@@ -10,6 +10,7 @@
 
 #include <Availability.h>
 #include <DriverKit/IOService.iig>
+#include <DriverKit/OSData.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
 
 class ASOHCI: public IOService
@@ -20,6 +21,10 @@ public:
     
     virtual kern_return_t
     Stop(IOService * provider) override;
+
+    // Copy a chunk of in-memory bridge logs into a client-provided buffer.
+    virtual kern_return_t
+    CopyBridgeLogs(OSData ** outData);
 };
 
 #endif /* ASOHCI_h */

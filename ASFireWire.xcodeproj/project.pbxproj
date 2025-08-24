@@ -11,6 +11,8 @@
 		3A034C6C2E5B160900CC8C61 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A034C6B2E5B160900CC8C61 /* PCIDriverKit.framework */; };
 		3A7C30612E5A40FD004F0DAF /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A7C30602E5A40FD004F0DAF /* DriverKit.framework */; };
 		3A7C306A2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF100012E5B999900000001 /* ASOHCI.cpp */; };
+		3AF100042E5B999900000004 /* ASOHCI.iig in Sources */ = {isa = PBXBuildFile; fileRef = 3AF100022E5B999900000002 /* ASOHCI.iig */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,6 +61,8 @@
 		3A7C30462E5A40E6004F0DAF /* ASFireWireUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFireWireUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.mrmidi.ASFireWire.ASOHCI.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A7C30602E5A40FD004F0DAF /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
+		3AF100012E5B999900000001 /* ASOHCI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCI.cpp; path = ASFireWire/ASOHCI/ASOHCI.cpp; sourceTree = SOURCE_ROOT; };
+		3AF100022E5B999900000002 /* ASOHCI.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; name = ASOHCI.iig; path = ASFireWire/ASOHCI/ASOHCI.iig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -351,34 +355,36 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		3A7C30292E5A40E3004F0DAF /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		3A7C30382E5A40E6004F0DAF /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		3A7C30422E5A40E6004F0DAF /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		3A7C305A2E5A40FD004F0DAF /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+			3A7C30292E5A40E3004F0DAF /* Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+			3A7C30382E5A40E6004F0DAF /* Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+			3A7C30422E5A40E6004F0DAF /* Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
+			3A7C305A2E5A40FD004F0DAF /* Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */,
+					3AF100042E5B999900000004 /* ASOHCI.iig in Sources */,
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -529,7 +535,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+					CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -563,7 +569,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+					CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -674,10 +680,11 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				CLANG_ENABLE_CODE_COVERAGE = NO;
 				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = ASOHCI/ASOHCI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
-				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+					DRIVERKIT_DEPLOYMENT_TARGET = 23.0;
 				ENABLE_CODE_COVERAGE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -703,10 +710,11 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				CLANG_ENABLE_CODE_COVERAGE = NO;
 				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_ENTITLEMENTS = ASOHCI/ASOHCI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
-				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+					DRIVERKIT_DEPLOYMENT_TARGET = 23.0;
 				ENABLE_CODE_COVERAGE = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",

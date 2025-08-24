@@ -2,34 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- Match MacVFN: no device filters here; matching lives in Info.plist -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+
   <key>com.apple.developer.driverkit</key>
+  <true/>
+
+  <key>com.apple.developer.driverkit.transport.pci</key>
+  <true/>
+
+  <key>com.apple.developer.driverkit.transport.pci.bridge</key>
   <true/>
 
   <!-- Development convenience: allow any user client access -->
   <key>com.apple.developer.driverkit.allow-any-userclient-access</key>
   <true/>
-
-  <!-- PCI transport entitlements with device matching -->
-  <key>com.apple.developer.driverkit.transport.pci</key>
-  <array>
-    <!-- Vendor-wide (11c1 - Agere/LSI) entitlement -->
-    <dict>
-      <key>IOPCIPrimaryMatch</key>
-      <string>0x000011c1&amp;0x0000ffff</string>
-    </dict>
-
-    <!-- Exact 5901 device entitlement -->
-    <dict>
-      <key>IOPCIMatch</key>
-      <string>0x590111c1</string>
-    </dict>
-
-    <!-- Optional: class entitlement for OHCI-1394 -->
-    <dict>
-      <key>IOPCIClassMatch</key>
-      <string>0x0c0010&amp;0xffffff</string>
-    </dict>
-  </array>
 </dict>
 </plist>
-

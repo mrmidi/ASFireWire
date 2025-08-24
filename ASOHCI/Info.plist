@@ -4,43 +4,54 @@
 <dict>
 	<key>IOKitPersonalities</key>
 	<dict>
-		<!-- Boot the user server -->
-		<key>ASFireWireUserServer</key>
-		<dict>
-			<key>CFBundleIdentifierKernel</key>
-			<string>com.apple.kpi.iokit</string>
-			<key>IOClass</key>
-			<string>IOUserService</string>
-			<key>IOMatchCategory</key>
-			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-			<key>IOProviderClass</key>
-			<string>IOUserResources</string>
-			<key>IOResourceMatch</key>
-			<string>IOKit</string>
-			<key>IOUserServerName</key>
-			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-		</dict>
+			<!-- Boot the user server (disabled; follow MacVFN single-personality pattern) -->
+			<!--
+			<key>ASFireWireUserServer</key>
+			<dict>
+				<key>CFBundleIdentifierKernel</key>
+				<string>com.apple.kpi.iokit</string>
+				<key>IOClass</key>
+				<string>IOUserService</string>
+				<key>IOMatchCategory</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+				<key>IOProviderClass</key>
+				<string>IOUserResources</string>
+				<key>IOResourceMatch</key>
+				<string>IOKit</string>
+				<key>IOUserServerName</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			</dict>
+			-->
 		
 		<!-- Actual PCI matching service -->
-		<key>ASOHCIService</key>
-		<dict>
+			<key>ASOHCIService</key>
+			<dict>
 			<key>CFBundleIdentifierKernel</key>
 			<string>com.apple.kpi.iokit</string>
 			<key>IOClass</key>
 			<string>IOUserService</string>
-			<key>IOUserClass</key>
-			<string>ASOHCI</string>
-			<key>IOProviderClass</key>
-			<string>IOPCIDevice</string>
+				<key>IOUserClass</key>
+				<string>ASOHCI</string>
+				<key>IOUserServerName</key>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+				<key>IOProviderClass</key>
+				<string>IOPCIDevice</string>
+				<!-- Required for Thunderbolt-tunneled PCI devices -->
+				<key>IOPCITunnelCompatible</key>
+				<true/>
+				
+				<!-- Match the Agere/LSI FW800 controller precisely -->
+				<key>IOPCIMatch</key>
+				<string>0x590111c1</string>
 			
-			<!-- Match the Agere/LSI FW800 controller precisely -->
-			<key>IOPCIMatch</key>
-			<string>0x590111c1</string>
-			
-			<!-- Optional safety net: class match for IEEE1394 OHCI -->
-			<key>IOPCIClassMatch</key>
-			<string>0x0c0010&amp;0xffffff</string>
-		</dict>
+				<!-- Optional safety net: class match for IEEE1394 OHCI (disable for now) -->
+				<!--
+				<key>IOPCIClassMatch</key>
+				<string>0x0c0010&amp;0xffffff</string>
+				-->
+				<key>IOProbeScore</key>
+				<integer>65530</integer>
+			</dict>
 	</dict>
 	<key>OSBundleUsageDescription</key>
 	<string>AS FireWire Driver for development and testing</string>
