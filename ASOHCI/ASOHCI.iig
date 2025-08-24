@@ -10,6 +10,8 @@
 
 #include <Availability.h>
 #include <DriverKit/IOService.iig>
+#include <DriverKit/OSAction.iig>
+#include <DriverKit/IOInterruptDispatchSource.iig>
 #include <DriverKit/OSData.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
 
@@ -25,6 +27,10 @@ public:
     // Copy a chunk of in-memory bridge logs into a client-provided buffer.
     virtual kern_return_t
     CopyBridgeLogs(OSData ** outData);
+
+    // MSI interrupt handler hook (exact signature for IOInterruptDispatchSource)
+    virtual void
+    InterruptOccurred(OSAction * action TARGET, uint64_t count, uint64_t time);
 };
 
 #endif /* ASOHCI_h */

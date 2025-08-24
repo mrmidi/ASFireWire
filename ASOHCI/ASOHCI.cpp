@@ -16,8 +16,11 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
 #include <PCIDriverKit/IOPCIDevice.h>
+// Interrupt dispatch source
+#include <DriverKit/IOInterruptDispatchSource.h>
 // Apple PCI config register offsets and command bits
-#include "../../AppleHeaders/PCI/IOPCIFamilyDefinitions.h"
+//#include "../../AppleHeaders/PCI/IOPCIFamilyDefinitions.h"
+#include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 // Minimal OHCI 1394 register offsets (from OHCI 1394 spec)
 static constexpr uint32_t kOHCI_Version                 = 0x000;
@@ -41,7 +44,14 @@ static constexpr uint32_t kOHCI_HCControl_PostedWriteEn = 0x00040000;
 static constexpr uint32_t kOHCI_HCControl_LinkEnable    = 0x00020000;
 static constexpr uint32_t kOHCI_HCControl_LPS           = 0x00080000;
 
-#include "ASOHCI.h"
+// Interrupt mask bits (subset)
+static constexpr uint32_t kOHCI_Int_SelfIDComplete      = 0x00010000;
+static constexpr uint32_t kOHCI_Int_BusReset            = 0x00020000;
+static constexpr uint32_t kOHCI_Int_MasterEnable        = 0x80000000;
+
+static IOInterruptDispatchSource * gIntSource = nullptr;
+
+#include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
 //------------------------------------------------------------------------------
 // Logging helper: dedicated subsystem/category for easy filtering.
@@ -149,7 +159,7 @@ IMPL(ASOHCI, Start)
     // Enable BusMaster/MemorySpace
     uint16_t cmd = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &cmd);
-    uint16_t newCmd = cmd | (kIOPCICommandBusLead | kIOPCICommandMemorySpace);
+    uint16_t newCmd = (uint16_t)(cmd | kIOPCICommandBusMaster | kIOPCICommandMemorySpace);
     if (newCmd != cmd) {
         pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, newCmd);
         pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &newCmd);
@@ -220,6 +230,43 @@ IMPL(ASOHCI, Start)
         // Optionally enable the Link state now; keep interrupts masked until MSI is wired
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, kOHCI_HCControl_LinkEnable);
         os_log(ASLog(), "ASOHCI: HCControlSet LinkEnable");
+
+        // ------------------------------------------------------------------
+        // MSI interrupt scaffolding: create source and set handler
+        // ------------------------------------------------------------------
+        IODispatchQueue *queue = nullptr;
+        if (CopyDispatchQueue(kIOServiceDefaultQueueName, &queue) == kIOReturnSuccess && queue) {
+            IOInterruptDispatchSource *src = nullptr;
+            kern_return_t ikr = IOInterruptDispatchSource::Create(pci, 0, queue, &src);
+            if (ikr == kIOReturnSuccess && src) {
+                OSAction *action = nullptr;
+                // Create action bound to our InterruptOccurred method
+                kern_return_t actionResult = OSAction::Create(this, 
+                                                            ASOHCI_InterruptOccurred_ID,
+                                                            ASOHCI_InterruptOccurred_ID, 
+                                                            0, 
+                                                            &action);
+                if (actionResult == kIOReturnSuccess && action) {
+                    src->SetHandler(action);
+                    src->SetEnableWithCompletion(true, nullptr);
+                    gIntSource = src; // keep a reference for lifetime
+                    os_log(ASLog(), "ASOHCI: MSI interrupt source enabled");
+                    // Unmask minimal interrupts and master enable
+                    uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable);
+                    pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, mask);
+                    os_log(ASLog(), "ASOHCI: IntMaskSet 0x%08x", mask);
+                } else {
+                    os_log(ASLog(), "ASOHCI: Failed to create OSAction for interrupt handler");
+                    src->release();
+                }
+                queue->release();
+            } else {
+                os_log(ASLog(), "ASOHCI: IOInterruptDispatchSource::Create failed: 0x%08x", ikr);
+                if (queue) queue->release();
+            }
+        } else {
+            os_log(ASLog(), "ASOHCI: CopyDispatchQueue failed");
+        }
     } else {
         os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx) to read OHCI regs", bar0Size);
     }
@@ -238,7 +285,7 @@ IMPL(ASOHCI, Stop)
     if (pci) {
         uint16_t cmd = 0;
         pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &cmd);
-        uint16_t clr = (uint16_t)(cmd & ~(kIOPCICommandBusLead | kIOPCICommandMemorySpace));
+        uint16_t clr = (uint16_t)(cmd & ~(kIOPCICommandBusMaster | kIOPCICommandMemorySpace));
         if (clr != cmd) {
             pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, clr);
         }
@@ -297,4 +344,11 @@ IMPL(ASOHCI, CopyBridgeLogs)
     if (!data) return kIOReturnNoMemory;
     *outData = data;
     return kIOReturnSuccess;
+}
+
+// Interrupt handler: runs on dispatch queue when MSI fires
+void
+IMPL(ASOHCI, InterruptOccurred)
+{
+    os_log(ASLog(), "ASOHCI: OnInterrupt count=%llu time=%llu", (unsigned long long)count, (unsigned long long)time);
 }
