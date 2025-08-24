@@ -16,6 +16,8 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
 #include <PCIDriverKit/IOPCIDevice.h>
+// Apple PCI config register offsets and command bits
+#include "../../AppleHeaders/PCI/IOPCIFamilyDefinitions.h"
 
 #include "ASOHCI.h"
 
@@ -33,14 +35,7 @@ static inline os_log_t ASLog()
 #endif
 }
 
-// PCI Configuration offsets
-#define kIOPCIConfigurationOffsetVendorID         0x00
-#define kIOPCIConfigurationOffsetDeviceID         0x02
-#define kIOPCIConfigurationOffsetCommand          0x04
-
-// PCI Command register bits
-#define kIOPCICommandMemorySpace                  0x0002
-#define kIOPCICommandBusMaster                    0x0004
+// using constants from IOPCIFamilyDefinitions.h
 
 // --------------------------------------------------------------------------
 // Bridge logging: lightweight in-memory ring buffer + export via IIG method
@@ -95,7 +90,7 @@ static void bridge_logf(const char *fmt, ...)
 
 #define BRIDGE_LOG(fmt, ...) do { bridge_logf(fmt, ##__VA_ARGS__); } while(0)
 
-// Minimal Start to diagnose restart loop: call super and return
+// Guided Start: Open PCI, enable command bits, log BARs, read OHCI regs
 kern_return_t
 IMPL(ASOHCI, Start)
 {
@@ -104,17 +99,89 @@ IMPL(ASOHCI, Start)
         os_log(ASLog(), "ASOHCI: Start superdispatch failed: 0x%08x", kr);
         return kr;
     }
-    os_log(ASLog(), "ASOHCI: Minimal Start() reached");
-    BRIDGE_LOG("Minimal Start()");
+    os_log(ASLog(), "ASOHCI: Start() begin bring-up");
+    BRIDGE_LOG("Start bring-up");
+
+    // Cast provider to IOPCIDevice
+    auto pci = OSDynamicCast(IOPCIDevice, provider);
+    if (!pci) {
+        os_log(ASLog(), "ASOHCI: Provider is not IOPCIDevice");
+        return kIOReturnBadArgument;
+    }
+
+    // Open the device for exclusive access
+    kr = pci->Open(this, 0);
+    if (kr != kIOReturnSuccess) {
+        os_log(ASLog(), "ASOHCI: PCI Open failed: 0x%08x", kr);
+        return kr;
+    }
+
+    // Read IDs
+    uint16_t vendorID = 0, deviceID = 0;
+    pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorID);
+    pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceID);
+    os_log(ASLog(), "ASOHCI: PCI IDs V:0x%04x D:0x%04x", vendorID, deviceID);
+    BRIDGE_LOG("PCI IDs V=%04x D=%04x", vendorID, deviceID);
+
+    // Enable BusMaster/MemorySpace
+    uint16_t cmd = 0;
+    pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &cmd);
+    uint16_t newCmd = cmd | (kIOPCICommandBusLead | kIOPCICommandMemorySpace);
+    if (newCmd != cmd) {
+        pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, newCmd);
+        pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &newCmd);
+    }
+    os_log(ASLog(), "ASOHCI: PCI CMD=0x%04x (was 0x%04x)", newCmd, cmd);
+    BRIDGE_LOG("PCI CMD=0x%04x->0x%04x", cmd, newCmd);
+
+    // BAR enumeration and BAR0 memory index
+    uint8_t bar0Index = 0;
+    uint64_t bar0Size = 0;
+    uint8_t bar0Type = 0;
+    kr = pci->GetBARInfo(0 /* BAR0 */, &bar0Index, &bar0Size, &bar0Type);
+    if (kr == kIOReturnSuccess) {
+        os_log(ASLog(), "ASOHCI: BAR0 idx=%u size=0x%llx type=0x%02x", bar0Index, bar0Size, bar0Type);
+        BRIDGE_LOG("BAR0 idx=%u size=0x%llx type=0x%02x", bar0Index, bar0Size, bar0Type);
+    } else {
+        os_log(ASLog(), "ASOHCI: GetBARInfo(BAR0) failed: 0x%08x", kr);
+    }
+
+    // Try reading a few OHCI registers if BAR0 present
+    if (bar0Size >= 0x2C) {
+        uint32_t ohci_ver = 0, bus_opts = 0, guid_hi = 0, guid_lo = 0;
+        pci->MemoryRead32(bar0Index, 0x000, &ohci_ver);
+        pci->MemoryRead32(bar0Index, 0x020, &bus_opts);
+        pci->MemoryRead32(bar0Index, 0x024, &guid_hi);
+        pci->MemoryRead32(bar0Index, 0x028, &guid_lo);
+        os_log(ASLog(), "ASOHCI: OHCI VER=0x%08x BUSOPT=0x%08x GUID=%08x:%08x", ohci_ver, bus_opts, guid_hi, guid_lo);
+        BRIDGE_LOG("OHCI VER=%08x BUSOPT=%08x GUID=%08x:%08x", ohci_ver, bus_opts, guid_hi, guid_lo);
+    } else {
+        os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx) to read OHCI regs", bar0Size);
+    }
+
+    os_log(ASLog(), "ASOHCI: Start() bring-up complete");
+    BRIDGE_LOG("Bring-up complete");
     return kIOReturnSuccess;
 }
 
 kern_return_t
 IMPL(ASOHCI, Stop)
 {
-    os_log(ASLog(), "ASOHCI: Minimal Stop() reached");
-    BRIDGE_LOG("Minimal Stop()");
-    return Stop(provider, SUPERDISPATCH);
+    os_log(ASLog(), "ASOHCI: Stop() begin");
+    // Best-effort clean up
+    auto pci = OSDynamicCast(IOPCIDevice, provider);
+    if (pci) {
+        uint16_t cmd = 0;
+        pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &cmd);
+        uint16_t clr = (uint16_t)(cmd & ~(kIOPCICommandBusLead | kIOPCICommandMemorySpace));
+        if (clr != cmd) {
+            pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, clr);
+        }
+        pci->Close(this, 0);
+    }
+    kern_return_t r = Stop(provider, SUPERDISPATCH);
+    os_log(ASLog(), "ASOHCI: Stop() complete: 0x%08x", r);
+    return r;
 }
 
 // CopyBridgeLogs implementation: return newline-delimited UTF-8 lines via OSData
