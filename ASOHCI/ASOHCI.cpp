@@ -26,6 +26,7 @@ static constexpr uint32_t kOHCI_GUIDHi                  = 0x024;
 static constexpr uint32_t kOHCI_GUIDLo                  = 0x028;
 static constexpr uint32_t kOHCI_HCControlSet            = 0x050;
 static constexpr uint32_t kOHCI_HCControlClear          = 0x054;
+static constexpr uint32_t kOHCI_NodeID                  = 0x0E8;
 static constexpr uint32_t kOHCI_IntEventClear           = 0x084;
 static constexpr uint32_t kOHCI_IntMaskSet              = 0x088;
 static constexpr uint32_t kOHCI_IntMaskClear            = 0x08C;
@@ -36,6 +37,9 @@ static constexpr uint32_t kOHCI_IsoRecvIntMaskClear     = 0x0AC;
 
 // HCControl bits
 static constexpr uint32_t kOHCI_HCControl_SoftReset     = 0x00010000;
+static constexpr uint32_t kOHCI_HCControl_PostedWriteEn = 0x00040000;
+static constexpr uint32_t kOHCI_HCControl_LinkEnable    = 0x00020000;
+static constexpr uint32_t kOHCI_HCControl_LPS           = 0x00080000;
 
 #include "ASOHCI.h"
 
@@ -101,7 +105,8 @@ static void bridge_logf(const char *fmt, ...)
     memcpy(e.msg, buf, n);
     e.msg[n] = '\0';
 
-#if DEBUG
+// Temporarily disable bridge os_log output to reduce noise
+#if 0
     os_log(ASLog(), "[BRIDGE] %s", e.msg);
 #endif
 }
@@ -200,6 +205,17 @@ IMPL(ASOHCI, Start)
         pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntMaskClear,   allOnes);
         os_log(ASLog(), "ASOHCI: Post-reset interrupt clear complete");
         BRIDGE_LOG("IRQ clear after reset done");
+
+        // Bring controller to link power state, enable posted writes (no link enable yet)
+        uint32_t hcSet = (kOHCI_HCControl_LPS | kOHCI_HCControl_PostedWriteEn);
+        pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, hcSet);
+        os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%08x)", hcSet);
+
+        // Probe NodeID
+        uint32_t node_id = 0;
+        pci->MemoryRead32(bar0Index, kOHCI_NodeID, &node_id);
+        os_log(ASLog(), "ASOHCI: NodeID=0x%08x (idValid=%u root=%u)", node_id,
+               (node_id >> 31) & 0x1, (node_id >> 30) & 0x1);
     } else {
         os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx) to read OHCI regs", bar0Size);
     }
