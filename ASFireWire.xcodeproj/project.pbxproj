@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		3A034C032E5A76A200CC8C61 /* SystemExtensions.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A034C022E5A76A200CC8C61 /* SystemExtensions.framework */; };
+		3A7C30612E5A40FD004F0DAF /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A7C30602E5A40FD004F0DAF /* DriverKit.framework */; };
+		3A7C306A2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		3A7C303D2E5A40E6004F0DAF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,13 +27,47 @@
 			remoteGlobalIDString = 3A7C302C2E5A40E3004F0DAF;
 			remoteInfo = ASFireWire;
 		};
+		3A7C30682E5A40FD004F0DAF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3A7C30252E5A40E3004F0DAF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3A7C305D2E5A40FD004F0DAF;
+			remoteInfo = ASOHCI;
+		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		3A7C306F2E5A40FD004F0DAF /* Embed System Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				3A7C306A2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext in Embed System Extensions */,
+			);
+			name = "Embed System Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		3A034C022E5A76A200CC8C61 /* SystemExtensions.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemExtensions.framework; path = System/Library/Frameworks/SystemExtensions.framework; sourceTree = SDKROOT; };
 		3A7C302D2E5A40E3004F0DAF /* ASFireWire.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ASFireWire.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A7C303C2E5A40E6004F0DAF /* ASFireWireTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFireWireTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A7C30462E5A40E6004F0DAF /* ASFireWireUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFireWireUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.mrmidi.ASFireWire.ASOHCI.dext; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A7C30602E5A40FD004F0DAF /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3A7C306B2E5A40FD004F0DAF /* Exceptions for "ASOHCI" folder in "ASOHCI" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3A7C305D2E5A40FD004F0DAF /* ASOHCI */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3A7C302F2E5A40E3004F0DAF /* ASFireWire */ = {
@@ -45,6 +85,14 @@
 			path = ASFireWireUITests;
 			sourceTree = "<group>";
 		};
+		3A7C30622E5A40FD004F0DAF /* ASOHCI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3A7C306B2E5A40FD004F0DAF /* Exceptions for "ASOHCI" folder in "ASOHCI" target */,
+			);
+			path = ASOHCI;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +100,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A034C032E5A76A200CC8C61 /* SystemExtensions.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -69,6 +118,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3A7C305B2E5A40FD004F0DAF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A7C30612E5A40FD004F0DAF /* DriverKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -78,6 +135,8 @@
 				3A7C302F2E5A40E3004F0DAF /* ASFireWire */,
 				3A7C303F2E5A40E6004F0DAF /* ASFireWireTests */,
 				3A7C30492E5A40E6004F0DAF /* ASFireWireUITests */,
+				3A7C30622E5A40FD004F0DAF /* ASOHCI */,
+				3A7C305F2E5A40FD004F0DAF /* Frameworks */,
 				3A7C302E2E5A40E3004F0DAF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,11 +147,31 @@
 				3A7C302D2E5A40E3004F0DAF /* ASFireWire.app */,
 				3A7C303C2E5A40E6004F0DAF /* ASFireWireTests.xctest */,
 				3A7C30462E5A40E6004F0DAF /* ASFireWireUITests.xctest */,
+				3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+		3A7C305F2E5A40FD004F0DAF /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3A034C022E5A76A200CC8C61 /* SystemExtensions.framework */,
+				3A7C30602E5A40FD004F0DAF /* DriverKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		3A7C30592E5A40FD004F0DAF /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
 		3A7C302C2E5A40E3004F0DAF /* ASFireWire */ = {
@@ -102,10 +181,12 @@
 				3A7C30292E5A40E3004F0DAF /* Sources */,
 				3A7C302A2E5A40E3004F0DAF /* Frameworks */,
 				3A7C302B2E5A40E3004F0DAF /* Resources */,
+				3A7C306F2E5A40FD004F0DAF /* Embed System Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3A7C30692E5A40FD004F0DAF /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3A7C302F2E5A40E3004F0DAF /* ASFireWire */,
@@ -163,6 +244,29 @@
 			productReference = 3A7C30462E5A40E6004F0DAF /* ASFireWireUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		3A7C305D2E5A40FD004F0DAF /* ASOHCI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3A7C306C2E5A40FD004F0DAF /* Build configuration list for PBXNativeTarget "ASOHCI" */;
+			buildPhases = (
+				3A7C30592E5A40FD004F0DAF /* Headers */,
+				3A7C305A2E5A40FD004F0DAF /* Sources */,
+				3A7C305B2E5A40FD004F0DAF /* Frameworks */,
+				3A7C305C2E5A40FD004F0DAF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3A7C30622E5A40FD004F0DAF /* ASOHCI */,
+			);
+			name = ASOHCI;
+			packageProductDependencies = (
+			);
+			productName = ASOHCI;
+			productReference = 3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */;
+			productType = "com.apple.product-type.driver-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -184,6 +288,9 @@
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = 3A7C302C2E5A40E3004F0DAF;
 					};
+					3A7C305D2E5A40FD004F0DAF = {
+						CreatedOnToolsVersion = 26.0;
+					};
 				};
 			};
 			buildConfigurationList = 3A7C30282E5A40E3004F0DAF /* Build configuration list for PBXProject "ASFireWire" */;
@@ -203,6 +310,7 @@
 				3A7C302C2E5A40E3004F0DAF /* ASFireWire */,
 				3A7C303B2E5A40E6004F0DAF /* ASFireWireTests */,
 				3A7C30452E5A40E6004F0DAF /* ASFireWireUITests */,
+				3A7C305D2E5A40FD004F0DAF /* ASOHCI */,
 			);
 		};
 /* End PBXProject section */
@@ -223,6 +331,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		3A7C30442E5A40E6004F0DAF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3A7C305C2E5A40FD004F0DAF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -253,6 +368,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3A7C305A2E5A40FD004F0DAF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -265,6 +387,11 @@
 			isa = PBXTargetDependency;
 			target = 3A7C302C2E5A40E3004F0DAF /* ASFireWire */;
 			targetProxy = 3A7C30472E5A40E6004F0DAF /* PBXContainerItemProxy */;
+		};
+		3A7C30692E5A40FD004F0DAF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3A7C305D2E5A40FD004F0DAF /* ASOHCI */;
+			targetProxy = 3A7C30682E5A40FD004F0DAF /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -394,6 +521,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ASFireWire/ASFireWire.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -426,6 +555,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ASFireWire/ASFireWire.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -533,6 +664,56 @@
 			};
 			name = Release;
 		};
+		3A7C306D2E5A40FD004F0DAF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				CLANG_ENABLE_CODE_COVERAGE = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				ENABLE_CODE_COVERAGE = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ASOHCI/Info.plist;
+				LLVM_PROFILE_GENERATE = NO;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFireWire.ASOHCI;
+				PRODUCT_NAME = "$(inherited)";
+				RUN_CLANG_STATIC_ANALYZER = YES;
+				SDKROOT = driverkit;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		3A7C306E2E5A40FD004F0DAF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				CLANG_ENABLE_CODE_COVERAGE = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				ENABLE_CODE_COVERAGE = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ASOHCI/Info.plist;
+				LLVM_PROFILE_GENERATE = NO;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFireWire.ASOHCI;
+				PRODUCT_NAME = "$(inherited)";
+				RUN_CLANG_STATIC_ANALYZER = YES;
+				SDKROOT = driverkit;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -568,6 +749,15 @@
 			buildConfigurations = (
 				3A7C30572E5A40E6004F0DAF /* Debug */,
 				3A7C30582E5A40E6004F0DAF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3A7C306C2E5A40FD004F0DAF /* Build configuration list for PBXNativeTarget "ASOHCI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3A7C306D2E5A40FD004F0DAF /* Debug */,
+				3A7C306E2E5A40FD004F0DAF /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

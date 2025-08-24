@@ -1,0 +1,21 @@
+//
+//  ASOHCI.iig
+//  ASOHCI
+//
+//  Created by Aleksandr Shabelnikov on 23.08.2025.
+//
+
+#ifndef ASOHCI_h
+#define ASOHCI_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+
+class ASOHCI: public IOService
+{
+public:
+    virtual kern_return_t
+    Start(IOService * provider) override;
+};
+
+#endif /* ASOHCI_h */
