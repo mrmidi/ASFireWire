@@ -9,9 +9,27 @@
   <key>com.apple.developer.driverkit.allow-any-userclient-access</key>
   <true/>
 
-  <!-- FireWire host controller is PCI; include PCI transport entitlement for dev -->
+  <!-- PCI transport entitlements with device matching -->
   <key>com.apple.developer.driverkit.transport.pci</key>
-  <true/>
+  <array>
+    <!-- Vendor-wide (11c1 - Agere/LSI) entitlement -->
+    <dict>
+      <key>IOPCIPrimaryMatch</key>
+      <string>0x000011c1&amp;0x0000ffff</string>
+    </dict>
+
+    <!-- Exact 5901 device entitlement -->
+    <dict>
+      <key>IOPCIMatch</key>
+      <string>0x590111c1</string>
+    </dict>
+
+    <!-- Optional: class entitlement for OHCI-1394 -->
+    <dict>
+      <key>IOPCIClassMatch</key>
+      <string>0x0c0010&amp;0xffffff</string>
+    </dict>
+  </array>
 </dict>
 </plist>
 

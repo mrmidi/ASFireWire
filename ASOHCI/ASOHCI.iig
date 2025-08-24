@@ -10,12 +10,16 @@
 
 #include <Availability.h>
 #include <DriverKit/IOService.iig>
+#include <PCIDriverKit/IOPCIDevice.iig>
 
 class ASOHCI: public IOService
 {
 public:
     virtual kern_return_t
     Start(IOService * provider) override;
+    
+    virtual kern_return_t
+    Stop(IOService * provider) override;
 };
 
 #endif /* ASOHCI_h */
