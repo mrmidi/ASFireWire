@@ -19,6 +19,24 @@
 // Apple PCI config register offsets and command bits
 #include "../../AppleHeaders/PCI/IOPCIFamilyDefinitions.h"
 
+// Minimal OHCI 1394 register offsets (from OHCI 1394 spec)
+static constexpr uint32_t kOHCI_Version                 = 0x000;
+static constexpr uint32_t kOHCI_BusOptions              = 0x020;
+static constexpr uint32_t kOHCI_GUIDHi                  = 0x024;
+static constexpr uint32_t kOHCI_GUIDLo                  = 0x028;
+static constexpr uint32_t kOHCI_HCControlSet            = 0x050;
+static constexpr uint32_t kOHCI_HCControlClear          = 0x054;
+static constexpr uint32_t kOHCI_IntEventClear           = 0x084;
+static constexpr uint32_t kOHCI_IntMaskSet              = 0x088;
+static constexpr uint32_t kOHCI_IntMaskClear            = 0x08C;
+static constexpr uint32_t kOHCI_IsoXmitIntEventClear    = 0x094;
+static constexpr uint32_t kOHCI_IsoXmitIntMaskClear     = 0x09C;
+static constexpr uint32_t kOHCI_IsoRecvIntEventClear    = 0x0A4;
+static constexpr uint32_t kOHCI_IsoRecvIntMaskClear     = 0x0AC;
+
+// HCControl bits
+static constexpr uint32_t kOHCI_HCControl_SoftReset     = 0x00010000;
+
 #include "ASOHCI.h"
 
 //------------------------------------------------------------------------------
@@ -149,12 +167,39 @@ IMPL(ASOHCI, Start)
     // Try reading a few OHCI registers if BAR0 present
     if (bar0Size >= 0x2C) {
         uint32_t ohci_ver = 0, bus_opts = 0, guid_hi = 0, guid_lo = 0;
-        pci->MemoryRead32(bar0Index, 0x000, &ohci_ver);
-        pci->MemoryRead32(bar0Index, 0x020, &bus_opts);
-        pci->MemoryRead32(bar0Index, 0x024, &guid_hi);
-        pci->MemoryRead32(bar0Index, 0x028, &guid_lo);
+        pci->MemoryRead32(bar0Index, kOHCI_Version, &ohci_ver);
+        pci->MemoryRead32(bar0Index, kOHCI_BusOptions, &bus_opts);
+        pci->MemoryRead32(bar0Index, kOHCI_GUIDHi, &guid_hi);
+        pci->MemoryRead32(bar0Index, kOHCI_GUIDLo, &guid_lo);
         os_log(ASLog(), "ASOHCI: OHCI VER=0x%08x BUSOPT=0x%08x GUID=%08x:%08x", ohci_ver, bus_opts, guid_hi, guid_lo);
         BRIDGE_LOG("OHCI VER=%08x BUSOPT=%08x GUID=%08x:%08x", ohci_ver, bus_opts, guid_hi, guid_lo);
+
+        // --- Minimal controller init: clear pending interrupts and masks ---
+        uint32_t allOnes = 0xFFFFFFFFu;
+        pci->MemoryWrite32(bar0Index, kOHCI_IntEventClear,        allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoXmitIntEventClear,  allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntEventClear,  allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IntMaskClear,          allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoXmitIntMaskClear,   allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntMaskClear,   allOnes);
+        os_log(ASLog(), "ASOHCI: Cleared interrupt events/masks");
+        BRIDGE_LOG("IRQ clear/mask done");
+
+        // Optional: issue a soft reset and wait briefly for completion
+        pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet,   kOHCI_HCControl_SoftReset);
+        IOSleep(10); // give hardware time to settle
+        os_log(ASLog(), "ASOHCI: Soft reset issued");
+        BRIDGE_LOG("Soft reset issued");
+
+        // Re-clear masks/events after reset just to be safe
+        pci->MemoryWrite32(bar0Index, kOHCI_IntEventClear,        allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoXmitIntEventClear,  allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntEventClear,  allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IntMaskClear,          allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoXmitIntMaskClear,   allOnes);
+        pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntMaskClear,   allOnes);
+        os_log(ASLog(), "ASOHCI: Post-reset interrupt clear complete");
+        BRIDGE_LOG("IRQ clear after reset done");
     } else {
         os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx) to read OHCI regs", bar0Size);
     }
