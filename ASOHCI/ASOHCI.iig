@@ -13,6 +13,7 @@
 #include <DriverKit/OSAction.iig>
 #include <DriverKit/IOInterruptDispatchSource.iig>
 #include <DriverKit/OSData.iig>
+#include <DriverKit/IOBufferMemoryDescriptor.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
 
 class ASOHCI: public IOService

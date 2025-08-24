@@ -18,6 +18,8 @@
 #include <PCIDriverKit/IOPCIDevice.h>
 // Interrupt dispatch source
 #include <DriverKit/IOInterruptDispatchSource.h>
+// DMA buffer management
+#include <DriverKit/IOBufferMemoryDescriptor.h>
 // Apple PCI config register offsets and command bits
 //#include "../../AppleHeaders/PCI/IOPCIFamilyDefinitions.h"
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
@@ -38,6 +40,17 @@ static constexpr uint32_t kOHCI_IsoXmitIntMaskClear     = 0x09C;
 static constexpr uint32_t kOHCI_IsoRecvIntEventClear    = 0x0A4;
 static constexpr uint32_t kOHCI_IsoRecvIntMaskClear     = 0x0AC;
 
+// Self-ID buffer registers
+static constexpr uint32_t kOHCI_SelfIDBuffer            = 0x064;
+static constexpr uint32_t kOHCI_SelfIDCount             = 0x068;
+
+// DMA context registers
+static constexpr uint32_t kOHCI_AsReqFilterHiSet        = 0x100;
+static constexpr uint32_t kOHCI_AsReqFilterLoSet        = 0x104;
+static constexpr uint32_t kOHCI_AsReqTrContextBase      = 0x180;
+static constexpr uint32_t kOHCI_AsReqTrContextControl   = 0x184;
+static constexpr uint32_t kOHCI_AsReqTrCommandPtr       = 0x18C;
+
 // HCControl bits
 static constexpr uint32_t kOHCI_HCControl_SoftReset     = 0x00010000;
 static constexpr uint32_t kOHCI_HCControl_PostedWriteEn = 0x00040000;
@@ -49,7 +62,15 @@ static constexpr uint32_t kOHCI_Int_SelfIDComplete      = 0x00010000;
 static constexpr uint32_t kOHCI_Int_BusReset            = 0x00020000;
 static constexpr uint32_t kOHCI_Int_MasterEnable        = 0x80000000;
 
+// Global state
 static IOInterruptDispatchSource * gIntSource = nullptr;
+
+// DMA buffer constants
+static constexpr size_t kSelfIDBufferSize = 2048;  // Self-ID buffer (1-2KB typical)
+static constexpr size_t kSelfIDBufferAlign = 4;    // 4-byte alignment required
+
+// DMA buffer storage
+static IOBufferMemoryDescriptor * gSelfIDBuffer = nullptr;
 
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
@@ -251,6 +272,44 @@ IMPL(ASOHCI, Start)
                     src->SetEnableWithCompletion(true, nullptr);
                     gIntSource = src; // keep a reference for lifetime
                     os_log(ASLog(), "ASOHCI: MSI interrupt source enabled");
+                    
+                    // ------------------------------------------------------------------
+                    // DMA Buffer Setup: Self-ID receive buffer
+                    // ------------------------------------------------------------------
+                    BRIDGE_LOG("Setting up DMA buffers");
+                    
+                    // Allocate Self-ID buffer
+                    kern_return_t bufferResult = IOBufferMemoryDescriptor::Create(
+                        kIOMemoryDirectionInOut,
+                        kSelfIDBufferSize,
+                        kSelfIDBufferAlign,
+                        &gSelfIDBuffer);
+                    
+                    if (bufferResult == kIOReturnSuccess && gSelfIDBuffer) {
+                        os_log(ASLog(), "ASOHCI: Self-ID buffer allocated (size=0x%zx)", kSelfIDBufferSize);
+                        BRIDGE_LOG("Self-ID buffer allocated size=0x%zx", kSelfIDBufferSize);
+                        
+                        // Set buffer length to full capacity
+                        gSelfIDBuffer->SetLength(kSelfIDBufferSize);
+                        
+                        // Get physical address for OHCI registers
+                        IOAddressSegment range;
+                        kern_return_t mapResult = gSelfIDBuffer->GetAddressRange(&range);
+                        if (mapResult == kIOReturnSuccess && range.address) {
+                            // Configure Self-ID buffer in OHCI
+                            pci->MemoryWrite32(bar0Index, kOHCI_SelfIDBuffer, (uint32_t)range.address);
+                            os_log(ASLog(), "ASOHCI: Self-ID buffer configured at phys=0x%llx len=0x%llx", 
+                                   range.address, range.length);
+                            BRIDGE_LOG("Self-ID buffer phys=0x%llx len=0x%llx", range.address, range.length);
+                        } else {
+                            os_log(ASLog(), "ASOHCI: Failed to get Self-ID buffer address range: 0x%08x", mapResult);
+                            gSelfIDBuffer->release();
+                            gSelfIDBuffer = nullptr;
+                        }
+                    } else {
+                        os_log(ASLog(), "ASOHCI: Failed to allocate Self-ID buffer: 0x%08x", bufferResult);
+                    }
+                    
                     // Unmask minimal interrupts and master enable
                     uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable);
                     pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, mask);
@@ -280,6 +339,23 @@ kern_return_t
 IMPL(ASOHCI, Stop)
 {
     os_log(ASLog(), "ASOHCI: Stop() begin");
+    
+    // Clean up DMA buffers
+    if (gSelfIDBuffer) {
+        gSelfIDBuffer->release();
+        gSelfIDBuffer = nullptr;
+        os_log(ASLog(), "ASOHCI: Self-ID buffer released");
+        BRIDGE_LOG("Self-ID buffer released");
+    }
+    
+    // Clean up interrupt source
+    if (gIntSource) {
+        gIntSource->SetEnableWithCompletion(false, nullptr);
+        gIntSource->release();
+        gIntSource = nullptr;
+        os_log(ASLog(), "ASOHCI: Interrupt source disabled");
+    }
+    
     // Best-effort clean up
     auto pci = OSDynamicCast(IOPCIDevice, provider);
     if (pci) {
