@@ -206,7 +206,7 @@ IMPL(ASOHCI, Start)
         os_log(ASLog(), "ASOHCI: Post-reset interrupt clear complete");
         BRIDGE_LOG("IRQ clear after reset done");
 
-        // Bring controller to link power state, enable posted writes (no link enable yet)
+        // Bring controller to link power state, enable posted writes (no interrupts yet)
         uint32_t hcSet = (kOHCI_HCControl_LPS | kOHCI_HCControl_PostedWriteEn);
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, hcSet);
         os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%08x)", hcSet);
@@ -216,6 +216,10 @@ IMPL(ASOHCI, Start)
         pci->MemoryRead32(bar0Index, kOHCI_NodeID, &node_id);
         os_log(ASLog(), "ASOHCI: NodeID=0x%08x (idValid=%u root=%u)", node_id,
                (node_id >> 31) & 0x1, (node_id >> 30) & 0x1);
+
+        // Optionally enable the Link state now; keep interrupts masked until MSI is wired
+        pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, kOHCI_HCControl_LinkEnable);
+        os_log(ASLog(), "ASOHCI: HCControlSet LinkEnable");
     } else {
         os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx) to read OHCI regs", bar0Size);
     }
