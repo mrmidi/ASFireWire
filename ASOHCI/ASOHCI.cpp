@@ -47,6 +47,7 @@ static uint32_t                    gLastLoggedNodeID = 0xFFFFFFFF; // last logge
 static bool                        gLastLoggedValid  = false;
 static bool                        gLastLoggedRoot   = false;
 static ASOHCIPHYAccess           * gPhyAccess        = nullptr; // serialized PHY register access
+static bool                        gDidInitialPhyScan = false;  // one-shot PHY scan after first stable Self-ID
 
 // ------------------------ Logging -----------------------------------
 #include "LogHelper.hpp"
@@ -561,6 +562,54 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
             os_log(ASLog(), "ASOHCI: CycleTimerEnable asserted post Self-ID (LinkControl=0x%08x)", lcPost);
             BRIDGE_LOG("CycleTimerEnable now set (LC=%08x)", lcPost);
             gCycleTimerArmed = true;
+        }
+        // Perform one-time PHY scan (read-only) after first stable Self-ID
+        if (!gDidInitialPhyScan && gPhyAccess) {
+            // Inline small scan to avoid extra TU for now
+            const uint8_t kMaxPhyPorts = 16; // hard cap
+            uint8_t phyIdReg = 0;
+            if (gPhyAccess->readPhyRegister(0, &phyIdReg) == kIOReturnSuccess) {
+                uint8_t localPhyId = phyIdReg & 0x3F;
+                BRIDGE_LOG("PHY scan start localPhyId=%u raw0=0x%02x", localPhyId, phyIdReg);
+                os_log(ASLog(), "ASOHCI: PHY scan start localPhyId=%u raw0=0x%02x", localPhyId, phyIdReg);
+                uint32_t connectedCount = 0, enabledCount = 0, contenderCount = 0;
+                uint8_t portBaseReg = 4; // typical start of port status regs
+                for (uint8_t p = 0; p < kMaxPhyPorts; ++p) {
+                    uint8_t raw = 0; uint8_t reg = (uint8_t)(portBaseReg + p);
+                    if (gPhyAccess->readPhyRegister(reg, &raw) != kIOReturnSuccess) {
+                        BRIDGE_LOG("PHY port reg %u read timeout - stopping scan", reg);
+                        os_log(ASLog(), "ASOHCI: PHY port reg %u read timeout - stopping scan", reg);
+                        break; // abort further scanning
+                    }
+                    // Heuristic: if raw reads as all ones (0xFF) or all zeros beyond first gap, assume no more ports
+                    if (raw == 0xFF || raw == 0x00) {
+                        if (p == 0) {
+                            // ambiguous, still treat as potentially valid first port; continue
+                        } else {
+                            BRIDGE_LOG("PHY port %u raw=0x%02x sentinel -> end", p, raw);
+                            break;
+                        }
+                    }
+                    bool connected = (raw & 0x01) != 0;      // Connected
+                    bool child     = (raw & 0x02) != 0;      // Child
+                    bool parent    = (raw & 0x04) != 0;      // Parent
+                    bool contender = (raw & 0x08) != 0;      // Contender
+                    bool power     = (raw & 0x10) != 0;      // Power (arbitration participation / bias)
+                    bool disabled  = (raw & 0x40) != 0;      // Disabled (spec dependent bit position)
+                    bool enabled   = !disabled;              // Derived
+                    if (connected) ++connectedCount;
+                    if (enabled)   ++enabledCount;
+                    if (contender) ++contenderCount;
+                    BRIDGE_LOG("PHY port %u raw=0x%02x conn=%u en=%u child=%u parent=%u cont=%u pwr=%u", p, raw, connected, enabled, child, parent, contender, power);
+                    os_log(ASLog(), "ASOHCI: PHY port %u raw=0x%02x conn=%u en=%u child=%u parent=%u cont=%u pwr=%u", p, raw, connected, enabled, child, parent, contender, power);
+                }
+                BRIDGE_LOG("PHY scan summary connected=%u enabled=%u contender=%u", connectedCount, enabledCount, contenderCount);
+                os_log(ASLog(), "ASOHCI: PHY scan summary connected=%u enabled=%u contender=%u", connectedCount, enabledCount, contenderCount);
+            } else {
+                BRIDGE_LOG("PHY scan failed: register 0 read error");
+                os_log(ASLog(), "ASOHCI: PHY scan failed: register 0 read error");
+            }
+            gDidInitialPhyScan = true;
         }
         // Mark cycle complete; prepare for future resets but do not override in-progress flags until next BusReset
         gSelfIDInProgress = false;
