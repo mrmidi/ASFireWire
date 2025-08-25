@@ -1,11 +1,5 @@
 #pragma once
-#include <DriverKit/OSObject.h>
-#include <DriverKit/IOService.h>
 #include <DriverKit/IOLib.h>
-#include <DriverKit/IOBufferMemoryDescriptor.h>
-#include <DriverKit/IOInterruptDispatchSource.h>
-#include <DriverKit/OSCollection.h>
-#include <DriverKit/locks.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include "OHCIConstants.hpp"
 #include "LogHelper.hpp"
@@ -14,8 +8,7 @@
 class ASOHCI;
 
 // Encapsulates serialized access to OHCI PhyControl register using IORecursiveLock.
-class ASOHCIPHYAccess : public OSObject {
-    OSDeclareDefaultStructors(ASOHCIPHYAccess)
+class ASOHCIPHYAccess {
 private:
     IORecursiveLock * _lock {nullptr};
     ASOHCI          * _owner {nullptr};
@@ -25,8 +18,9 @@ private:
     bool waitForWriteComplete(uint32_t timeoutIterations); // busy poll small bounded
     bool waitForReadComplete(uint32_t timeoutIterations);
 public:
+    ASOHCIPHYAccess() = default;
+    ~ASOHCIPHYAccess();
     bool init(ASOHCI * owner, IOPCIDevice * pci, uint8_t bar0);
-    void free() override;
 
     // Lock helpers
     void acquire();

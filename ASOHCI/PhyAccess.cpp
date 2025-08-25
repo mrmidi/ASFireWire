@@ -2,24 +2,20 @@
 #include "ASOHCI.h" // generated header for owner type forward reference if needed
 #include <os/log.h>
 
-OSDefineMetaClassAndStructors(ASOHCIPHYAccess, OSObject)
+ASOHCIPHYAccess::~ASOHCIPHYAccess() {
+    if (_lock) {
+        IORecursiveLockFree(_lock);
+        _lock = nullptr;
+    }
+}
 
 bool ASOHCIPHYAccess::init(ASOHCI * owner, IOPCIDevice * pci, uint8_t bar0) {
-    if (!OSObject::init()) return false;
     _owner = owner;
     _pci = pci;
     _bar0 = bar0;
     _lock = IORecursiveLockAlloc();
     if (!_lock) return false;
     return true;
-}
-
-void ASOHCIPHYAccess::free() {
-    if (_lock) {
-        IORecursiveLockFree(_lock);
-        _lock = nullptr;
-    }
-    OSObject::free();
 }
 
 void ASOHCIPHYAccess::acquire() {

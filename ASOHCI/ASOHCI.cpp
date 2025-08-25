@@ -389,10 +389,10 @@ IMPL(ASOHCI, Start)
 
     // Create PHY access helper after BAR mapping & PCI device known
     if (!gPhyAccess) {
-        gPhyAccess = OSTypeAlloc(ASOHCIPHYAccess);
+        gPhyAccess = new ASOHCIPHYAccess();
         if (gPhyAccess && !gPhyAccess->init(this, pci, (uint8_t)bar0Index)) {
             os_log(ASLog(), "ASOHCI: PHY access init failed (continuing without)" );
-            gPhyAccess->release();
+            delete gPhyAccess;
             gPhyAccess = nullptr;
         } else if (gPhyAccess) {
             os_log(ASLog(), "ASOHCI: PHY access initialized");
@@ -443,7 +443,7 @@ IMPL(ASOHCI, Stop)
     }
 
     if (gPhyAccess) {
-        gPhyAccess->release();
+        delete gPhyAccess;
         gPhyAccess = nullptr;
     }
 
