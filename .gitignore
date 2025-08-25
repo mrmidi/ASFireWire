@@ -1,0 +1,13 @@
+# Build artifacts
+build/
+
+# Xcode user data
+**/*.xcuserdatad/
+**/*.xcuserdata/
+
+# Derived data (if created inside repo)
+DerivedData/
+
+# macOS noise
+.DS_Store
+

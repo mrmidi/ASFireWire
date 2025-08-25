@@ -12,7 +12,6 @@
 		3A7C30612E5A40FD004F0DAF /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A7C30602E5A40FD004F0DAF /* DriverKit.framework */; };
 		3A7C306A2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF100012E5B999900000001 /* ASOHCI.cpp */; };
-		3AF100042E5B999900000004 /* ASOHCI.iig in Sources */ = {isa = PBXBuildFile; fileRef = 3AF100022E5B999900000002 /* ASOHCI.iig */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,8 +60,8 @@
 		3A7C30462E5A40E6004F0DAF /* ASFireWireUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFireWireUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.mrmidi.ASFireWire.ASOHCI.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A7C30602E5A40FD004F0DAF /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
-		3AF100012E5B999900000001 /* ASOHCI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCI.cpp; path = ASFireWire/ASOHCI/ASOHCI.cpp; sourceTree = SOURCE_ROOT; };
-		3AF100022E5B999900000002 /* ASOHCI.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; name = ASOHCI.iig; path = ASFireWire/ASOHCI/ASOHCI.iig; sourceTree = SOURCE_ROOT; };
+		3AF100012E5B999900000001 /* ASOHCI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCI.cpp; path = ASOHCI/ASOHCI.cpp; sourceTree = SOURCE_ROOT; };
+		3AF100022E5B999900000002 /* ASOHCI.iig */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.iig; name = ASOHCI.iig; path = ASOHCI/ASOHCI.iig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -381,7 +380,6 @@
 				buildActionMask = 2147483647;
 				files = (
 					3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */,
-					3AF100042E5B999900000004 /* ASOHCI.iig in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};

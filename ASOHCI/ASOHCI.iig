@@ -16,22 +16,30 @@
 #include <DriverKit/IOBufferMemoryDescriptor.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
 
-class ASOHCI: public IOService
+
+class ASOHCI : public IOService
 {
 public:
-    virtual kern_return_t
-    Start(IOService * provider) override;
-    
-    virtual kern_return_t
-    Stop(IOService * provider) override;
+    virtual bool init() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
 
-    // Copy a chunk of in-memory bridge logs into a client-provided buffer.
-    virtual kern_return_t
-    CopyBridgeLogs(OSData ** outData);
+    // Interrupt action (called on a DriverKit dispatch queue)
+    virtual void InterruptOccurred(OSAction* action,
+                                   uint64_t count,
+                                   uint64_t time)
+        TYPE(IOInterruptDispatchSource::InterruptOccurred);
 
-    // MSI interrupt handler hook (exact signature for IOInterruptDispatchSource)
-    virtual void
-    InterruptOccurred(OSAction * action TARGET, uint64_t count, uint64_t time);
+    // Bridge logging method
+    virtual kern_return_t CopyBridgeLogs(OSData** outData);
+
+private:
+    // ivars you’ll keep
+    IOPCIDevice*                     pciDevice   = nullptr;
+    IOMemoryMap*                     bar0Map     = nullptr;
+    IOInterruptDispatchSource*       intSource   = nullptr;
+    IODispatchQueue*                 defaultQ    = nullptr;
+
 };
 
 #endif /* ASOHCI_h */

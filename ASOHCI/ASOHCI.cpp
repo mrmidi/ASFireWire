@@ -7,7 +7,6 @@
 
 #include <os/log.h>
 #include <TargetConditionals.h>
-#include <time.h>
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
@@ -23,52 +22,10 @@
 
 // Generated Header
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
+#include "BridgeLog.hpp"
 
-// ------------------------ Minimal OHCI 1394 register offsets ------------------------
-static constexpr uint32_t kOHCI_Version                 = 0x000;
-static constexpr uint32_t kOHCI_BusOptions              = 0x020;
-static constexpr uint32_t kOHCI_GUIDHi                  = 0x024;
-static constexpr uint32_t kOHCI_GUIDLo                  = 0x028;
-static constexpr uint32_t kOHCI_HCControlSet            = 0x050;
-static constexpr uint32_t kOHCI_HCControlClear          = 0x054;
-static constexpr uint32_t kOHCI_SelfIDBuffer            = 0x064;
-static constexpr uint32_t kOHCI_SelfIDCount             = 0x068;
-static constexpr uint32_t kOHCI_IntEvent                = 0x080;
-static constexpr uint32_t kOHCI_IntEventClear           = 0x084;
-static constexpr uint32_t kOHCI_IntMaskSet              = 0x088;
-static constexpr uint32_t kOHCI_IntMaskClear            = 0x08C;
-static constexpr uint32_t kOHCI_IsoXmitIntEventClear    = 0x094;
-static constexpr uint32_t kOHCI_IsoXmitIntMaskClear     = 0x09C;
-static constexpr uint32_t kOHCI_IsoRecvIntEventClear    = 0x0A4;
-static constexpr uint32_t kOHCI_IsoRecvIntMaskClear     = 0x0AC;
-static constexpr uint32_t kOHCI_NodeID                  = 0x0E8;
-static constexpr uint32_t kOHCI_PhyControl              = 0x0EC;
-
-// HCControl bits
-static constexpr uint32_t kOHCI_HCControl_SoftReset     = 0x00010000;
-static constexpr uint32_t kOHCI_HCControl_LinkEnable    = 0x00020000;
-static constexpr uint32_t kOHCI_HCControl_PostedWriteEn = 0x00040000;
-static constexpr uint32_t kOHCI_HCControl_LPS           = 0x00080000;
-
-// Int bits
-static constexpr uint32_t kOHCI_Int_SelfIDComplete      = 0x00010000;
-static constexpr uint32_t kOHCI_Int_BusReset            = 0x00020000;
-static constexpr uint32_t kOHCI_Int_MasterEnable        = 0x80000000;
-
-// ------------------------ Self‑ID parsing helpers ------------------------
-static constexpr uint32_t kSelfID_PhyID_Mask        = 0xFC000000;
-static constexpr uint32_t kSelfID_PhyID_Shift       = 26;
-static constexpr uint32_t kSelfID_LinkActive_Mask   = 0x02000000;
-static constexpr uint32_t kSelfID_GapCount_Mask     = 0x01FC0000;
-static constexpr uint32_t kSelfID_GapCount_Shift    = 18;
-static constexpr uint32_t kSelfID_Speed_Mask        = 0x0000C000;
-static constexpr uint32_t kSelfID_Speed_Shift       = 14;
-static constexpr uint32_t kSelfID_Contender_Mask    = 0x00000800;
-static constexpr uint32_t kSelfID_PowerClass_Mask   = 0x00000700;
-
-// ------------------------ Driver constants ------------------------
-static constexpr size_t   kSelfIDBufferSize  = 2048; // 1–2KB typical
-static constexpr size_t   kSelfIDBufferAlign = 4;
+// OHCI constants
+#include "OHCIConstants.hpp"
 
 // ------------------------ Globals for this TU (simple bring‑up) ------------------------
 static IOInterruptDispatchSource * gIntSource     = nullptr;
@@ -78,17 +35,6 @@ static uint8_t                     gBAR0Index     = 0;
 static volatile uint32_t           gInterruptCount= 0;
 
 // ------------------------ Logging -----------------------------------
-#define BRIDGE_LOG_MSG_MAX    160u
-#define BRIDGE_LOG_CAPACITY   256u
-typedef struct {
-    uint64_t seq;
-    uint64_t ts_nanos;
-    uint8_t  level;
-    char     msg[BRIDGE_LOG_MSG_MAX];
-} bridge_log_entry_t;
-static bridge_log_entry_t g_bridge_log[BRIDGE_LOG_CAPACITY];
-static volatile uint64_t  g_bridge_seq = 0;
-
 static inline os_log_t ASLog() {
 #if defined(TARGET_OS_DRIVERKIT) && TARGET_OS_DRIVERKIT
     return OS_LOG_DEFAULT;
@@ -98,66 +44,10 @@ static inline os_log_t ASLog() {
 #endif
 }
 
-static inline uint64_t bridge_now_nanos() {
-#if defined(CLOCK_UPTIME_RAW)
-    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-#else
-    return 0;
-#endif
-}
-static void bridge_logf(const char *fmt, ...) {
-    char buf[BRIDGE_LOG_MSG_MAX];
-    va_list ap; va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    uint64_t seq = __atomic_add_fetch(&g_bridge_seq, 1, __ATOMIC_RELAXED);
-    uint32_t idx = (uint32_t)(seq % BRIDGE_LOG_CAPACITY);
-    bridge_log_entry_t &e = g_bridge_log[idx];
-    e.seq = seq;
-    e.ts_nanos = bridge_now_nanos();
-    e.level = 0;
-    size_t n = strnlen(buf, sizeof(buf));
-    if (n >= sizeof(e.msg)) n = sizeof(e.msg) - 1;
-    memcpy(e.msg, buf, n);
-    e.msg[n] = '\0';
-}
-#define BRIDGE_LOG(fmt, ...) do { bridge_logf(fmt, ##__VA_ARGS__); } while(0)
+// BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
 
-// ------------------------ Self‑ID parser (debug) ------------------------
-static void processSelfIDPackets(uint32_t *selfIDData, uint32_t quadletCount) {
-    if (!selfIDData || quadletCount == 0) {
-        os_log(ASLog(), "ASOHCI: Invalid Self-ID data");
-        return;
-    }
-    os_log(ASLog(), "ASOHCI: Processing %u Self-ID quadlets", quadletCount);
-    BRIDGE_LOG("Self-ID processing: %u quads", quadletCount);
-
-    uint32_t nodeCount = 0;
-    for (uint32_t i = 0; i < quadletCount; i++) {
-        uint32_t q = selfIDData[i];
-        if ((q & 0x1) == 0) {
-            uint32_t physID    = (q & kSelfID_PhyID_Mask)      >> kSelfID_PhyID_Shift;
-            bool     linkAct   = (q & kSelfID_LinkActive_Mask)  != 0;
-            uint32_t gap       = (q & kSelfID_GapCount_Mask)    >> kSelfID_GapCount_Shift;
-            uint32_t speed     = (q & kSelfID_Speed_Mask)       >> kSelfID_Speed_Shift;
-            bool     contender = (q & kSelfID_Contender_Mask)   != 0;
-            uint32_t pwrClass  = (q & kSelfID_PowerClass_Mask)  >> 8;
-
-            const char *speedStr[] = {"S100","S200","S400","S800"};
-            const char *spd = (speed < 4) ? speedStr[speed] : "Unknown";
-
-            os_log(ASLog(), "ASOHCI: Node %u: PhyID=%u Link=%d Gap=%u Speed=%s Contender=%d Power=%u",
-                  nodeCount, physID, linkAct, gap, spd, contender, pwrClass);
-            BRIDGE_LOG("Node%u: PhyID=%u Link=%d Gap=%u Speed=%s",
-                       nodeCount, physID, linkAct, gap, spd);
-            nodeCount++;
-        } else {
-            os_log(ASLog(), "ASOHCI: Non-Self-ID quadlet[%u]=0x%08x", i, q);
-        }
-    }
-    os_log(ASLog(), "ASOHCI: Self-ID processing complete: %u nodes discovered", nodeCount);
-    BRIDGE_LOG("Self-ID done: %u nodes", nodeCount);
-}
+// Self-ID parsing
+#include "SelfIDParser.hpp"
 
 // Init
 bool ASOHCI::init()
@@ -183,6 +73,7 @@ IMPL(ASOHCI, Start)
     }
     os_log(ASLog(), "ASOHCI: Start() begin bring-up");
     BRIDGE_LOG("Start bring-up");
+    bridge_log_init();
 
     auto pci = OSDynamicCast(IOPCIDevice, provider);
     if (!pci) {
@@ -418,45 +309,7 @@ IMPL(ASOHCI, Stop)
 kern_return_t
 IMPL(ASOHCI, CopyBridgeLogs)
 {
-    if (outData == nullptr) {
-        return kIOReturnBadArgument;
-    }
-    *outData = nullptr;
-
-    uint64_t seqNow = __atomic_load_n(&g_bridge_seq, __ATOMIC_RELAXED);
-    const size_t maxLines = (seqNow < BRIDGE_LOG_CAPACITY) ? (size_t)seqNow : (size_t)BRIDGE_LOG_CAPACITY;
-    if (maxLines == 0) {
-        OSData *empty = OSData::withBytes("", 1);
-        if (empty) { *outData = empty; return kIOReturnSuccess; }
-        return kIOReturnNoMemory;
-    }
-
-    const size_t maxBytes = maxLines * (BRIDGE_LOG_MSG_MAX + 32);
-    char *buf = (char *)IOMalloc(maxBytes);
-    if (!buf) return kIOReturnNoMemory;
-    size_t written = 0;
-
-    uint64_t minSeq = (seqNow > BRIDGE_LOG_CAPACITY) ? (seqNow - BRIDGE_LOG_CAPACITY) : 0;
-    uint64_t startSeq = (minSeq ? minSeq + 1 : 1);
-
-    for (uint64_t s = startSeq; s <= seqNow; ++s) {
-        uint32_t idx = (uint32_t)(s % BRIDGE_LOG_CAPACITY);
-        bridge_log_entry_t e = g_bridge_log[idx];
-        if (e.seq != s) continue;
-        char line[BRIDGE_LOG_MSG_MAX + 32];
-        int n = snprintf(line, sizeof(line), "%llu %s\n",
-                         (unsigned long long)e.seq, e.msg);
-        if (n <= 0) continue;
-        if (written + (size_t)n > maxBytes) break;
-        memcpy(buf + written, line, (size_t)n);
-        written += (size_t)n;
-    }
-
-    OSData *data = OSData::withBytes(buf, written);
-    IOFree(buf, maxBytes);
-    if (!data) return kIOReturnNoMemory;
-    *outData = data;
-    return kIOReturnSuccess;
+    return bridge_log_copy(outData);
 }
 
 // =====================================================================================
@@ -532,7 +385,7 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
                 len = (size_t) seg.length;
 
                 if (ptr && len >= quads * sizeof(uint32_t)) {
-                    processSelfIDPackets(ptr, quads);
+                    SelfIDParser::Process(ptr, quads);
                 } else {
                     os_log(ASLog(), "ASOHCI: Self-ID buffer mapping invalid for parse");
                 }
