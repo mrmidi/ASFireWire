@@ -18,6 +18,8 @@
 #include <PCIDriverKit/IOPCIDevice.h>
 #include <DriverKit/IOInterruptDispatchSource.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/IODMACommand.h>
+#include <DriverKit/IOMemoryMap.h>
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 // Generated Header
@@ -31,20 +33,27 @@
 static IOInterruptDispatchSource * gIntSource     = nullptr;
 static IOPCIDevice               * gPCIDevice     = nullptr;
 static IOBufferMemoryDescriptor  * gSelfIDBuffer  = nullptr;
+static IODMACommand              * gSelfIDDMA     = nullptr;
+static IOAddressSegment            gSelfIDSeg     = {};
+static IOMemoryMap               * gSelfIDMap     = nullptr; // CPU mapping of buffer
 static uint8_t                     gBAR0Index     = 0;
 static volatile uint32_t           gInterruptCount= 0;
 
 // ------------------------ Logging -----------------------------------
-static inline os_log_t ASLog() {
-#if defined(TARGET_OS_DRIVERKIT) && TARGET_OS_DRIVERKIT
-    return OS_LOG_DEFAULT;
-#else
-    static os_log_t log = os_log_create("net.mrmidi.ASFireWire", "ASOHCI");
-    return log;
-#endif
-}
+#include "LogHelper.hpp"
 
 // BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
+
+// Helper: program 32-bit Self-ID IOVA and enable packet reception
+static inline void ArmSelfIDReceive(IOPCIDevice *pci, uint8_t bar0)
+{
+    uint32_t iova32 = (uint32_t) gSelfIDSeg.address;
+    pci->MemoryWrite32(bar0, kOHCI_SelfIDBuffer, iova32);
+    pci->MemoryWrite32(bar0, kOHCI_SelfIDCount,  0);
+    pci->MemoryWrite32(bar0, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+    os_log(ASLog(), "ASOHCI: Armed Self-ID @IOVA=0x%08x", iova32);
+    BRIDGE_LOG("Arm Self-ID IOVA=%08x", iova32);
+}
 
 // Self-ID parsing
 #include "SelfIDParser.hpp"
@@ -211,29 +220,61 @@ IMPL(ASOHCI, Start)
             os_log(ASLog(), "ASOHCI: CopyDispatchQueue failed: 0x%08x", kr);
         }
 
-        // --- Self‑ID DMA buffer setup (allocate + program HC register)
+        // --- Self‑ID DMA buffer setup (allocate, map to 32-bit IOVA, map to CPU)
         BRIDGE_LOG("Setting up Self-ID DMA buffer");
         kr = IOBufferMemoryDescriptor::Create(
-            kIOMemoryDirectionInOut,
+            kIOMemoryDirectionIn, // device writes into it
             kSelfIDBufferSize,
             kSelfIDBufferAlign,
             &gSelfIDBuffer
         );
-        if (kr == kIOReturnSuccess && gSelfIDBuffer) {
-            IOAddressSegment seg{};
-            if (gSelfIDBuffer->GetAddressRange(&seg) == kIOReturnSuccess && seg.address != 0 && seg.length >= kSelfIDBufferSize) {
-                // Program physical DMA address into Self ID Buffer pointer
-                pci->MemoryWrite32(bar0Index, kOHCI_SelfIDBuffer, (uint32_t)seg.address);
-                // Clear count before enabling interrupts
-                pci->MemoryWrite32(bar0Index, kOHCI_SelfIDCount,  0);
-                os_log(ASLog(), "ASOHCI: Self-ID buffer @0x%llx len=0x%llx", (unsigned long long)seg.address, (unsigned long long)seg.length);
-                BRIDGE_LOG("Self-ID DMA @0x%llx", (unsigned long long)seg.address);
-            } else {
-                os_log(ASLog(), "ASOHCI: Self-ID buffer GetAddressRange failed");
-            }
-        } else {
+        if (kr != kIOReturnSuccess || !gSelfIDBuffer) {
             os_log(ASLog(), "ASOHCI: IOBufferMemoryDescriptor::Create failed: 0x%08x", kr);
+            return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
         }
+
+        // Map buffer into CPU address space for parsing
+        if (!gSelfIDMap) {
+            kern_return_t mr = gSelfIDBuffer->CreateMapping(0, 0, 0, 0, 0, &gSelfIDMap);
+            if (mr != kIOReturnSuccess || !gSelfIDMap) {
+                os_log(ASLog(), "ASOHCI: CreateMapping for Self-ID buffer failed: 0x%08x", mr);
+            }
+        }
+
+        // Create 32-bit DMA mapping
+        IODMACommandSpecification spec{};
+        spec.options = kIODMACommandSpecificationNoOptions;
+        spec.maxAddressBits = 32; // critical: 32-bit IOVA
+        IODMACommand *dma = nullptr;
+        kr = IODMACommand::Create(pci, kIODMACommandCreateNoOptions, &spec, &dma);
+        if (kr != kIOReturnSuccess || !dma) {
+            os_log(ASLog(), "ASOHCI: IODMACommand::Create failed: 0x%08x", kr);
+            return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+        }
+
+        uint64_t flags = 0;
+        uint32_t segCount = 32;
+        IOAddressSegment segs[32] = {};
+        kr = dma->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
+                                gSelfIDBuffer,
+                                0,
+                                kSelfIDBufferSize,
+                                &flags,
+                                &segCount,
+                                segs);
+        if (kr != kIOReturnSuccess || segCount < 1 || segs[0].address == 0) {
+            os_log(ASLog(), "ASOHCI: PrepareForDMA failed: 0x%08x segs=%u addr=0x%llx", kr, segCount, (unsigned long long)segs[0].address);
+            dma->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+            dma->release();
+            return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
+        }
+        gSelfIDDMA = dma;
+        gSelfIDSeg = segs[0];
+        os_log(ASLog(), "ASOHCI: Self-ID IOVA=0x%llx len=0x%llx", (unsigned long long)gSelfIDSeg.address, (unsigned long long)gSelfIDSeg.length);
+        BRIDGE_LOG("Self-ID IOVA=0x%llx", (unsigned long long)gSelfIDSeg.address);
+
+        // Program and enable reception
+        ArmSelfIDReceive(pci, bar0Index);
 
         // --- Unmask minimal interrupts + master enable
         uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable);
@@ -276,6 +317,15 @@ IMPL(ASOHCI, Stop)
         gSelfIDBuffer = nullptr;
         os_log(ASLog(), "ASOHCI: Self-ID buffer released");
         BRIDGE_LOG("Self-ID buffer released");
+    }
+    if (gSelfIDMap) {
+        gSelfIDMap->release();
+        gSelfIDMap = nullptr;
+    }
+    if (gSelfIDDMA) {
+        gSelfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        gSelfIDDMA->release();
+        gSelfIDDMA = nullptr;
     }
 
     // Interrupt source
@@ -353,7 +403,10 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
                nodeID, idValid, isRoot, nAdr);
         BRIDGE_LOG("NodeID=%08x valid=%d root=%d addr=%u",
                    nodeID, idValid, isRoot, nAdr);
-    }
+
+        // Re-arm Self-ID reception immediately after reset per spec
+        ArmSelfIDReceive(gPCIDevice, gBAR0Index);
+        }
 
     // Self-ID complete
     if (intEvent & kOHCI_Int_SelfIDComplete) {
@@ -368,27 +421,13 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
         os_log(ASLog(), "ASOHCI: SelfID count=%u quads, error=%d", quads, err);
         BRIDGE_LOG("SelfID count=%u error=%d", quads, err);
 
-        if (!err && quads > 0 && gSelfIDBuffer) {
-            IOAddressSegment seg{};
-            if (gSelfIDBuffer->GetAddressRange(&seg) == kIOReturnSuccess && seg.address) {
-                // In DK, GetAddressRange.address is a DMA (bus) address; but we mapped it contiguously,
-                // so we can re-map to CPU VA via the same call (seg.address isn't CPU VA). For simple
-                // debug parse, use MapMemory to get a CPU pointer.
-                // Simpler: use CopyMemoryAddress to get host pointer if supported; otherwise rely on
-                // IOBufferMemoryDescriptor's internal mapping via GetAddressRange for CPU space:
-                uint32_t *ptr = nullptr;
-                size_t    len = 0;
-                // Safe portable way in DK: CreateMemoryMapOnDevice is not available; but IOBuffer MD
-                // is already CPU-accessible; getBytesNoCopy is not exposed, so we can use getAddressRange.address
-                // as a CPU address on DriverKit (it is).
-                ptr = (uint32_t *) (uintptr_t) seg.address;
-                len = (size_t) seg.length;
-
-                if (ptr && len >= quads * sizeof(uint32_t)) {
-                    SelfIDParser::Process(ptr, quads);
-                } else {
-                    os_log(ASLog(), "ASOHCI: Self-ID buffer mapping invalid for parse");
-                }
+        if (!err && quads > 0 && gSelfIDMap) {
+            uint32_t *ptr = (uint32_t *)(uintptr_t) gSelfIDMap->GetAddress();
+            size_t     len = (size_t) gSelfIDMap->GetLength();
+            if (ptr && len >= quads * sizeof(uint32_t)) {
+                SelfIDParser::Process(ptr, quads);
+            } else {
+                os_log(ASLog(), "ASOHCI: Self-ID CPU mapping invalid for parse");
             }
         }
     }

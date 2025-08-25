@@ -8,15 +8,7 @@
 
 #include "OHCIConstants.hpp"
 #include "BridgeLog.hpp"
-
-static inline os_log_t ASLog() {
-#if defined(TARGET_OS_DRIVERKIT) && TARGET_OS_DRIVERKIT
-    return OS_LOG_DEFAULT;
-#else
-    static os_log_t log = os_log_create("net.mrmidi.ASFireWire", "ASOHCI");
-    return log;
-#endif
-}
+#include "LogHelper.hpp"
 
 namespace SelfIDParser {
 
@@ -57,4 +49,3 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
 }
 
 } // namespace SelfIDParser
-
