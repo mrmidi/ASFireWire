@@ -175,6 +175,10 @@ IMPL(ASOHCI, Start)
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, kOHCI_HCControl_LinkEnable);
         os_log(ASLog(), "ASOHCI: HCControlSet LinkEnable");
 
+        // Enable reception of Self-ID & PHY packets (OHCI 1.1, Link Control)
+        pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+        os_log(ASLog(), "ASOHCI: LinkControlSet rcvSelfID+rcvPhyPkt");
+
         // --- MSI/MSI-X/Legacy routing
         kern_return_t rc = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
         if (rc == kIOReturnSuccess) {
@@ -273,8 +277,26 @@ IMPL(ASOHCI, Start)
         os_log(ASLog(), "ASOHCI: Self-ID IOVA=0x%llx len=0x%llx", (unsigned long long)gSelfIDSeg.address, (unsigned long long)gSelfIDSeg.length);
         BRIDGE_LOG("Self-ID IOVA=0x%llx", (unsigned long long)gSelfIDSeg.address);
 
-        // Program and enable reception
+        // Program Self-ID buffer and enable Self-ID/PHY reception
         ArmSelfIDReceive(pci, bar0Index);
+
+        // --- Async RX/TX scaffolding (no DMA yet): accept all, keep contexts halted (OHCI 1.1 §7)
+        auto initAsyncScaffold = [&](uint32_t ctrlClear, uint32_t /*ctrlSet*/, uint32_t cmdPtr) {
+            // Clear Run bit to halt context and set command pointer to 0
+            pci->MemoryWrite32(bar0Index, ctrlClear, kOHCI_Context_Run);
+            pci->MemoryWrite32(bar0Index, cmdPtr, 0);
+        };
+        // Accept all AR/AT transactions (filters are 64-bit: hi+lo)
+        pci->MemoryWrite32(bar0Index, kOHCI_AsReqFilterHiSet, 0xFFFFFFFF);
+        pci->MemoryWrite32(bar0Index, kOHCI_AsReqFilterLoSet, 0xFFFFFFFF);
+        pci->MemoryWrite32(bar0Index, kOHCI_AsRspFilterHiSet, 0xFFFFFFFF);
+        pci->MemoryWrite32(bar0Index, kOHCI_AsRspFilterLoSet, 0xFFFFFFFF);
+        // Ensure all four async contexts are halted (no programs yet)
+        initAsyncScaffold(kOHCI_AsReqRcvContextControlC, kOHCI_AsReqRcvContextControlS, kOHCI_AsReqRcvCommandPtr);
+        initAsyncScaffold(kOHCI_AsRspRcvContextControlC, kOHCI_AsRspRcvContextControlS, kOHCI_AsRspRcvCommandPtr);
+        initAsyncScaffold(kOHCI_AsReqTrContextControlC,  kOHCI_AsReqTrContextControlS,  kOHCI_AsReqTrCommandPtr);
+        initAsyncScaffold(kOHCI_AsRspTrContextControlC,  kOHCI_AsRspTrContextControlS,  kOHCI_AsRspTrCommandPtr);
+        os_log(ASLog(), "ASOHCI: Async filters set (accept-all); AR/AT contexts halted");
 
         // --- Unmask minimal interrupts + master enable
         uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable);
