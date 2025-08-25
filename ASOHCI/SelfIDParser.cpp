@@ -10,6 +10,7 @@
 #include "BridgeLog.hpp"
 #include "LogHelper.hpp"
 
+
 namespace SelfIDParser {
 
 void Process(uint32_t* selfIDData, uint32_t quadletCount)
@@ -45,13 +46,31 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
         }
     };
 
+    // Find first tagged self-ID quadlet (b31..30 == 10b). If none, abort.
+    uint32_t start = 0;
+    while (start < quadletCount) {
+        if ((selfIDData[start] & kSelfID_Tag_Mask) == kSelfID_Tag_SelfID) break;
+        ++start;
+    }
+    if (start == quadletCount) {
+        os_log(ASLog(), "ASOHCI: No tagged self-ID quadlets found (raw[0]=0x%08x)", selfIDData[0]);
+        return;
+    }
+    // Determine contiguous tagged range (stop at first non-tag after start)
+    uint32_t end = start;
+    while (end < quadletCount && (selfIDData[end] & kSelfID_Tag_Mask) == kSelfID_Tag_SelfID) {
+        ++end;
+    }
+    uint32_t taggedCount = end - start;
+    // Raw diagnostic (first up to 8 quadlets starting at start)
+    os_log(ASLog(), "ASOHCI: SIDraw tagged=%u total=%u start=%u", taggedCount, quadletCount, start);
+    for (uint32_t i = 0; i < taggedCount && i < 8; ++i) {
+        os_log(ASLog(), "ASOHCI:  SID[%u]=0x%08x", i, selfIDData[start + i]);
+    }
+
     uint32_t nodes = 0;
-    for (uint32_t i = 0; i < quadletCount; ++i) {
-        const uint32_t q = selfIDData[i];
-        if ((q & kSelfID_Tag_Mask) != kSelfID_Tag_SelfID) {
-            os_log(ASLog(), "ASOHCI: Skip non-selfID quadlet[%u]=0x%08x", i, q);
-            continue;
-        }
+    for (uint32_t idx = start; idx < end; ++idx) {
+        const uint32_t q = selfIDData[idx];
         const uint32_t phy = (q & kSelfID_PhyID_Mask) >> kSelfID_PhyID_Shift;
         const bool isExt   = (q & kSelfID_IsExtended_Mask) != 0;
         if (!isExt) {
@@ -68,17 +87,17 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
             const bool     ini = (q & kSelfID_Initiated_Mask) != 0;
             const bool     more= (q & kSelfID_More_Mask) != 0;
 
-            os_log(ASLog(), "ASOHCI: Node %u: phy=%u L=%u gap=%u sp=%{public}s del=%u c=%u pwr=%{public}s i=%u m=%u",
-                   nodes, phy, L, gap, alphaSpeedStr(sp), del, c, powerStr(pwr), ini, more);
-            os_log(ASLog(), "ASOHCI:  ports p0=%{public}s p1=%{public}s p2=%{public}s",
-                   portCodeStr(p0), portCodeStr(p1), portCodeStr(p2));
+         os_log(ASLog(), "ASOHCI: Node %u: phy=%u L=%u gap=%u sp=%{public}s del=%u c=%u pwr=%{public}s i=%u m=%u",
+             nodes, phy, L, gap, alphaSpeedStr(sp), del, c, powerStr(pwr), ini, more);
+         os_log(ASLog(), "ASOHCI:  ports p0=%{public}s p1=%{public}s p2=%{public}s",
+             portCodeStr(p0), portCodeStr(p1), portCodeStr(p2));
             BRIDGE_LOG("Node%u phy=%u sp=%s L=%u gap=%u c=%u pwr=%u",
                        nodes, phy, alphaSpeedStr(sp), L, gap, c, pwr);
 
             // Consume optional extended packets (#1/#2) for this phy
             uint8_t portIndex = 3;
-            uint32_t j = i + 1;
-            while (j < quadletCount) {
+            uint32_t j = idx + 1;
+            while (j < end) {
                 const uint32_t qx = selfIDData[j];
                 if ((qx & kSelfID_Tag_Mask) != kSelfID_Tag_SelfID) break;
                 const uint32_t phyX = (qx & kSelfID_PhyID_Mask) >> kSelfID_PhyID_Shift;
@@ -93,7 +112,7 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
                     ++portIndex;
                 }
                 ++j;
-                if (n == 1) { i = j - 1; break; }
+                if (n == 1) { idx = j - 1; break; }
             }
             ++nodes;
         } else {

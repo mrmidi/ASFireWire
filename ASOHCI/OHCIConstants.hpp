@@ -7,28 +7,58 @@
 #include <stddef.h>
 
 // ------------------------ Register Offsets ------------------------
+// Identification / ROM / CSR block
 static constexpr uint32_t kOHCI_Version                 = 0x000;
+static constexpr uint32_t kOHCI_CSRData                 = 0x00C;
+static constexpr uint32_t kOHCI_CSRCompareData          = 0x010;
+static constexpr uint32_t kOHCI_CSRControl              = 0x014;
+static constexpr uint32_t kOHCI_ConfigROMhdr            = 0x018;
+static constexpr uint32_t kOHCI_BusID                   = 0x01C;
 static constexpr uint32_t kOHCI_BusOptions              = 0x020;
 static constexpr uint32_t kOHCI_GUIDHi                  = 0x024;
 static constexpr uint32_t kOHCI_GUIDLo                  = 0x028;
+static constexpr uint32_t kOHCI_PostedWriteAddressLo    = 0x038;
+static constexpr uint32_t kOHCI_PostedWriteAddressHi    = 0x03C;
+static constexpr uint32_t kOHCI_VendorID                = 0x040;
+
+// Host Control
 static constexpr uint32_t kOHCI_HCControlSet            = 0x050;
 static constexpr uint32_t kOHCI_HCControlClear          = 0x054;
+
+// Self-ID DMA
 static constexpr uint32_t kOHCI_SelfIDBuffer            = 0x064;
 static constexpr uint32_t kOHCI_SelfIDCount             = 0x068;
-static constexpr uint32_t kOHCI_IntEvent                = 0x080;
-static constexpr uint32_t kOHCI_IntEventClear           = 0x084;
+
+// Interrupt event / mask sets
+// Some code refers to kOHCI_IntEvent for a read of the raw event register at 0x080.
+// OHCI defines separate write-1-to-set / write-1-to-clear views; reading either
+// address (0x080) yields current event bits. Provide both names for clarity.
+static constexpr uint32_t kOHCI_IntEvent               = 0x080; // read current events
+static constexpr uint32_t kOHCI_IntEventSet            = 0x080; // write-1-to-set
+static constexpr uint32_t kOHCI_IntEventClear           = 0x084; // write-1-to-clear
 static constexpr uint32_t kOHCI_IntMaskSet              = 0x088;
 static constexpr uint32_t kOHCI_IntMaskClear            = 0x08C;
+static constexpr uint32_t kOHCI_IsoXmitIntEventSet      = 0x090;
 static constexpr uint32_t kOHCI_IsoXmitIntEventClear    = 0x094;
+static constexpr uint32_t kOHCI_IsoXmitIntMaskSet       = 0x098;
 static constexpr uint32_t kOHCI_IsoXmitIntMaskClear     = 0x09C;
+static constexpr uint32_t kOHCI_IsoRecvIntEventSet      = 0x0A0;
 static constexpr uint32_t kOHCI_IsoRecvIntEventClear    = 0x0A4;
+static constexpr uint32_t kOHCI_IsoRecvIntMaskSet       = 0x0A8;
 static constexpr uint32_t kOHCI_IsoRecvIntMaskClear     = 0x0AC;
+
+// Fairness / bandwidth
+static constexpr uint32_t kOHCI_InitialBandwidthAvail   = 0x0B0;
+static constexpr uint32_t kOHCI_InitialChannelsAvailHi  = 0x0B4;
+static constexpr uint32_t kOHCI_InitialChannelsAvailLo  = 0x0B8;
+static constexpr uint32_t kOHCI_FairnessControl         = 0x0DC;
+
+// Link / Node / PHY / Cycle timer
+static constexpr uint32_t kOHCI_LinkControlSet          = 0x0E0; // corrected
+static constexpr uint32_t kOHCI_LinkControlClear        = 0x0E4; // corrected
 static constexpr uint32_t kOHCI_NodeID                  = 0x0E8;
 static constexpr uint32_t kOHCI_PhyControl              = 0x0EC;
-// Link Control (OHCI 1.1 Register Set — Link Control)
-static constexpr uint32_t kOHCI_LinkControl             = 0x0F0;
-static constexpr uint32_t kOHCI_LinkControlSet          = 0x0F4;
-static constexpr uint32_t kOHCI_LinkControlClear        = 0x0F8;
+static constexpr uint32_t kOHCI_CycleTimer              = 0x0F0; // was kOHCI_LinkControl
 
 // ------------------------ HCControl Bits --------------------------
 static constexpr uint32_t kOHCI_HCControl_SoftReset     = 0x00010000;
@@ -36,7 +66,13 @@ static constexpr uint32_t kOHCI_HCControl_LinkEnable    = 0x00020000;
 static constexpr uint32_t kOHCI_HCControl_PostedWriteEn = 0x00040000;
 static constexpr uint32_t kOHCI_HCControl_LPS           = 0x00080000;
 // Endianness: HcControl[noByteSwapData]
-static constexpr uint32_t kOHCI_HCControl_NoByteSwap    = 0x40000000;
+static constexpr uint32_t kOHCI_HCControl_NoByteSwap      = 0x40000000;
+// Aliases for spec terminology (reuse same bit values)
+static constexpr uint32_t kOHCI_HCControl_CycleSynch      = 0x00100000;
+static constexpr uint32_t kOHCI_HCControl_Cycle64Seconds  = 0x00200000;
+static constexpr uint32_t kOHCI_HCControl_aPhyEnhanceEnable = 0x00400000;
+static constexpr uint32_t kOHCI_HCControl_programPhyEnable = 0x00800000;
+static constexpr uint32_t kOHCI_HCControl_BIBimageValid     = 0x80000000;
 
 // ------------------------ Interrupt Bits --------------------------
 // (Spec: OHCI 1.1 Interrupts — Interrupt Event/Mask table.)
@@ -62,11 +98,17 @@ static constexpr uint32_t kOHCI_Int_CycleTooLong        = 0x02000000;  // Cycle 
 static constexpr uint32_t kOHCI_Int_PhyRegRcvd          = 0x04000000;  // PHY register packet received
 
 // ------------------------ LinkControl Bits -------------------------
-// OHCI 1.1: rcvSelfID=bit9, rcvPhyPkt=bit10 (Link Control fields)
 static constexpr uint32_t kOHCI_LC_RcvSelfID            = (1u << 9);
 static constexpr uint32_t kOHCI_LC_RcvPhyPkt            = (1u << 10);
 static constexpr uint32_t kOHCI_LC_CycleTimerEnable     = (1u << 20);
 static constexpr uint32_t kOHCI_LC_CycleMaster          = (1u << 21);
+
+// ------------------------ PHY Request Filter & Upper Bound ---------
+static constexpr uint32_t kOHCI_PhyReqFilterHiSet       = 0x0110;
+static constexpr uint32_t kOHCI_PhyReqFilterHiClear     = 0x0114;
+static constexpr uint32_t kOHCI_PhyReqFilterLoSet       = 0x0118;
+static constexpr uint32_t kOHCI_PhyReqFilterLoClear     = 0x011C;
+static constexpr uint32_t kOHCI_PhyUpperBound           = 0x0120;
 
 // ------------------------ Async Receive Filters (OHCI 1.1 §7.*) ---
 static constexpr uint32_t kOHCI_AsReqFilterHiSet        = 0x0100;
@@ -141,3 +183,18 @@ enum : uint8_t {
     kSelfIDPort_Parent     = 2,
     kSelfIDPort_Child      = 3,
 };
+
+// ------------------------ NodeID Register Field Masks -------------
+static constexpr uint32_t kOHCI_NodeID_busNumber        = 0x0000FFC0;
+static constexpr uint32_t kOHCI_NodeID_nodeNumber       = 0x0000003F;
+static constexpr uint32_t kOHCI_NodeID_idValid          = 0x80000000; // alias to Int_MasterEnable
+static constexpr uint32_t kOHCI_NodeID_root             = 0x40000000;
+
+// ------------------------ SelfIDCount Field Masks -----------------
+static constexpr uint32_t kOHCI_SelfIDCount_selfIDError      = 0x80000000;
+static constexpr uint32_t kOHCI_SelfIDCount_selfIDGeneration = 0x00FF0000;
+static constexpr uint32_t kOHCI_SelfIDCount_selfIDSize       = 0x000007FC;
+
+// ------------------------ PhyControl Bits -------------------------
+static constexpr uint32_t kOHCI_PhyControl_ReadDone     = 0x80000000; // alias to Int_MasterEnable
+static constexpr uint32_t kOHCI_PhyControl_WritePending = 0x00004000;

@@ -14,6 +14,7 @@
 		3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF100012E5B999900000001 /* ASOHCI.cpp */; };
 		3AF200102E5C000000000001 /* BridgeLog.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF2000C2E5C000000000001 /* BridgeLog.cpp */; };
 		3AF200112E5C000000000001 /* SelfIDParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF2000E2E5C000000000001 /* SelfIDParser.cpp */; };
+		3AF300002E5C100000000001 /* PhyAccess.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF300002E5C0FFF00000001 /* PhyAccess.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +70,8 @@
 		3AF2000E2E5C000000000001 /* SelfIDParser.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = SelfIDParser.cpp; path = ASOHCI/SelfIDParser.cpp; sourceTree = SOURCE_ROOT; };
 		3AF2000F2E5C000000000001 /* SelfIDParser.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = SelfIDParser.hpp; path = ASOHCI/SelfIDParser.hpp; sourceTree = SOURCE_ROOT; };
 		3AF200122E5C000000000001 /* OHCIConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = OHCIConstants.hpp; path = ASOHCI/OHCIConstants.hpp; sourceTree = SOURCE_ROOT; };
+		3AF300002E5C0FFF00000001 /* PhyAccess.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = PhyAccess.cpp; path = ASOHCI/PhyAccess.cpp; sourceTree = SOURCE_ROOT; };
+		3AF300012E5C0FFF00000001 /* PhyAccess.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = PhyAccess.hpp; path = ASOHCI/PhyAccess.hpp; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -389,6 +392,7 @@
 				3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */,
 				3AF200102E5C000000000001 /* BridgeLog.cpp in Sources */,
 				3AF200112E5C000000000001 /* SelfIDParser.cpp in Sources */,
+				3AF300002E5C100000000001 /* PhyAccess.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

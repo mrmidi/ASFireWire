@@ -28,6 +28,7 @@
 
 // OHCI constants
 #include "OHCIConstants.hpp"
+#include "PhyAccess.hpp"
 
 // ------------------------ Globals for this TU (simple bring‑up) ------------------------
 static IOInterruptDispatchSource * gIntSource     = nullptr;
@@ -38,6 +39,14 @@ static IOAddressSegment            gSelfIDSeg     = {};
 static IOMemoryMap               * gSelfIDMap     = nullptr; // CPU mapping of buffer
 static uint8_t                     gBAR0Index     = 0;
 static volatile uint32_t           gInterruptCount= 0;
+static bool                        gCycleTimerArmed = false; // deferred enable
+static bool                        gSelfIDInProgress = false; // between BusReset and SelfIDComplete
+static bool                        gSelfIDArmed      = false; // Self-ID buffer armed for current cycle
+static uint32_t                    gCollapsedBusResets = 0;   // BusReset signals ignored while in-progress
+static uint32_t                    gLastLoggedNodeID = 0xFFFFFFFF; // last logged raw NodeID value
+static bool                        gLastLoggedValid  = false;
+static bool                        gLastLoggedRoot   = false;
+static ASOHCIPHYAccess           * gPhyAccess        = nullptr; // serialized PHY register access
 
 // ------------------------ Logging -----------------------------------
 #include "LogHelper.hpp"
@@ -53,8 +62,9 @@ static inline void ArmSelfIDReceive(IOPCIDevice *pci, uint8_t bar0, bool clearCo
         pci->MemoryWrite32(bar0, kOHCI_SelfIDCount, 0);
     }
     pci->MemoryWrite32(bar0, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
-    uint32_t lc=0; pci->MemoryRead32(bar0, kOHCI_LinkControl, &lc);
+    uint32_t lc=0; pci->MemoryRead32(bar0, kOHCI_LinkControlSet, &lc);
     os_log(ASLog(), "ASOHCI: Arm Self-ID (clearCount=%u) LinkControl=0x%08x", clearCount ? 1u : 0u, lc);
+    gSelfIDArmed = true;
 }
 
 // Decode IntEvent bits for logs
@@ -192,21 +202,49 @@ IMPL(ASOHCI, Start)
         pci->MemoryWrite32(bar0Index, kOHCI_IsoXmitIntMaskClear,   allOnes);
         pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntMaskClear,   allOnes);
 
-        // Enter LPS + enable posted writes (no IRQs yet)
+        // Enter LPS + enable posted writes (program BusOptions/NodeID prior to linkEnable)
         const uint32_t hcSet = (kOHCI_HCControl_LPS | kOHCI_HCControl_PostedWriteEn);
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, hcSet);
         os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%08x)", hcSet);
-        // Posted-write flush for ordering
-        uint32_t _hc = 0; pci->MemoryRead32(bar0Index, kOHCI_HCControlSet, &_hc);
+        // Poll up to 3 * 50ms for LPS latch similar to Linux early init
+        uint32_t _hc = 0; bool lpsOk = false;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            IOSleep(50);
+            pci->MemoryRead32(bar0Index, kOHCI_HCControlSet, &_hc);
+            if ((_hc & kOHCI_HCControl_LPS) != 0) { lpsOk = true; break; }
+        }
+        if (!lpsOk) {
+            os_log(ASLog(), "ASOHCI: WARNING LPS did not latch after polling (_hc=0x%08x)", _hc);
+        } else {
+            os_log(ASLog(), "ASOHCI: LPS latched (_hc=0x%08x)", _hc);
+        }
 
-        // Link enable
+        // Program BusOptions similar to Linux early init: set CMC|ISC, clear PMC|BMC|cyc_clk_acc field
+        uint32_t bo=0; pci->MemoryRead32(bar0Index, kOHCI_BusOptions, &bo);
+        uint32_t origBo = bo;
+        // Masks based on Linux patterns: CMC=bit29, ISC=bit30, PMC=bit27, BMC=bit28, cyc_clk_acc bits [23:16]
+        bo |=  0x60000000;          // set ISC|CMC
+        bo &= ~0x18000000;          // clear BMC|PMC
+        bo &= ~0x00FF0000;          // clear cyc_clk_acc placeholder
+        if (bo != origBo) {
+            pci->MemoryWrite32(bar0Index, kOHCI_BusOptions, bo);
+            os_log(ASLog(), "ASOHCI: BusOptions updated 0x%08x->0x%08x", origBo, bo);
+        } else {
+            os_log(ASLog(), "ASOHCI: BusOptions kept 0x%08x (already desired)", bo);
+        }
+
+        // Provisional NodeID (Linux early path uses 0x0000FFC0) prior to bus reset assignment
+        pci->MemoryWrite32(bar0Index, kOHCI_NodeID, 0x0000FFC0);
+        os_log(ASLog(), "ASOHCI: Provisional NodeID set to 0x0000FFC0");
+
+        // Link enable after baseline BusOptions/NodeID prepared
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, kOHCI_HCControl_LinkEnable);
         os_log(ASLog(), "ASOHCI: HCControlSet LinkEnable");
 
-        // Enable reception of Self-ID & PHY packets and cycle timer (Link Control)
+        // Enable reception of Self-ID & PHY packets ONLY (defer cycle timer until stable Self-ID)
         pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet,
-                           (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt | kOHCI_LC_CycleTimerEnable));
-        os_log(ASLog(), "ASOHCI: LinkControlSet rcvSelfID+rcvPhyPkt+cycleTimer");
+                           (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+        os_log(ASLog(), "ASOHCI: LinkControlSet rcvSelfID+rcvPhyPkt (cycle timer deferred)");
 
         // --- MSI/MSI-X/Legacy routing
         kern_return_t rc = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
@@ -315,11 +353,9 @@ IMPL(ASOHCI, Start)
             pci->MemoryWrite32(bar0Index, ctrlClear, kOHCI_Context_Run);
             pci->MemoryWrite32(bar0Index, cmdPtr, 0);
         };
-        // Accept all AR/AT transactions (filters are 64-bit: hi+lo)
-        pci->MemoryWrite32(bar0Index, kOHCI_AsReqFilterHiSet, 0xFFFFFFFF);
-        pci->MemoryWrite32(bar0Index, kOHCI_AsReqFilterLoSet, 0xFFFFFFFF);
-        pci->MemoryWrite32(bar0Index, kOHCI_AsRspFilterHiSet, 0xFFFFFFFF);
-        pci->MemoryWrite32(bar0Index, kOHCI_AsRspFilterLoSet, 0xFFFFFFFF);
+    // Async request filter baseline (Linux early init sets hi=0x80000000 to accept from all nodes)
+    pci->MemoryWrite32(bar0Index, kOHCI_AsReqFilterHiSet, 0x80000000);
+    // Leave other filters (lo + response filters) at reset defaults for now (can widen later under policy)
         // Ensure all four async contexts are halted (no programs yet)
         initAsyncScaffold(kOHCI_AsReqRcvContextControlC, kOHCI_AsReqRcvContextControlS, kOHCI_AsReqRcvCommandPtr);
         initAsyncScaffold(kOHCI_AsRspRcvContextControlC, kOHCI_AsRspRcvContextControlS, kOHCI_AsRspRcvCommandPtr);
@@ -327,9 +363,9 @@ IMPL(ASOHCI, Start)
         initAsyncScaffold(kOHCI_AsRspTrContextControlC,  kOHCI_AsRspTrContextControlS,  kOHCI_AsRspTrCommandPtr);
         os_log(ASLog(), "ASOHCI: Async filters set (accept-all); AR/AT contexts halted");
 
-        // --- Unmask minimal interrupts + a few more for visibility
-        uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable
-                         | kOHCI_Int_Phy | kOHCI_Int_RegAccessFail);
+    // --- Unmask minimal interrupts (defer cycle-related noise until stable bus)
+    uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable
+             | kOHCI_Int_Phy | kOHCI_Int_RegAccessFail);
         pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, mask);
         os_log(ASLog(), "ASOHCI: IntMaskSet 0x%08x", mask);
 
@@ -348,6 +384,18 @@ IMPL(ASOHCI, Start)
                (node_id >> 31) & 0x1, (node_id >> 30) & 0x1);
     } else {
         os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx)", bar0Size);
+    }
+
+    // Create PHY access helper after BAR mapping & PCI device known
+    if (!gPhyAccess) {
+        gPhyAccess = OSTypeAlloc(ASOHCIPHYAccess);
+        if (gPhyAccess && !gPhyAccess->init(this, pci, (uint8_t)bar0Index)) {
+            os_log(ASLog(), "ASOHCI: PHY access init failed (continuing without)" );
+            gPhyAccess->release();
+            gPhyAccess = nullptr;
+        } else if (gPhyAccess) {
+            os_log(ASLog(), "ASOHCI: PHY access initialized");
+        }
     }
 
     os_log(ASLog(), "ASOHCI: Start() bring-up complete");
@@ -391,6 +439,11 @@ IMPL(ASOHCI, Stop)
     // Mask all device interrupts as courtesy
     if (gPCIDevice) {
         gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IntMaskClear, 0xFFFFFFFFu);
+    }
+
+    if (gPhyAccess) {
+        gPhyAccess->release();
+        gPhyAccess = nullptr;
     }
 
     // Best-effort: disable BM/MEM space and close
@@ -448,23 +501,33 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
     BRIDGE_LOG("IRQ events=0x%08x", intEvent);
     DumpIntEvent(intEvent);
 
-    // Bus reset
+    // Bus reset (coalesce repeated resets until SelfIDComplete)
     if (intEvent & kOHCI_Int_BusReset) {
-        os_log(ASLog(), "ASOHCI: Bus reset");
-        BRIDGE_LOG("Bus reset");
-        uint32_t nodeID=0;
-        gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_NodeID, &nodeID);
+        if (gSelfIDInProgress) {
+            // Already in a reset/self-id cycle; collapse this extra signal
+            ++gCollapsedBusResets;
+            BRIDGE_LOG("Collapsed BusReset (total collapsed=%u)", gCollapsedBusResets);
+        } else {
+            gSelfIDInProgress = true;
+            gCollapsedBusResets = 0;
+            BRIDGE_LOG("Bus reset (new cycle)");
+            os_log(ASLog(), "ASOHCI: Bus reset (new cycle)");
+            // Arm Self-ID fresh (clearCount true at start of cycle)
+            ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/true);
+        }
+        // NodeID logging only when it changes or validity/root status toggles
+        uint32_t nodeID=0; gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_NodeID, &nodeID);
         bool idValid = ((nodeID >> 31) & 1) != 0;
         bool isRoot  = ((nodeID >> 30) & 1) != 0;
-        uint8_t nAdr = (uint8_t)((nodeID >> 16) & 0x3F);
-        os_log(ASLog(), "ASOHCI: NodeID=0x%08x valid=%d root=%d addr=%u",
-               nodeID, idValid, isRoot, nAdr);
-        BRIDGE_LOG("NodeID=%08x valid=%d root=%d addr=%u",
-                   nodeID, idValid, isRoot, nAdr);
-
-        // Keep RcvSelfID enabled; do not clear count during Self-ID window
-        ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/false);
+        if (nodeID != gLastLoggedNodeID || idValid != gLastLoggedValid || isRoot != gLastLoggedRoot) {
+            uint8_t nAdr = (uint8_t)((nodeID >> 16) & 0x3F);
+            os_log(ASLog(), "ASOHCI: NodeID=0x%08x valid=%d root=%d addr=%u (changed)", nodeID, idValid, isRoot, nAdr);
+            BRIDGE_LOG("NodeID change %08x v=%d r=%d addr=%u", nodeID, idValid, isRoot, nAdr);
+            gLastLoggedNodeID = nodeID;
+            gLastLoggedValid  = idValid;
+            gLastLoggedRoot   = isRoot;
         }
+    }
 
     // NOTE: Self-ID complete will deliver alpha self-ID quadlets (#0 and optional #1/#2).
     // Parser implements IEEE 1394-2008 §16.3.2.1 (Alpha). Beta support can be added later.
@@ -491,8 +554,23 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
                 os_log(ASLog(), "ASOHCI: Self-ID CPU mapping invalid for parse");
             }
         }
-        // Safe to clear count now to prepare for next cycle
-        ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/true);
+        // First stable Self-ID -> enable cycle timer if not yet
+        if (!gCycleTimerArmed && gPCIDevice) {
+            gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_LinkControlSet, kOHCI_LC_CycleTimerEnable);
+            uint32_t lcPost=0; gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_LinkControlSet, &lcPost);
+            os_log(ASLog(), "ASOHCI: CycleTimerEnable asserted post Self-ID (LinkControl=0x%08x)", lcPost);
+            BRIDGE_LOG("CycleTimerEnable now set (LC=%08x)", lcPost);
+            gCycleTimerArmed = true;
+        }
+        // Mark cycle complete; prepare for future resets but do not override in-progress flags until next BusReset
+        gSelfIDInProgress = false;
+        gSelfIDArmed = false;
+        if (gCollapsedBusResets) {
+            os_log(ASLog(), "ASOHCI: Collapsed %u BusReset IRQs in cycle", gCollapsedBusResets);
+            BRIDGE_LOG("Collapsed %u BusResets", gCollapsedBusResets);
+        }
+        // Re-arm to listen for next cycle (do not clear count again until next BusReset)
+        ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/false);
     }
 
     // Others (debug)
