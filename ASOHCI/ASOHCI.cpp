@@ -45,14 +45,40 @@ static volatile uint32_t           gInterruptCount= 0;
 // BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
 
 // Helper: program 32-bit Self-ID IOVA and enable packet reception
-static inline void ArmSelfIDReceive(IOPCIDevice *pci, uint8_t bar0)
+static inline void ArmSelfIDReceive(IOPCIDevice *pci, uint8_t bar0, bool clearCount)
 {
-    uint32_t iova32 = (uint32_t) gSelfIDSeg.address;
-    pci->MemoryWrite32(bar0, kOHCI_SelfIDBuffer, iova32);
-    pci->MemoryWrite32(bar0, kOHCI_SelfIDCount,  0);
+    // Keep buffer pointer programmed; optionally clear count; ensure receive bits are set
+    pci->MemoryWrite32(bar0, kOHCI_SelfIDBuffer, (uint32_t) gSelfIDSeg.address);
+    if (clearCount) {
+        pci->MemoryWrite32(bar0, kOHCI_SelfIDCount, 0);
+    }
     pci->MemoryWrite32(bar0, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
-    os_log(ASLog(), "ASOHCI: Armed Self-ID @IOVA=0x%08x", iova32);
-    BRIDGE_LOG("Arm Self-ID IOVA=%08x", iova32);
+    uint32_t lc=0; pci->MemoryRead32(bar0, kOHCI_LinkControl, &lc);
+    os_log(ASLog(), "ASOHCI: Arm Self-ID (clearCount=%u) LinkControl=0x%08x", clearCount ? 1u : 0u, lc);
+}
+
+// Decode IntEvent bits for logs
+static void DumpIntEvent(uint32_t ev)
+{
+    if (!ev) return;
+    #define P(bit,name) do { if (ev & (bit)) os_log(ASLog(), "ASOHCI:  • %{public}s", name); } while(0)
+    P(kOHCI_Int_SelfIDComplete,    "SelfIDComplete");
+    P(kOHCI_Int_BusReset,          "BusReset");
+    P(kOHCI_Int_Phy,               "PHY event");
+    P(kOHCI_Int_PhyRegRcvd,        "PHY reg received");
+    P(kOHCI_Int_CycleSynch,        "CycleSynch");
+    P(kOHCI_Int_Cycle64Seconds,    "Cycle64Seconds");
+    P(kOHCI_Int_CycleLost,         "CycleLost");
+    P(kOHCI_Int_CycleInconsistent, "CycleInconsistent");
+    P(kOHCI_Int_UnrecoverableError,"UnrecoverableError");
+    P(kOHCI_Int_CycleTooLong,      "CycleTooLong");
+    P(kOHCI_Int_RqPkt,             "AR Req packet");
+    P(kOHCI_Int_RsPkt,             "AR Rsp packet");
+    P(kOHCI_Int_IsochTx,           "IsochTx");
+    P(kOHCI_Int_IsochRx,           "IsochRx");
+    P(kOHCI_Int_PostedWriteErr,    "PostedWriteErr");
+    P(kOHCI_Int_LockRespErr,       "LockRespErr");
+    #undef P
 }
 
 // Self-ID parsing
@@ -170,14 +196,17 @@ IMPL(ASOHCI, Start)
         const uint32_t hcSet = (kOHCI_HCControl_LPS | kOHCI_HCControl_PostedWriteEn);
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, hcSet);
         os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%08x)", hcSet);
+        // Posted-write flush for ordering
+        uint32_t _hc = 0; pci->MemoryRead32(bar0Index, kOHCI_HCControlSet, &_hc);
 
         // Link enable
         pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, kOHCI_HCControl_LinkEnable);
         os_log(ASLog(), "ASOHCI: HCControlSet LinkEnable");
 
-        // Enable reception of Self-ID & PHY packets (OHCI 1.1, Link Control)
-        pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
-        os_log(ASLog(), "ASOHCI: LinkControlSet rcvSelfID+rcvPhyPkt");
+        // Enable reception of Self-ID & PHY packets and cycle timer (Link Control)
+        pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet,
+                           (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt | kOHCI_LC_CycleTimerEnable));
+        os_log(ASLog(), "ASOHCI: LinkControlSet rcvSelfID+rcvPhyPkt+cycleTimer");
 
         // --- MSI/MSI-X/Legacy routing
         kern_return_t rc = pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
@@ -277,8 +306,8 @@ IMPL(ASOHCI, Start)
         os_log(ASLog(), "ASOHCI: Self-ID IOVA=0x%llx len=0x%llx", (unsigned long long)gSelfIDSeg.address, (unsigned long long)gSelfIDSeg.length);
         BRIDGE_LOG("Self-ID IOVA=0x%llx", (unsigned long long)gSelfIDSeg.address);
 
-        // Program Self-ID buffer and enable Self-ID/PHY reception
-        ArmSelfIDReceive(pci, bar0Index);
+        // Program Self-ID buffer once; initial arm clears count
+        ArmSelfIDReceive(pci, bar0Index, /*clearCount=*/true);
 
         // --- Async RX/TX scaffolding (no DMA yet): accept all, keep contexts halted (OHCI 1.1 §7)
         auto initAsyncScaffold = [&](uint32_t ctrlClear, uint32_t /*ctrlSet*/, uint32_t cmdPtr) {
@@ -298,8 +327,9 @@ IMPL(ASOHCI, Start)
         initAsyncScaffold(kOHCI_AsRspTrContextControlC,  kOHCI_AsRspTrContextControlS,  kOHCI_AsRspTrCommandPtr);
         os_log(ASLog(), "ASOHCI: Async filters set (accept-all); AR/AT contexts halted");
 
-        // --- Unmask minimal interrupts + master enable
-        uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable);
+        // --- Unmask minimal interrupts + a few more for visibility
+        uint32_t mask = (kOHCI_Int_SelfIDComplete | kOHCI_Int_BusReset | kOHCI_Int_MasterEnable
+                         | kOHCI_Int_Phy | kOHCI_Int_RegAccessFail);
         pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, mask);
         os_log(ASLog(), "ASOHCI: IntMaskSet 0x%08x", mask);
 
@@ -308,6 +338,7 @@ IMPL(ASOHCI, Start)
         if (ev) {
             pci->MemoryWrite32(bar0Index, kOHCI_IntEventClear, ev);
             os_log(ASLog(), "ASOHCI: Cleared initial IntEvent: 0x%08x", ev);
+            DumpIntEvent(ev);
         }
 
         // Probe NodeID
@@ -356,6 +387,10 @@ IMPL(ASOHCI, Stop)
         gIntSource->release();
         gIntSource = nullptr;
         os_log(ASLog(), "ASOHCI: Interrupt source disabled");
+    }
+    // Mask all device interrupts as courtesy
+    if (gPCIDevice) {
+        gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IntMaskClear, 0xFFFFFFFFu);
     }
 
     // Best-effort: disable BM/MEM space and close
@@ -407,10 +442,11 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
         return;
     }
 
-    // Ack/clear what we saw
+    // Ack/clear what we saw (write-1-to-clear)
     gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IntEventClear, intEvent);
     os_log(ASLog(), "ASOHCI: IntEvent=0x%08x", intEvent);
     BRIDGE_LOG("IRQ events=0x%08x", intEvent);
+    DumpIntEvent(intEvent);
 
     // Bus reset
     if (intEvent & kOHCI_Int_BusReset) {
@@ -426,9 +462,12 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
         BRIDGE_LOG("NodeID=%08x valid=%d root=%d addr=%u",
                    nodeID, idValid, isRoot, nAdr);
 
-        // Re-arm Self-ID reception immediately after reset per spec
-        ArmSelfIDReceive(gPCIDevice, gBAR0Index);
+        // Keep RcvSelfID enabled; do not clear count during Self-ID window
+        ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/false);
         }
+
+    // NOTE: Self-ID complete will deliver alpha self-ID quadlets (#0 and optional #1/#2).
+    // Parser implements IEEE 1394-2008 §16.3.2.1 (Alpha). Beta support can be added later.
 
     // Self-ID complete
     if (intEvent & kOHCI_Int_SelfIDComplete) {
@@ -452,6 +491,8 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
                 os_log(ASLog(), "ASOHCI: Self-ID CPU mapping invalid for parse");
             }
         }
+        // Safe to clear count now to prepare for next cycle
+        ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/true);
     }
 
     // Others (debug)
