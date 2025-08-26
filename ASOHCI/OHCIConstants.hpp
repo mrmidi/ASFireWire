@@ -29,6 +29,9 @@ static constexpr uint32_t kOHCI_HCControlClear          = 0x054;
 static constexpr uint32_t kOHCI_SelfIDBuffer            = 0x064;
 static constexpr uint32_t kOHCI_SelfIDCount             = 0x068;
 
+// AT Retries Register (OHCI 1.1 §5.4)
+static constexpr uint32_t kOHCI_ATRetries               = 0x06C;
+
 // Interrupt event / mask sets
 // Some code refers to kOHCI_IntEvent for a read of the raw event register at 0x080.
 // OHCI defines separate write-1-to-set / write-1-to-clear views; reading either
@@ -75,27 +78,49 @@ static constexpr uint32_t kOHCI_HCControl_programPhyEnable = 0x00800000;
 static constexpr uint32_t kOHCI_HCControl_BIBimageValid     = 0x80000000;
 
 // ------------------------ Interrupt Bits --------------------------
-// (Spec: OHCI 1.1 Interrupts — Interrupt Event/Mask table.)
-static constexpr uint32_t kOHCI_Int_SelfIDComplete      = 0x00010000;
-static constexpr uint32_t kOHCI_Int_BusReset            = 0x00020000;
-static constexpr uint32_t kOHCI_Int_MasterEnable        = 0x80000000;
-// Low-order async / error bits (see Interrupt Event/Mask table)
-static constexpr uint32_t kOHCI_Int_ARRS                = 0x00000008;  // Async Rcv Rsp Service
-static constexpr uint32_t kOHCI_Int_RqPkt               = 0x00000010;  // Async Request packet received
-static constexpr uint32_t kOHCI_Int_RsPkt               = 0x00000020;  // Async Response packet received
-static constexpr uint32_t kOHCI_Int_IsochTx             = 0x00000040;  // Isochronous transmit
-static constexpr uint32_t kOHCI_Int_IsochRx             = 0x00000080;  // Isochronous receive
-static constexpr uint32_t kOHCI_Int_PostedWriteErr      = 0x00000100;  // Posted write error
-static constexpr uint32_t kOHCI_Int_LockRespErr         = 0x00000200;  // Lock response error
-static constexpr uint32_t kOHCI_Int_RegAccessFail       = 0x00040000;  // Register access failure
-static constexpr uint32_t kOHCI_Int_Phy                 = 0x00080000;  // PHY event
-static constexpr uint32_t kOHCI_Int_CycleSynch          = 0x00100000;  // Cycle start sync
-static constexpr uint32_t kOHCI_Int_Cycle64Seconds      = 0x00200000;  // 64-second tick
-static constexpr uint32_t kOHCI_Int_CycleLost           = 0x00400000;  // Cycle lost
-static constexpr uint32_t kOHCI_Int_CycleInconsistent   = 0x00800000;  // Cycle inconsistent
-static constexpr uint32_t kOHCI_Int_UnrecoverableError  = 0x01000000;  // Unrecoverable error
-static constexpr uint32_t kOHCI_Int_CycleTooLong        = 0x02000000;  // Cycle too long
-static constexpr uint32_t kOHCI_Int_PhyRegRcvd          = 0x04000000;  // PHY register packet received
+// Complete OHCI 1.1 IntEvent register bit definitions (§6.1 Table 6-1)
+// Register offset: 0x080 (set) / 0x084 (clear)
+
+// DMA Completion Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 0-7)
+static constexpr uint32_t kOHCI_Int_ReqTxComplete       = 0x00000001;  // Bit 0: AT request DMA complete (§7.6)
+static constexpr uint32_t kOHCI_Int_RespTxComplete      = 0x00000002;  // Bit 1: AT response DMA complete (§7.6)
+static constexpr uint32_t kOHCI_Int_ARRQ                = 0x00000004;  // Bit 2: AR request DMA complete (§8.6)
+static constexpr uint32_t kOHCI_Int_ARRS                = 0x00000008;  // Bit 3: AR response DMA complete (§8.6)
+static constexpr uint32_t kOHCI_Int_RqPkt               = 0x00000010;  // Bit 4: AR request packet received (§8.6)
+static constexpr uint32_t kOHCI_Int_RsPkt               = 0x00000020;  // Bit 5: AR response packet received (§8.6)
+static constexpr uint32_t kOHCI_Int_IsochTx             = 0x00000040;  // Bit 6: Isochronous transmit (§6.3)
+static constexpr uint32_t kOHCI_Int_IsochRx             = 0x00000080;  // Bit 7: Isochronous receive (§6.4)
+
+// Error Condition Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 8-9)
+static constexpr uint32_t kOHCI_Int_PostedWriteErr      = 0x00000100;  // Bit 8: Posted write error (§13.2.8.1)
+static constexpr uint32_t kOHCI_Int_LockRespErr         = 0x00000200;  // Bit 9: Lock response error (§5.5.1)
+
+// Bits 10-14: Reserved per OHCI 1.1 specification
+
+// Self-ID and Bus Management Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 15-17)
+static constexpr uint32_t kOHCI_Int_SelfIDComplete2     = 0x00008000;  // Bit 15: Secondary Self-ID complete (§11.5)
+static constexpr uint32_t kOHCI_Int_SelfIDComplete      = 0x00010000;  // Bit 16: Self-ID complete (§11.5)
+static constexpr uint32_t kOHCI_Int_BusReset            = 0x00020000;  // Bit 17: PHY bus reset mode (§6.1.1)
+
+// System and PHY Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 18-19)
+static constexpr uint32_t kOHCI_Int_RegAccessFail       = 0x00040000;  // Bit 18: Register access failed (missing SCLK)
+static constexpr uint32_t kOHCI_Int_Phy                 = 0x00080000;  // Bit 19: PHY status transfer request
+
+// Cycle Timer and Management Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 20-25)
+static constexpr uint32_t kOHCI_Int_CycleSynch          = 0x00100000;  // Bit 20: New isochronous cycle started
+static constexpr uint32_t kOHCI_Int_Cycle64Seconds      = 0x00200000;  // Bit 21: 64-second counter bit 7 changed
+static constexpr uint32_t kOHCI_Int_CycleLost           = 0x00400000;  // Bit 22: No cycle_start between cycleSynch events
+static constexpr uint32_t kOHCI_Int_CycleInconsistent   = 0x00800000;  // Bit 23: Cycle timer mismatch (§5.13)
+static constexpr uint32_t kOHCI_Int_UnrecoverableError  = 0x01000000;  // Bit 24: Context dead or fatal error
+static constexpr uint32_t kOHCI_Int_CycleTooLong        = 0x02000000;  // Bit 25: Cycle >120μsec (root node only)
+
+// High-Order Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 26-31)
+static constexpr uint32_t kOHCI_Int_PhyRegRcvd          = 0x04000000;  // Bit 26: PHY register packet received
+static constexpr uint32_t kOHCI_Int_AckTardy            = 0x08000000;  // Bit 27: Late acknowledgment received
+static constexpr uint32_t kOHCI_Int_SoftInterrupt       = 0x10000000;  // Bit 28: Software-generated interrupt
+static constexpr uint32_t kOHCI_Int_VendorSpecific      = 0x20000000;  // Bit 29: Implementation-specific interrupt
+// Bit 30: Reserved per OHCI 1.1 specification
+static constexpr uint32_t kOHCI_Int_MasterEnable        = 0x80000000;  // Bit 31: Master interrupt enable
 
 // ------------------------ LinkControl Bits -------------------------
 static constexpr uint32_t kOHCI_LC_RcvSelfID            = (1u << 9);
@@ -195,6 +220,27 @@ static constexpr uint32_t kOHCI_SelfIDCount_selfIDError      = 0x80000000;
 static constexpr uint32_t kOHCI_SelfIDCount_selfIDGeneration = 0x00FF0000;
 static constexpr uint32_t kOHCI_SelfIDCount_selfIDSize       = 0x000007FC;
 
-// ------------------------ PhyControl Bits -------------------------
-static constexpr uint32_t kOHCI_PhyControl_ReadDone     = 0x80000000; // alias to Int_MasterEnable
-static constexpr uint32_t kOHCI_PhyControl_WritePending = 0x00004000;
+// ------------------------ PHY Control Bits (OHCI 1.1 §5.12) ------------------------
+// PHY Control Register bit definitions (Table 5-19)
+static constexpr uint32_t kOHCI_PhyControl_rdDone       = 0x80000000; // Bit 31: read completion status
+static constexpr uint32_t kOHCI_PhyControl_rdReg        = 0x00008000; // Bit 15: initiate read request
+static constexpr uint32_t kOHCI_PhyControl_wrReg        = 0x00004000; // Bit 14: initiate write request
+// Field masks
+static constexpr uint32_t kOHCI_PhyControl_rdAddr_Mask  = 0x0F000000; // Bits 27-24: read address
+static constexpr uint32_t kOHCI_PhyControl_rdData_Mask  = 0x00FF0000; // Bits 23-16: read data
+static constexpr uint32_t kOHCI_PhyControl_regAddr_Mask = 0x000007C0; // Bits 10-6: register address  
+static constexpr uint32_t kOHCI_PhyControl_wrData_Mask  = 0x000000FF; // Bits 7-0: write data
+// Field shift constants
+static constexpr uint32_t kOHCI_PhyControl_rdAddr_Shift = 24;
+static constexpr uint32_t kOHCI_PhyControl_rdData_Shift = 16;
+static constexpr uint32_t kOHCI_PhyControl_regAddr_Shift = 6;
+static constexpr uint32_t kOHCI_PhyControl_wrData_Shift = 0;
+// Legacy compatibility aliases
+static constexpr uint32_t kOHCI_PhyControl_ReadDone     = kOHCI_PhyControl_rdDone;
+static constexpr uint32_t kOHCI_PhyControl_WritePending = kOHCI_PhyControl_wrReg;
+
+// ------------------------ PHY Register Constants ------------------
+// PHY Register 4 bit definitions (IEEE 1394a PHY)
+static constexpr uint8_t  kPHY_REG_4                    = 4;          // PHY register 4 address
+static constexpr uint8_t  kPHY_LINK_ACTIVE              = 0x40;       // Link Active bit (L)
+static constexpr uint8_t  kPHY_CONTENDER               = 0x08;       // Contender bit (C)
