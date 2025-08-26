@@ -15,6 +15,8 @@
 		3AF200102E5C000000000001 /* BridgeLog.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF2000C2E5C000000000001 /* BridgeLog.cpp */; };
 		3AF200112E5C000000000001 /* SelfIDParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF2000E2E5C000000000001 /* SelfIDParser.cpp */; };
 		3AF300002E5C100000000001 /* PhyAccess.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF300002E5C0FFF00000001 /* PhyAccess.cpp */; };
+		3AF400032E5D100000000003 /* ASOHCIARContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF400012E5D000000000001 /* ASOHCIARContext.cpp */; };
+		3AF500032E5D100000000003 /* ASOHCIATContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF500012E5D000000000001 /* ASOHCIATContext.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +74,10 @@
 		3AF200122E5C000000000001 /* OHCIConstants.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = OHCIConstants.hpp; path = ASOHCI/OHCIConstants.hpp; sourceTree = SOURCE_ROOT; };
 		3AF300002E5C0FFF00000001 /* PhyAccess.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = PhyAccess.cpp; path = ASOHCI/PhyAccess.cpp; sourceTree = SOURCE_ROOT; };
 		3AF300012E5C0FFF00000001 /* PhyAccess.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = PhyAccess.hpp; path = ASOHCI/PhyAccess.hpp; sourceTree = SOURCE_ROOT; };
+		3AF400012E5D000000000001 /* ASOHCIARContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARContext.cpp; path = ASOHCI/ASOHCIARContext.cpp; sourceTree = SOURCE_ROOT; };
+		3AF400022E5D000000000002 /* ASOHCIARContext.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = ASOHCIARContext.hpp; path = ASOHCI/ASOHCIARContext.hpp; sourceTree = SOURCE_ROOT; };
+		3AF500012E5D000000000001 /* ASOHCIATContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIATContext.cpp; path = ASOHCI/ASOHCIATContext.cpp; sourceTree = SOURCE_ROOT; };
+		3AF500022E5D000000000002 /* ASOHCIATContext.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = ASOHCIATContext.hpp; path = ASOHCI/ASOHCIATContext.hpp; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -393,6 +399,8 @@
 				3AF200102E5C000000000001 /* BridgeLog.cpp in Sources */,
 				3AF200112E5C000000000001 /* SelfIDParser.cpp in Sources */,
 				3AF300002E5C100000000001 /* PhyAccess.cpp in Sources */,
+				3AF400032E5D100000000003 /* ASOHCIARContext.cpp in Sources */,
+				3AF500032E5D100000000003 /* ASOHCIATContext.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

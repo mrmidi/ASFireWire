@@ -165,7 +165,7 @@ static constexpr uint32_t kOHCI_AsRspRcvContextControlC = 0x0224;
 static constexpr uint32_t kOHCI_AsRspRcvContextControlS = 0x0228;
 static constexpr uint32_t kOHCI_AsRspRcvCommandPtr      = 0x022C;
 
-// Context Control bits (Run only for initial scaffolding)
+// Legacy context control bit (deprecated - use kOHCI_ContextControl_* definitions above)
 static constexpr uint32_t kOHCI_Context_Run             = (1u << 15);
 
 // ------------------------ Self‑ID parse (IEEE 1394-2008 Alpha §16.3.2.1) ---------------------------
@@ -244,3 +244,161 @@ static constexpr uint32_t kOHCI_PhyControl_WritePending = kOHCI_PhyControl_wrReg
 static constexpr uint8_t  kPHY_REG_4                    = 4;          // PHY register 4 address
 static constexpr uint8_t  kPHY_LINK_ACTIVE              = 0x40;       // Link Active bit (L)
 static constexpr uint8_t  kPHY_CONTENDER               = 0x08;       // Contender bit (C)
+
+// ------------------------ OHCI DMA Context Control Bits (OHCI 1.1 §3.1.1) ------------------------
+// ContextControl register bit definitions - used by all DMA contexts
+static constexpr uint32_t kOHCI_ContextControl_run      = 0x00008000; // Bit 15: Enable descriptor processing
+static constexpr uint32_t kOHCI_ContextControl_wake     = 0x00000400; // Bit 10: Resume/continue processing
+static constexpr uint32_t kOHCI_ContextControl_dead     = 0x00000800; // Bit 11: Fatal error occurred
+static constexpr uint32_t kOHCI_ContextControl_active   = 0x00000200; // Bit 9: Currently processing descriptors
+
+// Event code field (bits 4-0) per OHCI 1.1 Table 3-2
+static constexpr uint32_t kOHCI_ContextControl_evtCode_Mask  = 0x0000001F; // Bits 4-0: Event code
+static constexpr uint32_t kOHCI_ContextControl_spd_Mask     = 0x000000E0; // Bits 7-5: Speed indication
+
+// Event codes for context completion (OHCI 1.1 Table 3-2)
+static constexpr uint32_t kOHCI_EvtCode_NoStatus        = 0x00; // evt_no_status
+static constexpr uint32_t kOHCI_EvtCode_MissingAck      = 0x03; // evt_missing_ack
+static constexpr uint32_t kOHCI_EvtCode_Underrun       = 0x04; // evt_underrun
+static constexpr uint32_t kOHCI_EvtCode_Overrun        = 0x05; // evt_overrun
+static constexpr uint32_t kOHCI_EvtCode_DescriptorRead = 0x06; // evt_descriptor_read
+static constexpr uint32_t kOHCI_EvtCode_DataRead       = 0x07; // evt_data_read
+static constexpr uint32_t kOHCI_EvtCode_DataWrite      = 0x08; // evt_data_write
+static constexpr uint32_t kOHCI_EvtCode_BusReset       = 0x09; // evt_bus_reset
+static constexpr uint32_t kOHCI_EvtCode_AckComplete    = 0x11; // ack_complete
+static constexpr uint32_t kOHCI_EvtCode_AckPending     = 0x12; // ack_pending
+
+// ------------------------ OHCI DMA Descriptor Structures (OHCI 1.1 §7-8) ------------------------
+// All descriptors are 16-byte aligned and use quadlet (32-bit) fields
+
+// AR INPUT_MORE Descriptor (OHCI 1.1 §8.1.1) - 16 bytes
+struct OHCI_ARInputMoreDescriptor {
+    // First quadlet: command and control fields
+    uint32_t cmd         : 4;   // Must be 0x2 for INPUT_MORE
+    uint32_t key         : 3;   // Must be 0x0
+    uint32_t reserved1   : 1;   // Reserved, must be 0
+    uint32_t i           : 2;   // Interrupt control (0x3=interrupt on completion, 0x0=no interrupt)
+    uint32_t b           : 2;   // Branch control (must be 0x3)
+    uint32_t reserved2   : 4;   // Reserved, must be 0
+    uint32_t reqCount    : 16;  // Buffer size in bytes (multiple of 4)
+    
+    // Second quadlet: data address
+    uint32_t dataAddress;       // Host memory buffer address (quadlet-aligned)
+    
+    // Third quadlet: branch address and Z
+    uint32_t branchAddress : 28; // Next descriptor block address (16-byte aligned)
+    uint32_t Z            : 4;   // Descriptor count: 0=end, 1=next block
+    
+    // Fourth quadlet: status fields (updated by hardware)
+    uint32_t resCount     : 16;  // Residual count (bytes not yet filled)
+    uint32_t xferStatus   : 16;  // Copy of ContextControl[15:0] on completion
+} __attribute__((packed, aligned(16)));
+
+// AT OUTPUT_MORE Descriptor (OHCI 1.1 §7.1.1) - 16 bytes
+struct OHCI_ATOutputMoreDescriptor {
+    // First quadlet: command and control fields
+    uint32_t cmd         : 4;   // Must be 0x0 for OUTPUT_MORE
+    uint32_t key         : 3;   // Must be 0x0
+    uint32_t reserved1   : 1;   // Reserved, must be 0
+    uint32_t reserved2   : 2;   // Reserved, must be 0
+    uint32_t b           : 2;   // Branch control (must be 0x0)
+    uint32_t reserved3   : 4;   // Reserved, must be 0
+    uint32_t reqCount    : 16;  // Transmit data size in bytes
+    
+    // Second quadlet: data address
+    uint32_t dataAddress;       // Transmit data address (no alignment restrictions)
+    
+    // Third and fourth quadlets: reserved/unused for non-branch descriptors
+    uint32_t reserved4;
+    uint32_t reserved5;
+} __attribute__((packed, aligned(16)));
+
+// AT OUTPUT_LAST Descriptor (OHCI 1.1 §7.1.3) - 16 bytes  
+struct OHCI_ATOutputLastDescriptor {
+    // First quadlet: command and control fields
+    uint32_t cmd         : 4;   // Must be 0x1 for OUTPUT_LAST
+    uint32_t key         : 3;   // Must be 0x0
+    uint32_t p           : 1;   // Ping timing (AT request only)
+    uint32_t i           : 2;   // Interrupt control (0x3=always, 0x1=on error, 0x0=never)
+    uint32_t b           : 2;   // Branch control (must be 0x3)
+    uint32_t reserved1   : 4;   // Reserved, must be 0
+    uint32_t reqCount    : 16;  // Transmit data size in bytes
+    
+    // Second quadlet: data address
+    uint32_t dataAddress;       // Transmit data address (no alignment restrictions)
+    
+    // Third quadlet: branch address and Z
+    uint32_t branchAddress : 28; // Next descriptor block address (16-byte aligned) 
+    uint32_t Z            : 4;   // Next packet size: 0=end, 2-8=descriptor count
+    
+    // Fourth quadlet: status fields (updated by hardware)
+    uint32_t timeStamp    : 16;  // Transmission timestamp or ping duration
+    uint32_t xferStatus   : 16;  // Copy of ContextControl[15:0] on completion
+} __attribute__((packed, aligned(16)));
+
+// AT OUTPUT_MORE_Immediate Descriptor (OHCI 1.1 §7.1.2) - 32 bytes
+struct OHCI_ATOutputMoreImmediateDescriptor {
+    // First quadlet: command and control fields
+    uint32_t cmd         : 4;   // Must be 0x0 for OUTPUT_MORE-Immediate
+    uint32_t key         : 3;   // Must be 0x2 for OUTPUT_MORE-Immediate  
+    uint32_t reserved1   : 1;   // Reserved, must be 0
+    uint32_t reserved2   : 2;   // Reserved, must be 0
+    uint32_t b           : 2;   // Branch control (must be 0x0)
+    uint32_t reserved3   : 4;   // Reserved, must be 0
+    uint32_t reqCount    : 16;  // Must be 8 (2 quadlets) or 16 (4 quadlets)
+    
+    // Second quadlet: timestamp (AT response only)
+    uint32_t timeStamp   : 16;  // Expiration time for responses
+    uint32_t reserved4   : 16;  // Reserved
+    
+    // Quadlets 3-6: packet header data (up to 4 quadlets)
+    uint32_t firstQuadlet;      // First packet header quadlet
+    uint32_t secondQuadlet;     // Second packet header quadlet  
+    uint32_t thirdQuadlet;      // Third packet header quadlet (optional)
+    uint32_t fourthQuadlet;     // Fourth packet header quadlet (optional)
+} __attribute__((packed, aligned(16)));
+
+// AT OUTPUT_LAST_Immediate Descriptor (OHCI 1.1 §7.1.4) - 32 bytes
+struct OHCI_ATOutputLastImmediateDescriptor {
+    // First quadlet: command and control fields
+    uint32_t cmd         : 4;   // Must be 0x1 for OUTPUT_LAST-Immediate
+    uint32_t key         : 3;   // Must be 0x2 for OUTPUT_LAST-Immediate
+    uint32_t p           : 1;   // Ping timing (AT request only)
+    uint32_t i           : 2;   // Interrupt control (0x3=always, 0x1=on error, 0x0=never)
+    uint32_t b           : 2;   // Branch control (must be 0x3)
+    uint32_t reserved1   : 4;   // Reserved, must be 0
+    uint32_t reqCount    : 16;  // Must be 8, 12, or 16 bytes
+    
+    // Second quadlet: branch address and Z
+    uint32_t branchAddress : 28; // Next descriptor block address (16-byte aligned)
+    uint32_t Z            : 4;   // Next packet size: 0=end, 2-8=descriptor count
+    
+    // Third quadlet: status fields (updated by hardware)
+    uint32_t timeStamp    : 16;  // Transmission timestamp or ping duration
+    uint32_t xferStatus   : 16;  // Copy of ContextControl[15:0] on completion
+    
+    // Fourth quadlet: reserved
+    uint32_t reserved2;
+    
+    // Quadlets 5-8: packet header data (2-4 quadlets)
+    uint32_t firstQuadlet;      // First packet header quadlet
+    uint32_t secondQuadlet;     // Second packet header quadlet
+    uint32_t thirdQuadlet;      // Third packet header quadlet (optional)
+    uint32_t fourthQuadlet;     // Fourth packet header quadlet (optional)
+} __attribute__((packed, aligned(16)));
+
+// CommandPtr Register Structure (OHCI 1.1 §3.1.2)
+struct OHCI_CommandPtr {
+    uint32_t descriptorAddress : 28; // Upper 28 bits of descriptor block address
+    uint32_t Z                 : 4;  // Number of 16-byte blocks at address
+} __attribute__((packed));
+
+// Z value encoding constants (OHCI 1.1 Table 7-5)
+static constexpr uint32_t kOHCI_Z_EndOfProgram    = 0;  // Last descriptor in program
+static constexpr uint32_t kOHCI_Z_MinPacketSize   = 2;  // Minimum packet size (2 blocks)
+static constexpr uint32_t kOHCI_Z_MaxPacketSize   = 8;  // Maximum packet size (8 blocks)
+
+// Descriptor alignment requirements
+static constexpr size_t   kOHCI_DescriptorAlign   = 16;  // All descriptors 16-byte aligned
+static constexpr size_t   kOHCI_DescriptorSize    = 16;  // Standard descriptor size
+static constexpr size_t   kOHCI_ImmediateDescSize = 32;  // *-Immediate descriptor size
