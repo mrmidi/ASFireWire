@@ -20,13 +20,18 @@ ASOHCIARContext::ASOHCIARContext() :
     fContextControlSetOffset(0), 
     fContextControlClearOffset(0),
     fCommandPtrOffset(0),
+    fBARIndex(0),
     fBufferCount(0),
     fBufferSize(0),
     fBufferDescriptors(nullptr),
     fBufferMaps(nullptr),
+    fBufferDMA(nullptr),
+    fBufferSegs(nullptr),
     fDescriptorChain(nullptr),
     fDescriptorMap(nullptr),
     fDescriptors(nullptr),
+    fDescriptorDMA(nullptr),
+    fDescriptorSeg{},
     fDescriptorCount(0),
     fCurrentDescriptor(0),
     fInitialized(false),
@@ -46,8 +51,9 @@ ASOHCIARContext::~ASOHCIARContext()
 }
 
 // Initialize the AR context
-kern_return_t ASOHCIARContext::Initialize(IOPCIDevice* pciDevice, 
+kern_return_t ASOHCIARContext::Initialize(IOPCIDevice* pciDevice,
                                         ContextType contextType,
+                                        uint8_t barIndex,
                                         uint32_t bufferCount,
                                         uint32_t bufferSize)
 {
@@ -78,6 +84,7 @@ kern_return_t ASOHCIARContext::Initialize(IOPCIDevice* pciDevice,
     fPCIDevice->retain();
     
     fContextType = contextType;
+    fBARIndex = barIndex;
     fBufferCount = bufferCount;
     fBufferSize = bufferSize;
     fDescriptorCount = bufferCount;  // One descriptor per buffer
@@ -151,15 +158,12 @@ kern_return_t ASOHCIARContext::Start()
         return kIOReturnError;
     }
     
-    // Write CommandPtr register with first descriptor address
-    // For DriverKit, we use the virtual address since DMA is handled by the system
-    uint64_t descriptorVirtAddr = fDescriptorMap->GetAddress();
-    if (!descriptorVirtAddr) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to get descriptor virtual address");
+    // Write CommandPtr register with descriptor DMA address; Z=1 denotes next via branch
+    if (fDescriptorSeg.address == 0) {
+        os_log(ASLog(), "ASOHCIARContext: ERROR: No DMA address for descriptor chain");
         return kIOReturnError;
     }
-    
-    result = WriteCommandPtr((uint32_t)(descriptorVirtAddr >> 4), fDescriptorCount);
+    result = WriteCommandPtr((uint32_t)(fDescriptorSeg.address >> 4), 1);
     if (result != kIOReturnSuccess) {
         os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to write command pointer: 0x%x", result);
         return result;
@@ -291,8 +295,10 @@ kern_return_t ASOHCIARContext::AllocateBuffers()
     
     fBufferDescriptors = new IOBufferMemoryDescriptor*[fBufferCount];
     fBufferMaps = new IOMemoryMap*[fBufferCount];
+    fBufferDMA = new IODMACommand*[fBufferCount];
+    fBufferSegs = new IOAddressSegment[fBufferCount];
     
-    if (!fBufferDescriptors || !fBufferMaps) {
+    if (!fBufferDescriptors || !fBufferMaps || !fBufferDMA || !fBufferSegs) {
         return kIOReturnNoMemory;
     }
     
@@ -300,6 +306,8 @@ kern_return_t ASOHCIARContext::AllocateBuffers()
     for (uint32_t i = 0; i < fBufferCount; i++) {
         fBufferDescriptors[i] = nullptr;
         fBufferMaps[i] = nullptr;
+        fBufferDMA[i] = nullptr;
+        fBufferSegs[i] = {};
     }
     
     // Allocate each buffer
@@ -318,6 +326,25 @@ kern_return_t ASOHCIARContext::AllocateBuffers()
             os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to map buffer %u: 0x%x", i, result);
             return result;
         }
+
+        // Create 32-bit DMA mapping for each buffer
+        IODMACommandSpecification spec{};
+        spec.options = kIODMACommandSpecificationNoOptions;
+        spec.maxAddressBits = 32;
+        result = IODMACommand::Create(fPCIDevice, kIODMACommandCreateNoOptions, &spec, &fBufferDMA[i]);
+        if (result != kIOReturnSuccess || !fBufferDMA[i]) {
+            os_log(ASLog(), "ASOHCIARContext: ERROR: DMA cmd create failed for buffer %u: 0x%x", i, result);
+            return (result != kIOReturnSuccess) ? result : kIOReturnNoMemory;
+        }
+        uint64_t flags = 0; uint32_t segCount = 1; IOAddressSegment segs[1] = {};
+        result = fBufferDMA[i]->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
+                                              fBufferDescriptors[i], 0, fBufferSize,
+                                              &flags, &segCount, segs);
+        if (result != kIOReturnSuccess || segCount < 1 || segs[0].address == 0) {
+            os_log(ASLog(), "ASOHCIARContext: ERROR: DMA map failed for buffer %u: 0x%x segs=%u", i, result, segCount);
+            return (result != kIOReturnSuccess) ? result : kIOReturnNoResources;
+        }
+        fBufferSegs[i] = segs[0];
     }
     
     return kIOReturnSuccess;
@@ -350,14 +377,34 @@ kern_return_t ASOHCIARContext::AllocateDescriptorChain()
         return kIOReturnError;
     }
     
+    // DMA map the descriptor chain
+    IODMACommandSpecification spec{};
+    spec.options = kIODMACommandSpecificationNoOptions;
+    spec.maxAddressBits = 32;
+    result = IODMACommand::Create(fPCIDevice, kIODMACommandCreateNoOptions, &spec, &fDescriptorDMA);
+    if (result != kIOReturnSuccess || !fDescriptorDMA) {
+        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to create desc DMA cmd: 0x%x", result);
+        return (result != kIOReturnSuccess) ? result : kIOReturnNoMemory;
+    }
+    uint64_t flags = 0; uint32_t segCount = 1; IOAddressSegment segs[1] = {};
+    result = fDescriptorDMA->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
+                                           fDescriptorChain,
+                                           0,
+                                           chainSize,
+                                           &flags,
+                                           &segCount,
+                                           segs);
+    if (result != kIOReturnSuccess || segCount < 1 || segs[0].address == 0) {
+        os_log(ASLog(), "ASOHCIARContext: ERROR: Desc DMA map failed: 0x%x segs=%u", result, segCount);
+        return (result != kIOReturnSuccess) ? result : kIOReturnNoResources;
+    }
+    fDescriptorSeg = segs[0];
     return kIOReturnSuccess;
 }
 
 // Setup descriptor chain
 kern_return_t ASOHCIARContext::SetupDescriptorChain()
 {
-    kern_return_t result;
-    
     // Initialize each descriptor in the chain
     for (uint32_t i = 0; i < fDescriptorCount; i++) {
         OHCI_ARInputMoreDescriptor* desc = &fDescriptors[i];
@@ -372,19 +419,18 @@ kern_return_t ASOHCIARContext::SetupDescriptorChain()
         desc->b = 0x3;          // Branch control (must be 0x3)
         desc->reqCount = fBufferSize;
         
-        // Get buffer virtual address (DriverKit handles DMA translation)
-        uint64_t bufferVirtAddr = fBufferMaps[i]->GetAddress();
-        if (!bufferVirtAddr) {
-            os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to get buffer %u virtual address", i);
+        // Use DMA address for data
+        if (fBufferSegs == nullptr || fBufferSegs[i].address == 0) {
+            os_log(ASLog(), "ASOHCIARContext: ERROR: Missing DMA address for buffer %u", i);
             return kIOReturnError;
         }
-        desc->dataAddress = (uint32_t)bufferVirtAddr;
+        desc->dataAddress = (uint32_t)fBufferSegs[i].address;
         
         // Set branch address and Z value
         if (i < fDescriptorCount - 1) {
-            // Point to next descriptor
-            uint64_t nextDescVirtAddr = fDescriptorMap->GetAddress() + (i + 1) * sizeof(*desc);
-            desc->branchAddress = (uint32_t)(nextDescVirtAddr >> 4); // 16-byte aligned
+            // Point to next descriptor using DMA base of descriptor chain
+            uint64_t nextDescDMA = fDescriptorSeg.address + (uint64_t)(i + 1) * sizeof(*desc);
+            desc->branchAddress = (uint32_t)(nextDescDMA >> 4); // upper 28 bits
             desc->Z = 1;  // Next block has 1 descriptor
         } else {
             // Last descriptor - end of chain
@@ -403,6 +449,16 @@ kern_return_t ASOHCIARContext::SetupDescriptorChain()
 // Free buffers
 kern_return_t ASOHCIARContext::FreeBuffers()
 {
+    if (fBufferDMA) {
+        for (uint32_t i = 0; i < fBufferCount; i++) {
+            if (fBufferDMA[i]) {
+                fBufferDMA[i]->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+                fBufferDMA[i]->release();
+            }
+        }
+        delete[] fBufferDMA;
+        fBufferDMA = nullptr;
+    }
     if (fBufferMaps) {
         for (uint32_t i = 0; i < fBufferCount; i++) {
             if (fBufferMaps[i]) {
@@ -422,6 +478,10 @@ kern_return_t ASOHCIARContext::FreeBuffers()
         delete[] fBufferDescriptors;
         fBufferDescriptors = nullptr;
     }
+    if (fBufferSegs) {
+        delete[] fBufferSegs;
+        fBufferSegs = nullptr;
+    }
     
     return kIOReturnSuccess;
 }
@@ -429,6 +489,12 @@ kern_return_t ASOHCIARContext::FreeBuffers()
 // Free descriptor chain
 kern_return_t ASOHCIARContext::FreeDescriptorChain()
 {
+    if (fDescriptorDMA) {
+        fDescriptorDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        fDescriptorDMA->release();
+        fDescriptorDMA = nullptr;
+        fDescriptorSeg = {};
+    }
     if (fDescriptorMap) {
         fDescriptorMap->release();
         fDescriptorMap = nullptr;
@@ -447,7 +513,7 @@ kern_return_t ASOHCIARContext::FreeDescriptorChain()
 kern_return_t ASOHCIARContext::WriteContextControl(uint32_t value, bool setRegister)
 {
     uint32_t offset = setRegister ? fContextControlSetOffset : fContextControlClearOffset;
-    fPCIDevice->MemoryWrite32(0, offset, value);
+    fPCIDevice->MemoryWrite32(fBARIndex, offset, value);
     return kIOReturnSuccess;
 }
 
@@ -457,7 +523,7 @@ kern_return_t ASOHCIARContext::ReadContextControl(uint32_t* value)
     if (!value) {
         return kIOReturnBadArgument;
     }
-    fPCIDevice->MemoryRead32(0, fContextControlSetOffset, value);
+    fPCIDevice->MemoryRead32(fBARIndex, fContextControlSetOffset, value);
     return kIOReturnSuccess;
 }
 
@@ -465,6 +531,6 @@ kern_return_t ASOHCIARContext::ReadContextControl(uint32_t* value)
 kern_return_t ASOHCIARContext::WriteCommandPtr(uint32_t descriptorAddress, uint32_t zValue)
 {
     uint32_t commandPtr = (descriptorAddress << 4) | (zValue & 0xF);
-    fPCIDevice->MemoryWrite32(0, fCommandPtrOffset, commandPtr);
+    fPCIDevice->MemoryWrite32(fBARIndex, fCommandPtrOffset, commandPtr);
     return kIOReturnSuccess;
 }

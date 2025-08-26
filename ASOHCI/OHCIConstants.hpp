@@ -20,6 +20,7 @@ static constexpr uint32_t kOHCI_GUIDLo                  = 0x028;
 static constexpr uint32_t kOHCI_PostedWriteAddressLo    = 0x038;
 static constexpr uint32_t kOHCI_PostedWriteAddressHi    = 0x03C;
 static constexpr uint32_t kOHCI_VendorID                = 0x040;
+static constexpr uint32_t kOHCI_ConfigROMmap            = 0x034; // Config ROM base address (device view)
 
 // Host Control
 static constexpr uint32_t kOHCI_HCControlSet            = 0x050;

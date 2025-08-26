@@ -14,6 +14,7 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
+#include <DriverKit/IODMACommand.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
 #include "OHCIConstants.hpp"
@@ -54,10 +55,11 @@ public:
      * @param bufferSize    Size of each receive buffer in bytes
      * @return kIOReturnSuccess on success
      */
-    virtual kern_return_t Initialize(IOPCIDevice* pciDevice, 
-                                   ContextType contextType,
-                                   uint32_t bufferCount = 4,
-                                   uint32_t bufferSize = 4096);
+    virtual kern_return_t Initialize(IOPCIDevice* pciDevice,
+                                     ContextType contextType,
+                                     uint8_t barIndex,
+                                     uint32_t bufferCount = 4,
+                                     uint32_t bufferSize = 4096);
 
     /**
      * Start the AR context (set run bit and activate DMA)
@@ -112,17 +114,22 @@ private:
     uint32_t                        fContextControlSetOffset;
     uint32_t                        fContextControlClearOffset;
     uint32_t                        fCommandPtrOffset;
+    uint8_t                         fBARIndex;
 
     // Buffer management
     uint32_t                        fBufferCount;
     uint32_t                        fBufferSize;
     IOBufferMemoryDescriptor**      fBufferDescriptors;
     IOMemoryMap**                   fBufferMaps;
+    IODMACommand**                  fBufferDMA;         // DMA commands for buffers
+    IOAddressSegment*               fBufferSegs;        // IOVA for each buffer
 
     // Descriptor chain management  
     IOBufferMemoryDescriptor*       fDescriptorChain;
     IOMemoryMap*                    fDescriptorMap;
     OHCI_ARInputMoreDescriptor*     fDescriptors;
+    IODMACommand*                   fDescriptorDMA;     // DMA command for descriptor chain
+    IOAddressSegment                fDescriptorSeg;     // IOVA for descriptor chain
     uint32_t                        fDescriptorCount;
     uint32_t                        fCurrentDescriptor;
 

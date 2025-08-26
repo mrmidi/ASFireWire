@@ -70,12 +70,18 @@
 - [x] Add DMA descriptor chain handling
 - [x] Implement `ar_context_run()` equivalent
 - [x] Add AR interrupt handlers (basic logging; full processing TBD)
+- [ ] Map AR buffers with `IODMACommand` (32-bit IOVA)
+- [ ] Map descriptor chain with `IODMACommand` and use DMA addresses in `CommandPtr`/branches
+- [ ] Plumb PCI BAR index into AR context and use for MMIO
+- [ ] Minimal IRQ recycle: retire/recycle AR descriptors; log header
 
 #### **A4. Implement Basic AT Context**  
 - [x] Create ASOHCIATContext class for Asynchronous Transmit
-- [ ] Implement AT DMA descriptor management
+- [ ] Implement AT DMA descriptor management with coherent pool + DMA addresses
 - [x] Add AT interrupt handlers (basic logging; full processing TBD)
 - [x] Implement `at_context_run()` equivalent (context runs with empty program)
+- [ ] Implement minimal OUTPUT_LAST_Immediate builder (header-only)
+- [ ] Plumb PCI BAR index into AT context and use for MMIO
 
 ### **Phase B: Configuration ROM Implementation**
 
@@ -85,11 +91,13 @@
 - [ ] Study ConfigROMmap, ConfigROMhdr, BusOptions register usage
 
 #### **B2. Implement Config ROM Support**
-- [ ] Add Config ROM buffer allocation using IOBufferMemoryDescriptor
-- [ ] Implement ConfigROMmap register programming
-- [ ] Implement ConfigROMhdr and BusOptions register setup
-- [ ] Add atomic config ROM update mechanism
-- [ ] Add BIBimageValid bit handling
+- [ ] Add Config ROM buffer allocation (1 KB) using IOBufferMemoryDescriptor
+- [ ] Map ROM with `IODMACommand` (32-bit IOVA)
+- [ ] Implement `ConfigROMmap` register programming (initial, link disabled)
+- [ ] Program `ConfigROMhdr=0` workaround and `BusOptions` from ROM[2]
+- [ ] Set `BIBimageValid` when enabling link
+- [ ] Add atomic config ROM update path (when link enabled) + bus reset
+- [ ] Verify ROM structure (big-endian, CRC) against Apple IOConfigDirectory readers
 
 ### **Phase C: Complete IEEE 1394a Enhancement**
 
@@ -107,7 +115,7 @@
 ### **Phase D: Interrupt and Error Handling**
 
 #### **D1. Implement Missing Interrupt Handlers**
-- [ ] AT/AR DMA completion interrupts
+- [ ] AT/AR DMA completion interrupts with retire/recycle logic
 - [ ] Physical request/response handling (OHCI §12)
 - [ ] Isochronous context interrupts (§9, §10)
 - [ ] regAccessFail interrupt handling
@@ -118,6 +126,24 @@
 - [ ] DMA error handling and context restart
 - [ ] PHY error recovery
 - [ ] Cycle timer error handling
+
+### **DriverKit/IIG Integration**
+- [ ] Use `IODMACommand::Create` (`maxAddressBits=32`) + `PrepareForDMA` for AR/AT buffers and descriptor regions
+- [ ] Ensure `IOBufferMemoryDescriptor` directions and alignment are correct (AR in, AT out, 16-byte descriptors)
+- [ ] Keep interrupts via `IOInterruptDispatchSource` and typed IIG actions; consider additional actions for future async callbacks
+- [ ] Use `IOPCIDevice.iig` `MemoryRead32/Write32` with real BAR index inside contexts
+- [ ] Prefer `IOTimerDispatchSource` for deferred work over `IOSleep` where possible
+
+### **Robustness & Resets**
+- [x] Stop sequence: mask/clear IRQs → stop contexts → clear LinkControl → soft reset → free DMA
+- [x] Self-ID gating: cycle timer enabled only after first stable Self-ID
+- [ ] Re-arm Self-ID across resets idempotently; collapse overlapping bus resets
+- [ ] Track and recover from `regAccessFail`, `unrecoverableError`, `cycleInconsistent`
+
+### **Documentation & Constants**
+- [ ] Add `kOHCI_ConfigROMmap = 0x034` to `OHCIConstants.hpp`
+- [ ] Re-verify register offsets (LinkControlSet/Clear corrected)
+- [ ] Update acceptance checks in docs as features land
 
 ### **Phase E: Advanced Features**
 
@@ -175,6 +201,45 @@ See [docs/ohci/README.md](../docs/ohci/README.md) for complete specification ind
 - [ ] **DMA data transfer capability** - Actual FireWire communication working
 - [ ] **Isochronous support** - Audio/video streaming capability
 - [ ] **Complete OHCI 1.1 compliance** - All specification requirements met
+
+## Test Phase (Current)
+
+### What to Run
+- Build: `xcodebuild -project ASFireWire.xcodeproj -target ASOHCI -configuration Debug -arch arm64 build`
+- Load dext and stream logs: `./log.sh` (or `log stream --predicate 'subsystem == "com.apple.kernel"' --info`)
+- Unload dext to validate Stop sequence.
+
+### Expected Logs (Now)
+- Start/Bring-up:
+  - `ASOHCI: BAR0 idx=... size=...`
+  - `ASOHCI: Self-ID IOVA=0x...` (allocation success)
+  - `ASOHCI: Initializing AR/AT DMA contexts`
+  - `ASOHCI: AR Request context initialized and started`
+  - `ASOHCI: AR Response context initialized and started`
+  - `ASOHCI: AT Request/Response context initialized and started`
+  - `ASOHCI: Phase 9 - Comprehensive interrupt mask set: ...`
+  - `ASOHCI: Link enabled successfully - controller active on bus`
+- Self-ID/Cycle:
+  - `ASOHCI: Bus Reset (bit 17)` followed by `ASOHCI: Self-ID phase complete`
+  - On first stable Self-ID: `CycleTimerEnable now set`
+- AR/AT Interrupts (with any bus traffic):
+  - From DumpIntEvent: `ARRQ`/`ARRS` and/or `RqPkt`/`RsPkt` bits identified under “DMA Completion Interrupts”
+  - Context hooks: `ASOHCIARContext: Interrupt handled for Request/Response`
+- Errors (should not appear):
+  - `regAccessFail` / `unrecoverableError` / `cycleInconsistent`. If seen, capture timestamps and counts.
+- Stop/Unload:
+  - `ASOHCI: Interrupt source disabled`
+  - `ASOHCI: HC soft reset during Stop (HCControl=...)`
+  - `ASOHCI: AR/AT context stopped and released`
+
+### What This Validates
+- AR buffers and descriptors are using 32-bit DMA addresses (no DMA-to-virtual faults; IRQs arrive on AR contexts).
+- BAR index is used consistently for MMIO (works on BAR0 now; future-safe for non-zero BAR devices).
+- Stop sequence quiesces hardware without late IRQs.
+
+### Capture for Analysis
+- Save a 60–120s excerpt of `./log.sh` covering bring-up, at least one bus reset, Self-ID complete, and any AR/AT IRQs.
+- Note counts of BusReset, SelfIDComplete, and any error bits.
 
 ## Development Notes
 

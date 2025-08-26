@@ -533,7 +533,7 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     // Initialize AR Request Context  
     gARRequestContext = new ASOHCIARContext();
     if (gARRequestContext) {
-        kr = gARRequestContext->Initialize(pci, ASOHCIARContext::AR_REQUEST_CONTEXT);
+        kr = gARRequestContext->Initialize(pci, ASOHCIARContext::AR_REQUEST_CONTEXT, (uint8_t)bar0Index);
         if (kr == kIOReturnSuccess) {
             kr = gARRequestContext->Start();
             if (kr == kIOReturnSuccess) {
@@ -551,7 +551,7 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     // Initialize AR Response Context
     gARResponseContext = new ASOHCIARContext();
     if (gARResponseContext) {
-        kr = gARResponseContext->Initialize(pci, ASOHCIARContext::AR_RESPONSE_CONTEXT);
+        kr = gARResponseContext->Initialize(pci, ASOHCIARContext::AR_RESPONSE_CONTEXT, (uint8_t)bar0Index);
         if (kr == kIOReturnSuccess) {
             kr = gARResponseContext->Start();
             if (kr == kIOReturnSuccess) {
