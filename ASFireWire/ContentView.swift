@@ -34,19 +34,7 @@ struct ContentView: View {
                     }
                 }
 
-                HStack {
-                    Button("Enable Dev Mode") {
-                        addLog("Enable developer mode button clicked")
-                        enableDeveloperMode()
-                    }
-                    .font(.caption)
-
-                    Button("Show Logs") {
-                        addLog("Show logs button clicked")
-                        showSystemLogs()
-                    }
-                    .font(.caption)
-                }
+                // Removed: Inspect / Observer / Force Nuke buttons per updated manager scope
             }
 
             Text("You may be prompted to approve the driver in System Settings → Privacy & Security.")
@@ -151,30 +139,5 @@ struct ContentView: View {
         }
     }
 
-    private func enableDeveloperMode() {
-        addLog("Attempting to enable system extensions developer mode… (admin required)")
-        let task = Process()
-        task.launchPath = "/usr/bin/sudo"
-        task.arguments = ["/usr/bin/systemextensionsctl", "developer", "on"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        do {
-            try task.run()
-            task.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            if task.terminationStatus == 0 { addLog("✅ Developer mode enabled successfully") }
-            else { addLog("❌ Failed to enable developer mode\n\(output)") }
-        } catch {
-            addLog("❌ Failed to run systemextensionsctl developer: \(error.localizedDescription)")
-        }
-    }
-
-    private func showSystemLogs() {
-        addLog("Opening Console.app… Look for subsystem: com.apple.systemextensions, net.mrmidi.ASFireWire; process: kernelmanagerd")
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Console") {
-            NSWorkspace.shared.open(url)
-        }
-    }
+    // Removed developer mode & show logs helpers (noise)
 }

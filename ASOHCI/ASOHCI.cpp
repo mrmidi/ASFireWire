@@ -31,11 +31,56 @@
 #include "PhyAccess.hpp"
 #include "ASOHCIARContext.hpp"
 #include "ASOHCIATContext.hpp"
+// Config ROM
+#include "ASOHCIConfigROM.hpp"
 // ------------------------ Logging -----------------------------------
 #include "LogHelper.hpp"
 #include "ASOHCIInterruptDump.hpp"
 
 // BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
+
+// Helper: dump a memory region as hex lines to os_log without sprintf/snprintf
+static inline char _hex_digit(uint8_t v) { return (v < 10) ? char('0' + v) : char('a' + (v - 10)); }
+static inline void DumpHexBigEndian(const void* data, size_t length, const char* title)
+{
+    if (!data || length == 0) return;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(data);
+    // Determine effective length by trimming trailing zeros; keep at least 64 bytes, round up to 16
+    size_t eff = length;
+    while (eff > 0 && p[eff - 1] == 0) {
+        --eff;
+    }
+    const size_t kMinDump = 64; // keep at least 64 bytes (header + small root dir)
+    if (eff < kMinDump) eff = (length < kMinDump) ? length : kMinDump;
+    // round up to 16-byte boundary for clean lines
+    if (eff % 16) {
+        size_t rounded = ((eff + 15) / 16) * 16;
+        if (rounded <= length) eff = rounded; else eff = length;
+    }
+
+    os_log(ASLog(), "ASOHCI: === %{public}s (BIG-ENDIAN) === size=%lu dump=%lu", title ? title : "DUMP", (unsigned long)length, (unsigned long)eff);
+    char line[80];
+    for (size_t off = 0; off < eff; off += 16) {
+        size_t pos = 0;
+        // 4 hex digits of offset
+        uint16_t o = (uint16_t)off;
+        line[pos++] = _hex_digit(uint8_t((o >> 12) & 0xF));
+        line[pos++] = _hex_digit(uint8_t((o >> 8) & 0xF));
+        line[pos++] = _hex_digit(uint8_t((o >> 4) & 0xF));
+        line[pos++] = _hex_digit(uint8_t(o & 0xF));
+        line[pos++] = ':';
+        // up to 16 bytes
+        for (size_t i = 0; i < 16 && (off + i) < length; ++i) {
+            uint8_t b = p[off + i];
+            line[pos++] = ' ';
+            line[pos++] = _hex_digit(uint8_t((b >> 4) & 0xF));
+            line[pos++] = _hex_digit(uint8_t(b & 0xF));
+        }
+        line[pos] = '\0';
+        os_log(ASLog(), "ASOHCI: %{public}s", line);
+    }
+    os_log(ASLog(), "ASOHCI: === END OF DUMP ===");
+}
 
 // Provide the concrete definition for ASOHCI_IVars matching ASOHCI.iig ivars.
 // This enables safe member access in this TU while keeping layout identical.
@@ -50,6 +95,14 @@ struct ASOHCI_IVars {
     IODMACommand              * selfIDDMA     = nullptr;
     IOAddressSegment            selfIDSeg     = {};
     IOMemoryMap               * selfIDMap     = nullptr;
+    // Config ROM resources
+    IOBufferMemoryDescriptor  * configROMBuffer = nullptr;
+    IOMemoryMap               * configROMMap    = nullptr;
+    IODMACommand              * configROMDMA    = nullptr;
+    IOAddressSegment            configROMSeg    = {};
+    uint32_t                    configROMHeaderQuad = 0;
+    uint32_t                    configROMBusOptions = 0;
+    bool                        configROMHeaderNeedsCommit = false;
     bool                        cycleTimerArmed   = false;
     bool                        selfIDInProgress  = false;
     bool                        selfIDArmed       = false;
@@ -121,6 +174,14 @@ void ASOHCI::free()
         }
         if (ivars->selfIDMap)    { ivars->selfIDMap->release();    ivars->selfIDMap    = nullptr; }
         if (ivars->selfIDBuffer) { ivars->selfIDBuffer->release(); ivars->selfIDBuffer = nullptr; }
+        // Release Config ROM resources
+        if (ivars->configROMDMA) {
+            ivars->configROMDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+            ivars->configROMDMA->release();
+            ivars->configROMDMA = nullptr;
+        }
+        if (ivars->configROMMap)    { ivars->configROMMap->release();    ivars->configROMMap    = nullptr; }
+        if (ivars->configROMBuffer) { ivars->configROMBuffer->release(); ivars->configROMBuffer = nullptr; }
         // Release default queue if we retained it (see §4)
         if (ivars->defaultQ)     { ivars->defaultQ->release();     ivars->defaultQ     = nullptr; }
         // Delete helpers
@@ -221,7 +282,8 @@ if (bar0Size >= 0x2C) {
     }
 
     // Log current link speed for diagnostics
-    IOPCILinkSpeed linkSpeed = 0;
+    // Initialize with a valid enum value to satisfy strict type checking
+    IOPCILinkSpeed linkSpeed = kPCILinkSpeed_2_5_GTs;
     if (pci->GetLinkSpeed(&linkSpeed) == kIOReturnSuccess) {
         os_log(ASLog(), "ASOHCI: PCIe link speed: %u", (unsigned)linkSpeed);
     }
@@ -237,6 +299,74 @@ if (bar0Size >= 0x2C) {
 
     ivars->pciDevice = pci;
     ivars->barIndex  = bar0Index;
+
+    // -----------------------------------------------------------------
+    // Minimal Configuration ROM: allocate 1KB, populate BIB, map, program
+    // -----------------------------------------------------------------
+    {
+        // Allocate 1KB ROM buffer and map for CPU access
+        // Device will READ this buffer (host -> device), so direction = Out
+        kern_return_t ckr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionOut,
+                                                             1024,
+                                                             4,
+                                                             &ivars->configROMBuffer);
+        if (ckr == kIOReturnSuccess && ivars->configROMBuffer) {
+            ckr = ivars->configROMBuffer->CreateMapping(0, 0, 0, 0, 0, &ivars->configROMMap);
+        }
+        if (ckr != kIOReturnSuccess || !ivars->configROMMap) {
+            os_log(ASLog(), "ASOHCI: WARN: Config ROM map failed: 0x%08x", ckr);
+        } else {
+            // Build ROM (BIB + minimal root directory) and write big-endian into buffer
+            ASOHCIConfigROM rom;
+            rom.buildFromHardware(bus_opts, guid_hi, guid_lo, /*includeRootDirectory*/true, /*includeNodeCaps*/true);
+            void* romPtr = (void*)ivars->configROMMap->GetAddress();
+            size_t romLen = (size_t)ivars->configROMMap->GetLength();
+            rom.writeToBufferBE(romPtr, romLen);
+
+            // Full ROM dump for debugging and verification
+            DumpHexBigEndian(romPtr, romLen, "CONFIG ROM DUMP HEX");
+
+            // DMA-map to obtain 32-bit IOVA for ConfigROMmap register
+            IODMACommandSpecification spec{};
+            spec.options = kIODMACommandSpecificationNoOptions;
+            spec.maxAddressBits = 32; // 32-bit IOVA required for OHCI
+            IODMACommand* dma = nullptr;
+            ckr = IODMACommand::Create(pci, kIODMACommandCreateNoOptions, &spec, &dma);
+            if (ckr == kIOReturnSuccess && dma) {
+                uint64_t dflags = 0;
+                uint32_t dsegs = 32;
+                IOAddressSegment segs[32] = {};
+                ckr = dma->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
+                                         ivars->configROMBuffer,
+                                         0,
+                                         1024,
+                                         &dflags,
+                                         &dsegs,
+                                         segs);
+                if (ckr == kIOReturnSuccess) {
+                    ivars->configROMDMA = dma;
+                    ivars->configROMSeg = segs[0];
+                    // Program OHCI registers: header=0 (workaround), BusOptions from ROM[2], map address
+                    // Stage BusOptions and header for commit on next BusReset per OHCI §5.5 (Linux parity)
+                    ivars->configROMHeaderQuad = rom.headerQuad();
+                    ivars->configROMBusOptions = rom.romQuad(2);
+                    ivars->configROMHeaderNeedsCommit = true;
+                    // Initial workaround: header=0 until next BusReset; program BusOptions mirror for completeness
+                    pci->MemoryWrite32(bar0Index, kOHCI_ConfigROMhdr, 0);
+                    pci->MemoryWrite32(bar0Index, kOHCI_BusOptions, ivars->configROMBusOptions);
+                    pci->MemoryWrite32(bar0Index, kOHCI_ConfigROMmap, (uint32_t)ivars->configROMSeg.address);
+                    os_log(ASLog(), "ASOHCI: ConfigROM mapped @ 0x%08x, BusOptions=0x%08x, VendorID=0x%06x, EUI64=%08x%08x",
+                           (unsigned)ivars->configROMSeg.address, ivars->configROMBusOptions,
+                           (unsigned)rom.vendorID(), (unsigned)guid_hi, (unsigned)guid_lo);
+                } else {
+                    os_log(ASLog(), "ASOHCI: WARN: Config ROM DMA prepare failed: 0x%08x", ckr);
+                    dma->release();
+                }
+            } else {
+                os_log(ASLog(), "ASOHCI: WARN: Config ROM DMA create failed: 0x%08x", ckr);
+            }
+        }
+    }
 
     // --- Clear/mask interrupts
     const uint32_t allOnes = 0xFFFFFFFFu;
@@ -701,6 +831,8 @@ if (ivars && ivars->pciDevice) {
                               (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt | kOHCI_LC_CycleTimerEnable));
     // Readback to flush posted writes
     uint32_t _lc=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &_lc);
+    // Clear Config ROM map to decouple DMA before freeing memory
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_ConfigROMmap, 0);
 }
 
 // 3) Stop AR/AT contexts gracefully (clear run, wait inactive) before freeing backing memory
@@ -773,6 +905,21 @@ if (ivars && ivars->selfIDBuffer) {
     os_log(ASLog(), "ASOHCI: Self-ID buffer released");
     BRIDGE_LOG("Self-ID buffer released");
 }
+// 7) Release Config ROM resources
+if (ivars && ivars->configROMDMA) {
+    os_log(ASLog(), "ASOHCI: Stop step 7 - release Config ROM DMA/map/buffer");
+    ivars->configROMDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+    ivars->configROMDMA->release();
+    ivars->configROMDMA = nullptr;
+}
+if (ivars && ivars->configROMMap) {
+    ivars->configROMMap->release();
+    ivars->configROMMap = nullptr;
+}
+if (ivars && ivars->configROMBuffer) {
+    ivars->configROMBuffer->release();
+    ivars->configROMBuffer = nullptr;
+}
 
 // 7) Release PHY helper
 if (ivars && ivars->phyAccess) {
@@ -818,10 +965,10 @@ ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
     if (!ivars) {
         return;
     }
-    uint32_t seq = __atomic_add_fetch(&ivars->interruptCount, 1, __ATOMIC_RELAXED);
-    os_log(ASLog(), "ASOHCI: InterruptOccurred #%u (count=%llu time=%llu)",
-            seq, (unsigned long long)count, (unsigned long long)time);
-    BRIDGE_LOG("IRQ #%u hwcount=%llu", seq, (unsigned long long)count);
+    uint64_t seq = __atomic_add_fetch(&ivars->interruptCount, 1, __ATOMIC_RELAXED);
+    os_log(ASLog(), "ASOHCI: InterruptOccurred #%llu (count=%llu time=%llu)",
+            (unsigned long long)seq, (unsigned long long)count, (unsigned long long)time);
+    BRIDGE_LOG("IRQ #%llu hwcount=%llu", (unsigned long long)seq, (unsigned long long)count);
 
     if (!ivars->pciDevice) {
         os_log(ASLog(), "ASOHCI: No PCI device bound; spurious?");
@@ -857,6 +1004,14 @@ if (intEvent & kOHCI_Int_PostedWriteErr) {
 if (intEvent & kOHCI_Int_BusReset) {
     // Mask busReset until bus reset handling completes (Linux parity)
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear, kOHCI_Int_BusReset);
+    // Per OHCI §5.5, if a Config ROM image is staged, update BusOptions then Header now.
+    if (ivars->configROMHeaderNeedsCommit && ivars->configROMHeaderQuad != 0) {
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_BusOptions, ivars->configROMBusOptions);
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_ConfigROMhdr, ivars->configROMHeaderQuad);
+        os_log(ASLog(), "ASOHCI: ConfigROM header committed on BusReset (BusOptions=0x%08x, Header=0x%08x)",
+               ivars->configROMBusOptions, ivars->configROMHeaderQuad);
+        ivars->configROMHeaderNeedsCommit = false;
+    }
     if (ivars->selfIDInProgress) {
         // Already in a reset/self-id cycle; collapse this extra signal
         ++ivars->collapsedBusResets;

@@ -59,6 +59,15 @@ private:
         IOAddressSegment           selfIDSeg     = {};
         IOMemoryMap*               selfIDMap     = nullptr; // CPU mapping
 
+        // Config ROM DMA resources
+        IOBufferMemoryDescriptor*  configROMBuffer = nullptr; // 1KB ROM image
+        IOMemoryMap*               configROMMap    = nullptr; // CPU mapping
+        IODMACommand*              configROMDMA    = nullptr; // DMA mapping
+        IOAddressSegment           configROMSeg    = {};      // 32-bit IOVA
+        uint32_t                   configROMHeaderQuad = 0;   // Computed BIB header quadlet
+        uint32_t                   configROMBusOptions = 0;   // Mirror of ROM[2]
+        bool                       configROMHeaderNeedsCommit = false; // Write hdr after next BusReset
+
         // Link/Bus state flags
         bool                       cycleTimerArmed   = false;
         bool                       selfIDInProgress  = false;

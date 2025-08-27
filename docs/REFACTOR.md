@@ -22,8 +22,8 @@ The first step is to create the empty files for our new class structure within t
 - [ ] **Topology & Configuration**
     - [ ] `ASOHCITopologyDB.hpp`
     - [ ] `ASOHCITopologyDB.cpp`
-    - [ ] `ASOHCIConfigROM.hpp`
-    - [ ] `ASOHCIConfigROM.cpp`
+    - [x] `ASOHCIConfigROM.hpp` (added)
+    - [x] `ASOHCIConfigROM.cpp` (added)
     - [ ] `ASOHCICSRSpace.hpp`
     - [ ] `ASOHCICSRSpace.cpp`
 - [ ] **DMA & Data Flow Management**
@@ -49,6 +49,7 @@ Populate the newly created files with the C++ stub code. The code for each class
 
 - [ ] Paste stub code into all `.hpp` files.
 - [ ] Paste stub code into all `.cpp` files.
+- [x] Implemented `ASOHCIConfigROM` (BIB + minimal Root Dir + CRC-16).
 
 ## Phase 3: Update Xcode Project & Verify Build
 
@@ -57,9 +58,10 @@ Manually add all new files to the Xcode project file to ensure they are compiled
 **Warning:** Editing `project.pbxproj` is error-prone. Be careful with syntax, and ensure you have a backup.
 
 - [ ] **Edit `ASFireWire/ASFireWire.xcodeproj/project.pbxproj`:**
-    - [ ] Locate the `PBXGroup` for the `ASOHCI` sources and add entries for all new `.hpp` and `.cpp` files.
-    - [ ] Locate the `PBXSourcesBuildPhase` for the `ASOHCI` target and add references to all new `.cpp` files.
-    - [ ] Locate the `PBXHeadersBuildPhase` for the `ASOHCI` target and add references to all new `.hpp` files.
+    - [x] Added `ASOHCIConfigROM.hpp/.cpp` to `ASOHCI` target (Sources/Headers).
+    - [ ] Locate the `PBXGroup` for the `ASOHCI` sources and add entries for remaining new files.
+    - [ ] Locate the `PBXSourcesBuildPhase` for the `ASOHCI` target and add references to all remaining new `.cpp` files.
+    - [ ] Locate the `PBXHeadersBuildPhase` for the `ASOHCI` target and add references to all remaining new `.hpp` files.
 - [ ] **Verify Build:**
     - [ ] Run the command line build to confirm the project still compiles with the new files:
       ```sh
@@ -74,10 +76,11 @@ Refactor the main `ASOHCI.cpp` file to use the new manager classes. The goal is 
     - [ ] Add private member variables for all new manager classes in `ASOHCI.h`.
 - [ ] **Initialization (`Start` method):**
     - [ ] Instantiate `ASOHCIBusManager` and `ASOHCICycleTimerService`.
-    - [ ] Instantiate `ASOHCIConfigROM`, build the minimal ROM, and attach it to an instantiated `ASOHCICSRSpace`.
+    - [ ] Instantiate `ASOHCIConfigROM`, build the ROM, and attach it to `ASOHCICSRSpace`.
     - [ ] Instantiate `ASOHCIAddressHandler` and connect it to the `CSRSpace`.
     - [ ] Instantiate `ASOHCIAsyncManager` and bind it to the existing `AR`/`AT` contexts and the new `CSRSpace`.
     - [ ] Instantiate `ASOHCIIsochManager` and its `IT`/`IR` contexts (placeholders).
+    - [x] Current integration: ROM buffer allocated/mapped; `ConfigROMmap` programmed; `BIBimageValid` set with LinkEnable.
 - [ ] **Teardown (`Stop` method):**
     - [ ] Add calls to the `onStop()` methods of the new manager classes.
     - [ ] Ensure all newly allocated objects are properly released.
@@ -86,6 +89,7 @@ Refactor the main `ASOHCI.cpp` file to use the new manager classes. The goal is 
     - [ ] **Self-ID Complete:** Delegate to `ASOHCIBusManager::handleSelfIDCompleteIRQ()`.
     - [ ] **DMA (AR/AT/IR/IT):** Delegate to the `handleInterrupt()` method of the corresponding context object (`ASOHCIARContext`, `ASOHCIATContext`, etc.).
     - [ ] **Posted Write Error:** Delegate to `ASOHCIAddressHandler::onPostedWriteError()`.
+    - [x] Current: Commit `BusOptions` then `ConfigROMhdr` on BusReset (OHCI §5.5 parity).
 
 ## Phase 5: Implementation Checklist
 
@@ -103,8 +107,10 @@ This section tracks the implementation of the `TODO` items within each new class
 - [ ] `probableRoot()`: Implement logic to derive the bus root node from port status.
 
 ### 3. Configuration ROM (`ASOHCIConfigROM`) ([details](REFACTOR_DETAILS.md#5-configuration-rom-builder))
-- [ ] `buildMinimal()`: Implement Bus_Info_Block and Root_Dir creation per IEEE 1212 §7.2, §7.6.
-- [ ] `crc32()`: Implement the CRC-32 calculation per IEEE 1212 §7.3.
+- [x] `buildFromHardware()`: Build BIB (5 quadlets) + minimal Root Dir (Vendor_ID, Node_Capabilities).
+- [x] `crc16()`: Implement ITU‑T CRC‑16 per IEEE 1212 §7.3 for BIB and directories.
+- [x] Stage ROM header/BusOptions and commit on BusReset (write BusOptions, then Header).
+- [ ] Atomic ROM updates: write `ConfigROMmap` (next) and trigger bus reset to swap images.
 
 ### 4. CSR Space (`ASOHCICSRSpace`) ([details](REFACTOR_DETAILS.md#6-csr-space-façade))
 - [ ] `read()`: Implement CSR read handling for physical requests per 1212 §5.1 + §6.
