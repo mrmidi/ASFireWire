@@ -14,6 +14,9 @@
 #include <DriverKit/IOInterruptDispatchSource.iig>
 #include <DriverKit/OSData.iig>
 #include <DriverKit/IOBufferMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryMap.iig>
+#include <DriverKit/IODMACommand.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
 
 
@@ -34,11 +37,46 @@ public:
     virtual kern_return_t CopyBridgeLogs(OSData** outData);
 
 private:
-    // ivars you’ll keep
-    IOPCIDevice*                     pciDevice   = nullptr;
-    IOMemoryMap*                     bar0Map     = nullptr;
-    IOInterruptDispatchSource*       intSource   = nullptr;
-    IODispatchQueue*                 defaultQ    = nullptr;
+    // Helper to arm Self-ID receive buffer and enable bits
+    virtual void ArmSelfIDReceive(bool clearCount) LOCALONLY;
+
+    // Per-instance state managed by IIG (ivars pointer is auto-provided)
+    struct ivars {
+        // Device / MMIO
+        IOPCIDevice*               pciDevice     = nullptr;
+        IOMemoryMap*               bar0Map       = nullptr;
+        uint8_t                    barIndex      = 0;
+        IOInterruptDispatchSource* intSource     = nullptr;
+        IODispatchQueue*           defaultQ      = nullptr;
+
+        // Interrupt/accounting
+        uint64_t                   interruptCount = 0;
+
+        // Self-ID DMA resources
+        IOBufferMemoryDescriptor*  selfIDBuffer  = nullptr;
+        IODMACommand*              selfIDDMA     = nullptr;
+        IOAddressSegment           selfIDSeg     = {};
+        IOMemoryMap*               selfIDMap     = nullptr; // CPU mapping
+
+        // Link/Bus state flags
+        bool                       cycleTimerArmed   = false;
+        bool                       selfIDInProgress  = false;
+        bool                       selfIDArmed       = false;
+        uint32_t                   collapsedBusResets= 0;
+        uint32_t                   lastLoggedNodeID  = 0xFFFFFFFFu;
+        bool                       lastLoggedValid   = false;
+        bool                       lastLoggedRoot    = false;
+        bool                       didInitialPhyScan = false;
+
+        // PHY access helper
+        class ASOHCIPHYAccess*     phyAccess     = nullptr;
+
+        // DMA Contexts
+        class ASOHCIARContext*     arRequestContext  = nullptr;
+        class ASOHCIARContext*     arResponseContext = nullptr;
+        class ASOHCIATContext*     atRequestContext  = nullptr;
+        class ASOHCIATContext*     atResponseContext = nullptr;
+    };
 
 };
 

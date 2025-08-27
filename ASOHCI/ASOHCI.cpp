@@ -31,121 +31,52 @@
 #include "PhyAccess.hpp"
 #include "ASOHCIARContext.hpp"
 #include "ASOHCIATContext.hpp"
-
-// ------------------------ Globals for this TU (simple bring‑up) ------------------------
-static IOInterruptDispatchSource * gIntSource     = nullptr;
-static IOPCIDevice               * gPCIDevice     = nullptr;
-static IOBufferMemoryDescriptor  * gSelfIDBuffer  = nullptr;
-static IODMACommand              * gSelfIDDMA     = nullptr;
-static IOAddressSegment            gSelfIDSeg     = {};
-static IOMemoryMap               * gSelfIDMap     = nullptr; // CPU mapping of buffer
-static uint8_t                     gBAR0Index     = 0;
-static volatile uint32_t           gInterruptCount= 0;
-static bool                        gCycleTimerArmed = false; // deferred enable
-static bool                        gSelfIDInProgress = false; // between BusReset and SelfIDComplete
-static bool                        gSelfIDArmed      = false; // Self-ID buffer armed for current cycle
-static uint32_t                    gCollapsedBusResets = 0;   // BusReset signals ignored while in-progress
-static uint32_t                    gLastLoggedNodeID = 0xFFFFFFFF; // last logged raw NodeID value
-static bool                        gLastLoggedValid  = false;
-static bool                        gLastLoggedRoot   = false;
-static ASOHCIPHYAccess           * gPhyAccess        = nullptr; // serialized PHY register access
-static bool                        gDidInitialPhyScan = false;  // one-shot PHY scan after first stable Self-ID
-
-// AR/AT DMA Context Management
-static ASOHCIARContext           * gARRequestContext  = nullptr; // AR Request context
-static ASOHCIARContext           * gARResponseContext = nullptr; // AR Response context  
-static ASOHCIATContext           * gATRequestContext  = nullptr; // AT Request context
-static ASOHCIATContext           * gATResponseContext = nullptr; // AT Response context
-
 // ------------------------ Logging -----------------------------------
 #include "LogHelper.hpp"
+#include "ASOHCIInterruptDump.hpp"
 
 // BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
 
-// Helper: program 32-bit Self-ID IOVA and enable packet reception
-static inline void ArmSelfIDReceive(IOPCIDevice *pci, uint8_t bar0, bool clearCount)
-{
-// Keep buffer pointer programmed; optionally clear count; ensure receive bits are set
-pci->MemoryWrite32(bar0, kOHCI_SelfIDBuffer, (uint32_t) gSelfIDSeg.address);
-if (clearCount) {
-    pci->MemoryWrite32(bar0, kOHCI_SelfIDCount, 0);
-}
-pci->MemoryWrite32(bar0, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
-uint32_t lc=0; pci->MemoryRead32(bar0, kOHCI_LinkControlSet, &lc);
-os_log(ASLog(), "ASOHCI: Arm Self-ID (clearCount=%u) LinkControl=0x%08x", clearCount ? 1u : 0u, lc);
-gSelfIDArmed = true;
-}
+// Define ASOHCI_IVars to match the generated forward declaration so member access compiles
+struct ASOHCI_IVars {
+    IOPCIDevice               * pciDevice     = nullptr;
+    IOMemoryMap               * bar0Map       = nullptr;
+    uint8_t                     barIndex      = 0;
+    IOInterruptDispatchSource * intSource     = nullptr;
+    IODispatchQueue           * defaultQ      = nullptr;
+    uint64_t                    interruptCount = 0;
+    IOBufferMemoryDescriptor  * selfIDBuffer  = nullptr;
+    IODMACommand              * selfIDDMA     = nullptr;
+    IOAddressSegment            selfIDSeg     = {};
+    IOMemoryMap               * selfIDMap     = nullptr;
+    bool                        cycleTimerArmed   = false;
+    bool                        selfIDInProgress  = false;
+    bool                        selfIDArmed       = false;
+    uint32_t                    collapsedBusResets= 0;
+    uint32_t                    lastLoggedNodeID  = 0xFFFFFFFFu;
+    bool                        lastLoggedValid   = false;
+    bool                        lastLoggedRoot    = false;
+    bool                        didInitialPhyScan = false;
+    ASOHCIPHYAccess           * phyAccess     = nullptr;
+    ASOHCIARContext           * arRequestContext  = nullptr;
+    ASOHCIARContext           * arResponseContext = nullptr;
+    ASOHCIATContext           * atRequestContext  = nullptr;
+    ASOHCIATContext           * atResponseContext = nullptr;
+};
 
-// OHCI 1.1 §6.1 compliant interrupt bit analysis with specification references
-static void DumpIntEvent(uint32_t ev)
+// Helper: program 32-bit Self-ID IOVA and enable packet reception
+void ASOHCI::ArmSelfIDReceive(bool clearCount)
 {
-    if (!ev) return;
-    
-    // Group 1: DMA Completion Events (OHCI 1.1 §6.1 Table 6-1 bits 0-7)
-    uint32_t dmaEvents = ev & 0x000000FF;
-    if (dmaEvents) {
-        os_log(ASLog(), "ASOHCI: === DMA Completion Interrupts (OHCI §6.1) ===");
-        if (ev & kOHCI_Int_ReqTxComplete)   os_log(ASLog(), "ASOHCI:  • AT Request Tx Complete (bit 0) - §7.6");
-        if (ev & kOHCI_Int_RespTxComplete)  os_log(ASLog(), "ASOHCI:  • AT Response Tx Complete (bit 1) - §7.6");
-        if (ev & kOHCI_Int_ARRQ)            os_log(ASLog(), "ASOHCI:  • AR Request DMA Complete (bit 2) - §8.6");
-        if (ev & kOHCI_Int_ARRS)            os_log(ASLog(), "ASOHCI:  • AR Response DMA Complete (bit 3) - §8.6");
-        if (ev & kOHCI_Int_RqPkt)           os_log(ASLog(), "ASOHCI:  • AR Request Packet Received (bit 4) - §8.6");
-        if (ev & kOHCI_Int_RsPkt)           os_log(ASLog(), "ASOHCI:  • AR Response Packet Received (bit 5) - §8.6");
-        if (ev & kOHCI_Int_IsochTx)         os_log(ASLog(), "ASOHCI:  • Isochronous Tx Interrupt (bit 6) - §6.3");
-        if (ev & kOHCI_Int_IsochRx)         os_log(ASLog(), "ASOHCI:  • Isochronous Rx Interrupt (bit 7) - §6.4");
+    if (!ivars || !ivars->pciDevice) return;
+    // Keep buffer pointer programmed; optionally clear count; ensure receive bits are set
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDBuffer, (uint32_t) ivars->selfIDSeg.address);
+    if (clearCount) {
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDCount, 0);
     }
-    
-    // Group 2: Error Conditions (OHCI 1.1 §6.1 Table 6-1 bits 8-9, 18, 24-25)
-    uint32_t errors = ev & (kOHCI_Int_PostedWriteErr | kOHCI_Int_LockRespErr |
-                           kOHCI_Int_RegAccessFail | kOHCI_Int_UnrecoverableError |
-                           kOHCI_Int_CycleTooLong);
-    if (errors) {
-        os_log(ASLog(), "ASOHCI: === ERROR CONDITIONS (OHCI §6.1) ===");
-        if (ev & kOHCI_Int_PostedWriteErr)     os_log(ASLog(), "ASOHCI:  • Posted Write Error (bit 8) - host bus error §13.2.8.1");
-        if (ev & kOHCI_Int_LockRespErr)        os_log(ASLog(), "ASOHCI:  • Lock Response Error (bit 9) - no ack_complete §5.5.1");
-        if (ev & kOHCI_Int_RegAccessFail)      os_log(ASLog(), "ASOHCI:  • Register Access Failed (bit 18) - missing SCLK clock");
-        if (ev & kOHCI_Int_UnrecoverableError) os_log(ASLog(), "ASOHCI:  • UNRECOVERABLE ERROR (bit 24) - context dead, operations stopped");
-        if (ev & kOHCI_Int_CycleTooLong)       os_log(ASLog(), "ASOHCI:  • Cycle Too Long (bit 25) - >120μs cycle, cycleMaster cleared");
-    }
-    
-    // Group 3: Bus Management & Timing (OHCI 1.1 §6.1 Table 6-1 bits 15-17, 19-23)
-    uint32_t busEvents = ev & (kOHCI_Int_SelfIDComplete2 | kOHCI_Int_SelfIDComplete |
-                              kOHCI_Int_BusReset | kOHCI_Int_Phy | kOHCI_Int_CycleSynch |
-                              kOHCI_Int_Cycle64Seconds | kOHCI_Int_CycleLost |
-                              kOHCI_Int_CycleInconsistent);
-    if (busEvents) {
-        os_log(ASLog(), "ASOHCI: === Bus Management & Timing (OHCI §6.1) ===");
-        if (ev & kOHCI_Int_BusReset)          os_log(ASLog(), "ASOHCI:  • Bus Reset (bit 17) - PHY entered reset mode §6.1.1");
-        if (ev & kOHCI_Int_SelfIDComplete)    os_log(ASLog(), "ASOHCI:  • Self-ID Complete (bit 16) - packet stream received §11.5");
-        if (ev & kOHCI_Int_SelfIDComplete2)   os_log(ASLog(), "ASOHCI:  • Self-ID Complete Secondary (bit 15) - independent of busReset §11.5");
-        if (ev & kOHCI_Int_Phy)               os_log(ASLog(), "ASOHCI:  • PHY Interrupt (bit 19) - status transfer request");
-        if (ev & kOHCI_Int_CycleSynch)        os_log(ASLog(), "ASOHCI:  • Cycle Start (bit 20) - new isochronous cycle begun");
-        if (ev & kOHCI_Int_Cycle64Seconds)    os_log(ASLog(), "ASOHCI:  • 64 Second Tick (bit 21) - cycle second counter bit 7 changed");
-        if (ev & kOHCI_Int_CycleLost)         os_log(ASLog(), "ASOHCI:  • Cycle Lost (bit 22) - no cycle_start between cycleSynch events");
-        if (ev & kOHCI_Int_CycleInconsistent) os_log(ASLog(), "ASOHCI:  • Cycle Inconsistent (bit 23) - timer mismatch §5.13, §9.5.1, §10.5.1");
-    }
-    
-    // Group 4: High-Order Interrupts (OHCI 1.1 §6.1 Table 6-1 bits 26-31)
-    uint32_t highBits = ev & 0xFC000000;
-    if (highBits) {
-        os_log(ASLog(), "ASOHCI: === High-Order Interrupts (OHCI §6.1) ===");
-        if (ev & kOHCI_Int_PhyRegRcvd)        os_log(ASLog(), "ASOHCI:  • PHY Register Received (bit 26) - PHY register packet");
-        if (ev & kOHCI_Int_AckTardy)          os_log(ASLog(), "ASOHCI:  • Acknowledgment Tardy (bit 27) - late ack received");
-        if (ev & kOHCI_Int_SoftInterrupt)     os_log(ASLog(), "ASOHCI:  • Software Interrupt (bit 28) - host-initiated");
-        if (ev & kOHCI_Int_VendorSpecific)    os_log(ASLog(), "ASOHCI:  • Vendor Specific (bit 29) - implementation-defined");
-        if (ev & kOHCI_Int_MasterEnable)      os_log(ASLog(), "ASOHCI:  • Master Interrupt Enable (bit 31) - global enable bit");
-    }
-    
-    // Check for unexpected bits in reserved ranges
-    uint32_t reserved = ev & 0x00007C00;  // Bits 10-14 are reserved per OHCI spec
-    if (reserved) {
-        os_log(ASLog(), "ASOHCI: WARNING: Reserved interrupt bits set: 0x%08x (bits 10-14)", reserved);
-    }
-    
-    uint32_t bit30 = ev & 0x40000000;  // Bit 30 is reserved per OHCI spec
-    if (bit30) {
-        os_log(ASLog(), "ASOHCI: WARNING: Reserved interrupt bit 30 set: 0x%08x", bit30);
-    }
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+    uint32_t lc=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &lc);
+    os_log(ASLog(), "ASOHCI: Arm Self-ID (clearCount=%u) LinkControl=0x%08x", clearCount ? 1u : 0u, lc);
+    ivars->selfIDArmed = true;
 }
 
 // Self-ID parsing
@@ -176,6 +107,13 @@ if (kr != kIOReturnSuccess) {
 os_log(ASLog(), "ASOHCI: Start() begin bring-up");
 BRIDGE_LOG("Start bring-up");
 bridge_log_init();
+
+// Reset bring-up/lifecycle flags to known defaults
+ivars->cycleTimerArmed    = false;
+ivars->selfIDInProgress   = false;
+ivars->selfIDArmed        = false;
+ivars->collapsedBusResets = 0;
+ivars->didInitialPhyScan  = false;
 
 auto pci = OSDynamicCast(IOPCIDevice, provider);
 if (!pci) {
@@ -231,8 +169,8 @@ if (bar0Size >= 0x2C) {
             ohci_ver, bus_opts, guid_hi, guid_lo);
     BRIDGE_LOG("OHCI VER=%08x BUSOPT=%08x GUID=%08x:%08x", ohci_ver, bus_opts, guid_hi, guid_lo);
 
-    gPCIDevice = pci;
-    gBAR0Index = bar0Index;
+    ivars->pciDevice = pci;
+    ivars->barIndex  = bar0Index;
 
     // --- Clear/mask interrupts
     const uint32_t allOnes = 0xFFFFFFFFu;
@@ -338,7 +276,7 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
                 src->SetHandler(action);
                 action->release();
                 src->SetEnableWithCompletion(true, nullptr);
-                gIntSource = src;
+                ivars->intSource = src;
                 os_log(ASLog(), "ASOHCI: Interrupt source enabled");
                 BRIDGE_LOG("IRQ source enabled");
             } else {
@@ -359,17 +297,17 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
         kIOMemoryDirectionIn, // device writes into it
         kSelfIDBufferSize,
         kSelfIDBufferAlign,
-        &gSelfIDBuffer
+        &ivars->selfIDBuffer
     );
-    if (kr != kIOReturnSuccess || !gSelfIDBuffer) {
+    if (kr != kIOReturnSuccess || !ivars->selfIDBuffer) {
         os_log(ASLog(), "ASOHCI: IOBufferMemoryDescriptor::Create failed: 0x%08x", kr);
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
     }
 
     // Map buffer into CPU address space for parsing
-    if (!gSelfIDMap) {
-        kern_return_t mr = gSelfIDBuffer->CreateMapping(0, 0, 0, 0, 0, &gSelfIDMap);
-        if (mr != kIOReturnSuccess || !gSelfIDMap) {
+    if (!ivars->selfIDMap) {
+        kern_return_t mr = ivars->selfIDBuffer->CreateMapping(0, 0, 0, 0, 0, &ivars->selfIDMap);
+        if (mr != kIOReturnSuccess || !ivars->selfIDMap) {
             os_log(ASLog(), "ASOHCI: CreateMapping for Self-ID buffer failed: 0x%08x", mr);
         }
     }
@@ -389,7 +327,7 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     uint32_t segCount = 32;
     IOAddressSegment segs[32] = {};
     kr = dma->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
-                            gSelfIDBuffer,
+                            ivars->selfIDBuffer,
                             0,
                             kSelfIDBufferSize,
                             &flags,
@@ -401,10 +339,10 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
         dma->release();
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
     }
-    gSelfIDDMA = dma;
-    gSelfIDSeg = segs[0];
-    os_log(ASLog(), "ASOHCI: Self-ID IOVA=0x%llx len=0x%llx", (unsigned long long)gSelfIDSeg.address, (unsigned long long)gSelfIDSeg.length);
-    BRIDGE_LOG("Self-ID IOVA=0x%llx", (unsigned long long)gSelfIDSeg.address);
+    ivars->selfIDDMA = dma;
+    ivars->selfIDSeg = segs[0];
+    os_log(ASLog(), "ASOHCI: Self-ID IOVA=0x%llx len=0x%llx", (unsigned long long)ivars->selfIDSeg.address, (unsigned long long)ivars->selfIDSeg.length);
+    BRIDGE_LOG("Self-ID IOVA=0x%llx", (unsigned long long)ivars->selfIDSeg.address);
 
     // =====================================================================================
     // Complete OHCI Initialization Sequence (based on Linux driver and OHCI 1.1 spec)
@@ -461,8 +399,16 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
 
     // Phase 4: Self-ID Buffer Programming (OHCI 1.1 §11)
     os_log(ASLog(), "ASOHCI: Phase 4 - Self-ID Buffer Configuration");
-    pci->MemoryWrite32(bar0Index, kOHCI_SelfIDBuffer, (uint32_t)gSelfIDSeg.address);
-    // Gate the cycle timer until after a stable Self-ID is observed (handled in IRQ path)
+    pci->MemoryWrite32(bar0Index, kOHCI_SelfIDBuffer, (uint32_t)ivars->selfIDSeg.address);
+    // Linux parity: enable Cycle Timer + Cycle Master early during bring-up.
+    // Note: If this proves unstable on some hosts, we can try the alternative
+    // "deferred timer after first stable Self-ID" strategy (spec-friendly).
+    pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet,
+                       (kOHCI_LC_CycleTimerEnable | kOHCI_LC_CycleMaster));
+    uint32_t lcEarly=0; pci->MemoryRead32(bar0Index, kOHCI_LinkControlSet, &lcEarly);
+    os_log(ASLog(), "ASOHCI: LinkControlSet cycleTimerEnable+cycleMaster (LC=0x%08x)", lcEarly);
+    ivars->cycleTimerArmed = true; // mark as enabled to skip deferred path in IRQ
+    // Also enable reception of Self-ID and PHY packets now
     pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet,
                        (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
 
@@ -487,25 +433,25 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     }
 
     // Ensure PHY access helper is available before PHY programming
-    if (!gPhyAccess) {
-        gPhyAccess = new ASOHCIPHYAccess();
-        if (gPhyAccess && !gPhyAccess->init(this, pci, (uint8_t)bar0Index)) {
+    if (!ivars->phyAccess) {
+        ivars->phyAccess = new ASOHCIPHYAccess();
+        if (ivars->phyAccess && !ivars->phyAccess->init(this, pci, (uint8_t)bar0Index)) {
             os_log(ASLog(), "ASOHCI: PHY access init failed (continuing without)" );
-            delete gPhyAccess;
-            gPhyAccess = nullptr;
-        } else if (gPhyAccess) {
+            delete ivars->phyAccess;
+            ivars->phyAccess = nullptr;
+        } else if (ivars->phyAccess) {
             os_log(ASLog(), "ASOHCI: PHY access initialized");
         }
     }
 
     // Phase 7: PHY Register Programming (Linux ohci_enable line 2514)
     os_log(ASLog(), "ASOHCI: Phase 7 - PHY Register Programming");
-    if (gPhyAccess) {
+    if (ivars->phyAccess) {
         // Read current PHY register 4
         uint8_t currentVal = 0;
-        if (gPhyAccess->readPhyRegister(kPHY_REG_4, &currentVal) == kIOReturnSuccess) {
+        if (ivars->phyAccess->readPhyRegister(kPHY_REG_4, &currentVal) == kIOReturnSuccess) {
             uint8_t newVal = currentVal | kPHY_LINK_ACTIVE | kPHY_CONTENDER;
-            if (gPhyAccess->writePhyRegister(kPHY_REG_4, newVal) == kIOReturnSuccess) {
+            if (ivars->phyAccess->writePhyRegister(kPHY_REG_4, newVal) == kIOReturnSuccess) {
                 os_log(ASLog(), "ASOHCI: PHY register 4: 0x%02x -> 0x%02x (LINK_ACTIVE + CONTENDER)", 
                        currentVal, newVal);
             } else {
@@ -531,11 +477,11 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     // Leave other filters (lo + response filters) at reset defaults for now
     
     // Initialize AR Request Context  
-    gARRequestContext = new ASOHCIARContext();
-    if (gARRequestContext) {
-        kr = gARRequestContext->Initialize(pci, ASOHCIARContext::AR_REQUEST_CONTEXT, (uint8_t)bar0Index);
+    ivars->arRequestContext = new ASOHCIARContext();
+    if (ivars->arRequestContext) {
+        kr = ivars->arRequestContext->Initialize(pci, ASOHCIARContext::AR_REQUEST_CONTEXT, (uint8_t)bar0Index);
         if (kr == kIOReturnSuccess) {
-            kr = gARRequestContext->Start();
+            kr = ivars->arRequestContext->Start();
             if (kr == kIOReturnSuccess) {
                 os_log(ASLog(), "ASOHCI: AR Request context initialized and started");
             } else {
@@ -549,11 +495,11 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     }
     
     // Initialize AR Response Context
-    gARResponseContext = new ASOHCIARContext();
-    if (gARResponseContext) {
-        kr = gARResponseContext->Initialize(pci, ASOHCIARContext::AR_RESPONSE_CONTEXT, (uint8_t)bar0Index);
+    ivars->arResponseContext = new ASOHCIARContext();
+    if (ivars->arResponseContext) {
+        kr = ivars->arResponseContext->Initialize(pci, ASOHCIARContext::AR_RESPONSE_CONTEXT, (uint8_t)bar0Index);
         if (kr == kIOReturnSuccess) {
-            kr = gARResponseContext->Start();
+            kr = ivars->arResponseContext->Start();
             if (kr == kIOReturnSuccess) {
                 os_log(ASLog(), "ASOHCI: AR Response context initialized and started");
             } else {
@@ -567,11 +513,11 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     }
     
     // Initialize AT Request Context (foundation only)
-    gATRequestContext = new ASOHCIATContext();
-    if (gATRequestContext) {
-        kr = gATRequestContext->Initialize(pci, ASOHCIATContext::AT_REQUEST_CONTEXT);
+    ivars->atRequestContext = new ASOHCIATContext();
+    if (ivars->atRequestContext) {
+        kr = ivars->atRequestContext->Initialize(pci, ASOHCIATContext::AT_REQUEST_CONTEXT);
         if (kr == kIOReturnSuccess) {
-            kr = gATRequestContext->Start();
+            kr = ivars->atRequestContext->Start();
             if (kr == kIOReturnSuccess) {
                 os_log(ASLog(), "ASOHCI: AT Request context initialized and started");
             } else {
@@ -585,11 +531,11 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     }
     
     // Initialize AT Response Context (foundation only)
-    gATResponseContext = new ASOHCIATContext();
-    if (gATResponseContext) {
-        kr = gATResponseContext->Initialize(pci, ASOHCIATContext::AT_RESPONSE_CONTEXT);
+    ivars->atResponseContext = new ASOHCIATContext();
+    if (ivars->atResponseContext) {
+        kr = ivars->atResponseContext->Initialize(pci, ASOHCIATContext::AT_RESPONSE_CONTEXT);
         if (kr == kIOReturnSuccess) {
-            kr = gATResponseContext->Start();
+            kr = ivars->atResponseContext->Start();
             if (kr == kIOReturnSuccess) {
                 os_log(ASLog(), "ASOHCI: AT Response context initialized and started");
             } else {
@@ -618,8 +564,10 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
 
     // Phase 10: LinkEnable - Final Activation (OHCI 1.1 §5.7.3, Linux lines 2575-2581)
     os_log(ASLog(), "ASOHCI: Phase 10 - Link Enable (Final Activation)");
-    // Defer BIBimageValid until Config ROM is programmed per OHCI §5.5
-    pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet, kOHCI_HCControl_LinkEnable);
+    // Linux parity: set BIBimageValid alongside LinkEnable. If Config ROM is not
+    // yet implemented, we may revisit; try this first as it matches Linux.
+    pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet,
+                       (kOHCI_HCControl_LinkEnable | kOHCI_HCControl_BIBimageValid));
     
     // Verify LinkEnable took effect
     uint32_t finalHCControl = 0;
@@ -655,102 +603,102 @@ return kIOReturnSuccess;
 kern_return_t
 IMPL(ASOHCI, Stop)
 {
-os_log(ASLog(), "ASOHCI: Stop() begin - Total interrupts received: %u", gInterruptCount);
-BRIDGE_LOG("Stop - IRQ count: %u", gInterruptCount);
+os_log(ASLog(), "ASOHCI: Stop() begin - Total interrupts received: %llu", (unsigned long long)(ivars ? ivars->interruptCount : 0));
+BRIDGE_LOG("Stop - IRQ count: %llu", (unsigned long long)(ivars ? ivars->interruptCount : 0));
 
 // 1) Disable our dispatch source first to stop callbacks
-if (gIntSource) {
-    gIntSource->SetEnableWithCompletion(false, nullptr);
-    gIntSource->release();
-    gIntSource = nullptr;
+if (ivars && ivars->intSource) {
+    ivars->intSource->SetEnableWithCompletion(false, nullptr);
+    ivars->intSource->release();
+    ivars->intSource = nullptr;
     os_log(ASLog(), "ASOHCI: Interrupt source disabled");
 }
 
 // 2) Quiesce the controller: mask and clear all interrupts, stop link RX paths
-if (gPCIDevice) {
+if (ivars && ivars->pciDevice) {
     // Mask all interrupt sources including MasterEnable
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IntMaskClear, 0xFFFFFFFFu);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear, 0xFFFFFFFFu);
     // Clear any pending events to avoid later spurious IRQs on re-enable
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IntEventClear,        0xFFFFFFFFu);
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IsoXmitIntEventClear, 0xFFFFFFFFu);
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IsoRecvIntEventClear, 0xFFFFFFFFu);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear,        0xFFFFFFFFu);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IsoXmitIntEventClear, 0xFFFFFFFFu);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IsoRecvIntEventClear, 0xFFFFFFFFu);
     // Also clear iso masks for completeness
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IsoXmitIntMaskClear,  0xFFFFFFFFu);
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IsoRecvIntMaskClear,  0xFFFFFFFFu);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IsoXmitIntMaskClear,  0xFFFFFFFFu);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IsoRecvIntMaskClear,  0xFFFFFFFFu);
 
     // Disable Self-ID/PHY receive and cycle timer
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_LinkControlClear,
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlClear,
                               (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt | kOHCI_LC_CycleTimerEnable));
     // Readback to flush posted writes
-    uint32_t _lc=0; gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_LinkControlSet, &_lc);
+    uint32_t _lc=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &_lc);
 }
 
 // 3) Stop AR/AT contexts gracefully (clear run, wait inactive) before freeing backing memory
-if (gARRequestContext) {
-    gARRequestContext->Stop();
-    delete gARRequestContext;
-    gARRequestContext = nullptr;
+if (ivars && ivars->arRequestContext) {
+    ivars->arRequestContext->Stop();
+    delete ivars->arRequestContext;
+    ivars->arRequestContext = nullptr;
     os_log(ASLog(), "ASOHCI: AR Request context stopped and released");
 }
-if (gARResponseContext) {
-    gARResponseContext->Stop();
-    delete gARResponseContext;
-    gARResponseContext = nullptr;
+if (ivars && ivars->arResponseContext) {
+    ivars->arResponseContext->Stop();
+    delete ivars->arResponseContext;
+    ivars->arResponseContext = nullptr;
     os_log(ASLog(), "ASOHCI: AR Response context stopped and released");
 }
-if (gATRequestContext) {
-    gATRequestContext->Stop();
-    delete gATRequestContext;
-    gATRequestContext = nullptr;
+if (ivars && ivars->atRequestContext) {
+    ivars->atRequestContext->Stop();
+    delete ivars->atRequestContext;
+    ivars->atRequestContext = nullptr;
     os_log(ASLog(), "ASOHCI: AT Request context stopped and released");
 }
-if (gATResponseContext) {
-    gATResponseContext->Stop();
-    delete gATResponseContext;
-    gATResponseContext = nullptr;
+if (ivars && ivars->atResponseContext) {
+    ivars->atResponseContext->Stop();
+    delete ivars->atResponseContext;
+    ivars->atResponseContext = nullptr;
     os_log(ASLog(), "ASOHCI: AT Response context stopped and released");
 }
 
 // 4) Disarm Self-ID receive and scrub registers before freeing buffers
-if (gPCIDevice) {
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_SelfIDCount, 0);
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_SelfIDBuffer, 0);
+if (ivars && ivars->pciDevice) {
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDCount, 0);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDBuffer, 0);
 }
 
 // 5) Assert SoftReset and drop LinkEnable to stop the link state machine
-if (gPCIDevice) {
+if (ivars && ivars->pciDevice) {
     // Clear LinkEnable and aPhyEnhanceEnable bits
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_HCControlClear,
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlClear,
                               (kOHCI_HCControl_LinkEnable | kOHCI_HCControl_aPhyEnhanceEnable));
     // Soft reset the controller
-    gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_HCControlSet, kOHCI_HCControl_SoftReset);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet, kOHCI_HCControl_SoftReset);
     IOSleep(10);
     // Readback to ensure reset posted
-    uint32_t _hc=0; gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_HCControlSet, &_hc);
+    uint32_t _hc=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_HCControlSet, &_hc);
     os_log(ASLog(), "ASOHCI: HC soft reset during Stop (HCControl=0x%08x)", _hc);
 }
 
 // 6) Now free DMA resources in safe order
-if (gSelfIDDMA) {
-    gSelfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-    gSelfIDDMA->release();
-    gSelfIDDMA = nullptr;
+if (ivars && ivars->selfIDDMA) {
+    ivars->selfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+    ivars->selfIDDMA->release();
+    ivars->selfIDDMA = nullptr;
 }
-if (gSelfIDMap) {
-    gSelfIDMap->release();
-    gSelfIDMap = nullptr;
+if (ivars && ivars->selfIDMap) {
+    ivars->selfIDMap->release();
+    ivars->selfIDMap = nullptr;
 }
-if (gSelfIDBuffer) {
-    gSelfIDBuffer->release();
-    gSelfIDBuffer = nullptr;
+if (ivars && ivars->selfIDBuffer) {
+    ivars->selfIDBuffer->release();
+    ivars->selfIDBuffer = nullptr;
     os_log(ASLog(), "ASOHCI: Self-ID buffer released");
     BRIDGE_LOG("Self-ID buffer released");
 }
 
 // 7) Release PHY helper
-if (gPhyAccess) {
-    delete gPhyAccess;
-    gPhyAccess = nullptr;
+if (ivars && ivars->phyAccess) {
+    delete ivars->phyAccess;
+    ivars->phyAccess = nullptr;
 }
 
 // 8) Best-effort: disable BM/MEM space and close
@@ -761,9 +709,11 @@ if (auto pci = OSDynamicCast(IOPCIDevice, provider)) {
     pci->Close(this, 0);
 }
 
-gPCIDevice = nullptr;
-gBAR0Index = 0;
-gInterruptCount = 0;
+if (ivars) {
+    ivars->pciDevice = nullptr;
+    ivars->barIndex = 0;
+    ivars->interruptCount = 0;
+}
 
 kern_return_t r = Stop(provider, SUPERDISPATCH);
 os_log(ASLog(), "ASOHCI: Stop() complete: 0x%08x", r);
@@ -785,54 +735,68 @@ return bridge_log_copy(outData);
 void
 ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
 {
-uint32_t seq = __atomic_add_fetch(&gInterruptCount, 1, __ATOMIC_RELAXED);
+uint32_t seq = __atomic_add_fetch(&ivars->interruptCount, 1, __ATOMIC_RELAXED);
 os_log(ASLog(), "ASOHCI: InterruptOccurred #%u (count=%llu time=%llu)",
         seq, (unsigned long long)count, (unsigned long long)time);
 BRIDGE_LOG("IRQ #%u hwcount=%llu", seq, (unsigned long long)count);
 
-if (!gPCIDevice) {
+if (!ivars || !ivars->pciDevice) {
     os_log(ASLog(), "ASOHCI: No PCI device bound; spurious?");
     return;
 }
 
 uint32_t intEvent = 0;
-gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_IntEvent, &intEvent);
+ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_IntEvent, &intEvent);
 if (intEvent == 0) {
     os_log(ASLog(), "ASOHCI: Spurious MSI (IntEvent=0)");
     return;
 }
 
-// Ack/clear what we saw (write-1-to-clear)
-gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_IntEventClear, intEvent);
+// Ack/clear what we saw (write-1-to-clear), but per OHCI 1.1 and Linux parity
+// do not clear busReset or postedWriteErr in this bulk clear.
+uint32_t clearMask = intEvent & ~(kOHCI_Int_BusReset | kOHCI_Int_PostedWriteErr);
+if (clearMask)
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear, clearMask);
 os_log(ASLog(), "ASOHCI: IntEvent=0x%08x", intEvent);
 BRIDGE_LOG("IRQ events=0x%08x", intEvent);
-DumpIntEvent(intEvent);
+LogUtils::DumpIntEvent(intEvent);
+
+// Handle Posted Write Error per spec: read posted write address regs then clear
+if (intEvent & kOHCI_Int_PostedWriteErr) {
+    uint32_t _hi=0, _lo=0;
+    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_PostedWriteAddressHi, &_hi);
+    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_PostedWriteAddressLo, &_lo);
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear, kOHCI_Int_PostedWriteErr);
+    os_log(ASLog(), "ASOHCI: Posted Write Error addr=%08x:%08x (cleared)", _hi, _lo);
+}
 
 // Bus reset (coalesce repeated resets until SelfIDComplete)
 if (intEvent & kOHCI_Int_BusReset) {
-    if (gSelfIDInProgress) {
+    // Mask busReset until bus reset handling completes (Linux parity)
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear, kOHCI_Int_BusReset);
+    if (ivars->selfIDInProgress) {
         // Already in a reset/self-id cycle; collapse this extra signal
-        ++gCollapsedBusResets;
-        BRIDGE_LOG("Collapsed BusReset (total collapsed=%u)", gCollapsedBusResets);
+        ++ivars->collapsedBusResets;
+        BRIDGE_LOG("Collapsed BusReset (total collapsed=%u)", ivars->collapsedBusResets);
     } else {
-        gSelfIDInProgress = true;
-        gCollapsedBusResets = 0;
+        ivars->selfIDInProgress = true;
+        ivars->collapsedBusResets = 0;
         BRIDGE_LOG("Bus reset (new cycle)");
         os_log(ASLog(), "ASOHCI: Bus reset (new cycle)");
         // Arm Self-ID fresh (clearCount true at start of cycle)
-        ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/true);
+        ArmSelfIDReceive(/*clearCount=*/true);
     }
     // NodeID logging only when it changes or validity/root status toggles
-    uint32_t nodeID=0; gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_NodeID, &nodeID);
+    uint32_t nodeID=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
     bool idValid = ((nodeID >> 31) & 1) != 0;
     bool isRoot  = ((nodeID >> 30) & 1) != 0;
-    if (nodeID != gLastLoggedNodeID || idValid != gLastLoggedValid || isRoot != gLastLoggedRoot) {
+    if (nodeID != ivars->lastLoggedNodeID || idValid != ivars->lastLoggedValid || isRoot != ivars->lastLoggedRoot) {
         uint8_t nAdr = (uint8_t)((nodeID >> 16) & 0x3F);
         os_log(ASLog(), "ASOHCI: NodeID=0x%08x valid=%d root=%d addr=%u (changed)", nodeID, idValid, isRoot, nAdr);
         BRIDGE_LOG("NodeID change %08x v=%d r=%d addr=%u", nodeID, idValid, isRoot, nAdr);
-        gLastLoggedNodeID = nodeID;
-        gLastLoggedValid  = idValid;
-        gLastLoggedRoot   = isRoot;
+        ivars->lastLoggedNodeID = nodeID;
+        ivars->lastLoggedValid  = idValid;
+        ivars->lastLoggedRoot   = isRoot;
     }
 }
 
@@ -845,16 +809,16 @@ if (intEvent & kOHCI_Int_SelfIDComplete) {
     BRIDGE_LOG("Self-ID complete");
 
     uint32_t selfIDCount=0;
-    gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_SelfIDCount, &selfIDCount);
+    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_SelfIDCount, &selfIDCount);
 
     uint32_t quads = (selfIDCount >> 2) & 0x1FF;
     bool     err   = (selfIDCount >> 31) & 0x1;
     os_log(ASLog(), "ASOHCI: SelfID count=%u quads, error=%d", quads, err);
     BRIDGE_LOG("SelfID count=%u error=%d", quads, err);
 
-    if (!err && quads > 0 && gSelfIDMap) {
-        uint32_t *ptr = (uint32_t *)(uintptr_t) gSelfIDMap->GetAddress();
-        size_t     len = (size_t) gSelfIDMap->GetLength();
+    if (!err && quads > 0 && ivars->selfIDMap) {
+        uint32_t *ptr = (uint32_t *)(uintptr_t) ivars->selfIDMap->GetAddress();
+        size_t     len = (size_t) ivars->selfIDMap->GetLength();
         if (ptr && len >= quads * sizeof(uint32_t)) {
             SelfIDParser::Process(ptr, quads);
         } else {
@@ -862,22 +826,22 @@ if (intEvent & kOHCI_Int_SelfIDComplete) {
         }
     }
     // First stable Self-ID -> enable cycle timer if not yet
-    if (!gCycleTimerArmed && gPCIDevice) {
-        gPCIDevice->MemoryWrite32(gBAR0Index, kOHCI_LinkControlSet, kOHCI_LC_CycleTimerEnable);
-        uint32_t lcPost=0; gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_LinkControlSet, &lcPost);
+    if (!ivars->cycleTimerArmed && ivars->pciDevice) {
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleTimerEnable);
+        uint32_t lcPost=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &lcPost);
         os_log(ASLog(), "ASOHCI: CycleTimerEnable asserted post Self-ID (LinkControl=0x%08x)", lcPost);
         BRIDGE_LOG("CycleTimerEnable now set (LC=%08x)", lcPost);
-        gCycleTimerArmed = true;
+        ivars->cycleTimerArmed = true;
     }
     // Perform one-time PHY scan (read-only) after first stable Self-ID
-    if (!gDidInitialPhyScan && gPhyAccess) {
+    if (!ivars->didInitialPhyScan && ivars->phyAccess) {
         // Inline small scan to avoid extra TU for now
         const uint8_t kMaxPhyPorts = 16; // hard cap
         
         // OHCI 5.12: "Software shall not issue a read of PHY register 0. 
         // The most recently available contents of this register shall be reflected in the NodeID register"
         uint32_t nodeIdReg = 0;
-        gPCIDevice->MemoryRead32(gBAR0Index, kOHCI_NodeID, &nodeIdReg);
+        ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeIdReg);
         uint8_t localPhyId = (uint8_t)((nodeIdReg >> 24) & 0x3F); // NodeID register bits 29:24 contain PHY ID
         
         BRIDGE_LOG("PHY scan start localPhyId=%u (from NodeID=0x%08x)", localPhyId, nodeIdReg);
@@ -887,7 +851,7 @@ if (intEvent & kOHCI_Int_SelfIDComplete) {
         uint8_t portBaseReg = 4; // typical start of port status regs
         for (uint8_t p = 0; p < kMaxPhyPorts; ++p) {
                 uint8_t raw = 0; uint8_t reg = (uint8_t)(portBaseReg + p);
-                if (gPhyAccess->readPhyRegister(reg, &raw) != kIOReturnSuccess) {
+                if (ivars->phyAccess->readPhyRegister(reg, &raw) != kIOReturnSuccess) {
                     BRIDGE_LOG("PHY port reg %u read timeout - stopping scan", reg);
                     os_log(ASLog(), "ASOHCI: PHY port reg %u read timeout - stopping scan", reg);
                     break; // abort further scanning
@@ -916,41 +880,48 @@ if (intEvent & kOHCI_Int_SelfIDComplete) {
         }
         BRIDGE_LOG("PHY scan summary connected=%u enabled=%u contender=%u", connectedCount, enabledCount, contenderCount);
         os_log(ASLog(), "ASOHCI: PHY scan summary connected=%u enabled=%u contender=%u", connectedCount, enabledCount, contenderCount);
-        gDidInitialPhyScan = true;
+        ivars->didInitialPhyScan = true;
     }
     // Mark cycle complete; prepare for future resets but do not override in-progress flags until next BusReset
-    gSelfIDInProgress = false;
-    gSelfIDArmed = false;
-    if (gCollapsedBusResets) {
-        os_log(ASLog(), "ASOHCI: Collapsed %u BusReset IRQs in cycle", gCollapsedBusResets);
-        BRIDGE_LOG("Collapsed %u BusResets", gCollapsedBusResets);
+    ivars->selfIDInProgress = false;
+    ivars->selfIDArmed = false;
+    if (ivars->collapsedBusResets) {
+        os_log(ASLog(), "ASOHCI: Collapsed %u BusReset IRQs in cycle", ivars->collapsedBusResets);
+        BRIDGE_LOG("Collapsed %u BusResets", ivars->collapsedBusResets);
     }
     // Re-arm to listen for next cycle (do not clear count again until next BusReset)
-    ArmSelfIDReceive(gPCIDevice, gBAR0Index, /*clearCount=*/false);
+    ArmSelfIDReceive(/*clearCount=*/false);
+    // Re-enable busReset interrupt now that reset cycle finished
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet, kOHCI_Int_BusReset);
 }
 
 // AR/AT Context Interrupt Handling (OHCI 1.1 §6.1 bits 0-3)
 if (intEvent & (kOHCI_Int_ARRQ | kOHCI_Int_ARRS | kOHCI_Int_ReqTxComplete | kOHCI_Int_RespTxComplete)) {
     
     // AR Request context interrupt (bit 2)
-    if ((intEvent & kOHCI_Int_ARRQ) && gARRequestContext) {
-        gARRequestContext->HandleInterrupt();
+    if ((intEvent & kOHCI_Int_ARRQ) && ivars->arRequestContext) {
+        ivars->arRequestContext->HandleInterrupt();
     }
     
     // AR Response context interrupt (bit 3) 
-    if ((intEvent & kOHCI_Int_ARRS) && gARResponseContext) {
-        gARResponseContext->HandleInterrupt();
+    if ((intEvent & kOHCI_Int_ARRS) && ivars->arResponseContext) {
+        ivars->arResponseContext->HandleInterrupt();
     }
     
     // AT Request context interrupt (bit 0)
-    if ((intEvent & kOHCI_Int_ReqTxComplete) && gATRequestContext) {
-        gATRequestContext->HandleInterrupt();
+    if ((intEvent & kOHCI_Int_ReqTxComplete) && ivars->atRequestContext) {
+        ivars->atRequestContext->HandleInterrupt();
     }
     
     // AT Response context interrupt (bit 1)
-    if ((intEvent & kOHCI_Int_RespTxComplete) && gATResponseContext) {
-        gATResponseContext->HandleInterrupt();
+    if ((intEvent & kOHCI_Int_RespTxComplete) && ivars->atResponseContext) {
+        ivars->atResponseContext->HandleInterrupt();
     }
+}
+
+// If cycle too long, assert cycle master again (Linux parity)
+if (intEvent & kOHCI_Int_CycleTooLong) {
+    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleMaster);
 }
 
 // All interrupt bits are now handled by the comprehensive DumpIntEvent function
