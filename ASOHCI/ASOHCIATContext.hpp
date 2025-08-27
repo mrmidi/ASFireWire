@@ -64,7 +64,7 @@ public:
      * @param contextType   AT_REQUEST_CONTEXT or AT_RESPONSE_CONTEXT
      * @return kIOReturnSuccess on success
      */
-    virtual kern_return_t Initialize(IOPCIDevice* pciDevice, ContextType contextType);
+    virtual kern_return_t Initialize(IOPCIDevice* pciDevice, ContextType contextType, uint8_t barIndex = 0);
 
     /**
      * Start the AT context (set run bit and activate DMA)
@@ -130,6 +130,7 @@ public:
 private:
     // Context configuration
     IOPCIDevice*                    fPCIDevice;
+    uint8_t                         fBARIndex;       // ← add
     ContextType                     fContextType;
     uint32_t                        fContextBaseOffset;
     uint32_t                        fContextControlSetOffset;

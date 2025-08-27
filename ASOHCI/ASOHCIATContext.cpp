@@ -15,6 +15,7 @@
 ASOHCIATContext::ASOHCIATContext() :
     fPCIDevice(nullptr),
     fContextType(AT_REQUEST_CONTEXT),
+    fBARIndex(0),
     fContextBaseOffset(0),
     fContextControlSetOffset(0),
     fContextControlClearOffset(0),
@@ -44,49 +45,29 @@ ASOHCIATContext::~ASOHCIATContext()
 }
 
 // Initialize the AT context
-kern_return_t ASOHCIATContext::Initialize(IOPCIDevice* pciDevice, ContextType contextType)
+
+kern_return_t ASOHCIATContext::Initialize(IOPCIDevice* pciDevice, ContextType contextType, uint8_t barIndex)
 {
-    kern_return_t result;
-    
     if (fInitialized) {
-        os_log(ASLog(), "ASOHCIATContext: ERROR: Already initialized");
-        return kIOReturnError;
+        return kIOReturnSuccess;
     }
-    
-    if (!pciDevice) {
-        os_log(ASLog(), "ASOHCIATContext: Invalid PCI device");
-        return kIOReturnBadArgument;
-    }
-    
+
     fPCIDevice = pciDevice;
-    fPCIDevice->retain();
-    
-    fContextType = contextType;
-    
-    // Set context register offsets based on type
-    SetContextOffsets(contextType);
-    
-    // Allocate descriptor pool for future packet transmission
-    result = AllocateDescriptorPool();
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIATContext: Failed to allocate descriptor pool: 0x%x", result);
-        goto error;
-    }
-    
-    fInitialized = true;
-    
-    os_log(ASLog(), "ASOHCIATContext: Initialized %s context", 
-                (contextType == AT_REQUEST_CONTEXT) ? "Request" : "Response");
-    
-    return kIOReturnSuccess;
-    
-error:
-    FreeDescriptorPool();
     if (fPCIDevice) {
-        fPCIDevice->release();
-        fPCIDevice = nullptr;
+        fPCIDevice->retain();
     }
-    return result;
+    fContextType = contextType;
+    fBARIndex = barIndex;
+    SetContextOffsets(contextType);
+
+    // Future: Allocate descriptor pool
+    // kern_return_t kr = AllocateDescriptorPool();
+    // if (kr != kIOReturnSuccess) {
+    //     return kr;
+    // }
+
+    fInitialized = true;
+    return kIOReturnSuccess;
 }
 
 // Start the AT context
@@ -326,7 +307,7 @@ kern_return_t ASOHCIATContext::FreeDescriptorPool()
 kern_return_t ASOHCIATContext::WriteContextControl(uint32_t value, bool setRegister)
 {
     uint32_t offset = setRegister ? fContextControlSetOffset : fContextControlClearOffset;
-    fPCIDevice->MemoryWrite32(0, offset, value);
+    fPCIDevice->MemoryWrite32(fBARIndex, offset, value);
     return kIOReturnSuccess;
 }
 
@@ -336,7 +317,7 @@ kern_return_t ASOHCIATContext::ReadContextControl(uint32_t* value)
     if (!value) {
         return kIOReturnBadArgument;
     }
-    fPCIDevice->MemoryRead32(0, fContextControlSetOffset, value);
+    fPCIDevice->MemoryRead32(fBARIndex, fContextControlSetOffset, value);
     return kIOReturnSuccess;
 }
 
@@ -344,7 +325,7 @@ kern_return_t ASOHCIATContext::ReadContextControl(uint32_t* value)
 kern_return_t ASOHCIATContext::WriteCommandPtr(uint32_t descriptorAddress, uint32_t zValue)
 {
     uint32_t commandPtr = (descriptorAddress << 4) | (zValue & 0xF);
-    fPCIDevice->MemoryWrite32(0, fCommandPtrOffset, commandPtr);
+    fPCIDevice->MemoryWrite32(fBARIndex, fCommandPtrOffset, commandPtr);
     return kIOReturnSuccess;
 }
 

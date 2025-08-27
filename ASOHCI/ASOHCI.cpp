@@ -37,7 +37,8 @@
 
 // BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
 
-// Define ASOHCI_IVars to match the generated forward declaration so member access compiles
+// Provide the concrete definition for ASOHCI_IVars matching ASOHCI.iig ivars.
+// This enables safe member access in this TU while keeping layout identical.
 struct ASOHCI_IVars {
     IOPCIDevice               * pciDevice     = nullptr;
     IOMemoryMap               * bar0Map       = nullptr;
@@ -85,12 +86,42 @@ void ASOHCI::ArmSelfIDReceive(bool clearCount)
 // Init
 bool ASOHCI::init()
 {
-if (!super::init()) {
-    return false;
+    if (!super::init()) return false;
+    if (!ivars) {
+        ivars = new ASOHCI_IVars{}; // value-init → zero-initialize
+        if (!ivars) return false;
+    }
+    os_log(ASLog(), "ASOHCI: init()");
+    return true;
 }
-// (Optional: zero / prepare any driver-local state if needed)
-os_log(ASLog(), "ASOHCI: init()");
-return true;
+
+void ASOHCI::free()
+{
+    os_log(ASLog(), "ASOHCI: free()");
+    if (ivars) {
+        // Disable interrupt source first to stop callbacks
+        if (ivars->intSource) {
+            ivars->intSource->SetEnableWithCompletion(false, nullptr);
+            ivars->intSource->release();
+            ivars->intSource = nullptr;
+        }
+        // Release DMA resources (safe even if Start failed mid-way)
+        if (ivars->selfIDDMA) {
+            ivars->selfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+            ivars->selfIDDMA->release();
+            ivars->selfIDDMA = nullptr;
+        }
+        if (ivars->selfIDMap)    { ivars->selfIDMap->release();    ivars->selfIDMap    = nullptr; }
+        if (ivars->selfIDBuffer) { ivars->selfIDBuffer->release(); ivars->selfIDBuffer = nullptr; }
+        // Release default queue if we retained it (see §4)
+        if (ivars->defaultQ)     { ivars->defaultQ->release();     ivars->defaultQ     = nullptr; }
+        // Delete helpers
+        if (ivars->phyAccess)    { delete ivars->phyAccess;        ivars->phyAccess    = nullptr; }
+        // Delete ivars (run C++ dtors if introduced later)
+        delete ivars;
+        ivars = nullptr;
+    }
+    super::free();
 }
 
 // =====================================================================================
@@ -99,11 +130,15 @@ return true;
 kern_return_t
 IMPL(ASOHCI, Start)
 {
-kern_return_t kr = Start(provider, SUPERDISPATCH);
-if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: Start superdispatch failed: 0x%08x", kr);
-    return kr;
-}
+    kern_return_t kr = Start(provider, SUPERDISPATCH);
+    if (kr != kIOReturnSuccess) {
+        os_log(ASLog(), "ASOHCI: Start superdispatch failed: 0x%08x", kr);
+        return kr;
+    }
+    if (!ivars) {
+        os_log(ASLog(), "ASOHCI: ivars not allocated");
+        return kIOReturnNoResources;
+    }
 os_log(ASLog(), "ASOHCI: Start() begin bring-up");
 BRIDGE_LOG("Start bring-up");
 bridge_log_init();
@@ -515,7 +550,7 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     // Initialize AT Request Context (foundation only)
     ivars->atRequestContext = new ASOHCIATContext();
     if (ivars->atRequestContext) {
-        kr = ivars->atRequestContext->Initialize(pci, ASOHCIATContext::AT_REQUEST_CONTEXT);
+        kr = ivars->atRequestContext->Initialize(pci, ASOHCIATContext::AT_REQUEST_CONTEXT, (uint8_t)bar0Index);
         if (kr == kIOReturnSuccess) {
             kr = ivars->atRequestContext->Start();
             if (kr == kIOReturnSuccess) {
@@ -533,7 +568,7 @@ os_log(ASLog(), "ASOHCI: HCControlSet programPhyEnable (HCControl=0x%08x)", hcAf
     // Initialize AT Response Context (foundation only)
     ivars->atResponseContext = new ASOHCIATContext();
     if (ivars->atResponseContext) {
-        kr = ivars->atResponseContext->Initialize(pci, ASOHCIATContext::AT_RESPONSE_CONTEXT);
+        kr = ivars->atResponseContext->Initialize(pci, ASOHCIATContext::AT_RESPONSE_CONTEXT, (uint8_t)bar0Index);
         if (kr == kIOReturnSuccess) {
             kr = ivars->atResponseContext->Start();
             if (kr == kIOReturnSuccess) {
@@ -735,15 +770,18 @@ return bridge_log_copy(outData);
 void
 ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args)
 {
-uint32_t seq = __atomic_add_fetch(&ivars->interruptCount, 1, __ATOMIC_RELAXED);
-os_log(ASLog(), "ASOHCI: InterruptOccurred #%u (count=%llu time=%llu)",
-        seq, (unsigned long long)count, (unsigned long long)time);
-BRIDGE_LOG("IRQ #%u hwcount=%llu", seq, (unsigned long long)count);
+    if (!ivars) {
+        return;
+    }
+    uint32_t seq = __atomic_add_fetch(&ivars->interruptCount, 1, __ATOMIC_RELAXED);
+    os_log(ASLog(), "ASOHCI: InterruptOccurred #%u (count=%llu time=%llu)",
+            seq, (unsigned long long)count, (unsigned long long)time);
+    BRIDGE_LOG("IRQ #%u hwcount=%llu", seq, (unsigned long long)count);
 
-if (!ivars || !ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: No PCI device bound; spurious?");
-    return;
-}
+    if (!ivars->pciDevice) {
+        os_log(ASLog(), "ASOHCI: No PCI device bound; spurious?");
+        return;
+    }
 
 uint32_t intEvent = 0;
 ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_IntEvent, &intEvent);
