@@ -91,6 +91,8 @@ Refactor the main `ASOHCI.cpp` file to use the new manager classes. The goal is 
     - [ ] **DMA (AR/AT/IR/IT):** Delegate to the `handleInterrupt()` method of the corresponding context object (`ASOHCIARContext`, `ASOHCIATContext`, etc.).
     - [ ] **Posted Write Error:** Delegate to `ASOHCIAddressHandler::onPostedWriteError()`.
     - [x] Current: Commit `BusOptions` then `ConfigROMhdr` on BusReset (OHCI §5.5 parity).
+    - [x] Current: Deferred cycle timer policy — enable after first stable Self‑ID; stop/restart AT on BusReset; explicit BusReset event clear.
+    - [x] Current: Interrupt diagnostics added (bound type); synthetic IRQ self‑test used during bring‑up (to be removed once stable).
 
 ## Phase 5: Implementation Checklist
 
@@ -102,6 +104,9 @@ This section tracks the implementation of the `TODO` items within each new class
 - [ ] `handleBusResetIRQ()`: Implement §6.1 BusReset logic, §11 Self-ID timing.
 - [ ] `handleSelfIDCompleteIRQ()`: Implement §11.5 logic, read Self-ID count, parse packets, and re-arm.
 - [ ] `considerGapCountUpdate()`: Implement gap count update logic per OHCI §5.7 & 1394-2008 §8.6.2.
+ - [ ] Initiate PHY bus reset (IBR) after bring‑up to kick Self‑ID on idle buses. [Deferred — not triggered in Start()]
+ - [x] Self‑ID generation consistency check across parse (pre/post generation compare).
+ - [ ] Assert `cycleMaster` alongside `cycleTimerEnable` post stable Self‑ID (policy gate: only when root?).
 
 ### 2. Topology Database (`ASOHCITopologyDB`) ([details](REFACTOR_DETAILS.md#4-self-id--topology-database))
 - [ ] `ingestSelfIDs()`: Connect to `SelfIDParser` output and populate the node database.
@@ -122,6 +127,8 @@ This section tracks the implementation of the `TODO` items within each new class
 - [ ] `onARPacketAvailable()`: Parse incoming packet headers (§8.7) and route to CSR or user client.
 - [ ] `onATComplete()`: Handle transmit complete interrupts (§7.6), including error checking and retries (§7.4).
 - [ ] `queueAsyncResponse()`: Build response packets using `ASOHCIDMAProgramBuilder` (§7.1, §7.8).
+ - [ ] AR ring recycle: retire/requeue buffers; header‑peek logging; stop/restart on BusReset.
+ - [ ] AT minimal OUTPUT_LAST Immediate (header‑only) enablement for future CSR replies.
 
 ### 6. Isochronous DMA (`ASOHCIIsochManager`, `IT`/`IR` Contexts) ([details](REFACTOR_DETAILS.md#8-isochronous-orchestration))
 - [ ] `openIT()`: Implement IT context initialization (§9.2).

@@ -28,20 +28,35 @@ void ASOHCIPHYAccess::release() {
 
 bool ASOHCIPHYAccess::waitForWriteComplete(uint32_t timeoutIterations) {
     // OHCI 5.12: Wait until wrReg bit clears (hardware clears when request sent to PHY)
-    while (timeoutIterations--) {
-        uint32_t v=0; _pci->MemoryRead32(_bar0, kOHCI_PhyControl, &v);
+    // Mirror Linux strategy: a few quick polls, then ms sleeps up to ~100ms total if needed.
+    uint32_t v = 0;
+    // Fast path: ~30 quick polls with short delay
+    for (uint32_t i = 0; i < 30; ++i) {
+        _pci->MemoryRead32(_bar0, kOHCI_PhyControl, &v);
         if ((v & kOHCI_PhyControl_wrReg) == 0) return true;
-        IODelay(10); // 10 microseconds incremental wait
+        IODelay(10);
+    }
+    // Slow path: up to ~100ms in 1ms steps
+    for (uint32_t i = 0; i < 100; ++i) {
+        _pci->MemoryRead32(_bar0, kOHCI_PhyControl, &v);
+        if ((v & kOHCI_PhyControl_wrReg) == 0) return true;
+        IOSleep(1);
     }
     return false;
 }
 
 bool ASOHCIPHYAccess::waitForReadComplete(uint32_t timeoutIterations) {
     // OHCI 5.12: Wait for rdDone bit set (hardware sets when PHY returns register data)
-    while (timeoutIterations--) {
-        uint32_t v=0; _pci->MemoryRead32(_bar0, kOHCI_PhyControl, &v);
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < 30; ++i) {
+        _pci->MemoryRead32(_bar0, kOHCI_PhyControl, &v);
         if ((v & kOHCI_PhyControl_rdDone) != 0) return true;
         IODelay(10);
+    }
+    for (uint32_t i = 0; i < 100; ++i) {
+        _pci->MemoryRead32(_bar0, kOHCI_PhyControl, &v);
+        if ((v & kOHCI_PhyControl_rdDone) != 0) return true;
+        IOSleep(1);
     }
     return false;
 }

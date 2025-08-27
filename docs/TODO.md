@@ -67,10 +67,20 @@ Status Checklist (Aug 27, 2025)
 - [x] ConfigROM hex dump added with trimming and ASOHCI prefix.
 - [x] `ConfigROMmap` programmed before LinkEnable; `BIBimageValid` set.
 - [x] BusReset commit path writes BusOptions then ConfigROMhdr.
+ - [x] Deferred cycle timer policy.
+- [x] Self‑ID generation consistency check across parse; stop/restart AT on BusReset.
 - [ ] Add Self-ID generation consistency check before parse.
 - [ ] Stop/flush AT contexts during bus reset; restart after.
 - [ ] Optional: schedule bus reset after bring-up to finalize config.
 - [ ] Implement live "next ROM" update path (shadow map + reset).
+
+Next Steps (Post Bring‑up)
+- [ ] Remove synthetic IRQ self‑test now that interrupts verified.
+- [ ] Assert `cycleMaster` with deferred cycle timer after first stable Self‑ID (policy: when root? configurable).
+- [ ] Implement AR ring recycle and header‑peek logging; ensure AR re‑arm on BusReset.
+- [ ] Add Topology DB and gap count update logic (derive from Self‑IDs; program via PHY).
+- [ ] Implement 1394a PHY register 5 programming (paged access helper if needed); clear programPhyEnable when done.
+- [ ] Minimal AT OUTPUT_LAST Immediate builder (header‑only) for future CSR replies.
 - After Step 3–4:
     - ARRQ/ARRS/RqPkt/RsPkt bits with corresponding context logs
     - AT ReqTxComplete/RespTxComplete seen on header‑only packets
