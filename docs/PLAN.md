@@ -226,6 +226,7 @@ See [docs/ohci/README.md](../docs/ohci/README.md) for complete specification ind
 ### Expected Logs (Now)
 - Start/Bring-up:
   - `ASOHCI: BAR0 idx=... size=...`
+  - `ASOHCI: === CONFIG ROM DUMP HEX (BIG-ENDIAN) === size=... dump=...` (first 32 bytes show valid BIB/root)
   - `ASOHCI: Self-ID IOVA=0x...` (allocation success)
   - `ASOHCI: Initializing AR/AT DMA contexts`
   - `ASOHCI: AR Request context initialized and started`
@@ -235,7 +236,7 @@ See [docs/ohci/README.md](../docs/ohci/README.md) for complete specification ind
   - `ASOHCI: Link enabled successfully - controller active on bus`
 - Self-ID/Cycle:
   - `ASOHCI: Bus Reset (bit 17)` followed by `ASOHCI: Self-ID phase complete`
-  - On first stable Self-ID: `CycleTimerEnable now set`
+  - Cycle timer policy (current): enabled during bring-up (`LinkControlSet cycleTimerEnable+cycleMaster`). Alternative deferred policy can be toggled later if needed.
 - AR/AT Interrupts (with any bus traffic):
   - From DumpIntEvent: `ARRQ`/`ARRS` and/or `RqPkt`/`RsPkt` bits identified under “DMA Completion Interrupts”
   - Context hooks: `ASOHCIARContext: Interrupt handled for Request/Response`
@@ -250,9 +251,10 @@ See [docs/ohci/README.md](../docs/ohci/README.md) for complete specification ind
 - AR buffers and descriptors are using 32-bit DMA addresses (no DMA-to-virtual faults; IRQs arrive on AR contexts).
 - BAR index is used consistently for MMIO (works on BAR0 now; future-safe for non-zero BAR devices).
 - Stop sequence quiesces hardware without late IRQs.
+- Config ROM is written in big-endian order; BIB/root CRCs validate; dump shows correct fields.
 
 ### Capture for Analysis
-- Save a 60–120s excerpt of `./log.sh` covering bring-up, at least one bus reset, Self-ID complete, and any AR/AT IRQs.
+- Save a 60–120s excerpt of `./log.sh` covering bring-up (including ROM dump), at least one bus reset, Self-ID complete, and any AR/AT IRQs.
 - Note counts of BusReset, SelfIDComplete, and any error bits.
 
 ## Development Notes

@@ -81,6 +81,7 @@ Refactor the main `ASOHCI.cpp` file to use the new manager classes. The goal is 
     - [ ] Instantiate `ASOHCIAsyncManager` and bind it to the existing `AR`/`AT` contexts and the new `CSRSpace`.
     - [ ] Instantiate `ASOHCIIsochManager` and its `IT`/`IR` contexts (placeholders).
     - [x] Current integration: ROM buffer allocated/mapped; `ConfigROMmap` programmed; `BIBimageValid` set with LinkEnable.
+    - [x] ROM image written big-endian; full hex dump added (trimmed), CRCs validate.
 - [ ] **Teardown (`Stop` method):**
     - [ ] Add calls to the `onStop()` methods of the new manager classes.
     - [ ] Ensure all newly allocated objects are properly released.

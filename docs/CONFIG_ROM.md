@@ -643,3 +643,28 @@ IOReturn ASOHCIConfigROM::validateAndRecover() {
 ```
 
 This ConfigROM implementation provides a robust, thread-safe foundation for proper FireWire device advertisement and discovery within the ASFireWire OHCI driver, incorporating proven patterns from Apple's IOFireWire architecture while maintaining full IEEE 1212 compliance.
+
+## Verification Checklist (Aug 27, 2025)
+
+- Build BIB (header + 4 quadlets) and compute CRC-16 over quads 1..4.
+- Root Directory includes:
+  - Vendor_ID immediate entry (24-bit company_id).
+  - Node_Capabilities immediate entry mirroring BusOptions.
+- Write ROM bytes in BIG-ENDIAN into the DMA buffer (no double-swap).
+- Program before LinkEnable:
+  - `ConfigROMhdr = 0x00000000` (workaround per OHCI §5.5.6)
+  - `BusOptions = rom[2]` (host-endian from BE quadlet)
+  - `ConfigROMmap = <32-bit IOVA>`
+- Enable link with `BIBimageValid` set.
+- On BusReset: commit staged header sequence
+  - Write `BusOptions = rom[2]` then `ConfigROMhdr = header`.
+- Logs include trimmed ROM dump:
+  - `=== CONFIG ROM DUMP HEX (BIG-ENDIAN) === size=... dump=...`
+  - First 32 bytes match expected BIB + Root Dir.
+
+Known-good first 32 bytes (example):
+
+```
+04 04 a5 4b  31 33 39 34  00 00 b0 03  00 0a 27 02
+00 75 29 66  00 02 40 4b  03 00 0a 27  0c 00 b0 03
+```

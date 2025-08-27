@@ -246,6 +246,10 @@ static constexpr uint8_t  kPHY_REG_4                    = 4;          // PHY reg
 static constexpr uint8_t  kPHY_LINK_ACTIVE              = 0x40;       // Link Active bit (L)
 static constexpr uint8_t  kPHY_CONTENDER               = 0x08;       // Contender bit (C)
 
+// Commonly used additional PHY registers/bits
+static constexpr uint8_t  kPHY_REG_1                    = 1;          // PHY register 1 address (vendor/ID/reset bits)
+static constexpr uint8_t  kPHY_INITIATE_BUS_RESET       = 0x40;       // IBR bit: Initiate Bus Reset (IEEE 1394a)
+
 // ------------------------ OHCI DMA Context Control Bits (OHCI 1.1 §3.1.1) ------------------------
 // ContextControl register bit definitions - used by all DMA contexts
 static constexpr uint32_t kOHCI_ContextControl_run      = 0x00008000; // Bit 15: Enable descriptor processing

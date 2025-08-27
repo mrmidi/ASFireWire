@@ -58,8 +58,19 @@ Validation loop
 - Use ./log.sh to capture 60–120s around bring‑up and one bus reset.
 - Expected patterns after Step 1–2:
     - “ConfigROM mapped @ …”, “BIBimageValid set”
+    - “=== CONFIG ROM DUMP HEX (BIG-ENDIAN) === size=… dump=…” (first 32 bytes match expected)
     - “Bus Reset (bit 17)” → “Self‑ID Complete (bit 16)” → “CycleTimerEnable now set”
     - No recurring “Cycle Inconsistent”
+
+Status Checklist (Aug 27, 2025)
+- [x] ROM image written big-endian into buffer (endianness fix).
+- [x] ConfigROM hex dump added with trimming and ASOHCI prefix.
+- [x] `ConfigROMmap` programmed before LinkEnable; `BIBimageValid` set.
+- [x] BusReset commit path writes BusOptions then ConfigROMhdr.
+- [ ] Add Self-ID generation consistency check before parse.
+- [ ] Stop/flush AT contexts during bus reset; restart after.
+- [ ] Optional: schedule bus reset after bring-up to finalize config.
+- [ ] Implement live "next ROM" update path (shadow map + reset).
 - After Step 3–4:
     - ARRQ/ARRS/RqPkt/RsPkt bits with corresponding context logs
     - AT ReqTxComplete/RespTxComplete seen on header‑only packets
