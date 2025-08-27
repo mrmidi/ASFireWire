@@ -99,13 +99,21 @@ void ASOHCI::free()
 {
     os_log(ASLog(), "ASOHCI: free()");
     if (ivars) {
+        os_log(ASLog(), "ASOHCI: free step A - stop contexts if present");
+        // Safety: in case Stop() was not invoked, ensure contexts are torn down
+        if (ivars->arRequestContext)  { ivars->arRequestContext->Stop();  delete ivars->arRequestContext;  ivars->arRequestContext  = nullptr; }
+        if (ivars->arResponseContext) { ivars->arResponseContext->Stop(); delete ivars->arResponseContext; ivars->arResponseContext = nullptr; }
+        if (ivars->atRequestContext)  { ivars->atRequestContext->Stop();  delete ivars->atRequestContext;  ivars->atRequestContext  = nullptr; }
+        if (ivars->atResponseContext) { ivars->atResponseContext->Stop(); delete ivars->atResponseContext; ivars->atResponseContext = nullptr; }
         // Disable interrupt source first to stop callbacks
+        os_log(ASLog(), "ASOHCI: free step B - disable/release interrupt source");
         if (ivars->intSource) {
             ivars->intSource->SetEnableWithCompletion(false, nullptr);
             ivars->intSource->release();
             ivars->intSource = nullptr;
         }
         // Release DMA resources (safe even if Start failed mid-way)
+        os_log(ASLog(), "ASOHCI: free step C - release Self-ID DMA/map/buffer");
         if (ivars->selfIDDMA) {
             ivars->selfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
             ivars->selfIDDMA->release();
@@ -116,6 +124,7 @@ void ASOHCI::free()
         // Release default queue if we retained it (see §4)
         if (ivars->defaultQ)     { ivars->defaultQ->release();     ivars->defaultQ     = nullptr; }
         // Delete helpers
+        os_log(ASLog(), "ASOHCI: free step D - delete helpers and ivars");
         if (ivars->phyAccess)    { delete ivars->phyAccess;        ivars->phyAccess    = nullptr; }
         // Delete ivars (run C++ dtors if introduced later)
         delete ivars;
@@ -195,6 +204,28 @@ if (kr != kIOReturnSuccess) {
 }
 
 if (bar0Size >= 0x2C) {
+    // Optional: discover and log common PCI capabilities (PM, MSI, MSI-X)
+    {
+        uint64_t off = 0;
+        if (pci->FindPCICapability(kIOPCICapabilityIDPowerManagement, 0 /* start */, &off) == kIOReturnSuccess && off) {
+            os_log(ASLog(), "ASOHCI: PCI PM capability at 0x%llx", off);
+        }
+        off = 0;
+        if (pci->FindPCICapability(kIOPCICapabilityIDMSI, 0 /* start */, &off) == kIOReturnSuccess && off) {
+            os_log(ASLog(), "ASOHCI: PCI MSI capability at 0x%llx", off);
+        }
+        off = 0;
+        if (pci->FindPCICapability(kIOPCICapabilityIDMSIX, 0 /* start */, &off) == kIOReturnSuccess && off) {
+            os_log(ASLog(), "ASOHCI: PCI MSI-X capability at 0x%llx", off);
+        }
+    }
+
+    // Log current link speed for diagnostics
+    IOPCILinkSpeed linkSpeed = 0;
+    if (pci->GetLinkSpeed(&linkSpeed) == kIOReturnSuccess) {
+        os_log(ASLog(), "ASOHCI: PCIe link speed: %u", (unsigned)linkSpeed);
+    }
+
     uint32_t ohci_ver=0, bus_opts=0, guid_hi=0, guid_lo=0;
     pci->MemoryRead32(bar0Index, kOHCI_Version, &ohci_ver);
     pci->MemoryRead32(bar0Index, kOHCI_BusOptions, &bus_opts);
@@ -638,11 +669,14 @@ return kIOReturnSuccess;
 kern_return_t
 IMPL(ASOHCI, Stop)
 {
+// Align with Apple samples: call super Stop first to quiesce framework state
+kern_return_t r = Stop(provider, SUPERDISPATCH);
 os_log(ASLog(), "ASOHCI: Stop() begin - Total interrupts received: %llu", (unsigned long long)(ivars ? ivars->interruptCount : 0));
 BRIDGE_LOG("Stop - IRQ count: %llu", (unsigned long long)(ivars ? ivars->interruptCount : 0));
 
 // 1) Disable our dispatch source first to stop callbacks
 if (ivars && ivars->intSource) {
+    os_log(ASLog(), "ASOHCI: Stop step 1 - disabling interrupt source");
     ivars->intSource->SetEnableWithCompletion(false, nullptr);
     ivars->intSource->release();
     ivars->intSource = nullptr;
@@ -651,6 +685,7 @@ if (ivars && ivars->intSource) {
 
 // 2) Quiesce the controller: mask and clear all interrupts, stop link RX paths
 if (ivars && ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: Stop step 2 - mask/clear IRQs and link RX");
     // Mask all interrupt sources including MasterEnable
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear, 0xFFFFFFFFu);
     // Clear any pending events to avoid later spurious IRQs on re-enable
@@ -670,24 +705,28 @@ if (ivars && ivars->pciDevice) {
 
 // 3) Stop AR/AT contexts gracefully (clear run, wait inactive) before freeing backing memory
 if (ivars && ivars->arRequestContext) {
+    os_log(ASLog(), "ASOHCI: Stop step 3a - stopping AR Request");
     ivars->arRequestContext->Stop();
     delete ivars->arRequestContext;
     ivars->arRequestContext = nullptr;
     os_log(ASLog(), "ASOHCI: AR Request context stopped and released");
 }
 if (ivars && ivars->arResponseContext) {
+    os_log(ASLog(), "ASOHCI: Stop step 3b - stopping AR Response");
     ivars->arResponseContext->Stop();
     delete ivars->arResponseContext;
     ivars->arResponseContext = nullptr;
     os_log(ASLog(), "ASOHCI: AR Response context stopped and released");
 }
 if (ivars && ivars->atRequestContext) {
+    os_log(ASLog(), "ASOHCI: Stop step 3c - stopping AT Request");
     ivars->atRequestContext->Stop();
     delete ivars->atRequestContext;
     ivars->atRequestContext = nullptr;
     os_log(ASLog(), "ASOHCI: AT Request context stopped and released");
 }
 if (ivars && ivars->atResponseContext) {
+    os_log(ASLog(), "ASOHCI: Stop step 3d - stopping AT Response");
     ivars->atResponseContext->Stop();
     delete ivars->atResponseContext;
     ivars->atResponseContext = nullptr;
@@ -696,12 +735,14 @@ if (ivars && ivars->atResponseContext) {
 
 // 4) Disarm Self-ID receive and scrub registers before freeing buffers
 if (ivars && ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: Stop step 4 - disarm Self-ID registers");
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDCount, 0);
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDBuffer, 0);
 }
 
 // 5) Assert SoftReset and drop LinkEnable to stop the link state machine
 if (ivars && ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: Stop step 5 - soft reset + drop LinkEnable");
     // Clear LinkEnable and aPhyEnhanceEnable bits
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlClear,
                               (kOHCI_HCControl_LinkEnable | kOHCI_HCControl_aPhyEnhanceEnable));
@@ -715,15 +756,18 @@ if (ivars && ivars->pciDevice) {
 
 // 6) Now free DMA resources in safe order
 if (ivars && ivars->selfIDDMA) {
+    os_log(ASLog(), "ASOHCI: Stop step 6a - release Self-ID DMA");
     ivars->selfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
     ivars->selfIDDMA->release();
     ivars->selfIDDMA = nullptr;
 }
 if (ivars && ivars->selfIDMap) {
+    os_log(ASLog(), "ASOHCI: Stop step 6b - release Self-ID map");
     ivars->selfIDMap->release();
     ivars->selfIDMap = nullptr;
 }
 if (ivars && ivars->selfIDBuffer) {
+    os_log(ASLog(), "ASOHCI: Stop step 6c - release Self-ID buffer");
     ivars->selfIDBuffer->release();
     ivars->selfIDBuffer = nullptr;
     os_log(ASLog(), "ASOHCI: Self-ID buffer released");
@@ -732,12 +776,14 @@ if (ivars && ivars->selfIDBuffer) {
 
 // 7) Release PHY helper
 if (ivars && ivars->phyAccess) {
+    os_log(ASLog(), "ASOHCI: Stop step 7 - delete PHY access helper");
     delete ivars->phyAccess;
     ivars->phyAccess = nullptr;
 }
 
 // 8) Best-effort: disable BM/MEM space and close
 if (auto pci = OSDynamicCast(IOPCIDevice, provider)) {
+    os_log(ASLog(), "ASOHCI: Stop step 8 - clear PCI CMD and Close");
     uint16_t cmd=0; pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &cmd);
     uint16_t clr = (uint16_t)(cmd & ~(kIOPCICommandBusMaster | kIOPCICommandMemorySpace));
     if (clr != cmd) pci->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand, clr);
@@ -750,7 +796,6 @@ if (ivars) {
     ivars->interruptCount = 0;
 }
 
-kern_return_t r = Stop(provider, SUPERDISPATCH);
 os_log(ASLog(), "ASOHCI: Stop() complete: 0x%08x", r);
 return r;
 }

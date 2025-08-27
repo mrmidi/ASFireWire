@@ -1,5 +1,19 @@
 # ASFireWire Development Plan: Complete OHCI Implementation
 
+## Refactor Reference
+
+- Architecture overview and class layout: see [REFACTOR.md](REFACTOR.md).
+- Per-class stubs and spec-anchored notes: see [REFACTOR_DETAILS.MD](REFACTOR_DETAILS.MD).
+
+Mapping from this plan to refactor modules:
+- Phase A (DMA Contexts): existing `ASOHCIARContext`/`ASOHCIATContext` + `ASOHCIAsyncManager` (orchestration) + `ASOHCIDMAProgramBuilder` (descriptor encoding).
+- Phase B (Config ROM): `ASOHCIConfigROM` (image) + `ASOHCICSRSpace` (serving). `ASOHCIBusManager` programs `ConfigROMmap` and `BIBimageValid` in link sequence.
+- Phase C (IEEE 1394a): `ASOHCIBusManager` (link/aPhyEnhance sequencing) + `PhyAccess` (with future paged PHY helpers) for reg 2/5 config.
+- Phase D (Interrupts/Errors): `ASOHCIInterruptDump` (decoding), `ASOHCIAsyncManager` (AR/AT IRQ handling), `ASOHCIBusManager` (reset coalescing and recovery hooks).
+- DriverKit/IIG integration: `ASOHCI.iig` ivars for per-instance state; LOCALONLY helpers for internal methods.
+- Robustness & resets: `ASOHCIBusManager` handles Self‑ID re‑arm, cycle timer gating, and reset collapse.
+- Advanced (Isochronous): `ASOHCIIsochManager`, `ASOHCIITContext`, `ASOHCIIRContext`.
+
 ## Current Status ✅
 
 ### **Major Breakthrough Achieved**

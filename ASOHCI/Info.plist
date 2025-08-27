@@ -53,6 +53,10 @@
 				<integer>65530</integer>
 			</dict>
 	</dict>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>7</string>
 	<key>OSBundleUsageDescription</key>
 	<string>AS FireWire Driver for development and testing</string>
 </dict>
