@@ -233,10 +233,58 @@ kern_return_t ASOHCIARContext::Stop()
 // Handle context interrupt
 kern_return_t ASOHCIARContext::HandleInterrupt()
 {
-    // TODO: Implement interrupt handling for completed buffers
-    // This will process completed descriptors and prepare new ones
-    os_log(ASLog(), "ASOHCIARContext: Interrupt handled for %s context",
-                 (fContextType == AR_REQUEST_CONTEXT) ? "Request" : "Response");
+    if (!fInitialized || !fRunning || !fDescriptors) {
+        return kIOReturnError;
+    }
+
+    bool any = false;
+    // Iterate all descriptors, look for completed fills (resCount < reqCount)
+    for (uint32_t i = 0; i < fDescriptorCount; ++i) {
+        OHCI_ARInputMoreDescriptor* desc = &fDescriptors[i];
+        uint32_t req = desc->reqCount;
+        uint32_t res = desc->resCount;
+        if (req == 0 || req > fBufferSize) req = fBufferSize;
+        // If hardware wrote anything (residual decreased), peek header and recycle
+        if (res < req) {
+            uint32_t received = req - res;
+            // Header peek: dump first up to 16 bytes of packet
+            if (fBufferMaps && fBufferMaps[i]) {
+                uint8_t* buf = (uint8_t*)(uintptr_t)fBufferMaps[i]->GetAddress();
+                size_t   blen = (size_t)fBufferMaps[i]->GetLength();
+                if (buf && blen >= fBufferSize) {
+                    // Build a small hex string without sprintf
+                    char line[80]; size_t pos = 0; uint32_t dump = (received < 16) ? received : 16;
+                    for (uint32_t b = 0; b < dump && pos + 3 < sizeof(line); ++b) {
+                        uint8_t v = buf[b];
+                        line[pos++] = ' ';
+                        static const char hexd[17] = "0123456789abcdef";
+                        line[pos++] = hexd[(v >> 4) & 0xF];
+                        line[pos++] = hexd[v & 0xF];
+                    }
+                    line[pos] = '\0';
+                    os_log(ASLog(), "ASOHCIARContext: %s RX[%u] len=%u peek:%{public}s",
+                           (fContextType == AR_REQUEST_CONTEXT) ? "ARRQ" : "ARRS",
+                           i, received, line);
+                }
+            }
+            // Recycle: reset residual count and status; leave reqCount/dataAddress/branch as-is
+            desc->resCount = req;
+            desc->xferStatus = 0;
+            any = true;
+        }
+    }
+    if (any) {
+        // If the context ended (e.g., last descriptor Z=0), re-arm CommandPtr
+        uint32_t st = 0;
+        if (GetStatus(&st) == kIOReturnSuccess) {
+            if ((st & kOHCI_ContextControl_active) == 0) {
+                (void)WriteCommandPtr((uint32_t)(fDescriptorSeg.address >> 4), 1);
+                (void)WriteContextControl(kOHCI_ContextControl_run, true);
+            }
+        }
+        // Wake the context to continue DMA after recycling
+        (void)Wake();
+    }
     return kIOReturnSuccess;
 }
 

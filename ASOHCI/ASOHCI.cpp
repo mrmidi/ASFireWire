@@ -745,7 +745,7 @@ if (ivars->atResponseContext) {
 
 os_log(ASLog(), "ASOHCI: AR/AT context initialization complete");
 
-// Phase 9: Enable Comprehensive Interrupt Set (Linux ohci_enable lines 2562-2573)
+    // Phase 9: Enable Comprehensive Interrupt Set (Linux ohci_enable lines 2562-2573)
 uint32_t irqs = kOHCI_Int_ReqTxComplete | kOHCI_Int_RespTxComplete |
                 kOHCI_Int_RqPkt | kOHCI_Int_RsPkt |
                 kOHCI_Int_IsochTx | kOHCI_Int_IsochRx |
@@ -754,12 +754,8 @@ uint32_t irqs = kOHCI_Int_ReqTxComplete | kOHCI_Int_RespTxComplete |
                 kOHCI_Int_UnrecoverableError | kOHCI_Int_CycleTooLong |
                 kOHCI_Int_MasterEnable | kOHCI_Int_BusReset | kOHCI_Int_Phy;
 
-pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, irqs);
-os_log(ASLog(), "ASOHCI: Phase 9 - Comprehensive interrupt mask set: 0x%08x", irqs);
-// Interrupt self-test: synthesize a CycleTooLong event to validate path
-pci->MemoryWrite32(bar0Index, kOHCI_IntEventSet, kOHCI_Int_CycleTooLong);
-IOSleep(1);
-pci->MemoryWrite32(bar0Index, kOHCI_IntEventClear, kOHCI_Int_CycleTooLong);
+    pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, irqs);
+    os_log(ASLog(), "ASOHCI: Phase 9 - Comprehensive interrupt mask set: 0x%08x", irqs);
 
 // Phase 10: LinkEnable - Final Activation (OHCI 1.1 §5.7.3, Linux lines 2575-2581)
 os_log(ASLog(), "ASOHCI: Phase 10 - Link Enable (Final Activation)");
@@ -1087,14 +1083,14 @@ if ((selfIDCount1 & kOHCI_SelfIDCount_selfIDGeneration) != (selfIDCount2 & kOHCI
     ivars->selfIDArmed = true;
     return;
 }
-// First stable Self-ID -> enable cycle timer if not yet (deferred policy)
-if (!ivars->cycleTimerArmed && ivars->pciDevice) {
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleTimerEnable);
-    uint32_t lcPost=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &lcPost);
-    os_log(ASLog(), "ASOHCI: CycleTimerEnable asserted post Self-ID (LinkControl=0x%08x)", lcPost);
-    BRIDGE_LOG("CycleTimerEnable now set (LC=%08x)", lcPost);
-    ivars->cycleTimerArmed = true;
-}
+    // First stable Self-ID -> enable cycle timer (deferred policy) and assert cycle master
+    if (!ivars->cycleTimerArmed && ivars->pciDevice) {
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, (kOHCI_LC_CycleTimerEnable | kOHCI_LC_CycleMaster));
+        uint32_t lcPost=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &lcPost);
+        os_log(ASLog(), "ASOHCI: CycleTimerEnable+CycleMaster asserted post Self-ID (LinkControl=0x%08x)", lcPost);
+        BRIDGE_LOG("CycleTimer+Master now set (LC=%08x)", lcPost);
+        ivars->cycleTimerArmed = true;
+    }
 // Restart AT contexts after successful Self-ID processing
 if (ivars->atRequestContext)  { ivars->atRequestContext->Start(); }
 if (ivars->atResponseContext) { ivars->atResponseContext->Start(); }
