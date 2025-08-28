@@ -1,5 +1,10 @@
 // SelfIDParser.cpp
-// Self-ID quadlet parsing (IEEE 1394-2008 Alpha §16.3.2.1)
+// Self-ID quadlet parsing and buffer analysis
+//
+// References:
+// - IEEE 1394-2008 Alpha §16.3.2.1 (Self-ID packet format and PHY ID assignment)
+// - IEEE 1394-2008 Annex P (Deriving bus topology from self-ID packets) 
+// - OHCI 1.1 §11.3 (Self-ID receive format and buffer structure)
 
 #include "SelfIDParser.hpp"
 
@@ -21,6 +26,32 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
     }
     os_log(ASLog(), "ASOHCI: Processing %u Self-ID quadlets (IEEE 1394-2008 Alpha)", quadletCount);
     BRIDGE_LOG("Self-ID processing: %u quads", quadletCount);
+
+    // OHCI 1.1 §11.3: Buffer format = [header quadlet][concatenated self-ID packet data]
+    // Header quadlet (position 0): selfIDGeneration | timeStamp (NOT tagged)
+    // Data quadlets: Self-ID packets (tag=10b) + inverted check quadlets + topology maps
+    os_log(ASLog(), "ASOHCI: === RAW SELF-ID BUFFER ANALYSIS (OHCI 1.1 §11.3) ===");
+    for (uint32_t i = 0; i < quadletCount; ++i) {
+        uint32_t q = selfIDData[i];
+        uint32_t tag = (q >> 30) & 0x3;
+        const char* tagType = "";
+        const char* purpose = "";
+        
+        if (i == 0) {
+            // OHCI 1.1 §11.3: First quadlet is always header (selfIDGeneration | timeStamp)
+            purpose = " [HEADER: generation | timestamp]";
+            tagType = "N/A-Header";
+        } else {
+            switch (tag) {
+                case 0: tagType = "00b-Reserved"; purpose = " [Unknown/Reserved]"; break;
+                case 1: tagType = "01b-Topology"; purpose = " [Topology Map]"; break; 
+                case 2: tagType = "10b-SelfID"; purpose = " [Self-ID Packet]"; break;
+                case 3: tagType = "11b-Reserved"; purpose = " [Inverted Check?]"; break;
+            }
+        }
+        os_log(ASLog(), "ASOHCI:  BUF[%u]=0x%08x tag=%s%s", i, q, tagType, purpose);
+    }
+    os_log(ASLog(), "ASOHCI: === END BUFFER ANALYSIS ===");
 
     // Helpers per Table 16-4
     auto portCodeStr = [](uint32_t v)->const char* {
@@ -46,31 +77,69 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
         }
     };
 
-    // Find first tagged self-ID quadlet (b31..30 == 10b). If none, abort.
-    uint32_t start = 0;
-    while (start < quadletCount) {
-        if ((selfIDData[start] & kSelfID_Tag_Mask) == kSelfID_Tag_SelfID) break;
-        ++start;
+    // IEEE 1394-2008 Annex P + OHCI 1.1 §11.3: Collect ALL Self-ID packets (tag=10b)
+    // Buffer contains mixed data: header + Self-ID packets + inverted checks + topology maps
+    // Skip buffer[0] (header quadlet) and scan remaining data for tagged Self-ID packets
+    uint32_t selfIDIndices[32]; // max 32 Self-ID packets should be more than enough  
+    uint32_t selfIDCount = 0;
+    
+    for (uint32_t i = 1; i < quadletCount && selfIDCount < 32; ++i) { // Start from 1 (skip header)
+        if ((selfIDData[i] & kSelfID_Tag_Mask) == kSelfID_Tag_SelfID) {
+            selfIDIndices[selfIDCount] = i;
+            selfIDCount++;
+        }
     }
-    if (start == quadletCount) {
-        os_log(ASLog(), "ASOHCI: No tagged self-ID quadlets found (raw[0]=0x%08x)", selfIDData[0]);
+    
+    if (selfIDCount == 0) {
+        os_log(ASLog(), "ASOHCI: No tagged Self-ID packets found in %u data quadlets (OHCI buffer corruption?)", quadletCount - 1);
         return;
     }
-    // Determine contiguous tagged range (stop at first non-tag after start)
-    uint32_t end = start;
-    while (end < quadletCount && (selfIDData[end] & kSelfID_Tag_Mask) == kSelfID_Tag_SelfID) {
-        ++end;
+    
+    // Log all discovered Self-ID packets with their buffer positions
+    os_log(ASLog(), "ASOHCI: === SELF-ID PACKET DISCOVERY ===");
+    os_log(ASLog(), "ASOHCI: Found %u Self-ID packets in %u total quadlets", selfIDCount, quadletCount);
+    for (uint32_t i = 0; i < selfIDCount; ++i) {
+        uint32_t idx = selfIDIndices[i];
+        uint32_t packet = selfIDData[idx];
+        uint32_t phy = (packet & kSelfID_PhyID_Mask) >> kSelfID_PhyID_Shift;
+        os_log(ASLog(), "ASOHCI:  SelfID[%u]: buffer[%u]=0x%08x (PHY %u)", i, idx, packet, phy);
     }
-    uint32_t taggedCount = end - start;
-    // Raw diagnostic (first up to 8 quadlets starting at start)
-    os_log(ASLog(), "ASOHCI: SIDraw tagged=%u total=%u start=%u", taggedCount, quadletCount, start);
-    for (uint32_t i = 0; i < taggedCount && i < 8; ++i) {
-        os_log(ASLog(), "ASOHCI:  SID[%u]=0x%08x", i, selfIDData[start + i]);
+    os_log(ASLog(), "ASOHCI: === END DISCOVERY ===");
+
+    // OHCI 1.1 §11.3: "Host Controller does not verify the integrity of the self-ID packets 
+    // and software is responsible for performing this function (i.e., using the logical inverse quadlet)."
+    // Check for inverted quadlets following each Self-ID packet for error detection
+    os_log(ASLog(), "ASOHCI: === INVERTED QUADLET VERIFICATION (OHCI 1.1 §11.3) ===");
+    for (uint32_t i = 0; i < selfIDCount; ++i) {
+        uint32_t selfIDIdx = selfIDIndices[i];
+        uint32_t selfIDPacket = selfIDData[selfIDIdx];
+        
+        // Look for inverted check quadlet immediately after Self-ID packet
+        if (selfIDIdx + 1 < quadletCount) {
+            uint32_t nextQuad = selfIDData[selfIDIdx + 1];
+            uint32_t expectedInverse = ~selfIDPacket;
+            
+            if (nextQuad == expectedInverse) {
+                os_log(ASLog(), "ASOHCI:  SelfID[%u]: Inverted check PASSED (0x%08x ^ 0x%08x)", i, selfIDPacket, nextQuad);
+            } else {
+                // Check if next quadlet has no tag (might be inverted check with different position)
+                uint32_t nextTag = (nextQuad >> 30) & 0x3;
+                if (nextTag == 3) { // 11b tag might indicate inverted data
+                    os_log(ASLog(), "ASOHCI:  SelfID[%u]: Potential inverted check at +1: 0x%08x (tag=11b)", i, nextQuad);
+                } else {
+                    os_log(ASLog(), "ASOHCI:  SelfID[%u]: No inverted check found at +1 (next=0x%08x, expected=0x%08x)", i, nextQuad, expectedInverse);
+                }
+            }
+        } else {
+            os_log(ASLog(), "ASOHCI:  SelfID[%u]: No space for inverted check (end of buffer)", i);
+        }
     }
+    os_log(ASLog(), "ASOHCI: === END VERIFICATION ===");
 
     uint32_t nodes = 0;
-    for (uint32_t idx = start; idx < end; ++idx) {
-        const uint32_t q = selfIDData[idx];
+    for (uint32_t sidIdx = 0; sidIdx < selfIDCount; ++sidIdx) {
+        const uint32_t bufIdx = selfIDIndices[sidIdx];
+        const uint32_t q = selfIDData[bufIdx];
         const uint32_t phy = (q & kSelfID_PhyID_Mask) >> kSelfID_PhyID_Shift;
         const bool isExt   = (q & kSelfID_IsExtended_Mask) != 0;
         if (!isExt) {
@@ -94,16 +163,17 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
             BRIDGE_LOG("Node%u phy=%u sp=%s L=%u gap=%u c=%u pwr=%u",
                        nodes, phy, alphaSpeedStr(sp), L, gap, c, pwr);
 
-            // Consume optional extended packets (#1/#2) for this phy
+            // Look for optional extended packets (#1/#2) for this phy in remaining Self-ID packets
             uint8_t portIndex = 3;
-            uint32_t j = idx + 1;
-            while (j < end) {
-                const uint32_t qx = selfIDData[j];
-                if ((qx & kSelfID_Tag_Mask) != kSelfID_Tag_SelfID) break;
+            for (uint32_t extIdx = sidIdx + 1; extIdx < selfIDCount; ++extIdx) {
+                const uint32_t extBufIdx = selfIDIndices[extIdx];
+                const uint32_t qx = selfIDData[extBufIdx];
                 const uint32_t phyX = (qx & kSelfID_PhyID_Mask) >> kSelfID_PhyID_Shift;
-                if (phyX != phy) break;
-                if ((qx & kSelfID_IsExtended_Mask) == 0) break;
+                if (phyX != phy) continue; // different PHY - keep looking
+                if ((qx & kSelfID_IsExtended_Mask) == 0) continue; // not extended
+                
                 const uint32_t n = (qx & kSelfID_SeqN_Mask) >> kSelfID_SeqN_Shift; // 0 or 1 expected
+                os_log(ASLog(), "ASOHCI:  Found extended packet n=%u for phy=%u", n, phy);
 
                 uint32_t payload = qx & 0x000FFFFF; // keep low 20 bits for ports
                 for (unsigned k = 0; k < 10 && portIndex <= 15; ++k) {
@@ -111,8 +181,7 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
                     os_log(ASLog(), "ASOHCI:  port p%u=%{public}s (n=%u)", portIndex, portCodeStr(code), n);
                     ++portIndex;
                 }
-                ++j;
-                if (n == 1) { idx = j - 1; break; }
+                if (n == 1) break; // packet #2 processed, done with extensions
             }
             ++nodes;
         } else {
