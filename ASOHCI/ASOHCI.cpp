@@ -33,6 +33,10 @@
 #include "ASOHCIATContext.hpp"
 // Config ROM
 #include "ASOHCIConfigROM.hpp"
+// Managers
+#include "SelfIDManager.hpp"
+#include "ConfigROMManager.hpp"
+#include "Topology.hpp"
 // ------------------------ Logging -----------------------------------
 #include "LogHelper.hpp"
 #include "ASOHCIInterruptDump.hpp"
@@ -116,25 +120,21 @@ ASOHCIARContext           * arRequestContext  = nullptr;
 ASOHCIARContext           * arResponseContext = nullptr;
 ASOHCIATContext           * atRequestContext  = nullptr;
 ASOHCIATContext           * atResponseContext = nullptr;
+// Managers
+SelfIDManager             * selfIDManager   = nullptr;
+ConfigROMManager          * configROMManager= nullptr;
+Topology                  * topology        = nullptr;
 };
 
-// Helper: program 32-bit Self-ID IOVA and enable packet reception
+// Helper: program Self-ID reception via manager
 void ASOHCI::ArmSelfIDReceive(bool clearCount)
 {
-if (!ivars || !ivars->pciDevice) return;
-// Keep buffer pointer programmed; optionally clear count; ensure receive bits are set
-ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDBuffer, (uint32_t) ivars->selfIDSeg.address);
-if (clearCount) {
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDCount, 0);
-}
-ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
-uint32_t lc=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &lc);
-os_log(ASLog(), "ASOHCI: Arm Self-ID (clearCount=%u) LinkControl=0x%08x", clearCount ? 1u : 0u, lc);
-ivars->selfIDArmed = true;
+    if (!ivars || !ivars->selfIDManager) return;
+    ivars->selfIDManager->Arm(clearCount);
+    ivars->selfIDArmed = true;
 }
 
-// Self-ID parsing
-#include "SelfIDParser.hpp"
+// (Legacy) Self-ID parser not used when manager is active
 
 // Init
 bool ASOHCI::init()
@@ -300,71 +300,45 @@ BRIDGE_LOG("OHCI VER=%08x BUSOPT=%08x GUID=%08x:%08x", ohci_ver, bus_opts, guid_
 ivars->pciDevice = pci;
 ivars->barIndex  = bar0Index;
 
-// -----------------------------------------------------------------
-// Minimal Configuration ROM: allocate 1KB, populate BIB, map, program
-// -----------------------------------------------------------------
+// Configuration ROM via manager
 {
-    // Allocate 1KB ROM buffer and map for CPU access
-    // Device will READ this buffer (host -> device), so direction = Out
-    kern_return_t ckr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionOut,
-                                                            1024,
-                                                            4,
-                                                            &ivars->configROMBuffer);
-    if (ckr == kIOReturnSuccess && ivars->configROMBuffer) {
-        ckr = ivars->configROMBuffer->CreateMapping(0, 0, 0, 0, 0, &ivars->configROMMap);
-    }
-    if (ckr != kIOReturnSuccess || !ivars->configROMMap) {
-        os_log(ASLog(), "ASOHCI: WARN: Config ROM map failed: 0x%08x", ckr);
-    } else {
-        // Build ROM (BIB + minimal root directory) and write big-endian into buffer
-        ASOHCIConfigROM rom;
-        rom.buildFromHardware(bus_opts, guid_hi, guid_lo, /*includeRootDirectory*/true, /*includeNodeCaps*/true);
-        void* romPtr = (void*)ivars->configROMMap->GetAddress();
-        size_t romLen = (size_t)ivars->configROMMap->GetLength();
-        rom.writeToBufferBE(romPtr, romLen);
-
-        // Full ROM dump for debugging and verification
-        DumpHexBigEndian(romPtr, romLen, "CONFIG ROM DUMP HEX");
-
-        // DMA-map to obtain 32-bit IOVA for ConfigROMmap register
-        IODMACommandSpecification spec{};
-        spec.options = kIODMACommandSpecificationNoOptions;
-        spec.maxAddressBits = 32; // 32-bit IOVA required for OHCI
-        IODMACommand* dma = nullptr;
-        ckr = IODMACommand::Create(pci, kIODMACommandCreateNoOptions, &spec, &dma);
-        if (ckr == kIOReturnSuccess && dma) {
-            uint64_t dflags = 0;
-            uint32_t dsegs = 32;
-            IOAddressSegment segs[32] = {};
-            ckr = dma->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
-                                        ivars->configROMBuffer,
-                                        0,
-                                        1024,
-                                        &dflags,
-                                        &dsegs,
-                                        segs);
-            if (ckr == kIOReturnSuccess) {
-                ivars->configROMDMA = dma;
-                ivars->configROMSeg = segs[0];
-                // Program OHCI registers: header=0 (workaround), BusOptions from ROM[2], map address
-                // Stage BusOptions and header for commit on next BusReset per OHCI §5.5 (Linux parity)
-                ivars->configROMHeaderQuad = rom.headerQuad();
-                ivars->configROMBusOptions = rom.romQuad(2);
-                ivars->configROMHeaderNeedsCommit = true;
-                // Initial workaround: header=0 until next BusReset; program BusOptions mirror for completeness
-                pci->MemoryWrite32(bar0Index, kOHCI_ConfigROMhdr, 0);
-                pci->MemoryWrite32(bar0Index, kOHCI_BusOptions, ivars->configROMBusOptions);
-                pci->MemoryWrite32(bar0Index, kOHCI_ConfigROMmap, (uint32_t)ivars->configROMSeg.address);
-                os_log(ASLog(), "ASOHCI: ConfigROM mapped @ 0x%08x, BusOptions=0x%08x, VendorID=0x%06x, EUI64=%08x%08x",
-                        (unsigned)ivars->configROMSeg.address, ivars->configROMBusOptions,
-                        (unsigned)rom.vendorID(), (unsigned)guid_hi, (unsigned)guid_lo);
-            } else {
-                os_log(ASLog(), "ASOHCI: WARN: Config ROM DMA prepare failed: 0x%08x", ckr);
-                dma->release();
-            }
-        } else {
-            os_log(ASLog(), "ASOHCI: WARN: Config ROM DMA create failed: 0x%08x", ckr);
+    ivars->configROMManager = new ConfigROMManager();
+    if (ivars->configROMManager) {
+        kern_return_t ckr = ivars->configROMManager->Initialize(pci, (uint8_t)bar0Index, bus_opts, guid_hi, guid_lo, 1024);
+        if (ckr != kIOReturnSuccess) {
+            os_log(ASLog(), "ASOHCI: WARN: ConfigROMManager init failed: 0x%08x", ckr);
         }
+    }
+}
+
+// Topology + Self-ID manager callbacks
+{
+    if (!ivars->topology) ivars->topology = new Topology();
+    if (!ivars->selfIDManager) ivars->selfIDManager = new SelfIDManager();
+    if (ivars->selfIDManager && ivars->topology) {
+        ivars->selfIDManager->SetCallbacks(
+            // onDecode: begin cycle and accumulate nodes
+            [this](const SelfID::Result& res){
+                if (!ivars || !ivars->topology) return;
+                ivars->topology->BeginCycle(res.generation);
+                for (const auto& n : res.nodes) ivars->topology->AddOrUpdateNode(n);
+            },
+            // onStable: finalize and log a concise summary
+            [this](const SelfID::Result& res){
+                if (!ivars || !ivars->topology) return;
+                ivars->topology->Finalize();
+                size_t nodes = ivars->topology->NodeCount();
+                const Topology::Node* root = ivars->topology->Root();
+                uint8_t hops = ivars->topology->MaxHopsFromRoot();
+                bool ok = ivars->topology->IsConsistent();
+                auto& info = ivars->topology->Info();
+                os_log(ASLog(), "ASOHCI: Topology gen=%u nodes=%lu rootPhy=%u hops=%u consistent=%d warnings=%lu",
+                        info.generation, (unsigned long)nodes, root ? root->phy.value : 0xFF, hops, ok ? 1 : 0,
+                        (unsigned long)info.warnings.size());
+                BRIDGE_LOG("Topo g=%u nodes=%lu root=%u hops=%u", info.generation, (unsigned long)nodes, root ? root->phy.value : 0xFF, hops);
+                ivars->topology->Log();
+            }
+        );
     }
 }
 
@@ -492,58 +466,17 @@ if (kr == kIOReturnSuccess && queue) {
     os_log(ASLog(), "ASOHCI: CopyDispatchQueue failed: 0x%08x", kr);
 }
 
-// --- Self‑ID DMA buffer setup (allocate, map to 32-bit IOVA, map to CPU)
-BRIDGE_LOG("Setting up Self-ID DMA buffer");
-kr = IOBufferMemoryDescriptor::Create(
-    kIOMemoryDirectionIn, // device writes into it
-    kSelfIDBufferSize,
-    kSelfIDBufferAlign,
-    &ivars->selfIDBuffer
-);
-if (kr != kIOReturnSuccess || !ivars->selfIDBuffer) {
-    os_log(ASLog(), "ASOHCI: IOBufferMemoryDescriptor::Create failed: 0x%08x", kr);
-    return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
-}
-
-// Map buffer into CPU address space for parsing
-if (!ivars->selfIDMap) {
-    kern_return_t mr = ivars->selfIDBuffer->CreateMapping(0, 0, 0, 0, 0, &ivars->selfIDMap);
-    if (mr != kIOReturnSuccess || !ivars->selfIDMap) {
-        os_log(ASLog(), "ASOHCI: CreateMapping for Self-ID buffer failed: 0x%08x", mr);
+// --- Self‑ID via manager (create once; Initialize once)
+BRIDGE_LOG("Setting up Self-ID manager & buffer");
+if (!ivars->selfIDManager) {
+    ivars->selfIDManager = new SelfIDManager();
+    if (ivars->selfIDManager) {
+        kr = ivars->selfIDManager->Initialize(pci, (uint8_t)bar0Index, kSelfIDBufferSize);
+        if (kr != kIOReturnSuccess) {
+            os_log(ASLog(), "ASOHCI: SelfIDManager init failed: 0x%08x", kr);
+        }
     }
 }
-
-// Create 32-bit DMA mapping
-IODMACommandSpecification spec{};
-spec.options = kIODMACommandSpecificationNoOptions;
-spec.maxAddressBits = 32; // critical: 32-bit IOVA
-IODMACommand *dma = nullptr;
-kr = IODMACommand::Create(pci, kIODMACommandCreateNoOptions, &spec, &dma);
-if (kr != kIOReturnSuccess || !dma) {
-    os_log(ASLog(), "ASOHCI: IODMACommand::Create failed: 0x%08x", kr);
-    return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
-}
-
-uint64_t flags = 0;
-uint32_t segCount = 32;
-IOAddressSegment segs[32] = {};
-kr = dma->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
-                        ivars->selfIDBuffer,
-                        0,
-                        kSelfIDBufferSize,
-                        &flags,
-                        &segCount,
-                        segs);
-if (kr != kIOReturnSuccess || segCount < 1 || segs[0].address == 0) {
-    os_log(ASLog(), "ASOHCI: PrepareForDMA failed: 0x%08x segs=%u addr=0x%llx", kr, segCount, (unsigned long long)segs[0].address);
-    dma->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-    dma->release();
-    return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
-}
-ivars->selfIDDMA = dma;
-ivars->selfIDSeg = segs[0];
-os_log(ASLog(), "ASOHCI: Self-ID IOVA=0x%llx len=0x%llx", (unsigned long long)ivars->selfIDSeg.address, (unsigned long long)ivars->selfIDSeg.length);
-BRIDGE_LOG("Self-ID IOVA=0x%llx", (unsigned long long)ivars->selfIDSeg.address);
 
 // =====================================================================================
 // Complete OHCI Initialization Sequence (based on Linux driver and OHCI 1.1 spec)
@@ -598,14 +531,12 @@ if (!lpsEnabled) {
 pci->MemoryWrite32(bar0Index, kOHCI_HCControlClear, kOHCI_HCControl_NoByteSwap);
 os_log(ASLog(), "ASOHCI: Phase 3 - Configured for little-endian byte order");
 
-// Phase 4: Self-ID Buffer Programming (OHCI 1.1 §11)
-os_log(ASLog(), "ASOHCI: Phase 4 - Self-ID Buffer Configuration");
-pci->MemoryWrite32(bar0Index, kOHCI_SelfIDBuffer, (uint32_t)ivars->selfIDSeg.address);
-// Deferred cycle timer policy: only enable after first stable Self-ID
+// Phase 4: Self-ID Buffer Programming (via manager)
+os_log(ASLog(), "ASOHCI: Phase 4 - Self-ID Manager arming");
 ivars->cycleTimerArmed = false;
-// Enable reception of Self-ID and PHY packets now
-pci->MemoryWrite32(bar0Index, kOHCI_LinkControlSet,
-                    (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+if (ivars->selfIDManager) {
+    ivars->selfIDManager->Arm(false);
+}
 
 // Phase 5: AT Retries Configuration (Linux ohci_enable line 2479)
 uint32_t retries = (3 << 0) |        // MAX_AT_REQ_RETRIES 
@@ -871,6 +802,13 @@ ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDCount, 0);
 ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_SelfIDBuffer, 0);
 }
 
+// 4a) Teardown managers
+if (ivars) {
+    if (ivars->selfIDManager) { ivars->selfIDManager->Teardown(); delete ivars->selfIDManager; ivars->selfIDManager = nullptr; }
+    if (ivars->configROMManager) { ivars->configROMManager->Teardown(); delete ivars->configROMManager; ivars->configROMManager = nullptr; }
+    if (ivars->topology) { delete ivars->topology; ivars->topology = nullptr; }
+}
+
 // 5) Assert SoftReset and drop LinkEnable to stop the link state machine
 if (ivars && ivars->pciDevice) {
 os_log(ASLog(), "ASOHCI: Stop step 5 - soft reset + drop LinkEnable");
@@ -886,39 +824,9 @@ os_log(ASLog(), "ASOHCI: HC soft reset during Stop (HCControl=0x%08x)", _hc);
 }
 
 // 6) Now free DMA resources in safe order
-if (ivars && ivars->selfIDDMA) {
-os_log(ASLog(), "ASOHCI: Stop step 6a - release Self-ID DMA");
-ivars->selfIDDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-ivars->selfIDDMA->release();
-ivars->selfIDDMA = nullptr;
-}
-if (ivars && ivars->selfIDMap) {
-os_log(ASLog(), "ASOHCI: Stop step 6b - release Self-ID map");
-ivars->selfIDMap->release();
-ivars->selfIDMap = nullptr;
-}
-if (ivars && ivars->selfIDBuffer) {
-os_log(ASLog(), "ASOHCI: Stop step 6c - release Self-ID buffer");
-ivars->selfIDBuffer->release();
-ivars->selfIDBuffer = nullptr;
-os_log(ASLog(), "ASOHCI: Self-ID buffer released");
-BRIDGE_LOG("Self-ID buffer released");
-}
+// Legacy Self-ID resources were managed by SelfIDManager (already torn down)
 // 7) Release Config ROM resources
-if (ivars && ivars->configROMDMA) {
-os_log(ASLog(), "ASOHCI: Stop step 7 - release Config ROM DMA/map/buffer");
-ivars->configROMDMA->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-ivars->configROMDMA->release();
-ivars->configROMDMA = nullptr;
-}
-if (ivars && ivars->configROMMap) {
-ivars->configROMMap->release();
-ivars->configROMMap = nullptr;
-}
-if (ivars && ivars->configROMBuffer) {
-ivars->configROMBuffer->release();
-ivars->configROMBuffer = nullptr;
-}
+// Legacy ROM resources were managed by ConfigROMManager (already torn down)
 
 // 7) Release PHY helper
 if (ivars && ivars->phyAccess) {
@@ -1003,19 +911,9 @@ os_log(ASLog(), "ASOHCI: Posted Write Error addr=%08x:%08x (cleared)", _hi, _lo)
 if (intEvent & kOHCI_Int_BusReset) {
 // Mask busReset until bus reset handling completes (Linux parity)
 ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear, kOHCI_Int_BusReset);
-// Per OHCI §5.5, if a Config ROM image is staged, update BusOptions then Header now.
-if (ivars->configROMHeaderNeedsCommit && ivars->configROMHeaderQuad != 0) {
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_BusOptions, ivars->configROMBusOptions);
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_ConfigROMhdr, ivars->configROMHeaderQuad);
-    os_log(ASLog(), "ASOHCI: ConfigROM header committed on BusReset (BusOptions=0x%08x, Header=0x%08x)",
-            ivars->configROMBusOptions, ivars->configROMHeaderQuad);
-    // Optional: short post-commit dump (trimmed) for verification
-    if (ivars->configROMMap) {
-        void* romPtr = (void*)ivars->configROMMap->GetAddress();
-        size_t romLen = (size_t)ivars->configROMMap->GetLength();
-        DumpHexBigEndian(romPtr, romLen, "CONFIG ROM POST-COMMIT DUMP HEX");
-    }
-    ivars->configROMHeaderNeedsCommit = false;
+// Commit staged Config ROM header via manager
+if (ivars->configROMManager) {
+    ivars->configROMManager->CommitOnBusReset();
 }
 // Stop/flush AT contexts during reset window (parity with Linux behavior)
 if (ivars->atRequestContext)  { ivars->atRequestContext->Stop(); }
@@ -1056,32 +954,14 @@ if (intEvent & kOHCI_Int_SelfIDComplete) {
 os_log(ASLog(), "ASOHCI: Self-ID phase complete");
 BRIDGE_LOG("Self-ID complete");
 
-uint32_t selfIDCount1=0, selfIDCount2=0;
+uint32_t selfIDCount1=0;
 ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_SelfIDCount, &selfIDCount1);
-
 uint32_t quads = (selfIDCount1 & kOHCI_SelfIDCount_selfIDSize) >> 2;
 bool     err   = (selfIDCount1 & kOHCI_SelfIDCount_selfIDError) != 0;
 os_log(ASLog(), "ASOHCI: SelfID count=%u quads, error=%d", quads, err);
 BRIDGE_LOG("SelfID count=%u error=%d", quads, err);
-
-if (!err && quads > 0 && ivars->selfIDMap) {
-    uint32_t *ptr = (uint32_t *)(uintptr_t) ivars->selfIDMap->GetAddress();
-    size_t     len = (size_t) ivars->selfIDMap->GetLength();
-    if (ptr && len >= quads * sizeof(uint32_t)) {
-        SelfIDParser::Process(ptr, quads);
-    } else {
-        os_log(ASLog(), "ASOHCI: Self-ID CPU mapping invalid for parse");
-    }
-}
-// Generation consistency check: ensure no new bus reset occurred during parse
-ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_SelfIDCount, &selfIDCount2);
-if ((selfIDCount1 & kOHCI_SelfIDCount_selfIDGeneration) != (selfIDCount2 & kOHCI_SelfIDCount_selfIDGeneration)) {
-    os_log(ASLog(), "ASOHCI: New bus reset detected during Self-ID parse; discarding results");
-    // Re-arm Self-ID for next cycle, keep busReset masked until next event handler run
-    ArmSelfIDReceive(/*clearCount=*/false);
-    ivars->selfIDInProgress = false;
-    ivars->selfIDArmed = true;
-    return;
+if (ivars->selfIDManager) {
+    ivars->selfIDManager->OnSelfIDComplete(selfIDCount1);
 }
     // First stable Self-ID -> enable cycle timer (deferred policy) and assert cycle master
     if (!ivars->cycleTimerArmed && ivars->pciDevice) {

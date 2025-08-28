@@ -19,6 +19,11 @@
 		3AF500032E5D100000000003 /* ASOHCIATContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF500012E5D000000000001 /* ASOHCIATContext.cpp */; };
 		3AF600032E5D200000000003 /* ASOHCIInterruptDump.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF600012E5D200000000001 /* ASOHCIInterruptDump.cpp */; };
 		3AF700032E5D300000000003 /* ASOHCIConfigROM.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF700012E5D300000000001 /* ASOHCIConfigROM.cpp */; };
+		3AF800032E5E000000000003 /* SelfIDDecode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800012E5E000000000001 /* SelfIDDecode.cpp */; };
+		3AF800042E5E000000000004 /* SelfIDManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800022E5E000000000002 /* SelfIDManager.cpp */; };
+		3AF800052E5E000000000005 /* ConfigROMManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800062E5E000000000006 /* ConfigROMManager.cpp */; };
+		3AF800072E5E000000000007 /* Topology.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800082E5E000000000008 /* Topology.cpp */; };
+		3AF800092E5E000000000009 /* ConfigROMProperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -77,6 +82,11 @@
 		3AF600022E5D200000000002 /* ASOHCIInterruptDump.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = ASOHCIInterruptDump.hpp; path = ASOHCI/ASOHCIInterruptDump.hpp; sourceTree = SOURCE_ROOT; };
 		3AF700012E5D300000000001 /* ASOHCIConfigROM.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIConfigROM.cpp; path = ASOHCI/ASOHCIConfigROM.cpp; sourceTree = SOURCE_ROOT; };
 		3AF700022E5D300000000002 /* ASOHCIConfigROM.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; name = ASOHCIConfigROM.hpp; path = ASOHCI/ASOHCIConfigROM.hpp; sourceTree = SOURCE_ROOT; };
+		3AF800012E5E000000000001 /* SelfIDDecode.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = SelfIDDecode.cpp; path = ASOHCI/SelfIDDecode.cpp; sourceTree = SOURCE_ROOT; };
+		3AF800022E5E000000000002 /* SelfIDManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = SelfIDManager.cpp; path = ASOHCI/SelfIDManager.cpp; sourceTree = SOURCE_ROOT; };
+		3AF800062E5E000000000006 /* ConfigROMManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ConfigROMManager.cpp; path = ASOHCI/ConfigROMManager.cpp; sourceTree = SOURCE_ROOT; };
+		3AF800082E5E000000000008 /* Topology.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = Topology.cpp; path = ASOHCI/Topology.cpp; sourceTree = SOURCE_ROOT; };
+		3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ConfigROMProperties.cpp; path = ASOHCI/ConfigROMProperties.cpp; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -163,6 +173,11 @@
 				3AF600022E5D200000000002 /* ASOHCIInterruptDump.hpp */,
 				3AF700012E5D300000000001 /* ASOHCIConfigROM.cpp */,
 				3AF700022E5D300000000002 /* ASOHCIConfigROM.hpp */,
+				3AF800012E5E000000000001 /* SelfIDDecode.cpp */,
+				3AF800022E5E000000000002 /* SelfIDManager.cpp */,
+				3AF800062E5E000000000006 /* ConfigROMManager.cpp */,
+				3AF800082E5E000000000008 /* Topology.cpp */,
+				3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -441,6 +456,11 @@
 				3AF700032E5D300000000003 /* ASOHCIConfigROM.cpp in Sources */,
 				3AF500032E5D100000000003 /* ASOHCIATContext.cpp in Sources */,
 				3AF600032E5D200000000003 /* ASOHCIInterruptDump.cpp in Sources */,
+				3AF800032E5E000000000003 /* SelfIDDecode.cpp in Sources */,
+				3AF800042E5E000000000004 /* SelfIDManager.cpp in Sources */,
+				3AF800052E5E000000000005 /* ConfigROMManager.cpp in Sources */,
+				3AF800072E5E000000000007 /* Topology.cpp in Sources */,
+				3AF800092E5E000000000009 /* ConfigROMProperties.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -499,6 +519,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 16;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -520,14 +541,13 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				CURRENT_PROJECT_VERSION = 14;
-				MARKETING_VERSION = 1.0.0;
 			};
 			name = Debug;
 		};
@@ -565,6 +585,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 16;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -580,12 +601,11 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
-				CURRENT_PROJECT_VERSION = 14;
-				MARKETING_VERSION = 1.0.0;
 			};
 			name = Release;
 		};
@@ -598,7 +618,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -633,7 +653,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -664,7 +684,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -685,7 +705,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -705,7 +725,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
@@ -724,7 +744,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
@@ -747,7 +767,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASOHCI/ASOHCI.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 23.0;
 				ENABLE_CODE_COVERAGE = NO;
@@ -778,7 +798,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASOHCI/ASOHCI.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 23.0;
 				ENABLE_CODE_COVERAGE = NO;

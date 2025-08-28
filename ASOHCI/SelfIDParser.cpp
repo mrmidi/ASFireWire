@@ -8,6 +8,10 @@
 
 #include "SelfIDParser.hpp"
 
+#ifndef ASOHCI_VERBOSE_SELFID
+#define ASOHCI_VERBOSE_SELFID 0
+#endif
+
 #include <os/log.h>
 #include <DriverKit/IOLib.h>
 
@@ -30,28 +34,21 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
     // OHCI 1.1 §11.3: Buffer format = [header quadlet][concatenated self-ID packet data]
     // Header quadlet (position 0): selfIDGeneration | timeStamp (NOT tagged)
     // Data quadlets: Self-ID packets (tag=10b) + inverted check quadlets + topology maps
+    #if ASOHCI_VERBOSE_SELFID
     os_log(ASLog(), "ASOHCI: === RAW SELF-ID BUFFER ANALYSIS (OHCI 1.1 §11.3) ===");
     for (uint32_t i = 0; i < quadletCount; ++i) {
         uint32_t q = selfIDData[i];
         uint32_t tag = (q >> 30) & 0x3;
         const char* tagType = "";
         const char* purpose = "";
-        
-        if (i == 0) {
-            // OHCI 1.1 §11.3: First quadlet is always header (selfIDGeneration | timeStamp)
-            purpose = " [HEADER: generation | timestamp]";
-            tagType = "N/A-Header";
-        } else {
-            switch (tag) {
-                case 0: tagType = "00b-Reserved"; purpose = " [Unknown/Reserved]"; break;
-                case 1: tagType = "01b-Topology"; purpose = " [Topology Map]"; break; 
-                case 2: tagType = "10b-SelfID"; purpose = " [Self-ID Packet]"; break;
-                case 3: tagType = "11b-Reserved"; purpose = " [Inverted Check?]"; break;
-            }
+        if (i == 0) { purpose = " [HEADER: generation | timestamp]"; tagType = "N/A-Header"; }
+        else {
+            switch (tag) { case 0: tagType = "00b-Reserved"; purpose = " [Unknown/Reserved]"; break; case 1: tagType = "01b-Topology"; purpose = " [Topology Map]"; break; case 2: tagType = "10b-SelfID"; purpose = " [Self-ID Packet]"; break; case 3: tagType = "11b-Reserved"; purpose = " [Inverted Check?]"; break; }
         }
         os_log(ASLog(), "ASOHCI:  BUF[%u]=0x%08x tag=%s%s", i, q, tagType, purpose);
     }
     os_log(ASLog(), "ASOHCI: === END BUFFER ANALYSIS ===");
+    #endif
 
     // Helpers per Table 16-4
     auto portCodeStr = [](uint32_t v)->const char* {
@@ -96,6 +93,7 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
     }
     
     // Log all discovered Self-ID packets with their buffer positions
+    #if ASOHCI_VERBOSE_SELFID
     os_log(ASLog(), "ASOHCI: === SELF-ID PACKET DISCOVERY ===");
     os_log(ASLog(), "ASOHCI: Found %u Self-ID packets in %u total quadlets", selfIDCount, quadletCount);
     for (uint32_t i = 0; i < selfIDCount; ++i) {
@@ -105,10 +103,12 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
         os_log(ASLog(), "ASOHCI:  SelfID[%u]: buffer[%u]=0x%08x (PHY %u)", i, idx, packet, phy);
     }
     os_log(ASLog(), "ASOHCI: === END DISCOVERY ===");
+    #endif
 
     // OHCI 1.1 §11.3: "Host Controller does not verify the integrity of the self-ID packets 
     // and software is responsible for performing this function (i.e., using the logical inverse quadlet)."
     // Check for inverted quadlets following each Self-ID packet for error detection
+    #if ASOHCI_VERBOSE_SELFID
     os_log(ASLog(), "ASOHCI: === INVERTED QUADLET VERIFICATION (OHCI 1.1 §11.3) ===");
     for (uint32_t i = 0; i < selfIDCount; ++i) {
         uint32_t selfIDIdx = selfIDIndices[i];
@@ -135,6 +135,7 @@ void Process(uint32_t* selfIDData, uint32_t quadletCount)
         }
     }
     os_log(ASLog(), "ASOHCI: === END VERIFICATION ===");
+    #endif
 
     uint32_t nodes = 0;
     for (uint32_t sidIdx = 0; sidIdx < selfIDCount; ++sidIdx) {

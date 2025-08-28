@@ -86,6 +86,11 @@ private:
         class ASOHCIARContext*     arResponseContext = nullptr;
         class ASOHCIATContext*     atRequestContext  = nullptr;
         class ASOHCIATContext*     atResponseContext = nullptr;
+
+        // Managers (factored subsystems)
+        class SelfIDManager*       selfIDManager   = nullptr;
+        class ConfigROMManager*    configROMManager= nullptr;
+        class Topology*            topology        = nullptr;
     };
 
 };

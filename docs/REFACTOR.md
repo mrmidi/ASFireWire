@@ -29,6 +29,7 @@ The first step is to create the empty files for our new class structure within t
 - [ ] **DMA & Data Flow Management**
     - [ ] `ASOHCIAsyncManager.hpp`
     - [ ] `ASOHCIAsyncManager.cpp`
+    - [x] AR design white paper: see `docs/AR_ASYNC_RECEIVE.md` for spec anchors and implementation notes.
     - [ ] `ASOHCIIsochManager.hpp`
     - [ ] `ASOHCIIsochManager.cpp`
     - [ ] `ASOHCIITContext.hpp`
