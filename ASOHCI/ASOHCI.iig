@@ -77,6 +77,10 @@ private:
         bool                       lastLoggedValid   = false;
         bool                       lastLoggedRoot    = false;
         bool                       didInitialPhyScan = false;
+        
+        // Cycle inconsistent rate limiting 
+        uint32_t                   cycleInconsistentCount = 0;
+        uint64_t                   lastCycleInconsistentTime = 0;
 
         // PHY access helper
         class ASOHCIPHYAccess*     phyAccess     = nullptr;

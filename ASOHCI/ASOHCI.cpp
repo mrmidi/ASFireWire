@@ -115,6 +115,12 @@ uint32_t                    lastLoggedNodeID  = 0xFFFFFFFFu;
 bool                        lastLoggedValid   = false;
 bool                        lastLoggedRoot    = false;
 bool                        didInitialPhyScan = false;
+// Bus reset watchdog
+bool                        busResetMasked    = false;
+uint64_t                    lastBusResetTime  = 0;
+// Cycle inconsistent rate limiting 
+uint32_t                    cycleInconsistentCount = 0;
+uint64_t                    lastCycleInconsistentTime = 0;
 ASOHCIPHYAccess           * phyAccess     = nullptr;
 ASOHCIARContext           * arRequestContext  = nullptr;
 ASOHCIARContext           * arResponseContext = nullptr;
@@ -130,7 +136,9 @@ Topology                  * topology        = nullptr;
 void ASOHCI::ArmSelfIDReceive(bool clearCount)
 {
     if (!ivars || !ivars->selfIDManager) return;
-    ivars->selfIDManager->Arm(clearCount);
+    kern_return_t akr = ivars->selfIDManager->Arm(clearCount);
+    os_log(ASLog(), "ASOHCI: Self-ID armed clear=%u iova=0x%llx status=0x%08x",
+           clearCount ? 1u : 0u, (unsigned long long)ivars->selfIDManager->BufferIOVA(), akr);
     ivars->selfIDArmed = true;
 }
 
@@ -320,6 +328,8 @@ ivars->barIndex  = bar0Index;
             // onDecode: begin cycle and accumulate nodes
             [this](const SelfID::Result& res){
                 if (!ivars || !ivars->topology) return;
+                os_log(ASLog(), "ASOHCI: Topology decode callback fired (begin cycle): gen=%u nodes=%lu",
+                       res.generation, (unsigned long)res.nodes.size());
                 ivars->topology->BeginCycle(res.generation);
                 for (const auto& n : res.nodes) ivars->topology->AddOrUpdateNode(n);
             },
@@ -327,6 +337,7 @@ ivars->barIndex  = bar0Index;
             [this](const SelfID::Result& res){
                 if (!ivars || !ivars->topology) return;
                 ivars->topology->Finalize();
+                os_log(ASLog(), "ASOHCI: Topology callback fired (finalize)");
                 size_t nodes = ivars->topology->NodeCount();
                 const Topology::Node* root = ivars->topology->Root();
                 uint8_t hops = ivars->topology->MaxHopsFromRoot();
@@ -680,13 +691,15 @@ os_log(ASLog(), "ASOHCI: AR/AT context initialization complete");
 uint32_t irqs = kOHCI_Int_ReqTxComplete | kOHCI_Int_RespTxComplete |
                 kOHCI_Int_RqPkt | kOHCI_Int_RsPkt |
                 kOHCI_Int_IsochTx | kOHCI_Int_IsochRx |
-                kOHCI_Int_PostedWriteErr | kOHCI_Int_SelfIDComplete |
-                kOHCI_Int_RegAccessFail | kOHCI_Int_CycleInconsistent |
+                kOHCI_Int_PostedWriteErr | kOHCI_Int_SelfIDComplete | kOHCI_Int_SelfIDComplete2 |
+                kOHCI_Int_RegAccessFail | /* kOHCI_Int_CycleInconsistent | DISABLED until isochronous contexts implemented */
                 kOHCI_Int_UnrecoverableError | kOHCI_Int_CycleTooLong |
                 kOHCI_Int_MasterEnable | kOHCI_Int_BusReset | kOHCI_Int_Phy;
 
     pci->MemoryWrite32(bar0Index, kOHCI_IntMaskSet, irqs);
     os_log(ASLog(), "ASOHCI: Phase 9 - Comprehensive interrupt mask set: 0x%08x", irqs);
+    os_log(ASLog(), "ASOHCI: WARNING: CycleInconsistent interrupt DISABLED until isochronous contexts implemented");
+    BRIDGE_LOG("WARNING: CycleInconsistent interrupt disabled - no isochronous support yet");
 
 // Phase 10: LinkEnable - Final Activation (OHCI 1.1 §5.7.3, Linux lines 2575-2581)
 os_log(ASLog(), "ASOHCI: Phase 10 - Link Enable (Final Activation)");
@@ -889,6 +902,18 @@ os_log(ASLog(), "ASOHCI: Spurious MSI (IntEvent=0)");
 return;
 }
 
+// Watchdog: if BusReset was masked and Self-ID has not completed within ~250ms, re-enable BusReset
+if (ivars->selfIDInProgress && ivars->busResetMasked) {
+    const uint64_t threshold_ns = 250000000ULL; // 250 ms
+    if (time > ivars->lastBusResetTime && (time - ivars->lastBusResetTime) > threshold_ns) {
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet, kOHCI_Int_BusReset);
+        ivars->busResetMasked = false;
+        os_log(ASLog(), "ASOHCI: Watchdog re-enabled BusReset mask after timeout");
+        // Best-effort: keep Self-ID armed in case we missed it
+        ArmSelfIDReceive(/*clearCount=*/false);
+    }
+}
+
 // Ack/clear what we saw (write-1-to-clear), but per OHCI 1.1 and Linux parity
 // do not clear busReset or postedWriteErr in this bulk clear.
 uint32_t clearMask = intEvent & ~(kOHCI_Int_BusReset | kOHCI_Int_PostedWriteErr);
@@ -911,9 +936,16 @@ os_log(ASLog(), "ASOHCI: Posted Write Error addr=%08x:%08x (cleared)", _hi, _lo)
 if (intEvent & kOHCI_Int_BusReset) {
 // Mask busReset until bus reset handling completes (Linux parity)
 ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear, kOHCI_Int_BusReset);
+ivars->busResetMasked = true;
+ivars->lastBusResetTime = time;
+os_log(ASLog(), "ASOHCI: BusReset masked during handling");
 // Commit staged Config ROM header via manager
 if (ivars->configROMManager) {
     ivars->configROMManager->CommitOnBusReset();
+}
+// Reset topology accumulation for the new cycle
+if (ivars->topology) {
+    ivars->topology->Clear();
 }
 // Stop/flush AT contexts during reset window (parity with Linux behavior)
 if (ivars->atRequestContext)  { ivars->atRequestContext->Stop(); }
@@ -949,8 +981,8 @@ if (nodeID != ivars->lastLoggedNodeID || idValid != ivars->lastLoggedValid || is
 // NOTE: Self-ID complete will deliver alpha self-ID quadlets (#0 and optional #1/#2).
 // Parser implements IEEE 1394-2008 §16.3.2.1 (Alpha). Beta support can be added later.
 
-// Self-ID complete
-if (intEvent & kOHCI_Int_SelfIDComplete) {
+// Self-ID complete (primary or secondary)
+if (intEvent & (kOHCI_Int_SelfIDComplete | kOHCI_Int_SelfIDComplete2)) {
 os_log(ASLog(), "ASOHCI: Self-ID phase complete");
 BRIDGE_LOG("Self-ID complete");
 
@@ -963,12 +995,39 @@ BRIDGE_LOG("SelfID count=%u error=%d", quads, err);
 if (ivars->selfIDManager) {
     ivars->selfIDManager->OnSelfIDComplete(selfIDCount1);
 }
-    // First stable Self-ID -> enable cycle timer (deferred policy) and assert cycle master
+    // First stable Self-ID -> enable cycle timer only (receive timing, don't generate)
     if (!ivars->cycleTimerArmed && ivars->pciDevice) {
-        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, (kOHCI_LC_CycleTimerEnable | kOHCI_LC_CycleMaster));
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleTimerEnable);
+        
+        // Check if this node should be cycle master (only if we are root)
+        uint32_t nodeIdReg = 0;
+        ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeIdReg);
+        bool hardwareIsRoot = ((nodeIdReg & kOHCI_NodeID_root) != 0);
+        bool idValid = ((nodeIdReg & kOHCI_NodeID_idValid) != 0);
+        
+        // Also check topology if available
+        bool topologyConfirmsRoot = false;
+        if (ivars->topology) {
+            uint8_t localPhyId = (uint8_t)((nodeIdReg >> 24) & 0x3F); // PHY ID from bits 29:24
+            const Topology::Node* root = ivars->topology->Root();
+            if (root && root->phy.value == localPhyId) {
+                topologyConfirmsRoot = true;
+            }
+        }
+        
+        bool shouldBeCycleMaster = idValid && hardwareIsRoot && 
+                                  (ivars->topology == nullptr || topologyConfirmsRoot);
+        
+        if (shouldBeCycleMaster) {
+            ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleMaster);
+            os_log(ASLog(), "ASOHCI: CycleMaster asserted - this node is root (hwRoot=%d topoRoot=%d phyId=%u)", 
+                   hardwareIsRoot, topologyConfirmsRoot, (nodeIdReg >> 24) & 0x3F);
+            BRIDGE_LOG("CycleMaster enabled - root node");
+        }
+        
         uint32_t lcPost=0; ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_LinkControlSet, &lcPost);
-        os_log(ASLog(), "ASOHCI: CycleTimerEnable+CycleMaster asserted post Self-ID (LinkControl=0x%08x)", lcPost);
-        BRIDGE_LOG("CycleTimer+Master now set (LC=%08x)", lcPost);
+        os_log(ASLog(), "ASOHCI: CycleTimerEnable asserted post Self-ID (LinkControl=0x%08x)", lcPost);
+        BRIDGE_LOG("CycleTimer enabled (LC=%08x)", lcPost);
         ivars->cycleTimerArmed = true;
     }
 // Restart AT contexts after successful Self-ID processing
@@ -1034,6 +1093,8 @@ if (ivars->collapsedBusResets) {
 ArmSelfIDReceive(/*clearCount=*/false);
 // Re-enable busReset interrupt now that reset cycle finished
 ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet, kOHCI_Int_BusReset);
+ivars->busResetMasked = false;
+os_log(ASLog(), "ASOHCI: BusReset re-enabled after Self-ID completion");
 }
 
 // AR/AT Context Interrupt Handling (OHCI 1.1 §6.1 bits 0-3)
@@ -1060,9 +1121,46 @@ if ((intEvent & kOHCI_Int_RespTxComplete) && ivars->atResponseContext) {
 }
 }
 
-// If cycle too long, assert cycle master again (Linux parity)
+// If cycle too long, take over as cycle master if we are root node (Linux parity)
 if (intEvent & kOHCI_Int_CycleTooLong) {
-ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleMaster);
+    uint32_t nodeIdReg = 0;
+    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeIdReg);
+    bool hardwareIsRoot = ((nodeIdReg & kOHCI_NodeID_root) != 0);
+    bool idValid = ((nodeIdReg & kOHCI_NodeID_idValid) != 0);
+    
+    if (idValid && hardwareIsRoot) {
+        ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleMaster);
+        os_log(ASLog(), "ASOHCI: CycleTooLong detected - asserting CycleMaster (root node takeover)");
+        BRIDGE_LOG("CycleTooLong - CycleMaster takeover by root");
+    } else {
+        os_log(ASLog(), "ASOHCI: CycleTooLong detected but not root node - cannot take over (idValid=%d hwRoot=%d)", 
+               idValid, hardwareIsRoot);
+    }
+}
+
+// Handle cycle inconsistent events with rate limiting (Linux-like behavior)
+// NOTE: This handler is currently disabled in interrupt mask until isochronous contexts are implemented
+if (intEvent & kOHCI_Int_CycleInconsistent) {
+    const uint64_t rate_limit_ns = 1000000000ULL; // 1 second rate limit
+    bool should_log = false;
+    
+    ivars->cycleInconsistentCount++;
+    
+    if (ivars->lastCycleInconsistentTime == 0 || 
+        (time > ivars->lastCycleInconsistentTime && 
+         (time - ivars->lastCycleInconsistentTime) > rate_limit_ns)) {
+        should_log = true;
+        ivars->lastCycleInconsistentTime = time;
+    }
+    
+    if (should_log) {
+        os_log(ASLog(), "ASOHCI: Cycle inconsistent detected (count=%u) - isochronous timing mismatch", 
+               ivars->cycleInconsistentCount);
+        BRIDGE_LOG("CycleInconsistent #%u - timing mismatch", ivars->cycleInconsistentCount);
+    }
+    
+    // Clear the event to prevent continuous interrupts
+    // ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear, kOHCI_Int_CycleInconsistent);
 }
 
 // All interrupt bits are now handled by the comprehensive DumpIntEvent function

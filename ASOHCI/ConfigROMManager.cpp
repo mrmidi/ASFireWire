@@ -12,6 +12,8 @@
 #include "OHCIConstants.hpp"
 #include "ASOHCIConfigROM.hpp"
 
+#include "LogHelper.hpp"
+
  
 
 kern_return_t ConfigROMManager::Initialize(::IOPCIDevice* pci, uint8_t barIndex,
@@ -53,6 +55,14 @@ kern_return_t ConfigROMManager::Initialize(::IOPCIDevice* pci, uint8_t barIndex,
 
   // Program map address and mirror BusOptions; leave header staged for BusReset
   programROMMap();
+
+  // Log Config ROM creation/mapping summary
+  os_log(ASLog(), "ASOHCI: ConfigROM built: vendor=0x%06x EUI64=%08x%08x",
+         _vendorId & 0xFFFFFF, (unsigned)((_eui64 >> 32) & 0xFFFFFFFFu), (unsigned)(_eui64 & 0xFFFFFFFFu));
+  if (_seg) {
+    os_log(ASLog(), "ASOHCI: ConfigROM mapped IOVA=0x%08x BusOptions=0x%08x Header(staged)=0x%08x",
+           (unsigned)_seg->address, _busOptions, _headerQuad);
+  }
 
   return kIOReturnSuccess;
 }

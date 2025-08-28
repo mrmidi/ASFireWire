@@ -11,6 +11,7 @@
 
 #include "OHCIConstants.hpp"
 #include "SelfIDDecode.hpp"
+#include "LogHelper.hpp"
 
 kern_return_t SelfIDManager::Initialize(::IOPCIDevice* pci, uint8_t barIndex, uint32_t bufferBytes)
 {
@@ -19,21 +20,36 @@ kern_return_t SelfIDManager::Initialize(::IOPCIDevice* pci, uint8_t barIndex, ui
   _bar = barIndex;
   _bufBytes = bufferBytes;
 
+  os_log(ASLog(), "ASOHCI: SelfID init start bytes=%u", (unsigned)bufferBytes);
+
   kern_return_t kr = ::IOBufferMemoryDescriptor::Create(
       kIOMemoryDirectionIn, // device writes into it
       bufferBytes,
       16, // alignment (quadlet)
       &_buf);
-  if (kr != kIOReturnSuccess || !_buf) return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+  if (kr != kIOReturnSuccess || !_buf) {
+    os_log(ASLog(), "ASOHCI: SelfID buffer alloc failed: 0x%08x", kr);
+    return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+  }
+  os_log(ASLog(), "ASOHCI: SelfID buffer allocated");
 
   kr = _buf->CreateMapping(0, 0, 0, 0, 0, &_map);
-  if (kr != kIOReturnSuccess || !_map) return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+  if (kr != kIOReturnSuccess || !_map) {
+    os_log(ASLog(), "ASOHCI: SelfID CreateMapping failed: 0x%08x", kr);
+    return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+  }
+  os_log(ASLog(), "ASOHCI: SelfID map addr=0x%llx len=0x%llx",
+         (unsigned long long)_map->GetAddress(), (unsigned long long)_map->GetLength());
 
   IODMACommandSpecification spec{};
   spec.options = kIODMACommandSpecificationNoOptions;
   spec.maxAddressBits = 32;
   kr = ::IODMACommand::Create(_pci, kIODMACommandCreateNoOptions, &spec, &_dma);
-  if (kr != kIOReturnSuccess || !_dma) return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+  if (kr != kIOReturnSuccess || !_dma) {
+    os_log(ASLog(), "ASOHCI: SelfID DMA create failed: 0x%08x", kr);
+    return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
+  }
+  os_log(ASLog(), "ASOHCI: SelfID DMA created");
 
   uint64_t flags = 0;
   uint32_t segCount = 32;
@@ -46,6 +62,10 @@ kern_return_t SelfIDManager::Initialize(::IOPCIDevice* pci, uint8_t barIndex, ui
                            &flags,
                            &segCount,
                            segs);
+  os_log(ASLog(), "ASOHCI: SelfID DMA prepare status=0x%08x segs=%u addr0=0x%llx len0=0x%llx",
+         kr, segCount,
+         (unsigned long long)((segCount>0)?segs[0].address:0ULL),
+         (unsigned long long)((segCount>0)?segs[0].length:0ULL));
   if (kr != kIOReturnSuccess || segCount < 1 || segs[0].address == 0) {
     if (_dma) { _dma->CompleteDMA(kIODMACommandCompleteDMANoOptions); _dma->release(); _dma = nullptr; }
     return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
@@ -54,13 +74,19 @@ kern_return_t SelfIDManager::Initialize(::IOPCIDevice* pci, uint8_t barIndex, ui
   _seg = (::IOAddressSegment*)IOMalloc(sizeof(::IOAddressSegment));
   if (!_seg) return kIOReturnNoMemory;
   *_seg = segs[0];
+  os_log(ASLog(), "ASOHCI: SelfID using IOVA=0x%llx len=0x%llx",
+         (unsigned long long)_seg->address, (unsigned long long)_seg->length);
 
   // Program initial buffer pointer (do not arm yet)
   programSelfIDBuffer();
+  // Read back register to confirm
+  uint32_t rb=0; _pci->MemoryRead32(_bar, kOHCI_SelfIDBuffer, &rb);
+  os_log(ASLog(), "ASOHCI: SelfIDBuffer programmed/readback=0x%08x", rb);
   _armed = false;
   _inProgress = false;
   _lastGeneration = 0;
 
+  os_log(ASLog(), "ASOHCI: SelfID init complete");
   return kIOReturnSuccess;
 }
 
@@ -92,6 +118,9 @@ kern_return_t SelfIDManager::Arm(bool clearCount)
     _pci->MemoryWrite32(_bar, kOHCI_SelfIDCount, 0);
   }
   _pci->MemoryWrite32(_bar, kOHCI_LinkControlSet, (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+  // Read back SelfIDBuffer for sanity
+  uint32_t rb=0; _pci->MemoryRead32(_bar, kOHCI_SelfIDBuffer, &rb);
+  os_log(ASLog(), "ASOHCI: SelfID Arm readback SelfIDBuffer=0x%08x", rb);
   _armed = true;
   _inProgress = true;
   return kIOReturnSuccess;
@@ -115,6 +144,7 @@ void SelfIDManager::verifyGenerationAndDispatch(uint32_t countReg)
   uint32_t gen1 = (countReg & kOHCI_SelfIDCount_selfIDGeneration) >> 16;
   uint32_t sizeQuads = (countReg & kOHCI_SelfIDCount_selfIDSize) >> 2; // size in bytes >>2
   bool error = (countReg & kOHCI_SelfIDCount_selfIDError) != 0;
+  os_log(ASLog(), "ASOHCI: SelfIDComplete: gen=%u sizeQ=%u error=%u", gen1, sizeQuads, error?1:0);
 
   if (!_map || error || sizeQuads == 0) {
     _inProgress = false;

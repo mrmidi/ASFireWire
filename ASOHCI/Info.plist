@@ -56,7 +56,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>16</string>
+	<string>19</string>
 	<key>OSBundleUsageDescription</key>
 	<string>AS FireWire Driver for development and testing</string>
 </dict>

@@ -338,7 +338,7 @@ uint16_t ASOHCIConfigROM::crc16_update(uint16_t crc, uint16_t data) {
 bool ASOHCI::setupConfigROM() {
     // 1. Build minimal ROM
     if (!_configROM.buildMinimalROM(_deviceEUI64, _vendorID, _nodeCapabilities)) {
-        os_log_error(_log, "ASOHCI: Failed to build Configuration ROM");
+        os_log(_log, "ASOHCI: Failed to build Configuration ROM");
         return false;
     }
     
@@ -369,7 +369,7 @@ bool ASOHCI::setupConfigROM() {
     // ConfigROMmap points to ROM buffer
     pci->MemoryWrite32(_barIndex, kOHCI_ConfigROMmap, rom_phys_addr);
     
-    os_log_info(_log, "ASOHCI: ConfigROM mapped @ 0x%08x", rom_phys_addr);
+    os_log(_log, "ASOHCI: ConfigROM mapped @ 0x%08x", rom_phys_addr);
     return true;
 }
 
@@ -377,7 +377,7 @@ bool ASOHCI::setupConfigROM() {
 void ASOHCI::enableConfigROMBlocks() {
     // Set BIBimageValid to enable block read responses
     pci->MemoryWrite32(_barIndex, kOHCI_HCControlSet, kOHCIHCControl_BIBimageValid);
-    os_log_info(_log, "ASOHCI: BIBimageValid set - block ROM reads enabled");
+    os_log(_log, "ASOHCI: BIBimageValid set - block ROM reads enabled");
 }
 ```
 
@@ -475,21 +475,21 @@ bool ASOHCIConfigROM::validateROM() const {
 }
 
 void ASOHCIConfigROM::dumpROM(os_log_t log) const {
-    os_log_info(log, "ConfigROM dump (%zu quadlets):", _quads.size());
+    os_log(log, "ConfigROM dump (%zu quadlets):", _quads.size());
     
     // Dump Bus Info Block
-    os_log_info(log, "  BIB[0]: length=%d, crc_len=%d, crc=0x%04x", 
+    os_log(log, "  BIB[0]: length=%d, crc_len=%d, crc=0x%04x", 
                 static_cast<uint8_t>(_quads[0] >> 24),
                 static_cast<uint8_t>(_quads[0] >> 16),
                 static_cast<uint16_t>(_quads[0]));
-    os_log_info(log, "  BIB[1]: bus_name=0x%08x", _quads[1]);
-    os_log_info(log, "  BIB[2]: capabilities=0x%08x", _quads[2]);
-    os_log_info(log, "  BIB[3-4]: EUI-64=0x%08x%08x", _quads[3], _quads[4]);
+    os_log(log, "  BIB[1]: bus_name=0x%08x", _quads[1]);
+    os_log(log, "  BIB[2]: capabilities=0x%08x", _quads[2]);
+    os_log(log, "  BIB[3-4]: EUI-64=0x%08x%08x", _quads[3], _quads[4]);
     
     // Dump Root Directory
     size_t root_offset = 5;
     uint16_t root_length = static_cast<uint16_t>(_quads[root_offset] >> 16);
-    os_log_info(log, "  Root[%zu]: length=%d, crc=0x%04x", root_offset, root_length, 
+    os_log(log, "  Root[%zu]: length=%d, crc=0x%04x", root_offset, root_length, 
                 static_cast<uint16_t>(_quads[root_offset]));
     
     for (size_t i = 1; i <= root_length; i++) {
@@ -500,7 +500,7 @@ void ASOHCIConfigROM::dumpROM(os_log_t log) const {
         
         const char* type_name = (type == 0) ? "IMM" : (type == 1) ? "CSR" : 
                                (type == 2) ? "LEAF" : "DIR";
-        os_log_info(log, "    Entry[%zu]: %s key=0x%02x value=0x%06x", 
+        os_log(log, "    Entry[%zu]: %s key=0x%02x value=0x%06x", 
                     root_offset + i, type_name, key, value);
     }
 }
@@ -538,12 +538,12 @@ private:
 // In Start() method after PCI setup:
 _configROM = new ASOHCIConfigROM();
 if (!_configROM) {
-    os_log_error(_log, "ASOHCI: Failed to allocate ConfigROM");
+    os_log(_log, "ASOHCI: Failed to allocate ConfigROM");
     return kIOReturnNoMemory;
 }
 
 if (!setupConfigROM()) {
-    os_log_error(_log, "ASOHCI: ConfigROM setup failed");
+    os_log(_log, "ASOHCI: ConfigROM setup failed");
     return kIOReturnError;
 }
 
@@ -627,7 +627,7 @@ IOReturn ASOHCIConfigROM::validateAndRecover() {
     lock();
     
     if (!validateROM()) {
-        os_log_error(ASOHCITraceLog(), "ConfigROM: Corruption detected, rebuilding");
+        os_log(ASOHCITraceLog(), "ConfigROM: Corruption detected, rebuilding");
         setROMState(kROMStateInvalid);
         
         // Attempt to rebuild from cached parameters
