@@ -1,203 +1,94 @@
 //
-//  ASOHCIARContext.cpp
-//  ASOHCI
+// ASOHCIARContext.cpp
+// ASOHCI
 //
-//  OHCI 1.1 Asynchronous Receive Context Implementation
+// AR context wrapper on ASOHCIContextBase with RAII and ARDescriptorRing.
 //
 
 #include "ASOHCIARContext.hpp"
-#include <os/log.h>
-#include <DriverKit/IOLib.h>
-
-// Logging helper
+#include "ASOHCIARDescriptorRing.hpp"
+#include "Shared/ASOHCIContextBase.hpp"
+#include "OHCIConstants.hpp"
 #include "LogHelper.hpp"
 
-// Constructor
-ASOHCIARContext::ASOHCIARContext() :
-    fPCIDevice(nullptr),
-    fContextType(AR_REQUEST_CONTEXT),
-    fContextBaseOffset(0),
-    fContextControlSetOffset(0), 
-    fContextControlClearOffset(0),
-    fCommandPtrOffset(0),
-    fBARIndex(0),
-    fBufferCount(0),
-    fBufferSize(0),
-    fBufferDescriptors(nullptr),
-    fBufferMaps(nullptr),
-    fBufferDMA(nullptr),
-    fBufferSegs(nullptr),
-    fDescriptorChain(nullptr),
-    fDescriptorMap(nullptr),
-    fDescriptors(nullptr),
-    fDescriptorDMA(nullptr),
-    fDescriptorSeg{},
-    fDescriptorCount(0),
-    fCurrentDescriptor(0),
-    fInitialized(false),
-    fRunning(false)
+#include <DriverKit/IOLib.h>
+
+ASOHCIARContext::ASOHCIARContext() = default;
+ASOHCIARContext::~ASOHCIARContext() = default;
+
+kern_return_t ASOHCIARContext::Initialize(IOPCIDevice* pci,
+                                          uint8_t barIndex,
+                                          ARContextRole role,
+                                          const ASContextOffsets& offsets,
+                                          ARBufferFillMode fillMode)
 {
+    if (!pci) return kIOReturnBadArgument;
+    _role = role;
+    _fill = fillMode;
+
+    ASContextKind kind = (role == ARContextRole::kRequest)
+                            ? ASContextKind::kAR_Request
+                            : ASContextKind::kAR_Response;
+    return ASOHCIContextBase::Initialize(pci, barIndex, kind, offsets);
 }
 
-// Destructor  
-ASOHCIARContext::~ASOHCIARContext()
+kern_return_t ASOHCIARContext::AttachRing(ASOHCIARDescriptorRing* ring)
 {
-    if (fRunning) {
-        Stop();
-    }
-    
-    FreeDescriptorChain();
-    FreeBuffers();
+    _ring = ring;
+    return (_ring) ? kIOReturnSuccess : kIOReturnBadArgument;
 }
 
-// Initialize the AR context
-kern_return_t ASOHCIARContext::Initialize(IOPCIDevice* pciDevice,
-                                        ContextType contextType,
-                                        uint8_t barIndex,
-                                        uint32_t bufferCount,
-                                        uint32_t bufferSize)
-{
-    kern_return_t result;
-    
-    if (fInitialized) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Already initialized");
-        return kIOReturnError;
-    }
-    
-    if (!pciDevice) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Invalid PCI device");
-        return kIOReturnBadArgument;
-    }
-    
-    // Validate buffer parameters
-    if (bufferCount < 2 || bufferCount > 32) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Invalid buffer count %u (must be 2-32)", bufferCount);
-        return kIOReturnBadArgument;
-    }
-    
-    if (bufferSize < 1024 || bufferSize > 65536 || (bufferSize % 4) != 0) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Invalid buffer size %u (must be 1024-65536, quadlet-aligned)", bufferSize);
-        return kIOReturnBadArgument;
-    }
-    
-    fPCIDevice = pciDevice;
-    fPCIDevice->retain();
-    
-    fContextType = contextType;
-    fBARIndex = barIndex;
-    fBufferCount = bufferCount;
-    fBufferSize = bufferSize;
-    fDescriptorCount = bufferCount;  // One descriptor per buffer
-    
-    // Set context register offsets based on type
-    SetContextOffsets(contextType);
-    
-    // Allocate receive buffers
-    result = AllocateBuffers();
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to allocate buffers: 0x%x", result);
-        goto error;
-    }
-    
-    // Allocate and setup descriptor chain
-    result = AllocateDescriptorChain();
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to allocate descriptor chain: 0x%x", result);
-        goto error;
-    }
-    
-    result = SetupDescriptorChain();
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to setup descriptor chain: 0x%x", result);
-        goto error;
-    }
-    
-    fInitialized = true;
-    
-    os_log(ASLog(), "ASOHCIARContext: Initialized %s context with %u buffers of %u bytes", 
-                (contextType == AR_REQUEST_CONTEXT) ? "Request" : "Response",
-                bufferCount, bufferSize);
-    
-    return kIOReturnSuccess;
-    
-error:
-    FreeDescriptorChain();
-    FreeBuffers();
-    if (fPCIDevice) {
-        fPCIDevice->release();
-        fPCIDevice = nullptr;
-    }
-    return result;
-}
-
-// Start the AR context
 kern_return_t ASOHCIARContext::Start()
 {
-    kern_return_t result;
-    uint32_t contextControl;
-    
-    if (!fInitialized) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Not initialized");
-        return kIOReturnError;
-    }
-    
-    if (fRunning) {
-        os_log(ASLog(), "ASOHCIARContext: Already running");
-        return kIOReturnSuccess;
-    }
-    
-    // Verify context is not active
-    result = ReadContextControl(&contextControl);
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to read context control: 0x%x", result);
-        return result;
-    }
-    
-    if (contextControl & (kOHCI_ContextControl_run | kOHCI_ContextControl_active)) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Context already running/active: 0x%x", contextControl);
-        return kIOReturnError;
-    }
-    
-    // Write CommandPtr register with descriptor DMA address; Z=1 denotes next via branch
-    if (fDescriptorSeg.address == 0) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: No DMA address for descriptor chain");
-        return kIOReturnError;
-    }
-    result = WriteCommandPtr((uint32_t)(fDescriptorSeg.address >> 4), 1);
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to write command pointer: 0x%x", result);
-        return result;
-    }
-    
-    // Set run bit to start context
-    result = WriteContextControl(kOHCI_ContextControl_run, true);
-    if (result != kIOReturnSuccess) {
-        os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to set run bit: 0x%x", result);
-        return result;
-    }
-    
-    fRunning = true;
-    
-    os_log(ASLog(), "ASOHCIARContext: Started %s context", 
-                (fContextType == AR_REQUEST_CONTEXT) ? "Request" : "Response");
-    
+    if (!_ring) return kIOReturnNotReady;
+    uint32_t addr = 0; uint8_t z = 0;
+    kern_return_t kr = _ring->GetCommandPtrSeed(&addr, &z);
+    if (kr != kIOReturnSuccess) return kr;
+    kr = WriteCommandPtr(addr, z);
+    if (kr != kIOReturnSuccess) return kr;
+    WriteContextSet(kOHCI_ContextControl_run);
+    os_log(ASLog(), "ARContext: started (addr=0x%x Z=%u)", addr, z);
     return kIOReturnSuccess;
 }
 
-// Stop the AR context
 kern_return_t ASOHCIARContext::Stop()
 {
-    kern_return_t result;
-    uint32_t contextControl;
-    int retries = 100;
-    
-    if (!fRunning) {
-        return kIOReturnSuccess;
-    }
-    
-    // Clear run bit
-    result = WriteContextControl(kOHCI_ContextControl_run, false);
-    if (result != kIOReturnSuccess) {
+    return ASOHCIContextBase::Stop();
+}
+
+void ASOHCIARContext::OnPacketArrived()
+{
+    // Lightweight nudge; consumers should pull via TryDequeue
+    WriteContextSet(kOHCI_ContextControl_wake);
+}
+
+void ASOHCIARContext::OnBufferComplete()
+{
+    // Same as packet arrived for now; policy can diverge later
+    WriteContextSet(kOHCI_ContextControl_wake);
+}
+
+bool ASOHCIARContext::TryDequeue(ARPacketView* outView, uint32_t* outRingIndex)
+{
+    if (!_ring) return false;
+    return _ring->TryPopCompleted(outView, outRingIndex);
+}
+
+kern_return_t ASOHCIARContext::Recycle(uint32_t ringIndex)
+{
+    if (!_ring) return kIOReturnNotReady;
+    kern_return_t kr = _ring->Recycle(ringIndex);
+    if (kr == kIOReturnSuccess) WriteContextSet(kOHCI_ContextControl_wake);
+    return kr;
+}
+
+void ASOHCIARContext::SetStatusHelper(ASOHCIARStatus* status)
+{
+    _stat = status;
+}
+
+// Reset lifecycle: defer to base; ring is continuous and will be re-armed on Start().
+// No overrides needed here.
         os_log(ASLog(), "ASOHCIARContext: ERROR: Failed to clear run bit: 0x%x", result);
         return result;
     }
