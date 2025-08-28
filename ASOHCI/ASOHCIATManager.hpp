@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include "ASOHCIATDescriptorPool.hpp"
 #include "ASOHCIATProgramBuilder.hpp"

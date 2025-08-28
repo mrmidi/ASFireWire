@@ -24,6 +24,10 @@
 		3AF800052E5E000000000005 /* ConfigROMManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800062E5E000000000006 /* ConfigROMManager.cpp */; };
 		3AF800072E5E000000000007 /* Topology.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800082E5E000000000008 /* Topology.cpp */; };
 		3AF800092E5E000000000009 /* ConfigROMProperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */; };
+		3AF900182E5F000000000018 /* ASOHCIARDescriptorRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF900192E5F000000000019 /* ASOHCIARDescriptorRing.cpp */; };
+		3AF9001A2E5F00000000001A /* ASOHCIARManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF9001B2E5F00000000001B /* ASOHCIARManager.cpp */; };
+		3AF9001C2E5F00000000001C /* ASOHCIARParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF9001D2E5F00000000001D /* ASOHCIARParser.cpp */; };
+		3AF9001E2E5F00000000001E /* ASOHCIARStatus.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF9001F2E5F00000000001F /* ASOHCIARStatus.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -87,6 +91,10 @@
 		3AF800062E5E000000000006 /* ConfigROMManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ConfigROMManager.cpp; path = ASOHCI/ConfigROMManager.cpp; sourceTree = SOURCE_ROOT; };
 		3AF800082E5E000000000008 /* Topology.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = Topology.cpp; path = ASOHCI/Topology.cpp; sourceTree = SOURCE_ROOT; };
 		3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ConfigROMProperties.cpp; path = ASOHCI/ConfigROMProperties.cpp; sourceTree = SOURCE_ROOT; };
+		3AF900192E5F000000000019 /* ASOHCIARDescriptorRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARDescriptorRing.cpp; path = ASOHCI/ASOHCIARDescriptorRing.cpp; sourceTree = SOURCE_ROOT; };
+		3AF9001B2E5F00000000001B /* ASOHCIARManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARManager.cpp; path = ASOHCI/ASOHCIARManager.cpp; sourceTree = SOURCE_ROOT; };
+		3AF9001D2E5F00000000001D /* ASOHCIARParser.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARParser.cpp; path = ASOHCI/ASOHCIARParser.cpp; sourceTree = SOURCE_ROOT; };
+		3AF9001F2E5F00000000001F /* ASOHCIARStatus.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARStatus.cpp; path = ASOHCI/ASOHCIARStatus.cpp; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -460,8 +468,12 @@
 				3AF800042E5E000000000004 /* SelfIDManager.cpp in Sources */,
 				3AF800052E5E000000000005 /* ConfigROMManager.cpp in Sources */,
 				3AF800072E5E000000000007 /* Topology.cpp in Sources */,
-				3AF800092E5E000000000009 /* ConfigROMProperties.cpp in Sources */,
-				/* removed invalid ASOHCIContextBase.cpp in Sources */
+					3AF800092E5E000000000009 /* ConfigROMProperties.cpp in Sources */,
+					3AF900182E5F000000000018 /* ASOHCIARDescriptorRing.cpp in Sources */,
+					3AF9001A2E5F00000000001A /* ASOHCIARManager.cpp in Sources */,
+					3AF9001C2E5F00000000001C /* ASOHCIARParser.cpp in Sources */,
+					3AF9001E2E5F00000000001E /* ASOHCIARStatus.cpp in Sources */,
+					/* removed invalid ASOHCIContextBase.cpp in Sources */
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

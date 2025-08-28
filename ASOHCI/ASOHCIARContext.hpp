@@ -6,7 +6,7 @@
 // Spec refs: OHCI 1.1 §8.2 (AR context registers), §8.1 (program rules),
 //            §8.4 (buffer-fill), §8.6 (interrupts)
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
 #include "Shared/ASOHCITypes.hpp"
@@ -18,6 +18,8 @@ class ASOHCIARStatus;
 
 class ASOHCIARContext : public ASOHCIContextBase {
 public:
+    // Back-compat enum to satisfy existing call sites
+    enum ContextType { AR_REQUEST_CONTEXT = 0, AR_RESPONSE_CONTEXT = 1 };
     ASOHCIARContext() = default;
     ~ASOHCIARContext() = default;
 
@@ -27,6 +29,18 @@ public:
                              ARContextRole role,
                              const ASContextOffsets& offsets,
                              ARBufferFillMode fillMode);
+
+    // Back-compat initializer that also builds and owns a ring
+    kern_return_t Initialize(IOPCIDevice* pci,
+                             ContextType contextType,
+                             uint8_t barIndex,
+                             uint32_t bufferCount,
+                             uint32_t bufferBytes);
+
+    // Back-compat minimal init: uses a default buffer policy
+    kern_return_t Initialize(IOPCIDevice* pci,
+                             ContextType contextType,
+                             uint8_t barIndex);
 
     // Attach a prepared ring (Initialize it first)
     kern_return_t AttachRing(ASOHCIARDescriptorRing* ring);
@@ -38,6 +52,9 @@ public:
     // Interrupt entrypoints (called by router per §8.6)
     void OnPacketArrived();     // “packet available” style
     void OnBufferComplete();    // “buffer filled/last” style
+
+    // Back-compat ISR hook
+    kern_return_t HandleInterrupt();
 
     // Consumer API — pull one packet, parse elsewhere
     bool TryDequeue(ARPacketView* outView, uint32_t* outRingIndex);
@@ -57,4 +74,3 @@ private:
     ARContextRole           _role  = ARContextRole::kRequest;
     ARBufferFillMode        _fill  = ARBufferFillMode::kImmediate;
 };
-

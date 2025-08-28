@@ -8,7 +8,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>

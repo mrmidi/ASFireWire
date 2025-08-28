@@ -5,7 +5,7 @@
 //
 // Spec refs: OHCI 1.1 §8.1 (programs), §8.2 (regs), §8.4 (buffer-fill), §8.6 (interrupts)
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
 #include "ASOHCIARTypes.hpp"
@@ -50,6 +50,8 @@ public:
     kern_return_t RecycleResponse(uint32_t index);
 
 private:
+    IOPCIDevice*             _pci = nullptr;
+    uint8_t                  _bar = 0;
     ASOHCIARContext*        _arReq = nullptr;
     ASOHCIARContext*        _arRsp = nullptr;
     ASOHCIARDescriptorRing* _ringReq = nullptr;
@@ -60,4 +62,3 @@ private:
     PacketCallback          _cb = nullptr;
     void*                   _cbRefcon = nullptr;
 };
-

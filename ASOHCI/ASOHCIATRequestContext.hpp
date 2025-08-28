@@ -8,7 +8,6 @@
 #pragma once
 
 #include "Shared/ASOHCIContextBase.hpp"
-#include <DriverKit/DriverKit.h>
 #include "ASOHCIATPolicy.hpp"
 #include "ASOHCIATTypes.hpp"
 #include "ASOHCIATDescriptor.hpp"

@@ -8,7 +8,7 @@
 //            AT §7.2 (AT context registers), AR §8.2 (AR context registers)
 //
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include "ASOHCITypes.hpp"
 #include "OHCIConstants.hpp"

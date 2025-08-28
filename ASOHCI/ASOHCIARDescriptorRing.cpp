@@ -18,6 +18,7 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODMACommand.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOMemoryMap.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include <string.h>
 
@@ -279,4 +280,3 @@ kern_return_t ASOHCIARDescriptorRing::ReArmAfterBusReset()
 uint32_t ASOHCIARDescriptorRing::BufferCount() const { return _impl ? _impl->buffers : 0; }
 uint32_t ASOHCIARDescriptorRing::BufferBytes() const { return _impl ? _impl->bufSize : 0; }
 ARBufferFillMode ASOHCIARDescriptorRing::FillMode() const { return _impl ? _impl->fill : ARBufferFillMode::kImmediate; }
-

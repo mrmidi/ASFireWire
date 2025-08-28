@@ -5,7 +5,7 @@
 //
 // Spec refs: OHCI 1.1 §8.1.5 (status/timestamp in INPUT_LAST), §8.6 (AR interrupts)
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <stdint.h>
 #include "ASOHCIARTypes.hpp"
 
@@ -38,4 +38,3 @@ public:
 
     const char* EventString(AREventCode e) const;
 };
-

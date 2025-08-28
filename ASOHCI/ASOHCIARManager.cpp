@@ -44,8 +44,7 @@ static inline ASContextOffsets OffsetsFor(ARContextRole role) {
 }
 
 // RAII manager
-ASOHCIARManager::ASOHCIARManager() = default;
-ASOHCIARManager::~ASOHCIARManager() { (void)Stop(); }
+// (use implicit defaults from header; ensure Stop on dtor if needed by owner)
 
 kern_return_t ASOHCIARManager::Initialize(IOPCIDevice* pci,
                                           uint8_t barIndex,
@@ -133,4 +132,3 @@ kern_return_t ASOHCIARManager::RecycleRequest(uint32_t index)
 
 kern_return_t ASOHCIARManager::RecycleResponse(uint32_t index)
 { return _arRsp ? _arRsp->Recycle(index) : kIOReturnNotReady; }
-

@@ -7,7 +7,7 @@
 
 #include "ASOHCIContextBase.hpp"
 #include "LogHelper.hpp"
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOLib.h>
 #include <DriverKit/IOLib.h>
 
 kern_return_t ASOHCIContextBase::Initialize(IOPCIDevice* pci,

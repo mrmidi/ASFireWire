@@ -5,7 +5,7 @@
 //
 // Spec refs: OHCI 1.1 §8.7 (AR data formats), IEEE 1394 async packet headers (tCode, length)
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <stdint.h>
 #include "ASOHCIARTypes.hpp"
 
@@ -33,4 +33,3 @@ public:
     // Utility: discover IEEE-1394 header size of a frame (2/3/4 quadlets)
     uint32_t HeaderSize(const uint8_t* bytes, uint32_t len) const;
 };
-

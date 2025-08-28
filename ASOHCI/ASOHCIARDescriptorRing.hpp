@@ -5,7 +5,7 @@
 //
 // Spec refs: OHCI 1.1 §8.1 (AR programs), §8.4 (buffer-fill), §3.1.2 (Branch/Z)
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <stdint.h>
 
 class IOPCIDevice;
@@ -57,4 +57,3 @@ private:
     ASOHCIARDescriptorRing(const ASOHCIARDescriptorRing&) = delete;
     ASOHCIARDescriptorRing& operator=(const ASOHCIARDescriptorRing&) = delete;
 };
-

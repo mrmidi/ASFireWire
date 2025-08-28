@@ -8,7 +8,7 @@
 #include "ASOHCIARParser.hpp"
 #include "ASOHCIARTypes.hpp"
 
-#include <DriverKit/DriverKit.h>
+#include <DriverKit/IOReturn.h>
 #include <stdint.h>
 
 namespace {
@@ -111,4 +111,3 @@ bool ASOHCIARParser::Parse(const ARPacketView& view, ARParsedPacket* out) const
     (void)h0; // reserved for future header decoding
     return true;
 }
-
