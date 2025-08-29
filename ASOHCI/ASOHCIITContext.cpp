@@ -3,7 +3,7 @@
 // Isochronous Transmit (IT) context skeleton (DriverKit-friendly)
 //
 // Spec anchors:
-//   Host interrupt + IsoXmit event/mask registers: OHCI 1.1 Chapter 6 (esp. §6.1 event bits, §6.3 demux)
+//   Host interrupt + IsoXmit event/mask registers: OHCI 1.1 Chapter 6 (event bits demux; not IT-specific semantics)
 //   IT DMA programs & descriptor usage: §9.1
 //   IT Context registers / cycle match fields: §9.2
 //   Safe program appending (tail patching semantics): §9.4

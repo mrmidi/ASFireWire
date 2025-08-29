@@ -10,6 +10,16 @@
 #include "ASOHCIITDescriptor.hpp"
 #include "ASOHCIITTypes.hpp"
 
+// Descriptor opcode/key constants for IT reuse (mirrors AT forms but separated for clarity)
+namespace ITDescOps {
+    static constexpr uint32_t kCmd_OUTPUT_MORE            = 0x0; // cmd=0,key=0
+    static constexpr uint32_t kCmd_OUTPUT_LAST            = 0x1; // cmd=1,key=0
+    static constexpr uint32_t kCmd_OUTPUT_MORE_IMMEDIATE  = 0x0; // cmd=0,key=2
+    static constexpr uint32_t kCmd_OUTPUT_LAST_IMMEDIATE  = 0x1; // cmd=1,key=2
+    static constexpr uint32_t kKey_STANDARD               = 0x0;
+    static constexpr uint32_t kKey_IMMEDIATE              = 0x2;
+}
+
 class ASOHCIITProgramBuilder {
 public:
     // Reserve up to 'maxDescriptors' (header/immediate + payload frags + last), max 8 (Z range 2..8) (§9.1)
@@ -24,10 +34,10 @@ public:
                             uint32_t dataLength,
                             ATIntPolicy ip = ATIntPolicy::kErrorsOnly);
 
-    // Append a payload fragment by physical address (§6.1)
+    // Append a payload fragment by physical address (§9.1)
     void AddPayloadFragment(uint32_t payloadPA, uint32_t payloadBytes);
 
-    // Close the packet with OUTPUT_LAST*; returns a ready-to-enqueue program (§6.1)
+    // Close the packet with OUTPUT_LAST*; returns a ready-to-enqueue program (§9.1)
     ITDesc::Program Finalize();
 
     // Abort build and return reserved descriptors to pool
@@ -38,5 +48,6 @@ private:
     ASOHCIATDescriptorPool::Block _blk{};
     uint32_t _descUsed = 0;
     ATIntPolicy _ip = ATIntPolicy::kErrorsOnly;
+    uint32_t _headerQuadlets = 0; // number of header quadlets used in immediate descriptor
 };
 

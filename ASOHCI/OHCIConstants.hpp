@@ -129,23 +129,21 @@ static constexpr uint32_t kOHCI_LC_RcvPhyPkt            = (1u << 10);
 static constexpr uint32_t kOHCI_LC_CycleTimerEnable     = (1u << 20);
 static constexpr uint32_t kOHCI_LC_CycleMaster          = (1u << 21);
 
-// ------------------------ PHY Request Filter & Upper Bound ---------
-// NOTE: Original definitions overlapped Async Response Filter (0x0110-0x011C).
-// OHCI 1.1 places Async Request/Response filters at 0x0100-0x011C and the Physical Response Upper Bound at 0x0120.
-// There is no separate PHY Request Filter block occupying 0x0110..0x011C; retain only Upper Bound at 0x0120.
-// If implementation provides vendor-specific PHY request filtering, map it outside standard filter window.
-// (Removed conflicting kOHCI_PhyReqFilter* aliases.)
-static constexpr uint32_t kOHCI_PhyUpperBound           = 0x0120;
-
-// ------------------------ Async Receive Filters (OHCI 1.1 §7.*) ---
+// ------------------------ Address Filtering (OHCI 1.1 §5.14) -----------------
+// 0x0100–0x010C: Asynchronous Request Filters (Hi/Lo Set/Clear) (§5.14.1)
+// 0x0110–0x011C: Physical Request Filters (Hi/Lo Set/Clear) (§5.14.2)
+// 0x0120       : Physical Upper Bound (§5.15)
+// NOTE: The OHCI spec does NOT define separate "Asynchronous Response" filter registers;
+// earlier aliases named AsRspFilter* were incorrect and have been removed.
 static constexpr uint32_t kOHCI_AsReqFilterHiSet        = 0x0100;
-static constexpr uint32_t kOHCI_AsReqFilterHiClear      = 0x0104;
+static constexpr uint32_t kOHCI_AsReqFilterHiClear      = 0x0104; // read returns HiClear, write clears bits
 static constexpr uint32_t kOHCI_AsReqFilterLoSet        = 0x0108;
 static constexpr uint32_t kOHCI_AsReqFilterLoClear      = 0x010C;
-static constexpr uint32_t kOHCI_AsRspFilterHiSet        = 0x0110;
-static constexpr uint32_t kOHCI_AsRspFilterHiClear      = 0x0114;
-static constexpr uint32_t kOHCI_AsRspFilterLoSet        = 0x0118;
-static constexpr uint32_t kOHCI_AsRspFilterLoClear      = 0x011C;
+static constexpr uint32_t kOHCI_PhyReqFilterHiSet       = 0x0110;
+static constexpr uint32_t kOHCI_PhyReqFilterHiClear     = 0x0114;
+static constexpr uint32_t kOHCI_PhyReqFilterLoSet       = 0x0118;
+static constexpr uint32_t kOHCI_PhyReqFilterLoClear     = 0x011C;
+static constexpr uint32_t kOHCI_PhyUpperBound           = 0x0120;   // PhysicalUpperBound
 
 // ------------------------ Async Contexts (OHCI 1.1 §7.*) ----------
 // Transmit (ATReq / ATRsp)

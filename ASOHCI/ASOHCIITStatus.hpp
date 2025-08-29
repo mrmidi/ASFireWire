@@ -10,17 +10,17 @@
 
 enum class ITEvent : uint8_t {
     kNone        = 0,
-    kUnderrun,           // transmitter starved (§6.3/§6.4)
-    kLate,               // cycle late, packet dropped or skipped (policy) (§6.4)
-    kSkipped,            // skipped by program flow (§6.1 appending/branch)
-    kUnrecoverable,      // dead/timeout (skip overflow) (§6.3)
+    kUnderrun,           // transmitter starved (§9.5)
+    kLate,               // cycle late, packet dropped or skipped (policy) (§9.5)
+    kSkipped,            // skipped by program flow (§9.4 appending semantics)
+    kUnrecoverable,      // dead/timeout (skip overflow) (§9.5)
     kUnknown
 };
 
 struct ITCompletion {
     bool      success = false;   // transmitted in time this cycle
     ITEvent   event   = ITEvent::kNone;
-    uint16_t  timeStamp = 0;     // if provided by controller (§6.4)
+    uint16_t  timeStamp = 0;     // if provided by controller (§9.6)
 };
 
 class ASOHCIITStatus {

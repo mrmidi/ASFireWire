@@ -19,28 +19,28 @@
 
 class ASOHCIITContext : public ASOHCIContextBase {
 public:
-    // ctxIndex: hardware IT context number (0..N-1). Offsets computed in .cpp (§6.2)
+    // ctxIndex: hardware IT context number (0..N-1). Offsets computed in .cpp (see §9.2)
     virtual kern_return_t Initialize(IOPCIDevice* pci,
                                      uint8_t barIndex,
                                      uint32_t ctxIndex);
 
     virtual void ApplyPolicy(const ITPolicy& policy);
 
-    // Enqueue one packet program (may append while active if policy allows) (§6.1)
+    // Enqueue one packet program (may append while active if policy allows) (§9.1, §9.4)
     virtual kern_return_t Enqueue(const ITDesc::Program& program,
                                   const ITQueueOptions& opts);
 
-    // Called by manager when isoXmitIntEvent indicates this context fired (§6.3)
+    // Called by manager when isoXmitIntEvent indicates this context fired (§9.5; demux via Chapter 6)
     virtual void OnInterruptTx();
 
-    // Manager signals cycleInconsistent to cycle-matched contexts (§6.3)
+    // Manager signals cycleInconsistent to cycle-matched contexts (§9.5 cycle inconsistent handling)
     virtual void OnCycleInconsistent();
 
     // Expose some counters/telemetry
     uint32_t PacketsInFlight() const { return _outstanding; }
 
 protected:
-    virtual void RecoverDeadContext() override; // skip overflow / unrecoverable (§6.3)
+    virtual void RecoverDeadContext() override; // skip overflow / unrecoverable (§9.5)
 
 private:
     uint32_t _ctxIndex = 0;
