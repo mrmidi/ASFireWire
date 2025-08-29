@@ -23,22 +23,45 @@ kern_return_t ASOHCIITManager::Initialize(IOPCIDevice* pci,
 
     // Minimal pool init stub: keep uninitialized until used
     (void)poolBytes;
-    _numCtx = 0; // will be probed later
-    os_log(ASLog(), "ITManager: Initialize (bar=%u, pool=%u bytes) [stub]", _bar, poolBytes);
+    _numCtx = ProbeContextCount();
+    if (_numCtx > 32) _numCtx = 32;
+    os_log(ASLog(), "ITManager: Initialize (bar=%u, pool=%u bytes) contexts=%u", _bar, poolBytes, _numCtx);
+
+    if (poolBytes) {
+        kern_return_t r = _pool.Initialize(pci, barIndex, poolBytes);
+        if (r != kIOReturnSuccess) {
+            os_log(ASLog(), "ITManager: pool init failed 0x%x", r);
+        }
+    }
+
+    for (uint32_t i = 0; i < _numCtx; ++i) {
+        _ctx[i].Initialize(pci, barIndex, i);
+        _ctx[i].ApplyPolicy(_defaultPolicy);
+    }
     return kIOReturnSuccess;
 }
 
 kern_return_t ASOHCIITManager::StartAll()
 {
-    // TODO: enable isoXmitIntMask per context and start contexts
-    os_log(ASLog(), "ITManager: StartAll [stub]");
+    if (!_pci) return kIOReturnNotReady;
+    // Enable interrupt mask bits for each context present
+    uint32_t mask = (_numCtx >= 32) ? 0xFFFFFFFFu : ((1u << _numCtx) - 1u);
+    _pci->MemoryWrite32(_bar, kOHCI_IsoXmitIntMaskSet, mask);
+    for (uint32_t i = 0; i < _numCtx; ++i) {
+        _ctx[i].Start();
+    }
+    os_log(ASLog(), "ITManager: StartAll enabled mask=0x%x", mask);
     return kIOReturnSuccess;
 }
 
 kern_return_t ASOHCIITManager::StopAll()
 {
-    // TODO: disable masks and stop contexts
-    os_log(ASLog(), "ITManager: StopAll [stub]");
+    if (!_pci) return kIOReturnNotReady;
+    _pci->MemoryWrite32(_bar, kOHCI_IsoXmitIntMaskClear, 0xFFFFFFFFu);
+    for (uint32_t i = 0; i < _numCtx; ++i) {
+        _ctx[i].Stop();
+    }
+    os_log(ASLog(), "ITManager: StopAll");
     return kIOReturnSuccess;
 }
 
@@ -52,25 +75,55 @@ kern_return_t ASOHCIITManager::Queue(uint32_t ctxId,
                                      uint32_t fragments,
                                      const ITQueueOptions& opts)
 {
-    (void)ctxId; (void)spd; (void)tag; (void)channel; (void)sy; (void)payloadPAs; (void)payloadSizes; (void)fragments; (void)opts;
-    // TODO: build program via _builder and enqueue into context
-    return kIOReturnUnsupported;
+    if (ctxId >= _numCtx) return kIOReturnBadArgument;
+    if (!_pool.IsInitialized()) return kIOReturnNotReady;
+    if (fragments == 0 || !payloadPAs || !payloadSizes) return kIOReturnBadArgument;
+
+    _builder.Begin(_pool, fragments + 2); // header + payloads + last
+    _builder.AddHeaderImmediate(spd, tag, channel, sy, 0 /*dataLength TBD*/, ATIntPolicy::kErrorsOnly);
+    uint32_t totalLen = 0;
+    for (uint32_t i = 0; i < fragments; ++i) {
+        _builder.AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
+        totalLen += payloadSizes[i];
+    }
+    // (Future) patch length into header's quad0 if needed.
+    ITDesc::Program p = _builder.Finalize();
+    if (!p.headPA) return kIOReturnNoResources;
+    return _ctx[ctxId].Enqueue(p, opts);
 }
 
 void ASOHCIITManager::OnInterrupt_TxEventMask(uint32_t mask)
 {
-    // TODO: demux per-context bits and call OnInterruptTx()
-    (void)mask;
+    uint32_t remaining = mask;
+    while (remaining) {
+        uint32_t bit = __builtin_ctz(remaining);
+        if (bit < _numCtx) {
+            _ctx[bit].OnInterruptTx();
+        }
+        remaining &= ~(1u << bit);
+    }
 }
 
 void ASOHCIITManager::OnInterrupt_CycleInconsistent()
 {
-    // TODO: notify cycle-matched contexts
+    for (uint32_t i = 0; i < _numCtx; ++i) {
+        _ctx[i].OnCycleInconsistent();
+    }
 }
 
 uint32_t ASOHCIITManager::ProbeContextCount()
 {
-    // TODO: read isoXmitIntMaskSet/Clr to discover implemented contexts
-    return 0;
+    if (!_pci) return 0;
+    // Strategy: write all-ones to mask set, read back event clear; hardware only implements bits for existing contexts.
+    _pci->MemoryWrite32(_bar, kOHCI_IsoXmitIntMaskSet, 0xFFFFFFFFu);
+    uint32_t mask = 0;
+    _pci->MemoryRead32(_bar, kOHCI_IsoXmitIntMaskSet, &mask); // reading set returns current mask state
+    // Clear any unintended enables
+    _pci->MemoryWrite32(_bar, kOHCI_IsoXmitIntMaskClear, 0xFFFFFFFFu);
+    if (mask == 0) return 0;
+    // Count contiguous low-order bits until first zero (assume contexts numbered from 0)
+    uint32_t count = 0;
+    while (mask & 0x1) { count++; mask >>= 1; }
+    return count;
 }
 
