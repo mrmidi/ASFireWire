@@ -125,7 +125,7 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 {
     if (!_pci || !program.headPA || program.descCount == 0) return kIOReturnBadArgument;
 
-    uint32_t cc = ReadContextControlCached();
+    uint32_t cc = ReadContextSet();
     bool active = (cc & kOHCI_ContextControl_active) != 0;
 
     if (!active) {
@@ -186,7 +186,7 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 void ASOHCIITContext::OnInterruptTx()
 {
     if (!_pci) return;
-    uint32_t cc = ReadContextControlCached();
+    uint32_t cc = ReadContextSet();
     InFlightProg* prog = CurrentTail(); // most recently queued still in-flight; after retire we'll have consumed one
     uint16_t xferStatus = 0;
     uint16_t ts = 0;
@@ -227,7 +227,7 @@ void ASOHCIITContext::OnCycleInconsistent()
     _outstanding = 0;
     if (_policy.cycleMatchEnable) {
         // Read current cycle match value (bits 28-16) and increment by 2 cycles (wrap 8000)
-        uint32_t cc = ReadContextControlCached();
+        uint32_t cc = ReadContextSet();
         uint32_t match = (cc >> 16) & 0x1FFF;
         match = (match + 2) % 8000;
         // Reprogram cycle match enable with new starting cycle

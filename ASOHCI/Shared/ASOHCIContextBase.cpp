@@ -35,7 +35,7 @@ kern_return_t ASOHCIContextBase::Start()
 {
     if (!_pci) return kIOReturnNotReady;
 
-    uint32_t cc = ReadContextControlCached();
+    uint32_t cc = ReadContextSet();
     if (cc & kOHCI_ContextControl_active) {
         os_log(ASLog(), "ASOHCIContextBase: Cannot start - context active");
         return kIOReturnBusy;
@@ -62,7 +62,7 @@ kern_return_t ASOHCIContextBase::Stop()
     const uint32_t kWaitStepMS = 1;
     uint32_t waited = 0;
     while (waited < kMaxWaitMS) {
-        uint32_t cc = ReadContextControlCached();
+    uint32_t cc = ReadContextSet();
         if ((cc & kOHCI_ContextControl_active) == 0) {
             os_log(ASLog(), "ASOHCIContextBase: Stopped after %u ms", waited);
             return kIOReturnSuccess;
@@ -96,16 +96,16 @@ void ASOHCIContextBase::OnBusResetEnd()
 bool ASOHCIContextBase::IsRunning() const
 {
     if (!_pci) return false;
-    return (ReadContextControlCached() & kOHCI_ContextControl_run) != 0;
+    return (ReadContextSet() & kOHCI_ContextControl_run) != 0;
 }
 
 bool ASOHCIContextBase::IsActive() const
 {
     if (!_pci) return false;
-    return (ReadContextControlCached() & kOHCI_ContextControl_active) != 0;
+    return (ReadContextSet() & kOHCI_ContextControl_active) != 0;
 }
 
-uint32_t ASOHCIContextBase::ReadContextControlCached() const
+uint32_t ASOHCIContextBase::ReadContextSet() const
 {
     if (!_pci) return 0;
     uint32_t v = 0;

@@ -87,7 +87,7 @@ kern_return_t ASOHCIATContext::Start()
     }
     
     // Verify context is not active
-    result = ReadContextControl(&contextControl);
+    result = ReadContextSet();
     if (result != kIOReturnSuccess) {
         os_log(ASLog(), "ASOHCIATContext: Failed to read context control: 0x%x", result);
         return result;
@@ -140,7 +140,7 @@ kern_return_t ASOHCIATContext::Stop()
     
     // Wait for context to become inactive (OHCI 1.1 §3.1.1.1)
     while (retries-- > 0) {
-        result = ReadContextControl(&contextControl);
+    result = ReadContextSet();
         if (result != kIOReturnSuccess) {
             os_log(ASLog(), "ASOHCIATContext: Failed to read context control: 0x%x", result);
             return result;
@@ -193,14 +193,14 @@ kern_return_t ASOHCIATContext::GetStatus(uint32_t* outStatus)
         return kIOReturnBadArgument;
     }
     
-    return ReadContextControl(outStatus);
+    return ReadContextSet();
 }
 
 // Check if context is active
 bool ASOHCIATContext::IsActive()
 {
     uint32_t status = 0;
-    if (ReadContextControl(&status) == kIOReturnSuccess) {
+    if (ReadContextSet() == kIOReturnSuccess) {
         return (status & kOHCI_ContextControl_active) != 0;
     }
     return false;

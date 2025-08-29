@@ -49,7 +49,7 @@ kern_return_t ASOHCIATRequestContext::Enqueue(const ATDesc::Program& program, co
         return kIOReturnNoSpace;
     }
 
-    uint32_t cc = ReadContextControlCached();
+    uint32_t cc = ReadContextSet();
     bool wasActive = (cc & kOHCI_ContextControl_active) != 0;
 
     if (!wasActive) {
@@ -65,7 +65,7 @@ kern_return_t ASOHCIATRequestContext::Enqueue(const ATDesc::Program& program, co
         // Minimal strategy: try wake and fall back if still active
         Wake();
         IOSleep(1);
-        cc = ReadContextControlCached();
+    cc = ReadContextSet();
         if ((cc & kOHCI_ContextControl_active) == 0) {
             OSMemoryFence();
             WriteCommandPtr(program.headPA, program.zHead);
@@ -87,7 +87,7 @@ void ASOHCIATRequestContext::OnInterruptTxComplete()
     if (completed > 0) {
         if (_outstanding >= completed) _outstanding -= completed; else _outstanding = 0;
     }
-    uint32_t cc2 = ReadContextControlCached();
+    uint32_t cc2 = ReadContextSet();
     if (cc2 & kOHCI_ContextControl_dead) {
         RecoverDeadContext();
     }
@@ -96,7 +96,7 @@ void ASOHCIATRequestContext::OnInterruptTxComplete()
 uint32_t ASOHCIATRequestContext::DrainCompletions(uint32_t maxToDrain)
 {
     uint32_t completed = 0;
-    uint32_t cc = ReadContextControlCached();
+    uint32_t cc = ReadContextSet();
     uint32_t eventCode = cc & 0x1F;
     bool hasCompletion = false;
     switch (eventCode) {
