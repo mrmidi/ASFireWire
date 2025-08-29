@@ -2,6 +2,9 @@
 // ASOHCIITManager.cpp
 // Isochronous Transmit (IT) manager skeleton
 //
+// Spec refs (OHCI 1.1): Chapter 6 (IsoXmitIntEvent/Mask demux), §9.2 (context discovery),
+//   §9.4 (appending constraints), §9.5 (interrupt causes / cycle inconsistent handling)
+//
 
 #include "ASOHCIITManager.hpp"
 #include "LogHelper.hpp"

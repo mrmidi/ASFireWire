@@ -1,9 +1,10 @@
 #pragma once
 //
 // ASOHCIITDescriptor.hpp
-// IT uses the same 16B OUTPUT_* descriptor format as AT.
+// IT uses the same 16B OUTPUT_* descriptor format as AT for non-immediate forms.
+// Immediate variants (key=0x2) carry the isoch header quadlets emitted on the bus.
 //
-// Spec refs: OHCI 1.1 IT §6.1 (program), §6.4 (OUTPUT_* formats)
+// Spec refs (OHCI 1.1): §9.1 (program building), §9.6 (IT data/header), Chapter 6 (interrupt context)
 
 #include "ASOHCIATDescriptor.hpp" // ATDesc::Descriptor + ATDesc::Program
 

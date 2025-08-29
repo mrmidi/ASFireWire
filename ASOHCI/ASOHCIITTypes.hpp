@@ -3,8 +3,9 @@
 // ASOHCIITTypes.hpp
 // IT (Isochronous Transmit) enums and simple option structs
 //
-// Spec refs: OHCI 1.1 IT §6.1 (program/list basics), §6.2 (context registers),
-//            §6.3 (interrupts), §6.4 (data formats)
+// Spec refs (OHCI 1.1): §9.1 (program/list basics), §9.2 (context registers),
+//   §9.4 (appending), §9.5 (interrupt semantics), §9.6 (data/header formats).
+//   Chapter 6 for global IntEvent / IsoXmitIntEvent bit demux.
 
 #include <stdint.h>
 #include "ASOHCIATTypes.hpp" // reuse ATIntPolicy definition (same 'i' field semantics)
@@ -27,7 +28,7 @@ struct ITQueueOptions {
 struct ITPolicy {
     bool     cycleMatchEnable = false;  // §6.2
     uint8_t  startOnCycle     = 0;      // §6.2
-    bool     dropIfLate       = true;   // §6.4 late behavior (drop vs. skip)
+    bool     dropIfLate       = true;   // Software policy only: if packet missed its cycle, do not enqueue retroactively
     uint32_t underrunBudgetUs = 0;      // controller-specific: how soon to re-arm after underrun
 };
 

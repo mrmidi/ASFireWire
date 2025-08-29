@@ -1,9 +1,9 @@
 #pragma once
 //
 // ASOHCIITProgramBuilder.hpp
-// Builds OUTPUT_MORE/OUTPUT_LAST* chains for IT packets.
+// Builds OUTPUT_MORE/OUTPUT_LAST* (and *_Immediate) chains for IT packets.
 //
-// Spec refs: OHCI 1.1 IT §6.1 (list building), §6.4 (IT header/data format)
+// Spec refs (OHCI 1.1): §9.1 (list building), §9.4 (appending), §9.6 (IT header/data format)
 
 #include <stdint.h>
 #include "ASOHCIATDescriptorPool.hpp"  // reuse the existing pool
@@ -12,10 +12,10 @@
 
 class ASOHCIITProgramBuilder {
 public:
-    // Reserve up to 'maxDescriptors' (1 header + N payload + 1 last), max 7 (§6.1)
+    // Reserve up to 'maxDescriptors' (header/immediate + payload frags + last), max 8 (Z range 2..8) (§9.1)
     void Begin(ASOHCIATDescriptorPool& pool, uint32_t maxDescriptors = 7);
 
-    // Build the IT immediate header (controller emits the wire header from these fields) (§6.4)
+    // Build the IT immediate header (controller emits the wire header from these fields) (§9.6)
     // dataLength = payload bytes for this packet; controller pads to quadlet if needed.
     void AddHeaderImmediate(ITSpeed spd,
                             uint8_t tag,

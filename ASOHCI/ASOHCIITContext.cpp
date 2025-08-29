@@ -2,7 +2,13 @@
 // ASOHCIITContext.cpp
 // Isochronous Transmit (IT) context skeleton (DriverKit-friendly)
 //
-// Spec anchors: IT registers/behavior (§6.* in OHCI 1.1)
+// Spec anchors:
+//   Host interrupt + IsoXmit event/mask registers: OHCI 1.1 Chapter 6 (esp. §6.1 event bits, §6.3 demux)
+//   IT DMA programs & descriptor usage: §9.1
+//   IT Context registers / cycle match fields: §9.2
+//   Safe program appending (tail patching semantics): §9.4
+//   IT interrupt meanings (underrun, handling late packets, cycle inconsistent): §9.5
+//   IT data / header emission (speed/tag/channel/sy, length): §9.6
 //
 
 #include "ASOHCIITContext.hpp"
@@ -39,7 +45,7 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 {
     (void)opts;
     if (!program.headPA || program.descCount == 0) return kIOReturnBadArgument;
-    // TODO: implement safe tail-append or initial CommandPtr arm (§6.1)
+    // TODO: implement safe tail-append or initial CommandPtr arm (§9.1 / §9.4)
     os_log_debug(ASLog(), "IT%u: Enqueue head=0x%x z=%u count=%u (stub)",
                  _ctxIndex, program.headPA, program.zHead, program.descCount);
     return kIOReturnUnsupported;
@@ -47,13 +53,13 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 
 void ASOHCIITContext::OnInterruptTx()
 {
-    // TODO: drain completions for this context (§6.3)
+    // TODO: drain completions for this context (§9.5 using per‑context IsoXmitIntEvent bit from Chapter 6)
     os_log_debug(ASLog(), "IT%u: OnInterruptTx (stub)", _ctxIndex);
 }
 
 void ASOHCIITContext::OnCycleInconsistent()
 {
-    // TODO: stop, delay ≥2 cycles, re-arm cycle match (§6.3)
+    // TODO: stop, delay ≥2 cycles, re-arm cycle match (§9.5 + general cycle timer consistency §5.13)
     os_log(ASLog(), "IT%u: CycleInconsistent (stub)", _ctxIndex);
 }
 

@@ -2,9 +2,9 @@
 //
 // ASOHCIITStatus.hpp
 // Interprets IT completion state from OUTPUT_LAST* xferStatus/timestamp.
-// (Isochronous has no IEEE1394 ACK codes; we report late/underrun/skip/etc.)
+// (Isochronous has no IEEE1394 ACK codes; we synthesize late/underrun/skip events.)
 //
-// Spec refs: OHCI 1.1 IT §6.3 (interrupts), §6.4 (status/timestamp fields)
+// Spec refs (OHCI 1.1): §9.5 (interrupt causes incl. underrun), §9.6 (timestamp fields), Chapter 6 (event capture)
 
 #include <stdint.h>
 

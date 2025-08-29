@@ -2,6 +2,8 @@
 // ASOHCIITProgramBuilder.cpp
 // Isochronous Transmit builder skeleton reusing AT descriptor pool
 //
+// Spec refs (OHCI 1.1): §9.1 (program layout), §9.4 (appending & tail patch), §9.6 (header quadlets)
+//
 
 #include "ASOHCIITProgramBuilder.hpp"
 #include "ASOHCIATDescriptor.hpp"
@@ -16,11 +18,13 @@ void ASOHCIITProgramBuilder::Begin(ASOHCIATDescriptorPool& pool, uint32_t maxDes
     _descUsed = 0;
     _ip = ATIntPolicy::kErrorsOnly;
 
-    uint32_t reserve = (maxDescriptors == 0) ? 7 : maxDescriptors;
-    if (reserve > 7) reserve = 7; // IT packet: header + payload frags + last (≤7)
+    // Reserve descriptor blocks for a single IT packet.
+    // Z nibble encodes 2..8 blocks per packet (0=end) – allow up to 8.
+    uint32_t reserve = (maxDescriptors == 0) ? 8 : maxDescriptors;
+    if (reserve > 8) reserve = 8; // IT packet: header/immediate + payload frags + last (≤8)
     _blk = pool.AllocateBlock(reserve);
     if (!_blk.valid) {
-        os_log_error(ASLog(), "ITBuilder: failed to allocate %u desc", reserve);
+        os_log(ASLog(), "ITBuilder: failed to allocate %u desc", reserve);
     } else {
         os_log(ASLog(), "ITBuilder: reserved %u desc (PA=0x%x Z=%u)", _blk.descriptorCount, _blk.physicalAddress, _blk.zValue);
     }

@@ -3,8 +3,13 @@
 // ASOHCIITContext.hpp
 // Per-IT-context plumbing built on ASOHCIContextBase.
 //
-// Spec refs: OHCI 1.1 IT §6.2 (context registers), §6.1 (program),
-//            §6.3 (interrupts/cycleInconsistent), §6.4 (data/late/underrun)
+// Spec refs (OHCI 1.1):
+//   §9.1 IT DMA programs (descriptor forms, initial arm)
+//   §9.2 IT Context registers (cycleMatch fields)
+//   §9.4 Appending (safe tail patch rules)
+//   §9.5 Interrupts (IsoXmit events, underrun handling, late synthesis)
+//   §9.6 Data format (header emission via Immediate descriptors)
+//   Chapter 6 for host IntEvent / IsoXmitIntEvent register demux
 
 #include <stdint.h>
 #include "Shared/ASOHCIContextBase.hpp"

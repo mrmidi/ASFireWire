@@ -3,8 +3,8 @@
 // ASOHCIITManager.hpp
 // Owns multiple IT contexts, descriptor pool sharing, and interrupt fan-out.
 //
-// Spec refs: OHCI 1.1 IT §6.3 (host/isoXmitIntEvent demux), §6.2 (context discovery),
-//            §6.1 (safe appending to a running program)
+// Spec refs (OHCI 1.1): Chapter 6 (IsoXmitIntEvent demux), §9.2 (context discovery),
+//   §9.4 (safe appending to a running program), §9.5 (interrupt semantics)
 
 #include <stdint.h>
 #include <PCIDriverKit/IOPCIDevice.h>
