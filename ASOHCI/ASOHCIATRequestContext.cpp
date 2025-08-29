@@ -7,6 +7,7 @@
 //
 
 #include "ASOHCIATRequestContext.hpp"
+#include "ASOHCIMemoryBarrier.hpp"
 #include "OHCIConstants.hpp"
 #include "LogHelper.hpp"
 #include <DriverKit/IOLib.h>
@@ -53,9 +54,9 @@ kern_return_t ASOHCIATRequestContext::Enqueue(const ATDesc::Program& program, co
     bool wasActive = (cc & kOHCI_ContextControl_active) != 0;
 
     if (!wasActive) {
-        OSMemoryFence(); // Ensure all descriptor writes visible before programming CommandPtr
+        OHCI_MEMORY_BARRIER(); // Ensure all descriptor writes visible before programming CommandPtr (OHCI §7.1)
         WriteCommandPtr(program.headPA, program.zHead);
-        OSMemoryFence(); // Ensure CommandPtr write is globally visible before run
+        OHCI_MEMORY_BARRIER(); // Ensure CommandPtr write is globally visible before run (OHCI §7.1)
         if (cc & kOHCI_ContextControl_run) {
             Wake();
         }
@@ -65,9 +66,9 @@ kern_return_t ASOHCIATRequestContext::Enqueue(const ATDesc::Program& program, co
         IOSleep(1);
         cc = ReadContextSet();
         if ((cc & kOHCI_ContextControl_active) == 0) {
-            OSMemoryFence(); // Ensure all descriptor writes visible before programming CommandPtr
+            OHCI_MEMORY_BARRIER(); // Ensure all descriptor writes visible before programming CommandPtr (OHCI §7.1)
             WriteCommandPtr(program.headPA, program.zHead);
-            OSMemoryFence(); // Ensure CommandPtr write is globally visible before run
+            OHCI_MEMORY_BARRIER(); // Ensure CommandPtr write is globally visible before run (OHCI §7.1)
             Wake();
         } else {
             return kIOReturnBusy;

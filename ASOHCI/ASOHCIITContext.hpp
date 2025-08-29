@@ -12,7 +12,7 @@
 //   Chapter 6 for host IntEvent / IsoXmitIntEvent register demux
 
 #include <stdint.h>
-#include "Shared/ASOHCIContextBase.hpp"
+#include "ASOHCIContextBase.hpp"
 #include "ASOHCIITTypes.hpp"
 #include "ASOHCIITDescriptor.hpp"
 #include "ASOHCIITStatus.hpp"
@@ -49,6 +49,7 @@ private:
     uint32_t _ctxIndex = 0;
     ITPolicy _policy{};
     ITCompletion _last{};
+    uint32_t _outstanding = 0;
 
     // Simple ring of in-flight programs (pending completion). Size small due to limited pipeline (§9.4 guidance)
     struct InFlightProg {

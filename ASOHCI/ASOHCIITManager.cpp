@@ -8,6 +8,7 @@
 
 #include "ASOHCIITManager.hpp"
 #include "LogHelper.hpp"
+#include "ASOHCICtxProbe.hpp"
 
 #include <DriverKit/IOReturn.h>
 
@@ -23,7 +24,8 @@ kern_return_t ASOHCIITManager::Initialize(IOPCIDevice* pci,
 
     // Minimal pool init stub: keep uninitialized until used
     (void)poolBytes;
-    _numCtx = ProbeContextCount();
+    // Use MMIO probe of IT windows: detect real, responding contexts (§4.2 / §9.2).
+    _numCtx = ProbeITContextCount(pci, barIndex).count;
     if (_numCtx > 32) _numCtx = 32;
     os_log(ASLog(), "ITManager: Initialize (bar=%u, pool=%u bytes) contexts=%u", _bar, poolBytes, _numCtx);
 
@@ -80,7 +82,7 @@ kern_return_t ASOHCIITManager::Queue(uint32_t ctxId,
     if (fragments == 0 || !payloadPAs || !payloadSizes) return kIOReturnBadArgument;
 
     _builder.Begin(_pool, fragments + 2); // header + payloads + last
-    _builder.AddHeaderImmediate(spd, tag, channel, sy, 0 /*dataLength TBD*/, ATIntPolicy::kErrorsOnly);
+    _builder.AddHeaderImmediate(spd, tag, channel, sy, 0 /*dataLength TBD*/, ITIntPolicy::kAlways);
     uint32_t totalLen = 0;
     for (uint32_t i = 0; i < fragments; ++i) {
         _builder.AddPayloadFragment(payloadPAs[i], payloadSizes[i]);

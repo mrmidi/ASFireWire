@@ -14,9 +14,15 @@ enum class ITSpeed : uint8_t {
     S100 = 0, S200 = 1, S400 = 2, S800 = 3, // extend if your silicon supports more
 };
 
+// IT interrupt policy for OUTPUT_LAST* descriptors 'i' field (OHCI §9.1.3, §9.1.4, Table 9-2, Table 9-3)
+enum class ITIntPolicy : uint8_t {
+    kNever  = 0,    // i=00: No interrupt on completion/skip
+    kAlways = 3,    // i=11: Interrupt on completion or skipAddress taken
+};
+
 struct ITQueueOptions {
-    // Per-packet interrupt policy (reuses AT's policy: same 'i' bits in OUTPUT_LAST*)
-    ATIntPolicy interruptPolicy = ATIntPolicy::kErrorsOnly;
+    // Per-packet interrupt policy (IT-specific 'i' bits in OUTPUT_LAST*, OHCI Table 9-3)
+    ITIntPolicy interruptPolicy = ITIntPolicy::kNever;
 
     // Cycle match controls (§9.2, IT ContextControl cycleMatch)
     bool     cycleMatchEnable = false;

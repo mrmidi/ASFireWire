@@ -146,14 +146,7 @@ void ASOHCIContextBase::WriteContextClear(uint32_t value)
     }
 }
 
-uint32_t ASOHCIContextBase::ReadContextSet() const
-{
-    // Read current ContextControl via read address (contextBase)
-    if (!_pci) return 0;
-    uint32_t v = 0;
-    _pci->MemoryRead32(_bar, _offs.contextBase, &v);
-    return v;
-}
+// (duplicate definition removed)
 
 void ASOHCIContextBase::RecoverDeadContext()
 {

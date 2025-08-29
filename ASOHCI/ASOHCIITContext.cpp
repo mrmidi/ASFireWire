@@ -12,23 +12,22 @@
 //
 
 #include "ASOHCIITContext.hpp"
+#include "ASOHCICtxRegMap.hpp"
+#include "ASOHCIITProgramBuilder.hpp"
+#include "ASOHCIDescriptorUtils.hpp"
+#include "ASOHCIMemoryBarrier.hpp"
 #include "Shared/ASOHCIContextBase.hpp"
 #include "Shared/ASOHCITypes.hpp"
 #include "LogHelper.hpp"
 #include "OHCIConstants.hpp"
 
 #include <DriverKit/IOReturn.h>
+#include <os/log.h>
 #include <DriverKit/IOLib.h>
 
-// Memory barrier helper
-#ifndef OSMemoryFence
-#define OSMemoryFence() __sync_synchronize()
-#endif
+// Memory barriers now provided by ASOHCIMemoryBarrier.hpp
 
-// Local masks for descriptor control quadlet (cmd/key bits)
-static inline uint32_t DescGetCmd(uint32_t q0) { return q0 & 0xF; }
-static inline uint32_t DescGetKey(uint32_t q0) { return (q0 >> 4) & 0x7; }
-static inline uint32_t DescSetCmd(uint32_t q0, uint32_t cmd) { return (q0 & ~0xF) | (cmd & 0xF); }
+// Descriptor utilities now provided by ASOHCIDescriptorUtils.hpp
 
 // OUTPUT_* command encoding we introduced (ITDescOps)
 namespace { constexpr uint32_t kCmd_OUTPUT_MORE = 0x0; constexpr uint32_t kCmd_OUTPUT_LAST = 0x1; }
@@ -72,11 +71,11 @@ kern_return_t ASOHCIITContext::Initialize(IOPCIDevice* pci,
     _policy = {};
     _last = {};
 
-    // Compute per-context register offsets (OHCI 1.1 §9.2)
+    // Compute per-context register offsets (read/base + set/clear/cmd)
     ASContextOffsets offs{};
-    offs.contextControlSet   = kOHCI_IsoXmitContextControlSet(_ctxIndex);
-    offs.contextControlClear = kOHCI_IsoXmitContextControlClear(_ctxIndex);
-    offs.commandPtr          = kOHCI_IsoXmitCommandPtr(_ctxIndex);
+    if (!ASOHCICtxRegMap::Compute(ASContextKind::kIT_Transmit, _ctxIndex, &offs)) {
+        return kIOReturnBadArgument;
+    }
     return ASOHCIContextBase::Initialize(pci, barIndex, ASContextKind::kIT_Transmit, offs);
 }
 
@@ -93,26 +92,18 @@ kern_return_t ASOHCIITContext::Start()
 void ASOHCIITContext::ApplyPolicy(const ITPolicy& policy)
 {
     _policy = policy;
-    // Program cycle match (OHCI 1.1 §9.2) if requested. Cycle match fields live in the context control register.
-    // Sequence: if disabling, clear enable bit; if enabling, write cycle start + enable atomically via Set.
-    volatile uint32_t* ctrlSet = _mmio32(_offsets.contextControlSet);
-    volatile uint32_t* ctrlClr = _mmio32(_offsets.contextControlClear);
-
-    // Bits layout (subset) for IsoXmit ContextControl (refer §9.2):
-    //  31: Run; 30: Reserved; 29: CycleMatchEnable; 28-16: CycleMatch; others: interrupt/status bits.
-    constexpr uint32_t kCycleMatchEnableBit = 1u << 29; // spec symbolic mapping
-    constexpr uint32_t kCycleMatchMask      = 0x1FFFu << 16; // 13 bits of cycle value (0..7999)
-
+    // Program cycle match using ContextControl Set/Clear (OHCI 1.1 §9.2).
+    constexpr uint32_t kCycleMatchMask   = kOHCI_IT_CycleMatchMask;    // [28:16], 13 bits
+    constexpr uint32_t kCycleMatchEnable = kOHCI_IT_CycleMatchEnable;  // enable bit per §9.2
     if (!policy.cycleMatchEnable) {
-        // Clear enable; do not disturb current cycle value.
-        *ctrlClr = kCycleMatchEnableBit;
+        WriteContextClear(kCycleMatchEnable);
         os_log(ASLog(), "IT%u: ApplyPolicy disable cycleMatch", _ctxIndex);
     } else {
-        uint32_t cycleVal = policy.startOnCycle % 8000; // wrap to 0..7999 (OHCI cycle range)
-        // Clear prior cycle match bits then set new value + enable.
-        *ctrlClr = kCycleMatchEnableBit | kCycleMatchMask; // clear enable + previous value
-        uint32_t setVal = ((cycleVal << 16) & kCycleMatchMask) | kCycleMatchEnableBit;
-        *ctrlSet = setVal;
+        uint32_t cycleVal = policy.startOnCycle % 8000; // 0..7999
+        // Clear existing value+enable, then Set new value+enable atomically via Set register.
+        WriteContextClear(kCycleMatchMask | kCycleMatchEnable);
+        uint32_t setVal = ((cycleVal << 16) & kCycleMatchMask) | kCycleMatchEnable;
+        WriteContextSet(setVal);
         os_log(ASLog(), "IT%u: ApplyPolicy enable cycleMatch startCycle=%u", _ctxIndex, cycleVal);
     }
 
@@ -130,9 +121,9 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 
     if (!active) {
         // Initial arm: program CommandPtr and set run (if not already) then wake for immediate fetch.
-        OSMemoryFence(); // Ensure all descriptor writes visible before programming CommandPtr
+        OHCI_MEMORY_BARRIER(); // Ensure all descriptor writes visible before programming CommandPtr (OHCI §9.1)
         WriteCommandPtr(program.headPA, program.zHead);
-        OSMemoryFence(); // Ensure CommandPtr write is globally visible before run
+        OHCI_MEMORY_BARRIER(); // Ensure CommandPtr write is globally visible before run (OHCI §9.1)
         if ((cc & kOHCI_ContextControl_run) == 0) {
             WriteContextSet(kOHCI_ContextControl_run);
         } else {
@@ -140,7 +131,7 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
         }
         _outstanding++;
         PushProgram(program);
-        os_log_debug(ASLog(), "IT%u: Enqueue initial (auto-run) head=0x%x z=%u count=%u", _ctxIndex, program.headPA, program.zHead, program.descCount);
+        os_log(ASLog(), "IT%u: Enqueue initial (auto-run) head=0x%x z=%u count=%u", _ctxIndex, program.headPA, program.zHead, program.descCount);
         return kIOReturnSuccess;
     }
 
@@ -166,21 +157,28 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
         return kIOReturnUnsupported;
     }
 
-    // 1. Convert existing LAST -> MORE (clear cmd bit to 0x0) leaving key/interrupt bits untouched.
+    // 1. Convert existing LAST -> MORE
     q0 = DescSetCmd(q0, kCmd_OUTPUT_MORE);
+    q0 &= ~(0x3u << 10); // b=0 for *_MORE
     tailDesc->quad[0] = q0;
 
-    // 2. Patch branchAddress (quad1) with new program head physical & Z nibble (§9.4). Format: [31:4] addr, [3:0] Z
+    // 2. Patch branchAddress
     uint32_t branch = (program.headPA & 0xFFFFFFF0u) | (program.zHead & 0xF);
-    tailDesc->quad[1] = branch;
+    if (DescGetKey(q0) == ITDescOps::kKey_IMMEDIATE) {
+        // For immediate, branch is in the second block's Q2 (skipAddress+Z)
+        auto* tailDesc1 = tailDesc + 1;
+        tailDesc1->quad[0] = branch;
+    } else {
+        tailDesc->quad[2] = branch;
+    }
 
-    OSMemoryFence(); // Ensure tail patch is visible before hardware fetches new program
+    OHCI_MEMORY_BARRIER(); // Ensure tail patch is visible before hardware fetches new program (OHCI §9.4)
 
     // 4. Convert new program final descriptor (already *_LAST from builder) — we trust builder produced LAST.
-    OSMemoryFence(); // Ensure all descriptor writes are visible before updating program ring
+    OHCI_MEMORY_BARRIER(); // Ensure all descriptor writes are visible before updating program ring (OHCI §9.4)
     _outstanding++;
     PushProgram(program);
-    os_log_debug(ASLog(), "IT%u: Append tailPA=0x%x -> newHead=0x%x branch=0x%x z=%u", _ctxIndex, tail->tailPA, program.headPA, branch, program.zHead);
+    os_log(ASLog(), "IT%u: Append tailPA=0x%x -> newHead=0x%x branch=0x%x z=%u", _ctxIndex, tail->tailPA, program.headPA, branch, program.zHead);
     return kIOReturnSuccess;
 }
 
@@ -215,7 +213,7 @@ void ASOHCIITContext::OnInterruptTx()
     if ((_last.event == ITEvent::kUnrecoverable) || (cc & kOHCI_ContextControl_dead)) {
         RecoverDeadContext();
     }
-    os_log_debug(ASLog(), "IT%u: Interrupt status=0x%x ts=%u success=%u event=%u outstanding=%u", _ctxIndex,
+    os_log(ASLog(), "IT%u: Interrupt status=0x%x ts=%u success=%u event=%u outstanding=%u", _ctxIndex,
                  xferStatus, ts, _last.success, static_cast<unsigned>(_last.event), _outstanding);
 }
 

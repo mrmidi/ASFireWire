@@ -36,7 +36,7 @@ public:
     // Status helpers
     virtual bool     IsRunning() const;
     virtual bool     IsActive() const;
-    virtual uint32_t ReadContextSet() const; // reads ContextControl.Set register
+    virtual uint32_t ReadContextSet() const; // reads ContextControl (via read address)
 
     // CommandPtr writer (§3.1.2): addr must be 16-byte aligned; z in [0..15]
     virtual kern_return_t WriteCommandPtr(uint32_t descriptorAddress, uint8_t zNibble);
@@ -51,7 +51,6 @@ protected:
     // Low-level register IO (Memory BAR space, not PCI config)
     virtual void WriteContextSet(uint32_t value);
     virtual void WriteContextClear(uint32_t value);
-    virtual uint32_t ReadContextSet() const;
 
     // Allow derived types to override recovery strategy
     virtual void RecoverDeadContext();

@@ -168,13 +168,36 @@ static constexpr uint32_t kOHCI_AsRspRcvContextControlS = 0x01E8;
 static constexpr uint32_t kOHCI_AsRspRcvCommandPtr      = 0x01EC;
 
 // ------------------------ Isochronous Transmit Contexts (OHCI 1.1 §9.2) ---------
-// Each IT context n has 16-byte spaced registers: ControlSet(n), ControlClear(n), CommandPtr(n)
-// Base pattern (matches common Linux mapping): base 0x0200 + 0x10 * n
-// (Separate from Async Receive which follows later in map.)
-static constexpr uint32_t kOHCI_IsoXmitContextBase(uint32_t n)        { return 0x0200 + 0x10 * n; }
-static constexpr uint32_t kOHCI_IsoXmitContextControlSet(uint32_t n)  { return 0x0200 + 0x10 * n; }   // §9.2
-static constexpr uint32_t kOHCI_IsoXmitContextControlClear(uint32_t n){ return 0x0204 + 0x10 * n; }   // §9.2
-static constexpr uint32_t kOHCI_IsoXmitCommandPtr(uint32_t n)         { return 0x020C + 0x10 * n; }   // §9.1/§9.2
+// IT context n register block: base 0x0200 + 0x10*n
+static constexpr uint32_t kOHCI_IsoXmitContextBase(uint32_t n)         { return 0x0200 + 0x10 * n; }
+static constexpr uint32_t kOHCI_IsoXmitContextControlSet(uint32_t n)   { return kOHCI_IsoXmitContextBase(n) + 0x00; } // Set @ base
+static constexpr uint32_t kOHCI_IsoXmitContextControlClear(uint32_t n) { return kOHCI_IsoXmitContextBase(n) + 0x04; } // Clear @ +0x04
+static constexpr uint32_t kOHCI_IsoXmitCommandPtr(uint32_t n)          { return kOHCI_IsoXmitContextBase(n) + 0x0C; }
+
+// Isochronous Transmit ContextControl fields (subset) per §9.2:
+// CycleMatch value in [28:16], enable bit nearby (commonly bit 29 on implementations).
+// Keep these symbolic; controller-specific variants may exist.
+static constexpr uint32_t kOHCI_IT_CycleMatchMask    = (0x1FFFu << 16); // 13 bits 0..7999 (§9.2)
+static constexpr uint32_t kOHCI_IT_CycleMatchEnable  = (1u << 29);      // enable (symbolic, §9.2)
+
+// ------------------------ Isochronous Receive Contexts (OHCI 1.1 §10.3) ---------
+// IR context n register block: base 0x0400 + 0x20*n
+static constexpr uint32_t kOHCI_IsoRcvContextBase(uint32_t n)         { return 0x0400 + 0x20 * n; }
+static constexpr uint32_t kOHCI_IsoRcvContextControlSet(uint32_t n)   { return kOHCI_IsoRcvContextBase(n) + 0x00; } // Set @ base
+static constexpr uint32_t kOHCI_IsoRcvContextControlClear(uint32_t n) { return kOHCI_IsoRcvContextBase(n) + 0x04; } // Clear @ +0x04
+static constexpr uint32_t kOHCI_IsoRcvContextMatch(uint32_t n)        { return kOHCI_IsoRcvContextBase(n) + 0x10; } // Match @ +0x10
+static constexpr uint32_t kOHCI_IsoRcvCommandPtr(uint32_t n)          { return kOHCI_IsoRcvContextBase(n) + 0x0C; } // CommandPtr @ +0x0C
+
+// IR ContextControl fields per §10.3:
+// Multi-channel mode enable and bufferFill mode (implementation-specific bit positions)
+static constexpr uint32_t kOHCI_IR_MultiChannelMode = (1u << 28);     // Enable multi-channel reception (symbolic, §10.3)
+static constexpr uint32_t kOHCI_IR_BufferFill       = (1u << 31);     // Enable buffer-fill mode (symbolic, §10.3)
+
+// IR ContextMatch register fields per §10.3:
+static constexpr uint32_t kOHCI_IR_ChannelMask      = 0x0000003F;     // Bits 5-0: Channel number (0-63)
+static constexpr uint32_t kOHCI_IR_TagMask          = 0x000000C0;     // Bits 7-6: Tag field match
+static constexpr uint32_t kOHCI_IR_SyncMask         = 0x00000F00;     // Bits 11-8: Sync field match
+
 
 // Legacy context control bit (deprecated - use kOHCI_ContextControl_* definitions above)
 static constexpr uint32_t kOHCI_Context_Run             = (1u << 15);

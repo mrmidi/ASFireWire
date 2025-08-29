@@ -32,10 +32,11 @@ public:
                             uint8_t channel,
                             uint8_t sy,
                             uint32_t dataLength,
-                            ATIntPolicy ip = ATIntPolicy::kErrorsOnly);
+                            ITIntPolicy ip = ITIntPolicy::kNever,
+                            bool isLast = false);
 
     // Append a payload fragment by physical address (§9.1)
-    void AddPayloadFragment(uint32_t payloadPA, uint32_t payloadBytes);
+    void AddPayloadFragment(uint32_t payloadPA, uint32_t payloadBytes, bool isLast = false);
 
     // Close the packet with OUTPUT_LAST*; returns a ready-to-enqueue program (§9.1)
     ITDesc::Program Finalize();
@@ -47,7 +48,7 @@ private:
     ASOHCIATDescriptorPool* _pool = nullptr;
     ASOHCIATDescriptorPool::Block _blk{};
     uint32_t _descUsed = 0;
-    ATIntPolicy _ip = ATIntPolicy::kErrorsOnly;
+    ITIntPolicy _ip = ITIntPolicy::kNever;
     uint32_t _headerQuadlets = 0; // number of header quadlets used in immediate descriptor
 };
 

@@ -13,7 +13,8 @@ enum class ASContextKind : uint8_t {
     kAT_Response,  // AT Rsp context (Tx)
     kAR_Request,   // AR Req context (Rx)
     kAR_Response,  // AR Rsp context (Rx)
-    kIT_Transmit   // Isochronous Transmit (Tx)
+    kIT_Transmit,  // Isochronous Transmit (Tx)
+    kIR_Receive    // Isochronous Receive (Rx)
 };
 
 // Context register offsets bundle (per-kind)
