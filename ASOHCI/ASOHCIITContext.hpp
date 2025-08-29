@@ -46,5 +46,18 @@ private:
     uint32_t _ctxIndex = 0;
     ITPolicy _policy{};
     ITCompletion _last{};
+
+    // Simple ring of in-flight programs (pending completion). Size small due to limited pipeline (§9.4 guidance)
+    struct InFlightProg {
+        uint32_t headPA; uint32_t tailPA; void* tailVA; uint8_t zHead; bool valid; };
+    static constexpr uint32_t kMaxInFlight = 16; // adjustable
+    InFlightProg _ring[kMaxInFlight] = {};
+    uint32_t _ringHead = 0; // next insertion
+    uint32_t _ringTail = 0; // next retirement
+    bool     _ringFull = false;
+
+    InFlightProg* CurrentTail();
+    void          PushProgram(const ITDesc::Program& p);
+    void          RetireOne();
 };
 

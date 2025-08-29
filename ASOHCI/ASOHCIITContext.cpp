@@ -20,6 +20,49 @@
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/IOLib.h>
 
+// Memory barrier helper
+#ifndef OSMemoryFence
+#define OSMemoryFence() __sync_synchronize()
+#endif
+
+// Local masks for descriptor control quadlet (cmd/key bits)
+static inline uint32_t DescGetCmd(uint32_t q0) { return q0 & 0xF; }
+static inline uint32_t DescGetKey(uint32_t q0) { return (q0 >> 4) & 0x7; }
+static inline uint32_t DescSetCmd(uint32_t q0, uint32_t cmd) { return (q0 & ~0xF) | (cmd & 0xF); }
+
+// OUTPUT_* command encoding we introduced (ITDescOps)
+namespace { constexpr uint32_t kCmd_OUTPUT_MORE = 0x0; constexpr uint32_t kCmd_OUTPUT_LAST = 0x1; }
+
+ASOHCIITContext::InFlightProg* ASOHCIITContext::CurrentTail()
+{
+    if (_ringHead == _ringTail && !_ringFull) return nullptr;
+    // Last valid element is at (ringHead - 1) modulo size if any entries exist
+    uint32_t count = _ringFull ? kMaxInFlight : ((_ringHead + kMaxInFlight) - _ringTail) % kMaxInFlight;
+    if (count == 0) return nullptr;
+    uint32_t idx = (_ringHead + kMaxInFlight - 1) % kMaxInFlight;
+    return &_ring[idx];
+}
+
+void ASOHCIITContext::PushProgram(const ITDesc::Program& p)
+{
+    InFlightProg prog{p.headPA, p.tailPA, p.tailVA, p.zHead, true};
+    _ring[_ringHead] = prog;
+    if (_ringFull) {
+        // Overwrite oldest (drop) – should not happen if completion keeps up
+        _ringTail = (_ringTail + 1) % kMaxInFlight;
+    }
+    _ringHead = (_ringHead + 1) % kMaxInFlight;
+    if (_ringHead == _ringTail) _ringFull = true;
+}
+
+void ASOHCIITContext::RetireOne()
+{
+    if (_ringHead == _ringTail && !_ringFull) return;
+    _ring[_ringTail].valid = false;
+    _ringTail = (_ringTail + 1) % kMaxInFlight;
+    _ringFull = false;
+}
+
 kern_return_t ASOHCIITContext::Initialize(IOPCIDevice* pci,
                                           uint8_t barIndex,
                                           uint32_t ctxIndex)
@@ -76,27 +119,56 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
     bool active = (cc & kOHCI_ContextControl_active) != 0;
 
     if (!active) {
-        // Initial arm: memory fence then write CommandPtr + wake if already running
-        #ifndef OSMemoryFence
-        #define OSMemoryFence() __sync_synchronize()
-        #endif
+        // Initial arm: program CommandPtr then (if already RUN) wake.
         OSMemoryFence();
         WriteCommandPtr(program.headPA, program.zHead);
         if (cc & kOHCI_ContextControl_run) {
             Wake();
         }
         _outstanding++;
+        PushProgram(program);
         os_log_debug(ASLog(), "IT%u: Enqueue initial head=0x%x z=%u count=%u", _ctxIndex, program.headPA, program.zHead, program.descCount);
         return kIOReturnSuccess;
     }
 
-    // Active: attempt safe tail append placeholder. Real implementation must patch OUTPUT_LAST per §9.4.
+    // Active: perform safe tail append (§9.4)
     if (!opts.allowAppendWhileActive) {
         return kIOReturnBusy;
     }
-    // For now we do not support live tail patching; indicate unsupported.
-    os_log_debug(ASLog(), "IT%u: Enqueue append unsupported (active context)", _ctxIndex);
-    return kIOReturnUnsupported;
+
+    InFlightProg* tail = CurrentTail();
+    if (!tail || !tail->valid || !tail->tailVA) {
+        os_log(ASLog(), "IT%u: Append failed (no tracked tail)", _ctxIndex);
+        return kIOReturnNotReady;
+    }
+
+    // Tail descriptor layout: quad0 (cmd/key/i), quad1 (branchAddress+Z placeholder for immediate forms)
+    auto* tailDesc = reinterpret_cast<ATDesc::Descriptor*>(tail->tailVA);
+    uint32_t q0 = tailDesc->quad[0];
+    uint32_t q1 = tailDesc->quad[1];
+    (void)q1;
+    // Ensure it is currently a LAST variant
+    if (DescGetCmd(q0) != kCmd_OUTPUT_LAST) {
+        os_log(ASLog(), "IT%u: Append tail not LAST (cmd=0x%x)", _ctxIndex, DescGetCmd(q0));
+        return kIOReturnUnsupported;
+    }
+
+    // 1. Convert existing LAST -> MORE (clear cmd bit to 0x0) leaving key/interrupt bits untouched.
+    q0 = DescSetCmd(q0, kCmd_OUTPUT_MORE);
+    tailDesc->quad[0] = q0;
+
+    // 2. Patch branchAddress (quad1) with new program head physical & Z nibble (§9.4). Format: [31:4] addr, [3:0] Z
+    uint32_t branch = (program.headPA & 0xFFFFFFF0u) | (program.zHead & 0xF);
+    tailDesc->quad[1] = branch;
+
+    // 3. Memory fence to ensure descriptor writes visible before hardware could fetch new program.
+    OSMemoryFence();
+
+    // 4. Convert new program final descriptor (already *_LAST from builder) — we trust builder produced LAST.
+    _outstanding++;
+    PushProgram(program);
+    os_log_debug(ASLog(), "IT%u: Append tailPA=0x%x -> newHead=0x%x branch=0x%x z=%u", _ctxIndex, tail->tailPA, program.headPA, branch, program.zHead);
+    return kIOReturnSuccess;
 }
 
 void ASOHCIITContext::OnInterruptTx()
@@ -109,8 +181,8 @@ void ASOHCIITContext::OnInterruptTx()
     ASOHCIITStatus statusDec;
     _last = statusDec.Decode(xferStatus, ts);
     if (_outstanding > 0) {
-        // For now treat any interrupt as completion of one packet until real descriptor readback added
         _outstanding--;
+        RetireOne();
     }
     if ((_last.event == ITEvent::kUnrecoverable) || (cc & kOHCI_ContextControl_dead)) {
         RecoverDeadContext();

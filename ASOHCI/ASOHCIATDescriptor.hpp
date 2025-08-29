@@ -26,6 +26,9 @@ struct Program {
     uint32_t tailPA = 0;  // last descriptor physical address (OUTPUT_LAST*)
     uint8_t  zHead  = 0;  // Z nibble for CommandPtr (§7.1)
     uint32_t descCount = 0;
+    // CPU virtual addresses (for tail patching / completion readback)
+    void*    headVA = nullptr;
+    void*    tailVA = nullptr;
 };
 
 } // namespace ATDesc

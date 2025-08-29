@@ -99,6 +99,8 @@ ITDesc::Program ASOHCIITProgramBuilder::Finalize()
     p.tailPA = _blk.physicalAddress + ((_descUsed - 1) * sizeof(ATDesc::Descriptor));
     p.zHead = _blk.zValue;
     p.descCount = _descUsed;
+    p.headVA = _blk.virtualAddress;
+    p.tailVA = static_cast<uint8_t*>(_blk.virtualAddress) + ((_descUsed - 1) * sizeof(ATDesc::Descriptor));
 
     // Release builder state
     _pool = nullptr;
