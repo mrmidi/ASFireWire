@@ -36,7 +36,7 @@ public:
     // Status helpers
     virtual bool     IsRunning() const;
     virtual bool     IsActive() const;
-    virtual uint32_t ReadContextControlCached() const; // reads ContextControl.Set register
+    virtual uint32_t ReadContextSet() const; // reads ContextControl.Set register
 
     // CommandPtr writer (§3.1.2): addr must be 16-byte aligned; z in [0..15]
     virtual kern_return_t WriteCommandPtr(uint32_t descriptorAddress, uint8_t zNibble);

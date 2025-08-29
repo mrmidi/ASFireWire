@@ -130,8 +130,9 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 
     if (!active) {
         // Initial arm: program CommandPtr and set run (if not already) then wake for immediate fetch.
-        OSMemoryFence();
+        OSMemoryFence(); // Ensure all descriptor writes visible before programming CommandPtr
         WriteCommandPtr(program.headPA, program.zHead);
+        OSMemoryFence(); // Ensure CommandPtr write is globally visible before run
         if ((cc & kOHCI_ContextControl_run) == 0) {
             WriteContextSet(kOHCI_ContextControl_run);
         } else {
@@ -173,10 +174,10 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
     uint32_t branch = (program.headPA & 0xFFFFFFF0u) | (program.zHead & 0xF);
     tailDesc->quad[1] = branch;
 
-    // 3. Memory fence to ensure descriptor writes visible before hardware could fetch new program.
-    OSMemoryFence();
+    OSMemoryFence(); // Ensure tail patch is visible before hardware fetches new program
 
     // 4. Convert new program final descriptor (already *_LAST from builder) — we trust builder produced LAST.
+    OSMemoryFence(); // Ensure all descriptor writes are visible before updating program ring
     _outstanding++;
     PushProgram(program);
     os_log_debug(ASLog(), "IT%u: Append tailPA=0x%x -> newHead=0x%x branch=0x%x z=%u", _ctxIndex, tail->tailPA, program.headPA, branch, program.zHead);

@@ -50,21 +50,20 @@ kern_return_t ASOHCIATResponseContext::Enqueue(const ATDesc::Program& program, c
     uint32_t cc = ReadContextSet();
     bool wasActive = (cc & kOHCI_ContextControl_active) != 0;
     if (!wasActive) {
-        #ifndef OSMemoryFence
-        #define OSMemoryFence() __sync_synchronize()
-        #endif
-        OSMemoryFence();
+        OSMemoryFence(); // Ensure all descriptor writes visible before programming CommandPtr
         WriteCommandPtr(program.headPA, program.zHead);
+        OSMemoryFence(); // Ensure CommandPtr write is globally visible before run
         if (cc & kOHCI_ContextControl_run) {
             Wake();
         }
     } else {
         Wake();
         IOSleep(1);
-    cc = ReadContextSet();
+        cc = ReadContextSet();
         if ((cc & kOHCI_ContextControl_active) == 0) {
-            OSMemoryFence();
+            OSMemoryFence(); // Ensure all descriptor writes visible before programming CommandPtr
             WriteCommandPtr(program.headPA, program.zHead);
+            OSMemoryFence(); // Ensure CommandPtr write is globally visible before run
             Wake();
         } else {
             return kIOReturnBusy;
