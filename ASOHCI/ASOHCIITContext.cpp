@@ -40,8 +40,31 @@ kern_return_t ASOHCIITContext::Initialize(IOPCIDevice* pci,
 void ASOHCIITContext::ApplyPolicy(const ITPolicy& policy)
 {
     _policy = policy;
-    os_log(ASLog(), "IT%u: ApplyPolicy cycleMatch=%u startOnCycle=%u dropIfLate=%u underrunBudgetUs=%u",
-           _ctxIndex, policy.cycleMatchEnable, policy.startOnCycle, policy.dropIfLate, policy.underrunBudgetUs);
+    // Program cycle match (OHCI 1.1 §9.2) if requested. Cycle match fields live in the context control register.
+    // Sequence: if disabling, clear enable bit; if enabling, write cycle start + enable atomically via Set.
+    volatile uint32_t* ctrlSet = _mmio32(_offsets.contextControlSet);
+    volatile uint32_t* ctrlClr = _mmio32(_offsets.contextControlClear);
+
+    // Bits layout (subset) for IsoXmit ContextControl (refer §9.2):
+    //  31: Run; 30: Reserved; 29: CycleMatchEnable; 28-16: CycleMatch; others: interrupt/status bits.
+    constexpr uint32_t kCycleMatchEnableBit = 1u << 29; // spec symbolic mapping
+    constexpr uint32_t kCycleMatchMask      = 0x1FFFu << 16; // 13 bits of cycle value (0..7999)
+
+    if (!policy.cycleMatchEnable) {
+        // Clear enable; do not disturb current cycle value.
+        *ctrlClr = kCycleMatchEnableBit;
+        os_log(ASLog(), "IT%u: ApplyPolicy disable cycleMatch", _ctxIndex);
+    } else {
+        uint32_t cycleVal = policy.startOnCycle % 8000; // wrap to 0..7999 (OHCI cycle range)
+        // Clear prior cycle match bits then set new value + enable.
+        *ctrlClr = kCycleMatchEnableBit | kCycleMatchMask; // clear enable + previous value
+        uint32_t setVal = ((cycleVal << 16) & kCycleMatchMask) | kCycleMatchEnableBit;
+        *ctrlSet = setVal;
+        os_log(ASLog(), "IT%u: ApplyPolicy enable cycleMatch startCycle=%u", _ctxIndex, cycleVal);
+    }
+
+    os_log(ASLog(), "IT%u: ApplyPolicy dropIfLate=%u underrunBudgetUs=%u (software-only policies logged)",
+           _ctxIndex, policy.dropIfLate, policy.underrunBudgetUs);
 }
 
 kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
