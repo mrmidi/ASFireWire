@@ -70,11 +70,32 @@ void ASOHCIITContext::ApplyPolicy(const ITPolicy& policy)
 kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
                                        const ITQueueOptions& opts)
 {
-    (void)opts;
-    if (!program.headPA || program.descCount == 0) return kIOReturnBadArgument;
-    // TODO: implement safe tail-append or initial CommandPtr arm (§9.1 / §9.4)
-    os_log_debug(ASLog(), "IT%u: Enqueue head=0x%x z=%u count=%u (stub)",
-                 _ctxIndex, program.headPA, program.zHead, program.descCount);
+    if (!_pci || !program.headPA || program.descCount == 0) return kIOReturnBadArgument;
+
+    uint32_t cc = ReadContextControlCached();
+    bool active = (cc & kOHCI_ContextControl_active) != 0;
+
+    if (!active) {
+        // Initial arm: memory fence then write CommandPtr + wake if already running
+        #ifndef OSMemoryFence
+        #define OSMemoryFence() __sync_synchronize()
+        #endif
+        OSMemoryFence();
+        WriteCommandPtr(program.headPA, program.zHead);
+        if (cc & kOHCI_ContextControl_run) {
+            Wake();
+        }
+        _outstanding++;
+        os_log_debug(ASLog(), "IT%u: Enqueue initial head=0x%x z=%u count=%u", _ctxIndex, program.headPA, program.zHead, program.descCount);
+        return kIOReturnSuccess;
+    }
+
+    // Active: attempt safe tail append placeholder. Real implementation must patch OUTPUT_LAST per §9.4.
+    if (!opts.allowAppendWhileActive) {
+        return kIOReturnBusy;
+    }
+    // For now we do not support live tail patching; indicate unsupported.
+    os_log_debug(ASLog(), "IT%u: Enqueue append unsupported (active context)", _ctxIndex);
     return kIOReturnUnsupported;
 }
 
