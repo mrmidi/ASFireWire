@@ -157,14 +157,25 @@ static constexpr uint32_t kOHCI_AsRspTrContextControlC  = 0x01A4;
 static constexpr uint32_t kOHCI_AsRspTrContextControlS  = 0x01A8;
 static constexpr uint32_t kOHCI_AsRspTrCommandPtr       = 0x01AC;
 // Receive (ARReq / ARRsp)
-static constexpr uint32_t kOHCI_AsReqRcvContextBase     = 0x0200;
-static constexpr uint32_t kOHCI_AsReqRcvContextControlC = 0x0204;
-static constexpr uint32_t kOHCI_AsReqRcvContextControlS = 0x0208;
-static constexpr uint32_t kOHCI_AsReqRcvCommandPtr      = 0x020C;
-static constexpr uint32_t kOHCI_AsRspRcvContextBase     = 0x0220;
-static constexpr uint32_t kOHCI_AsRspRcvContextControlC = 0x0224;
-static constexpr uint32_t kOHCI_AsRspRcvContextControlS = 0x0228;
-static constexpr uint32_t kOHCI_AsRspRcvCommandPtr      = 0x022C;
+// Async Receive Request Context (OHCI 1.1 §8.3) base 0x1C0 block
+static constexpr uint32_t kOHCI_AsReqRcvContextBase     = 0x01C0;
+static constexpr uint32_t kOHCI_AsReqRcvContextControlC = 0x01C4;
+static constexpr uint32_t kOHCI_AsReqRcvContextControlS = 0x01C8;
+static constexpr uint32_t kOHCI_AsReqRcvCommandPtr      = 0x01CC;
+// Async Receive Response Context (OHCI 1.1 §8.3) base 0x1E0 block
+static constexpr uint32_t kOHCI_AsRspRcvContextBase     = 0x01E0;
+static constexpr uint32_t kOHCI_AsRspRcvContextControlC = 0x01E4;
+static constexpr uint32_t kOHCI_AsRspRcvContextControlS = 0x01E8;
+static constexpr uint32_t kOHCI_AsRspRcvCommandPtr      = 0x01EC;
+
+// ------------------------ Isochronous Transmit Contexts (OHCI 1.1 §9.2) ---------
+// Each IT context n has 16-byte spaced registers: ControlSet(n), ControlClear(n), CommandPtr(n)
+// Base pattern (matches common Linux mapping): base 0x0200 + 0x10 * n
+// (Separate from Async Receive which follows later in map.)
+static constexpr uint32_t kOHCI_IsoXmitContextBase(uint32_t n)        { return 0x0200 + 0x10 * n; }
+static constexpr uint32_t kOHCI_IsoXmitContextControlSet(uint32_t n)  { return 0x0200 + 0x10 * n; }   // §9.2
+static constexpr uint32_t kOHCI_IsoXmitContextControlClear(uint32_t n){ return 0x0204 + 0x10 * n; }   // §9.2
+static constexpr uint32_t kOHCI_IsoXmitCommandPtr(uint32_t n)         { return 0x020C + 0x10 * n; }   // §9.1/§9.2
 
 // Legacy context control bit (deprecated - use kOHCI_ContextControl_* definitions above)
 static constexpr uint32_t kOHCI_Context_Run             = (1u << 15);

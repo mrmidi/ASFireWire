@@ -15,6 +15,7 @@
 #include "Shared/ASOHCIContextBase.hpp"
 #include "Shared/ASOHCITypes.hpp"
 #include "LogHelper.hpp"
+#include "OHCIConstants.hpp"
 
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/IOLib.h>
@@ -28,8 +29,11 @@ kern_return_t ASOHCIITContext::Initialize(IOPCIDevice* pci,
     _policy = {};
     _last = {};
 
-    // NOTE: Offsets for IT contexts are not wired yet. Keep as zeroed to compile.
+    // Compute per-context register offsets (OHCI 1.1 §9.2)
     ASContextOffsets offs{};
+    offs.contextControlSet   = kOHCI_IsoXmitContextControlSet(_ctxIndex);
+    offs.contextControlClear = kOHCI_IsoXmitContextControlClear(_ctxIndex);
+    offs.commandPtr          = kOHCI_IsoXmitCommandPtr(_ctxIndex);
     return ASOHCIContextBase::Initialize(pci, barIndex, ASContextKind::kIT_Transmit, offs);
 }
 
