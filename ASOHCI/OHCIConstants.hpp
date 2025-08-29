@@ -130,10 +130,11 @@ static constexpr uint32_t kOHCI_LC_CycleTimerEnable     = (1u << 20);
 static constexpr uint32_t kOHCI_LC_CycleMaster          = (1u << 21);
 
 // ------------------------ PHY Request Filter & Upper Bound ---------
-static constexpr uint32_t kOHCI_PhyReqFilterHiSet       = 0x0110;
-static constexpr uint32_t kOHCI_PhyReqFilterHiClear     = 0x0114;
-static constexpr uint32_t kOHCI_PhyReqFilterLoSet       = 0x0118;
-static constexpr uint32_t kOHCI_PhyReqFilterLoClear     = 0x011C;
+// NOTE: Original definitions overlapped Async Response Filter (0x0110-0x011C).
+// OHCI 1.1 places Async Request/Response filters at 0x0100-0x011C and the Physical Response Upper Bound at 0x0120.
+// There is no separate PHY Request Filter block occupying 0x0110..0x011C; retain only Upper Bound at 0x0120.
+// If implementation provides vendor-specific PHY request filtering, map it outside standard filter window.
+// (Removed conflicting kOHCI_PhyReqFilter* aliases.)
 static constexpr uint32_t kOHCI_PhyUpperBound           = 0x0120;
 
 // ------------------------ Async Receive Filters (OHCI 1.1 §7.*) ---
