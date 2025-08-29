@@ -80,6 +80,16 @@ kern_return_t ASOHCIITContext::Initialize(IOPCIDevice* pci,
     return ASOHCIContextBase::Initialize(pci, barIndex, ASContextKind::kIT_Transmit, offs);
 }
 
+kern_return_t ASOHCIITContext::Start()
+{
+    if (!_pci) return kIOReturnNotReady;
+    // Clear run bit to ensure a clean state; do NOT program CommandPtr yet.
+    WriteContextClear(kOHCI_ContextControl_run);
+    // Leave CommandPtr untouched (could be 0). Real arming occurs on first Enqueue.
+    os_log(ASLog(), "IT%u: Start deferred (will run on first enqueue)", _ctxIndex);
+    return kIOReturnSuccess;
+}
+
 void ASOHCIITContext::ApplyPolicy(const ITPolicy& policy)
 {
     _policy = policy;
@@ -119,15 +129,17 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
     bool active = (cc & kOHCI_ContextControl_active) != 0;
 
     if (!active) {
-        // Initial arm: program CommandPtr then (if already RUN) wake.
+        // Initial arm: program CommandPtr and set run (if not already) then wake for immediate fetch.
         OSMemoryFence();
         WriteCommandPtr(program.headPA, program.zHead);
-        if (cc & kOHCI_ContextControl_run) {
+        if ((cc & kOHCI_ContextControl_run) == 0) {
+            WriteContextSet(kOHCI_ContextControl_run);
+        } else {
             Wake();
         }
         _outstanding++;
         PushProgram(program);
-        os_log_debug(ASLog(), "IT%u: Enqueue initial head=0x%x z=%u count=%u", _ctxIndex, program.headPA, program.zHead, program.descCount);
+        os_log_debug(ASLog(), "IT%u: Enqueue initial (auto-run) head=0x%x z=%u count=%u", _ctxIndex, program.headPA, program.zHead, program.descCount);
         return kIOReturnSuccess;
     }
 

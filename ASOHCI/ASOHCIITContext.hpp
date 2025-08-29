@@ -24,6 +24,9 @@ public:
                                      uint8_t barIndex,
                                      uint32_t ctxIndex);
 
+    // Override Start: do not write run + empty CommandPtr; instead just clear any stale run and wait for first Enqueue.
+    virtual kern_return_t Start() override;
+
     virtual void ApplyPolicy(const ITPolicy& policy);
 
     // Enqueue one packet program (may append while active if policy allows) (§9.1, §9.4)
