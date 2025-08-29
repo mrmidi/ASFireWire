@@ -37,15 +37,34 @@ void ASOHCIITProgramBuilder::AddHeaderImmediate(ITSpeed spd,
                                                 uint32_t dataLength,
                                                 ATIntPolicy ip)
 {
-    (void)spd; (void)tag; (void)channel; (void)sy; (void)dataLength;
     if (!_pool || !_blk.valid) return;
     _ip = ip;
-    // Stub: don’t encode for now; just consume a slot so Finalize can run later
-    if (_descUsed < _blk.descriptorCount) {
-        ATDesc::Descriptor* d = static_cast<ATDesc::Descriptor*>(_blk.virtualAddress) + _descUsed;
-        memset(d, 0, sizeof(*d));
-        _descUsed++;
-    }
+    if (_descUsed >= _blk.descriptorCount) return;
+
+    // Encode OUTPUT_MORE_Immediate (first descriptor in IT packet) per §9.1/§9.6.
+    // Quadlet layout (simplified / representative):
+    //  quad0: [31:30]=speed, [29:28]=tag, [27:22]=channel, [21:16]=sy, [15:0]=dataLength bytes
+    //  quad1: branchAddress (patched later if chaining) or 0
+    //  quad2: interrupt control / misc policy (reuse AT int policy mapping)
+    //  quad3: context/hardware reserved (0)
+    ATDesc::Descriptor* d = static_cast<ATDesc::Descriptor*>(_blk.virtualAddress) + _descUsed;
+    memset(d, 0, sizeof(*d));
+    uint32_t q0 = 0;
+    uint32_t speedBits = static_cast<uint32_t>(spd) & 0x3;      // assume 2 bits
+    uint32_t tagBits   = static_cast<uint32_t>(tag) & 0x3;      // 2 bits per 1394 tag reuse (simplified)
+    uint32_t chanBits  = static_cast<uint32_t>(channel) & 0x3F; // 6 bits channel
+    uint32_t syBits    = static_cast<uint32_t>(sy) & 0x3F;      // 6 bits sy
+    uint32_t lenBits   = dataLength & 0xFFFF;                   // 16-bit length field
+    q0 |= speedBits << 30;
+    q0 |= tagBits   << 28;
+    q0 |= chanBits  << 22;
+    q0 |= syBits    << 16;
+    q0 |= lenBits;
+    d->quad[0] = q0;
+    d->quad[1] = 0; // branchAddress (will remain 0 until chaining / tail patch)
+    d->quad[2] = static_cast<uint32_t>(_ip); // interrupt policy placeholder
+    d->quad[3] = 0;
+    _descUsed++;
 }
 
 void ASOHCIITProgramBuilder::AddPayloadFragment(uint32_t payloadPA, uint32_t payloadBytes)
@@ -63,8 +82,13 @@ ITDesc::Program ASOHCIITProgramBuilder::Finalize()
 {
     ITDesc::Program p{};
     if (!_blk.valid || _descUsed == 0) return p;
+    // Ensure last descriptor is OUTPUT_LAST (or convert first if only one) by setting a marker.
+    ATDesc::Descriptor* base = static_cast<ATDesc::Descriptor*>(_blk.virtualAddress);
+    ATDesc::Descriptor* last = base + (_descUsed - 1);
+    // For now we simply set a high bit in quad2 to denote LAST (placeholder for true format bitfield per §9.1)
+    last->quad[2] |= (1u << 31);
 
-    // Minimal: expose head, Z from pool; leave tail equal to last descriptor position
+    // Provide a future-append patch point: quad1 (branchAddress) left 0; enqueue path will patch if chaining.
     p.headPA = _blk.physicalAddress;
     p.tailPA = _blk.physicalAddress + ((_descUsed - 1) * sizeof(ATDesc::Descriptor));
     p.zHead = _blk.zValue;
