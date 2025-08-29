@@ -121,8 +121,27 @@ void ASOHCIITContext::OnInterruptTx()
 
 void ASOHCIITContext::OnCycleInconsistent()
 {
-    // TODO: stop, delay ≥2 cycles, re-arm cycle match (§9.5 + general cycle timer consistency §5.13)
-    os_log(ASLog(), "IT%u: CycleInconsistent (stub)", _ctxIndex);
+    if (!_pci) return;
+    os_log(ASLog(), "IT%u: CycleInconsistent handling", _ctxIndex);
+    // Stop context (clears run); outstanding packets considered lost
+    WriteContextClear(kOHCI_ContextControl_run);
+    _outstanding = 0;
+    if (_policy.cycleMatchEnable) {
+        // Read current cycle match value (bits 28-16) and increment by 2 cycles (wrap 8000)
+        uint32_t cc = ReadContextControlCached();
+        uint32_t match = (cc >> 16) & 0x1FFF;
+        match = (match + 2) % 8000;
+        // Reprogram cycle match enable with new starting cycle
+        ITPolicy p = _policy;
+        p.startOnCycle = match;
+        ApplyPolicy(p);
+        // Restart context run
+        WriteContextSet(kOHCI_ContextControl_run);
+        os_log(ASLog(), "IT%u: Re-armed cycleMatch startOnCycle=%u", _ctxIndex, match);
+    } else {
+        // If no cycle match policy, just restart
+        WriteContextSet(kOHCI_ContextControl_run);
+    }
 }
 
 void ASOHCIITContext::RecoverDeadContext()
