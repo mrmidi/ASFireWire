@@ -12,7 +12,8 @@ enum class ASContextKind : uint8_t {
     kAT_Request,   // AT Req context (Tx)
     kAT_Response,  // AT Rsp context (Tx)
     kAR_Request,   // AR Req context (Rx)
-    kAR_Response   // AR Rsp context (Rx)
+    kAR_Response,  // AR Rsp context (Rx)
+    kIT_Transmit   // Isochronous Transmit (Tx)
 };
 
 // Context register offsets bundle (per-kind)
@@ -30,4 +31,3 @@ struct ASCompletionMini {
     uint16_t xferStatus = 0; // lower 16 of “status/timestamp” quadlet used by the context
     uint16_t timeStamp  = 0; // upper or lower 16 depending on desc type (caller knows side)
 };
-
