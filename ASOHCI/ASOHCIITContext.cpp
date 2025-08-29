@@ -101,8 +101,22 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 
 void ASOHCIITContext::OnInterruptTx()
 {
-    // TODO: drain completions for this context (§9.5 using per‑context IsoXmitIntEvent bit from Chapter 6)
-    os_log_debug(ASLog(), "IT%u: OnInterruptTx (stub)", _ctxIndex);
+    if (!_pci) return;
+    // Read context control for event/status bits (placeholder: low bits hold xferStatus analog)
+    uint32_t cc = ReadContextControlCached();
+    uint16_t xferStatus = static_cast<uint16_t>(cc & 0x1F); // heuristic
+    uint16_t ts = static_cast<uint16_t>((cc >> 16) & 0xFFFF); // assume timestamp in upper half (placeholder)
+    ASOHCIITStatus statusDec;
+    _last = statusDec.Decode(xferStatus, ts);
+    if (_outstanding > 0) {
+        // For now treat any interrupt as completion of one packet until real descriptor readback added
+        _outstanding--;
+    }
+    if ((_last.event == ITEvent::kUnrecoverable) || (cc & kOHCI_ContextControl_dead)) {
+        RecoverDeadContext();
+    }
+    os_log_debug(ASLog(), "IT%u: Interrupt xferStatus=0x%x ts=%u success=%u event=%u outstanding=%u", _ctxIndex,
+                 xferStatus, ts, _last.success, static_cast<unsigned>(_last.event), _outstanding);
 }
 
 void ASOHCIITContext::OnCycleInconsistent()

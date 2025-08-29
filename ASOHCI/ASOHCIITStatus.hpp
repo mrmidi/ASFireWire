@@ -25,6 +25,26 @@ struct ITCompletion {
 
 class ASOHCIITStatus {
 public:
-    ITCompletion Decode(uint16_t xferStatus, uint16_t timeStamp) const;
+    ITCompletion Decode(uint16_t xferStatus, uint16_t timeStamp) const {
+        ITCompletion c{};
+        c.timeStamp = timeStamp;
+        // Placeholder mapping (spec §9.5): real codes controller-specific; use heuristic ranges.
+        switch (xferStatus & 0x1F) { // low 5 bits often carry event/reason
+            case 0x00: // nominal success
+                c.success = true; c.event = ITEvent::kNone; break;
+            case 0x04: // underrun example
+            case 0x05:
+                c.success = false; c.event = ITEvent::kUnderrun; break;
+            case 0x06: // late
+                c.success = false; c.event = ITEvent::kLate; break;
+            case 0x07: // skipped
+                c.success = false; c.event = ITEvent::kSkipped; break;
+            case 0x0F: // fatal/unrecoverable
+                c.success = false; c.event = ITEvent::kUnrecoverable; break;
+            default:
+                c.success = false; c.event = ITEvent::kUnknown; break;
+        }
+        return c;
+    }
 };
 
