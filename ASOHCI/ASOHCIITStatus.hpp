@@ -9,11 +9,11 @@
 #include <stdint.h>
 
 enum class ITEvent : uint8_t {
-    kNone        = 0,
-    kUnderrun,           // transmitter starved (§9.5)
-    kLate,               // cycle late, packet dropped or skipped (policy) (§9.5)
-    kSkipped,            // skipped by program flow (§9.4 appending semantics)
-    kUnrecoverable,      // dead/timeout (skip overflow) (§9.5)
+    kNone = 0,
+    kUnderrun,       // transmitter starved (§9.5)
+    kLate,           // packet missed its target cycle (§9.5)
+    kSkipped,        // program logic skipped (padding / chain) (§9.4)
+    kUnrecoverable,  // dead/timeout / internal error (§9.5)
     kUnknown
 };
 
@@ -25,24 +25,41 @@ struct ITCompletion {
 
 class ASOHCIITStatus {
 public:
+    // Symbolic (provisional) status codes – actual controller may differ; centralize so future
+    // hardware-specific port can override via table.
+    static constexpr uint16_t kStatus_OK0        = 0x00; // success variant 0
+    static constexpr uint16_t kStatus_OK1        = 0x01; // success variant 1 (some controllers use multiple OK codes)
+    static constexpr uint16_t kStatus_UNDERRUN0  = 0x04;
+    static constexpr uint16_t kStatus_UNDERRUN1  = 0x05;
+    static constexpr uint16_t kStatus_LATE0      = 0x06;
+    static constexpr uint16_t kStatus_SKIPPED0   = 0x07;
+    static constexpr uint16_t kStatus_FATAL0     = 0x0F;
+
     ITCompletion Decode(uint16_t xferStatus, uint16_t timeStamp) const {
         ITCompletion c{};
         c.timeStamp = timeStamp;
-        // Placeholder mapping (spec §9.5): real codes controller-specific; use heuristic ranges.
-        switch (xferStatus & 0x1F) { // low 5 bits often carry event/reason
-            case 0x00: // nominal success
+        uint16_t code = xferStatus & 0x1F; // limit to low bits (typical event field width)
+        switch (code) {
+            case kStatus_OK0:
+            case kStatus_OK1:
                 c.success = true; c.event = ITEvent::kNone; break;
-            case 0x04: // underrun example
-            case 0x05:
+            case kStatus_UNDERRUN0:
+            case kStatus_UNDERRUN1:
                 c.success = false; c.event = ITEvent::kUnderrun; break;
-            case 0x06: // late
+            case kStatus_LATE0:
                 c.success = false; c.event = ITEvent::kLate; break;
-            case 0x07: // skipped
+            case kStatus_SKIPPED0:
                 c.success = false; c.event = ITEvent::kSkipped; break;
-            case 0x0F: // fatal/unrecoverable
+            case kStatus_FATAL0:
                 c.success = false; c.event = ITEvent::kUnrecoverable; break;
             default:
-                c.success = false; c.event = ITEvent::kUnknown; break;
+                // Heuristic fallback: treat unknown non-zero codes < 0x10 as late vs bigger as unrecoverable.
+                if (code && code < 0x10) {
+                    c.success = false; c.event = ITEvent::kLate; // safest to re-arm; not fatal
+                } else {
+                    c.success = false; c.event = ITEvent::kUnknown;
+                }
+                break;
         }
         return c;
     }
