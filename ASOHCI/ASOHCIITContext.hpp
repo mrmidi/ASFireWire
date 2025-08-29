@@ -52,7 +52,10 @@ private:
 
     // Simple ring of in-flight programs (pending completion). Size small due to limited pipeline (§9.4 guidance)
     struct InFlightProg {
-        uint32_t headPA; uint32_t tailPA; void* tailVA; uint8_t zHead; bool valid; };
+        uint32_t headPA; uint32_t tailPA; void* tailVA; uint8_t zHead; bool valid;
+        uint16_t lastStatus = 0; // decoded status field from tail descriptor (controller-written)
+        uint16_t timestamp = 0;  // optional cycle/timestamp if available
+    };
     static constexpr uint32_t kMaxInFlight = 16; // adjustable
     InFlightProg _ring[kMaxInFlight] = {};
     uint32_t _ringHead = 0; // next insertion

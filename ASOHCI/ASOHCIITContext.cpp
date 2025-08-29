@@ -186,10 +186,25 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program& program,
 void ASOHCIITContext::OnInterruptTx()
 {
     if (!_pci) return;
-    // Read context control for event/status bits (placeholder: low bits hold xferStatus analog)
     uint32_t cc = ReadContextControlCached();
-    uint16_t xferStatus = static_cast<uint16_t>(cc & 0x1F); // heuristic
-    uint16_t ts = static_cast<uint16_t>((cc >> 16) & 0xFFFF); // assume timestamp in upper half (placeholder)
+    InFlightProg* prog = CurrentTail(); // most recently queued still in-flight; after retire we'll have consumed one
+    uint16_t xferStatus = 0;
+    uint16_t ts = 0;
+    if (prog && prog->valid && prog->tailVA) {
+        auto* tailDesc = reinterpret_cast<ATDesc::Descriptor*>(prog->tailVA);
+        // Tentative mapping: assume controller writes completion status into quad2 low bits and timestamp into quad3 (implementation-specific).
+        uint32_t q2 = tailDesc->quad[2];
+        uint32_t q3 = tailDesc->quad[3];
+        xferStatus = static_cast<uint16_t>(q2 & 0xFFFF); // low 16 bits
+        ts = static_cast<uint16_t>(q3 & 0xFFFF);
+        prog->lastStatus = xferStatus;
+        prog->timestamp = ts;
+    } else {
+        // Fallback: derive a minimal status from context control if no program.
+        xferStatus = static_cast<uint16_t>(cc & 0x1F);
+        ts = static_cast<uint16_t>((cc >> 16) & 0xFFFF);
+    }
+
     ASOHCIITStatus statusDec;
     _last = statusDec.Decode(xferStatus, ts);
     if (_outstanding > 0) {
@@ -199,7 +214,7 @@ void ASOHCIITContext::OnInterruptTx()
     if ((_last.event == ITEvent::kUnrecoverable) || (cc & kOHCI_ContextControl_dead)) {
         RecoverDeadContext();
     }
-    os_log_debug(ASLog(), "IT%u: Interrupt xferStatus=0x%x ts=%u success=%u event=%u outstanding=%u", _ctxIndex,
+    os_log_debug(ASLog(), "IT%u: Interrupt status=0x%x ts=%u success=%u event=%u outstanding=%u", _ctxIndex,
                  xferStatus, ts, _last.success, static_cast<unsigned>(_last.event), _outstanding);
 }
 
