@@ -11,23 +11,6 @@
 		3A034C6C2E5B160900CC8C61 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A034C6B2E5B160900CC8C61 /* PCIDriverKit.framework */; };
 		3A7C30612E5A40FD004F0DAF /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A7C30602E5A40FD004F0DAF /* DriverKit.framework */; };
 		3A7C306A2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A7C305E2E5A40FD004F0DAF /* net.mrmidi.ASFireWire.ASOHCI.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		3AF100032E5B999900000003 /* ASOHCI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF100012E5B999900000001 /* ASOHCI.cpp */; };
-		3AF200102E5C000000000001 /* BridgeLog.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF2000C2E5C000000000001 /* BridgeLog.cpp */; };
-		3AF200112E5C000000000001 /* SelfIDParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF2000E2E5C000000000001 /* SelfIDParser.cpp */; };
-		3AF300002E5C100000000001 /* PhyAccess.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF300002E5C0FFF00000001 /* PhyAccess.cpp */; };
-		3AF400032E5D100000000003 /* ASOHCIARContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF400012E5D000000000001 /* ASOHCIARContext.cpp */; };
-		3AF500032E5D100000000003 /* ASOHCIATContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF500012E5D000000000001 /* ASOHCIATContext.cpp */; };
-		3AF600032E5D200000000003 /* ASOHCIInterruptDump.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF600012E5D200000000001 /* ASOHCIInterruptDump.cpp */; };
-		3AF700032E5D300000000003 /* ASOHCIConfigROM.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF700012E5D300000000001 /* ASOHCIConfigROM.cpp */; };
-		3AF800032E5E000000000003 /* SelfIDDecode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800012E5E000000000001 /* SelfIDDecode.cpp */; };
-		3AF800042E5E000000000004 /* SelfIDManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800022E5E000000000002 /* SelfIDManager.cpp */; };
-		3AF800052E5E000000000005 /* ConfigROMManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800062E5E000000000006 /* ConfigROMManager.cpp */; };
-		3AF800072E5E000000000007 /* Topology.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF800082E5E000000000008 /* Topology.cpp */; };
-		3AF800092E5E000000000009 /* ConfigROMProperties.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */; };
-		3AF900182E5F000000000018 /* ASOHCIARDescriptorRing.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF900192E5F000000000019 /* ASOHCIARDescriptorRing.cpp */; };
-		3AF9001A2E5F00000000001A /* ASOHCIARManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF9001B2E5F00000000001B /* ASOHCIARManager.cpp */; };
-		3AF9001C2E5F00000000001C /* ASOHCIARParser.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF9001D2E5F00000000001D /* ASOHCIARParser.cpp */; };
-		3AF9001E2E5F00000000001E /* ASOHCIARStatus.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3AF9001F2E5F00000000001F /* ASOHCIARStatus.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -91,10 +74,6 @@
 		3AF800062E5E000000000006 /* ConfigROMManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ConfigROMManager.cpp; path = ASOHCI/ConfigROMManager.cpp; sourceTree = SOURCE_ROOT; };
 		3AF800082E5E000000000008 /* Topology.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = Topology.cpp; path = ASOHCI/Topology.cpp; sourceTree = SOURCE_ROOT; };
 		3AF8000A2E5E00000000000A /* ConfigROMProperties.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ConfigROMProperties.cpp; path = ASOHCI/ConfigROMProperties.cpp; sourceTree = SOURCE_ROOT; };
-		3AF900192E5F000000000019 /* ASOHCIARDescriptorRing.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARDescriptorRing.cpp; path = ASOHCI/ASOHCIARDescriptorRing.cpp; sourceTree = SOURCE_ROOT; };
-		3AF9001B2E5F00000000001B /* ASOHCIARManager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARManager.cpp; path = ASOHCI/ASOHCIARManager.cpp; sourceTree = SOURCE_ROOT; };
-		3AF9001D2E5F00000000001D /* ASOHCIARParser.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARParser.cpp; path = ASOHCI/ASOHCIARParser.cpp; sourceTree = SOURCE_ROOT; };
-		3AF9001F2E5F00000000001F /* ASOHCIARStatus.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = ASOHCIARStatus.cpp; path = ASOHCI/ASOHCIARStatus.cpp; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -514,7 +493,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -580,7 +559,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -613,7 +592,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -648,7 +627,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -679,7 +658,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -700,7 +679,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -720,7 +699,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
@@ -739,7 +718,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0.0;
@@ -762,7 +741,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASOHCI/ASOHCI.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 23.0;
 				ENABLE_CODE_COVERAGE = NO;
@@ -793,7 +772,7 @@
 				CODE_SIGN_ENTITLEMENTS = ASOHCI/ASOHCI.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 23.0;
 				ENABLE_CODE_COVERAGE = NO;

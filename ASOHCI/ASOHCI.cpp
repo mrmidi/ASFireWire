@@ -39,6 +39,9 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 #include "BridgeLog.hpp"
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
+// Include Link API header
+#include "ASOHCILinkAPI.h"
+
 // Concrete ivars definition (workaround for IIG forward declaration issue)
 #include "ASOHCIIVars.h"
 
@@ -122,6 +125,11 @@ static void SelfIDWorkHandler(void *context) {
   // Process self-ID through manager
   if (ohci->ivars->selfIDManager) {
     ohci->ivars->selfIDManager->OnSelfIDComplete(sw->selfIDCount);
+  }
+
+  // Call Link API callback for Self-ID completion
+  if (ohci->ivars->selfIDCallback) {
+    ohci->ivars->selfIDCallback(ohci->ivars->selfIDCallbackContext);
   }
 
   // Enable cycle timer after first stable Self-ID (Linux parity)
@@ -1408,9 +1416,159 @@ kern_return_t IMPL(ASOHCI, Stop) {
 }
 
 // =====================================================================================
-// CopyBridgeLogs
+// ASOHCILinkAPI Implementation
 // =====================================================================================
-kern_return_t IMPL(ASOHCI, CopyBridgeLogs) { return bridge_log_copy(outData); }
+
+uint64_t ASOHCI::GetLocalGUID() {
+  if (!ivars || !ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: GetLocalGUID - no PCI device");
+    return 0;
+  }
+
+  uint32_t guidHi = 0, guidLo = 0;
+  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_GUIDHi, &guidHi);
+  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_GUIDLo, &guidLo);
+
+  uint64_t guid = ((uint64_t)guidHi << 32) | guidLo;
+  os_log(ASLog(), "ASOHCI: GetLocalGUID = 0x%016llx", guid);
+  return guid;
+}
+
+kern_return_t ASOHCI::ResetBus(bool forceIBR) {
+  if (!ivars || !ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: ResetBus - no PCI device");
+    return kIOReturnNotReady;
+  }
+
+  os_log(ASLog(), "ASOHCI: ResetBus forceIBR=%d", forceIBR ? 1 : 0);
+
+  // Force bus reset by setting and clearing the reset bit
+  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear,
+                                  kOHCI_Int_BusReset);
+  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet,
+                                  kOHCI_HCControl_BusReset);
+  IOSleep(1); // Brief delay
+  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlClear,
+                                  kOHCI_HCControl_BusReset);
+
+  // Re-enable bus reset interrupt
+  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet,
+                                  kOHCI_Int_BusReset);
+
+  return kIOReturnSuccess;
+}
+
+uint16_t ASOHCI::GetNodeID() {
+  if (!ivars || !ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: GetNodeID - no PCI device");
+    return 0xFFFF;
+  }
+
+  uint32_t nodeID = 0;
+  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
+
+  uint16_t result = (uint16_t)(nodeID & 0xFFFF);
+  os_log(ASLog(), "ASOHCI: GetNodeID = 0x%04x", result);
+  return result;
+}
+
+uint32_t ASOHCI::GetGeneration() {
+  if (!ivars || !ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: GetGeneration - no PCI device");
+    return 0;
+  }
+
+  uint32_t selfIDCount = 0;
+  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_SelfIDCount,
+                                 &selfIDCount);
+
+  uint32_t generation =
+      (selfIDCount & kOHCI_SelfIDCount_selfIDGeneration) >> 16;
+  os_log(ASLog(), "ASOHCI: GetGeneration = %u", generation);
+  return generation;
+}
+
+kern_return_t ASOHCI::AsyncRead(uint16_t nodeID, uint32_t addrHi,
+                                uint32_t addrLo, uint32_t length,
+                                uint32_t generation, uint8_t speed) {
+  if (!ivars || !ivars->atManager) {
+    os_log(ASLog(), "ASOHCI: AsyncRead - no AT manager");
+    return kIOReturnNotReady;
+  }
+
+  os_log(
+      ASLog(),
+      "ASOHCI: AsyncRead nodeID=0x%04x addr=0x%08x:%08x len=%u gen=%u speed=%u",
+      nodeID, addrHi, addrLo, length, generation, speed);
+
+  // TODO: Implement async read through AT manager
+  // This would involve creating an AT request context and programming it
+  return kIOReturnUnsupported;
+}
+
+kern_return_t ASOHCI::AsyncWrite(uint16_t nodeID, uint32_t addrHi,
+                                 uint32_t addrLo, const void *data,
+                                 uint32_t length, uint32_t generation,
+                                 uint8_t speed) {
+  if (!ivars || !ivars->atManager) {
+    os_log(ASLog(), "ASOHCI: AsyncWrite - no AT manager");
+    return kIOReturnNotReady;
+  }
+
+  os_log(ASLog(),
+         "ASOHCI: AsyncWrite nodeID=0x%04x addr=0x%08x:%08x len=%u gen=%u "
+         "speed=%u",
+         nodeID, addrHi, addrLo, length, generation, speed);
+
+  // TODO: Implement async write through AT manager
+  return kIOReturnUnsupported;
+}
+
+bool ASOHCI::IsRoot() {
+  if (!ivars || !ivars->pciDevice) {
+    os_log(ASLog(), "ASOHCI: IsRoot - no PCI device");
+    return false;
+  }
+
+  uint32_t nodeID = 0;
+  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
+
+  bool isRoot = ((nodeID & kOHCI_NodeID_root) != 0);
+  os_log(ASLog(), "ASOHCI: IsRoot = %d", isRoot ? 1 : 0);
+  return isRoot;
+}
+
+uint8_t ASOHCI::GetNodeCount() {
+  if (!ivars || !ivars->topology) {
+    os_log(ASLog(), "ASOHCI: GetNodeCount - no topology");
+    return 0;
+  }
+
+  uint8_t count = (uint8_t)ivars->topology->NodeCount();
+  os_log(ASLog(), "ASOHCI: GetNodeCount = %u", count);
+  return count;
+}
+
+void ASOHCI::SetSelfIDCallback(void (*callback)(void *context), void *context) {
+  if (!ivars)
+    return;
+
+  ivars->selfIDCallback = callback;
+  ivars->selfIDCallbackContext = context;
+  os_log(ASLog(), "ASOHCI: SetSelfIDCallback - callback %s",
+         callback ? "set" : "cleared");
+}
+
+void ASOHCI::SetBusResetCallback(void (*callback)(void *context),
+                                 void *context) {
+  if (!ivars)
+    return;
+
+  ivars->busResetCallback = callback;
+  ivars->busResetCallbackContext = context;
+  os_log(ASLog(), "ASOHCI: SetBusResetCallback - callback %s",
+         callback ? "set" : "cleared");
+}
 
 // =====================================================================================
 // Interrupt handler (typed action). IMPORTANT: complete the OSAction.
@@ -1541,6 +1699,11 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
     // Ack the BusReset event bit before re-enabling its mask later
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear,
                                     kOHCI_Int_BusReset);
+
+    // Call Link API callback for bus reset
+    if (ivars->busResetCallback) {
+      ivars->busResetCallback(ivars->busResetCallbackContext);
+    }
     // NodeID logging only when it changes or validity/root status toggles
     uint32_t nodeID = 0;
     ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
