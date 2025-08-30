@@ -7,6 +7,7 @@
 
 #include "ASFireWireController.h"
 #include "ASOHCILinkAPI.h"
+#include <DriverKit/OSMetaClass.h>
 #include <os/log.h>
 
 // Logging
@@ -17,7 +18,7 @@ OSDefineMetaClassAndStructors(ASFireWireController, OSObject);
 ASFireWireController *
 ASFireWireController::Create(OSSharedPtr<ASOHCILinkAPI> linkAPI) {
   if (!linkAPI) {
-    os_log(FWLog(), "Controller: Cannot create without Link API");
+    os_log(ASLog(), "Controller: Cannot create without Link API");
     return nullptr;
   }
 
@@ -38,7 +39,7 @@ bool ASFireWireController::init() {
     return false;
   }
 
-  os_log(FWLog(), "Controller: Initializing");
+  os_log(ASLog(), "Controller: Initializing");
 
   // Set up callbacks
   fLinkAPI->SetSelfIDCallback(SelfIDCallback, this);
@@ -49,31 +50,31 @@ bool ASFireWireController::init() {
 
 void ASFireWireController::StartDiscovery() {
   if (fDiscoveryInProgress) {
-    os_log(FWLog(), "Controller: Discovery already in progress");
+    os_log(ASLog(), "Controller: Discovery already in progress");
     return;
   }
 
-  os_log(FWLog(), "Controller: Starting discovery");
+  os_log(ASLog(), "Controller: Starting discovery");
 
   fDiscoveryInProgress = true;
 
   // Get local controller info
   uint64_t guid = fLinkAPI->GetLocalGUID();
-  os_log(FWLog(), "Controller: Local GUID = 0x%016llx", guid);
+  os_log(ASLog(), "Controller: Local GUID = 0x%016llx", guid);
 
   // Force a bus reset to start fresh discovery
   kern_return_t kr = fLinkAPI->ResetBus(false);
   if (kr != kIOReturnSuccess) {
-    os_log(FWLog(), "Controller: ResetBus failed: 0x%x", kr);
+    os_log(ASLog(), "Controller: ResetBus failed: 0x%x", kr);
     fDiscoveryInProgress = false;
     return;
   }
 
-  os_log(FWLog(), "Controller: Bus reset initiated, waiting for Self-ID...");
+  os_log(ASLog(), "Controller: Bus reset initiated, waiting for Self-ID...");
 }
 
 void ASFireWireController::Stop() {
-  os_log(FWLog(), "Controller: Stopping");
+  os_log(ASLog(), "Controller: Stopping");
   fDiscoveryInProgress = false;
 
   // Clear callbacks
@@ -104,7 +105,7 @@ void ASFireWireController::HandleSelfIDComplete() {
     return;
   }
 
-  os_log(FWLog(), "Controller: Self-ID complete");
+  os_log(ASLog(), "Controller: Self-ID complete");
 
   // Get current bus state
   uint16_t nodeId = fLinkAPI->GetNodeID();
@@ -112,7 +113,7 @@ void ASFireWireController::HandleSelfIDComplete() {
   bool isRoot = fLinkAPI->IsRoot();
   uint8_t nodeCount = fLinkAPI->GetNodeCount();
 
-  os_log(FWLog(),
+  os_log(ASLog(),
          "Controller: NodeID=%u, Generation=%u, IsRoot=%d, NodeCount=%u",
          nodeId, generation, isRoot ? 1 : 0, nodeCount);
 
@@ -125,36 +126,38 @@ void ASFireWireController::HandleSelfIDComplete() {
     }
   }
 
-  os_log(FWLog(), "Controller: Discovery phase 1 complete");
+  os_log(ASLog(), "Controller: Discovery phase 1 complete");
 }
 
 void ASFireWireController::HandleBusReset() {
-  os_log(FWLog(), "Controller: Bus reset detected");
+  os_log(ASLog(), "Controller: Bus reset detected");
 
   if (fDiscoveryInProgress) {
-    os_log(FWLog(), "Controller: Restarting discovery after bus reset");
+    os_log(ASLog(), "Controller: Restarting discovery after bus reset");
     // Bus reset will be followed by Self-ID, so discovery will continue
   }
 }
 
 void ASFireWireController::ReadConfigROM(uint16_t nodeID) {
-  os_log(FWLog(), "Controller: Reading Config ROM from node %u", nodeID);
+  os_log(ASLog(), "Controller: Reading Config ROM from node %u", nodeID);
 
   // Try reading Config ROM header (first quadlet)
   // Config ROM base address: 0xFFFF F000 0400
-  kern_return_t kr = fLinkAPI->AsyncRead(nodeID,
-                                         0xFFFF,     // addrHi
-                                         0xF0000400, // addrLo
-                                         4,          // length
+  ASFWAddress configRomAddr(0xFFFF, 0xF0000400, nodeID);
+
+  kern_return_t kr = fLinkAPI->AsyncRead(configRomAddr,
+                                         4, // length
                                          fCurrentGeneration,
-                                         2); // S400 speed
+                                         ASFWSpeed::s400, // S400 speed
+                                         nullptr,         // completionContext
+                                         nullptr);        // outBuffer
 
   if (kr != kIOReturnSuccess) {
-    os_log(FWLog(),
+    os_log(ASLog(),
            "Controller: Failed to read Config ROM header from node %u: 0x%x",
            nodeID, kr);
   } else {
-    os_log(FWLog(), "Controller: Config ROM read initiated for node %u",
+    os_log(ASLog(), "Controller: Config ROM read initiated for node %u",
            nodeID);
     // In a real implementation, you'd handle the async completion
     // and continue reading the full Config ROM

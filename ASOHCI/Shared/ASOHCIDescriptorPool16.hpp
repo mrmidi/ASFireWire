@@ -17,13 +17,11 @@ class IOBufferMemoryDescriptor;
 class OSArray;
 
 class ASOHCIDescriptorPool16 : public OSObject {
-  OSDeclareDefaultStructors(ASOHCIDescriptorPool16)
 
-      public :
-      // Allocate a physically contiguous, 32-bit addressable pool.
-      // poolSizeBytes must be a multiple of 16.
-      virtual kern_return_t
-      Initialize(IOPCIDevice *pci, uint32_t poolSizeBytes);
+public:
+  // Allocate a physically contiguous, 32-bit addressable pool.
+  // poolSizeBytes must be a multiple of 16.
+  virtual kern_return_t Initialize(IOPCIDevice *pci, uint32_t poolSizeBytes);
 
   virtual kern_return_t Deallocate();
 

@@ -14,14 +14,14 @@
 //
 
 #include "ASOHCIARManager.hpp"
+#include "../Shared/ASOHCIContextBase.hpp"
+#include "../Shared/ASOHCITypes.hpp"
 #include "ASOHCIARContext.hpp"
 #include "ASOHCIARDescriptorRing.hpp"
 #include "ASOHCIARParser.hpp"
 #include "ASOHCIARStatus.hpp"
 #include "LogHelper.hpp"
 #include "OHCIConstants.hpp"
-#include "Shared/ASOHCIContextBase.hpp"
-#include "Shared/ASOHCITypes.hpp"
 
 #include <DriverKit/IOLib.h>
 

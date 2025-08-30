@@ -28,6 +28,9 @@ class ASOHCIITManager;
 class SelfIDManager;
 class ConfigROMManager;
 class Topology;
+class ASOHCIInterruptRouter;
+class ASOHCIRegisterIO;
+// class ASOHCILinkAPI;
 
 // Concrete definition of ASOHCI_IVars matching the .iig ivars struct
 struct ASOHCI_IVars {
@@ -95,6 +98,21 @@ struct ASOHCI_IVars {
   OSSharedPtr<SelfIDManager> selfIDManager;
   OSSharedPtr<ConfigROMManager> configROMManager;
   OSSharedPtr<Topology> topology;
+
+  // Interrupt fan-out
+  OSSharedPtr<ASOHCIInterruptRouter> interruptRouter;
+
+  // Register IO helper
+  OSSharedPtr<ASOHCIRegisterIO> regs;
+
+  // Link API implementation
+  // OSSharedPtr<ASOHCILinkAPI> linkAPI;
+
+  // Link API callbacks
+  // void (*selfIDCallback)(void* context) = nullptr;
+  // void* selfIDCallbackContext = nullptr;
+  // void (*busResetCallback)(void* context) = nullptr;
+  // void* busResetCallbackContext = nullptr;
 };
 
 #endif /* ASOHCIIVars_h */

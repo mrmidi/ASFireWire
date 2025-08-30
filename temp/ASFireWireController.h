@@ -9,6 +9,7 @@
 #define ASFireWireController_h
 
 #include <DriverKit/IOReturn.h>
+#include <DriverKit/OSMetaClass.h>
 #include <DriverKit/OSObject.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <stdint.h>
@@ -25,7 +26,6 @@ class ASOHCILinkAPI;
  * hardware details.
  */
 class ASFireWireController : public OSObject {
-  OSDeclareDefaultStructors(ASFireWireController);
 
 public:
   /**

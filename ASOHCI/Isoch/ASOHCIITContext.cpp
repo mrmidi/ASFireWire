@@ -12,14 +12,14 @@
 //
 
 #include "ASOHCIITContext.hpp"
+#include "../Shared/ASOHCIContextBase.hpp"
+#include "../Shared/ASOHCITypes.hpp"
 #include "ASOHCICtxRegMap.hpp"
 #include "ASOHCIDescriptorUtils.hpp"
 #include "ASOHCIITProgramBuilder.hpp"
 #include "ASOHCIMemoryBarrier.hpp"
 #include "LogHelper.hpp"
 #include "OHCIConstants.hpp"
-#include "Shared/ASOHCIContextBase.hpp"
-#include "Shared/ASOHCITypes.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOReturn.h>

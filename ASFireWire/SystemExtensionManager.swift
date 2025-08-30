@@ -16,7 +16,7 @@ final class SystemExtensionManager: NSObject {
         case error(String)
     }
 
-    enum Action { case activate, deactivate }
+    enum Action: Sendable { case activate, deactivate }
 
     private static let log = Logger(subsystem: "net.mrmidi.ASFireWire", category: "SystemExtensions")
     private let dextIdentifier = "net.mrmidi.ASFireWire.ASOHCI"

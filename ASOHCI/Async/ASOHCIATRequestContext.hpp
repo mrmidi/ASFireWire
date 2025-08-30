@@ -1,29 +1,31 @@
 // #pragma once
 //
-//  ASOHCIATResponseContext.hpp
-//  Concrete AT Response context (response tCodes; fairness not applied)
+//  ASOHCIATRequestContext.hpp
+//  Concrete AT Request context (uses fairness; request tCodes)
 //
-//  Spec refs: OHCI 1.1 §7 (all), §7.4 (responses follow 1394a response rules)
+//  Spec refs: OHCI 1.1 §7 (all), §7.4 (Fairness applies to Request)
 
 #pragma once
 
+#include "../Shared/ASOHCIContextBase.hpp"
 #include "ASOHCIATDescriptor.hpp"
 #include "ASOHCIATPolicy.hpp"
 #include "ASOHCIATTypes.hpp"
-#include "Shared/ASOHCIContextBase.hpp"
 
-class ASOHCIATResponseContext : public ASOHCIContextBase {
+class ASOHCIATRequestContext : public ASOHCIContextBase {
 public:
-  ASOHCIATResponseContext() = default;
-  virtual ~ASOHCIATResponseContext() = default;
-  // Bring-up and policy (responses don't use fairness)
+  ASOHCIATRequestContext() = default;
+  virtual ~ASOHCIATRequestContext() = default;
+  // Bring-up and policy
   virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex);
   virtual void ApplyPolicy(const ATRetryPolicy &r, const ATFairnessPolicy &f,
                            const ATPipelinePolicy &p);
 
-  // Queue and IRQ handling mirror Request for now
+  // Queue one packet program (already built in pool) — no ownership transfer
   virtual kern_return_t Enqueue(const ATDesc::Program &program,
                                 const ATQueueOptions &opts);
+
+  // Interrupt hook: handle TxComplete for this context (§7.5)
   virtual void OnInterruptTxComplete();
 
 private:

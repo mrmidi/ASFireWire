@@ -11,9 +11,9 @@
 //   §10.6 Data format (header/trailer inclusion, status fields)
 //   Chapter 6 for host IntEvent / IsoRxIntEvent register demux
 
+#include "../Shared/ASOHCIContextBase.hpp"
 #include "ASOHCIIRDescriptor.hpp"
 #include "ASOHCIIRTypes.hpp"
-#include "Shared/ASOHCIContextBase.hpp"
 #include <stdint.h>
 
 class ASOHCIIRContext : public ASOHCIContextBase {

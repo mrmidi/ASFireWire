@@ -9,9 +9,9 @@
 #include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
+#include "../Shared/ASOHCIContextBase.hpp"
+#include "../Shared/ASOHCITypes.hpp"
 #include "ASOHCIARTypes.hpp"
-#include "Shared/ASOHCIContextBase.hpp"
-#include "Shared/ASOHCITypes.hpp"
 
 class ASOHCIARDescriptorRing;
 class ASOHCIARStatus;

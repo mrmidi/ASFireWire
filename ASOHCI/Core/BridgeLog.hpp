@@ -12,10 +12,9 @@ void bridge_log_init();
 // Variadic log append (printf-like)
 void bridge_logf(const char *fmt, ...);
 
-// Convenience macro
+// Convenience macro (disabled: route logs via os_log only)
 #define BRIDGE_LOG(fmt, ...)                                                   \
   do {                                                                         \
-    bridge_logf((fmt), ##__VA_ARGS__);                                         \
   } while (0)
 
 // Copy recent log lines into an OSData blob

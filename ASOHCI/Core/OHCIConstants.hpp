@@ -79,6 +79,12 @@ static constexpr uint32_t kOHCI_HCControl_CycleSynch = 0x00100000;
 static constexpr uint32_t kOHCI_HCControl_Cycle64Seconds = 0x00200000;
 static constexpr uint32_t kOHCI_HCControl_aPhyEnhanceEnable = 0x00400000;
 static constexpr uint32_t kOHCI_HCControl_programPhyEnable = 0x00800000;
+// Compatibility aliases (historical naming); OHCI has no explicit
+// "bus reset" bits in HcControl — bus reset is initiated via PHY.
+// These map to the actual HcControl bits for soft reset and link enable.
+static constexpr uint32_t kOHCI_HCControl_BusReset = kOHCI_HCControl_SoftReset;
+static constexpr uint32_t kOHCI_HCControl_InitiateBusReset =
+    kOHCI_HCControl_LinkEnable;
 static constexpr uint32_t kOHCI_HCControl_BIBimageValid = 0x80000000;
 
 // ------------------------ Interrupt Bits --------------------------

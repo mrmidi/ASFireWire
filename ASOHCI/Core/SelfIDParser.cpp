@@ -16,7 +16,6 @@
 #include <DriverKit/IOLib.h>
 #include <os/log.h>
 
-#include "BridgeLog.hpp"
 #include "LogHelper.hpp"
 #include "OHCIConstants.hpp"
 
@@ -30,7 +29,6 @@ void Process(uint32_t *selfIDData, uint32_t quadletCount) {
   os_log(ASLog(),
          "ASOHCI: Processing %u Self-ID quadlets (IEEE 1394-2008 Alpha)",
          quadletCount);
-  BRIDGE_LOG("Self-ID processing: %u quads", quadletCount);
 
 // OHCI 1.1 §11.3: Buffer format = [header quadlet][concatenated self-ID packet
 // data] Header quadlet (position 0): selfIDGeneration | timeStamp (NOT tagged)
@@ -228,8 +226,6 @@ void Process(uint32_t *selfIDData, uint32_t quadletCount) {
       os_log(ASLog(),
              "ASOHCI:  ports p0=%{public}s p1=%{public}s p2=%{public}s",
              portCodeStr(p0), portCodeStr(p1), portCodeStr(p2));
-      BRIDGE_LOG("Node%u phy=%u sp=%s L=%u gap=%u c=%u pwr=%u", nodes, phy,
-                 alphaSpeedStr(sp), L, gap, c, pwr);
 
       // Look for optional extended packets (#1/#2) for this phy in remaining
       // Self-ID packets
@@ -266,7 +262,6 @@ void Process(uint32_t *selfIDData, uint32_t quadletCount) {
     }
   }
   os_log(ASLog(), "ASOHCI: Self-ID parsing complete (nodes=%u)", nodes);
-  BRIDGE_LOG("Self-ID done: nodes=%u", nodes);
 }
 
 } // namespace SelfIDParser

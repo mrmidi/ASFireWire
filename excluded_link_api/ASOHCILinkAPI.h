@@ -26,33 +26,53 @@ class ASOHCI;
  * ASFireWireController.
  */
 class ASOHCILinkAPI : public OSObject {
-  OSDeclareDefaultStructors(ASOHCILinkAPI);
+protected:
+  /**
+   * @brief Constructor (protected for OSObject)
+   */
+  ASOHCILinkAPI();
+
+  /**
+   * @brief Destructor (virtual for OSObject)
+   */
+  virtual ~ASOHCILinkAPI();
+
+public:
+  /**
+   * @brief Retain the object (for OSSharedPtr compatibility)
+   */
+  virtual void retain() { OSObject::retain(); }
+
+  /**
+   * @brief Release the object (for OSSharedPtr compatibility)
+   */
+  virtual void release() { OSObject::release(); }
 
 public:
   /**
    * @brief Get the local controller's GUID
    * @return 64-bit GUID of the local FireWire controller
    */
-  virtual uint64_t GetLocalGUID();
+  virtual uint64_t GetLocalGUID() = 0;
 
   /**
    * @brief Force a bus reset
    * @param forceIBR If true, force an immediate bus reset
    * @return kIOReturnSuccess on success, error code otherwise
    */
-  virtual kern_return_t ResetBus(bool forceIBR = false);
+  virtual kern_return_t ResetBus(bool forceIBR = false) = 0;
 
   /**
    * @brief Get current Node ID
    * @return 16-bit Node ID (includes bus ID and node address)
    */
-  virtual uint16_t GetNodeID();
+  virtual uint16_t GetNodeID() = 0;
 
   /**
    * @brief Get current bus generation
    * @return 32-bit generation counter
    */
-  virtual uint32_t GetGeneration();
+  virtual uint32_t GetGeneration() = 0;
 
   /**
    * @brief Perform asynchronous read from a remote node
@@ -67,7 +87,7 @@ public:
    */
   virtual kern_return_t AsyncRead(uint16_t nodeID, uint32_t addrHi,
                                   uint32_t addrLo, uint32_t length,
-                                  uint32_t generation, uint8_t speed);
+                                  uint32_t generation, uint8_t speed) = 0;
 
   /**
    * @brief Perform asynchronous write to a remote node
@@ -84,19 +104,19 @@ public:
   virtual kern_return_t AsyncWrite(uint16_t nodeID, uint32_t addrHi,
                                    uint32_t addrLo, const void *data,
                                    uint32_t length, uint32_t generation,
-                                   uint8_t speed);
+                                   uint8_t speed) = 0;
 
   /**
    * @brief Check if the local node is the root of the bus
    * @return true if this node is the bus root
    */
-  virtual bool IsRoot();
+  virtual bool IsRoot() = 0;
 
   /**
    * @brief Get the number of nodes on the bus
    * @return Number of nodes currently on the bus
    */
-  virtual uint8_t GetNodeCount();
+  virtual uint8_t GetNodeCount() = 0;
 
   /**
    * @brief Set callback for Self-ID completion events
@@ -104,7 +124,7 @@ public:
    * @param context User context passed to callback
    */
   virtual void SetSelfIDCallback(void (*callback)(void *context),
-                                 void *context);
+                                 void *context) = 0;
 
   /**
    * @brief Set callback for bus reset events
@@ -112,7 +132,7 @@ public:
    * @param context User context passed to callback
    */
   virtual void SetBusResetCallback(void (*callback)(void *context),
-                                   void *context);
+                                   void *context) = 0;
 
 protected:
   ASOHCI *fASOHCI; // Reference to the owning ASOHCI instance

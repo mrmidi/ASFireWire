@@ -40,7 +40,8 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
 // Include Link API header
-#include "ASOHCILinkAPI.h"
+// #include "Core/ASOHCILinkAPI.h"
+// #include "ASOHCILink.h"
 
 // Concrete ivars definition (workaround for IIG forward declaration issue)
 #include "ASOHCIIVars.h"
@@ -64,177 +65,14 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 // ------------------------ Logging -----------------------------------
 #include "ASOHCIInterruptDump.hpp"
 #include "LogHelper.hpp"
+#include "Shared/ASOHCIInterruptRouter.hpp"
+#include "Shared/ASOHCIRegisterIO.hpp"
 
 // BRIDGE_LOG macro/functionality provided by BridgeLog.hpp
 
-// Deferred self-ID work context structure
-struct SelfIDWorkContext {
-  ASOHCI *ohci;
-  uint32_t selfIDCount;
-  uint32_t generation;
-};
+// Self-ID deferred processing moved to ASOHCIInterruptRouter
 
-// Dispatch queue for self-ID processing
-static IODispatchQueue *selfIDDispatchQueue = nullptr;
-
-// Deferred self-ID processing function (DriverKit dispatch queue equivalent of
-// Linux bus_reset_work)
-static void SelfIDWorkHandler(void *context) {
-  SelfIDWorkContext *sw = static_cast<SelfIDWorkContext *>(context);
-  if (!sw) {
-    os_log(ASLog(), "ASOHCI: Self-ID work: null context");
-    return;
-  }
-
-  ASOHCI *ohci = sw->ohci;
-
-  // CRITICAL: Check if the driver is being torn down or device is gone
-  if (!ohci || !ohci->ivars ||
-      __atomic_load_n(&ohci->ivars->stopping, __ATOMIC_ACQUIRE) ||
-      __atomic_load_n(&ohci->ivars->deviceGone, __ATOMIC_ACQUIRE)) {
-    os_log(ASLog(), "ASOHCI: Self-ID work: driver being torn down or device "
-                    "gone - aborting");
-    delete sw;
-    return;
-  }
-
-  if (!ohci->ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: Self-ID work: invalid state - no PCI device");
-    delete sw;
-    return;
-  }
-
-  os_log(ASLog(), "ASOHCI: Deferred Self-ID processing: count=0x%08x gen=%u",
-         sw->selfIDCount, sw->generation);
-
-  // Check generation consistency (Linux parity)
-  uint32_t currentGen = 0;
-  ohci->ivars->pciDevice->MemoryRead32(ohci->ivars->barIndex, kOHCI_SelfIDCount,
-                                       &currentGen);
-  currentGen = (currentGen & kOHCI_SelfIDCount_selfIDGeneration) >> 16;
-
-  if (currentGen != sw->generation) {
-    os_log(ASLog(),
-           "ASOHCI: Self-ID generation mismatch: expected=%u current=%u - "
-           "discarding",
-           sw->generation, currentGen);
-    delete sw;
-    return;
-  }
-
-  // Process self-ID through manager
-  if (ohci->ivars->selfIDManager) {
-    ohci->ivars->selfIDManager->OnSelfIDComplete(sw->selfIDCount);
-  }
-
-  // Call Link API callback for Self-ID completion
-  if (ohci->ivars->selfIDCallback) {
-    ohci->ivars->selfIDCallback(ohci->ivars->selfIDCallbackContext);
-  }
-
-  // Enable cycle timer after first stable Self-ID (Linux parity)
-  if (!ohci->ivars->cycleTimerArmed && ohci->ivars->pciDevice) {
-    ohci->ivars->pciDevice->MemoryWrite32(
-        ohci->ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleTimerEnable);
-
-    // Check if this node should be cycle master
-    uint32_t nodeIdReg = 0;
-    ohci->ivars->pciDevice->MemoryRead32(ohci->ivars->barIndex, kOHCI_NodeID,
-                                         &nodeIdReg);
-    bool hardwareIsRoot = ((nodeIdReg & kOHCI_NodeID_root) != 0);
-    bool idValid = ((nodeIdReg & kOHCI_NodeID_idValid) != 0);
-
-    if (idValid && hardwareIsRoot) {
-      ohci->ivars->pciDevice->MemoryWrite32(
-          ohci->ivars->barIndex, kOHCI_LinkControlSet, kOHCI_LC_CycleMaster);
-      os_log(ASLog(), "ASOHCI: CycleMaster asserted - this node is root");
-    }
-
-    uint32_t lcPost = 0;
-    ohci->ivars->pciDevice->MemoryRead32(ohci->ivars->barIndex,
-                                         kOHCI_LinkControlSet, &lcPost);
-    os_log(
-        ASLog(),
-        "ASOHCI: CycleTimerEnable asserted post Self-ID (LinkControl=0x%08x)",
-        lcPost);
-    ohci->ivars->cycleTimerArmed = true;
-
-    // Now that cycle timer is stable, enable CycleInconsistent interrupts
-    ohci->ivars->pciDevice->MemoryWrite32(
-        ohci->ivars->barIndex, kOHCI_IntMaskSet, kOHCI_Int_CycleInconsistent);
-    os_log(
-        ASLog(),
-        "ASOHCI: CycleInconsistent interrupts enabled after cycle timer armed");
-  }
-
-  // Mark cycle complete
-  ohci->ivars->selfIDInProgress = false;
-  ohci->ivars->selfIDArmed = false;
-
-  // Re-arm for next cycle
-  ohci->ArmSelfIDReceive(false);
-
-  // Re-enable bus reset interrupt
-  ohci->ivars->pciDevice->MemoryWrite32(ohci->ivars->barIndex, kOHCI_IntMaskSet,
-                                        kOHCI_Int_BusReset);
-  ohci->ivars->busResetMasked = false;
-  os_log(ASLog(), "ASOHCI: BusReset re-enabled after Self-ID completion");
-
-  delete sw;
-}
-
-// Helper: dump a memory region as hex lines to os_log without sprintf/snprintf
-static inline char _hex_digit(uint8_t v) {
-  return (v < 10) ? char('0' + v) : char('a' + (v - 10));
-}
-static inline void DumpHexBigEndian(const void *data, size_t length,
-                                    const char *title) {
-  if (!data || length == 0)
-    return;
-  const uint8_t *p = reinterpret_cast<const uint8_t *>(data);
-  // Determine effective length by trimming trailing zeros; keep at least 64
-  // bytes, round up to 16
-  size_t eff = length;
-  while (eff > 0 && p[eff - 1] == 0) {
-    --eff;
-  }
-  const size_t kMinDump =
-      64; // keep at least 64 bytes (header + small root dir)
-  if (eff < kMinDump)
-    eff = (length < kMinDump) ? length : kMinDump;
-  // round up to 16-byte boundary for clean lines
-  if (eff % 16) {
-    size_t rounded = ((eff + 15) / 16) * 16;
-    if (rounded <= length)
-      eff = rounded;
-    else
-      eff = length;
-  }
-
-  os_log(ASLog(), "ASOHCI: === %{public}s (BIG-ENDIAN) === size=%lu dump=%lu",
-         title ? title : "DUMP", (unsigned long)length, (unsigned long)eff);
-  char line[80];
-  for (size_t off = 0; off < eff; off += 16) {
-    size_t pos = 0;
-    // 4 hex digits of offset
-    uint16_t o = (uint16_t)off;
-    line[pos++] = _hex_digit(uint8_t((o >> 12) & 0xF));
-    line[pos++] = _hex_digit(uint8_t((o >> 8) & 0xF));
-    line[pos++] = _hex_digit(uint8_t((o >> 4) & 0xF));
-    line[pos++] = _hex_digit(uint8_t(o & 0xF));
-    line[pos++] = ':';
-    // up to 16 bytes
-    for (size_t i = 0; i < 16 && (off + i) < length; ++i) {
-      uint8_t b = p[off + i];
-      line[pos++] = ' ';
-      line[pos++] = _hex_digit(uint8_t((b >> 4) & 0xF));
-      line[pos++] = _hex_digit(uint8_t(b & 0xF));
-    }
-    line[pos] = '\0';
-    os_log(ASLog(), "ASOHCI: %{public}s", line);
-  }
-  os_log(ASLog(), "ASOHCI: === END OF DUMP ===");
-}
+// Hex dump helper moved to LogHelper.hpp (DumpHexBigEndian)
 
 // NOTE: Using concrete ASOHCI_IVars definition from ASOHCIIVars.h
 // This is a workaround for IIG forward declaration issues where the
@@ -263,6 +101,15 @@ bool ASOHCI::init() {
     if (!ivars)
       return false;
   }
+
+  // Initialize Link API
+  // ivars->linkAPI = OSSharedPtr<ASOHCILinkAPI>(new
+  // (IOMalloc(sizeof(ASOHCILink))) ASOHCILink(this), OSNoRetain); if
+  // (!ivars->linkAPI) {
+  //   os_log(ASLog(), "ASOHCI: Failed to create Link API");
+  //   return false;
+  // }
+
   os_log(ASLog(), "ASOHCI: init()");
   return true;
 }
@@ -361,7 +208,6 @@ kern_return_t IMPL(ASOHCI, Start) {
     return kIOReturnNoResources;
   }
   os_log(ASLog(), "ASOHCI: Start() begin bring-up");
-  BRIDGE_LOG("Start bring-up");
   bridge_log_init();
 
   // Reset bring-up/lifecycle flags to known defaults
@@ -389,7 +235,6 @@ kern_return_t IMPL(ASOHCI, Start) {
   pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorID);
   pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceID);
   os_log(ASLog(), "ASOHCI: PCI IDs V:0x%04x D:0x%04x", vendorID, deviceID);
-  BRIDGE_LOG("PCI IDs V=%04x D=%04x", vendorID, deviceID);
 
   // Enable BusMaster|MemorySpace
   uint16_t cmd = 0, newCmd = 0;
@@ -400,7 +245,6 @@ kern_return_t IMPL(ASOHCI, Start) {
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &newCmd);
   }
   os_log(ASLog(), "ASOHCI: PCI CMD=0x%04x (was 0x%04x)", newCmd, cmd);
-  BRIDGE_LOG("PCI CMD=0x%04x->0x%04x", cmd, newCmd);
 
   // BAR0 info
   uint8_t bar0Index = 0;
@@ -413,8 +257,6 @@ kern_return_t IMPL(ASOHCI, Start) {
   } else {
     os_log(ASLog(), "ASOHCI: BAR0 idx=%u size=0x%llx type=0x%02x", bar0Index,
            bar0Size, bar0Type);
-    BRIDGE_LOG("BAR0 idx=%u size=0x%llx type=0x%02x", bar0Index, bar0Size,
-               bar0Type);
   }
 
   if (bar0Size >= 0x2C) {
@@ -454,11 +296,14 @@ kern_return_t IMPL(ASOHCI, Start) {
     pci->MemoryRead32(bar0Index, kOHCI_GUIDLo, &guid_lo);
     os_log(ASLog(), "ASOHCI: OHCI VER=0x%08x BUSOPT=0x%08x GUID=%08x:%08x",
            ohci_ver, bus_opts, guid_hi, guid_lo);
-    BRIDGE_LOG("OHCI VER=%08x BUSOPT=%08x GUID=%08x:%08x", ohci_ver, bus_opts,
-               guid_hi, guid_lo);
 
     ivars->pciDevice = pci;
     ivars->barIndex = bar0Index;
+    // Initialize shared register IO helper for reuse by subsystems
+    ivars->regs = OSSharedPtr(ASOHCIRegisterIO::Create(), OSNoRetain);
+    if (ivars->regs && !ivars->regs->Init(pci, (uint8_t)bar0Index)) {
+      ivars->regs.reset();
+    }
 
     // Configuration ROM via manager
     {
@@ -521,9 +366,7 @@ kern_return_t IMPL(ASOHCI, Start) {
                      info.generation, (unsigned long)nodes,
                      root ? root->phy.value : 0xFF, hops, ok ? 1 : 0,
                      (unsigned long)info.warnings.size());
-              BRIDGE_LOG("Topo g=%u nodes=%lu root=%u hops=%u", info.generation,
-                         (unsigned long)nodes, root ? root->phy.value : 0xFF,
-                         hops);
+
               ivars->topology->Log();
             });
 
@@ -542,14 +385,12 @@ kern_return_t IMPL(ASOHCI, Start) {
     pci->MemoryWrite32(bar0Index, kOHCI_IsoXmitIntMaskClear, allOnes);
     pci->MemoryWrite32(bar0Index, kOHCI_IsoRecvIntMaskClear, allOnes);
     os_log(ASLog(), "ASOHCI: Cleared interrupt events/masks");
-    BRIDGE_LOG("IRQ clear/mask done");
 
     // --- Soft reset
     pci->MemoryWrite32(bar0Index, kOHCI_HCControlSet,
                        kOHCI_HCControl_SoftReset);
     IOSleep(10);
     os_log(ASLog(), "ASOHCI: Soft reset issued");
-    BRIDGE_LOG("Soft reset issued");
 
     // Re-clear after reset
     pci->MemoryWrite32(bar0Index, kOHCI_IntEventClear, allOnes);
@@ -632,15 +473,14 @@ kern_return_t IMPL(ASOHCI, Start) {
         pci->ConfigureInterrupts(kIOInterruptTypePCIMessagedX, 1, 1, 0);
     if (rc == kIOReturnSuccess) {
       os_log(ASLog(), "ASOHCI: Configured MSI-X interrupts");
-      BRIDGE_LOG("Configured MSI-X");
+
     } else {
       rc = pci->ConfigureInterrupts(kIOInterruptTypePCIMessaged, 1, 1, 0);
       if (rc == kIOReturnSuccess) {
         os_log(ASLog(), "ASOHCI: Configured MSI interrupts");
-        BRIDGE_LOG("Configured MSI");
+
       } else {
         os_log(ASLog(), "ASOHCI: Falling back to legacy interrupts");
-        BRIDGE_LOG("Legacy IRQ");
       }
     }
 
@@ -668,7 +508,7 @@ kern_return_t IMPL(ASOHCI, Start) {
           src->SetEnableWithCompletion(true, nullptr);
           ivars->intSource = src;
           os_log(ASLog(), "ASOHCI: Interrupt source enabled");
-          BRIDGE_LOG("IRQ source enabled");
+
         } else {
           os_log(ASLog(),
                  "ASOHCI: CreateActionInterruptOccurred failed: 0x%08x", ar);
@@ -685,7 +525,7 @@ kern_return_t IMPL(ASOHCI, Start) {
     }
 
     // --- Self‑ID via manager (create once; Initialize once)
-    BRIDGE_LOG("Setting up Self-ID manager & buffer");
+
     if (!ivars->selfIDManager) {
       ivars->selfIDManager = OSSharedPtr(new SelfIDManager(), OSNoRetain);
       if (!ivars->selfIDManager) {
@@ -704,18 +544,7 @@ kern_return_t IMPL(ASOHCI, Start) {
       }
     }
 
-    // Initialize dispatch queue for deferred self-ID processing (DriverKit
-    // equivalent of Linux workqueue)
-    if (!selfIDDispatchQueue) {
-      kern_return_t kr =
-          IODispatchQueue::Create("asohci_selfid", 0, 0, &selfIDDispatchQueue);
-      if (kr != kIOReturnSuccess) {
-        os_log(ASLog(),
-               "ASOHCI: Failed to create self-ID dispatch queue: 0x%08x", kr);
-        return kIOReturnNoResources;
-      }
-      os_log(ASLog(), "ASOHCI: Self-ID dispatch queue created");
-    }
+    // Self-ID deferred processing now handled by InterruptRouter's queue
 
     // =====================================================================================
     // Complete OHCI Initialization Sequence (based on Linux driver and OHCI 1.1
@@ -1035,6 +864,17 @@ kern_return_t IMPL(ASOHCI, Start) {
       os_log(ASLog(), "ASOHCI: ERROR: Failed to allocate AT Manager object");
     }
 
+    // Initialize interrupt router and wire managers
+    ivars->interruptRouter =
+        OSSharedPtr(ASOHCIInterruptRouter::Create(), OSNoRetain);
+    if (ivars->interruptRouter) {
+      ivars->interruptRouter->SetARManager(ivars->arManager.get());
+      ivars->interruptRouter->SetATManager(ivars->atManager.get());
+      ivars->interruptRouter->SetIRManager(ivars->irManager.get());
+      ivars->interruptRouter->SetITManager(ivars->itManager.get());
+      ivars->interruptRouter->SetController(this);
+    }
+
     // Phase 8c: Initialize IR Manager (OHCI 1.1 §10 - Isochronous Receive DMA)
     os_log(ASLog(), "ASOHCI: Phase 8c - Initializing IR Manager");
     ivars->irManager = OSSharedPtr(new ASOHCIIRManager(), OSNoRetain);
@@ -1210,7 +1050,7 @@ kern_return_t IMPL(ASOHCI, Start) {
 
     os_log(ASLog(), "ASOHCI: ✅ Complete OHCI initialization sequence finished "
                     "(11 phases)");
-    BRIDGE_LOG("Complete OHCI initialization finished");
+
   } else {
     os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx)", bar0Size);
   }
@@ -1218,7 +1058,7 @@ kern_return_t IMPL(ASOHCI, Start) {
   // (moved) PHY access helper is initialized before Phase 7
 
   os_log(ASLog(), "ASOHCI: Start() bring-up complete");
-  BRIDGE_LOG("Bring-up complete");
+
   return kIOReturnSuccess;
 }
 
@@ -1335,14 +1175,8 @@ kern_return_t IMPL(ASOHCI, Stop) {
     }
   }
 
-  // 6) Clean up Self-ID dispatch queue
-  if (selfIDDispatchQueue) {
-    os_log(ASLog(), "ASOHCI: Destroying Self-ID dispatch queue...");
-    selfIDDispatchQueue->Cancel(nullptr);
-    selfIDDispatchQueue->release();
-    selfIDDispatchQueue = nullptr;
-    os_log(ASLog(), "ASOHCI: Self-ID dispatch queue destroyed");
-  }
+  // 6) Self-ID dispatch queue is owned by InterruptRouter (released with
+  // router)
 
   // 7) Close PCI device
   if (auto pci = OSDynamicCast(IOPCIDevice, provider)) {
@@ -1416,161 +1250,6 @@ kern_return_t IMPL(ASOHCI, Stop) {
 }
 
 // =====================================================================================
-// ASOHCILinkAPI Implementation
-// =====================================================================================
-
-uint64_t ASOHCI::GetLocalGUID() {
-  if (!ivars || !ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: GetLocalGUID - no PCI device");
-    return 0;
-  }
-
-  uint32_t guidHi = 0, guidLo = 0;
-  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_GUIDHi, &guidHi);
-  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_GUIDLo, &guidLo);
-
-  uint64_t guid = ((uint64_t)guidHi << 32) | guidLo;
-  os_log(ASLog(), "ASOHCI: GetLocalGUID = 0x%016llx", guid);
-  return guid;
-}
-
-kern_return_t ASOHCI::ResetBus(bool forceIBR) {
-  if (!ivars || !ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: ResetBus - no PCI device");
-    return kIOReturnNotReady;
-  }
-
-  os_log(ASLog(), "ASOHCI: ResetBus forceIBR=%d", forceIBR ? 1 : 0);
-
-  // Force bus reset by setting and clearing the reset bit
-  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear,
-                                  kOHCI_Int_BusReset);
-  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet,
-                                  kOHCI_HCControl_BusReset);
-  IOSleep(1); // Brief delay
-  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlClear,
-                                  kOHCI_HCControl_BusReset);
-
-  // Re-enable bus reset interrupt
-  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet,
-                                  kOHCI_Int_BusReset);
-
-  return kIOReturnSuccess;
-}
-
-uint16_t ASOHCI::GetNodeID() {
-  if (!ivars || !ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: GetNodeID - no PCI device");
-    return 0xFFFF;
-  }
-
-  uint32_t nodeID = 0;
-  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
-
-  uint16_t result = (uint16_t)(nodeID & 0xFFFF);
-  os_log(ASLog(), "ASOHCI: GetNodeID = 0x%04x", result);
-  return result;
-}
-
-uint32_t ASOHCI::GetGeneration() {
-  if (!ivars || !ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: GetGeneration - no PCI device");
-    return 0;
-  }
-
-  uint32_t selfIDCount = 0;
-  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_SelfIDCount,
-                                 &selfIDCount);
-
-  uint32_t generation =
-      (selfIDCount & kOHCI_SelfIDCount_selfIDGeneration) >> 16;
-  os_log(ASLog(), "ASOHCI: GetGeneration = %u", generation);
-  return generation;
-}
-
-kern_return_t ASOHCI::AsyncRead(uint16_t nodeID, uint32_t addrHi,
-                                uint32_t addrLo, uint32_t length,
-                                uint32_t generation, uint8_t speed) {
-  if (!ivars || !ivars->atManager) {
-    os_log(ASLog(), "ASOHCI: AsyncRead - no AT manager");
-    return kIOReturnNotReady;
-  }
-
-  os_log(
-      ASLog(),
-      "ASOHCI: AsyncRead nodeID=0x%04x addr=0x%08x:%08x len=%u gen=%u speed=%u",
-      nodeID, addrHi, addrLo, length, generation, speed);
-
-  // TODO: Implement async read through AT manager
-  // This would involve creating an AT request context and programming it
-  return kIOReturnUnsupported;
-}
-
-kern_return_t ASOHCI::AsyncWrite(uint16_t nodeID, uint32_t addrHi,
-                                 uint32_t addrLo, const void *data,
-                                 uint32_t length, uint32_t generation,
-                                 uint8_t speed) {
-  if (!ivars || !ivars->atManager) {
-    os_log(ASLog(), "ASOHCI: AsyncWrite - no AT manager");
-    return kIOReturnNotReady;
-  }
-
-  os_log(ASLog(),
-         "ASOHCI: AsyncWrite nodeID=0x%04x addr=0x%08x:%08x len=%u gen=%u "
-         "speed=%u",
-         nodeID, addrHi, addrLo, length, generation, speed);
-
-  // TODO: Implement async write through AT manager
-  return kIOReturnUnsupported;
-}
-
-bool ASOHCI::IsRoot() {
-  if (!ivars || !ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: IsRoot - no PCI device");
-    return false;
-  }
-
-  uint32_t nodeID = 0;
-  ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
-
-  bool isRoot = ((nodeID & kOHCI_NodeID_root) != 0);
-  os_log(ASLog(), "ASOHCI: IsRoot = %d", isRoot ? 1 : 0);
-  return isRoot;
-}
-
-uint8_t ASOHCI::GetNodeCount() {
-  if (!ivars || !ivars->topology) {
-    os_log(ASLog(), "ASOHCI: GetNodeCount - no topology");
-    return 0;
-  }
-
-  uint8_t count = (uint8_t)ivars->topology->NodeCount();
-  os_log(ASLog(), "ASOHCI: GetNodeCount = %u", count);
-  return count;
-}
-
-void ASOHCI::SetSelfIDCallback(void (*callback)(void *context), void *context) {
-  if (!ivars)
-    return;
-
-  ivars->selfIDCallback = callback;
-  ivars->selfIDCallbackContext = context;
-  os_log(ASLog(), "ASOHCI: SetSelfIDCallback - callback %s",
-         callback ? "set" : "cleared");
-}
-
-void ASOHCI::SetBusResetCallback(void (*callback)(void *context),
-                                 void *context) {
-  if (!ivars)
-    return;
-
-  ivars->busResetCallback = callback;
-  ivars->busResetCallbackContext = context;
-  os_log(ASLog(), "ASOHCI: SetBusResetCallback - callback %s",
-         callback ? "set" : "cleared");
-}
-
-// =====================================================================================
 // Interrupt handler (typed action). IMPORTANT: complete the OSAction.
 // =====================================================================================
 void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
@@ -1593,8 +1272,6 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
   os_log(ASLog(), "ASOHCI: InterruptOccurred #%llu (count=%llu time=%llu)",
          (unsigned long long)seq, (unsigned long long)count,
          (unsigned long long)time);
-  BRIDGE_LOG("IRQ #%llu hwcount=%llu", (unsigned long long)seq,
-             (unsigned long long)count);
 
   // Re-check stopping flag after logging (another teardown might have started)
   if (__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
@@ -1634,92 +1311,20 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear,
                                     clearMask);
   os_log(ASLog(), "ASOHCI: IntEvent=0x%08x", intEvent);
-  BRIDGE_LOG("IRQ events=0x%08x", intEvent);
+
   LogUtils::DumpIntEvent(intEvent);
 
-  // Handle Posted Write Error per spec: read posted write address regs then
-  // clear
+  // Handle Posted Write Error via router
   if (intEvent & kOHCI_Int_PostedWriteErr) {
-    uint32_t _hi = 0, _lo = 0;
-    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_PostedWriteAddressHi,
-                                   &_hi);
-    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_PostedWriteAddressLo,
-                                   &_lo);
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear,
-                                    kOHCI_Int_PostedWriteErr);
-    os_log(ASLog(), "ASOHCI: Posted Write Error addr=%08x:%08x (cleared)", _hi,
-           _lo);
+    if (ivars->interruptRouter)
+      ivars->interruptRouter->OnPostedWriteError();
   }
 
   // Bus reset (coalesce repeated resets until SelfIDComplete)
   if (intEvent & kOHCI_Int_BusReset) {
-    // Mask busReset until bus reset handling completes (Linux parity)
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskClear,
-                                    kOHCI_Int_BusReset);
-    ivars->busResetMasked = true;
-    ivars->lastBusResetTime = time;
-    os_log(ASLog(), "ASOHCI: BusReset masked during handling");
-    // Commit staged Config ROM header via manager
-    if (ivars->configROMManager) {
-      ivars->configROMManager->CommitOnBusReset();
-    }
-    // Reset topology accumulation for the new cycle
-    if (ivars->topology) {
-      ivars->topology->Clear();
-    }
-    // Notify context managers of bus reset begin (OHCI 1.1 compliant handling)
-    if (ivars->atManager) {
-      ivars->atManager->OnBusResetBegin(); // Stops transmission per §7.2.3.1
-    }
-    if (ivars->irManager) {
-      ivars->irManager->OnInterrupt_BusReset(); // Clear context state per §10.5
-    }
+    if (ivars->interruptRouter) {
 
-    // Legacy: Stop/flush individual AT contexts during reset window (parity
-    // with Linux behavior)
-    if (ivars->atRequestContext) {
-      ivars->atRequestContext->Stop();
-    }
-    if (ivars->atResponseContext) {
-      ivars->atResponseContext->Stop();
-    }
-    if (ivars->selfIDInProgress) {
-      // Already in a reset/self-id cycle; collapse this extra signal
-      ++ivars->collapsedBusResets;
-      BRIDGE_LOG("Collapsed BusReset (total collapsed=%u)",
-                 ivars->collapsedBusResets);
-    } else {
-      ivars->selfIDInProgress = true;
-      ivars->collapsedBusResets = 0;
-      BRIDGE_LOG("Bus reset (new cycle)");
-      os_log(ASLog(), "ASOHCI: Bus reset (new cycle)");
-      // Arm Self-ID fresh (clearCount true at start of cycle)
-      ArmSelfIDReceive(/*clearCount=*/true);
-    }
-    // Ack the BusReset event bit before re-enabling its mask later
-    ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear,
-                                    kOHCI_Int_BusReset);
-
-    // Call Link API callback for bus reset
-    if (ivars->busResetCallback) {
-      ivars->busResetCallback(ivars->busResetCallbackContext);
-    }
-    // NodeID logging only when it changes or validity/root status toggles
-    uint32_t nodeID = 0;
-    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeID);
-    bool idValid = ((nodeID >> 31) & 1) != 0;
-    bool isRoot = ((nodeID >> 30) & 1) != 0;
-    if (nodeID != ivars->lastLoggedNodeID ||
-        idValid != ivars->lastLoggedValid || isRoot != ivars->lastLoggedRoot) {
-      uint8_t nAdr = (uint8_t)((nodeID >> 16) & 0x3F);
-      os_log(ASLog(),
-             "ASOHCI: NodeID=0x%08x valid=%d root=%d addr=%u (changed)", nodeID,
-             idValid, isRoot, nAdr);
-      BRIDGE_LOG("NodeID change %08x v=%d r=%d addr=%u", nodeID, idValid,
-                 isRoot, nAdr);
-      ivars->lastLoggedNodeID = nodeID;
-      ivars->lastLoggedValid = idValid;
-      ivars->lastLoggedRoot = isRoot;
+      ivars->interruptRouter->OnBusReset(time);
     }
   }
 
@@ -1727,51 +1332,17 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
   // #1/#2). Parser implements IEEE 1394-2008 §16.3.2.1 (Alpha). Beta support
   // can be added later.
 
-  // Self-ID complete (primary or secondary) - DEFERRED PROCESSING (Linux
-  // parity)
+  // Self-ID complete
   if (intEvent & (kOHCI_Int_SelfIDComplete | kOHCI_Int_SelfIDComplete2)) {
-    os_log(ASLog(), "ASOHCI: Self-ID phase complete - queuing deferred work");
-    BRIDGE_LOG("Self-ID complete - deferred");
-
     uint32_t selfIDCount1 = 0;
     ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_SelfIDCount,
                                    &selfIDCount1);
-    uint32_t quads = (selfIDCount1 & kOHCI_SelfIDCount_selfIDSize) >> 2;
     uint32_t generation =
         (selfIDCount1 & kOHCI_SelfIDCount_selfIDGeneration) >> 16;
     bool err = (selfIDCount1 & kOHCI_SelfIDCount_selfIDError) != 0;
+    if (ivars->interruptRouter) {
 
-    os_log(ASLog(), "ASOHCI: SelfID count=%u quads, generation=%u, error=%d",
-           quads, generation, err);
-    BRIDGE_LOG("SelfID count=%u gen=%u error=%d", quads, generation, err);
-
-    // Queue deferred work instead of processing immediately (DriverKit dispatch
-    // queue)
-    if (selfIDDispatchQueue &&
-        !__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-      SelfIDWorkContext *sw = new SelfIDWorkContext();
-      if (sw) {
-        sw->ohci = this;
-        sw->selfIDCount = selfIDCount1;
-        sw->generation = generation;
-
-        selfIDDispatchQueue->DispatchAsync(^{
-          SelfIDWorkHandler(sw);
-        });
-        os_log(ASLog(), "ASOHCI: Self-ID work queued for deferred processing");
-      } else {
-        os_log(ASLog(), "ASOHCI: Failed to allocate self-ID work context");
-      }
-    } else {
-      os_log(ASLog(), "ASOHCI: Self-ID dispatch queue unavailable or driver "
-                      "stopping - processing immediately");
-      // Fallback to immediate processing if dispatch queue not available or
-      // driver stopping
-      if (ivars->selfIDManager &&
-          !__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE) &&
-          !__atomic_load_n(&ivars->deviceGone, __ATOMIC_ACQUIRE)) {
-        ivars->selfIDManager->OnSelfIDComplete(selfIDCount1);
-      }
+      ivars->interruptRouter->OnSelfIDComplete(selfIDCount1, generation, err);
     }
   }
 
@@ -1780,23 +1351,19 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
                   kOHCI_Int_RespTxComplete)) {
 
     // AR Manager packet reception interrupts (bits 2-3)
-    if (ivars->arManager) {
-      if (intEvent & kOHCI_Int_RqPkt) {
-        ivars->arManager->OnRequestPacketIRQ();
-      }
-      if (intEvent & kOHCI_Int_RsPkt) {
-        ivars->arManager->OnResponsePacketIRQ();
-      }
+    if (ivars->interruptRouter) {
+      if (intEvent & kOHCI_Int_RqPkt)
+        ivars->interruptRouter->OnAR_Request_PacketArrived();
+      if (intEvent & kOHCI_Int_RsPkt)
+        ivars->interruptRouter->OnAR_Response_PacketArrived();
     }
 
     // AT Manager transmission complete interrupts (bits 0-1)
-    if (ivars->atManager) {
-      if (intEvent & kOHCI_Int_ReqTxComplete) {
-        ivars->atManager->OnInterrupt_ReqTxComplete();
-      }
-      if (intEvent & kOHCI_Int_RespTxComplete) {
-        ivars->atManager->OnInterrupt_RspTxComplete();
-      }
+    if (ivars->interruptRouter) {
+      if (intEvent & kOHCI_Int_ReqTxComplete)
+        ivars->interruptRouter->OnAT_Request_TxComplete();
+      if (intEvent & kOHCI_Int_RespTxComplete)
+        ivars->interruptRouter->OnAT_Response_TxComplete();
     }
 
     // Legacy context interrupt handling (kept for transition)
@@ -1814,38 +1381,23 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
     }
   }
 
-  // If cycle too long, take over as cycle master if we are root node (Linux
-  // parity)
+  // Cycle too long handling via router
   if (intEvent & kOHCI_Int_CycleTooLong) {
-    uint32_t nodeIdReg = 0;
-    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_NodeID, &nodeIdReg);
-    bool hardwareIsRoot = ((nodeIdReg & kOHCI_NodeID_root) != 0);
-    bool idValid = ((nodeIdReg & kOHCI_NodeID_idValid) != 0);
-
-    if (idValid && hardwareIsRoot) {
-      ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet,
-                                      kOHCI_LC_CycleMaster);
-      os_log(ASLog(), "ASOHCI: CycleTooLong detected - asserting CycleMaster "
-                      "(root node takeover)");
-      BRIDGE_LOG("CycleTooLong - CycleMaster takeover by root");
-    } else {
-      os_log(ASLog(),
-             "ASOHCI: CycleTooLong detected but not root node - cannot take "
-             "over (idValid=%d hwRoot=%d)",
-             idValid, hardwareIsRoot);
-    }
+    if (ivars->interruptRouter)
+      ivars->interruptRouter->OnCycleTooLong();
   }
 
   // Isochronous Transmit/Receive Manager Interrupts (OHCI 1.1 §6.3-6.4)
   if (intEvent & (kOHCI_Int_IsochTx | kOHCI_Int_IsochRx)) {
 
     // IT Manager interrupt handling (OHCI 1.1 §6.3)
-    if ((intEvent & kOHCI_Int_IsochTx) && ivars->itManager) {
+    if (intEvent & kOHCI_Int_IsochTx) {
       uint32_t txMask = 0;
       ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_IsoXmitIntEventSet,
                                      &txMask);
+      if (ivars->interruptRouter)
+        ivars->interruptRouter->OnIsoTxMask(txMask);
       if (txMask) {
-        ivars->itManager->OnInterrupt_TxEventMask(txMask);
         // Clear the context-specific events
         ivars->pciDevice->MemoryWrite32(ivars->barIndex,
                                         kOHCI_IsoXmitIntEventClear, txMask);
@@ -1853,12 +1405,13 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
     }
 
     // IR Manager interrupt handling (OHCI 1.1 §6.4)
-    if ((intEvent & kOHCI_Int_IsochRx) && ivars->irManager) {
+    if (intEvent & kOHCI_Int_IsochRx) {
       uint32_t rxMask = 0;
       ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_IsoRecvIntEventSet,
                                      &rxMask);
+      if (ivars->interruptRouter)
+        ivars->interruptRouter->OnIsoRxMask(rxMask);
       if (rxMask) {
-        ivars->irManager->OnInterrupt_RxEventMask(rxMask);
         // Clear the context-specific events
         ivars->pciDevice->MemoryWrite32(ivars->barIndex,
                                         kOHCI_IsoRecvIntEventClear, rxMask);
@@ -1866,39 +1419,43 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
     }
   }
 
-  // Handle cycle inconsistent events with rate limiting (Linux-like behavior)
-  // ENABLED AFTER CYCLE TIMER ARMED: delegate to IT Manager for proper cycle
-  // inconsistent handling
+  // Cycle inconsistent: rate limiting + IT fan-out via router (enabled after
+  // cycle timer armed)
   if (intEvent & kOHCI_Int_CycleInconsistent) {
-    const uint64_t rate_limit_ns = 1000000000ULL; // 1 second rate limit
-    bool should_log = false;
-
-    ivars->cycleInconsistentCount++;
-
-    if (ivars->lastCycleInconsistentTime == 0 ||
-        (time > ivars->lastCycleInconsistentTime &&
-         (time - ivars->lastCycleInconsistentTime) > rate_limit_ns)) {
-      should_log = true;
-      ivars->lastCycleInconsistentTime = time;
-    }
-
-    if (should_log) {
-      os_log(ASLog(),
-             "ASOHCI: Cycle inconsistent detected (count=%u) - isochronous "
-             "timing mismatch",
-             ivars->cycleInconsistentCount);
-      BRIDGE_LOG("CycleInconsistent #%u - timing mismatch",
-                 ivars->cycleInconsistentCount);
-    }
-
-    // Delegate to IT Manager for proper cycle inconsistent handling per OHCI
-    // §9.5
-    if (ivars->itManager) {
-      ivars->itManager->OnInterrupt_CycleInconsistent();
-    }
+    if (ivars->interruptRouter)
+      ivars->interruptRouter->OnCycleInconsistent(time);
   }
 
   // All interrupt bits are now handled by the comprehensive DumpIntEvent
   // function No need for generic "Other IRQ bits" logging as every bit is
   // properly identified per OHCI §6.1
+}
+
+// =====================================================================================
+// Copy Bridge Logs
+// =====================================================================================
+kern_return_t ASOHCI::CopyBridgeLogs_Impl(OSData **outData) {
+  if (!outData) {
+    os_log(ASLog(), "ASOHCI: CopyBridgeLogs - null out parameter");
+    return kIOReturnBadArgument;
+  }
+
+  *outData = nullptr;
+
+  // Get the bridge logs from the logging system
+  // This is a placeholder - in a real implementation, you'd collect
+  // the logs from your logging buffer
+  const char *logData = "ASOHCI Bridge Logs\n"; // Placeholder
+  size_t logLength = strlen(logData);
+
+  // Create OSData with the log content
+  *outData = OSData::withBytes(logData, logLength);
+  if (!*outData) {
+    os_log(ASLog(), "ASOHCI: CopyBridgeLogs - failed to create OSData");
+    return kIOReturnNoMemory;
+  }
+
+  os_log(ASLog(), "ASOHCI: CopyBridgeLogs - returned %zu bytes of log data",
+         logLength);
+  return kIOReturnSuccess;
 }
