@@ -46,6 +46,10 @@ public:
     // Buffer management for continuous receive
     virtual kern_return_t RefillBuffers();
     virtual bool NeedsRefill() const;
+    
+    // Bus reset handling for manager integration
+    virtual void OnBusReset();
+    virtual void ResetStats();
 
 protected:
     virtual void RecoverDeadContext() override; // handle buffer overrun recovery (§10.5)

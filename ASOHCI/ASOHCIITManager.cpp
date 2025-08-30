@@ -14,7 +14,6 @@
 
 kern_return_t ASOHCIITManager::Initialize(IOPCIDevice* pci,
                                           uint8_t barIndex,
-                                          uint32_t poolBytes,
                                           const ITPolicy& defaultPolicy)
 {
     if (!pci) return kIOReturnBadArgument;
@@ -22,18 +21,15 @@ kern_return_t ASOHCIITManager::Initialize(IOPCIDevice* pci,
     _bar = barIndex;
     _defaultPolicy = defaultPolicy;
 
-    // Minimal pool init stub: keep uninitialized until used
-    (void)poolBytes;
     // Use MMIO probe of IT windows: detect real, responding contexts (§4.2 / §9.2).
     _numCtx = ProbeITContextCount(pci, barIndex).count;
     if (_numCtx > 32) _numCtx = 32;
-    os_log(ASLog(), "ITManager: Initialize (bar=%u, pool=%u bytes) contexts=%u", _bar, poolBytes, _numCtx);
+    os_log(ASLog(), "ITManager: Initialize (bar=%u, dynamic allocation) contexts=%u", _bar, _numCtx);
 
-    if (poolBytes) {
-        kern_return_t r = _pool.Initialize(pci, barIndex, poolBytes);
-        if (r != kIOReturnSuccess) {
-            os_log(ASLog(), "ITManager: pool init failed 0x%x", r);
-        }
+    // Initialize shared descriptor pool with dynamic allocation (Linux-style)
+    kern_return_t r = _pool.Initialize(pci, barIndex);
+    if (r != kIOReturnSuccess) {
+        os_log(ASLog(), "ITManager: pool init failed 0x%x", r);
     }
 
     for (uint32_t i = 0; i < _numCtx; ++i) {

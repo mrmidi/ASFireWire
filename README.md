@@ -78,26 +78,50 @@ ASFireWire/ (this folder)
 - Apple Developer ID (system extension signing & notarization)
 
 ## Building & Installing (Developer Workflow)
-1. Open the workspace / project in Xcode.
-2. Select the system extension target under the app's scheme (the app embeds/activates the extension).
-3. Ensure a provisioning profile permitting DriverKit / System Extension entitlements.
-4. Build & Run the app; approve system extension in System Settings → Privacy & Security if prompted.
-5. View logs via:
+
+1. **Using the automated build script** (recommended):
+
+   ```bash
+   ./build.sh              # Standard build with error/warning filtering
+   ./build.sh --verbose    # Verbose build output
+   ./build.sh --help       # Show help and options
+   ```
+
+   The build script will:
+   - Bump the version number
+   - Build the project with error/warning filtering
+   - Save build logs to `./build/build.log`
+   - Show a summary of errors and warnings found
+
+2. **Manual Xcode build**:
+   - Open the workspace / project in Xcode
+   - Select the system extension target under the app's scheme (the app embeds/activates the extension)
+   - Ensure a provisioning profile permitting DriverKit / System Extension entitlements
+   - Build & Run the app; approve system extension in System Settings → Privacy & Security if prompted
+
+3. **View logs**:
+   - Build script output: `cat ./build/build.log`
+   - Only errors: `grep 'error:' ./build/build.log`
+   - Only warnings: `grep 'warning:' ./build/build.log`
    - Console.app filtering for bundle identifiers, or
-   - `log stream --predicate 'subsystem == "com.example.ASFireWire"'` (replace with actual subsystem once finalized).
+   - `log stream --predicate 'subsystem == "com.example.ASFireWire"'` (replace with actual subsystem once finalized)
 
 ## Development Notes
+
 - Emphasis on incremental parity with Linux `ohci1394` / related driver behavior for reset, Self‑ID, and PHY operations.
 - Logging intentionally verbose during early phases; will be toned down as stability (C8) lands.
 - Self‑ID parsing restricts to contiguous tagged quadlets (b31..30 == 10) matching spec guidance & Linux approach.
 
 ## Contributing / Feedback
+
 Early stage; external contributions not yet accepted until core stabilization phases (through C10) are complete. Issues & discussion (design insights, hardware quirks) are welcome.
 
 ## Disclaimer
+
 For development & research. Not production‑hardened; may hang hardware or require reboot in fault scenarios. Use only on test systems and with backed‑up data.
 
 ## License
+
 Project source under the terms provided in `APPLE_LICENSE` (and any per‑file headers where applicable). Review before redistribution.
 
 ---

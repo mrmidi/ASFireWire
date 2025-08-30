@@ -12,6 +12,7 @@
 #include <PCIDriverKit/IOPCIDevice.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
+#include <DriverKit/OSCollections.h>
 #include <stddef.h>
 #include "ASOHCIATDescriptor.hpp"
 
@@ -25,11 +26,22 @@ public:
         bool     valid           = false;
     };
 
+    // Buffer structure to match Linux approach
+    struct DescriptorBuffer {
+        IOBufferMemoryDescriptor* memory = nullptr;
+        IOMemoryMap*              map = nullptr;
+        void*                     virtualAddress = nullptr;
+        uint64_t                  physicalAddress = 0;
+        size_t                    bufferSize = 0;
+        size_t                    used = 0;
+        DescriptorBuffer*         next = nullptr;
+    };
+
     ASOHCIATDescriptorPool() = default;
     ~ASOHCIATDescriptorPool();
 
-    // Initialize a backing buffer and map it for both CPU & 32-bit DMA
-    kern_return_t Initialize(IOPCIDevice* pciDevice, uint8_t barIndex, uint32_t poolSizeBytes);
+    // Initialize with dynamic buffer allocation (Linux-style)
+    kern_return_t Initialize(IOPCIDevice* pciDevice, uint8_t barIndex);
     kern_return_t Deallocate();
 
     // Allocate a descriptor block (N descriptors * 16B). Returns contiguous chunk.
@@ -44,18 +56,20 @@ public:
     bool     IsInitialized() const { return fInitialized; }
 
 private:
-    struct FreeSpan { uint32_t offset; uint32_t descriptorCount; };
+    // Dynamic buffer management (Linux-style)
+    kern_return_t AddBuffer();
+    DescriptorBuffer* FindBufferForAllocation(size_t neededSize);
+    
+    static constexpr size_t kPageSize = 4096;  // PAGE_SIZE like Linux
+    static constexpr size_t kMaxAllocation = 16 * 1024 * 1024;  // 16MB limit like Linux
 
     IOPCIDevice*                fPCIDevice = nullptr;
     uint8_t                     fBARIndex = 0;
-    IOBufferMemoryDescriptor*   fPoolMemory = nullptr;
-    IOMemoryMap*                fPoolMap = nullptr;
-    void*                       fPoolVirtualAddress = nullptr;
-    uint64_t                    fPoolPhysicalAddress = 0;
-    uint32_t                    fPoolSizeBytes = 0;
-    uint32_t                    fDescriptorCount = 0;
-    static constexpr uint32_t   kMaxFreeSpans = 32;
-    FreeSpan                    fFreeBlocks[kMaxFreeSpans] = {};
-    uint32_t                    fFreeSpanCount = 0;
+    
+    // Buffer list management
+    DescriptorBuffer*           fBufferList = nullptr;  // Head of buffer list
+    DescriptorBuffer*           fCurrentBuffer = nullptr;  // Current buffer for allocations
+    size_t                      fTotalAllocation = 0;
+    
     bool                        fInitialized = false;
 };

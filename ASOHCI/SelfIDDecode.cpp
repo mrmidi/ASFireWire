@@ -33,6 +33,13 @@ Result Decode(const uint32_t* buffer, uint32_t quadletCount)
   // OHCI 1.1 §11.3: buffer[0] is header (generation|timestamp). Generation often matches SelfIDCount bits [23:16].
   out.generation = (quadletCount > 0) ? ((buffer[0] >> 16) & 0xFFu) : 0;
 
+  // DEBUG: Log buffer contents (removed for DriverKit compatibility)
+  // printf("SelfID::Decode: buffer[0]=0x%08x gen=%u, quadletCount=%u\n", buffer[0], out.generation, quadletCount);
+  for (uint32_t i = 1; i < quadletCount && i < 16; ++i) {
+    uint32_t tag = (buffer[i] >> 30) & 0x3;
+    // printf("SelfID::Decode: buffer[%u]=0x%08x tag=%u\n", i, buffer[i], tag);
+  }
+
   // Discover all tagged Self-ID packets (tag=10b) starting from index 1.
   // Also attempt a minimal inverse check (next quadlet equals bitwise not).
   bool integrityOk = true;
@@ -41,18 +48,23 @@ Result Decode(const uint32_t* buffer, uint32_t quadletCount)
 
   for (uint32_t i = 1; i < quadletCount; ++i) {
     uint32_t q = buffer[i];
+    uint32_t tag = (q >> 30) & 0x3;
     if ((q & kSelfID_Tag_Mask) == kSelfID_Tag_SelfID) {
+      // printf("SelfID::Decode: Found Self-ID packet at index %u: 0x%08x\n", i, q);
       sidIdx.push_back(i);
       if (i + 1 < quadletCount) {
         uint32_t inv = buffer[i + 1];
         if ((inv != ~q) && (((inv >> 30) & 0x3u) != 3u)) {
           integrityOk = false; // missing strict inverse and not tagged as 11b
+          // printf("SelfID::Decode: Integrity check failed for packet at %u\n", i);
         }
       }
     }
   }
 
   out.integrityOk = integrityOk;
+  // printf("SelfID::Decode: Found %zu Self-ID packets, integrityOk=%d\n", sidIdx.size(), integrityOk ? 1 : 0);
+  
   if (sidIdx.empty()) {
     out.warnings.push_back({"No Self-ID packets (tag=10b) found"});
     return out;

@@ -11,7 +11,6 @@
 #include "OHCIConstants.hpp"
 
 kern_return_t ASOHCIATManager::Initialize(IOPCIDevice* pci, uint8_t barIndex, 
-                                         uint32_t poolBytes,
                                          const ATRetryPolicy& retry,
                                          const ATFairnessPolicy& fair,
                                          const ATPipelinePolicy& pipe)
@@ -29,8 +28,8 @@ kern_return_t ASOHCIATManager::Initialize(IOPCIDevice* pci, uint8_t barIndex,
     
     kern_return_t result;
     
-    // Initialize descriptor pool
-    result = _pool.Initialize(pci, barIndex, poolBytes);
+    // Initialize descriptor pool with dynamic allocation (Linux-style)
+    result = _pool.Initialize(pci, barIndex);
     if (result != kIOReturnSuccess) {
         os_log(ASLog(), "ASOHCIATManager: Failed to initialize descriptor pool: 0x%x", result);
         return result;
@@ -54,8 +53,8 @@ kern_return_t ASOHCIATManager::Initialize(IOPCIDevice* pci, uint8_t barIndex,
     _req.ApplyPolicy(retry, fair, pipe);
     _rsp.ApplyPolicy(retry, fair, pipe);
     
-    os_log(ASLog(), "ASOHCIATManager: Initialized with %u byte pool, pipelining=%s, maxOutstanding=%u",
-           poolBytes, pipe.allowPipelining ? "enabled" : "disabled", pipe.maxOutstanding);
+    os_log(ASLog(), "ASOHCIATManager: Initialized with dynamic allocation, pipelining=%s, maxOutstanding=%u",
+           pipe.allowPipelining ? "enabled" : "disabled", pipe.maxOutstanding);
     
     return kIOReturnSuccess;
 }

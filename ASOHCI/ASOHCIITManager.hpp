@@ -17,7 +17,6 @@ public:
     // Discover available IT contexts, init shared pool, apply defaults.
     virtual kern_return_t Initialize(IOPCIDevice* pci,
                                      uint8_t barIndex,
-                                     uint32_t poolBytes,
                                      const ITPolicy& defaultPolicy);
 
     virtual kern_return_t StartAll();

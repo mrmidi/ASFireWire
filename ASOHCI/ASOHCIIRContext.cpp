@@ -334,3 +334,31 @@ void ASOHCIIRContext::UpdateStatsOnError(uint16_t status)
         os_log(ASLog(), "IR%u: Error status 0x%x", _ctxIndex, status);
     }
 }
+
+void ASOHCIIRContext::OnBusReset()
+{
+    // Clear context state on bus reset per OHCI §10.5
+    // Stop context and clear any pending buffers
+    if (IsRunning()) {
+        // Set run bit to false to stop context
+        WriteContextClear(kOHCI_ContextControl_run);
+    }
+    
+    // Reset buffer ring tracking
+    _bufferHead = 0;
+    _bufferTail = 0;
+    _bufferRingFull = false;
+    
+    // Clear completion callback state if set
+    _completionCallback = nullptr;
+    _completionContext = nullptr;
+    
+    os_log(ASLog(), "IRContext: ctx%u reset on bus reset", _ctxIndex);
+}
+
+void ASOHCIIRContext::ResetStats()
+{
+    // Reset all statistics counters
+    _stats = {};
+    os_log(ASLog(), "IRContext: ctx%u stats reset", _ctxIndex);
+}

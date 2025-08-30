@@ -18,6 +18,7 @@ enum class ITSpeed : uint8_t {
 enum class ITIntPolicy : uint8_t {
     kNever  = 0,    // i=00: No interrupt on completion/skip
     kAlways = 3,    // i=11: Interrupt on completion or skipAddress taken
+    kOnCompletion = 3,  // Alias for kAlways - interrupt on completion
 };
 
 struct ITQueueOptions {
@@ -32,9 +33,11 @@ struct ITQueueOptions {
 
 // High-level policy toggles for a context
 struct ITPolicy {
-    bool     cycleMatchEnable = false;  // §9.2
-    uint8_t  startOnCycle     = 0;      // §9.2
-    bool     dropIfLate       = true;   // Software policy only: if packet missed its cycle, do not enqueue retroactively
-    uint32_t underrunBudgetUs = 0;      // controller-specific: how soon to re-arm after underrun
+    bool     cycleMatchEnable = false;      // §9.2
+    bool     cycleMatchEnabled = false;     // Alias for cycleMatchEnable
+    uint8_t  startOnCycle     = 0;          // §9.2
+    bool     dropIfLate       = true;       // Software policy only: if packet missed its cycle, do not enqueue retroactively
+    uint32_t underrunBudgetUs = 0;          // controller-specific: how soon to re-arm after underrun
+    ITIntPolicy defaultInterruptPolicy = ITIntPolicy::kOnCompletion; // Default interrupt policy for packets
 };
 

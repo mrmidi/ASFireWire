@@ -123,6 +123,7 @@ kern_return_t SelfIDManager::Arm(bool clearCount)
   os_log(ASLog(), "ASOHCI: SelfID Arm readback SelfIDBuffer=0x%08x", rb);
   _armed = true;
   _inProgress = true;
+  os_log(ASLog(), "ASOHCI: SelfID armed successfully (clearCount=%d)", clearCount);
   return kIOReturnSuccess;
 }
 
@@ -155,19 +156,45 @@ void SelfIDManager::verifyGenerationAndDispatch(uint32_t countReg)
   uint32_t lenQuads = static_cast<uint32_t>(_map->GetLength() / sizeof(uint32_t));
   if (sizeQuads > lenQuads) sizeQuads = lenQuads; // clamp
 
+  os_log(ASLog(), "ASOHCI: SelfIDComplete: Decoding buffer len=%u quads, processing %u quads", lenQuads, sizeQuads);
+  
+  // DEBUG: Log first few quadlets
+  for (uint32_t i = 0; i < sizeQuads && i < 8; ++i) {
+    os_log(ASLog(), "ASOHCI: SelfID buffer[%u]=0x%08x", i, buf[i]);
+  }
+
   // Decode now (can be heavy). If needed, the caller can route to default queue instead.
   SelfID::Result res = SelfID::Decode(buf, sizeQuads);
   // Prefer generation from count register as authoritative.
   res.generation = gen1;
 
-  if (_onDecode) _onDecode(res);
+  os_log(ASLog(), "ASOHCI: SelfID decode result: nodes=%lu integrityOk=%d warnings=%lu", 
+         res.nodes.size(), res.integrityOk, res.warnings.size());
+  
+  for (const auto& warning : res.warnings) {
+    os_log(ASLog(), "ASOHCI: SelfID warning: %s", warning.message.c_str());
+  }
+
+  if (_onDecode) {
+    os_log(ASLog(), "ASOHCI: Calling onDecode callback");
+    _onDecode(res);
+  } else {
+    os_log(ASLog(), "ASOHCI: No onDecode callback set");
+  }
 
   // Re-read generation to detect mid-decode resets
   uint32_t count2 = 0; _pci->MemoryRead32(_bar, kOHCI_SelfIDCount, &count2);
   uint32_t gen2 = (count2 & kOHCI_SelfIDCount_selfIDGeneration) >> 16;
   if (gen1 == gen2) {
     _lastGeneration = gen1;
-    if (_onStable) _onStable(res);
+    if (_onStable) {
+      os_log(ASLog(), "ASOHCI: Calling onStable callback");
+      _onStable(res);
+    } else {
+      os_log(ASLog(), "ASOHCI: No onStable callback set");
+    }
+  } else {
+    os_log(ASLog(), "ASOHCI: Generation changed during decode (gen1=%u gen2=%u)", gen1, gen2);
   }
 
   _inProgress = false;
@@ -175,5 +202,6 @@ void SelfIDManager::verifyGenerationAndDispatch(uint32_t countReg)
 
 void SelfIDManager::OnSelfIDComplete(uint32_t selfIDCountRegValue)
 {
+  os_log(ASLog(), "ASOHCI: OnSelfIDComplete called with countReg=0x%08x", selfIDCountRegValue);
   verifyGenerationAndDispatch(selfIDCountRegValue);
 }

@@ -85,11 +85,17 @@ private:
         // PHY access helper
         class ASOHCIPHYAccess*     phyAccess     = nullptr;
 
-        // DMA Contexts
+        // DMA Contexts (legacy - will be managed by context managers)
         class ASOHCIARContext*     arRequestContext  = nullptr;
         class ASOHCIARContext*     arResponseContext = nullptr;
         class ASOHCIATContext*     atRequestContext  = nullptr;
         class ASOHCIATContext*     atResponseContext = nullptr;
+
+        // Context Managers (OHCI 1.1 DMA orchestration)
+        class ASOHCIARManager*     arManager        = nullptr;
+        class ASOHCIATManager*     atManager        = nullptr;
+        class ASOHCIIRManager*     irManager        = nullptr;
+        class ASOHCIITManager*     itManager        = nullptr;
 
         // Managers (factored subsystems)
         class SelfIDManager*       selfIDManager   = nullptr;

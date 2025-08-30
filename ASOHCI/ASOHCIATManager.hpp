@@ -21,7 +21,6 @@ public:
     ~ASOHCIATManager() = default;
     // Bring-up: create pool, init contexts, set policies
     virtual kern_return_t Initialize(IOPCIDevice* pci, uint8_t barIndex,
-                                     uint32_t poolBytes,
                                      const ATRetryPolicy& retry,
                                      const ATFairnessPolicy& fair,
                                      const ATPipelinePolicy& pipe);

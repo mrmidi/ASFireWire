@@ -51,9 +51,12 @@ struct IRQueueOptions {
 
 // High-level policy for IR context management
 struct IRPolicy {
-    IRChannelFilter channelFilter{};    // Channel and tag filtering setup
+    IRChannelFilter channelFilter{};        // Channel and tag filtering setup
     bool            dropOnOverrun = true;       // Drop packets if buffers full
     uint32_t        bufferWatermarkUs = 1000;   // Buffer fullness threshold (microseconds)
+    uint32_t        bufferFillWatermark = 4;    // Refill when N or fewer descriptors free
+    bool            headerSplitting = false;    // Include isochronous header in data
+    bool            timestampingEnabled = true; // Enable timestamp trailers
     bool            enableErrorLogging = true;  // Log packet errors and drops
 };
 
@@ -83,6 +86,6 @@ struct IRDualBufferInfo {
     uint16_t firstSize;                 // Size of first portion per packet
     uint32_t firstBufferPA;             // Physical address of first buffer
     uint32_t secondBufferPA;            // Physical address of second buffer
-    uint16_t firstReqCount;             // First buffer size
-    uint16_t secondReqCount;            // Second buffer size
+    uint16_t firstReqCount;             // First buffer request count
+    uint16_t secondReqCount;            // Second buffer request count
 };
