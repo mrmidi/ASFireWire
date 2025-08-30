@@ -8,4 +8,3 @@
 namespace LogUtils {
 void DumpIntEvent(uint32_t ev);
 }
-

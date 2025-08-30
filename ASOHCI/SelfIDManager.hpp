@@ -13,9 +13,9 @@
 
 #pragma once
 
-#include <stdint.h>
-#include <functional>
 #include <DriverKit/IOLib.h> // kern_return_t
+#include <functional>
+#include <stdint.h>
 
 // Global forward declarations for DriverKit classes (pointer use only)
 class IOPCIDevice;
@@ -25,24 +25,32 @@ class IODMACommand;
 struct IOAddressSegment;
 
 class Topology; // fwd
-namespace SelfID { struct Result; }
+namespace SelfID {
+struct Result;
+}
 
 // Use global DriverKit types directly (defined in :: scope)
 
 class SelfIDManager {
 public:
-  using DecodeCallback = std::function<void(const SelfID::Result&)>; // every decode
-  using StableCallback = std::function<void(const SelfID::Result&)>; // when gen stable
+  using DecodeCallback =
+      std::function<void(const SelfID::Result &)>; // every decode
+  using StableCallback =
+      std::function<void(const SelfID::Result &)>; // when gen stable
 
   SelfIDManager() = default;
   ~SelfIDManager() = default;
 
-  SelfIDManager(const SelfIDManager&) = delete;
-  SelfIDManager& operator=(const SelfIDManager&) = delete;
+  // Required for OSSharedPtr compatibility
+  void release() { delete this; }
+
+  SelfIDManager(const SelfIDManager &) = delete;
+  SelfIDManager &operator=(const SelfIDManager &) = delete;
 
   // Initialize DMA resources and program the controller with buffer address.
   // bufferBytes: size to allocate for self-ID buffer (caller chooses policy).
-  kern_return_t Initialize(::IOPCIDevice* pci, uint8_t barIndex, uint32_t bufferBytes);
+  kern_return_t Initialize(::IOPCIDevice *pci, uint8_t barIndex,
+                           uint32_t bufferBytes);
 
   // Free mappings/DMA and scrub controller programming.
   void Teardown();
@@ -62,10 +70,10 @@ public:
   }
 
   // Accessors (debug/telemetry).
-  bool     IsArmed() const { return _armed; }
-  bool     InProgress() const { return _inProgress; }
+  bool IsArmed() const { return _armed; }
+  bool InProgress() const { return _inProgress; }
   uint32_t LastGeneration() const { return _lastGeneration; }
-  uint64_t BufferIOVA() const;      // returns 0 if uninitialized
+  uint64_t BufferIOVA() const; // returns 0 if uninitialized
   uint32_t BufferBytes() const { return _bufBytes; }
 
 private:
@@ -74,22 +82,23 @@ private:
 
 private:
   // Owned resources
-  ::IOPCIDevice*             _pci = nullptr;
-  uint8_t                    _bar = 0;
+  ::IOPCIDevice *_pci = nullptr;
+  uint8_t _bar = 0;
 
-  ::IOBufferMemoryDescriptor*  _buf = nullptr;
-  ::IOMemoryMap*               _map = nullptr;
-  ::IODMACommand*              _dma = nullptr;
-  ::IOAddressSegment*          _seg = nullptr; // points to first segment (impl allocates)
+  ::IOBufferMemoryDescriptor *_buf = nullptr;
+  ::IOMemoryMap *_map = nullptr;
+  ::IODMACommand *_dma = nullptr;
+  ::IOAddressSegment *_seg =
+      nullptr; // points to first segment (impl allocates)
 
-  uint32_t                   _bufBytes = 0;
+  uint32_t _bufBytes = 0;
 
   // State
-  bool                       _armed = false;
-  bool                       _inProgress = false;
-  uint32_t                   _lastGeneration = 0;
+  bool _armed = false;
+  bool _inProgress = false;
+  uint32_t _lastGeneration = 0;
 
   // Callbacks
-  DecodeCallback             _onDecode;
-  StableCallback             _onStable;
+  DecodeCallback _onDecode;
+  StableCallback _onStable;
 };

@@ -15,30 +15,29 @@
 class ASOHCIContextBase;
 
 class ASOHCIInterruptRouter : public OSObject {
-    OSDeclareDefaultStructors(ASOHCIInterruptRouter)
+  OSDeclareDefaultStructors(ASOHCIInterruptRouter)
 
-public:
-    // Register contexts (any may be nullptr)
-    virtual void SetATRequest(ASOHCIContextBase* c);
-    virtual void SetATResponse(ASOHCIContextBase* c);
-    virtual void SetARRequest(ASOHCIContextBase* c);
-    virtual void SetARResponse(ASOHCIContextBase* c);
+      public :
+      // Register contexts (any may be nullptr)
+      virtual void SetATRequest(ASOHCIContextBase *c);
+  virtual void SetATResponse(ASOHCIContextBase *c);
+  virtual void SetARRequest(ASOHCIContextBase *c);
+  virtual void SetARResponse(ASOHCIContextBase *c);
 
-    // Dispatchers called from the controller’s ISR path
-    // AT Tx path (§7.6)
-    virtual void OnAT_Request_TxComplete();
-    virtual void OnAT_Response_TxComplete();
+  // Dispatchers called from the controller’s ISR path
+  // AT Tx path (§7.6)
+  virtual void OnAT_Request_TxComplete();
+  virtual void OnAT_Response_TxComplete();
 
-    // AR Rx path (§8.6) — packet arrivals vs buffer completions
-    virtual void OnAR_Request_PacketArrived();
-    virtual void OnAR_Response_PacketArrived();
-    virtual void OnAR_Request_BufferComplete();
-    virtual void OnAR_Response_BufferComplete();
+  // AR Rx path (§8.6) — packet arrivals vs buffer completions
+  virtual void OnAR_Request_PacketArrived();
+  virtual void OnAR_Response_PacketArrived();
+  virtual void OnAR_Request_BufferComplete();
+  virtual void OnAR_Response_BufferComplete();
 
 private:
-    ASOHCIContextBase* _atReq = nullptr;
-    ASOHCIContextBase* _atRsp = nullptr;
-    ASOHCIContextBase* _arReq = nullptr;
-    ASOHCIContextBase* _arRsp = nullptr;
+  ASOHCIContextBase *_atReq = nullptr;
+  ASOHCIContextBase *_atRsp = nullptr;
+  ASOHCIContextBase *_arReq = nullptr;
+  ASOHCIContextBase *_arRsp = nullptr;
 };
-

@@ -26,7 +26,7 @@ struct PhyId {
 // Alias the Port code used by topology (kept identical to SelfID::PortCode).
 enum class PortState : uint8_t {
   NotPresent = 0,
-  NotActive  = 1,
-  Parent     = 2,
-  Child      = 3
+  NotActive = 1,
+  Parent = 2,
+  Child = 3
 };
