@@ -32,6 +32,7 @@
 #include <DriverKit/IOService.h>
 
 // Include project headers
+#include "ASOHCIDriverTypes.hpp"
 #include "Core/ASOHCIIVars.h"
 #include <DriverKit/OSMetaClass.h>
 
@@ -54,8 +55,6 @@
 
 // Forward declarations used early
 struct ASOHCI_IVars;
-enum class ASOHCIState : uint32_t;
-
 static kern_return_t TransitionState(ASOHCI_IVars *, ASOHCIState, const char *);
 static bool IsOperationAllowed(ASOHCI_IVars *, ASOHCIState);
 static const char *StateToString(ASOHCIState);
@@ -301,19 +300,18 @@ void ASOHCI::CleanupOnError() {
 // Validate ivars and device state
 static kern_return_t ValidateState(ASOHCI_IVars *ivars, const char *operation) {
   if (!ivars) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - ivars not allocated", operation);
+    os_log(ASLog(), "ASOHCI: %s - ivars not allocated", operation);
     return kIOReturnNoResources;
   }
 
   if (__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - operation blocked, driver stopping",
+    os_log(ASLog(), "ASOHCI: %s - operation blocked, driver stopping",
            operation);
     return kIOReturnNotReady;
   }
 
   if (__atomic_load_n(&ivars->deviceGone, __ATOMIC_ACQUIRE)) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - operation blocked, device gone",
-           operation);
+    os_log(ASLog(), "ASOHCI: %s - operation blocked, device gone", operation);
     return kIOReturnNoDevice;
   }
 
@@ -321,13 +319,13 @@ static kern_return_t ValidateState(ASOHCI_IVars *ivars, const char *operation) {
   ASOHCIState currentState = static_cast<ASOHCIState>(
       __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
   if (currentState == ASOHCIState::Dead) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - operation blocked, driver is dead",
+    os_log(ASLog(), "ASOHCI: %s - operation blocked, driver is dead",
            operation);
     return kIOReturnNotReady;
   }
 
   if (!ivars->pciDevice) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - PCI device not available", operation);
+    os_log(ASLog(), "ASOHCI: %s - PCI device not available", operation);
     return kIOReturnNoDevice;
   }
 
@@ -361,10 +359,10 @@ static void LogError(kern_return_t error, const char *operation,
   }
 
   if (details) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s failed (%s) - %s", operation,
-           errorString, details);
+    os_log(ASLog(), "ASOHCI: %s failed (%s) - %s", operation, errorString,
+           details);
   } else {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s failed (%s)", operation, errorString);
+    os_log(ASLog(), "ASOHCI: %s failed (%s)", operation, errorString);
   }
 }
 
@@ -379,8 +377,8 @@ static kern_return_t WaitForCondition(bool (^condition)(void),
     IOSleep(1);
   }
 
-  os_log(OS_LOG_DEFAULT, "ASOHCI: Timeout waiting for %s after %u ms",
-         description, timeoutMs);
+  os_log(ASLog(), "ASOHCI: Timeout waiting for %s after %u ms", description,
+         timeoutMs);
   return kIOReturnTimeout;
 }
 
@@ -1210,7 +1208,7 @@ static kern_return_t TransitionState(ASOHCI_IVars *ivars, ASOHCIState newState,
   }
 
   if (!validTransition) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: Invalid state transition %s -> %s (%s)",
+    os_log(ASLog(), "ASOHCI: Invalid state transition %s -> %s (%s)",
            ivars->stateDescription, StateToString(newState), description);
     return kIOReturnInvalid;
   }

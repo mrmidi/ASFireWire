@@ -88,7 +88,7 @@ struct ASOHCI_IVars {
   uint64_t lastCycleInconsistentTime = 0;
 
   // PHY access helper - smart pointer for automatic cleanup
-  OSSharedPtr<ASOHCIPHYAccess> phyAccess;
+  std::unique_ptr<ASOHCIPHYAccess> phyAccess;
 
   // DMA Contexts (legacy - will be managed by context managers) - using
   // std::unique_ptr for exclusive ownership of non-OSObject types
