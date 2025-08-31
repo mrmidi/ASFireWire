@@ -20,8 +20,8 @@
 #include <PCIDriverKit/IOPCIDevice.iig>
 #include "ASOHCIDriverTypes.hpp"
 
-// Forward declaration for Link API
-// class ASOHCILinkAPI;
+// Forward declarations for Controller interface
+class ASFireWireController;
 
 
 class ASOHCI : public IOService
@@ -38,6 +38,60 @@ public:
 
     // Public API methods
     virtual kern_return_t CopyBridgeLogs(OSData** outData) LOCALONLY;
+
+    // =====================================================================================
+    // Link Interface - Transaction Primitives (PREPARATION.md §155-249)
+    // =====================================================================================
+    
+    // Controller registration
+    virtual kern_return_t SetController(ASFireWireController* controller) LOCALONLY;
+    
+    // Hardware state access
+    virtual uint16_t GetNodeID() const LOCALONLY;
+    virtual uint64_t GetLocalGUID() const LOCALONLY;
+    virtual uint32_t GetGeneration() const LOCALONLY;
+    virtual kern_return_t GetCycleTime(uint32_t* cycleTime) LOCALONLY;
+    
+    // Transaction primitives for Config ROM reading
+    virtual kern_return_t ReadQuad(uint16_t nodeID, uint16_t addrHi, uint32_t addrLo,
+                                   uint32_t* outValue, uint32_t generation, uint32_t speed) LOCALONLY;
+    virtual kern_return_t ReadBlock(uint16_t nodeID, uint16_t addrHi, uint32_t addrLo,
+                                    IOMemoryDescriptor* buffer, IOByteCount offset,
+                                    uint32_t length, uint32_t generation, uint32_t speed) LOCALONLY;
+    virtual kern_return_t WriteQuad(uint16_t nodeID, uint16_t addrHi, uint32_t addrLo,
+                                    uint32_t value, uint32_t generation, uint32_t speed) LOCALONLY;
+    
+    // Bus management operations
+    virtual kern_return_t ResetBus(bool forceIBR = false) LOCALONLY;
+    virtual kern_return_t SendPHYPacket(uint32_t quadlet) LOCALONLY;
+    virtual kern_return_t SetContender(bool enable) LOCALONLY;
+    virtual kern_return_t SetRootHoldOff(bool enable) LOCALONLY;
+    
+    // Config ROM management
+    virtual kern_return_t UpdateConfigROM(IOMemoryDescriptor* romData) LOCALONLY;
+
+protected:
+    // =====================================================================================
+    // Controller Event Delivery (PREPARATION.md §222-241)
+    // =====================================================================================
+    
+    // Bus Events (called from interrupt context)
+    virtual void OnBusReset(uint32_t generation) LOCALONLY;
+    virtual void OnSelfIDsComplete(const uint32_t* selfIDQuads, uint32_t count, 
+                                   uint32_t generation) LOCALONLY;
+    virtual void OnCycleInconsistent(uint32_t cycleTime) LOCALONLY;
+    
+    // Transaction Completion
+    virtual void OnTransactionComplete(void* completionContext, 
+                                       kern_return_t status,
+                                       uint32_t responseCode,
+                                       IOMemoryDescriptor* responseData) LOCALONLY;
+    
+    // Async Packet Reception
+    virtual void OnAsyncPacketReceived(uint16_t sourceNodeID, uint16_t destAddrHi,
+                                       uint32_t destAddrLo, uint32_t tCode,
+                                       IOMemoryDescriptor* packetData,
+                                       uint32_t generation, uint32_t speed) LOCALONLY;
 
 private:
     // State machine methods

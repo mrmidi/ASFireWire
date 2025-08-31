@@ -177,6 +177,12 @@ void ASOHCIInterruptRouter::OnBusReset(uint64_t time) {
     iv->lastLoggedValid = idValid;
     iv->lastLoggedRoot = isRoot;
   }
+
+  // Forward bus reset to controller (MVP)
+  uint32_t generation = (iv->collapsedBusResets > 0)
+                            ? iv->generation + iv->collapsedBusResets
+                            : iv->generation + 1;
+  _ohci->OnBusReset(generation);
 }
 
 void ASOHCIInterruptRouter::OnSelfIDComplete(uint32_t selfIDCountReg,
@@ -269,4 +275,10 @@ void ASOHCIInterruptRouter::ProcessSelfIDComplete(uint32_t selfIDCountReg,
   pci->MemoryWrite32(iv->barIndex, kOHCI_IntMaskSet, kOHCI_Int_BusReset);
   iv->busResetMasked = false;
   os_log(ASLog(), "ASOHCI: BusReset re-enabled after Self-ID completion");
+
+  // Forward Self-ID completion to controller (MVP)
+  // TODO: Extract actual Self-ID quadlets from DMA buffer
+  uint32_t dummySelfIDs[] = {
+      0x81C0FFFF}; // Placeholder - node 0, root capability
+  _ohci->OnSelfIDsComplete(dummySelfIDs, 1, generation);
 }

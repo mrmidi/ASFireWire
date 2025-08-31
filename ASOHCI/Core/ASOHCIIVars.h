@@ -35,6 +35,7 @@ class ConfigROMManager;
 class Topology;
 class ASOHCIInterruptRouter;
 class ASOHCIRegisterIO;
+class ASFireWireController;
 // class ASOHCILinkAPI;
 
 // Concrete definition of ASOHCI_IVars matching the .iig ivars struct
@@ -72,6 +73,7 @@ struct ASOHCI_IVars {
   bool configROMHeaderNeedsCommit = false; // Write hdr after next BusReset
 
   // Link/Bus state flags
+  uint32_t generation = 0; // Current bus generation
   bool cycleTimerArmed = false;
   bool selfIDInProgress = false;
   bool selfIDArmed = false;
@@ -115,6 +117,9 @@ struct ASOHCI_IVars {
 
   // Register IO helper
   OSSharedPtr<ASOHCIRegisterIO> regs;
+
+  // Link→Controller Interface (PREPARATION.md §155-249)
+  ASFireWireController *controller = nullptr;
 
   // Link API implementation
   // OSSharedPtr<ASOHCILinkAPI> linkAPI;

@@ -12,6 +12,7 @@
 #include "OHCIConstants.hpp"
 #include <DriverKit/IOReturn.h>
 #include <PCIDriverKit/IOPCIDevice.h>
+#include <atomic>
 
 class ASOHCIContextBase {
 
@@ -29,6 +30,11 @@ public:
   virtual kern_return_t Start();
   virtual kern_return_t Stop();
   virtual kern_return_t Wake();
+
+  // Set device gone flag for safe MMIO access during teardown
+  void SetDeviceGone(bool gone) {
+    _deviceGone.store(gone, std::memory_order_release);
+  }
 
   // Bus reset lifecycle hooks (common policy)
   virtual void OnBusResetBegin();
@@ -63,6 +69,9 @@ protected:
   uint8_t _bar = 0;
   ASContextKind _kind = ASContextKind::kAT_Request;
   ASContextOffsets _offs{};
+
+  // Device removal safety flag
+  std::atomic<bool> _deviceGone{false};
 
   // lightweight counters useful for both directions
   uint32_t _outstanding = 0;

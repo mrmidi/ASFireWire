@@ -81,14 +81,29 @@ kern_return_t ASOHCIIRManager::StopAll() {
   if (!_pci)
     return kIOReturnNotReady;
 
-  // Clear all interrupt mask bits
-  _pci->MemoryWrite32(_bar, kOHCI_IsoRecvIntMaskClear, 0xFFFFFFFFu);
+  // If the device is gone, do not touch MMIO at all. Just stop local state.
+  if (_deviceGone.load(std::memory_order_acquire)) {
+    for (uint32_t i = 0; i < _numCtx; ++i) {
+      if (_ctx[i]) {
+        _ctx[i]->SetDeviceGone(true);
+        _ctx[i]->Stop();
+      }
+      _contextStates[i].active = false;
+    }
+    os_log(ASLog(), "IRManager: StopAll (device gone; MMIO skipped)");
+    return kIOReturnSuccess;
+  }
 
-  // Stop all contexts
+  // Otherwise, quiesce contexts before masking:
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i]->Stop();
+    if (_ctx[i]) {
+      _ctx[i]->Stop(); // This should clear RUN, wait ACTIVE==0 with timeout
+    }
     _contextStates[i].active = false;
   }
+
+  // Now clear the global per-class mask (optional if ISR is already disabled)
+  _pci->MemoryWrite32(_bar, kOHCI_IsoRecvIntMaskClear, 0xFFFFFFFFu);
 
   os_log(ASLog(), "IRManager: StopAll");
   return kIOReturnSuccess;

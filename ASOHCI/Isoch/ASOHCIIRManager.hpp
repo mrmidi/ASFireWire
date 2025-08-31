@@ -12,6 +12,7 @@
 #include "ASOHCIIRDescriptor.hpp"
 #include "ASOHCIIRTypes.hpp"
 #include <DriverKit/OSSharedPtr.h>
+#include <atomic>
 #include <memory>
 
 class ASOHCIIRManager {
@@ -64,9 +65,10 @@ public:
   virtual const IRStats &GetContextStats(uint32_t ctxId) const;
   virtual void ResetContextStats(uint32_t ctxId);
 
-  // Context discovery
-  uint32_t NumContexts() const { return _numCtx; }
-  bool IsContextValid(uint32_t ctxId) const { return ctxId < _numCtx; }
+  // Set device gone flag for safe MMIO access
+  void SetDeviceGone(bool gone) {
+    _deviceGone.store(gone, std::memory_order_release);
+  }
 
 protected:
   // Probe isoRxIntMask to figure out how many IR contexts exist (§6.4)
@@ -87,6 +89,7 @@ protected:
 private:
   OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
+  std::atomic<bool> _deviceGone{false}; // Track device removal for safe MMIO
 
   std::unique_ptr<ASOHCIIRContext>
       _ctx[32]; // upper bound; actual count discovered

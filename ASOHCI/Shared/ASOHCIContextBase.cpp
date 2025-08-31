@@ -58,6 +58,13 @@ kern_return_t ASOHCIContextBase::Stop() {
   if (!_pci)
     return kIOReturnNotReady;
 
+  // If device is gone, skip MMIO operations to prevent crashes
+  if (_deviceGone.load(std::memory_order_acquire)) {
+    os_log(ASLog(), "ASOHCIContextBase: Stop skipped - device gone (kind=%u)",
+           static_cast<unsigned>(_kind));
+    return kIOReturnSuccess;
+  }
+
   WriteContextClear(kOHCI_ContextControl_run);
 
   const uint32_t kMaxWaitMS = 100;
@@ -86,7 +93,9 @@ kern_return_t ASOHCIContextBase::Wake() {
 
 void ASOHCIContextBase::OnBusResetBegin() {
   // Common policy: stop acquiring during reset window
-  WriteContextClear(kOHCI_ContextControl_run);
+  if (!_deviceGone.load(std::memory_order_acquire)) {
+    WriteContextClear(kOHCI_ContextControl_run);
+  }
 }
 
 void ASOHCIContextBase::OnBusResetEnd() { _outstanding = 0; }
@@ -106,6 +115,11 @@ bool ASOHCIContextBase::IsActive() const {
 uint32_t ASOHCIContextBase::ReadContextSet() const {
   if (!_pci)
     return 0;
+
+  // Skip MMIO if device is gone
+  if (_deviceGone.load(std::memory_order_acquire))
+    return 0;
+
   uint32_t v = 0;
   _pci->MemoryRead32(_bar, _offs.contextBase, &v);
   return v;
@@ -115,6 +129,10 @@ kern_return_t ASOHCIContextBase::WriteCommandPtr(uint32_t descriptorAddress,
                                                  uint8_t zNibble) {
   if (!_pci)
     return kIOReturnNotReady;
+
+  // Skip MMIO if device is gone
+  if (_deviceGone.load(std::memory_order_acquire))
+    return kIOReturnSuccess;
 
   if ((descriptorAddress & 0xF) != 0) {
     os_log(ASLog(), "ASOHCIContextBase: CommandPtr addr 0x%x not 16B aligned",
@@ -136,14 +154,14 @@ kern_return_t ASOHCIContextBase::WriteCommandPtr(uint32_t descriptorAddress,
 }
 
 void ASOHCIContextBase::WriteContextSet(uint32_t value) {
-  if (_pci) {
+  if (_pci && !_deviceGone.load(std::memory_order_acquire)) {
     _pci->MemoryWrite32(_bar, _offs.contextControlSet, value);
     OHCI_MEMORY_BARRIER(); // Ensure hardware sees context control changes
   }
 }
 
 void ASOHCIContextBase::WriteContextClear(uint32_t value) {
-  if (_pci) {
+  if (_pci && !_deviceGone.load(std::memory_order_acquire)) {
     _pci->MemoryWrite32(_bar, _offs.contextControlClear, value);
     OHCI_MEMORY_BARRIER(); // Ensure hardware sees context control changes
   }
@@ -152,6 +170,8 @@ void ASOHCIContextBase::WriteContextClear(uint32_t value) {
 // (duplicate definition removed)
 
 void ASOHCIContextBase::RecoverDeadContext() {
-  WriteContextClear(kOHCI_ContextControl_run);
+  if (!_deviceGone.load(std::memory_order_acquire)) {
+    WriteContextClear(kOHCI_ContextControl_run);
+  }
   _outstanding = 0;
 }

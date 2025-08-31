@@ -1,0 +1,109 @@
+//
+//  ASFireWireController.iig
+//  ASFireWire Controller - Bus orchestration layer
+//
+//  Created by ASFireWire MVP - Controller layer separation from ASOHCI
+//  Based on CONTROLLER.md architecture and PREPARATION.md interface design
+//
+
+#ifndef ASFireWireController_h
+#define ASFireWireController_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+#include <DriverKit/OSAction.iig>
+#include <DriverKit/IODispatchQueue.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
+
+// Forward declarations
+class ASOHCI;
+
+class ASFireWireController : public IOService
+{
+public:
+    // IOService lifecycle
+    virtual bool init() override;
+    virtual void free() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+
+    // =====================================================================================
+    // Bus State Management (CONTROLLER.md §242-243)
+    // =====================================================================================
+    
+    virtual kern_return_t ResetBus() LOCALONLY;
+    virtual kern_return_t GetBusInfo(uint32_t* generation, uint16_t* localNodeID, uint16_t* rootNodeID) LOCALONLY;
+
+    // =====================================================================================
+    // Device Access - Config ROM Reading (MVP Focus)
+    // =====================================================================================
+    
+    virtual kern_return_t ReadDeviceROM(uint16_t nodeID, uint32_t offset, 
+                                        uint32_t* quadlets, uint32_t count) LOCALONLY;
+    virtual kern_return_t GetDeviceCount(uint32_t* deviceCount) LOCALONLY;
+    virtual kern_return_t GetDeviceInfo(uint32_t deviceIndex, DeviceInfo* info) LOCALONLY;
+
+    // =====================================================================================
+    // Event Callbacks for User Space (Future - FWADaemon integration)
+    // =====================================================================================
+    
+    virtual void NotifyBusReset(uint32_t generation) LOCALONLY;
+    virtual void NotifyDeviceArrived(uint16_t nodeID, uint64_t guid) LOCALONLY;
+    virtual void NotifyDeviceDeparted(uint16_t nodeID, uint64_t guid) LOCALONLY;
+    virtual void NotifyTopologyChanged(uint32_t generation, uint32_t nodeCount) LOCALONLY;
+
+protected:
+    // =====================================================================================
+    // Event Handlers Called by ASOHCI (PREPARATION.md §257-266)
+    // =====================================================================================
+    
+    virtual void HandleBusReset(uint32_t generation) LOCALONLY;
+    virtual void HandleSelfIDs(const uint32_t* selfIDQuads, uint32_t count, uint32_t generation) LOCALONLY;
+    virtual void HandleAsyncPacket(const uint32_t* packetData, uint32_t quadCount, uint32_t speed) LOCALONLY;
+
+private:
+    // =====================================================================================
+    // Internal State Machine and Device Management
+    // =====================================================================================
+    
+    virtual void BuildTopology() LOCALONLY;
+    virtual void StartDeviceScan() LOCALONLY;
+    virtual void ProcessDeviceROM(uint16_t nodeID) LOCALONLY;
+    virtual void FinalizeBusScan() LOCALONLY;
+    virtual kern_return_t PublishDevice(uint16_t nodeID, uint64_t guid) LOCALONLY;
+
+    // Helper methods
+    virtual kern_return_t InitializeWorkQueue() LOCALONLY;
+    virtual kern_return_t CreateDeviceNub(uint16_t nodeID, uint64_t guid, 
+                                          uint32_t vendorID, uint32_t modelID) LOCALONLY;
+
+    // State validation
+    virtual kern_return_t ValidateState(const char* operation) LOCALONLY;
+    virtual bool IsDeviceKnown(uint16_t nodeID) LOCALONLY;
+
+    // NO ivars struct exposed - will be defined in implementation
+    // Key ivars include:
+    // - ASOHCI* fLink
+    // - BusState fBusState  
+    // - uint32_t fGeneration
+    // - uint16_t fLocalNodeID, fRootNodeID
+    // - DeviceRecord fDevices[63]
+    // - IODispatchQueue* fWorkQueue
+};
+
+// =====================================================================================
+// DeviceInfo Structure for Device Information Queries
+// =====================================================================================
+
+struct DeviceInfo {
+    uint16_t  nodeID;
+    uint64_t  guid;
+    uint32_t  vendorID;
+    uint32_t  modelID;
+    uint32_t  specID;
+    uint32_t  swVersion;
+    bool      romComplete;
+    char      reserved[3]; // Padding for alignment
+};
+
+#endif /* ASFireWireController_h */
