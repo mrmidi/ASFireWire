@@ -57,6 +57,11 @@ constexpr uint32_t kInterruptAlways = 0x3; // 2'b11
 
 class ASOHCIATProgramBuilder {
 public:
+  ASOHCIATProgramBuilder() = default;
+  ~ASOHCIATProgramBuilder() = default;
+
+  // Required for OSSharedPtr compatibility
+  void release() { delete this; }
   // Safe field encoding helpers
   static inline uint32_t EncodeCmd(uint32_t cmd) {
     return (cmd << ATDescField::kCmdShift) & ATDescField::kCmdMask;

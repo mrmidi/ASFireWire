@@ -18,6 +18,7 @@
 #include <DriverKit/IOMemoryMap.iig>
 #include <DriverKit/IODMACommand.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
+#include "ASOHCIIVars.h"
 
 // Forward declaration for Link API
 // class ASOHCILinkAPI;
@@ -39,6 +40,11 @@ public:
     virtual kern_return_t CopyBridgeLogs(OSData** outData) LOCALONLY;
 
 private:
+    // State machine methods
+    virtual ASOHCIState GetCurrentState() const LOCALONLY;
+    virtual const char* GetCurrentStateString() const LOCALONLY;
+    virtual bool IsInState(ASOHCIState state) const LOCALONLY;
+
     // Helper methods
     virtual void ArmSelfIDReceive(bool clearCount) LOCALONLY;
     

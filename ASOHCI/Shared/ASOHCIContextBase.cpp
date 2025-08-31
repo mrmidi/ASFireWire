@@ -7,6 +7,7 @@
 //
 
 #include "ASOHCIContextBase.hpp"
+#include "ASOHCIMemoryBarrier.hpp"
 #include "LogHelper.hpp"
 #include <DriverKit/IOLib.h>
 
@@ -127,6 +128,8 @@ kern_return_t ASOHCIContextBase::WriteCommandPtr(uint32_t descriptorAddress,
 
   uint32_t cmd = (descriptorAddress & 0xFFFFFFF0u) | (zNibble & 0xFu);
   _pci->MemoryWrite32(_bar, _offs.commandPtr, cmd);
+  OHCI_MEMORY_BARRIER(); // Ensure hardware sees CommandPtr update before
+                         // context operations
   os_log(ASLog(), "ASOHCIContextBase: CommandPtr=0x%08x (addr=0x%x Z=%u)", cmd,
          descriptorAddress, zNibble);
   return kIOReturnSuccess;
@@ -135,12 +138,14 @@ kern_return_t ASOHCIContextBase::WriteCommandPtr(uint32_t descriptorAddress,
 void ASOHCIContextBase::WriteContextSet(uint32_t value) {
   if (_pci) {
     _pci->MemoryWrite32(_bar, _offs.contextControlSet, value);
+    OHCI_MEMORY_BARRIER(); // Ensure hardware sees context control changes
   }
 }
 
 void ASOHCIContextBase::WriteContextClear(uint32_t value) {
   if (_pci) {
     _pci->MemoryWrite32(_bar, _offs.contextControlClear, value);
+    OHCI_MEMORY_BARRIER(); // Ensure hardware sees context control changes
   }
 }
 

@@ -6,7 +6,7 @@
 // Spec refs (OHCI 1.1): §9.1 (list building), §9.4 (appending), §9.6 (IT
 // header/data format)
 
-#include "ASOHCIATDescriptorPool.hpp" // reuse the existing pool
+#include "../Async/ASOHCIATDescriptorPool.hpp" // reuse the existing pool
 #include "ASOHCIITDescriptor.hpp"
 #include "ASOHCIITTypes.hpp"
 #include <stdint.h>
@@ -24,6 +24,11 @@ static constexpr uint32_t kKey_IMMEDIATE = 0x2;
 
 class ASOHCIITProgramBuilder {
 public:
+  ASOHCIITProgramBuilder() = default;
+  ~ASOHCIITProgramBuilder() = default;
+
+  // Required for OSSharedPtr compatibility
+  void release() { delete this; }
   // Reserve up to 'maxDescriptors' (header/immediate + payload frags + last),
   // max 8 (Z range 2..8) (§9.1)
   void Begin(ASOHCIATDescriptorPool &pool, uint32_t maxDescriptors = 7);

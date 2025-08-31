@@ -16,7 +16,8 @@
 
 #include <DriverKit/IOReturn.h>
 
-kern_return_t ASOHCIIRManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
+kern_return_t ASOHCIIRManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
+                                          uint8_t barIndex,
                                           const IRPolicy &defaultPolicy) {
   if (!pci)
     return kIOReturnBadArgument;
@@ -33,7 +34,9 @@ kern_return_t ASOHCIIRManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
          _numCtx);
 
   // Initialize shared descriptor pool with dynamic allocation (Linux-style)
-  kern_return_t r = _pool.Initialize(pci, barIndex);
+  _pool = OSSharedPtr<ASOHCIATDescriptorPool>(new ASOHCIATDescriptorPool(),
+                                              OSNoRetain);
+  kern_return_t r = _pool->Initialize(_pci.get(), barIndex);
   if (r != kIOReturnSuccess) {
     os_log(ASLog(), "IRManager: pool init failed 0x%x", r);
     os_log(ASLog(), "IRManager: Continuing with degraded functionality "
@@ -45,8 +48,9 @@ kern_return_t ASOHCIIRManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
 
   // Initialize each IR context
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].Initialize(pci, barIndex, i);
-    _ctx[i].ApplyPolicy(_defaultPolicy);
+    _ctx[i] = OSSharedPtr<ASOHCIIRContext>(new ASOHCIIRContext(), OSNoRetain);
+    _ctx[i]->Initialize(_pci.get(), barIndex, i);
+    _ctx[i]->ApplyPolicy(_defaultPolicy);
 
     // Initialize context state
     _contextStates[i] = {};
@@ -67,7 +71,7 @@ kern_return_t ASOHCIIRManager::StartAll() {
   _pci->MemoryWrite32(_bar, kOHCI_IsoRecvIntMaskSet, mask);
 
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].Start();
+    _ctx[i]->Start();
   }
 
   os_log(ASLog(), "IRManager: StartAll enabled mask=0x%x", mask);
@@ -83,7 +87,7 @@ kern_return_t ASOHCIIRManager::StopAll() {
 
   // Stop all contexts
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].Stop();
+    _ctx[i]->Stop();
     _contextStates[i].active = false;
   }
 
@@ -109,7 +113,7 @@ kern_return_t ASOHCIIRManager::StartReception(
   state.currentMode = queueOpts.receiveMode;
 
   // Apply channel filter to context
-  _ctx[ctxId].ApplyChannelFilter(channelFilter);
+  _ctx[ctxId]->ApplyChannelFilter(channelFilter);
   kern_return_t r = kIOReturnSuccess;
   if (r != kIOReturnSuccess) {
     os_log(ASLog(), "IRManager: ctx%u channel filter failed 0x%x", ctxId, r);
@@ -117,7 +121,7 @@ kern_return_t ASOHCIIRManager::StartReception(
   }
 
   // Start the context
-  r = _ctx[ctxId].Start();
+  r = _ctx[ctxId]->Start();
   if (r != kIOReturnSuccess) {
     os_log(ASLog(), "IRManager: ctx%u start failed 0x%x", ctxId, r);
     return r;
@@ -133,7 +137,7 @@ kern_return_t ASOHCIIRManager::StopReception(uint32_t ctxId) {
   if (ctxId >= _numCtx)
     return kIOReturnBadArgument;
 
-  _ctx[ctxId].Stop();
+  _ctx[ctxId]->Stop();
   _contextStates[ctxId].active = false;
 
   os_log(ASLog(), "IRManager: ctx%u reception stopped", ctxId);
@@ -148,7 +152,7 @@ kern_return_t ASOHCIIRManager::EnqueueReceiveBuffers(
     return kIOReturnBadArgument;
   if (!bufferVAs || !bufferPAs || !bufferSizes || bufferCount == 0)
     return kIOReturnBadArgument;
-  if (!_pool.IsInitialized())
+  if (!_pool->IsInitialized())
     return kIOReturnNotReady;
 
   auto &state = _contextStates[ctxId];
@@ -165,7 +169,7 @@ kern_return_t ASOHCIIRManager::EnqueueReceiveBuffers(
   }
 
   // Enqueue the program to the context
-  r = _ctx[ctxId].EnqueueStandard(program, opts);
+  r = _ctx[ctxId]->EnqueueStandard(program, opts);
   if (r != kIOReturnSuccess) {
     os_log(ASLog(), "IRManager: ctx%u enqueue failed 0x%x", ctxId, r);
     return r;
@@ -191,7 +195,7 @@ kern_return_t ASOHCIIRManager::EnqueueDualBufferReceive(
     const IRQueueOptions &opts) {
   if (ctxId >= _numCtx)
     return kIOReturnBadArgument;
-  if (!_pool.IsInitialized())
+  if (!_pool->IsInitialized())
     return kIOReturnNotReady;
 
   auto &state = _contextStates[ctxId];
@@ -218,7 +222,7 @@ void ASOHCIIRManager::OnInterrupt_RxEventMask(uint32_t mask) {
     uint32_t bit = __builtin_ctz(remaining);
     if (bit < _numCtx && _contextStates[bit].active) {
       // Route interrupt to the context's existing interrupt handler
-      _ctx[bit].OnInterruptRx();
+      _ctx[bit]->OnInterruptRx();
     }
     remaining &= ~(1u << bit);
   }
@@ -228,7 +232,7 @@ void ASOHCIIRManager::OnInterrupt_BusReset() {
   // Stop all active contexts on bus reset
   for (uint32_t i = 0; i < _numCtx; ++i) {
     if (_contextStates[i].active) {
-      _ctx[i].OnBusReset();
+      _ctx[i]->OnBusReset();
     }
   }
   os_log(ASLog(), "IRManager: bus reset handled for %u contexts", _numCtx);
@@ -264,7 +268,7 @@ bool ASOHCIIRManager::ContextNeedsRefill(uint32_t ctxId) const {
     return false;
 
   // Check if context is running low on buffers
-  return _ctx[ctxId].NeedsRefill();
+  return _ctx[ctxId]->NeedsRefill();
 }
 
 const IRStats &ASOHCIIRManager::GetContextStats(uint32_t ctxId) const {
@@ -272,12 +276,12 @@ const IRStats &ASOHCIIRManager::GetContextStats(uint32_t ctxId) const {
     static IRStats emptyStats{};
     return emptyStats;
   }
-  return _ctx[ctxId].GetStats();
+  return _ctx[ctxId]->GetStats();
 }
 
 void ASOHCIIRManager::ResetContextStats(uint32_t ctxId) {
   if (ctxId < _numCtx) {
-    _ctx[ctxId].ResetStats();
+    _ctx[ctxId]->ResetStats();
   }
 }
 
@@ -317,7 +321,7 @@ kern_return_t ASOHCIIRManager::BuildStandardProgram(
 
   // Use program builder to construct descriptor chain
   ASOHCIIRProgramBuilder builder;
-  builder.Begin(_pool, bufferCount + 1); // buffers + LAST descriptor
+  builder.Begin(*_pool, bufferCount + 1); // buffers + LAST descriptor
 
   kern_return_t r = kIOReturnSuccess;
 
@@ -348,7 +352,7 @@ kern_return_t ASOHCIIRManager::BuildDualBufferProgram(
 
   // Build dual-buffer program using OHCI DUALBUFFER descriptors
   ASOHCIIRProgramBuilder builder;
-  builder.Begin(_pool, 3); // descriptor count estimate
+  builder.Begin(*_pool, 3); // descriptor count estimate
 
   kern_return_t r = builder.BuildDualBufferProgram(info, 1, opts, outProgram);
   return r;

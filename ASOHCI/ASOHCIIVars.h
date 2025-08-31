@@ -13,24 +13,14 @@
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOInterruptDispatchSource.h>
 #include <DriverKit/IOMemoryDescriptor.h>
-// #include <DriverKit/IOMemoryMap.h> // Not used in DriverKit - using direct
-// memory access
+#include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
-
-// State machine enum (REFACTOR.md §9)
-enum class ASOHCIState : uint32_t {
-  Stopped = 0,
-  Starting = 1,
-  Running = 2,
-  Quiescing = 3,
-  Dead = 4
-};
 
 // Forward declarations for classes
 class ASOHCIPHYAccess;
 class ASOHCIARContext;
-class ASOHCIATContext;
+// class ASOHCIATContext;  // Removed - not used
 class ASOHCIARManager;
 class ASOHCIATManager;
 class ASOHCIIRManager;
@@ -40,34 +30,41 @@ class ConfigROMManager;
 class Topology;
 class ASOHCIInterruptRouter;
 class ASOHCIRegisterIO;
-// class ASOHCILinkAPI;
+
+// State machine for ASOHCI driver lifecycle (REFACTOR.md §9)
+enum class ASOHCIState {
+  Stopped,   // Initial state, no resources allocated
+  Starting,  // In the process of starting up
+  Running,   // Fully operational, accepting requests
+  Quiescing, // In the process of shutting down
+  Dead       // Terminal state, cleanup complete
+};
 
 // Concrete definition of ASOHCI_IVars matching the .iig ivars struct
 struct ASOHCI_IVars {
   // Device / MMIO
   OSSharedPtr<IOPCIDevice> pciDevice;
-  // bar0Map not used in DriverKit - using direct memory access via
-  // MemoryRead32/MemoryWrite32
+  IOMemoryMap *bar0Map = nullptr;
   uint8_t barIndex = 0;
   OSSharedPtr<IOInterruptDispatchSource> intSource;
   OSSharedPtr<IODispatchQueue> defaultQ;
+
+  // State machine (REFACTOR.md §9)
+  alignas(4) uint32_t state = static_cast<uint32_t>(ASOHCIState::Stopped);
+  char stateDescription[32] = "Stopped"; // Human-readable state for logging
 
   // Interrupt/accounting
   uint64_t interruptCount = 0;
   bool stopping = false;   // Add this for teardown gate
   bool deviceGone = false; // Set when device removal is detected
 
-  // State machine (REFACTOR.md §9) - stored as uint32_t for atomic operations
-  uint32_t state = static_cast<uint32_t>(ASOHCIState::Stopped);
-  char stateDescription[32] = "Stopped";
-
-  // Self-ID DMA resources - smart pointers for automatic cleanup
+  // Self-ID DMA resources
   OSSharedPtr<IOBufferMemoryDescriptor> selfIDBuffer;
   OSSharedPtr<IODMACommand> selfIDDMA;
   IOAddressSegment selfIDSeg = {};
   OSSharedPtr<IOMemoryMap> selfIDMap; // CPU mapping
 
-  // Config ROM DMA resources - smart pointers for automatic cleanup
+  // Config ROM DMA resources
   OSSharedPtr<IOBufferMemoryDescriptor> configROMBuffer; // 1KB ROM image
   OSSharedPtr<IOMemoryMap> configROMMap;                 // CPU mapping
   OSSharedPtr<IODMACommand> configROMDMA;                // DMA mapping
@@ -92,18 +89,17 @@ struct ASOHCI_IVars {
   uint32_t cycleInconsistentCount = 0;
   uint64_t lastCycleInconsistentTime = 0;
 
-  // PHY access helper - smart pointer for automatic cleanup
+  // PHY access helper
   OSSharedPtr<ASOHCIPHYAccess> phyAccess;
 
-  // DMA Contexts (legacy - will be managed by context managers) - smart
-  // pointers for automatic lifecycle management
+  // DMA Contexts (legacy - will be managed by context managers)
   OSSharedPtr<ASOHCIARContext> arRequestContext;
   OSSharedPtr<ASOHCIARContext> arResponseContext;
-  OSSharedPtr<ASOHCIATContext> atRequestContext;
-  OSSharedPtr<ASOHCIATContext> atResponseContext;
+  // OSSharedPtr<ASOHCIATContext> atRequestContext;  // Removed - not used
+  // OSSharedPtr<ASOHCIATContext> atResponseContext;  // Removed - not used
 
-  // Context Managers (OHCI 1.1 DMA orchestration) - already using OSSharedPtr
-  // for automatic lifecycle management
+  // Context Managers (OHCI 1.1 DMA orchestration) - using OSSharedPtr for
+  // automatic lifecycle management
   OSSharedPtr<ASOHCIARManager> arManager;
   OSSharedPtr<ASOHCIATManager> atManager;
   OSSharedPtr<ASOHCIIRManager> irManager;
@@ -120,15 +116,6 @@ struct ASOHCI_IVars {
 
   // Register IO helper
   OSSharedPtr<ASOHCIRegisterIO> regs;
-
-  // Link API implementation
-  // OSSharedPtr<ASOHCILinkAPI> linkAPI;
-
-  // Link API callbacks
-  // void (*selfIDCallback)(void* context) = nullptr;
-  // void* selfIDCallbackContext = nullptr;
-  // void (*busResetCallback)(void* context) = nullptr;
-  // void* busResetCallbackContext = nullptr;
 };
 
 #endif /* ASOHCIIVars_h */

@@ -14,7 +14,8 @@
 
 #include <DriverKit/IOReturn.h>
 
-kern_return_t ASOHCIITManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
+kern_return_t ASOHCIITManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
+                                          uint8_t barIndex,
                                           const ITPolicy &defaultPolicy) {
   if (!pci)
     return kIOReturnBadArgument;
@@ -24,7 +25,7 @@ kern_return_t ASOHCIITManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
 
   // Use MMIO probe of IT windows: detect real, responding contexts (§4.2 /
   // §9.2).
-  _numCtx = ProbeITContextCount(pci, barIndex).count;
+  _numCtx = ProbeITContextCount(_pci.get(), barIndex).count;
   if (_numCtx > 32)
     _numCtx = 32;
   os_log(ASLog(),
@@ -32,14 +33,18 @@ kern_return_t ASOHCIITManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
          _numCtx);
 
   // Initialize shared descriptor pool with dynamic allocation (Linux-style)
-  kern_return_t r = _pool.Initialize(pci, barIndex);
+  _pool = OSSharedPtr<ASOHCIATDescriptorPool>(new ASOHCIATDescriptorPool(),
+                                              OSNoRetain);
+  kern_return_t r = _pool->Initialize(_pci.get(), barIndex);
   if (r != kIOReturnSuccess) {
     os_log(ASLog(), "ITManager: pool init failed 0x%x", r);
   }
 
+  // Create and initialize contexts
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].Initialize(pci, barIndex, i);
-    _ctx[i].ApplyPolicy(_defaultPolicy);
+    _ctx[i] = OSSharedPtr<ASOHCIITContext>(new ASOHCIITContext(), OSNoRetain);
+    _ctx[i]->Initialize(_pci.get(), barIndex, i);
+    _ctx[i]->ApplyPolicy(_defaultPolicy);
   }
   return kIOReturnSuccess;
 }
@@ -51,7 +56,7 @@ kern_return_t ASOHCIITManager::StartAll() {
   uint32_t mask = (_numCtx >= 32) ? 0xFFFFFFFFu : ((1u << _numCtx) - 1u);
   _pci->MemoryWrite32(_bar, kOHCI_IsoXmitIntMaskSet, mask);
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].Start();
+    _ctx[i]->Start();
   }
   os_log(ASLog(), "ITManager: StartAll enabled mask=0x%x", mask);
   return kIOReturnSuccess;
@@ -62,7 +67,7 @@ kern_return_t ASOHCIITManager::StopAll() {
     return kIOReturnNotReady;
   _pci->MemoryWrite32(_bar, kOHCI_IsoXmitIntMaskClear, 0xFFFFFFFFu);
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].Stop();
+    _ctx[i]->Stop();
   }
   os_log(ASLog(), "ITManager: StopAll");
   return kIOReturnSuccess;
@@ -76,24 +81,24 @@ kern_return_t ASOHCIITManager::Queue(uint32_t ctxId, ITSpeed spd, uint8_t tag,
                                      const ITQueueOptions &opts) {
   if (ctxId >= _numCtx)
     return kIOReturnBadArgument;
-  if (!_pool.IsInitialized())
+  if (!_pool->IsInitialized())
     return kIOReturnNotReady;
   if (fragments == 0 || !payloadPAs || !payloadSizes)
     return kIOReturnBadArgument;
 
-  _builder.Begin(_pool, fragments + 2); // header + payloads + last
-  _builder.AddHeaderImmediate(spd, tag, channel, sy, 0 /*dataLength TBD*/,
-                              ITIntPolicy::kAlways);
+  _builder->Begin(*_pool, fragments + 2); // header + payloads + last
+  _builder->AddHeaderImmediate(spd, tag, channel, sy, 0 /*dataLength TBD*/,
+                               ITIntPolicy::kAlways);
   uint32_t totalLen = 0;
   for (uint32_t i = 0; i < fragments; ++i) {
-    _builder.AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
+    _builder->AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
     totalLen += payloadSizes[i];
   }
   // (Future) patch length into header's quad0 if needed.
-  ITDesc::Program p = _builder.Finalize();
+  ITDesc::Program p = _builder->Finalize();
   if (!p.headPA)
     return kIOReturnNoResources;
-  return _ctx[ctxId].Enqueue(p, opts);
+  return _ctx[ctxId]->Enqueue(p, opts);
 }
 
 void ASOHCIITManager::OnInterrupt_TxEventMask(uint32_t mask) {
@@ -101,7 +106,7 @@ void ASOHCIITManager::OnInterrupt_TxEventMask(uint32_t mask) {
   while (remaining) {
     uint32_t bit = __builtin_ctz(remaining);
     if (bit < _numCtx) {
-      _ctx[bit].OnInterruptTx();
+      _ctx[bit]->OnInterruptTx();
     }
     remaining &= ~(1u << bit);
   }
@@ -109,7 +114,7 @@ void ASOHCIITManager::OnInterrupt_TxEventMask(uint32_t mask) {
 
 void ASOHCIITManager::OnInterrupt_CycleInconsistent() {
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i].OnCycleInconsistent();
+    _ctx[i]->OnCycleInconsistent();
   }
 }
 

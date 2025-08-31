@@ -8,6 +8,11 @@ protocol SystemExtensionManagerDelegate: AnyObject {
     func systemExtensionManager(_ manager: SystemExtensionManager, didEmitMessage message: String)
 }
 
+// Define the action enum outside of the main class to avoid main-actor isolation.
+enum SystemExtensionAction: Sendable {
+    case activate, deactivate
+}
+
 final class SystemExtensionManager: NSObject {
     enum State: Equatable {
         case unknown
@@ -16,8 +21,6 @@ final class SystemExtensionManager: NSObject {
         case error(String)
     }
 
-    enum Action: Sendable { case activate, deactivate }
-
     private static let log = Logger(subsystem: "net.mrmidi.ASFireWire", category: "SystemExtensions")
     private let dextIdentifier = "net.mrmidi.ASFireWire.ASOHCI"
 
@@ -25,7 +28,7 @@ final class SystemExtensionManager: NSObject {
 
     private let internalQueue = DispatchQueue(label: "SystemExtensionManager.serial")
     private var currentRequest: OSSystemExtensionRequest?
-    private var pendingAction: Action?
+    private var pendingAction: SystemExtensionAction?
 
     // MARK: Public API
     func activate() { submit(.activate) }
@@ -35,7 +38,7 @@ final class SystemExtensionManager: NSObject {
     func activateDriver(completion: @escaping (String) -> Void) { oneShotMessageTap(completion) { self.activate() } }
     func deactivateDriver(completion: @escaping (String) -> Void) { oneShotMessageTap(completion) { self.deactivate() } }
 
-    private func submit(_ action: Action) {
+    private func submit(_ action: SystemExtensionAction) {
         internalQueue.async { [weak self] in
             guard let self else { return }
             guard self.currentRequest == nil else { self.emit("A request is already in progress"); return }
@@ -57,7 +60,7 @@ final class SystemExtensionManager: NSObject {
         }
     }
 
-    private func createAndSubmit(action: Action) {
+    private func createAndSubmit(action: SystemExtensionAction) {
         let req: OSSystemExtensionRequest
         switch action {
         case .activate:
@@ -179,4 +182,3 @@ extension SystemExtensionManager: OSSystemExtensionsWorkspaceObserver {
     func systemExtensionWillBecomeDisabled(_ info: OSSystemExtensionInfo) { emit("Extension disabled"); refreshStatus() }
     func systemExtensionWillBecomeInactive(_ info: OSSystemExtensionInfo) { emit("Extension inactive (uninstalling)"); refreshStatus() }
 }
-

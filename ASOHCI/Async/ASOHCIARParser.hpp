@@ -26,6 +26,9 @@ public:
   ASOHCIARParser() = default;
   ~ASOHCIARParser() = default;
 
+  // Required for OSSharedPtr compatibility
+  void release() { delete this; }
+
   kern_return_t Initialize() { return kIOReturnSuccess; }
 
   // Returns false if the buffer doesn’t contain a full AR async frame

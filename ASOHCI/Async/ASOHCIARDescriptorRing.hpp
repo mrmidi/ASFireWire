@@ -21,6 +21,9 @@ public:
   ASOHCIARDescriptorRing() = default;
   ~ASOHCIARDescriptorRing();
 
+  // Required for OSSharedPtr compatibility
+  void release() { delete this; }
+
   // Allocate N receive buffers (each quadlet-aligned), DMA-map them,
   // and build a linked descriptor chain (ring or list) for AR.
   kern_return_t Initialize(IOPCIDevice *pci, uint32_t bufferCount,

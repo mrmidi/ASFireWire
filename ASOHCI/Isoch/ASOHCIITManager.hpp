@@ -7,11 +7,13 @@
 // discovery),
 //   §9.4 (safe appending to a running program), §9.5 (interrupt semantics)
 
-#include "ASOHCIATDescriptorPool.hpp" // shared pool
+#include "../Async/ASOHCIATDescriptorPool.hpp"
 #include "ASOHCIITContext.hpp"
+#include "ASOHCIITDescriptor.hpp"
 #include "ASOHCIITProgramBuilder.hpp"
+#include "ASOHCIITTypes.hpp"
+#include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
-#include <stdint.h>
 
 class ASOHCIITManager {
 public:
@@ -21,7 +23,8 @@ public:
   // Required for OSSharedPtr compatibility
   void release() { delete this; }
   // Discover available IT contexts, init shared pool, apply defaults.
-  virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex,
+  virtual kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci,
+                                   uint8_t barIndex,
                                    const ITPolicy &defaultPolicy);
 
   virtual kern_return_t StartAll();
@@ -48,13 +51,13 @@ protected:
   virtual uint32_t ProbeContextCount();
 
 private:
-  IOPCIDevice *_pci = nullptr;
+  OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
 
-  ASOHCIITContext _ctx[32]; // upper bound; actual count discovered
+  OSSharedPtr<ASOHCIITContext> _ctx[32]; // upper bound; actual count discovered
   uint32_t _numCtx = 0;
 
-  ASOHCIITProgramBuilder _builder;
-  ASOHCIATDescriptorPool _pool; // shared pool reused from AT
+  OSSharedPtr<ASOHCIITProgramBuilder> _builder;
+  OSSharedPtr<ASOHCIATDescriptorPool> _pool; // shared pool reused from AT
   ITPolicy _defaultPolicy{};
 };

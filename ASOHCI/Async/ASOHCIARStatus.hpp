@@ -29,6 +29,9 @@ public:
   ASOHCIARStatus() = default;
   ~ASOHCIARStatus() = default;
 
+  // Required for OSSharedPtr compatibility
+  void release() { delete this; }
+
   kern_return_t Initialize() { return kIOReturnSuccess; }
 
   // Map 16-bit xferStatus into an AREventCode (no ACK on AR path)

@@ -29,15 +29,24 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 
 // Include system headers for DriverKit runtime functions
 #include <DriverKit/IOService.h>
+
+// Include project headers
+#include "ASOHCIIVars.h"
 #include <DriverKit/OSMetaClass.h>
 
 // Dispatch queue for deferred self-ID processing (DriverKit equivalent of Linux
 // workqueue)
 #include <DriverKit/IODispatchQueue.h>
 
+// IIG-generated header (path comes from your product name/bundle):
+#include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
+
+// Private helpers; NO 'class ASOHCI' here
+#include "ASOHCIIVars.h"
+#include "ASOHCI_Priv.hpp"
+
 // Generated Header
 #include "BridgeLog.hpp"
-#include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
 // Include Link API header
 // #include "Core/ASOHCILinkAPI.h"
@@ -45,6 +54,19 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 
 // Concrete ivars definition (workaround for IIG forward declaration issue)
 #include "ASOHCIIVars.h"
+
+// Forward declarations used early
+struct ASOHCI_IVars;
+enum class ASOHCIState;
+
+static kern_return_t TransitionState(ASOHCI_IVars *, ASOHCIState, const char *);
+static bool IsOperationAllowed(ASOHCI_IVars *, ASOHCIState);
+static const char *StateToString(ASOHCIState);
+static kern_return_t ValidateOperation(ASOHCI_IVars *, const char *,
+                                       ASOHCIState);
+
+// Memory barrier header for DMA-safe programming
+#include "Core/ASOHCIMemoryBarrier.hpp"
 
 // Private helper methods (implementation details, not in public interface)
 static kern_return_t CreateWorkQueue(ASOHCI_IVars *ivars);
@@ -117,14 +139,33 @@ bool ASOHCI::init() {
     return false;
   }
 
+  // State machine: Initialize to Stopped state (REFACTOR.md §9)
+  __atomic_store_n(&ivars->state, static_cast<uint32_t>(ASOHCIState::Stopped),
+                   __ATOMIC_RELEASE);
+  strlcpy(ivars->stateDescription, "Stopped", sizeof(ivars->stateDescription));
+
   // OSSharedPtr objects automatically initialized to nullptr
-  os_log(ASLog(), "ASOHCI: init() completed");
+  os_log(ASLog(), "ASOHCI: init() completed - state: %s",
+         ivars->stateDescription);
   return true;
 }
 
 void ASOHCI::free() {
-  os_log(ASLog(), "ASOHCI: free()");
+  os_log(ASLog(), "ASOHCI: free() - current state: %s",
+         ivars ? ivars->stateDescription : "null");
+
   if (ivars != nullptr) {
+    // State machine: Force transition to Dead if not already there (REFACTOR.md
+    // §9)
+    ASOHCIState currentState = static_cast<ASOHCIState>(
+        __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
+    if (currentState != ASOHCIState::Dead) {
+      __atomic_store_n(&ivars->state, static_cast<uint32_t>(ASOHCIState::Dead),
+                       __ATOMIC_RELEASE);
+      strlcpy(ivars->stateDescription, "Dead", sizeof(ivars->stateDescription));
+      os_log(ASLog(), "ASOHCI: free() forced state to Dead");
+    }
+
     // Step 1: Stop all operations first
     if (ivars->arManager.get() != nullptr) {
       ivars->arManager->Stop();
@@ -161,29 +202,13 @@ void ASOHCI::free() {
     ivars->configROMManager.reset();
     ivars->selfIDManager.reset();
 
-    // Legacy raw pointers (manual cleanup)
-    if (ivars->phyAccess) {
-      delete ivars->phyAccess;
-      ivars->phyAccess = nullptr;
-    }
-
-    // Legacy context cleanup (kept for transition - managed by managers now)
-    if (ivars->arRequestContext) {
-      delete ivars->arRequestContext;
-      ivars->arRequestContext = nullptr;
-    }
-    if (ivars->arResponseContext) {
-      delete ivars->arResponseContext;
-      ivars->arResponseContext = nullptr;
-    }
-    if (ivars->atRequestContext) {
-      delete ivars->atRequestContext;
-      ivars->atRequestContext = nullptr;
-    }
-    if (ivars->atResponseContext) {
-      delete ivars->atResponseContext;
-      ivars->atResponseContext = nullptr;
-    }
+    // Legacy raw pointers (manual cleanup) - now smart pointers
+    ivars->phyAccess.reset();
+    ivars->arRequestContext.reset();
+    ivars->arResponseContext.reset();
+    // AT contexts removed - not used
+    // ivars->atRequestContext.reset();
+    // ivars->atResponseContext.reset();
   }
 
   // Step 3: Safe deallocation with null-setting
@@ -253,93 +278,191 @@ static kern_return_t DispatchAsyncWithCompletion(ASOHCI_IVars *ivars,
 void ASOHCI::CleanupOnError() {
   os_log(ASLog(), "ASOHCI: CleanupOnError - performing comprehensive cleanup");
 
-  // Step 1: Stop all managers in reverse order of initialization
-  if (ivars->arManager) {
-    ivars->arManager->Stop();
-    ivars->arManager.reset();
+  // Take a stable snapshot and guard it
+  ASOHCI_IVars *const iv = ivars;
+  if (!iv) {
+    os_log(ASLog(), "ASOHCI: CleanupOnError - ivars is null, nothing to do");
+    return;
   }
-  if (ivars->atManager) {
-    ivars->atManager->Stop();
-    ivars->atManager.reset();
+
+  // State machine: Transition to Quiescing if not already stopping
+  ASOHCIState currentState =
+      static_cast<ASOHCIState>(__atomic_load_n(&iv->state, __ATOMIC_ACQUIRE));
+  if (currentState != ASOHCIState::Quiescing &&
+      currentState != ASOHCIState::Dead) {
+    kern_return_t stateKr =
+        TransitionState(iv, ASOHCIState::Quiescing, "CleanupOnError");
+    if (stateKr != kIOReturnSuccess) {
+      os_log(ASLog(), "ASOHCI: CleanupOnError state transition failed: 0x%08x",
+             stateKr);
+    }
   }
-  if (ivars->irManager) {
-    ivars->irManager->StopAll();
-    ivars->irManager.reset();
+
+  // Step 1: Stop managers (all iv->... guarded by the early return above)
+  if (iv->arManager) {
+    iv->arManager->Stop();
+    iv->arManager.reset();
   }
-  if (ivars->itManager) {
-    ivars->itManager->StopAll();
-    ivars->itManager.reset();
+  if (iv->atManager) {
+    iv->atManager->Stop();
+    iv->atManager.reset();
+  }
+  if (iv->irManager) {
+    iv->irManager->StopAll();
+    iv->irManager.reset();
+  }
+  if (iv->itManager) {
+    iv->itManager->StopAll();
+    iv->itManager.reset();
   }
 
   // Step 2: Clean up DMA resources
-  ivars->configROMDMA.reset();
-  ivars->configROMMap.reset();
-  ivars->configROMBuffer.reset();
-  ivars->selfIDDMA.reset();
-  ivars->selfIDMap.reset();
-  ivars->selfIDBuffer.reset();
+  iv->configROMDMA.reset();
+  iv->configROMMap.reset();
+  iv->configROMBuffer.reset();
+  iv->selfIDDMA.reset();
+  iv->selfIDMap.reset();
+  iv->selfIDBuffer.reset();
 
   // Step 3: Clean up device resources
-  if (ivars->intSource) {
-    ivars->intSource->SetEnableWithCompletion(false, nullptr);
-    ivars->intSource.reset();
+  if (iv->intSource) {
+    iv->intSource->SetEnableWithCompletion(false, nullptr);
+    iv->intSource.reset();
   }
-  ivars->defaultQ.reset();
+  iv->defaultQ.reset();
   // bar0Map not used in DriverKit - using direct memory access
 
   // Step 4: Clean up managers and helpers
-  if (ivars->selfIDManager) {
-    ivars->selfIDManager->Teardown();
-    ivars->selfIDManager.reset();
+  if (iv->selfIDManager) {
+    iv->selfIDManager->Teardown();
+    iv->selfIDManager.reset();
   }
-  if (ivars->configROMManager) {
-    ivars->configROMManager->Teardown();
-    ivars->configROMManager.reset();
+  if (iv->configROMManager) {
+    iv->configROMManager->Teardown();
+    iv->configROMManager.reset();
   }
-  ivars->topology.reset();
-  ivars->regs.reset();
-  ivars->interruptRouter.reset();
+  iv->topology.reset();
+  iv->regs.reset();
+  iv->interruptRouter.reset();
 
-  // Step 5: Clean up legacy resources
-  if (ivars->phyAccess) {
-    delete ivars->phyAccess;
-    ivars->phyAccess = nullptr;
-  }
-  if (ivars->arRequestContext) {
-    delete ivars->arRequestContext;
-    ivars->arRequestContext = nullptr;
-  }
-  if (ivars->arResponseContext) {
-    delete ivars->arResponseContext;
-    ivars->arResponseContext = nullptr;
-  }
-  if (ivars->atRequestContext) {
-    delete ivars->atRequestContext;
-    ivars->atRequestContext = nullptr;
-  }
-  if (ivars->atResponseContext) {
-    delete ivars->atResponseContext;
-    ivars->atResponseContext = nullptr;
-  }
+  // Step 5: Clean up legacy resources - now smart pointers
+  iv->phyAccess.reset();
+  iv->arRequestContext.reset();
+  iv->arResponseContext.reset();
+  // ivars->atRequestContext.reset();  // Removed - not used
+  // ivars->atResponseContext.reset();  // Removed - not used
 
   // Step 6: Close PCI device if open
-  if (ivars->pciDevice) {
-    ivars->pciDevice->Close(this, 0);
-    ivars->pciDevice.reset();
+  if (iv->pciDevice) {
+    iv->pciDevice->Close(this, 0);
+    iv->pciDevice.reset();
   }
 
+  // State machine: Transition to Dead (REFACTOR.md §9)
+  (void)TransitionState(iv, ASOHCIState::Dead, "CleanupOnError complete");
   os_log(ASLog(), "ASOHCI: CleanupOnError - cleanup completed");
 }
 
 // =====================================================================================
-// Helper Methods for Start()
+// Validation and Error Handling Helpers
 // =====================================================================================
 
+// Validate ivars and device state
+static kern_return_t ValidateState(ASOHCI_IVars *ivars, const char *operation) {
+  if (!ivars) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - ivars not allocated", operation);
+    return kIOReturnNoResources;
+  }
+
+  if (__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - operation blocked, driver stopping",
+           operation);
+    return kIOReturnNotReady;
+  }
+
+  if (__atomic_load_n(&ivars->deviceGone, __ATOMIC_ACQUIRE)) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - operation blocked, device gone",
+           operation);
+    return kIOReturnNoDevice;
+  }
+
+  // State machine validation (REFACTOR.md §9)
+  ASOHCIState currentState = static_cast<ASOHCIState>(
+      __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
+  if (currentState == ASOHCIState::Dead) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - operation blocked, driver is dead",
+           operation);
+    return kIOReturnNotReady;
+  }
+
+  if (!ivars->pciDevice) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - PCI device not available", operation);
+    return kIOReturnNoDevice;
+  }
+
+  return kIOReturnSuccess;
+}
+
+// Enhanced error logging with context
+static void LogError(kern_return_t error, const char *operation,
+                     const char *details = nullptr) {
+  const char *errorString = "unknown";
+  switch (error) {
+  case kIOReturnSuccess:
+    return; // Don't log success
+  case kIOReturnNoMemory:
+    errorString = "no memory";
+    break;
+  case kIOReturnNoDevice:
+    errorString = "no device";
+    break;
+  case kIOReturnNotReady:
+    errorString = "not ready";
+    break;
+  case kIOReturnBadArgument:
+    errorString = "bad argument";
+    break;
+  case kIOReturnNoResources:
+    errorString = "no resources";
+    break;
+  default:
+    break;
+  }
+
+  if (details) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s failed (%s) - %s", operation,
+           errorString, details);
+  } else {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s failed (%s)", operation, errorString);
+  }
+}
+
+// Timeout wrapper for hardware operations
+static kern_return_t WaitForCondition(bool (^condition)(void),
+                                      uint32_t timeoutMs,
+                                      const char *description) {
+  for (uint32_t i = 0; i < timeoutMs; i++) {
+    if (condition()) {
+      return kIOReturnSuccess;
+    }
+    IOSleep(1);
+  }
+
+  os_log(OS_LOG_DEFAULT, "ASOHCI: Timeout waiting for %s after %u ms",
+         description, timeoutMs);
+  return kIOReturnTimeout;
+}
+
 kern_return_t ASOHCI::CreateWorkQueue() {
-  IODispatchQueue *queue = nullptr;
-  kern_return_t kr = IODispatchQueue::Create("ASOHCI.WorkQueue", 0, 0, &queue);
+  kern_return_t kr = ValidateState(ivars, "CreateWorkQueue");
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: Failed to create work queue: 0x%08x", kr);
+    return kr;
+  }
+
+  IODispatchQueue *queue = nullptr;
+  kr = IODispatchQueue::Create("ASOHCI.WorkQueue", 0, 0, &queue);
+  if (kr != kIOReturnSuccess) {
+    LogError(kr, "CreateWorkQueue", "IODispatchQueue::Create failed");
     return kr;
   }
 
@@ -574,6 +697,7 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
   // Enter LPS + enable posted writes
   const uint32_t hcSet = (kOHCI_HCControl_LPS | kOHCI_HCControl_PostedWriteEn);
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet, hcSet);
+  OHCI_MEMORY_BARRIER(); // Ensure HC control changes are visible to hardware
   os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%08x)", hcSet);
 
   // Program BusOptions and NodeID
@@ -585,13 +709,16 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
   bo &= ~0x00FF0000; // clear cyc_clk_acc
   if (bo != origBo) {
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_BusOptions, bo);
+    OHCI_MEMORY_BARRIER(); // Ensure bus options are visible to hardware
     os_log(ASLog(), "ASOHCI: BusOptions updated 0x%08x->0x%08x", origBo, bo);
   }
 
   // Provisional NodeID
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_NodeID, 0x0000FFC0);
+  OHCI_MEMORY_BARRIER(); // Ensure NodeID is visible to hardware
   os_log(ASLog(), "ASOHCI: Provisional NodeID set to 0x0000FFC0");
 
+  // Enable link and reception
   // Enable link and reception
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet,
                                   kOHCI_HCControl_programPhyEnable);
@@ -599,6 +726,7 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
                                   kOHCI_HCControl_LinkEnable);
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_LinkControlSet,
                                   (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+  OHCI_MEMORY_BARRIER(); // Ensure link control changes are visible to hardware
   os_log(ASLog(), "ASOHCI: Link enabled with Self-ID and PHY reception");
 
   // Enable comprehensive interrupts
@@ -610,12 +738,15 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
                   kOHCI_Int_CycleTooLong | kOHCI_Int_MasterEnable |
                   kOHCI_Int_BusReset | kOHCI_Int_Phy;
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet, irqs);
+  OHCI_MEMORY_BARRIER(); // Ensure interrupt mask changes are visible to
+                         // hardware
   os_log(ASLog(), "ASOHCI: Comprehensive interrupt mask set: 0x%08x", irqs);
 
   // Final link activation
   ivars->pciDevice->MemoryWrite32(
       ivars->barIndex, kOHCI_HCControlSet,
       (kOHCI_HCControl_LinkEnable | kOHCI_HCControl_BIBimageValid));
+  OHCI_MEMORY_BARRIER(); // Ensure final link activation is visible to hardware
   os_log(ASLog(), "ASOHCI: Final link activation completed");
 
   return kIOReturnSuccess;
@@ -636,6 +767,14 @@ kern_return_t IMPL(ASOHCI, Start) {
     CleanupOnError();
     return kIOReturnNoResources;
   }
+
+  // State machine: Transition to Starting (REFACTOR.md §9)
+  kr = TransitionState(ivars, ASOHCIState::Starting, "Start begin");
+  if (kr != kIOReturnSuccess) {
+    CleanupOnError();
+    return kr;
+  }
+
   os_log(ASLog(), "ASOHCI: Start() begin bring-up");
 
   // Step 1: Store provider with smart pointer and retain
@@ -643,6 +782,7 @@ kern_return_t IMPL(ASOHCI, Start) {
       OSSharedPtr(OSDynamicCast(IOPCIDevice, provider), OSRetain);
   if (ivars->pciDevice.get() == nullptr) {
     os_log(ASLog(), "ASOHCI: Provider is not IOPCIDevice");
+    TransitionState(ivars, ASOHCIState::Quiescing, "provider cast failed");
     CleanupOnError();
     return kIOReturnBadArgument;
   }
@@ -650,6 +790,8 @@ kern_return_t IMPL(ASOHCI, Start) {
   // Step 2: Create dispatch queue
   kr = CreateWorkQueue();
   if (kr != kIOReturnSuccess) {
+    TransitionState(ivars, ASOHCIState::Quiescing,
+                    "work queue creation failed");
     CleanupOnError();
     return kr;
   }
@@ -657,6 +799,8 @@ kern_return_t IMPL(ASOHCI, Start) {
   // Step 3: Map device memory
   kr = MapDeviceMemory();
   if (kr != kIOReturnSuccess) {
+    TransitionState(ivars, ASOHCIState::Quiescing,
+                    "device memory mapping failed");
     CleanupOnError();
     return kr;
   }
@@ -664,6 +808,8 @@ kern_return_t IMPL(ASOHCI, Start) {
   // Step 4: Initialize managers
   kr = InitializeManagers();
   if (kr != kIOReturnSuccess) {
+    TransitionState(ivars, ASOHCIState::Quiescing,
+                    "manager initialization failed");
     CleanupOnError();
     return kr;
   }
@@ -671,6 +817,16 @@ kern_return_t IMPL(ASOHCI, Start) {
   // Step 5: Continue with OHCI initialization sequence
   kr = InitializeOHCI();
   if (kr != kIOReturnSuccess) {
+    TransitionState(ivars, ASOHCIState::Quiescing,
+                    "OHCI initialization failed");
+    CleanupOnError();
+    return kr;
+  }
+
+  // State machine: Transition to Running (REFACTOR.md §9)
+  kr = TransitionState(ivars, ASOHCIState::Running, "bring-up complete");
+  if (kr != kIOReturnSuccess) {
+    // This shouldn't happen with valid transitions, but handle it
     CleanupOnError();
     return kr;
   }
@@ -684,6 +840,23 @@ kern_return_t IMPL(ASOHCI, Start) {
 // =====================================================================================
 kern_return_t IMPL(ASOHCI, Stop) {
   os_log(ASLog(), "ASOHCI: Stop begin");
+
+  // State machine: Check if we're already in a stopping state (REFACTOR.md §9)
+  if (ivars && IsOperationAllowed(ivars, ASOHCIState::Quiescing)) {
+    os_log(ASLog(), "ASOHCI: Stop called while already quiescing");
+    return kIOReturnSuccess; // Idempotent
+  }
+
+  // State machine: Transition to Quiescing if not already there (REFACTOR.md
+  // §9)
+  if (ivars) {
+    kern_return_t stateKr =
+        TransitionState(ivars, ASOHCIState::Quiescing, "Stop begin");
+    if (stateKr != kIOReturnSuccess) {
+      // If transition fails, we're probably already in a terminal state
+      os_log(ASLog(), "ASOHCI: Stop state transition failed: 0x%08x", stateKr);
+    }
+  }
 
   // 0) Set stopping flag FIRST to prevent new interrupt processing
   if (ivars) {
@@ -770,25 +943,22 @@ kern_return_t IMPL(ASOHCI, Stop) {
         (kOHCI_HCControl_LinkEnable | kOHCI_HCControl_aPhyEnhanceEnable));
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet,
                                     kOHCI_HCControl_SoftReset);
+    OHCI_MEMORY_BARRIER(); // Ensure soft reset commands are visible to hardware
 
     // Wait for soft reset to complete
-    bool resetComplete = false;
-    for (int i = 0; i < 100; i++) { // 100ms timeout
-      uint32_t hcControl = 0;
-      // FIX: Read from base register, not Set/Clear
-      ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_HCControl,
-                                     &hcControl);
-      if (!(hcControl & kOHCI_HCControl_SoftReset)) {
-        resetComplete = true;
-        break;
-      }
-      IOSleep(1);
-    }
+    kern_return_t resetResult = WaitForCondition(
+        ^{
+          uint32_t hcControl = 0;
+          ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_HCControl,
+                                         &hcControl);
+          return !(hcControl & kOHCI_HCControl_SoftReset);
+        },
+        100, "soft reset completion");
 
-    if (resetComplete) {
+    if (resetResult == kIOReturnSuccess) {
       os_log(ASLog(), "ASOHCI: Hardware quiesced successfully");
     } else {
-      os_log(ASLog(), "ASOHCI: WARNING - Hardware quiesce timeout");
+      LogError(resetResult, "Stop", "hardware quiesce timeout");
     }
   }
 
@@ -812,7 +982,7 @@ kern_return_t IMPL(ASOHCI, Stop) {
 
   // 8) Clear PCI device reference to prevent any further access
   if (ivars) {
-    ivars->pciDevice = nullptr;
+    ivars->pciDevice.reset();
     ivars->barIndex = 0;
     os_log(ASLog(), "ASOHCI: PCI device reference cleared");
   }
@@ -832,8 +1002,7 @@ kern_return_t IMPL(ASOHCI, Stop) {
       ivars->topology.reset();
     }
     if (ivars->phyAccess) {
-      delete ivars->phyAccess;
-      ivars->phyAccess = nullptr;
+      ivars->phyAccess.reset();
     }
 
     // Reset OSSharedPtr managers (automatic cleanup)
@@ -848,8 +1017,8 @@ kern_return_t IMPL(ASOHCI, Stop) {
   // 10) Release interrupt source (do this late to ensure no interrupts during
   // cleanup)
   if (ivars && ivars->intSource) {
-    ivars->intSource->release();
-    ivars->intSource = nullptr;
+    ivars->intSource->SetEnableWithCompletion(false, nullptr);
+    ivars->intSource.reset();
     os_log(ASLog(), "ASOHCI: Interrupt source released");
   }
 
@@ -857,6 +1026,16 @@ kern_return_t IMPL(ASOHCI, Stop) {
   if (ivars) {
     __atomic_store_n(&ivars->deviceGone, true, __ATOMIC_RELEASE);
     os_log(ASLog(), "ASOHCI: Stop completed - device marked as gone");
+  }
+
+  // State machine: Transition to Dead (terminal state) (REFACTOR.md §9)
+  if (ivars) {
+    kern_return_t stateKr =
+        TransitionState(ivars, ASOHCIState::Dead, "Stop completed");
+    if (stateKr != kIOReturnSuccess) {
+      os_log(ASLog(), "ASOHCI: Stop state transition to Dead failed: 0x%08x",
+             stateKr);
+    }
   }
 
   // 12) NOW call super Stop LAST (following Apple's pattern)
@@ -875,6 +1054,13 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
       __atomic_load_n(&ivars->deviceGone, __ATOMIC_ACQUIRE)) {
     os_log(ASLog(),
            "ASOHCI: Interrupt during teardown or device gone - ignoring");
+    return;
+  }
+
+  // State machine: Only process interrupts when Running (REFACTOR.md §9)
+  if (!IsOperationAllowed(ivars, ASOHCIState::Running)) {
+    os_log(ASLog(), "ASOHCI: Interrupt blocked - state is %s, requires Running",
+           ivars->stateDescription);
     return;
   }
 
@@ -993,12 +1179,13 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
     if ((intEvent & kOHCI_Int_RsPkt) && ivars->arResponseContext) {
       ivars->arResponseContext->HandleInterrupt();
     }
-    if ((intEvent & kOHCI_Int_ReqTxComplete) && ivars->atRequestContext) {
-      ivars->atRequestContext->HandleInterrupt();
-    }
-    if ((intEvent & kOHCI_Int_RespTxComplete) && ivars->atResponseContext) {
-      ivars->atResponseContext->HandleInterrupt();
-    }
+    // AT contexts removed - handled by AT Manager
+    // if ((intEvent & kOHCI_Int_ReqTxComplete) && ivars->atRequestContext) {
+    //   ivars->atRequestContext->HandleInterrupt();
+    // }
+    // if ((intEvent & kOHCI_Int_RespTxComplete) && ivars->atResponseContext) {
+    //   ivars->atResponseContext->HandleInterrupt();
+    // }
   }
 
   // Cycle too long handling via router
@@ -1052,6 +1239,115 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
 }
 
 // =====================================================================================
+// State Machine Implementation (REFACTOR.md §9)
+// =====================================================================================
+
+// Forward declarations for state machine functions
+static kern_return_t TransitionState(ASOHCI_IVars *ivars, ASOHCIState newState,
+                                     const char *description);
+static const char *StateToString(ASOHCIState state);
+static kern_return_t ValidateOperation(ASOHCI_IVars *ivars,
+                                       const char *operation,
+                                       ASOHCIState requiredState);
+static bool IsOperationAllowed(ASOHCI_IVars *ivars, ASOHCIState allowedState);
+
+// Thread-safe state transition with validation
+static kern_return_t TransitionState(ASOHCI_IVars *ivars, ASOHCIState newState,
+                                     const char *description) {
+  if (!ivars) {
+    return kIOReturnNoResources;
+  }
+
+  ASOHCIState currentState = static_cast<ASOHCIState>(
+      __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
+
+  // Validate state transitions (REFACTOR.md §9)
+  bool validTransition = false;
+  switch (currentState) {
+  case ASOHCIState::Stopped:
+    validTransition = (newState == ASOHCIState::Starting);
+    break;
+  case ASOHCIState::Starting:
+    validTransition = (newState == ASOHCIState::Running ||
+                       newState == ASOHCIState::Quiescing);
+    break;
+  case ASOHCIState::Running:
+    validTransition = (newState == ASOHCIState::Quiescing);
+    break;
+  case ASOHCIState::Quiescing:
+    validTransition = (newState == ASOHCIState::Dead);
+    break;
+  case ASOHCIState::Dead:
+    validTransition = false; // Terminal state
+    break;
+  }
+
+  if (!validTransition) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: Invalid state transition %s -> %s (%s)",
+           ivars->stateDescription, StateToString(newState), description);
+    return kIOReturnInvalid;
+  }
+
+  // Perform atomic transition
+  __atomic_store_n(&ivars->state, static_cast<uint32_t>(newState),
+                   __ATOMIC_RELEASE);
+  strlcpy(ivars->stateDescription, StateToString(newState),
+          sizeof(ivars->stateDescription));
+
+  os_log(ASLog(), "ASOHCI: State transition %s -> %s (%s)",
+         StateToString(currentState), StateToString(newState), description);
+
+  return kIOReturnSuccess;
+}
+
+// Convert state enum to string for logging
+static const char *StateToString(ASOHCIState state) {
+  switch (state) {
+  case ASOHCIState::Stopped:
+    return "Stopped";
+  case ASOHCIState::Starting:
+    return "Starting";
+  case ASOHCIState::Running:
+    return "Running";
+  case ASOHCIState::Quiescing:
+    return "Quiescing";
+  case ASOHCIState::Dead:
+    return "Dead";
+  default:
+    return "Unknown";
+  }
+}
+
+// Validate operation is allowed in current state
+static kern_return_t ValidateOperation(ASOHCI_IVars *ivars,
+                                       const char *operation,
+                                       ASOHCIState requiredState) {
+  if (!ivars) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - ivars not allocated", operation);
+    return kIOReturnNoResources;
+  }
+
+  ASOHCIState currentState = static_cast<ASOHCIState>(
+      __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
+  if (currentState != requiredState) {
+    os_log(OS_LOG_DEFAULT, "ASOHCI: %s blocked - state is %s, requires %s",
+           operation, ivars->stateDescription, StateToString(requiredState));
+    return kIOReturnNotReady;
+  }
+
+  return kIOReturnSuccess;
+}
+
+// Check if operation is allowed (more permissive than ValidateOperation)
+static bool IsOperationAllowed(ASOHCI_IVars *ivars, ASOHCIState allowedState) {
+  if (!ivars)
+    return false;
+  ASOHCIState currentState = static_cast<ASOHCIState>(
+      __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
+  return (currentState == allowedState);
+}
+
+// =====================================================================================
 // Copy Bridge Logs
 // =====================================================================================
 kern_return_t ASOHCI::CopyBridgeLogs(OSData **outData) {
@@ -1078,4 +1374,31 @@ kern_return_t ASOHCI::CopyBridgeLogs(OSData **outData) {
   os_log(ASLog(), "ASOHCI: CopyBridgeLogs - returned %zu bytes of log data",
          logLength);
   return kIOReturnSuccess;
+}
+
+// =====================================================================================
+// State Machine Query Methods (REFACTOR.md §9)
+// =====================================================================================
+
+// Get current state for debugging/testing
+ASOHCIState ASOHCI::GetCurrentState() const {
+  if (!ivars)
+    return ASOHCIState::Dead;
+  return static_cast<ASOHCIState>(
+      __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
+}
+
+// Get current state as string for logging
+const char *ASOHCI::GetCurrentStateString() const {
+  if (!ivars)
+    return "null";
+  return ivars->stateDescription;
+}
+
+// Check if driver is in a specific state
+bool ASOHCI::IsInState(ASOHCIState state) const {
+  if (!ivars)
+    return (state == ASOHCIState::Dead);
+  return (static_cast<ASOHCIState>(
+              __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE)) == state);
 }

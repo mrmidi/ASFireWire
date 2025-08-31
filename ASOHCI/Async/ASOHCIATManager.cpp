@@ -11,7 +11,8 @@
 #include "LogHelper.hpp"
 #include "OHCIConstants.hpp"
 
-kern_return_t ASOHCIATManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
+kern_return_t ASOHCIATManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
+                                          uint8_t barIndex,
                                           const ATRetryPolicy &retry,
                                           const ATFairnessPolicy &fair,
                                           const ATPipelinePolicy &pipe) {
@@ -26,10 +27,22 @@ kern_return_t ASOHCIATManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
   _fair = fair;
   _pipe = pipe;
 
+  // Create components with OSSharedPtr
+  _pool = OSSharedPtr<ASOHCIATDescriptorPool>(new ASOHCIATDescriptorPool(),
+                                              OSNoRetain);
+  _builderReq = OSSharedPtr<ASOHCIATProgramBuilder>(
+      new ASOHCIATProgramBuilder(), OSNoRetain);
+  _builderRsp = OSSharedPtr<ASOHCIATProgramBuilder>(
+      new ASOHCIATProgramBuilder(), OSNoRetain);
+  _req = OSSharedPtr<ASOHCIATRequestContext>(new ASOHCIATRequestContext(),
+                                             OSNoRetain);
+  _rsp = OSSharedPtr<ASOHCIATResponseContext>(new ASOHCIATResponseContext(),
+                                              OSNoRetain);
+
   kern_return_t result;
 
   // Initialize descriptor pool with dynamic allocation (Linux-style)
-  result = _pool.Initialize(pci, barIndex);
+  result = _pool->Initialize(_pci.get(), barIndex);
   if (result != kIOReturnSuccess) {
     os_log(ASLog(),
            "ASOHCIATManager: Failed to initialize descriptor pool: 0x%x",
@@ -43,7 +56,7 @@ kern_return_t ASOHCIATManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
   }
 
   // Initialize AT Request context
-  result = _req.Initialize(pci, barIndex);
+  result = _req->Initialize(_pci.get(), barIndex);
   if (result != kIOReturnSuccess) {
     os_log(ASLog(),
            "ASOHCIATManager: Failed to initialize Request context: 0x%x",
@@ -52,7 +65,7 @@ kern_return_t ASOHCIATManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
   }
 
   // Initialize AT Response context
-  result = _rsp.Initialize(pci, barIndex);
+  result = _rsp->Initialize(_pci.get(), barIndex);
   if (result != kIOReturnSuccess) {
     os_log(ASLog(),
            "ASOHCIATManager: Failed to initialize Response context: 0x%x",
@@ -61,8 +74,8 @@ kern_return_t ASOHCIATManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
   }
 
   // Apply policies to both contexts
-  _req.ApplyPolicy(retry, fair, pipe);
-  _rsp.ApplyPolicy(retry, fair, pipe);
+  _req->ApplyPolicy(retry, fair, pipe);
+  _rsp->ApplyPolicy(retry, fair, pipe);
 
   os_log(ASLog(),
          "ASOHCIATManager: Initialized with dynamic allocation, pipelining=%s, "
@@ -80,7 +93,7 @@ kern_return_t ASOHCIATManager::Start() {
   kern_return_t result;
 
   // Start AT Request context first
-  result = _req.Start();
+  result = _req->Start();
   if (result != kIOReturnSuccess) {
     os_log(ASLog(), "ASOHCIATManager: Failed to start Request context: 0x%x",
            result);
@@ -88,11 +101,11 @@ kern_return_t ASOHCIATManager::Start() {
   }
 
   // Start AT Response context
-  result = _rsp.Start();
+  result = _rsp->Start();
   if (result != kIOReturnSuccess) {
     os_log(ASLog(), "ASOHCIATManager: Failed to start Response context: 0x%x",
            result);
-    _req.Stop(); // Clean up Request context
+    _req->Stop(); // Clean up Request context
     return result;
   }
 
@@ -106,13 +119,13 @@ kern_return_t ASOHCIATManager::Stop() {
 
   if (_pci) {
     // Stop both contexts (order doesn't matter for stop)
-    reqResult = _req.Stop();
+    reqResult = _req->Stop();
     if (reqResult != kIOReturnSuccess) {
       os_log(ASLog(), "ASOHCIATManager: Failed to stop Request context: 0x%x",
              reqResult);
     }
 
-    rspResult = _rsp.Stop();
+    rspResult = _rsp->Stop();
     if (rspResult != kIOReturnSuccess) {
       os_log(ASLog(), "ASOHCIATManager: Failed to stop Response context: 0x%x",
              rspResult);
@@ -153,28 +166,28 @@ kern_return_t ASOHCIATManager::QueueRequest(const uint32_t *header,
   }
 
   // Build program using Request builder
-  _builderReq.Begin(_pool, maxDescriptors);
+  _builderReq->Begin(*_pool, maxDescriptors);
 
   // Add header as immediate data
-  _builderReq.AddHeaderImmediate(header, headerBytes, opts.interruptPolicy);
+  _builderReq->AddHeaderImmediate(header, headerBytes, opts.interruptPolicy);
 
   // Add payload fragments
   for (uint32_t i = 0; i < fragments; i++) {
     if (payloadPAs && payloadSizes && payloadSizes[i] > 0) {
-      _builderReq.AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
+      _builderReq->AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
     }
   }
 
   // Finalize program
-  ATDesc::Program program = _builderReq.Finalize();
+  ATDesc::Program program = _builderReq->Finalize();
   if (!program.headPA) {
     os_log(ASLog(), "ASOHCIATManager: Failed to build request program");
-    _builderReq.Cancel();
+    _builderReq->Cancel();
     return kIOReturnNoMemory;
   }
 
   // Enqueue to Request context
-  kern_return_t result = _req.Enqueue(program, opts);
+  kern_return_t result = _req->Enqueue(program, opts);
   if (result != kIOReturnSuccess) {
     os_log(ASLog(), "ASOHCIATManager: Failed to enqueue request: 0x%x", result);
     return result;
@@ -211,28 +224,28 @@ kern_return_t ASOHCIATManager::QueueResponse(const uint32_t *header,
   }
 
   // Build program using Response builder
-  _builderRsp.Begin(_pool, maxDescriptors);
+  _builderRsp->Begin(*_pool, maxDescriptors);
 
   // Add header as immediate data (responses may include timestamp)
-  _builderRsp.AddHeaderImmediate(header, headerBytes, opts.interruptPolicy);
+  _builderRsp->AddHeaderImmediate(header, headerBytes, opts.interruptPolicy);
 
   // Add payload fragments
   for (uint32_t i = 0; i < fragments; i++) {
     if (payloadPAs && payloadSizes && payloadSizes[i] > 0) {
-      _builderRsp.AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
+      _builderRsp->AddPayloadFragment(payloadPAs[i], payloadSizes[i]);
     }
   }
 
   // Finalize program
-  ATDesc::Program program = _builderRsp.Finalize();
+  ATDesc::Program program = _builderRsp->Finalize();
   if (!program.headPA) {
     os_log(ASLog(), "ASOHCIATManager: Failed to build response program");
-    _builderRsp.Cancel();
+    _builderRsp->Cancel();
     return kIOReturnNoMemory;
   }
 
   // Enqueue to Response context
-  kern_return_t result = _rsp.Enqueue(program, opts);
+  kern_return_t result = _rsp->Enqueue(program, opts);
   if (result != kIOReturnSuccess) {
     os_log(ASLog(), "ASOHCIATManager: Failed to enqueue response: 0x%x",
            result);
@@ -246,14 +259,14 @@ kern_return_t ASOHCIATManager::QueueResponse(const uint32_t *header,
 
 void ASOHCIATManager::OnInterrupt_ReqTxComplete() {
   // Fan-out interrupt to Request context per OHCI §7.6
-  _req.OnInterruptTxComplete();
+  _req->OnInterruptTxComplete();
 
   os_log(ASLog(), "ASOHCIATManager: Processed reqTxComplete interrupt");
 }
 
 void ASOHCIATManager::OnInterrupt_RspTxComplete() {
   // Fan-out interrupt to Response context per OHCI §7.6
-  _rsp.OnInterruptTxComplete();
+  _rsp->OnInterruptTxComplete();
 
   os_log(ASLog(), "ASOHCIATManager: Processed respTxComplete interrupt");
 }
@@ -261,8 +274,8 @@ void ASOHCIATManager::OnInterrupt_RspTxComplete() {
 void ASOHCIATManager::OnBusResetBegin() {
   // Per OHCI §7.2.3.1: AT contexts cease transmission on bus reset
   // Fan-out to both contexts
-  _req.OnBusResetBegin();
-  _rsp.OnBusResetBegin();
+  _req->OnBusResetBegin();
+  _rsp->OnBusResetBegin();
 
   os_log(ASLog(),
          "ASOHCIATManager: Bus reset begin - stopping AT transmission");
@@ -270,8 +283,8 @@ void ASOHCIATManager::OnBusResetBegin() {
 
 void ASOHCIATManager::OnBusResetEnd() {
   // Per OHCI §7.2.3.2: Wait for contexts to quiesce before clearing busReset
-  _req.OnBusResetEnd();
-  _rsp.OnBusResetEnd();
+  _req->OnBusResetEnd();
+  _rsp->OnBusResetEnd();
 
   os_log(ASLog(),
          "ASOHCIATManager: Bus reset end - AT contexts ready for restart");
@@ -283,11 +296,11 @@ void ASOHCIATManager::OnBusResetEnd() {
 uint32_t ASOHCIATManager::OutstandingRequests() const {
   // For telemetry - would need to expose this from ASOHCIATContextBase
   // Simplified implementation
-  return _req.IsActive() ? 1 : 0;
+  return _req->IsActive() ? 1 : 0;
 }
 
 uint32_t ASOHCIATManager::OutstandingResponses() const {
   // For telemetry - would need to expose this from ASOHCIATContextBase
   // Simplified implementation
-  return _rsp.IsActive() ? 1 : 0;
+  return _rsp->IsActive() ? 1 : 0;
 }

@@ -47,7 +47,7 @@ static inline ASContextOffsets OffsetsFor(ARContextRole role) {
 // (use implicit defaults from header; ensure Stop on dtor if needed by owner)
 
 kern_return_t
-ASOHCIARManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
+ASOHCIARManager::Initialize(OSSharedPtr<IOPCIDevice> pci, uint8_t barIndex,
                             uint32_t bufferCount, uint32_t bufferBytes,
                             ARBufferFillMode fillMode,
                             const ARFilterOptions & /*filterOpts*/) {
@@ -62,44 +62,42 @@ ASOHCIARManager::Initialize(IOPCIDevice *pci, uint8_t barIndex,
   _pci = pci;
   _bar = barIndex;
 
-  // Create contexts
-  if (!_arReq)
-    _arReq = new ASOHCIARContext();
-  if (!_arRsp)
-    _arRsp = new ASOHCIARContext();
+  // Create contexts with OSSharedPtr
+  _arReq = OSSharedPtr<ASOHCIARContext>(new ASOHCIARContext(), OSNoRetain);
+  _arRsp = OSSharedPtr<ASOHCIARContext>(new ASOHCIARContext(), OSNoRetain);
   if (!_arReq || !_arRsp)
     return kIOReturnNoMemory;
 
-  // Create rings
-  if (!_ringReq)
-    _ringReq = new ASOHCIARDescriptorRing();
-  if (!_ringRsp)
-    _ringRsp = new ASOHCIARDescriptorRing();
+  // Create rings with OSSharedPtr
+  _ringReq = OSSharedPtr<ASOHCIARDescriptorRing>(new ASOHCIARDescriptorRing(),
+                                                 OSNoRetain);
+  _ringRsp = OSSharedPtr<ASOHCIARDescriptorRing>(new ASOHCIARDescriptorRing(),
+                                                 OSNoRetain);
   if (!_ringReq || !_ringRsp)
     return kIOReturnNoMemory;
 
   // Initialize rings (shared policy for now)
   kern_return_t kr =
-      _ringReq->Initialize(pci, bufferCount, bufferBytes, fillMode);
+      _ringReq->Initialize(_pci.get(), bufferCount, bufferBytes, fillMode);
   if (kr != kIOReturnSuccess)
     return kr;
-  kr = _ringRsp->Initialize(pci, bufferCount, bufferBytes, fillMode);
+  kr = _ringRsp->Initialize(_pci.get(), bufferCount, bufferBytes, fillMode);
   if (kr != kIOReturnSuccess)
     return kr;
 
   // Initialize contexts with role-specific offsets
-  kr = _arReq->Initialize(pci, barIndex, ARContextRole::kRequest,
+  kr = _arReq->Initialize(_pci.get(), barIndex, ARContextRole::kRequest,
                           OffsetsFor(ARContextRole::kRequest), fillMode);
   if (kr != kIOReturnSuccess)
     return kr;
-  kr = _arRsp->Initialize(pci, barIndex, ARContextRole::kResponse,
+  kr = _arRsp->Initialize(_pci.get(), barIndex, ARContextRole::kResponse,
                           OffsetsFor(ARContextRole::kResponse), fillMode);
   if (kr != kIOReturnSuccess)
     return kr;
 
   // Attach rings
-  (void)_arReq->AttachRing(_ringReq);
-  (void)_arRsp->AttachRing(_ringRsp);
+  (void)_arReq->AttachRing(_ringReq.get());
+  (void)_arRsp->AttachRing(_ringRsp.get());
 
   os_log(ASLog(), "ARManager: initialized (%u buffers × %u bytes, BAR=%u)",
          bufferCount, bufferBytes, _bar);

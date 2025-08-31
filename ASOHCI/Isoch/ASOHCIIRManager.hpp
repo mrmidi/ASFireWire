@@ -7,11 +7,11 @@
 // discovery),
 //   §10.2 (receive modes), §10.5 (interrupt semantics), §10.6 (data formats)
 
-#include "ASOHCIATDescriptorPool.hpp" // shared pool
+#include "../Async/ASOHCIATDescriptorPool.hpp"
 #include "ASOHCIIRContext.hpp"
+#include "ASOHCIIRDescriptor.hpp"
 #include "ASOHCIIRTypes.hpp"
-#include <PCIDriverKit/IOPCIDevice.h>
-#include <stdint.h>
+#include <DriverKit/OSSharedPtr.h>
 
 class ASOHCIIRManager {
 public:
@@ -21,7 +21,8 @@ public:
   // Required for OSSharedPtr compatibility
   void release() { delete this; }
   // Discover available IR contexts, init shared pool, apply defaults.
-  virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex,
+  virtual kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci,
+                                   uint8_t barIndex,
                                    const IRPolicy &defaultPolicy);
 
   virtual kern_return_t StartAll();
@@ -85,13 +86,13 @@ protected:
                          IRProgram::DualBufferProgram *outProgram);
 
 private:
-  IOPCIDevice *_pci = nullptr;
+  OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
 
-  ASOHCIIRContext _ctx[32]; // upper bound; actual count discovered
+  OSSharedPtr<ASOHCIIRContext> _ctx[32]; // upper bound; actual count discovered
   uint32_t _numCtx = 0;
 
-  ASOHCIATDescriptorPool _pool; // shared pool reused from AT
+  OSSharedPtr<ASOHCIATDescriptorPool> _pool; // shared pool reused from AT
   IRPolicy _defaultPolicy{};
 
   // Context state tracking

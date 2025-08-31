@@ -7,15 +7,15 @@
 // (interrupts)
 
 #include <DriverKit/IOReturn.h>
+#include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
 #include "../Shared/ASOHCITypes.hpp"
+#include "ASOHCIARContext.hpp"
+#include "ASOHCIARDescriptorRing.hpp"
+#include "ASOHCIARParser.hpp"
+#include "ASOHCIARStatus.hpp"
 #include "ASOHCIARTypes.hpp"
-
-class ASOHCIARContext;
-class ASOHCIARDescriptorRing;
-class ASOHCIARParser;
-class ASOHCIARStatus;
 
 class ASOHCIARManager {
 public:
@@ -26,7 +26,7 @@ public:
   void release() { delete this; }
 
   // Create both AR contexts + rings
-  kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex,
+  kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci, uint8_t barIndex,
                            uint32_t bufferCount, uint32_t bufferBytes,
                            ARBufferFillMode fillMode,
                            const ARFilterOptions &filterOpts);
@@ -52,14 +52,14 @@ public:
   kern_return_t RecycleResponse(uint32_t index);
 
 private:
-  IOPCIDevice *_pci = nullptr;
+  OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
-  ASOHCIARContext *_arReq = nullptr;
-  ASOHCIARContext *_arRsp = nullptr;
-  ASOHCIARDescriptorRing *_ringReq = nullptr;
-  ASOHCIARDescriptorRing *_ringRsp = nullptr;
-  ASOHCIARParser *_parser = nullptr;
-  ASOHCIARStatus *_status = nullptr;
+  OSSharedPtr<ASOHCIARContext> _arReq;
+  OSSharedPtr<ASOHCIARContext> _arRsp;
+  OSSharedPtr<ASOHCIARDescriptorRing> _ringReq;
+  OSSharedPtr<ASOHCIARDescriptorRing> _ringRsp;
+  OSSharedPtr<ASOHCIARParser> _parser;
+  OSSharedPtr<ASOHCIARStatus> _status;
 
   PacketCallback _cb = nullptr;
   void *_cbRefcon = nullptr;

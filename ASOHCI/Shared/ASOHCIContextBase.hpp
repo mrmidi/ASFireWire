@@ -18,6 +18,9 @@ class ASOHCIContextBase {
 public:
   ASOHCIContextBase() = default;
   virtual ~ASOHCIContextBase() = default;
+
+  // Required for OSSharedPtr compatibility
+  virtual void release() { delete this; }
   // Initialize with PCI device, BAR index, context kind, and precomputed
   // offsets
   virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex,
