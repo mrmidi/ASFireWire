@@ -12,14 +12,13 @@
 #include "ASOHCIIRDescriptor.hpp"
 #include "ASOHCIIRTypes.hpp"
 #include <DriverKit/OSSharedPtr.h>
+#include <memory>
 
 class ASOHCIIRManager {
 public:
   ASOHCIIRManager() = default;
   ~ASOHCIIRManager() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
   // Discover available IR contexts, init shared pool, apply defaults.
   virtual kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci,
                                    uint8_t barIndex,
@@ -89,10 +88,11 @@ private:
   OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
 
-  OSSharedPtr<ASOHCIIRContext> _ctx[32]; // upper bound; actual count discovered
+  std::unique_ptr<ASOHCIIRContext>
+      _ctx[32]; // upper bound; actual count discovered
   uint32_t _numCtx = 0;
 
-  OSSharedPtr<ASOHCIATDescriptorPool> _pool; // shared pool reused from AT
+  std::unique_ptr<ASOHCIATDescriptorPool> _pool; // shared pool reused from AT
   IRPolicy _defaultPolicy{};
 
   // Context state tracking

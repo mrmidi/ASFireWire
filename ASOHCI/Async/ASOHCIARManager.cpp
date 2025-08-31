@@ -62,17 +62,15 @@ ASOHCIARManager::Initialize(OSSharedPtr<IOPCIDevice> pci, uint8_t barIndex,
   _pci = pci;
   _bar = barIndex;
 
-  // Create contexts with OSSharedPtr
-  _arReq = OSSharedPtr<ASOHCIARContext>(new ASOHCIARContext(), OSNoRetain);
-  _arRsp = OSSharedPtr<ASOHCIARContext>(new ASOHCIARContext(), OSNoRetain);
+  // Create contexts with std::unique_ptr
+  _arReq = std::make_unique<ASOHCIARContext>();
+  _arRsp = std::make_unique<ASOHCIARContext>();
   if (!_arReq || !_arRsp)
     return kIOReturnNoMemory;
 
-  // Create rings with OSSharedPtr
-  _ringReq = OSSharedPtr<ASOHCIARDescriptorRing>(new ASOHCIARDescriptorRing(),
-                                                 OSNoRetain);
-  _ringRsp = OSSharedPtr<ASOHCIARDescriptorRing>(new ASOHCIARDescriptorRing(),
-                                                 OSNoRetain);
+  // Create rings with std::unique_ptr
+  _ringReq = std::make_unique<ASOHCIARDescriptorRing>();
+  _ringRsp = std::make_unique<ASOHCIARDescriptorRing>();
   if (!_ringReq || !_ringRsp)
     return kIOReturnNoMemory;
 

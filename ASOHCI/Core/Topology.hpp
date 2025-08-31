@@ -58,9 +58,6 @@ public:
 public:
   Topology() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
-
   // Start a new cycle accumulation.
   void BeginCycle(uint32_t generation);
 

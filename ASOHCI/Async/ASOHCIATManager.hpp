@@ -14,14 +14,13 @@
 #include "ASOHCIATRequestContext.hpp"
 #include "ASOHCIATResponseContext.hpp"
 #include <DriverKit/OSSharedPtr.h>
+#include <memory>
 
 class ASOHCIATManager {
 public:
   ASOHCIATManager() = default;
   ~ASOHCIATManager() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
   // Bring-up: create pool, init contexts, set policies
   virtual kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci,
                                    uint8_t barIndex, const ATRetryPolicy &retry,
@@ -58,12 +57,12 @@ private:
   OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
 
-  OSSharedPtr<ASOHCIATDescriptorPool> _pool;
-  OSSharedPtr<ASOHCIATProgramBuilder> _builderReq;
-  OSSharedPtr<ASOHCIATProgramBuilder> _builderRsp;
+  std::unique_ptr<ASOHCIATDescriptorPool> _pool;
+  std::unique_ptr<ASOHCIATProgramBuilder> _builderReq;
+  std::unique_ptr<ASOHCIATProgramBuilder> _builderRsp;
 
-  OSSharedPtr<ASOHCIATRequestContext> _req;
-  OSSharedPtr<ASOHCIATResponseContext> _rsp;
+  std::unique_ptr<ASOHCIATRequestContext> _req;
+  std::unique_ptr<ASOHCIATResponseContext> _rsp;
 
   ATRetryPolicy _retry{};
   ATFairnessPolicy _fair{};

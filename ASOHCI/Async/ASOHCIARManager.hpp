@@ -9,6 +9,7 @@
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
+#include <memory>
 
 #include "../Shared/ASOHCITypes.hpp"
 #include "ASOHCIARContext.hpp"
@@ -21,9 +22,6 @@ class ASOHCIARManager {
 public:
   ASOHCIARManager() = default;
   ~ASOHCIARManager() = default;
-
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
 
   // Create both AR contexts + rings
   kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci, uint8_t barIndex,
@@ -54,12 +52,12 @@ public:
 private:
   OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
-  OSSharedPtr<ASOHCIARContext> _arReq;
-  OSSharedPtr<ASOHCIARContext> _arRsp;
-  OSSharedPtr<ASOHCIARDescriptorRing> _ringReq;
-  OSSharedPtr<ASOHCIARDescriptorRing> _ringRsp;
-  OSSharedPtr<ASOHCIARParser> _parser;
-  OSSharedPtr<ASOHCIARStatus> _status;
+  std::unique_ptr<ASOHCIARContext> _arReq;
+  std::unique_ptr<ASOHCIARContext> _arRsp;
+  std::unique_ptr<ASOHCIARDescriptorRing> _ringReq;
+  std::unique_ptr<ASOHCIARDescriptorRing> _ringRsp;
+  std::unique_ptr<ASOHCIARParser> _parser;
+  std::unique_ptr<ASOHCIARStatus> _status;
 
   PacketCallback _cb = nullptr;
   void *_cbRefcon = nullptr;

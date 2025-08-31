@@ -17,8 +17,6 @@ public:
   ASOHCIATResponseContext() = default;
   virtual ~ASOHCIATResponseContext() = default;
 
-  // Required for OSSharedPtr compatibility
-  virtual void release() override { delete this; }
   // Bring-up and policy (responses don't use fairness)
   virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex);
   virtual void ApplyPolicy(const ATRetryPolicy &r, const ATFairnessPolicy &f,

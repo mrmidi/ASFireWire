@@ -18,7 +18,7 @@
 #include <DriverKit/IOMemoryMap.iig>
 #include <DriverKit/IODMACommand.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
-#include "ASOHCIIVars.h"
+#include "ASOHCIDriverTypes.hpp"
 
 // Forward declaration for Link API
 // class ASOHCILinkAPI;

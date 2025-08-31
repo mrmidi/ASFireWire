@@ -17,8 +17,6 @@ public:
   ASOHCIATRequestContext() = default;
   virtual ~ASOHCIATRequestContext() = default;
 
-  // Required for OSSharedPtr compatibility
-  virtual void release() override { delete this; }
   // Bring-up and policy
   virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex);
   virtual void ApplyPolicy(const ATRetryPolicy &r, const ATFairnessPolicy &f,

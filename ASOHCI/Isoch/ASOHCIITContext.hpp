@@ -22,8 +22,6 @@ public:
   ASOHCIITContext() = default;
   virtual ~ASOHCIITContext() = default;
 
-  // Required for OSSharedPtr compatibility
-  virtual void release() override { delete this; }
   // ctxIndex: hardware IT context number (0..N-1). Offsets computed in .cpp
   // (see §9.2)
   virtual kern_return_t Initialize(IOPCIDevice *pci, uint8_t barIndex,

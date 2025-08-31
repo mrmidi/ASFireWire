@@ -41,9 +41,6 @@ public:
   SelfIDManager() = default;
   ~SelfIDManager() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
-
   SelfIDManager(const SelfIDManager &) = delete;
   SelfIDManager &operator=(const SelfIDManager &) = delete;
 

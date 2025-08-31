@@ -28,9 +28,6 @@ public:
   ConfigROMManager() = default;
   ~ConfigROMManager() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
-
   ConfigROMManager(const ConfigROMManager &) = delete;
   ConfigROMManager &operator=(const ConfigROMManager &) = delete;
 

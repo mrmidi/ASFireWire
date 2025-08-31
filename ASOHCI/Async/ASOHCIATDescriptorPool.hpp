@@ -42,9 +42,6 @@ public:
   ASOHCIATDescriptorPool() = default;
   ~ASOHCIATDescriptorPool();
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
-
   // Initialize with dynamic buffer allocation (Linux-style)
   kern_return_t Initialize(IOPCIDevice *pciDevice, uint8_t barIndex);
   kern_return_t Deallocate();

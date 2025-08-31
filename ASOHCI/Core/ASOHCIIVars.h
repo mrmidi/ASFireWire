@@ -17,15 +17,10 @@
 // memory access
 #include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
+#include <memory>
 
-// State machine enum (REFACTOR.md §9)
-enum class ASOHCIState : uint32_t {
-  Stopped = 0,
-  Starting = 1,
-  Running = 2,
-  Quiescing = 3,
-  Dead = 4
-};
+// Include shared types
+#include "../ASOHCIDriverTypes.hpp"
 
 // Forward declarations for classes
 class ASOHCIPHYAccess;
@@ -95,25 +90,25 @@ struct ASOHCI_IVars {
   // PHY access helper - smart pointer for automatic cleanup
   OSSharedPtr<ASOHCIPHYAccess> phyAccess;
 
-  // DMA Contexts (legacy - will be managed by context managers) - smart
-  // pointers for automatic lifecycle management
-  OSSharedPtr<ASOHCIARContext> arRequestContext;
-  OSSharedPtr<ASOHCIARContext> arResponseContext;
-  OSSharedPtr<ASOHCIATContext> atRequestContext;
-  OSSharedPtr<ASOHCIATContext> atResponseContext;
+  // DMA Contexts (legacy - will be managed by context managers) - using
+  // std::unique_ptr for exclusive ownership of non-OSObject types
+  std::unique_ptr<ASOHCIARContext> arRequestContext;
+  std::unique_ptr<ASOHCIARContext> arResponseContext;
+  std::unique_ptr<ASOHCIATContext> atRequestContext;
+  std::unique_ptr<ASOHCIATContext> atResponseContext;
 
-  // Context Managers (OHCI 1.1 DMA orchestration) - already using OSSharedPtr
-  // for automatic lifecycle management
-  OSSharedPtr<ASOHCIARManager> arManager;
-  OSSharedPtr<ASOHCIATManager> atManager;
-  OSSharedPtr<ASOHCIIRManager> irManager;
-  OSSharedPtr<ASOHCIITManager> itManager;
+  // Context Managers (OHCI 1.1 DMA orchestration) - using std::unique_ptr
+  // for exclusive ownership of non-OSObject types
+  std::unique_ptr<ASOHCIARManager> arManager;
+  std::unique_ptr<ASOHCIATManager> atManager;
+  std::unique_ptr<ASOHCIIRManager> irManager;
+  std::unique_ptr<ASOHCIITManager> itManager;
 
-  // Managers (factored subsystems) - using OSSharedPtr for automatic lifecycle
-  // management
-  OSSharedPtr<SelfIDManager> selfIDManager;
-  OSSharedPtr<ConfigROMManager> configROMManager;
-  OSSharedPtr<Topology> topology;
+  // Managers (factored subsystems) - using std::unique_ptr for exclusive
+  // ownership of non-OSObject types
+  std::unique_ptr<SelfIDManager> selfIDManager;
+  std::unique_ptr<ConfigROMManager> configROMManager;
+  std::unique_ptr<Topology> topology;
 
   // Interrupt fan-out
   OSSharedPtr<ASOHCIInterruptRouter> interruptRouter;

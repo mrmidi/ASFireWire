@@ -93,12 +93,13 @@ void ASOHCIConfigROM::buildBIB(uint32_t busOptions, uint32_t guidHi,
   // General BIB: header + 4 quadlets (bus_name, node_capabilities, guid_hi,
   // guid_lo)
   const size_t initialCapacity = 20; // 5 quadlets * 4 bytes
-  _quads =
-      OSSharedPtr<OSData>(OSData::withCapacity(initialCapacity), OSNoRetain);
-  if (!_quads) {
+  _quads.reset();
+  OSData *tempData = OSData::withCapacity(initialCapacity);
+  if (!tempData) {
     os_log(ASLog(), "ASOHCI: ConfigROM - Failed to allocate OSData for BIB");
     return;
   }
+  _quads.reset(tempData, OSNoRetain); // Take ownership of the +1 object
 
   // Reserve space for 5 quadlets
   uint32_t placeholder[5] = {0};

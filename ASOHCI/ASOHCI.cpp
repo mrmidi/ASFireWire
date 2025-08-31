@@ -12,8 +12,9 @@
 #include <string.h>
 
 // Memory allocation constants (OHCI 1.1 spec + Linux reference compliance)
-static constexpr size_t kPageSize = 4096;                  // Standard page size
-static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
+[[maybe_unused]] static constexpr size_t kPageSize = 4096; // Standard page size
+[[maybe_unused]] static constexpr size_t kMaxAllocation =
+    16 * 1024 * 1024; // 16MB limit
 
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODMACommand.h>
@@ -31,7 +32,7 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 #include <DriverKit/IOService.h>
 
 // Include project headers
-#include "ASOHCIIVars.h"
+#include "Core/ASOHCIIVars.h"
 #include <DriverKit/OSMetaClass.h>
 
 // Dispatch queue for deferred self-ID processing (DriverKit equivalent of Linux
@@ -42,7 +43,6 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
 // Private helpers; NO 'class ASOHCI' here
-#include "ASOHCIIVars.h"
 #include "ASOHCI_Priv.hpp"
 
 // Generated Header
@@ -52,33 +52,18 @@ static constexpr size_t kMaxAllocation = 16 * 1024 * 1024; // 16MB limit
 // #include "Core/ASOHCILinkAPI.h"
 // #include "ASOHCILink.h"
 
-// Concrete ivars definition (workaround for IIG forward declaration issue)
-#include "ASOHCIIVars.h"
-
 // Forward declarations used early
 struct ASOHCI_IVars;
-enum class ASOHCIState;
+enum class ASOHCIState : uint32_t;
 
 static kern_return_t TransitionState(ASOHCI_IVars *, ASOHCIState, const char *);
 static bool IsOperationAllowed(ASOHCI_IVars *, ASOHCIState);
 static const char *StateToString(ASOHCIState);
-static kern_return_t ValidateOperation(ASOHCI_IVars *, const char *,
-                                       ASOHCIState);
 
 // Memory barrier header for DMA-safe programming
 #include "Core/ASOHCIMemoryBarrier.hpp"
 
 // Private helper methods (implementation details, not in public interface)
-static kern_return_t CreateWorkQueue(ASOHCI_IVars *ivars);
-static kern_return_t MapDeviceMemory(ASOHCI_IVars *ivars);
-static kern_return_t InitializeManagers(ASOHCI *self, ASOHCI_IVars *ivars);
-static kern_return_t InitializeOHCI(ASOHCI *self, ASOHCI_IVars *ivars);
-static kern_return_t SetupInterrupts(ASOHCI *self, ASOHCI_IVars *ivars);
-static kern_return_t InitializeOHCIHardware(ASOHCI_IVars *ivars);
-static kern_return_t DispatchAsync(ASOHCI_IVars *ivars, void (^work)(void));
-static kern_return_t DispatchAsyncWithCompletion(ASOHCI_IVars *ivars,
-                                                 void (^work)(void),
-                                                 void (^completion)(void));
 
 // OHCI constants and contexts
 #include "ASOHCIARContext.hpp"
@@ -214,60 +199,6 @@ void ASOHCI::free() {
   // Step 3: Safe deallocation with null-setting
   IOSafeDeleteNULL(ivars, ASOHCI_IVars, 1);
   super::free();
-}
-
-// =====================================================================================
-// Helper Methods for Dispatch Queue Integration
-// =====================================================================================
-
-// Thread-safe dispatch of work to the default queue
-static kern_return_t DispatchAsync(ASOHCI_IVars *ivars, void (^work)(void)) {
-  if (!ivars || !ivars->defaultQ) {
-    os_log(ASLog(), "ASOHCI: Cannot dispatch work - no queue available");
-    return kIOReturnNotReady;
-  }
-
-  // Use variables for thread-safe capture
-  ASOHCI_IVars *blockIv = ivars;
-  void (^blockWork)(void) = work;
-
-  // Dispatch work asynchronously with proper block capture
-  ivars->defaultQ->DispatchAsync(^{
-    if (blockIv && !__atomic_load_n(&blockIv->stopping, __ATOMIC_ACQUIRE) &&
-        !__atomic_load_n(&blockIv->deviceGone, __ATOMIC_ACQUIRE)) {
-      blockWork();
-    }
-  });
-
-  return kIOReturnSuccess;
-}
-
-// Thread-safe dispatch of work to the default queue with completion handler
-static kern_return_t DispatchAsyncWithCompletion(ASOHCI_IVars *ivars,
-                                                 void (^work)(void),
-                                                 void (^completion)(void)) {
-  if (!ivars || !ivars->defaultQ) {
-    os_log(ASLog(), "ASOHCI: Cannot dispatch work - no queue available");
-    return kIOReturnNotReady;
-  }
-
-  // Use variables for thread-safe capture
-  ASOHCI_IVars *blockIv = ivars;
-  void (^blockWork)(void) = work;
-  void (^blockCompletion)(void) = completion;
-
-  // Dispatch work asynchronously with completion
-  ivars->defaultQ->DispatchAsync(^{
-    if (blockIv && !__atomic_load_n(&blockIv->stopping, __ATOMIC_ACQUIRE) &&
-        !__atomic_load_n(&blockIv->deviceGone, __ATOMIC_ACQUIRE)) {
-      blockWork();
-      if (blockCompletion) {
-        blockCompletion();
-      }
-    }
-  });
-
-  return kIOReturnSuccess;
 }
 
 // =====================================================================================
@@ -497,17 +428,16 @@ kern_return_t ASOHCI::MapDeviceMemory() {
 }
 
 kern_return_t ASOHCI::InitializeManagers() {
-  kern_return_t result = kIOReturnSuccess;
 
   // AR Manager
-  ivars->arManager = OSSharedPtr(new ASOHCIARManager(), OSNoRetain);
+  ivars->arManager = std::make_unique<ASOHCIARManager>();
   if (ivars->arManager.get() == nullptr) {
     os_log(ASLog(), "ASOHCI: Failed to allocate AR Manager");
     return kIOReturnNoMemory;
   }
 
   // AT Manager
-  ivars->atManager = OSSharedPtr(new ASOHCIATManager(), OSNoRetain);
+  ivars->atManager = std::make_unique<ASOHCIATManager>();
   if (ivars->atManager.get() == nullptr) {
     os_log(ASLog(), "ASOHCI: Failed to allocate AT Manager");
     // Clean up AR Manager on AT Manager failure
@@ -525,14 +455,14 @@ kern_return_t ASOHCI::InitializeManagers() {
   }
 
   // Initialize Self-ID Manager with thread-safe callbacks
-  ivars->selfIDManager = OSSharedPtr(new SelfIDManager(), OSNoRetain);
+  ivars->selfIDManager = std::make_unique<SelfIDManager>();
   if (!ivars->selfIDManager) {
     os_log(ASLog(), "ASOHCI: Failed to allocate SelfIDManager");
     return kIOReturnNoMemory;
   }
 
   // Initialize Topology
-  ivars->topology = OSSharedPtr(new Topology(), OSNoRetain);
+  ivars->topology = std::make_unique<Topology>();
   if (!ivars->topology) {
     os_log(ASLog(), "ASOHCI: Failed to allocate Topology");
     ivars->selfIDManager.reset();
@@ -1246,9 +1176,6 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
 static kern_return_t TransitionState(ASOHCI_IVars *ivars, ASOHCIState newState,
                                      const char *description);
 static const char *StateToString(ASOHCIState state);
-static kern_return_t ValidateOperation(ASOHCI_IVars *ivars,
-                                       const char *operation,
-                                       ASOHCIState requiredState);
 static bool IsOperationAllowed(ASOHCI_IVars *ivars, ASOHCIState allowedState);
 
 // Thread-safe state transition with validation
@@ -1316,26 +1243,6 @@ static const char *StateToString(ASOHCIState state) {
   default:
     return "Unknown";
   }
-}
-
-// Validate operation is allowed in current state
-static kern_return_t ValidateOperation(ASOHCI_IVars *ivars,
-                                       const char *operation,
-                                       ASOHCIState requiredState) {
-  if (!ivars) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s - ivars not allocated", operation);
-    return kIOReturnNoResources;
-  }
-
-  ASOHCIState currentState = static_cast<ASOHCIState>(
-      __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
-  if (currentState != requiredState) {
-    os_log(OS_LOG_DEFAULT, "ASOHCI: %s blocked - state is %s, requires %s",
-           operation, ivars->stateDescription, StateToString(requiredState));
-    return kIOReturnNotReady;
-  }
-
-  return kIOReturnSuccess;
 }
 
 // Check if operation is allowed (more permissive than ValidateOperation)

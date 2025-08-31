@@ -27,8 +27,6 @@ public:
   ASOHCIITProgramBuilder() = default;
   ~ASOHCIITProgramBuilder() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
   // Reserve up to 'maxDescriptors' (header/immediate + payload frags + last),
   // max 8 (Z range 2..8) (§9.1)
   void Begin(ASOHCIATDescriptorPool &pool, uint32_t maxDescriptors = 7);

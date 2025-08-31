@@ -20,7 +20,7 @@
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 // Forward declarations for types defined in ASOHCIIVars.h
-enum class ASOHCIState;
+enum class ASOHCIState : uint32_t;
 struct ASOHCI_IVars;
 
 // State machine query methods (REFACTOR.md §9) - implementations

@@ -27,17 +27,12 @@ kern_return_t ASOHCIATManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
   _fair = fair;
   _pipe = pipe;
 
-  // Create components with OSSharedPtr
-  _pool = OSSharedPtr<ASOHCIATDescriptorPool>(new ASOHCIATDescriptorPool(),
-                                              OSNoRetain);
-  _builderReq = OSSharedPtr<ASOHCIATProgramBuilder>(
-      new ASOHCIATProgramBuilder(), OSNoRetain);
-  _builderRsp = OSSharedPtr<ASOHCIATProgramBuilder>(
-      new ASOHCIATProgramBuilder(), OSNoRetain);
-  _req = OSSharedPtr<ASOHCIATRequestContext>(new ASOHCIATRequestContext(),
-                                             OSNoRetain);
-  _rsp = OSSharedPtr<ASOHCIATResponseContext>(new ASOHCIATResponseContext(),
-                                              OSNoRetain);
+  // Create components with std::unique_ptr
+  _pool = std::make_unique<ASOHCIATDescriptorPool>();
+  _builderReq = std::make_unique<ASOHCIATProgramBuilder>();
+  _builderRsp = std::make_unique<ASOHCIATProgramBuilder>();
+  _req = std::make_unique<ASOHCIATRequestContext>();
+  _rsp = std::make_unique<ASOHCIATResponseContext>();
 
   kern_return_t result;
 

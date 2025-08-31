@@ -34,8 +34,7 @@ kern_return_t ASOHCIIRManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
          _numCtx);
 
   // Initialize shared descriptor pool with dynamic allocation (Linux-style)
-  _pool = OSSharedPtr<ASOHCIATDescriptorPool>(new ASOHCIATDescriptorPool(),
-                                              OSNoRetain);
+  _pool = std::make_unique<ASOHCIATDescriptorPool>();
   kern_return_t r = _pool->Initialize(_pci.get(), barIndex);
   if (r != kIOReturnSuccess) {
     os_log(ASLog(), "IRManager: pool init failed 0x%x", r);
@@ -48,7 +47,7 @@ kern_return_t ASOHCIIRManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
 
   // Initialize each IR context
   for (uint32_t i = 0; i < _numCtx; ++i) {
-    _ctx[i] = OSSharedPtr<ASOHCIIRContext>(new ASOHCIIRContext(), OSNoRetain);
+    _ctx[i] = std::make_unique<ASOHCIIRContext>();
     _ctx[i]->Initialize(_pci.get(), barIndex, i);
     _ctx[i]->ApplyPolicy(_defaultPolicy);
 

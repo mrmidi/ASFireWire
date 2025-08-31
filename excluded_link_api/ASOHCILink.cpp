@@ -53,7 +53,7 @@ public:
 OSMetaClass *gASOHCILinkAPIMetaClass;
 
 // Include ASOHCI ivars definition
-#include "ASOHCIIVars.h"
+#include "Core/ASOHCIIVars.h"
 
 // Include Topology header
 #include "Core/Topology.hpp"

@@ -14,14 +14,13 @@
 #include "ASOHCIITTypes.hpp"
 #include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
+#include <memory>
 
 class ASOHCIITManager {
 public:
   ASOHCIITManager() = default;
   ~ASOHCIITManager() = default;
 
-  // Required for OSSharedPtr compatibility
-  void release() { delete this; }
   // Discover available IT contexts, init shared pool, apply defaults.
   virtual kern_return_t Initialize(OSSharedPtr<IOPCIDevice> pci,
                                    uint8_t barIndex,
@@ -54,10 +53,11 @@ private:
   OSSharedPtr<IOPCIDevice> _pci;
   uint8_t _bar = 0;
 
-  OSSharedPtr<ASOHCIITContext> _ctx[32]; // upper bound; actual count discovered
+  std::unique_ptr<ASOHCIITContext>
+      _ctx[32]; // upper bound; actual count discovered
   uint32_t _numCtx = 0;
 
-  OSSharedPtr<ASOHCIITProgramBuilder> _builder;
-  OSSharedPtr<ASOHCIATDescriptorPool> _pool; // shared pool reused from AT
+  std::unique_ptr<ASOHCIITProgramBuilder> _builder;
+  std::unique_ptr<ASOHCIATDescriptorPool> _pool; // shared pool reused from AT
   ITPolicy _defaultPolicy{};
 };
