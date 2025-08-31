@@ -13,7 +13,8 @@
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOInterruptDispatchSource.h>
 #include <DriverKit/IOMemoryDescriptor.h>
-#include <DriverKit/IOMemoryMap.h>
+// #include <DriverKit/IOMemoryMap.h> // Not used in DriverKit - using direct
+// memory access
 #include <DriverKit/OSSharedPtr.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
@@ -35,28 +36,29 @@ class ASOHCIRegisterIO;
 // Concrete definition of ASOHCI_IVars matching the .iig ivars struct
 struct ASOHCI_IVars {
   // Device / MMIO
-  IOPCIDevice *pciDevice = nullptr;
-  IOMemoryMap *bar0Map = nullptr;
+  OSSharedPtr<IOPCIDevice> pciDevice;
+  // bar0Map not used in DriverKit - using direct memory access via
+  // MemoryRead32/MemoryWrite32
   uint8_t barIndex = 0;
-  IOInterruptDispatchSource *intSource = nullptr;
-  IODispatchQueue *defaultQ = nullptr;
+  OSSharedPtr<IOInterruptDispatchSource> intSource;
+  OSSharedPtr<IODispatchQueue> defaultQ;
 
   // Interrupt/accounting
   uint64_t interruptCount = 0;
   bool stopping = false;   // Add this for teardown gate
   bool deviceGone = false; // Set when device removal is detected
 
-  // Self-ID DMA resources
-  IOBufferMemoryDescriptor *selfIDBuffer = nullptr;
-  IODMACommand *selfIDDMA = nullptr;
+  // Self-ID DMA resources - smart pointers for automatic cleanup
+  OSSharedPtr<IOBufferMemoryDescriptor> selfIDBuffer;
+  OSSharedPtr<IODMACommand> selfIDDMA;
   IOAddressSegment selfIDSeg = {};
-  IOMemoryMap *selfIDMap = nullptr; // CPU mapping
+  OSSharedPtr<IOMemoryMap> selfIDMap; // CPU mapping
 
-  // Config ROM DMA resources
-  IOBufferMemoryDescriptor *configROMBuffer = nullptr; // 1KB ROM image
-  IOMemoryMap *configROMMap = nullptr;                 // CPU mapping
-  IODMACommand *configROMDMA = nullptr;                // DMA mapping
-  IOAddressSegment configROMSeg = {};                  // 32-bit IOVA
+  // Config ROM DMA resources - smart pointers for automatic cleanup
+  OSSharedPtr<IOBufferMemoryDescriptor> configROMBuffer; // 1KB ROM image
+  OSSharedPtr<IOMemoryMap> configROMMap;                 // CPU mapping
+  OSSharedPtr<IODMACommand> configROMDMA;                // DMA mapping
+  IOAddressSegment configROMSeg = {};                    // 32-bit IOVA
   uint32_t configROMHeaderQuad = 0;        // Computed BIB header quadlet
   uint32_t configROMBusOptions = 0;        // Mirror of ROM[2]
   bool configROMHeaderNeedsCommit = false; // Write hdr after next BusReset
@@ -77,17 +79,17 @@ struct ASOHCI_IVars {
   uint32_t cycleInconsistentCount = 0;
   uint64_t lastCycleInconsistentTime = 0;
 
-  // PHY access helper
+  // PHY access helper - raw pointer (legacy, manually managed)
   ASOHCIPHYAccess *phyAccess = nullptr;
 
-  // DMA Contexts (legacy - will be managed by context managers)
+  // DMA Contexts (legacy - will be managed by context managers) - raw pointers
   ASOHCIARContext *arRequestContext = nullptr;
   ASOHCIARContext *arResponseContext = nullptr;
   ASOHCIATContext *atRequestContext = nullptr;
   ASOHCIATContext *atResponseContext = nullptr;
 
-  // Context Managers (OHCI 1.1 DMA orchestration) - using OSSharedPtr for
-  // automatic lifecycle management
+  // Context Managers (OHCI 1.1 DMA orchestration) - already using OSSharedPtr
+  // for automatic lifecycle management
   OSSharedPtr<ASOHCIARManager> arManager;
   OSSharedPtr<ASOHCIATManager> atManager;
   OSSharedPtr<ASOHCIIRManager> irManager;

@@ -31,90 +31,29 @@ public:
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
 
-    // Interrupt action (called on a DriverKit dispatch queue)
-    virtual void InterruptOccurred(OSAction* action,
-                                   uint64_t count,
-                                   uint64_t time)
+    // Interrupt handling
+    virtual void InterruptOccurred(OSAction* action, uint64_t count, uint64_t time)
         TYPE(IOInterruptDispatchSource::InterruptOccurred);
 
-    // Bridge logging method
-    virtual kern_return_t CopyBridgeLogs(OSData** outData);
-
-    // Get Link API instance
-    // virtual kern_return_t GetLinkAPI(ASOHCILinkAPI** outLinkAPI);
+    // Public API methods
+    virtual kern_return_t CopyBridgeLogs(OSData** outData) LOCALONLY;
 
 private:
-    // Helper to arm Self-ID receive buffer and enable bits
+    // Helper methods
     virtual void ArmSelfIDReceive(bool clearCount) LOCALONLY;
+    
+    // Error handling
+    virtual void CleanupOnError() LOCALONLY;
 
-    // Per-instance state managed by IIG (ivars pointer is auto-provided)
-    struct ivars {
-        // Device / MMIO
-        IOPCIDevice*               pciDevice     = nullptr;
-        IOMemoryMap*               bar0Map       = nullptr;
-        uint8_t                    barIndex      = 0;
-        IOInterruptDispatchSource* intSource     = nullptr;
-        IODispatchQueue*           defaultQ      = nullptr;
+    // Implementation helper methods
+    virtual kern_return_t CreateWorkQueue() LOCALONLY;
+    virtual kern_return_t MapDeviceMemory() LOCALONLY;
+    virtual kern_return_t InitializeManagers() LOCALONLY;
+    virtual kern_return_t InitializeOHCI() LOCALONLY;
+    virtual kern_return_t SetupInterrupts() LOCALONLY;
+    virtual kern_return_t InitializeOHCIHardware() LOCALONLY;
 
-        // Interrupt/accounting
-        uint64_t                   interruptCount = 0;
-
-        // Self-ID DMA resources
-        IOBufferMemoryDescriptor*  selfIDBuffer  = nullptr;
-        IODMACommand*              selfIDDMA     = nullptr;
-        IOAddressSegment           selfIDSeg     = {};
-        IOMemoryMap*               selfIDMap     = nullptr; // CPU mapping
-
-        // Config ROM DMA resources
-        IOBufferMemoryDescriptor*  configROMBuffer = nullptr; // 1KB ROM image
-        IOMemoryMap*               configROMMap    = nullptr; // CPU mapping
-        IODMACommand*              configROMDMA    = nullptr; // DMA mapping
-        IOAddressSegment           configROMSeg    = {};      // 32-bit IOVA
-        uint32_t                   configROMHeaderQuad = 0;   // Computed BIB header quadlet
-        uint32_t                   configROMBusOptions = 0;   // Mirror of ROM[2]
-        bool                       configROMHeaderNeedsCommit = false; // Write hdr after next BusReset
-
-        // Link/Bus state flags
-        bool                       cycleTimerArmed   = false;
-        bool                       selfIDInProgress  = false;
-        bool                       selfIDArmed       = false;
-        uint32_t                   collapsedBusResets= 0;
-        uint32_t                   lastLoggedNodeID  = 0xFFFFFFFFu;
-        bool                       lastLoggedValid   = false;
-        bool                       lastLoggedRoot    = false;
-        bool                       didInitialPhyScan = false;
-        
-        // Cycle inconsistent rate limiting 
-        uint32_t                   cycleInconsistentCount = 0;
-        uint64_t                   lastCycleInconsistentTime = 0;
-
-        // PHY access helper
-        class ASOHCIPHYAccess*     phyAccess     = nullptr;
-
-        // DMA Contexts (legacy - will be managed by context managers)
-        class ASOHCIARContext*     arRequestContext  = nullptr;
-        class ASOHCIARContext*     arResponseContext = nullptr;
-        class ASOHCIATContext*     atRequestContext  = nullptr;
-        class ASOHCIATContext*     atResponseContext = nullptr;
-
-        // Context Managers (OHCI 1.1 DMA orchestration)
-        class ASOHCIARManager*     arManager        = nullptr;
-        class ASOHCIATManager*     atManager        = nullptr;
-        class ASOHCIIRManager*     irManager        = nullptr;
-        class ASOHCIITManager*     itManager        = nullptr;
-
-        // Managers (factored subsystems)
-        class SelfIDManager*       selfIDManager   = nullptr;
-        class ConfigROMManager*    configROMManager= nullptr;
-        class Topology*            topology        = nullptr;
-
-        // Link API callbacks
-        // void                       (*selfIDCallback)(void* context) = nullptr;
-        // void*                      selfIDCallbackContext = nullptr;
-        // void                       (*busResetCallback)(void* context) = nullptr;
-        // void*                      busResetCallbackContext = nullptr;
-    };
-
+    // NO ivars struct exposed - move to implementation
 };
 
 #endif /* ASOHCI_h */

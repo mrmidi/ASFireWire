@@ -76,7 +76,7 @@ void ASOHCIInterruptRouter::OnPostedWriteError() {
   if (!_ohci || !_ohci->ivars || !_ohci->ivars->pciDevice)
     return;
   auto *iv = _ohci->ivars;
-  auto *pci = iv->pciDevice;
+  auto *pci = iv->pciDevice.get();
   uint32_t hi = 0, lo = 0;
   if (iv->regs) {
     iv->regs->Read32(kOHCI_PostedWriteAddressHi, &hi);
@@ -96,7 +96,7 @@ void ASOHCIInterruptRouter::OnCycleTooLong() {
   if (!_ohci || !_ohci->ivars || !_ohci->ivars->pciDevice)
     return;
   auto *iv = _ohci->ivars;
-  auto *pci = iv->pciDevice;
+  auto *pci = iv->pciDevice.get();
   uint32_t nodeIdReg = 0;
   if (iv->regs)
     iv->regs->Read32(kOHCI_NodeID, &nodeIdReg);
@@ -124,7 +124,7 @@ void ASOHCIInterruptRouter::OnBusReset(uint64_t time) {
   if (!_ohci || !_ohci->ivars || !_ohci->ivars->pciDevice)
     return;
   auto *iv = _ohci->ivars;
-  auto *pci = iv->pciDevice;
+  auto *pci = iv->pciDevice.get();
 
   // Mask BusReset while handling
   pci->MemoryWrite32(iv->barIndex, kOHCI_IntMaskClear, kOHCI_Int_BusReset);
@@ -228,7 +228,7 @@ void ASOHCIInterruptRouter::ProcessSelfIDComplete(uint32_t selfIDCountReg,
   if (!_ohci || !_ohci->ivars || !_ohci->ivars->pciDevice)
     return;
   auto *iv = _ohci->ivars;
-  auto *pci = iv->pciDevice;
+  auto *pci = iv->pciDevice.get();
 
   os_log(ASLog(), "ASOHCI: SelfID count=%u gen=%u error=%d",
          (selfIDCountReg & kOHCI_SelfIDCount_selfIDSize) >> 2, generation,
