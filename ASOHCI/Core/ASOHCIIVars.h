@@ -35,8 +35,12 @@ class ConfigROMManager;
 class Topology;
 class ASOHCIInterruptRouter;
 class ASOHCIRegisterIO;
+
+// Forward declarations for new RAII architecture
+namespace fw {
+class LinkHandle;
 class ASFireWireController;
-// class ASOHCILinkAPI;
+} // namespace fw
 
 // Concrete definition of ASOHCI_IVars matching the .iig ivars struct
 struct ASOHCI_IVars {
@@ -118,11 +122,10 @@ struct ASOHCI_IVars {
   // Register IO helper
   OSSharedPtr<ASOHCIRegisterIO> regs;
 
-  // Link→Controller Interface (PREPARATION.md §155-249)
-  ASFireWireController *controller = nullptr;
-
-  // Link API implementation
-  // OSSharedPtr<ASOHCILinkAPI> linkAPI;
+  // RAII Architecture Components (start_that_worked.txt design)
+  std::shared_ptr<fw::LinkHandle>
+      linkHandle; // Link adapter for ILink interface
+  std::shared_ptr<fw::ASFireWireController> controller; // Plain C++ controller
 
   // Link API callbacks
   // void (*selfIDCallback)(void* context) = nullptr;

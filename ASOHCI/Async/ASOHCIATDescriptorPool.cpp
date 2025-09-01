@@ -184,7 +184,8 @@ kern_return_t ASOHCIATDescriptorPool::AddBuffer() {
   // Map memory for CPU access
   result = newBuffer->memory->CreateMapping(0, 0, 0, 0, 0, &newBuffer->map);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATDescriptorPool: Failed to map memory: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATDescriptorPool: Failed to map memory: 0x%{public}x",
            result);
     newBuffer->memory->release();
     delete newBuffer;

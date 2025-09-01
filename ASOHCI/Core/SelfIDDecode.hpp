@@ -59,8 +59,10 @@ struct Warning {
 struct Result {
   uint32_t generation = 0;        // copied from OHCI header (for correlation)
   std::vector<AlphaRecord> nodes; // one per PHY that reported self-ID
-  bool integrityOk = true;        // inverted-quadlet checks etc.
-  std::vector<Warning> warnings;  // non-fatal anomalies
+  std::vector<uint32_t>
+      rawQuadlets;               // raw quadlets from DMA buffer for LinkHandle
+  bool integrityOk = true;       // inverted-quadlet checks etc.
+  std::vector<Warning> warnings; // non-fatal anomalies
 };
 
 // Decode an OHCI self-ID receive buffer (host-endian quadlets as read from CPU

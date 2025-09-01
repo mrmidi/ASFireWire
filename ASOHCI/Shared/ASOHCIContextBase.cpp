@@ -135,7 +135,8 @@ kern_return_t ASOHCIContextBase::WriteCommandPtr(uint32_t descriptorAddress,
     return kIOReturnSuccess;
 
   if ((descriptorAddress & 0xF) != 0) {
-    os_log(ASLog(), "ASOHCIContextBase: CommandPtr addr 0x%x not 16B aligned",
+    os_log(ASLog(),
+           "ASOHCIContextBase: CommandPtr addr 0x%{public}x not 16B aligned",
            descriptorAddress);
     return kIOReturnBadArgument;
   }
@@ -148,7 +149,8 @@ kern_return_t ASOHCIContextBase::WriteCommandPtr(uint32_t descriptorAddress,
   _pci->MemoryWrite32(_bar, _offs.commandPtr, cmd);
   OHCI_MEMORY_BARRIER(); // Ensure hardware sees CommandPtr update before
                          // context operations
-  os_log(ASLog(), "ASOHCIContextBase: CommandPtr=0x%08x (addr=0x%x Z=%u)", cmd,
+  os_log(ASLog(),
+         "ASOHCIContextBase: CommandPtr=0x%08x (addr=0x%{public}x Z=%u)", cmd,
          descriptorAddress, zNibble);
   return kIOReturnSuccess;
 }

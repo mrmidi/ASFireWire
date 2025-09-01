@@ -79,14 +79,16 @@ kern_return_t ASOHCIATContext::Start() {
   // Verify context is not active
   result = ReadContextControl(&contextControl);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATContext: Failed to read context control: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATContext: Failed to read context control: 0x%{public}x",
            result);
     return result;
   }
 
   if (contextControl &
       (kOHCI_ContextControl_run | kOHCI_ContextControl_active)) {
-    os_log(ASLog(), "ASOHCIATContext: Context already running/active: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATContext: Context already running/active: 0x%{public}x",
            contextControl);
     return kIOReturnError;
   }
@@ -94,7 +96,8 @@ kern_return_t ASOHCIATContext::Start() {
   // Initialize CommandPtr to empty program (Z=0)
   result = WriteCommandPtr(0, 0); // No descriptors initially
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATContext: Failed to write command pointer: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATContext: Failed to write command pointer: 0x%{public}x",
            result);
     return result;
   }
@@ -103,13 +106,14 @@ kern_return_t ASOHCIATContext::Start() {
   // queued)
   result = WriteContextControl(kOHCI_ContextControl_run, true);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATContext: Failed to set run bit: 0x%x", result);
+    os_log(ASLog(), "ASOHCIATContext: Failed to set run bit: 0x%{public}x",
+           result);
     return result;
   }
 
   fRunning = true;
 
-  os_log(ASLog(), "ASOHCIATContext: Started %s context",
+  os_log(ASLog(), "ASOHCIATContext: Started %{public}s context",
          (fContextType == AT_REQUEST_CONTEXT) ? "Request" : "Response");
 
   return kIOReturnSuccess;
@@ -128,7 +132,8 @@ kern_return_t ASOHCIATContext::Stop() {
   // Clear run bit
   result = WriteContextControl(kOHCI_ContextControl_run, false);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATContext: Failed to clear run bit: 0x%x", result);
+    os_log(ASLog(), "ASOHCIATContext: Failed to clear run bit: 0x%{public}x",
+           result);
     return result;
   }
 
@@ -136,7 +141,8 @@ kern_return_t ASOHCIATContext::Stop() {
   while (retries-- > 0) {
     result = ReadContextControl(&contextControl);
     if (result != kIOReturnSuccess) {
-      os_log(ASLog(), "ASOHCIATContext: Failed to read context control: 0x%x",
+      os_log(ASLog(),
+             "ASOHCIATContext: Failed to read context control: 0x%{public}x",
              result);
       return result;
     }
@@ -149,15 +155,16 @@ kern_return_t ASOHCIATContext::Stop() {
   }
 
   if (contextControl & kOHCI_ContextControl_active) {
-    os_log(ASLog(),
-           "ASOHCIATContext: Context failed to stop (still active): 0x%x",
-           contextControl);
+    os_log(
+        ASLog(),
+        "ASOHCIATContext: Context failed to stop (still active): 0x%{public}x",
+        contextControl);
     return kIOReturnTimeout;
   }
 
   fRunning = false;
 
-  os_log(ASLog(), "ASOHCIATContext: Stopped %s context",
+  os_log(ASLog(), "ASOHCIATContext: Stopped %{public}s context",
          (fContextType == AT_REQUEST_CONTEXT) ? "Request" : "Response");
 
   return kIOReturnSuccess;
@@ -167,7 +174,7 @@ kern_return_t ASOHCIATContext::Stop() {
 kern_return_t ASOHCIATContext::HandleInterrupt() {
   // TODO: Implement interrupt handling for completed transmissions
   // This will process completed descriptors and handle acknowledgments
-  os_log(ASLog(), "ASOHCIATContext: Interrupt handled for %s context",
+  os_log(ASLog(), "ASOHCIATContext: Interrupt handled for %{public}s context",
          (fContextType == AT_REQUEST_CONTEXT) ? "Request" : "Response");
   return kIOReturnSuccess;
 }
@@ -253,14 +260,16 @@ kern_return_t ASOHCIATContext::AllocateDescriptorPool() {
       kIOMemoryDirectionInOut, fDescriptorPoolSize, kOHCI_DescriptorAlign,
       &fDescriptorPool);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATContext: Failed to create descriptor pool: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATContext: Failed to create descriptor pool: 0x%{public}x",
            result);
     return result;
   }
 
   result = fDescriptorPool->CreateMapping(0, 0, 0, 0, 0, &fDescriptorPoolMap);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATContext: Failed to map descriptor pool: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATContext: Failed to map descriptor pool: 0x%{public}x",
            result);
     return result;
   }

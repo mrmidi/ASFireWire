@@ -36,7 +36,7 @@ kern_return_t ASOHCIITManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
   _pool = std::make_unique<ASOHCIATDescriptorPool>();
   kern_return_t r = _pool->Initialize(_pci.get(), barIndex);
   if (r != kIOReturnSuccess) {
-    os_log(ASLog(), "ITManager: pool init failed 0x%x", r);
+    os_log(ASLog(), "ITManager: pool init failed 0x%{public}x", r);
   }
 
   // Create and initialize contexts
@@ -57,7 +57,7 @@ kern_return_t ASOHCIITManager::StartAll() {
   for (uint32_t i = 0; i < _numCtx; ++i) {
     _ctx[i]->Start();
   }
-  os_log(ASLog(), "ITManager: StartAll enabled mask=0x%x", mask);
+  os_log(ASLog(), "ITManager: StartAll enabled mask=0x%{public}x", mask);
   return kIOReturnSuccess;
 }
 

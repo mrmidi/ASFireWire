@@ -238,8 +238,9 @@ void ASFWReadQuadCommand::gotPacket(int rcode, const void *data, int size) {
     fBytesTransferred = 4;
     fQuadIndex++;
 
-    os_log(OS_LOG_DEFAULT, "ASFW: ASFWReadQuadCommand[%u] quadlet read: 0x%x",
-           getId(), fQuads[fQuadIndex - 1]);
+    os_log(OS_LOG_DEFAULT,
+           "ASFW: ASFWReadQuadCommand[%u] quadlet read: 0x%{public}x", getId(),
+           fQuads[fQuadIndex - 1]);
   }
 
   // Quadlet read is always complete after one response

@@ -43,6 +43,9 @@
 // IIG-generated header (path comes from your product name/bundle):
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
 
+// RAII adapter (Link only; controller lives outside ASOHCI)
+#include "LinkHandle.hpp"
+
 // Private helpers; NO 'class ASOHCI' here
 #include "ASOHCI_Priv.hpp"
 
@@ -101,8 +104,12 @@ static const char *StateToString(ASOHCIState);
 void ASOHCI::ArmSelfIDReceive(bool clearCount) {
   if (!ivars || !ivars->selfIDManager)
     return;
+  if (ivars->selfIDManager->BufferIOVA() == 0)
+    return;
   kern_return_t akr = ivars->selfIDManager->Arm(clearCount);
-  os_log(ASLog(), "ASOHCI: Self-ID armed clear=%u iova=0x%llx status=0x%08x",
+  os_log(ASLog(),
+         "ASOHCI: Self-ID armed clear=%u iova=0x%{public}llx "
+         "status=0x%{public}08x",
          clearCount ? 1u : 0u,
          (unsigned long long)ivars->selfIDManager->BufferIOVA(), akr);
   ivars->selfIDArmed = true;
@@ -135,13 +142,13 @@ bool ASOHCI::init() {
   strlcpy(ivars->stateDescription, "Stopped", sizeof(ivars->stateDescription));
 
   // OSSharedPtr objects automatically initialized to nullptr
-  os_log(ASLog(), "ASOHCI: init() completed - state: %s",
+  os_log(ASLog(), "ASOHCI: init() completed - state: %{public}s",
          ivars->stateDescription);
   return true;
 }
 
 void ASOHCI::free() {
-  os_log(ASLog(), "ASOHCI: free() - current state: %s",
+  os_log(ASLog(), "ASOHCI: free() - current state: %{public}s",
          ivars ? ivars->stateDescription : "null");
 
   if (ivars != nullptr) {
@@ -229,7 +236,8 @@ void ASOHCI::CleanupOnError() {
     kern_return_t stateKr =
         TransitionState(iv, ASOHCIState::Quiescing, "CleanupOnError");
     if (stateKr != kIOReturnSuccess) {
-      os_log(ASLog(), "ASOHCI: CleanupOnError state transition failed: 0x%08x",
+      os_log(ASLog(),
+             "ASOHCI: CleanupOnError state transition failed: 0x%{public}08x",
              stateKr);
     }
   }
@@ -306,18 +314,19 @@ void ASOHCI::CleanupOnError() {
 // Validate ivars and device state
 static kern_return_t ValidateState(ASOHCI_IVars *ivars, const char *operation) {
   if (!ivars) {
-    os_log(ASLog(), "ASOHCI: %s - ivars not allocated", operation);
+    os_log(ASLog(), "ASOHCI: %{public}s - ivars not allocated", operation);
     return kIOReturnNoResources;
   }
 
   if (__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    os_log(ASLog(), "ASOHCI: %s - operation blocked, driver stopping",
+    os_log(ASLog(), "ASOHCI: %{public}s - operation blocked, driver stopping",
            operation);
     return kIOReturnNotReady;
   }
 
   if (__atomic_load_n(&ivars->deviceGone, __ATOMIC_ACQUIRE)) {
-    os_log(ASLog(), "ASOHCI: %s - operation blocked, device gone", operation);
+    os_log(ASLog(), "ASOHCI: %{public}s - operation blocked, device gone",
+           operation);
     return kIOReturnNoDevice;
   }
 
@@ -325,13 +334,13 @@ static kern_return_t ValidateState(ASOHCI_IVars *ivars, const char *operation) {
   ASOHCIState currentState = static_cast<ASOHCIState>(
       __atomic_load_n(&ivars->state, __ATOMIC_ACQUIRE));
   if (currentState == ASOHCIState::Dead) {
-    os_log(ASLog(), "ASOHCI: %s - operation blocked, driver is dead",
+    os_log(ASLog(), "ASOHCI: %{public}s - operation blocked, driver is dead",
            operation);
     return kIOReturnNotReady;
   }
 
   if (!ivars->pciDevice) {
-    os_log(ASLog(), "ASOHCI: %s - PCI device not available", operation);
+    os_log(ASLog(), "ASOHCI: %{public}s - PCI device not available", operation);
     return kIOReturnNoDevice;
   }
 
@@ -365,10 +374,11 @@ static void LogError(kern_return_t error, const char *operation,
   }
 
   if (details) {
-    os_log(ASLog(), "ASOHCI: %s failed (%s) - %s", operation, errorString,
-           details);
+    os_log(ASLog(), "ASOHCI: %{public}s failed (%{public}s) - %{public}s",
+           operation, errorString, details);
   } else {
-    os_log(ASLog(), "ASOHCI: %s failed (%s)", operation, errorString);
+    os_log(ASLog(), "ASOHCI: %{public}s failed (%{public}s)", operation,
+           errorString);
   }
 }
 
@@ -383,8 +393,8 @@ static kern_return_t WaitForCondition(bool (^condition)(void),
     IOSleep(1);
   }
 
-  os_log(ASLog(), "ASOHCI: Timeout waiting for %s after %u ms", description,
-         timeoutMs);
+  os_log(ASLog(), "ASOHCI: Timeout waiting for %{public}s after %u ms",
+         description, timeoutMs);
   return kIOReturnTimeout;
 }
 
@@ -413,16 +423,16 @@ kern_return_t ASOHCI::MapDeviceMemory() {
   kern_return_t kr =
       ivars->pciDevice->GetBARInfo(0, &ivars->barIndex, &bar0Size, &bar0Type);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: GetBARInfo(BAR0) failed: 0x%08x", kr);
+    os_log(ASLog(), "ASOHCI: GetBARInfo(BAR0) failed: 0x%{public}08x", kr);
     return kr;
   }
 
   if (bar0Size < 0x2C) {
-    os_log(ASLog(), "ASOHCI: BAR0 too small (0x%llx)", bar0Size);
+    os_log(ASLog(), "ASOHCI: BAR0 too small (0x%{public}llx)", bar0Size);
     return kIOReturnNoResources;
   }
 
-  os_log(ASLog(), "ASOHCI: BAR0 idx=%u size=0x%llx type=0x%02x",
+  os_log(ASLog(), "ASOHCI: BAR0 idx=%u size=0x%{public}llx type=0x%{public}02x",
          ivars->barIndex, bar0Size, bar0Type);
 
   // For DriverKit, use direct memory access instead of mapping
@@ -463,6 +473,16 @@ kern_return_t ASOHCI::InitializeManagers() {
   if (!ivars->selfIDManager) {
     os_log(ASLog(), "ASOHCI: Failed to allocate SelfIDManager");
     return kIOReturnNoMemory;
+  }
+
+  // Initialize Self-ID Manager with 4KiB RX buffer
+  kern_return_t initResult = ivars->selfIDManager->Initialize(
+      ivars->pciDevice.get(), ivars->barIndex, 4096);
+  if (initResult != kIOReturnSuccess) {
+    os_log(ASLog(),
+           "ASOHCI: SelfIDManager initialization failed: 0x%{public}08x",
+           initResult);
+    return initResult;
   }
 
   // Initialize Topology
@@ -509,6 +529,13 @@ kern_return_t ASOHCI::InitializeManagers() {
                (unsigned long)info.warnings.size());
 
         blockIv->topology->Log();
+
+        // Forward actual Self-ID quadlets to LinkHandle
+        if (blockIv->linkHandle) {
+          blockIv->linkHandle->deliverSelfIDs(
+              res.rawQuadlets.data(),
+              static_cast<uint32_t>(res.rawQuadlets.size()), res.generation);
+        }
       });
 
   // IR Manager
@@ -522,7 +549,7 @@ kern_return_t ASOHCI::InitializeManagers() {
   kern_return_t irResult =
       ivars->irManager->Initialize(ivars->pciDevice, ivars->barIndex, {});
   if (irResult != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: IR Manager initialization failed: 0x%08x",
+    os_log(ASLog(), "ASOHCI: IR Manager initialization failed: 0x%{public}08x",
            irResult);
     ivars->irManager.reset();
     return irResult;
@@ -547,7 +574,7 @@ kern_return_t ASOHCI::InitializeOHCI() {
   // Open device and enable PCI capabilities
   kr = ivars->pciDevice->Open(this, 0);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: PCI Open failed: 0x%08x", kr);
+    os_log(ASLog(), "ASOHCI: PCI Open failed: 0x%{public}08x", kr);
     return kr;
   }
 
@@ -559,7 +586,8 @@ kern_return_t ASOHCI::InitializeOHCI() {
   if (newCmd != cmd) {
     ivars->pciDevice->ConfigurationWrite16(kIOPCIConfigurationOffsetCommand,
                                            newCmd);
-    os_log(ASLog(), "ASOHCI: PCI CMD updated: 0x%04x -> 0x%04x", cmd, newCmd);
+    os_log(ASLog(), "ASOHCI: PCI CMD updated: 0x%{public}04x -> 0x%{public}04x",
+           cmd, newCmd);
   }
 
   // Initialize interrupt handling
@@ -601,7 +629,8 @@ kern_return_t ASOHCI::SetupInterrupts() {
   kr = IOInterruptDispatchSource::Create(ivars->pciDevice.get(), 0,
                                          ivars->defaultQ.get(), &src);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: IOInterruptDispatchSource::Create failed: 0x%08x",
+    os_log(ASLog(),
+           "ASOHCI: IOInterruptDispatchSource::Create failed: 0x%{public}08x",
            kr);
     return kr;
   }
@@ -612,7 +641,8 @@ kern_return_t ASOHCI::SetupInterrupts() {
   OSAction *action = nullptr;
   kr = CreateActionInterruptOccurred(0, &action);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: CreateActionInterruptOccurred failed: 0x%08x", kr);
+    os_log(ASLog(),
+           "ASOHCI: CreateActionInterruptOccurred failed: 0x%{public}08x", kr);
     return kr;
   }
 
@@ -658,7 +688,35 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
   const uint32_t hcSet = (kOHCI_HCControl_LPS | kOHCI_HCControl_PostedWriteEn);
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlSet, hcSet);
   OHCI_MEMORY_BARRIER(); // Ensure HC control changes are visible to hardware
-  os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%08x)", hcSet);
+  os_log(ASLog(), "ASOHCI: HCControlSet LPS+PostedWrite (0x%{public}08x)",
+         hcSet);
+
+  // Poll up to 3 * 50ms for LPS latch similar to Linux early init
+  uint32_t _hc = 0;
+  bool lpsOk = false;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    IOSleep(50);
+    ivars->pciDevice->MemoryRead32(ivars->barIndex, kOHCI_HCControlSet, &_hc);
+    if ((_hc & kOHCI_HCControl_LPS) != 0) {
+      lpsOk = true;
+      break;
+    }
+  }
+  if (!lpsOk) {
+    os_log(
+        ASLog(),
+        "ASOHCI: WARNING LPS did not latch after polling (_hc=0x%{public}08x)",
+        _hc);
+  } else {
+    os_log(ASLog(), "ASOHCI: LPS latched (_hc=0x%{public}08x)", _hc);
+  }
+
+  // Phase 3: Byte Swap Configuration (OHCI 1.1 §5.7.1)
+  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_HCControlClear,
+                                  kOHCI_HCControl_NoByteSwap);
+  OHCI_MEMORY_BARRIER(); // Ensure byte swap configuration is visible to
+                         // hardware
+  os_log(ASLog(), "ASOHCI: Phase 3 - Configured for little-endian byte order");
 
   // Program BusOptions and NodeID
   uint32_t bo = 0;
@@ -670,7 +728,8 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
   if (bo != origBo) {
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_BusOptions, bo);
     OHCI_MEMORY_BARRIER(); // Ensure bus options are visible to hardware
-    os_log(ASLog(), "ASOHCI: BusOptions updated 0x%08x->0x%08x", origBo, bo);
+    os_log(ASLog(), "ASOHCI: BusOptions updated 0x%{public}08x->0x%{public}08x",
+           origBo, bo);
   }
 
   // Provisional NodeID
@@ -700,7 +759,19 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
   ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntMaskSet, irqs);
   OHCI_MEMORY_BARRIER(); // Ensure interrupt mask changes are visible to
                          // hardware
-  os_log(ASLog(), "ASOHCI: Comprehensive interrupt mask set: 0x%08x", irqs);
+  os_log(ASLog(), "ASOHCI: Comprehensive interrupt mask set: 0x%{public}08x",
+         irqs);
+
+  // Phase 6: AT Retries Configuration (Linux ohci_enable line 2479)
+  uint32_t retries = (3 << 0) |   // MAX_AT_REQ_RETRIES
+                     (3 << 4) |   // MAX_AT_RESP_RETRIES
+                     (3 << 8) |   // MAX_PHYS_RESP_RETRIES
+                     (200 << 16); // Cycle limit
+  ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_ATRetries, retries);
+  OHCI_MEMORY_BARRIER(); // Ensure AT retries configuration is visible to
+                         // hardware
+  os_log(ASLog(), "ASOHCI: Phase 6 - AT Retries configured: 0x%{public}08x",
+         retries);
 
   // Final link activation
   ivars->pciDevice->MemoryWrite32(
@@ -718,7 +789,7 @@ kern_return_t ASOHCI::InitializeOHCIHardware() {
 kern_return_t IMPL(ASOHCI, Start) {
   kern_return_t kr = Start(provider, SUPERDISPATCH);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCI: Start superdispatch failed: 0x%08x", kr);
+    os_log(ASLog(), "ASOHCI: Start superdispatch failed: 0x%{public}08x", kr);
     CleanupOnError();
     return kr;
   }
@@ -783,6 +854,15 @@ kern_return_t IMPL(ASOHCI, Start) {
     return kr;
   }
 
+  // Step 6: Create LinkHandle and start Controller (new RAII architecture)
+  auto linkHandle = CreateLinkHandle();
+  if (!linkHandle) {
+    TransitionState(ivars, ASOHCIState::Quiescing,
+                    "LinkHandle creation failed");
+    CleanupOnError();
+    return kIOReturnInternalError;
+  }
+
   // State machine: Transition to Running (REFACTOR.md §9)
   kr = TransitionState(ivars, ASOHCIState::Running, "bring-up complete");
   if (kr != kIOReturnSuccess) {
@@ -791,7 +871,7 @@ kern_return_t IMPL(ASOHCI, Start) {
     return kr;
   }
 
-  os_log(ASLog(), "ASOHCI: Start() bring-up complete");
+  os_log(ASLog(), "ASOHCI: Start() bring-up complete with RAII architecture");
   return kIOReturnSuccess;
 }
 
@@ -829,7 +909,8 @@ kern_return_t IMPL(ASOHCI, Stop) {
         TransitionState(ivars, ASOHCIState::Quiescing, "Stop begin");
     if (stateKr != kIOReturnSuccess) {
       // If transition fails, we're probably already in a terminal state
-      os_log(ASLog(), "ASOHCI: Stop state transition failed: 0x%08x", stateKr);
+      os_log(ASLog(), "ASOHCI: Stop state transition failed: 0x%{public}08x",
+             stateKr);
     }
   }
 
@@ -869,7 +950,19 @@ kern_return_t IMPL(ASOHCI, Stop) {
     }
   }
 
-  // 3) Stop all managers BEFORE hardware teardown
+  // 3) Stop RAII architecture components (controller and LinkHandle) first
+  if (ivars) {
+    os_log(ASLog(), "ASOHCI: Stopping RAII architecture components...");
+
+    // Clear LinkHandle - this will destroy the adapter and break the link
+    // connection
+    if (ivars->linkHandle) {
+      os_log(ASLog(), "ASOHCI: LinkHandle cleared");
+      ivars->linkHandle.reset(); // Release shared_ptr
+    }
+  }
+
+  // 4) Stop all managers AFTER controller cleanup
   if (ivars) {
     os_log(ASLog(), "ASOHCI: Stopping context managers...");
     if (ivars->arManager) {
@@ -961,6 +1054,12 @@ kern_return_t IMPL(ASOHCI, Stop) {
     os_log(ASLog(), "ASOHCI: PCI device closed");
   }
 
+  // Notify SelfIDManager that PCI session is closed (prevents MMIO after Close)
+  if (ivars && ivars->selfIDManager) {
+    ivars->selfIDManager->OnPCISessionClosed();
+    os_log(ASLog(), "ASOHCI: SelfIDManager notified of PCI session closure");
+  }
+
   // 8) Clear PCI device reference to prevent any further access
   if (ivars) {
     ivars->pciDevice.reset();
@@ -971,6 +1070,14 @@ kern_return_t IMPL(ASOHCI, Stop) {
   // 9) Clean up managers and helpers (safe now that hardware is quiesced)
   if (ivars) {
     os_log(ASLog(), "ASOHCI: Cleaning up managers and helpers...");
+
+    // Disarm Self-ID manager before teardown to prevent hardware access after
+    // session close
+    if (ivars->selfIDManager) {
+      ivars->selfIDManager->Disarm();
+      os_log(ASLog(), "ASOHCI: SelfIDManager disarmed");
+    }
+
     if (ivars->selfIDManager) {
       ivars->selfIDManager->Teardown();
       ivars->selfIDManager.reset();
@@ -1014,14 +1121,15 @@ kern_return_t IMPL(ASOHCI, Stop) {
     kern_return_t stateKr =
         TransitionState(ivars, ASOHCIState::Dead, "Stop completed");
     if (stateKr != kIOReturnSuccess) {
-      os_log(ASLog(), "ASOHCI: Stop state transition to Dead failed: 0x%08x",
+      os_log(ASLog(),
+             "ASOHCI: Stop state transition to Dead failed: 0x%{public}08x",
              stateKr);
     }
   }
 
   // 12) NOW call super Stop LAST (following Apple's pattern)
   kern_return_t result = Stop(provider, SUPERDISPATCH);
-  os_log(ASLog(), "ASOHCI: Super Stop completed: 0x%08x", result);
+  os_log(ASLog(), "ASOHCI: Super Stop completed: 0x%{public}08x", result);
 
   return result;
 }
@@ -1040,7 +1148,8 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
 
   // State machine: Only process interrupts when Running (REFACTOR.md §9)
   if (!IsOperationAllowed(ivars, ASOHCIState::Running)) {
-    os_log(ASLog(), "ASOHCI: Interrupt blocked - state is %s, requires Running",
+    os_log(ASLog(),
+           "ASOHCI: Interrupt blocked - state is %{public}s, requires Running",
            ivars->stateDescription);
     return;
   }
@@ -1105,7 +1214,7 @@ void ASOHCI::InterruptOccurred_Impl(ASOHCI_InterruptOccurred_Args) {
   if (clearMask && DeviceAccessOk(ivars))
     ivars->pciDevice->MemoryWrite32(ivars->barIndex, kOHCI_IntEventClear,
                                     clearMask);
-  os_log(ASLog(), "ASOHCI: IntEvent=0x%08x", intEvent);
+  os_log(ASLog(), "ASOHCI: IntEvent=0x%{public}08x", intEvent);
 
   LogUtils::DumpIntEvent(intEvent);
 
@@ -1275,7 +1384,9 @@ static kern_return_t TransitionState(ASOHCI_IVars *ivars, ASOHCIState newState,
   }
 
   if (!validTransition) {
-    os_log(ASLog(), "ASOHCI: Invalid state transition %s -> %s (%s)",
+    os_log(ASLog(),
+           "ASOHCI: Invalid state transition %{public}s -> %{public}s "
+           "(%{public}s)",
            ivars->stateDescription, StateToString(newState), description);
     return kIOReturnInvalid;
   }
@@ -1286,7 +1397,8 @@ static kern_return_t TransitionState(ASOHCI_IVars *ivars, ASOHCIState newState,
   strlcpy(ivars->stateDescription, StateToString(newState),
           sizeof(ivars->stateDescription));
 
-  os_log(ASLog(), "ASOHCI: State transition %s -> %s (%s)",
+  os_log(ASLog(),
+         "ASOHCI: State transition %{public}s -> %{public}s (%{public}s)",
          StateToString(currentState), StateToString(newState), description);
 
   return kIOReturnSuccess;
@@ -1352,16 +1464,42 @@ kern_return_t ASOHCI::CopyBridgeLogs(OSData **outData) {
 // Link Interface Implementation (PREPARATION.md §155-249)
 // =====================================================================================
 
-// Controller registration
-kern_return_t ASOHCI::SetController(ASFireWireController *controller) {
-  kern_return_t kr = ValidateState(ivars, "SetController");
+void *ASOHCI::CreateLinkHandle() {
+  kern_return_t kr = ValidateState(ivars, "CreateLinkHandle");
   if (kr != kIOReturnSuccess) {
-    return kr;
+    return nullptr;
   }
 
-  ivars->controller = controller;
-  os_log(ASLog(), "ASOHCI: Controller registered: %p", controller);
-  return kIOReturnSuccess;
+  // Create LinkHandle with OSSharedPtr<ASOHCI> - this retains the service
+  auto linkHandle =
+      std::make_shared<fw::LinkHandle>(OSSharedPtr(this, OSRetain));
+  ivars->linkHandle = linkHandle;
+
+  // Create InterruptRouter if not already created and register LinkHandle
+  if (!ivars->interruptRouter) {
+    ivars->interruptRouter =
+        OSSharedPtr(ASOHCIInterruptRouter::Create(), OSNoRetain);
+    if (ivars->interruptRouter) {
+      ivars->interruptRouter->SetController(this);
+      // Register managers with router if they exist
+      if (ivars->arManager) {
+        // TODO: Add SetARManager when available
+      }
+      if (ivars->atManager) {
+        // TODO: Add SetATManager when available
+      }
+    }
+  }
+
+  // Register LinkHandle with InterruptRouter for event delivery
+  if (ivars->interruptRouter) {
+    ivars->interruptRouter->SetLinkHandle(linkHandle);
+  }
+
+  os_log(
+      ASLog(),
+      "ASOHCI: LinkHandle created and InterruptRouter configured successfully");
+  return linkHandle.get();
 }
 
 // Hardware state access methods
@@ -1420,6 +1558,10 @@ kern_return_t ASOHCI::GetCycleTime(uint32_t *cycleTime) {
   return kIOReturnSuccess;
 }
 
+IODispatchQueue *ASOHCI::GetDefaultQueue() const {
+  return ivars ? ivars->defaultQ.get() : nullptr;
+}
+
 // Transaction primitives - MVP synchronous implementation
 kern_return_t ASOHCI::ReadQuad(uint16_t nodeID, uint16_t addrHi,
                                uint32_t addrLo, uint32_t *outValue,
@@ -1449,7 +1591,8 @@ kern_return_t ASOHCI::ReadQuad(uint16_t nodeID, uint16_t addrHi,
   // ASFWReadQuadCommand
 
   os_log(ASLog(),
-         "ASOHCI: ReadQuad nodeID=0x%04x addr=0x%04x%08x gen=%u speed=%u",
+         "ASOHCI: ReadQuad nodeID=0x%{public}04x "
+         "addr=0x%{public}04x%{public}08x gen=%u speed=%u",
          nodeID, addrHi, addrLo, generation, speed);
 
   // TODO: Use ASFWReadQuadCommand or AT manager for actual transaction
@@ -1558,56 +1701,6 @@ kern_return_t ASOHCI::UpdateConfigROM(IOMemoryDescriptor *romData) {
   // Not implemented for MVP
   os_log(ASLog(), "ASOHCI: UpdateConfigROM not implemented in MVP");
   return kIOReturnUnsupported;
-}
-
-// Controller Event Delivery - placeholders for MVP
-void ASOHCI::OnBusReset(uint32_t generation) {
-  if (ivars && ivars->controller) {
-    os_log(ASLog(), "ASOHCI: OnBusReset generation=%u (controller=%p)",
-           generation, ivars->controller);
-    // Update generation in ivars for Link Interface methods
-    ivars->generation = generation;
-    // Forward to controller
-    ivars->controller->HandleBusReset(generation);
-  }
-}
-
-void ASOHCI::OnSelfIDsComplete(const uint32_t *selfIDQuads, uint32_t count,
-                               uint32_t generation) {
-  if (ivars && ivars->controller) {
-    os_log(ASLog(),
-           "ASOHCI: OnSelfIDsComplete count=%u generation=%u (controller=%p)",
-           count, generation, ivars->controller);
-    // Forward to controller
-    ivars->controller->HandleSelfIDs(selfIDQuads, count, generation);
-  }
-}
-
-void ASOHCI::OnCycleInconsistent(uint32_t cycleTime) {
-  if (ivars && ivars->controller) {
-    // TODO: Forward to controller
-    os_log(ASLog(),
-           "ASOHCI: OnCycleInconsistent cycleTime=0x%08x (controller=%p)",
-           cycleTime, ivars->controller);
-  }
-}
-
-void ASOHCI::OnTransactionComplete(void *completionContext,
-                                   kern_return_t status, uint32_t responseCode,
-                                   IOMemoryDescriptor *responseData) {
-  // Transaction completion handling - not needed for MVP synchronous reads
-  os_log(ASLog(),
-         "ASOHCI: OnTransactionComplete context=%p status=0x%08x rcode=%u",
-         completionContext, status, responseCode);
-}
-
-void ASOHCI::OnAsyncPacketReceived(uint16_t sourceNodeID, uint16_t destAddrHi,
-                                   uint32_t destAddrLo, uint32_t tCode,
-                                   IOMemoryDescriptor *packetData,
-                                   uint32_t generation, uint32_t speed) {
-  // Async packet reception - not needed for MVP Config ROM reading
-  os_log(ASLog(), "ASOHCI: OnAsyncPacketReceived src=0x%04x tCode=%u gen=%u",
-         sourceNodeID, tCode, generation);
 }
 
 // =====================================================================================

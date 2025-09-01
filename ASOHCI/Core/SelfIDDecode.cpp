@@ -33,6 +33,9 @@ Result Decode(const uint32_t *buffer, uint32_t quadletCount) {
     return out;
   }
 
+  // Store raw quadlets for LinkHandle delivery
+  out.rawQuadlets.assign(buffer, buffer + quadletCount);
+
   // OHCI 1.1 §11.3: buffer[0] is header (generation|timestamp). Generation
   // often matches SelfIDCount bits [23:16].
   out.generation = (quadletCount > 0) ? ((buffer[0] >> 16) & 0xFFu) : 0;

@@ -52,6 +52,15 @@ public:
   // Free mappings/DMA and scrub controller programming.
   void Teardown();
 
+  // Disarm reception safely while PCI session is open
+  void Disarm();
+
+  // Notify that PCI session has been closed (prevents MMIO after Close)
+  void OnPCISessionClosed() {
+    _sessionOpen = false;
+    _pci = nullptr;
+  }
+
   // Arm reception; when clearCount is true, zeros the HW counter before arming.
   kern_return_t Arm(bool clearCount);
 
@@ -93,6 +102,7 @@ private:
   // State
   bool _armed = false;
   bool _inProgress = false;
+  bool _sessionOpen = false; // Track PCI session state
   uint32_t _lastGeneration = 0;
 
   // Callbacks

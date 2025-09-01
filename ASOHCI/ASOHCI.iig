@@ -20,9 +20,12 @@
 #include <PCIDriverKit/IOPCIDevice.iig>
 #include "ASOHCIDriverTypes.hpp"
 
-// Forward declarations for Controller interface
-class ASFireWireController;
+// Include C++ standard library headers needed for shared_ptr
+#include <memory>
 
+// Forward declarations for new RAII architecture
+// LinkHandle is a pure C++ class, not a DriverKit OSObject
+// We'll use opaque pointers in the interface
 
 class ASOHCI : public IOService
 {
@@ -40,17 +43,21 @@ public:
     virtual kern_return_t CopyBridgeLogs(OSData** outData) LOCALONLY;
 
     // =====================================================================================
-    // Link Interface - Transaction Primitives (PREPARATION.md §155-249)
+    // Link Interface - Transaction Primitives for LinkHandle Adapter 
     // =====================================================================================
     
-    // Controller registration
-    virtual kern_return_t SetController(ASFireWireController* controller) LOCALONLY;
+    // LinkHandle integration - called during Start()
+    // Returns opaque pointer to LinkHandle (pure C++ object)
+    virtual void* CreateLinkHandle() LOCALONLY;
     
     // Hardware state access
     virtual uint16_t GetNodeID() const LOCALONLY;
     virtual uint64_t GetLocalGUID() const LOCALONLY;
     virtual uint32_t GetGeneration() const LOCALONLY;
     virtual kern_return_t GetCycleTime(uint32_t* cycleTime) LOCALONLY;
+    
+    // Work queue access for LinkHandle
+    virtual IODispatchQueue* GetDefaultQueue() const LOCALONLY;
     
     // Transaction primitives for Config ROM reading
     virtual kern_return_t ReadQuad(uint16_t nodeID, uint16_t addrHi, uint32_t addrLo,
@@ -69,29 +76,6 @@ public:
     
     // Config ROM management
     virtual kern_return_t UpdateConfigROM(IOMemoryDescriptor* romData) LOCALONLY;
-
-protected:
-    // =====================================================================================
-    // Controller Event Delivery (PREPARATION.md §222-241)
-    // =====================================================================================
-    
-    // Bus Events (called from interrupt context)
-    virtual void OnBusReset(uint32_t generation) LOCALONLY;
-    virtual void OnSelfIDsComplete(const uint32_t* selfIDQuads, uint32_t count, 
-                                   uint32_t generation) LOCALONLY;
-    virtual void OnCycleInconsistent(uint32_t cycleTime) LOCALONLY;
-    
-    // Transaction Completion
-    virtual void OnTransactionComplete(void* completionContext, 
-                                       kern_return_t status,
-                                       uint32_t responseCode,
-                                       IOMemoryDescriptor* responseData) LOCALONLY;
-    
-    // Async Packet Reception
-    virtual void OnAsyncPacketReceived(uint16_t sourceNodeID, uint16_t destAddrHi,
-                                       uint32_t destAddrLo, uint32_t tCode,
-                                       IOMemoryDescriptor* packetData,
-                                       uint32_t generation, uint32_t speed) LOCALONLY;
 
 private:
     // State machine methods

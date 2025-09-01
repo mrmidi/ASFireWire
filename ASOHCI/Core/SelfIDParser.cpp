@@ -21,7 +21,7 @@
 
 namespace SelfIDParser {
 
-void Process(uint32_t *selfIDData, uint32_t quadletCount) {
+void Process(const uint32_t *selfIDData, uint32_t quadletCount) {
   if (!selfIDData || quadletCount == 0) {
     os_log(ASLog(), "ASOHCI: Invalid Self-ID data");
     return;
@@ -65,7 +65,8 @@ void Process(uint32_t *selfIDData, uint32_t quadletCount) {
         break;
       }
     }
-    os_log(ASLog(), "ASOHCI:  BUF[%u]=0x%08x tag=%s%s", i, q, tagType, purpose);
+    os_log(ASLog(), "ASOHCI:  BUF[%u]=0x%08x tag=%{public}s%{public}s", i, q,
+           tagType, purpose);
   }
   os_log(ASLog(), "ASOHCI: === END BUFFER ANALYSIS ===");
 #endif

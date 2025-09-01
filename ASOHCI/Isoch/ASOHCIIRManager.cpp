@@ -37,7 +37,7 @@ kern_return_t ASOHCIIRManager::Initialize(OSSharedPtr<IOPCIDevice> pci,
   _pool = std::make_unique<ASOHCIATDescriptorPool>();
   kern_return_t r = _pool->Initialize(_pci.get(), barIndex);
   if (r != kIOReturnSuccess) {
-    os_log(ASLog(), "IRManager: pool init failed 0x%x", r);
+    os_log(ASLog(), "IRManager: pool init failed 0x%{public}x", r);
     os_log(ASLog(), "IRManager: Continuing with degraded functionality "
                     "(following IT Manager pattern)");
     // Don't return failure - continue like IT Manager does
@@ -73,7 +73,7 @@ kern_return_t ASOHCIIRManager::StartAll() {
     _ctx[i]->Start();
   }
 
-  os_log(ASLog(), "IRManager: StartAll enabled mask=0x%x", mask);
+  os_log(ASLog(), "IRManager: StartAll enabled mask=0x%{public}x", mask);
   return kIOReturnSuccess;
 }
 
@@ -130,14 +130,15 @@ kern_return_t ASOHCIIRManager::StartReception(
   _ctx[ctxId]->ApplyChannelFilter(channelFilter);
   kern_return_t r = kIOReturnSuccess;
   if (r != kIOReturnSuccess) {
-    os_log(ASLog(), "IRManager: ctx%u channel filter failed 0x%x", ctxId, r);
+    os_log(ASLog(), "IRManager: ctx%u channel filter failed 0x%{public}x",
+           ctxId, r);
     return r;
   }
 
   // Start the context
   r = _ctx[ctxId]->Start();
   if (r != kIOReturnSuccess) {
-    os_log(ASLog(), "IRManager: ctx%u start failed 0x%x", ctxId, r);
+    os_log(ASLog(), "IRManager: ctx%u start failed 0x%{public}x", ctxId, r);
     return r;
   }
 
@@ -185,7 +186,7 @@ kern_return_t ASOHCIIRManager::EnqueueReceiveBuffers(
   // Enqueue the program to the context
   r = _ctx[ctxId]->EnqueueStandard(program, opts);
   if (r != kIOReturnSuccess) {
-    os_log(ASLog(), "IRManager: ctx%u enqueue failed 0x%x", ctxId, r);
+    os_log(ASLog(), "IRManager: ctx%u enqueue failed 0x%{public}x", ctxId, r);
     return r;
   }
 

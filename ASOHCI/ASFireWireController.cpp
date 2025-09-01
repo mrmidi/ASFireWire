@@ -1,679 +1,25 @@
 //
-//  ASFireWireController.cpp
-//  ASFireWire Controller - Bus orchestration layer implementation
+// ASFireWireController.cpp — Plain C++ Controller Implementation
 //
-//  Created by ASFireWire MVP - Controller layer separation from ASOHCI
-//  Based on CONTROLLER.md architecture and Linux firewire/core-device.c
-//  patterns
+// Bus orchestration layer converted from IOService to pure C++ with RAII.
+// Handles topology building, device scanning, and Config ROM parsing.
 //
 
-#include <TargetConditionals.h>
-#include <os/log.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
-
-#include <DriverKit/IOBufferMemoryDescriptor.h>
+#include "ASFireWireController.hpp"
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
-#include <DriverKit/IOMemoryMap.h>
-#include <DriverKit/IOUserServer.h>
-#include <DriverKit/OSAction.h>
-#include <DriverKit/OSData.h>
-#include <DriverKit/OSSharedPtr.h>
+#include <algorithm>
+#include <os/log.h>
 
-// IIG-generated header
-#include <net.mrmidi.ASFireWire.ASOHCI/ASFireWireController.h>
+#include "LogHelper.hpp"
 
-// Project headers
-#include "ASOHCI.h"
+namespace fw {
 
-// Forward declarations
-struct ASFireWireController_IVars;
-static kern_return_t TransitionBusState(ASFireWireController_IVars *ivars,
-                                        BusState newState,
-                                        const char *description);
-static const char *BusStateToString(BusState state);
+// =============================================================================
+// Static Helpers
+// =============================================================================
 
-// Logging helper
-static os_log_t ControllerLog() {
-  static os_log_t log =
-      os_log_create("net.mrmidi.ASFireWire.Controller", "Controller");
-  return log;
-}
-
-// =====================================================================================
-// Controller State Machine and Data Types (CONTROLLER.md §269-302)
-// =====================================================================================
-
-enum class BusState : uint32_t {
-  Starting = 0,
-  WaitingSelfIDs,
-  BuildingTopology,
-  Scanning,
-  Running
-};
-
-// Device record for tracking discovered devices (MVP - simplified)
-struct DeviceRecord {
-  uint16_t nodeID = 0xFFFF;
-  uint64_t guid = 0;
-  uint32_t generation = 0;
-  bool romValid = false;
-  uint32_t romQuads[16] = {}; // First 64 bytes of ROM only for MVP
-  uint32_t vendorID = 0;
-  uint32_t modelID = 0;
-  uint32_t specID = 0;
-  uint32_t swVersion = 0;
-};
-
-// Controller ivars structure (similar pattern to ASOHCI)
-struct ASFireWireController_IVars {
-  // Link interface
-  ASOHCI *link = nullptr;
-
-  // Bus state machine
-  uint32_t busState = static_cast<uint32_t>(BusState::Starting);
-  char busStateDescription[32] = "Starting";
-
-  // Bus information
-  uint32_t generation = 0;
-  uint16_t localNodeID = 0xFFFF;
-  uint16_t rootNodeID = 0xFFFF;
-  uint32_t nodeCount = 0;
-
-  // Self-ID processing
-  uint32_t selfIDQuads[256] = {}; // Raw Self-ID data
-  uint32_t selfIDCount = 0;
-
-  // Device tracking (MVP - simplified)
-  DeviceRecord devices[63] = {}; // Max 63 devices per bus
-  uint32_t deviceCount = 0;
-
-  // Dispatch queue for controller operations
-  OSSharedPtr<IODispatchQueue> workQueue;
-
-  // State flags
-  bool stopping = false;
-  uint64_t lastScanTime = 0;
-};
-
-// =====================================================================================
-// IOService Lifecycle
-// =====================================================================================
-
-bool ASFireWireController::init() {
-  auto success = super::init();
-  if (!success) {
-    return false;
-  }
-
-  // Allocate ivars
-  ivars = IONewZero(ASFireWireController_IVars, 1);
-  if (ivars == nullptr) {
-    return false;
-  }
-
-  // Initialize state machine
-  __atomic_store_n(&ivars->busState, static_cast<uint32_t>(BusState::Starting),
-                   __ATOMIC_RELEASE);
-  strlcpy(ivars->busStateDescription, "Starting",
-          sizeof(ivars->busStateDescription));
-
-  os_log(ControllerLog(), "ASFireWireController: init() completed - state: %s",
-         ivars->busStateDescription);
-  return true;
-}
-
-void ASFireWireController::free() {
-  os_log(ControllerLog(), "ASFireWireController: free() - current state: %s",
-         ivars ? ivars->busStateDescription : "null");
-
-  if (ivars != nullptr) {
-    // Set stopping flag
-    __atomic_store_n(&ivars->stopping, true, __ATOMIC_RELEASE);
-
-    // Clean up resources
-    ivars->workQueue.reset();
-    ivars->link = nullptr; // Don't release - we don't own it
-
-    // Clear device records
-    memset(ivars->devices, 0, sizeof(ivars->devices));
-    ivars->deviceCount = 0;
-  }
-
-  // Safe deallocation
-  IOSafeDeleteNULL(ivars, ASFireWireController_IVars, 1);
-  super::free();
-}
-
-// =====================================================================================
-// Start/Stop
-// =====================================================================================
-
-kern_return_t IMPL(ASFireWireController, Start) {
-  kern_return_t kr = Start(provider, SUPERDISPATCH);
-  if (kr != kIOReturnSuccess) {
-    os_log(ControllerLog(),
-           "ASFireWireController: Start superdispatch failed: 0x%08x", kr);
-    return kr;
-  }
-
-  if (!ivars) {
-    os_log(ControllerLog(), "ASFireWireController: ivars not allocated");
-    return kIOReturnNoResources;
-  }
-
-  os_log(ControllerLog(), "ASFireWireController: Start() begin");
-
-  // Step 1: Get link interface from provider (should be ASOHCI)
-  ASOHCI *link = OSDynamicCast(ASOHCI, provider);
-  if (!link) {
-    os_log(ControllerLog(), "ASFireWireController: Provider is not ASOHCI");
-    return kIOReturnBadArgument;
-  }
-
-  ivars->link = link;
-
-  // Step 2: Create work queue
-  kr = InitializeWorkQueue();
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  // Step 3: Register with link layer
-  kr = link->SetController(this);
-  if (kr != kIOReturnSuccess) {
-    os_log(ControllerLog(),
-           "ASFireWireController: SetController failed: 0x%08x", kr);
-    return kr;
-  }
-
-  // Step 4: Transition to waiting for Self-IDs
-  kr = TransitionBusState(ivars, BusState::WaitingSelfIDs, "Start complete");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: Start() completed successfully");
-  return kIOReturnSuccess;
-}
-
-kern_return_t IMPL(ASFireWireController, Stop) {
-  if (ivars) {
-    __atomic_store_n(&ivars->stopping, true, __ATOMIC_RELEASE);
-    TransitionBusState(ivars, BusState::Starting, "Stop");
-  }
-
-  os_log(ControllerLog(), "ASFireWireController: Stop completed");
-
-  // Call super Stop
-  kern_return_t result = Stop(provider, SUPERDISPATCH);
-  return result;
-}
-
-// =====================================================================================
-// Helper Methods
-// =====================================================================================
-
-kern_return_t ASFireWireController::InitializeWorkQueue() {
-  kern_return_t kr = ValidateState("InitializeWorkQueue");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  IODispatchQueue *queue = nullptr;
-  kr = IODispatchQueue::Create("ASFireWireController.WorkQueue", 0, 0, &queue);
-  if (kr != kIOReturnSuccess) {
-    os_log(ControllerLog(),
-           "ASFireWireController: Failed to create work queue: 0x%08x", kr);
-    return kr;
-  }
-
-  ivars->workQueue = OSSharedPtr(queue, OSNoRetain);
-  os_log(ControllerLog(),
-         "ASFireWireController: Work queue created successfully");
-  return kIOReturnSuccess;
-}
-
-kern_return_t ASFireWireController::ValidateState(const char *operation) {
-  if (!ivars) {
-    os_log(ControllerLog(), "ASFireWireController: %s - ivars not allocated",
-           operation);
-    return kIOReturnNoResources;
-  }
-
-  if (__atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    os_log(ControllerLog(),
-           "ASFireWireController: %s - operation blocked, stopping", operation);
-    return kIOReturnNotReady;
-  }
-
-  return kIOReturnSuccess;
-}
-
-// =====================================================================================
-// Bus State Management (CONTROLLER.md §242-243)
-// =====================================================================================
-
-kern_return_t ASFireWireController::ResetBus() {
-  kern_return_t kr = ValidateState("ResetBus");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  if (!ivars->link) {
-    return kIOReturnNoDevice;
-  }
-
-  os_log(ControllerLog(), "ASFireWireController: Initiating bus reset");
-  return ivars->link->ResetBus(false);
-}
-
-kern_return_t ASFireWireController::GetBusInfo(uint32_t *generation,
-                                               uint16_t *localNodeID,
-                                               uint16_t *rootNodeID) {
-  if (!generation || !localNodeID || !rootNodeID) {
-    return kIOReturnBadArgument;
-  }
-
-  kern_return_t kr = ValidateState("GetBusInfo");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  *generation = ivars->generation;
-  *localNodeID = ivars->localNodeID;
-  *rootNodeID = ivars->rootNodeID;
-
-  return kIOReturnSuccess;
-}
-
-// =====================================================================================
-// Device Access - Config ROM Reading (MVP Focus)
-// =====================================================================================
-
-kern_return_t ASFireWireController::ReadDeviceROM(uint16_t nodeID,
-                                                  uint32_t offset,
-                                                  uint32_t *quadlets,
-                                                  uint32_t count) {
-  if (!quadlets || count == 0) {
-    return kIOReturnBadArgument;
-  }
-
-  kern_return_t kr = ValidateState("ReadDeviceROM");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  if (!ivars->link) {
-    return kIOReturnNoDevice;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: ReadDeviceROM nodeID=0x%04x offset=0x%08x "
-         "count=%u",
-         nodeID, offset, count);
-
-  // Read ROM data via link layer using Config ROM address space (IEEE
-  // 1394-2008) Config ROM base address is 0xFFFFF0000400
-  for (uint32_t i = 0; i < count; i++) {
-    uint16_t addrHi = 0xFFFF;
-    uint32_t addrLo = 0xF0000400 + offset + (i * 4);
-
-    kr = ivars->link->ReadQuad(nodeID, addrHi, addrLo, &quadlets[i],
-                               ivars->generation, 2 /* S400 */);
-    if (kr != kIOReturnSuccess) {
-      os_log(ControllerLog(),
-             "ASFireWireController: ReadQuad failed at offset %u: 0x%08x", i,
-             kr);
-      return kr;
-    }
-
-    // Check for bus reset during read
-    uint32_t currentGen = ivars->link->GetGeneration();
-    if (currentGen != ivars->generation) {
-      os_log(ControllerLog(),
-             "ASFireWireController: Generation changed during ROM read");
-      return kIOReturnAborted;
-    }
-  }
-
-  return kIOReturnSuccess;
-}
-
-kern_return_t ASFireWireController::GetDeviceCount(uint32_t *deviceCount) {
-  if (!deviceCount) {
-    return kIOReturnBadArgument;
-  }
-
-  kern_return_t kr = ValidateState("GetDeviceCount");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  *deviceCount = ivars->deviceCount;
-  return kIOReturnSuccess;
-}
-
-kern_return_t ASFireWireController::GetDeviceInfo(uint32_t deviceIndex,
-                                                  DeviceInfo *info) {
-  if (!info) {
-    return kIOReturnBadArgument;
-  }
-
-  kern_return_t kr = ValidateState("GetDeviceInfo");
-  if (kr != kIOReturnSuccess) {
-    return kr;
-  }
-
-  if (deviceIndex >= ivars->deviceCount) {
-    return kIOReturnBadArgument;
-  }
-
-  // Find the device by scanning the array
-  uint32_t found = 0;
-  for (uint32_t i = 0; i < 63 && found <= deviceIndex; i++) {
-    if (ivars->devices[i].nodeID != 0xFFFF) {
-      if (found == deviceIndex) {
-        const DeviceRecord &dev = ivars->devices[i];
-        info->nodeID = dev.nodeID;
-        info->guid = dev.guid;
-        info->vendorID = dev.vendorID;
-        info->modelID = dev.modelID;
-        info->specID = dev.specID;
-        info->swVersion = dev.swVersion;
-        info->romComplete = dev.romValid;
-        return kIOReturnSuccess;
-      }
-      found++;
-    }
-  }
-
-  return kIOReturnNotFound;
-}
-
-// =====================================================================================
-// Event Handlers Called by ASOHCI (PREPARATION.md §257-266)
-// =====================================================================================
-
-void ASFireWireController::HandleBusReset(uint32_t generation) {
-  if (!ivars || __atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    return;
-  }
-
-  os_log(ControllerLog(), "ASFireWireController: HandleBusReset generation=%u",
-         generation);
-
-  ivars->generation = generation;
-  ivars->localNodeID = 0xFFFF;
-  ivars->rootNodeID = 0xFFFF;
-  ivars->nodeCount = 0;
-
-  // Clear device table
-  memset(ivars->devices, 0, sizeof(ivars->devices));
-  ivars->deviceCount = 0;
-
-  // Transition to waiting for Self-IDs
-  TransitionBusState(ivars, BusState::WaitingSelfIDs, "Bus reset");
-
-  // Notify user space
-  NotifyBusReset(generation);
-}
-
-void ASFireWireController::HandleSelfIDs(const uint32_t *selfIDQuads,
-                                         uint32_t count, uint32_t generation) {
-  if (!ivars || !selfIDQuads ||
-      __atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    return;
-  }
-
-  BusState currentState = static_cast<BusState>(
-      __atomic_load_n(&ivars->busState, __ATOMIC_ACQUIRE));
-  if (currentState != BusState::WaitingSelfIDs ||
-      ivars->generation != generation) {
-    os_log(ControllerLog(), "ASFireWireController: Stale Self-IDs ignored");
-    return;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: HandleSelfIDs count=%u generation=%u", count,
-         generation);
-
-  // Store raw Self-ID data
-  uint32_t copyCount = (count < 256) ? count : 256;
-  memcpy(ivars->selfIDQuads, selfIDQuads, copyCount * sizeof(uint32_t));
-  ivars->selfIDCount = copyCount;
-
-  // Extract basic topology information (simplified for MVP)
-  ivars->nodeCount = count; // Simplified - actual count requires parsing
-  if (ivars->link) {
-    ivars->localNodeID = ivars->link->GetNodeID();
-  }
-
-  // Transition to topology building
-  TransitionBusState(ivars, BusState::BuildingTopology, "Self-IDs received");
-
-  // Queue topology construction work
-  if (ivars->workQueue) {
-    ivars->workQueue->DispatchAsync(^{
-      BuildTopology();
-    });
-  }
-}
-
-void ASFireWireController::HandleAsyncPacket(const uint32_t *packetData,
-                                             uint32_t quadCount,
-                                             uint32_t speed) {
-  // Not needed for MVP Config ROM reading
-  os_log(ControllerLog(),
-         "ASFireWireController: HandleAsyncPacket quadCount=%u speed=%u",
-         quadCount, speed);
-}
-
-// =====================================================================================
-// Internal State Machine and Device Management
-// =====================================================================================
-
-void ASFireWireController::BuildTopology() {
-  if (!ivars || __atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    return;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: BuildTopology - parsing %u Self-ID quadlets",
-         ivars->selfIDCount);
-
-  // For MVP, simplified topology building - just extract node count
-  // Full implementation would parse Self-ID packets per IEEE 1394-2008
-  // §16.3.2.1
-
-  // Assume topology is valid for MVP
-  TransitionBusState(ivars, BusState::Scanning, "Topology built");
-  StartDeviceScan();
-}
-
-void ASFireWireController::StartDeviceScan() {
-  if (!ivars || __atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    return;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: StartDeviceScan - scanning %u nodes",
-         ivars->nodeCount);
-
-  // For MVP, just scan a few nodes to demonstrate the concept
-  // In a full implementation, this would scan all discovered nodes
-  for (uint16_t nodeID = 0; nodeID < 4 && nodeID < ivars->nodeCount; nodeID++) {
-    if (nodeID == ivars->localNodeID) {
-      continue; // Skip local node
-    }
-
-    ProcessDeviceROM(nodeID);
-  }
-
-  FinalizeBusScan();
-}
-
-void ASFireWireController::ProcessDeviceROM(uint16_t nodeID) {
-  if (!ivars || __atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    return;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: ProcessDeviceROM nodeID=0x%04x", nodeID);
-
-  // Read basic ROM header (bus info block) - first 5 quadlets
-  uint32_t romHeader[5] = {};
-  kern_return_t kr = ReadDeviceROM(nodeID, 0, romHeader, 5);
-  if (kr != kIOReturnSuccess) {
-    os_log(ControllerLog(),
-           "ASFireWireController: Failed to read ROM header for node 0x%04x: "
-           "0x%08x",
-           nodeID, kr);
-    return;
-  }
-
-  // Extract GUID from bus info block (quadlets 1 and 2)
-  uint64_t guid = ((uint64_t)romHeader[1] << 32) | romHeader[2];
-
-  // Extract vendor/model from root directory (simplified)
-  uint32_t vendorID = (romHeader[3] >> 8) & 0xFFFFFF; // Simplified extraction
-  uint32_t modelID = romHeader[4] & 0xFFFFFF;         // Simplified extraction
-
-  os_log(ControllerLog(),
-         "ASFireWireController: Device found - nodeID=0x%04x GUID=0x%016llx "
-         "vendor=0x%06x model=0x%06x",
-         nodeID, guid, vendorID, modelID);
-
-  // Add to device table
-  if (ivars->deviceCount < 63) {
-    DeviceRecord &dev = ivars->devices[ivars->deviceCount];
-    dev.nodeID = nodeID;
-    dev.guid = guid;
-    dev.generation = ivars->generation;
-    dev.romValid = true;
-    dev.vendorID = vendorID;
-    dev.modelID = modelID;
-    memcpy(dev.romQuads, romHeader, sizeof(romHeader));
-    ivars->deviceCount++;
-
-    // Publish device to IORegistry
-    PublishDevice(nodeID, guid);
-    NotifyDeviceArrived(nodeID, guid);
-  }
-}
-
-void ASFireWireController::FinalizeBusScan() {
-  if (!ivars || __atomic_load_n(&ivars->stopping, __ATOMIC_ACQUIRE)) {
-    return;
-  }
-
-  os_log(ControllerLog(),
-         "ASFireWireController: FinalizeBusScan - found %u devices",
-         ivars->deviceCount);
-
-  // Transition to running state
-  TransitionBusState(ivars, BusState::Running, "Bus scan complete");
-
-  // Notify topology change
-  NotifyTopologyChanged(ivars->generation, ivars->nodeCount);
-}
-
-kern_return_t ASFireWireController::PublishDevice(uint16_t nodeID,
-                                                  uint64_t guid) {
-  // For MVP, just log the device publication
-  // Full implementation would create IOFireWireDevice nub
-  os_log(ControllerLog(),
-         "ASFireWireController: PublishDevice nodeID=0x%04x GUID=0x%016llx",
-         nodeID, guid);
-  return kIOReturnSuccess;
-}
-
-// =====================================================================================
-// Event Callbacks for User Space (Future - placeholders for MVP)
-// =====================================================================================
-
-void ASFireWireController::NotifyBusReset(uint32_t generation) {
-  os_log(ControllerLog(), "ASFireWireController: NotifyBusReset generation=%u",
-         generation);
-}
-
-void ASFireWireController::NotifyDeviceArrived(uint16_t nodeID, uint64_t guid) {
-  os_log(
-      ControllerLog(),
-      "ASFireWireController: NotifyDeviceArrived nodeID=0x%04x GUID=0x%016llx",
-      nodeID, guid);
-}
-
-void ASFireWireController::NotifyDeviceDeparted(uint16_t nodeID,
-                                                uint64_t guid) {
-  os_log(
-      ControllerLog(),
-      "ASFireWireController: NotifyDeviceDeparted nodeID=0x%04x GUID=0x%016llx",
-      nodeID, guid);
-}
-
-void ASFireWireController::NotifyTopologyChanged(uint32_t generation,
-                                                 uint32_t nodeCount) {
-  os_log(
-      ControllerLog(),
-      "ASFireWireController: NotifyTopologyChanged generation=%u nodeCount=%u",
-      generation, nodeCount);
-}
-
-// =====================================================================================
-// Additional Helper Methods
-// =====================================================================================
-
-kern_return_t ASFireWireController::CreateDeviceNub(uint16_t nodeID,
-                                                    uint64_t guid,
-                                                    uint32_t vendorID,
-                                                    uint32_t modelID) {
-  // Placeholder for MVP - full implementation would create IOFireWireDevice
-  os_log(ControllerLog(), "ASFireWireController: CreateDeviceNub nodeID=0x%04x",
-         nodeID);
-  return kIOReturnSuccess;
-}
-
-bool ASFireWireController::IsDeviceKnown(uint16_t nodeID) {
-  for (uint32_t i = 0; i < 63; i++) {
-    if (ivars->devices[i].nodeID == nodeID) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// =====================================================================================
-// State Machine Implementation
-// =====================================================================================
-
-static kern_return_t TransitionBusState(ASFireWireController_IVars *ivars,
-                                        BusState newState,
-                                        const char *description) {
-  if (!ivars) {
-    return kIOReturnNoResources;
-  }
-
-  BusState currentState = static_cast<BusState>(
-      __atomic_load_n(&ivars->busState, __ATOMIC_ACQUIRE));
-
-  // Perform atomic transition
-  __atomic_store_n(&ivars->busState, static_cast<uint32_t>(newState),
-                   __ATOMIC_RELEASE);
-  strlcpy(ivars->busStateDescription, BusStateToString(newState),
-          sizeof(ivars->busStateDescription));
-
-  os_log(
-      ControllerLog(), "ASFireWireController: State transition %s -> %s (%s)",
-      BusStateToString(currentState), BusStateToString(newState), description);
-
-  return kIOReturnSuccess;
-}
-
-static const char *BusStateToString(BusState state) {
+static const char *busStateToString(BusState state) {
   switch (state) {
   case BusState::Starting:
     return "Starting";
@@ -685,7 +31,582 @@ static const char *BusStateToString(BusState state) {
     return "Scanning";
   case BusState::Running:
     return "Running";
+  case BusState::Stopping:
+    return "Stopping";
+  case BusState::Stopped:
+    return "Stopped";
   default:
     return "Unknown";
   }
 }
+
+// Config ROM parsing helpers
+static bool isValidROMHeader(uint32_t quad0) {
+  uint8_t info_length = (quad0 >> 24) & 0xFF;
+  return (info_length >= 4); // Minimum valid ROM header
+}
+
+static uint32_t extractVendorID(const uint32_t *rom, uint32_t quadCount) {
+  if (quadCount < 5)
+    return 0;
+  return rom[4] & 0x00FFFFFF; // Vendor ID in directory entry
+}
+
+static uint32_t extractModelID(const uint32_t *rom, uint32_t quadCount) {
+  if (quadCount < 6)
+    return 0;
+  return rom[5] & 0x00FFFFFF; // Model ID typically follows vendor ID
+}
+
+// =============================================================================
+// Factory & Construction
+// =============================================================================
+
+ASFireWireController::Ptr ASFireWireController::create() {
+  // Use shared_ptr constructor directly since constructor is private
+  auto ptr = std::shared_ptr<ASFireWireController>(new ASFireWireController());
+  ptr->_self = ptr; // Store reference to self
+  return ptr;
+}
+
+ASFireWireController::ASFireWireController() {
+  // Allocate IOLock instances
+  _stateMutex = IOLockAlloc();
+  _busInfoMutex = IOLockAlloc();
+  _devicesMutex = IOLockAlloc();
+  _selfIDMutex = IOLockAlloc();
+
+  os_log(ASLog(), "ASFireWireController created");
+}
+
+ASFireWireController::~ASFireWireController() {
+  stop(); // Ensure clean shutdown
+
+  // Free IOLock instances
+  if (_stateMutex) {
+    IOLockFree(_stateMutex);
+    _stateMutex = nullptr;
+  }
+  if (_busInfoMutex) {
+    IOLockFree(_busInfoMutex);
+    _busInfoMutex = nullptr;
+  }
+  if (_devicesMutex) {
+    IOLockFree(_devicesMutex);
+    _devicesMutex = nullptr;
+  }
+  if (_selfIDMutex) {
+    IOLockFree(_selfIDMutex);
+    _selfIDMutex = nullptr;
+  }
+
+  os_log(ASLog(), "ASFireWireController destroyed");
+}
+
+// =============================================================================
+// Controller Lifecycle
+// =============================================================================
+
+kern_return_t ASFireWireController::start(ILink::Ptr link) {
+  if (!link) {
+    os_log(ASLog(), "Cannot start with null link");
+    return kIOReturnBadArgument;
+  }
+
+  if (isRunning()) {
+    os_log(ASLog(), "Controller already running");
+    return kIOReturnStillOpen;
+  }
+
+  // Store weak reference to link
+  _link = link;
+
+  // Create work queue for controller operations
+  IODispatchQueue *tempQueue = nullptr;
+  kern_return_t result =
+      IODispatchQueue::Create("ASFireWireController", 0, 0, &tempQueue);
+  if (result != kIOReturnSuccess) {
+    os_log(ASLog(), "Failed to create work queue: 0x%{public}x", result);
+    return result;
+  }
+  _workQueue = OSSharedPtr<IODispatchQueue>(tempQueue, OSNoRetain);
+
+  // Register as event sink with link
+  link->setSink(std::weak_ptr<ILinkSink>(_self));
+
+  // Initialize state
+  transitionState(BusState::WaitingSelfIDs, "Started, waiting for bus reset");
+
+  os_log(ASLog(), "Controller started successfully");
+  return kIOReturnSuccess;
+}
+
+void ASFireWireController::stop() {
+  if (_stopping.exchange(true)) {
+    return; // Already stopping
+  }
+
+  os_log(ASLog(), "Controller stopping...");
+  transitionState(BusState::Stopping, "Stop requested");
+
+  // Clear link connection
+  if (auto link = _link.lock()) {
+    link->setSink(std::weak_ptr<ILinkSink>());
+  }
+  _link.reset();
+
+  // Clean up state
+  {
+    IOLockLock(_devicesMutex);
+    _deviceCount = 0;
+    std::fill(std::begin(_devices), std::end(_devices), DeviceRecord{});
+    IOLockUnlock(_devicesMutex);
+  }
+
+  {
+    IOLockLock(_selfIDMutex);
+    _selfIDCount = 0;
+    std::fill(std::begin(_selfIDQuads), std::end(_selfIDQuads), 0);
+    IOLockUnlock(_selfIDMutex);
+  }
+
+  // Note: Work queue cleanup handled by OSSharedPtr destructor
+  transitionState(BusState::Stopped, "Stopped");
+  os_log(ASLog(), "Controller stopped");
+}
+
+// =============================================================================
+// ILinkSink Implementation (Events from Hardware)
+// =============================================================================
+
+void ASFireWireController::onBusReset(uint32_t generation) {
+  post([this, generation]() { processBusReset(generation); });
+}
+
+void ASFireWireController::onSelfIDs(const SelfIDs &ids) {
+  post([this, ids]() { processSelfIDs(ids); });
+}
+
+void ASFireWireController::onIsoMasks(const IsoMask &mask) {
+  // For MVP, just log isochronous mask changes
+  os_log(ASLog(), "Iso masks updated: tx=0x%{public}x rx=0x%{public}x",
+         mask.txMask, mask.rxMask);
+}
+
+void ASFireWireController::onCycleInconsistent(uint32_t cycleTime) {
+  os_log(ASLog(), "Cycle inconsistent at time 0x%{public}x", cycleTime);
+}
+
+void ASFireWireController::onPostedWriteError() {
+  os_log(ASLog(), "Posted write error occurred");
+}
+
+void ASFireWireController::onBusError(uint32_t errorFlags) {
+  os_log(ASLog(), "Bus error: flags=0x%{public}x", errorFlags);
+  // Could transition to error state here if needed
+}
+
+// =============================================================================
+// Public API for Higher Layers
+// =============================================================================
+
+BusInfo ASFireWireController::getBusInfo() const {
+  IOLockLock(_busInfoMutex);
+  BusInfo result = _cachedBusInfo;
+  IOLockUnlock(_busInfoMutex);
+  return result;
+}
+
+uint32_t ASFireWireController::getDeviceCount() const noexcept {
+  IOLockLock(_devicesMutex);
+  uint32_t result = _deviceCount;
+  IOLockUnlock(_devicesMutex);
+  return result;
+}
+
+kern_return_t ASFireWireController::getDeviceInfo(uint32_t deviceIndex,
+                                                  DeviceInfo &info) const {
+  IOLockLock(_devicesMutex);
+
+  if (deviceIndex >= _deviceCount) {
+    IOLockUnlock(_devicesMutex);
+    return kIOReturnBadArgument;
+  }
+
+  const DeviceRecord &device = _devices[deviceIndex];
+  info.nodeID = device.nodeID;
+  info.guid = device.guid;
+  info.vendorID = device.vendorID;
+  info.modelID = device.modelID;
+  info.specID = device.specID;
+  info.swVersion = device.swVersion;
+  info.romComplete = device.romValid;
+
+  IOLockUnlock(_devicesMutex);
+  return kIOReturnSuccess;
+}
+
+kern_return_t ASFireWireController::resetBus() {
+  auto link = _link.lock();
+  if (!link || !canPerformOperation()) {
+    return kIOReturnNotReady;
+  }
+
+  return link->resetBus(BusResetMode::Normal);
+}
+
+// =============================================================================
+// Work Queue Integration
+// =============================================================================
+
+void ASFireWireController::post(std::function<void()> work) {
+  if (!work || !_workQueue || _stopping.load()) {
+    return;
+  }
+
+  auto workBlock = ^{
+    if (!this->_stopping.load()) {
+      work();
+    }
+  };
+
+  _workQueue->DispatchAsync(workBlock);
+}
+
+// =============================================================================
+// Event Processing (called on work queue)
+// =============================================================================
+
+void ASFireWireController::processBusReset(uint32_t generation) {
+  os_log(ASLog(), "Processing bus reset: generation=%u", generation);
+
+  // Update generation and clear device state
+  {
+    IOLockLock(_busInfoMutex);
+    _cachedBusInfo.generation = generation;
+    IOLockUnlock(_busInfoMutex);
+  }
+
+  {
+    IOLockLock(_devicesMutex);
+    _deviceCount = 0; // Clear previous devices
+    IOLockUnlock(_devicesMutex);
+  }
+
+  // Transition state based on current state
+  BusState currentState = _state.load();
+  if (currentState == BusState::WaitingSelfIDs) {
+    // First bus reset - stay in WaitingSelfIDs until Self-IDs arrive
+    os_log(ASLog(), "First bus reset received, waiting for Self-IDs");
+  } else {
+    // Subsequent bus reset - go back to waiting
+    transitionState(BusState::WaitingSelfIDs,
+                    "Bus reset - waiting for new Self-IDs");
+  }
+}
+
+void ASFireWireController::processSelfIDs(const SelfIDs &ids) {
+  if (!ids.quads || ids.count == 0) {
+    os_log(ASLog(), "Invalid Self-IDs received");
+    return;
+  }
+
+  os_log(ASLog(), "Processing Self-IDs: count=%u generation=%u", ids.count,
+         ids.generation);
+
+  // Copy Self-ID data for processing
+  {
+    IOLockLock(_selfIDMutex);
+    _selfIDCount =
+        std::min(ids.count, static_cast<uint32_t>(sizeof(_selfIDQuads) /
+                                                  sizeof(_selfIDQuads[0])));
+    std::copy(ids.quads, ids.quads + _selfIDCount, _selfIDQuads);
+    IOLockUnlock(_selfIDMutex);
+  }
+
+  transitionState(BusState::BuildingTopology, "Self-IDs received");
+  buildTopology();
+}
+
+void ASFireWireController::buildTopology() {
+  os_log(ASLog(), "Building topology from Self-IDs");
+
+  IOLockLock(_selfIDMutex);
+  SelfIDs ids;
+  ids.quads = _selfIDQuads;
+  ids.count = _selfIDCount;
+  ids.generation = _cachedBusInfo.generation;
+
+  // Extract topology information
+  uint32_t nodeCount = extractNodeCount(ids);
+  uint16_t rootNodeID = extractRootNodeID(ids);
+  std::vector<uint16_t> nodeList = extractNodeList(ids);
+
+  IOLockUnlock(_selfIDMutex);
+
+  os_log(ASLog(), "Topology: %u nodes, root=0x%{public}x", nodeCount,
+         rootNodeID);
+
+  // Update cached bus info
+  auto link = _link.lock();
+  if (link) {
+    BusInfo linkInfo = link->getBusInfo();
+    updateBusInfo(linkInfo.generation, linkInfo.localNodeID, rootNodeID);
+  }
+
+  _nodeCount = nodeCount;
+
+  transitionState(BusState::Scanning, "Topology built");
+  startDeviceScan();
+}
+
+void ASFireWireController::startDeviceScan() {
+  os_log(ASLog(), "Starting device scan");
+
+  // For MVP, scan all nodes we discovered
+  std::vector<uint16_t> nodeList;
+  {
+    IOLockLock(_selfIDMutex);
+    SelfIDs ids;
+    ids.quads = _selfIDQuads;
+    ids.count = _selfIDCount;
+    ids.generation = _cachedBusInfo.generation;
+    nodeList = extractNodeList(ids);
+    IOLockUnlock(_selfIDMutex);
+  }
+
+  // Start ROM reading for each discovered node
+  for (uint16_t nodeID : nodeList) {
+    if (nodeID != _cachedBusInfo.localNodeID) { // Don't scan ourselves
+      processDeviceROM(nodeID);
+    }
+  }
+
+  // For now, immediately finalize scan (asynchronous ROM reading not
+  // implemented in MVP)
+  finalizeBusScan();
+}
+
+void ASFireWireController::processDeviceROM(uint16_t nodeID) {
+  os_log(ASLog(), "Processing device ROM for node 0x%{public}x", nodeID);
+
+  auto link = _link.lock();
+  if (!link) {
+    return;
+  }
+
+  uint32_t generation = _cachedBusInfo.generation;
+
+  // Read Config ROM header (simplified MVP approach)
+  readDeviceROM(nodeID, generation);
+}
+
+void ASFireWireController::finalizeBusScan() {
+  os_log(ASLog(), "Finalizing bus scan");
+
+  transitionState(BusState::Running, "Device scan complete");
+
+  logState("Bus scan completed");
+}
+
+// =============================================================================
+// Device Management
+// =============================================================================
+
+ASFireWireController::DeviceRecord *
+ASFireWireController::findDevice(uint16_t nodeID) {
+  for (uint32_t i = 0; i < _deviceCount; ++i) {
+    if (_devices[i].nodeID == nodeID) {
+      return &_devices[i];
+    }
+  }
+  return nullptr;
+}
+
+const ASFireWireController::DeviceRecord *
+ASFireWireController::findDevice(uint16_t nodeID) const {
+  for (uint32_t i = 0; i < _deviceCount; ++i) {
+    if (_devices[i].nodeID == nodeID) {
+      return &_devices[i];
+    }
+  }
+  return nullptr;
+}
+
+void ASFireWireController::updateDevice(uint16_t nodeID, uint64_t guid,
+                                        uint32_t generation) {
+  IOLockLock(_devicesMutex);
+
+  DeviceRecord *existing = findDevice(nodeID);
+  if (existing) {
+    existing->guid = guid;
+    existing->generation = generation;
+    IOLockUnlock(_devicesMutex);
+    return;
+  }
+
+  // Add new device if there's space
+  if (_deviceCount < MAX_DEVICES) {
+    DeviceRecord &device = _devices[_deviceCount++];
+    device.nodeID = nodeID;
+    device.guid = guid;
+    device.generation = generation;
+    device.romValid = false;
+  }
+
+  IOLockUnlock(_devicesMutex);
+}
+
+void ASFireWireController::readDeviceROM(uint16_t nodeID, uint32_t generation) {
+  auto link = _link.lock();
+  if (!link) {
+    return;
+  }
+
+  // Read Config ROM outside of locks to prevent deadlocks
+  std::array<uint32_t, 16> rom{};
+  bool ok = true;
+  constexpr uint32_t HI = 0xFFFF;
+  constexpr uint32_t LO_BASE = 0xF0000000;
+
+  for (uint32_t i = 0; i < rom.size(); ++i) {
+    uint32_t q = 0;
+    auto kr = link->readQuad(nodeID, HI, LO_BASE + (i * 4), q, generation,
+                             Speed::S400);
+    if (kr != kIOReturnSuccess) {
+      ok = false;
+      break;
+    }
+    rom[i] = q;
+
+    // Check if generation changed (bus reset occurred)
+    if (link->getBusInfo().generation != generation) {
+      os_log(ASLog(),
+             "Bus reset detected during ROM read for node 0x%{public}x",
+             nodeID);
+      ok = false;
+      break;
+    }
+  }
+
+  // Update device record after I/O is complete
+  IOLockLock(_devicesMutex);
+  updateDevice(nodeID, 0, generation);
+  if (auto dev = findDevice(nodeID)) {
+    if (ok) {
+      std::copy(rom.begin(), rom.end(), dev->romQuads.begin());
+      parseDeviceROM(*dev, dev->romQuads.data(),
+                     static_cast<uint32_t>(rom.size()));
+      dev->romValid = true;
+    }
+  }
+  IOLockUnlock(_devicesMutex);
+}
+
+void ASFireWireController::parseDeviceROM(DeviceRecord &device,
+                                          const uint32_t *romQuads,
+                                          uint32_t quadCount) {
+  if (!romQuads || quadCount < 4) {
+    return;
+  }
+
+  // Validate ROM header
+  if (!isValidROMHeader(romQuads[0])) {
+    return;
+  }
+
+  // Extract basic device information (simplified parsing)
+  device.vendorID = extractVendorID(romQuads, quadCount);
+  device.modelID = extractModelID(romQuads, quadCount);
+
+  // Extract GUID from Config ROM if available
+  if (quadCount >= 8) {
+    device.guid = (static_cast<uint64_t>(romQuads[6]) << 32) | romQuads[7];
+  }
+
+  // Set default values for spec ID and software version
+  device.specID = 0x609E;      // IEEE 1394 spec
+  device.swVersion = 0x010483; // Default version
+}
+
+// =============================================================================
+// Utility Methods
+// =============================================================================
+
+uint32_t ASFireWireController::extractNodeCount(const SelfIDs &ids) const {
+  // Simple node count extraction from Self-IDs
+  // Each physical node contributes at least one Self-ID packet
+  return std::min(ids.count, static_cast<uint32_t>(63)); // Bus limit
+}
+
+uint16_t ASFireWireController::extractRootNodeID(const SelfIDs &ids) const {
+  // Root node is typically the highest node ID
+  // Simplified implementation - find the highest contiguity
+  uint16_t maxNodeID = 0;
+  for (uint32_t i = 0; i < ids.count; ++i) {
+    uint32_t quad = ids.quads[i];
+    if ((quad & 0x40000000) ==
+        0) { // More packets bit clear = last packet for this node
+      uint16_t nodeID = (quad >> 24) & 0x3F; // Node ID in bits 29-24
+      maxNodeID = std::max(maxNodeID, nodeID);
+    }
+  }
+  return maxNodeID;
+}
+
+std::vector<uint16_t>
+ASFireWireController::extractNodeList(const SelfIDs &ids) const {
+  std::vector<uint16_t> nodes;
+  nodes.reserve(63); // Bus maximum
+
+  for (uint32_t i = 0; i < ids.count; ++i) {
+    uint32_t quad = ids.quads[i];
+    if ((quad & 0x40000000) ==
+        0) { // More packets bit clear = last packet for this node
+      uint16_t nodeID = (quad >> 24) & 0x3F; // Node ID in bits 29-24
+      nodes.push_back(nodeID);
+    }
+  }
+
+  return nodes;
+}
+
+void ASFireWireController::updateBusInfo(uint32_t generation,
+                                         uint16_t localNodeID,
+                                         uint16_t rootNodeID) {
+  IOLockLock(_busInfoMutex);
+  _cachedBusInfo.generation = generation;
+  _cachedBusInfo.localNodeID = localNodeID;
+  _cachedBusInfo.rootNodeID = rootNodeID;
+  // GUID and maxSpeed should be set from link info
+  IOLockUnlock(_busInfoMutex);
+}
+
+void ASFireWireController::transitionState(BusState newState,
+                                           const std::string &reason) {
+  BusState oldState = _state.exchange(newState);
+
+  if (oldState != newState) {
+    os_log(ASLog(), "State: %{public}s → %{public}s (%{public}s)",
+           busStateToString(oldState), busStateToString(newState),
+           reason.c_str());
+  }
+}
+
+std::string ASFireWireController::stateString() const {
+  return busStateToString(_state.load());
+}
+
+void ASFireWireController::logState(const std::string &context) const {
+  // Lock both mutexes in consistent order: busInfo → devices
+  IOLockLock(_busInfoMutex);
+  IOLockLock(_devicesMutex);
+  os_log(ASLog(),
+         "%{public}s: gen=%u local=0x%{public}x root=0x%{public}x devices=%u",
+         context.c_str(), _cachedBusInfo.generation, _cachedBusInfo.localNodeID,
+         _cachedBusInfo.rootNodeID, _deviceCount);
+  IOLockUnlock(_devicesMutex);
+  IOLockUnlock(_busInfoMutex);
+}
+
+} // namespace fw

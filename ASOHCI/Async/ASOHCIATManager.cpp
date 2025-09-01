@@ -90,7 +90,8 @@ kern_return_t ASOHCIATManager::Start() {
   // Start AT Request context first
   result = _req->Start();
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATManager: Failed to start Request context: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATManager: Failed to start Request context: 0x%{public}x",
            result);
     return result;
   }
@@ -98,7 +99,8 @@ kern_return_t ASOHCIATManager::Start() {
   // Start AT Response context
   result = _rsp->Start();
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATManager: Failed to start Response context: 0x%x",
+    os_log(ASLog(),
+           "ASOHCIATManager: Failed to start Response context: 0x%{public}x",
            result);
     _req->Stop(); // Clean up Request context
     return result;
@@ -116,13 +118,15 @@ kern_return_t ASOHCIATManager::Stop() {
     // Stop both contexts (order doesn't matter for stop)
     reqResult = _req->Stop();
     if (reqResult != kIOReturnSuccess) {
-      os_log(ASLog(), "ASOHCIATManager: Failed to stop Request context: 0x%x",
+      os_log(ASLog(),
+             "ASOHCIATManager: Failed to stop Request context: 0x%{public}x",
              reqResult);
     }
 
     rspResult = _rsp->Stop();
     if (rspResult != kIOReturnSuccess) {
-      os_log(ASLog(), "ASOHCIATManager: Failed to stop Response context: 0x%x",
+      os_log(ASLog(),
+             "ASOHCIATManager: Failed to stop Response context: 0x%{public}x",
              rspResult);
     }
 
@@ -184,7 +188,8 @@ kern_return_t ASOHCIATManager::QueueRequest(const uint32_t *header,
   // Enqueue to Request context
   kern_return_t result = _req->Enqueue(program, opts);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATManager: Failed to enqueue request: 0x%x", result);
+    os_log(ASLog(), "ASOHCIATManager: Failed to enqueue request: 0x%{public}x",
+           result);
     return result;
   }
 
@@ -242,7 +247,7 @@ kern_return_t ASOHCIATManager::QueueResponse(const uint32_t *header,
   // Enqueue to Response context
   kern_return_t result = _rsp->Enqueue(program, opts);
   if (result != kIOReturnSuccess) {
-    os_log(ASLog(), "ASOHCIATManager: Failed to enqueue response: 0x%x",
+    os_log(ASLog(), "ASOHCIATManager: Failed to enqueue response: 0x%{public}x",
            result);
     return result;
   }

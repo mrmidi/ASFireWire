@@ -96,7 +96,7 @@ kern_return_t ASOHCIARContext::Start() {
   if (kr != kIOReturnSuccess)
     return kr;
   WriteContextSet(kOHCI_ContextControl_run);
-  os_log(ASLog(), "ARContext: started (addr=0x%x Z=%u)", addr, z);
+  os_log(ASLog(), "ARContext: started (addr=0x%{public}x Z=%u)", addr, z);
   return kIOReturnSuccess;
 }
 

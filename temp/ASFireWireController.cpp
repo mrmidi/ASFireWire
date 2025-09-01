@@ -65,7 +65,7 @@ void ASFireWireController::StartDiscovery() {
   // Force a bus reset to start fresh discovery
   kern_return_t kr = fLinkAPI->ResetBus(false);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "Controller: ResetBus failed: 0x%x", kr);
+    os_log(ASLog(), "Controller: ResetBus failed: 0x%{public}x", kr);
     fDiscoveryInProgress = false;
     return;
   }

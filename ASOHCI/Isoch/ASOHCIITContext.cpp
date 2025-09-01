@@ -148,7 +148,8 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program &program,
     }
     _outstanding++;
     PushProgram(program);
-    os_log(ASLog(), "IT%u: Enqueue initial (auto-run) head=0x%x z=%u count=%u",
+    os_log(ASLog(),
+           "IT%u: Enqueue initial (auto-run) head=0x%{public}x z=%u count=%u",
            _ctxIndex, program.headPA, program.zHead, program.descCount);
     return kIOReturnSuccess;
   }
@@ -172,7 +173,7 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program &program,
   (void)q1;
   // Ensure it is currently a LAST variant
   if (DescGetCmd(q0) != kCmd_OUTPUT_LAST) {
-    os_log(ASLog(), "IT%u: Append tail not LAST (cmd=0x%x)", _ctxIndex,
+    os_log(ASLog(), "IT%u: Append tail not LAST (cmd=0x%{public}x)", _ctxIndex,
            DescGetCmd(q0));
     return kIOReturnUnsupported;
   }
@@ -201,7 +202,9 @@ kern_return_t ASOHCIITContext::Enqueue(const ITDesc::Program &program,
                          // updating program ring (OHCI §9.4)
   _outstanding++;
   PushProgram(program);
-  os_log(ASLog(), "IT%u: Append tailPA=0x%x -> newHead=0x%x branch=0x%x z=%u",
+  os_log(ASLog(),
+         "IT%u: Append tailPA=0x%{public}x -> newHead=0x%{public}x "
+         "branch=0x%{public}x z=%u",
          _ctxIndex, tail->tailPA, program.headPA, branch, program.zHead);
   return kIOReturnSuccess;
 }

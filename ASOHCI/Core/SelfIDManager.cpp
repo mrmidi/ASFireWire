@@ -9,6 +9,7 @@
 #include <DriverKit/IOMemoryMap.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 
+#include "ASOHCIMemoryBarrier.hpp"
 #include "LogHelper.hpp"
 #include "OHCIConstants.hpp"
 #include "SelfIDDecode.hpp"
@@ -20,6 +21,7 @@ kern_return_t SelfIDManager::Initialize(::IOPCIDevice *pci, uint8_t barIndex,
   _pci = pci;
   _bar = barIndex;
   _bufBytes = bufferBytes;
+  _sessionOpen = true; // Track that PCI session is open
 
   os_log(ASLog(), "ASOHCI: SelfID init start bytes=%u", (unsigned)bufferBytes);
 
@@ -65,7 +67,13 @@ kern_return_t SelfIDManager::Initialize(::IOPCIDevice *pci, uint8_t barIndex,
          kr, segCount,
          (unsigned long long)((segCount > 0) ? segs[0].address : 0ULL),
          (unsigned long long)((segCount > 0) ? segs[0].length : 0ULL));
-  if (kr != kIOReturnSuccess || segCount < 1 || segs[0].address == 0) {
+  if (kr != kIOReturnSuccess || segCount != 1 || segs[0].address == 0 ||
+      segs[0].length != bufferBytes) {
+    os_log(ASLog(),
+           "ASOHCI: SelfID DMA segment validation failed: kr=0x%08x "
+           "segCount=%u addr=0x%llx len=0x%llx expected_len=0x%x",
+           kr, segCount, (unsigned long long)segs[0].address,
+           (unsigned long long)segs[0].length, bufferBytes);
     if (_dma) {
       _dma->CompleteDMA(kIODMACommandCompleteDMANoOptions);
       _dma->release();
@@ -97,10 +105,14 @@ kern_return_t SelfIDManager::Initialize(::IOPCIDevice *pci, uint8_t barIndex,
 }
 
 void SelfIDManager::Teardown() {
-  // Scrub registers
-  if (_pci) {
+  // Only scrub while session is open
+  if (_sessionOpen && _pci) {
+    // belt & suspenders: disarm + zero pointer
+    _pci->MemoryWrite32(_bar, kOHCI_LinkControlClear,
+                        (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
     _pci->MemoryWrite32(_bar, kOHCI_SelfIDCount, 0);
     _pci->MemoryWrite32(_bar, kOHCI_SelfIDBuffer, 0);
+    os_log(ASLog(), "ASOHCI: SelfID registers scrubbed during teardown");
   }
 
   if (_dma) {
@@ -126,10 +138,12 @@ void SelfIDManager::Teardown() {
   _inProgress = false;
   _lastGeneration = 0;
   _pci = nullptr;
+  _sessionOpen = false;
+  os_log(ASLog(), "ASOHCI: SelfID teardown complete");
 }
 
 kern_return_t SelfIDManager::Arm(bool clearCount) {
-  if (!_pci || !_seg)
+  if (!_sessionOpen || !_pci || !_seg)
     return kIOReturnNotReady;
   programSelfIDBuffer();
   if (clearCount) {
@@ -146,6 +160,19 @@ kern_return_t SelfIDManager::Arm(bool clearCount) {
   os_log(ASLog(), "ASOHCI: SelfID armed successfully (clearCount=%d)",
          clearCount);
   return kIOReturnSuccess;
+}
+
+void SelfIDManager::Disarm() {
+  if (_sessionOpen && _pci) {
+    // Stop the hardware from writing Self-ID / PHY packets
+    _pci->MemoryWrite32(_bar, kOHCI_LinkControlClear,
+                        (kOHCI_LC_RcvSelfID | kOHCI_LC_RcvPhyPkt));
+    // Optional: clear count so a late IRQ doesn't "look valid"
+    _pci->MemoryWrite32(_bar, kOHCI_SelfIDCount, 0);
+    _armed = false;
+    _inProgress = false;
+    os_log(ASLog(), "ASOHCI: SelfID disarmed safely");
+  }
 }
 
 void SelfIDManager::programSelfIDBuffer() {
@@ -172,6 +199,9 @@ void SelfIDManager::verifyGenerationAndDispatch(uint32_t countReg) {
     _inProgress = false;
     return;
   }
+
+  // Ensure device writes to DMA buffer are visible to CPU
+  OHCI_MEMORY_BARRIER();
 
   const uint32_t *buf =
       reinterpret_cast<const uint32_t *>((uintptr_t)_map->GetAddress());
@@ -201,7 +231,8 @@ void SelfIDManager::verifyGenerationAndDispatch(uint32_t countReg) {
          res.nodes.size(), res.integrityOk, res.warnings.size());
 
   for (const auto &warning : res.warnings) {
-    os_log(ASLog(), "ASOHCI: SelfID warning: %s", warning.message.c_str());
+    os_log(ASLog(), "ASOHCI: SelfID warning: %{public}s",
+           warning.message.c_str());
   }
 
   if (_onDecode) {
@@ -233,6 +264,11 @@ void SelfIDManager::verifyGenerationAndDispatch(uint32_t countReg) {
 }
 
 void SelfIDManager::OnSelfIDComplete(uint32_t selfIDCountRegValue) {
+  if (!_sessionOpen || !_pci || !_map) {
+    os_log(ASLog(), "ASOHCI: SelfID OnSelfIDComplete ignored - session closed "
+                    "or never armed");
+    return;
+  }
   os_log(ASLog(), "ASOHCI: OnSelfIDComplete called with countReg=0x%08x",
          selfIDCountRegValue);
   verifyGenerationAndDispatch(selfIDCountRegValue);

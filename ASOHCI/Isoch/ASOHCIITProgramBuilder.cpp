@@ -36,7 +36,7 @@ void ASOHCIITProgramBuilder::Begin(ASOHCIATDescriptorPool &pool,
   if (!_blk.valid) {
     os_log(ASLog(), "ITBuilder: failed to allocate %u desc", reserve);
   } else {
-    os_log(ASLog(), "ITBuilder: reserved %u desc (PA=0x%x Z=%u)",
+    os_log(ASLog(), "ITBuilder: reserved %u desc (PA=0x%{public}x Z=%u)",
            _blk.descriptorCount, _blk.physicalAddress, _blk.zValue);
   }
 }

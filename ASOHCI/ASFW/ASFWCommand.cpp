@@ -103,7 +103,8 @@ kern_return_t ASFWCommand::startExecution() {
 }
 
 kern_return_t ASFWCommand::complete(kern_return_t status) {
-  os_log(OS_LOG_DEFAULT, "ASFW: ASFWCommand[%u] complete with status 0x%x", fId,
+  os_log(OS_LOG_DEFAULT,
+         "ASFW: ASFWCommand[%u] complete with status 0x%{public}x", fId,
          status);
 
   // Remove from queue
@@ -130,8 +131,8 @@ kern_return_t ASFWCommand::complete(kern_return_t status) {
 }
 
 kern_return_t ASFWCommand::cancel(kern_return_t reason) {
-  os_log(OS_LOG_DEFAULT, "ASFW: ASFWCommand[%u] cancel with reason 0x%x", fId,
-         reason);
+  os_log(OS_LOG_DEFAULT,
+         "ASFW: ASFWCommand[%u] cancel with reason 0x%{public}x", fId, reason);
 
   kern_return_t result = kIOReturnSuccess;
 
@@ -337,7 +338,8 @@ void ASFWCmdQ::checkProgress() {
     // Call command's progress check method
     kern_return_t result = cmd->checkProgress();
     if (result != kIOReturnSuccess) {
-      os_log(OS_LOG_DEFAULT, "ASFW: Command[%u] progress check failed: 0x%x",
+      os_log(OS_LOG_DEFAULT,
+             "ASFW: Command[%u] progress check failed: 0x%{public}x",
              cmd->getId(), result);
     }
 

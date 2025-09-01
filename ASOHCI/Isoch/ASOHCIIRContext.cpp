@@ -62,8 +62,8 @@ kern_return_t ASOHCIIRContext::Start() {
   kern_return_t kr = ConfigureContextMatch(
       _channelFilter.singleChannel, _channelFilter.tag, _channelFilter.sync);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "IR%u: Failed to configure context match: 0x%x", _ctxIndex,
-           kr);
+    os_log(ASLog(), "IR%u: Failed to configure context match: 0x%{public}x",
+           _ctxIndex, kr);
     return kr;
   }
 
@@ -71,8 +71,8 @@ kern_return_t ASOHCIIRContext::Start() {
   if (_channelFilter.multiChannelMode && _ctxIndex == 0) {
     kr = SetMultiChannelMode(true, _channelFilter.channelMask);
     if (kr != kIOReturnSuccess) {
-      os_log(ASLog(), "IR%u: Failed to set multi-channel mode: 0x%x", _ctxIndex,
-             kr);
+      os_log(ASLog(), "IR%u: Failed to set multi-channel mode: 0x%{public}x",
+             _ctxIndex, kr);
       return kr;
     }
   }
@@ -84,7 +84,8 @@ kern_return_t ASOHCIIRContext::Start() {
 
 void ASOHCIIRContext::ApplyPolicy(const IRPolicy &policy) {
   _policy = policy;
-  os_log(ASLog(), "IR%u: Policy applied - dropOnOverrun=%s, watermark=%uμs",
+  os_log(ASLog(),
+         "IR%u: Policy applied - dropOnOverrun=%{public}s, watermark=%uμs",
          _ctxIndex, policy.dropOnOverrun ? "true" : "false",
          policy.bufferWatermarkUs);
 }
@@ -125,8 +126,8 @@ kern_return_t ASOHCIIRContext::EnqueueStandard(const IRDesc::Program &program,
   // Write CommandPtr to start reception
   kern_return_t kr = WriteCommandPtr(program.headPA >> 4, program.zHead);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "IR%u: Failed to write command pointer: 0x%x", _ctxIndex,
-           kr);
+    os_log(ASLog(), "IR%u: Failed to write command pointer: 0x%{public}x",
+           _ctxIndex, kr);
     return kr;
   }
 
@@ -163,7 +164,8 @@ ASOHCIIRContext::EnqueueDualBuffer(const IRProgram::DualBufferProgram &program,
   // Write CommandPtr to start reception
   kern_return_t kr = WriteCommandPtr(program.headPA >> 4, program.zHead);
   if (kr != kIOReturnSuccess) {
-    os_log(ASLog(), "IR%u: Failed to write dual-buffer command pointer: 0x%x",
+    os_log(ASLog(),
+           "IR%u: Failed to write dual-buffer command pointer: 0x%{public}x",
            _ctxIndex, kr);
     return kr;
   }
@@ -343,7 +345,7 @@ void ASOHCIIRContext::UpdateStatsOnError(uint16_t status) {
   }
 
   if (_policy.enableErrorLogging) {
-    os_log(ASLog(), "IR%u: Error status 0x%x", _ctxIndex, status);
+    os_log(ASLog(), "IR%u: Error status 0x%{public}x", _ctxIndex, status);
   }
 }
 

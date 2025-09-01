@@ -7,8 +7,12 @@
 #include "../Isoch/ASOHCIIRManager.hpp"
 #include "../Isoch/ASOHCIITManager.hpp"
 #include "ASOHCIRegisterIO.hpp"
+#include "SelfIDManager.hpp"
 #include <DriverKit/IODispatchQueue.h>
 #include <net.mrmidi.ASFireWire.ASOHCI/ASOHCI.h>
+
+// RAII Architecture Headers
+#include "../LinkHandle.hpp"
 
 // OSDefineMetaClassAndStructors not needed in DriverKit
 
@@ -19,6 +23,11 @@ void ASOHCIInterruptRouter::SetARManager(ASOHCIARManager *m) { _ar = m; }
 void ASOHCIInterruptRouter::SetITManager(ASOHCIITManager *m) { _it = m; }
 void ASOHCIInterruptRouter::SetIRManager(ASOHCIIRManager *m) { _ir = m; }
 void ASOHCIInterruptRouter::SetController(ASOHCI *ohci) { _ohci = ohci; }
+
+// RAII Architecture Integration
+void ASOHCIInterruptRouter::SetLinkHandle(LinkHandleWeakPtr linkHandle) {
+  _linkHandle = linkHandle;
+}
 
 void ASOHCIInterruptRouter::OnAT_Request_TxComplete() {
   if (_at)
@@ -182,7 +191,11 @@ void ASOHCIInterruptRouter::OnBusReset(uint64_t time) {
   uint32_t generation = (iv->collapsedBusResets > 0)
                             ? iv->generation + iv->collapsedBusResets
                             : iv->generation + 1;
-  _ohci->OnBusReset(generation);
+
+  // Deliver to RAII architecture (LinkHandle → Controller)
+  if (auto linkHandle = _linkHandle.lock()) {
+    linkHandle->deliverBusReset(generation);
+  }
 }
 
 void ASOHCIInterruptRouter::OnSelfIDComplete(uint32_t selfIDCountReg,
@@ -240,12 +253,10 @@ void ASOHCIInterruptRouter::ProcessSelfIDComplete(uint32_t selfIDCountReg,
          (selfIDCountReg & kOHCI_SelfIDCount_selfIDSize) >> 2, generation,
          errorFlag ? 1 : 0);
 
+  // Call SelfIDManager to handle the Self-ID completion
   if (iv->selfIDManager) {
-    // iv->selfIDManager->OnSelfIDComplete(selfIDCountReg);
+    iv->selfIDManager->OnSelfIDComplete(selfIDCountReg);
   }
-  // if (iv->selfIDCallback) {
-  //   iv->selfIDCallback(iv->selfIDCallbackContext);
-  // }
 
   if (!iv->cycleTimerArmed) {
     pci->MemoryWrite32(iv->barIndex, kOHCI_LinkControlSet,
@@ -275,10 +286,4 @@ void ASOHCIInterruptRouter::ProcessSelfIDComplete(uint32_t selfIDCountReg,
   pci->MemoryWrite32(iv->barIndex, kOHCI_IntMaskSet, kOHCI_Int_BusReset);
   iv->busResetMasked = false;
   os_log(ASLog(), "ASOHCI: BusReset re-enabled after Self-ID completion");
-
-  // Forward Self-ID completion to controller (MVP)
-  // TODO: Extract actual Self-ID quadlets from DMA buffer
-  uint32_t dummySelfIDs[] = {
-      0x81C0FFFF}; // Placeholder - node 0, root capability
-  _ohci->OnSelfIDsComplete(dummySelfIDs, 1, generation);
 }
