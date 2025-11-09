@@ -1,0 +1,30 @@
+# LLDB commands for debugging ASFWDriver bus-reset packet parsing
+# Usage: sudo lldb -p $(pgrep -n net.mrmidi.ASFW.ASFWDriver) -s lldb_commands.txt
+
+# Set breakpoint on packet processing
+b ASFW::Async::AsyncSubsystem::_ProcessReceivedPacket
+
+# When breakpoint hits, inspect the packet
+commands
+  # Show function arguments
+  frame variable contextType packetData packetSize
+  
+  # Dump first 64 bytes of packet buffer
+  memory read -c64 -fx packetData
+  
+  # Show as uint32_t array (first 16 quadlets)
+  p/x *((uint32_t*)packetData)@16
+  
+  # Extract tCode from first byte
+  p/x ((uint8_t*)packetData)[0]
+  p/x (((uint8_t*)packetData)[0] >> 4) & 0xF
+  
+  # Show trailer quadlet (offset 12 for PHY packet)
+  p/x *((uint32_t*)(packetData + 12))
+  
+  # Continue to next breakpoint
+  continue
+end
+
+# Continue execution
+continue

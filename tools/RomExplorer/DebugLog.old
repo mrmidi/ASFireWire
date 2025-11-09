@@ -1,0 +1,44 @@
+import Foundation
+import os
+
+/// Lightweight logging helper used across the project.
+/// - Uses unified logging via os.Logger. Visibility is controlled by system log settings.
+/// - Marked with `@inlinable` for call-site optimization while keeping internals hidden using `@usableFromInline`.
+public enum DebugLog {
+    // Symbols referenced by @inlinable funcs must be public or @usableFromInline.
+    @usableFromInline static let subsystem: String = Bundle.main.bundleIdentifier ?? "app"
+    @usableFromInline static let category: String = "General"
+    @usableFromInline static let logger = Logger(subsystem: subsystem, category: category)
+
+    /// Log an informational message.
+    @inlinable public static func info(_ message: @autoclosure @escaping () -> String, file: StaticString = #fileID, function: StaticString = #function, line: UInt = #line) {
+        logger.info("\(message())")
+    }
+
+    /// Log a warning message.
+    @inlinable public static func warn(_ message: @autoclosure @escaping () -> String, file: StaticString = #fileID, function: StaticString = #function, line: UInt = #line) {
+        logger.warning("\(message())")
+    }
+
+    /// Log an error message.
+    @inlinable public static func error(_ message: @autoclosure @escaping () -> String, file: StaticString = #fileID, function: StaticString = #function, line: UInt = #line) {
+        logger.error("\(message())")
+    }
+
+    /// Generic log with level string.
+    @inlinable public static func log(level: String, _ message: @autoclosure @escaping () -> String, file: StaticString = #fileID, function: StaticString = #function, line: UInt = #line) {
+        switch level.lowercased() {
+        case "info", "i":
+            logger.info("\(message())")
+        case "warn", "warning", "w":
+            logger.warning("\(message())")
+        case "error", "err", "e":
+            logger.error("\(message())")
+        case "debug", "d":
+            logger.debug("\(message())")
+        default:
+            logger.log("\(message())")
+        }
+    }
+}
+

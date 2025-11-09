@@ -1,0 +1,73 @@
+# === Pretty stop context ===
+settings set stop-line-count-before 3
+settings set stop-line-count-after 3
+
+# Allow larger memory dumps for AR buffers (up to 2KB)
+settings set target.max-memory-read-size 2048
+
+# === Break in AR buffer dequeue ===
+breakpoint set -n 'ASFW::Async::BufferRing::Dequeue'
+
+# === On hit: collect descriptor fields, buffer slice, tcode/event, and VA->PA ===
+breakpoint command add
+# -- In BufferRing::Dequeue() frame --
+expr -R -- size_t $idx = this->head_
+expr -R -- void*  $d   = (void*)(&this->descriptors_.data()[$idx])
+expr -R -- uint8_t* $base = this->buffers_.data()
+expr -R -- size_t  $bsz  = this->bufferSize_
+expr -R -- void*   $buf_va = (void*)($base + $idx * $bsz)
+
+# Descriptor 4 dwords: control, dataAddress, branchWord, statusWord
+memory read -s4 -fx -c4 $d
+expr -R -- uint32_t $ctrl = *((uint32_t*)$d + 0)
+expr -R -- uint32_t $data = *((uint32_t*)$d + 1)
+expr -R -- uint32_t $brch = *((uint32_t*)$d + 2)
+expr -R -- uint32_t $stat = *((uint32_t*)$d + 3)
+
+# Decode AR BIG-ENDIAN statusWord safely
+expr -R -- uint32_t $stat_sw = (uint32_t)__builtin_bswap32($stat)
+expr -R -- uint16_t $req     = (uint16_t)($ctrl & 0xFFFF)
+expr -R -- uint16_t $res     = (uint16_t)($stat_sw & 0xFFFF)
+expr -R -- size_t   $filled  = (size_t)$req - (size_t)$res
+
+# Branch nibble + physical next
+expr -R -- uint32_t $z         = (uint32_t)(($brch >> 28) & 0xF)
+expr -R -- uint32_t $next_phys = (uint32_t)($brch & 0xFFFFFFF0)
+
+# Quick peek of the start of the buffer
+memory read -s1 -fx -c64 $buf_va
+
+# Quick header decode: tCode and trailer event (byte +14 is endian-safe)
+expr -R -- int $tcode = (((*(uint8_t*)$buf_va) >> 4) & 0xF)
+expr -R -- int $event = (*(((uint8_t*)$buf_va)+14)) & 0x1F
+
+# Dump exactly the filled bytes to a binary file for offline verification (overwrites each hit)
+# Tip: change the filename if you want multiple captures: e.g. /tmp/ar_$idx.bin
+expr -R -- void* $buf_end = (void*)((uint8_t*)$buf_va + $filled)
+memory read --binary --outfile /tmp/ar.bin $buf_va $buf_end
+
+# === VA->PA mapping (optional - uncomment if needed) ===
+# Note: This requires navigating to AsyncSubsystem frame which has dmaMemory_
+# Manual usage: 
+#   (lldb) frame select 1
+#   (lldb) expr this->dmaMemory_->VirtToPhys($buf_va)
+#   (lldb) frame select 0
+
+# Echo key values as a compact summary
+expr -R -- $idx
+expr -R -- $req
+expr -R -- $res
+expr -R -- $filled
+expr -R -- $tcode
+expr -R -- $event
+# expr -R -- (unsigned long long)$buf_phys  # Commented - see VA->PA section above
+expr -R -- (unsigned int)$data
+
+# Uncomment to auto-continue after capture:
+# continue
+DONE
+
+# Helpful one-shot aliases for manual inspection
+# Note: These reference LLDB variables created by the breakpoint commands above
+command alias ar.desc memory read -s4 -fx -c4 $d
+command alias ar.peek memory read -s1 -fx -c128 $buf_va

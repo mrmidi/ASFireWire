@@ -1,0 +1,62 @@
+//
+//  ASFWDriver.iig
+//  ASFWDriver
+//
+//  Created by Alexander Shabelnikov on 21.09.2025.
+//
+
+#include <DriverKit/IOService.iig>
+#include <DriverKit/OSDictionary.iig>
+#include <DriverKit/OSNumber.iig>
+#include <DriverKit/OSString.iig>
+#include <DriverKit/IOInterruptDispatchSource.iig>
+#include <DriverKit/OSAction.iig>
+#include <DriverKit/OSObject.iig>
+#include <DriverKit/IOTimerDispatchSource.iig>
+#include <DriverKit/IOUserClient.iig>
+
+struct ServiceContext;
+
+class ASFWDriver : public IOService
+{
+public:
+    bool init() override;
+    void free() override;
+    kern_return_t Start(IOService* provider) override;
+    kern_return_t Stop(IOService* provider) override;
+
+    kern_return_t CopyControllerStatus(OSDictionary** status) LOCALONLY;
+    kern_return_t CopyControllerSnapshot(OSDictionary** status,
+                                         uint64_t* sequence,
+                                         uint64_t* timestamp) LOCALONLY;
+
+    // UserClient accessor methods
+    void* GetControllerCore() const LOCALONLY;
+    void* GetAsyncSubsystem() const LOCALONLY;
+    void* GetServiceContext() const LOCALONLY;
+
+    virtual kern_return_t
+    NewUserClient(uint32_t type,
+                  IOUserClient** userClient) override;
+
+    virtual void InterruptOccurred(OSAction* action,
+                                   uint64_t count,
+                                   uint64_t time)
+        TYPE(IOInterruptDispatchSource::InterruptOccurred);
+
+    void ScheduleAsyncWatchdog(uint64_t delayUsec) LOCALONLY;
+
+    virtual void AsyncWatchdogTimerFired(OSAction* action,
+                                         uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    void RegisterStatusListener(OSObject* client) LOCALONLY;
+    void UnregisterStatusListener(OSObject* client) LOCALONLY;
+    kern_return_t CopySharedStatusMemory(uint64_t* options,
+                                         IOMemoryDescriptor** memory) LOCALONLY;
+
+};
+
+struct ASFWDriver_IVars {
+    ServiceContext* context;
+};

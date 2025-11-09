@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+**/build/
+**/build_*/
+
+# .DS_Store
+.DS_Store
+
+# build logs
+*.logs
+
+# Other
+compile_commands.json
+
+# PVS studio
+.PVS-Studio*
+
+# Scripts for private repo management
+push-to-public.sh
+# Exclude docs from public repository
+docs/

@@ -1,0 +1,16 @@
+# Packet processing entry
+breakpoint set -n 'ASFW::Async::AsyncSubsystem::_ProcessReceivedPacket(ASFW::Async::AsyncSubsystem::ARContextType, unsigned char const*, unsigned long)'
+
+breakpoint command add
+# args: (contextType, packetData, packetSize)
+expr -R -- (unsigned long)packetSize
+expr -R -- (const void*)packetData
+# Dump first 64 bytes (LE as written)
+memory read -s1 -fx -c64 (void*)packetData
+# Quick tCode from first wire byte
+expr -R -- ((((uint8_t*)packetData)[0] >> 4) & 0xF)
+# If >=16, show the quadlet at +12 (potential trailer)
+expr -R -- (uint32_t)(packetSize>=16 ? *(uint32_t*)((uint8_t*)packetData+12) : 0)
+DONE
+
+continue

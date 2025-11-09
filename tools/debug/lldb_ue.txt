@@ -1,0 +1,21 @@
+# Break in your interrupt handler; adjust symbol if needed.
+breakpoint set -n 'ASFW::Driver::Controller*::HandleInterrupt'
+
+# Only stop when UnrecoverableError bit would be present (optional if Read() is cheap).
+# You can uncomment once you're sure Read() works from here:
+# breakpoint modify -c '( (uint32_t)this->hardware_->Read(ASFW::Driver::Register32::kIntEvent) & 0x01000000u ) != 0' 1
+
+breakpoint command add
+# Use new debugging helpers for cleaner output
+expr -R -- (uint32_t)this->hardware_->ReadIntEvent()
+expr -R -- (uint32_t)this->hardware_->ReadIntMask()
+expr -R -- (uint32_t)this->hardware_->ReadHCControl()
+expr -R -- (uint32_t)this->hardware_->ReadLinkControl()
+
+# If you expose Posted-Write-Error or PCI status via HardwareInterface, read them too:
+# expr -R -- (uint32_t)this->hardware_->Read(ASFW::Driver::Register32::kPostedWriteError)
+# expr -R -- (uint32_t)this->hardware_->ReadPCIStatus()
+
+DONE
+
+continue

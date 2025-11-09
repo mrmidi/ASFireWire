@@ -1,0 +1,25 @@
+settings set stop-line-count-after 3
+settings set stop-line-count-before 3
+
+# Break in OnRxInterrupt(Request/Response)
+breakpoint set -n 'ASFW::Async::AsyncSubsystem::OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType)'
+
+# Land inside the loop body right after Dequeue() returns a buffer.
+# This regex matches the first line that uses bufferInfo in the loop.
+breakpoint set -p "const auto& info = \\*bufferInfo" -f AsyncSubsystem.cpp
+
+breakpoint command add
+# === On hit: print size, ptr, tCode, and small dumps ===
+expr -R -- (size_t)info.bytesFilled
+expr -R -- (void*)info.virtualAddress
+# First 64 bytes raw
+memory read -s1 -fx -c64 (void*)info.virtualAddress
+# First 32 dwords
+memory read -s4 -fx -c32 (void*)info.virtualAddress
+# Quick tCode from FIRST BYTE (no swapping!)
+expr -R -- ((((uint8_t*)info.virtualAddress)[0] >> 4) & 0xF)
+# If at least 16 bytes, peek at +12 (often trailer for 16B PHY pkt)
+expr -R -- (uint32_t)(info.bytesFilled>=16 ? *(uint32_t*)((uint8_t*)info.virtualAddress+12) : 0)
+DONE
+
+continue

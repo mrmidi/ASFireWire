@@ -1,0 +1,5 @@
+/Users/mrmidi/DEV/FirWireDriver/RomExplorer/build-ninja/CMakeFiles/RomExplorer.dir
+/Users/mrmidi/DEV/FirWireDriver/RomExplorer/build-ninja/CMakeFiles/RomParserUnitTests.dir
+/Users/mrmidi/DEV/FirWireDriver/RomExplorer/build-ninja/CMakeFiles/test.dir
+/Users/mrmidi/DEV/FirWireDriver/RomExplorer/build-ninja/CMakeFiles/edit_cache.dir
+/Users/mrmidi/DEV/FirWireDriver/RomExplorer/build-ninja/CMakeFiles/rebuild_cache.dir

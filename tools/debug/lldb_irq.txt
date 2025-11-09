@@ -1,0 +1,11 @@
+breakpoint set -n 'ASFW::Driver::Controller*::HandleInterrupt'
+
+breakpoint command add
+# Use new debugging helpers for cleaner output
+expr -R -- (uint32_t)this->hardware_->ReadIntEvent()
+expr -R -- (uint32_t)this->hardware_->ReadIntMask()
+expr -R -- (uint32_t)this->hardware_->ReadHCControl()
+expr -R -- (uint32_t)this->hardware_->ReadLinkControl()
+DONE
+
+continue

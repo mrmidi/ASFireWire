@@ -1,0 +1,135 @@
+cmake_minimum_required(VERSION 3.23)
+
+project(ASFWHostTests LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+enable_testing()
+
+find_package(GTest CONFIG QUIET)
+
+if (NOT GTest_FOUND)
+  include(FetchContent)
+  set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.15.0
+  )
+  FetchContent_MakeAvailable(googletest)
+endif()
+
+add_library(asfw_core_host STATIC
+    ../ASFWDriver/Core/ConfigROMBuilder.cpp
+    ../ASFWDriver/Core/TopologyManager.cpp
+    ../ASFWDriver/Core/InterruptManager.cpp
+    ../ASFWDriver/Async/Tx/PacketBuilder.cpp
+    ../ASFWDriver/Async/Rx/ARPacketParser.cpp
+    ../ASFWDriver/Async/Rx/PacketRouter.cpp
+    HardwareInterfaceStub.cpp
+    LoggingStubs.cpp
+)
+
+target_include_directories(asfw_core_host
+    PUBLIC
+        ..
+        ../ASFWDriver
+        ../ASFWDriver/Core
+        ../ASFWDriver/Async
+        ../ASFWDriver/Async/Tx
+        ../ASFWDriver/Async/Rx
+        mocks
+)
+
+target_compile_features(asfw_core_host PUBLIC cxx_std_23)
+target_compile_definitions(asfw_core_host PUBLIC ASFW_HOST_TEST)
+
+# Discovery subsystem library for testing
+add_library(asfw_discovery_host STATIC
+    ../ASFWDriver/Discovery/ROMScanner.cpp
+    ../ASFWDriver/Discovery/ROMReader.cpp
+    ../ASFWDriver/Discovery/SpeedPolicy.cpp
+    ../ASFWDriver/Discovery/ConfigROMStore.cpp
+    ../ASFWDriver/Discovery/DeviceRegistry.cpp
+    LoggingStubs.cpp
+)
+
+target_include_directories(asfw_discovery_host
+    PUBLIC
+        ..
+        ../ASFWDriver
+        ../ASFWDriver/Core
+        ../ASFWDriver/Discovery
+        ../ASFWDriver/Async
+        ../AppleHeaders
+        mocks
+)
+
+target_compile_features(asfw_discovery_host PUBLIC cxx_std_23)
+target_compile_definitions(asfw_discovery_host PUBLIC ASFW_HOST_TEST)
+
+add_executable(ASFWCoreHostTests
+    ConfigROMBuilderTests.cpp
+    SelfIDSequenceTests.cpp
+    TopologyManagerTests.cpp
+    InterruptMaskShadowTests.cpp
+    PacketSerDesTests.cpp
+    AsyncPacketSerDesLinuxCompatTests.cpp
+)
+
+target_link_libraries(ASFWCoreHostTests
+    PRIVATE
+        asfw_core_host
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(ASFWCoreHostTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ASFWCoreHostTests
+    PRIVATE
+        ..
+        ../ASFWDriver
+        ../ASFWDriver/Core
+        ../ASFWDriver/Async
+        ../ASFWDriver/Async/Tx
+        ../ASFWDriver/Async/Rx
+        mocks
+)
+
+include(GoogleTest)
+gtest_discover_tests(ASFWCoreHostTests)
+
+# ROMScanner Completion Tests - Verifies Apple-style immediate completion
+add_executable(ROMScannerCompletionTests
+    ROMScannerCompletionTests.cpp
+)
+
+target_link_libraries(ROMScannerCompletionTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerCompletionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerCompletionTests
+    PRIVATE
+        ..
+        ../ASFWDriver
+        ../ASFWDriver/Core
+        ../ASFWDriver/Discovery
+        ../ASFWDriver/Async
+        ../AppleHeaders
+        mocks
+)
+
+gtest_discover_tests(ROMScannerCompletionTests)
