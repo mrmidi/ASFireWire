@@ -1,5 +1,3 @@
-What could you say on my README.md for the repo?
-
 # ASFW project
 
 ## Table of Contents
