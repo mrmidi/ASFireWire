@@ -163,6 +163,8 @@ final class ASFWDriverConnector: ObservableObject {
         case registerStatusListener = 10
         case exportConfigROM = 14
         case triggerROMRead = 15
+        case getDiscoveredDevices = 16
+        case asyncCompareSwap = 17
     }
 
     // MARK: - Published Properties
@@ -294,9 +296,9 @@ final class ASFWDriverConnector: ObservableObject {
             lastError = "Not connected to driver"
             return nil
         }
-        
+
         print("[Connector] 📞 callStruct: selector=\(selector) connection=0x\(String(connection, radix: 16)) initialCap=\(initialCap)")
-        
+
         var outSize = initialCap
         var out = Data(count: outSize)
 
@@ -322,15 +324,67 @@ final class ASFWDriverConnector: ObservableObject {
             out = Data(count: outSize)
             kr = doCall()
         }
-        
+
         guard kr == KERN_SUCCESS else {
             let errMsg = "\(selector) failed: \(interpretIOReturn(kr))"
             print("[Connector] ❌ callStruct error: \(errMsg)")
             lastError = errMsg
             return nil
         }
-        
+
         print("[Connector] ✅ callStruct success: selector=\(selector) outSize=\(outSize)")
+        out.count = outSize
+        return out
+    }
+
+    private func callStructWithScalar(_ selector: Method, input: Data? = nil, initialCap: Int = 64 * 1024, scalarOutput: inout UInt64) -> Data? {
+        guard connection != 0 else {
+            print("[Connector] ❌ callStructWithScalar: connection=0 (not connected)")
+            lastError = "Not connected to driver"
+            return nil
+        }
+
+        print("[Connector] 📞 callStructWithScalar: selector=\(selector) connection=0x\(String(connection, radix: 16)) initialCap=\(initialCap)")
+
+        var outSize = initialCap
+        var out = Data(count: outSize)
+        var scalarOutputCount: UInt32 = 1
+
+        func doCall() -> kern_return_t {
+            out.withUnsafeMutableBytes { outPtr in
+                if let input = input {
+                    return input.withUnsafeBytes { inPtr in
+                        IOConnectCallMethod(connection, selector.rawValue,
+                                          nil, 0,  // No scalar input
+                                          inPtr.baseAddress, input.count,
+                                          &scalarOutput, &scalarOutputCount,
+                                          outPtr.baseAddress, &outSize)
+                    }
+                } else {
+                    return IOConnectCallMethod(connection, selector.rawValue,
+                                             nil, 0,  // No scalar input
+                                             nil, 0,  // No struct input
+                                             &scalarOutput, &scalarOutputCount,
+                                             outPtr.baseAddress, &outSize)
+                }
+            }
+        }
+
+        var kr = doCall()
+        if kr == kIOReturnNoSpace {
+            print("[Connector] callStructWithScalar: got kIOReturnNoSpace, retrying with size=\(outSize)")
+            out = Data(count: outSize)
+            kr = doCall()
+        }
+
+        guard kr == KERN_SUCCESS else {
+            let errMsg = "\(selector) failed: \(interpretIOReturn(kr))"
+            print("[Connector] ❌ callStructWithScalar error: \(errMsg)")
+            lastError = errMsg
+            return nil
+        }
+
+        print("[Connector] ✅ callStructWithScalar success: selector=\(selector) outSize=\(outSize) scalarOut=\(scalarOutput)")
         out.count = outSize
         return out
     }
@@ -629,8 +683,8 @@ final class ASFWDriverConnector: ObservableObject {
             return
         }
 
-        DispatchQueue.main.async {
-            self.isConnected = true
+        DispatchQueue.main.async { [weak self] in
+            self?.isConnected = true
         }
         log("Connection established", level: .success)
     }
@@ -667,7 +721,8 @@ final class ASFWDriverConnector: ObservableObject {
         }
 
         lastDeliveredSequence = 0
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isConnected = false
             self.latestStatus = nil
         }
@@ -789,8 +844,8 @@ final class ASFWDriverConnector: ObservableObject {
         guard status.sequence != lastDeliveredSequence else { return }
         lastDeliveredSequence = status.sequence
 
-        DispatchQueue.main.async {
-            self.latestStatus = status
+        DispatchQueue.main.async { [weak self] in
+            self?.latestStatus = status
         }
         statusSubject.send(status)
     }
@@ -883,6 +938,78 @@ final class ASFWDriverConnector: ObservableObject {
         let handle = UInt16(truncatingIfNeeded: output)
         log(String(format: "AsyncWrite issued (handle=0x%04X, bytes=%u)", handle, payload.count), level: .success)
         return handle
+    }
+
+    func asyncCompareSwap(
+        destinationID: UInt16,
+        addressHigh: UInt16,
+        addressLow: UInt32,
+        compareValue: Data,
+        newValue: Data
+    ) -> (handle: UInt16?, locked: Bool)? {
+        guard isConnected else {
+            log("asyncCompareSwap: Not connected", level: .warning)
+            return nil
+        }
+
+        // Validate size (must be 4 or 8 bytes)
+        guard compareValue.count == newValue.count else {
+            log("asyncCompareSwap: compareValue and newValue size mismatch", level: .error)
+            lastError = "Compare and new values must be the same size"
+            return nil
+        }
+
+        guard compareValue.count == 4 || compareValue.count == 8 else {
+            log("asyncCompareSwap: Invalid size (must be 4 or 8 bytes)", level: .error)
+            lastError = "Size must be 4 (32-bit) or 8 (64-bit) bytes"
+            return nil
+        }
+
+        let size = UInt8(compareValue.count)
+
+        // Build operand: compareValue + newValue concatenated
+        var operand = Data()
+        operand.append(compareValue)
+        operand.append(newValue)
+
+        var scalars: [UInt64] = [
+            UInt64(destinationID),
+            UInt64(addressHigh),
+            UInt64(addressLow),
+            UInt64(size)
+        ]
+
+        var outputs: [UInt64] = [0, 0]  // handle, locked
+        var outputCount: UInt32 = 2
+
+        let kr = operand.withUnsafeBytes { operandPtr in
+            scalars.withUnsafeMutableBufferPointer { scalarPtr -> kern_return_t in
+                IOConnectCallMethod(
+                    connection,
+                    Method.asyncCompareSwap.rawValue,
+                    scalarPtr.baseAddress,
+                    UInt32(scalarPtr.count),
+                    operandPtr.baseAddress,
+                    operand.count,
+                    &outputs,
+                    &outputCount,
+                    nil,
+                    nil)
+            }
+        }
+
+        guard kr == KERN_SUCCESS else {
+            let errorMsg = "asyncCompareSwap failed: \(interpretIOReturn(kr))"
+            log(errorMsg, level: .error)
+            lastError = errorMsg
+            return nil
+        }
+
+        let handle = UInt16(truncatingIfNeeded: outputs[0])
+        let locked = outputs[1] != 0
+
+        log(String(format: "AsyncCompareSwap issued (handle=0x%04X, size=%u)", handle, size), level: .success)
+        return (handle, locked)
     }
 
     // MARK: - Config ROM Operations
@@ -984,8 +1111,8 @@ final class ASFWDriverConnector: ObservableObject {
         guard let status = DriverStatus(rawPointer: UnsafeRawPointer(pointer), length: Int(sharedMemoryLength)) else { return }
         guard status.sequence != 0 else { return }
         lastDeliveredSequence = status.sequence
-        DispatchQueue.main.async {
-            self.latestStatus = status
+        DispatchQueue.main.async { [weak self] in
+            self?.latestStatus = status
         }
         statusSubject.send(status)
     }
@@ -994,7 +1121,8 @@ final class ASFWDriverConnector: ObservableObject {
 
     private func log(_ message: String, level: LogMessage.Level = .info) {
         let logEntry = LogMessage(timestamp: Date(), level: level, message: message)
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.logMessages.append(logEntry)
             if self.logMessages.count > 100 {
                 self.logMessages.removeFirst(self.logMessages.count - 100)
@@ -1045,5 +1173,188 @@ final class ASFWDriverConnector: ObservableObject {
             return String(cString: cString)
         }
         return "kern_result = \(kr)"
+    }
+
+    // MARK: - Device Discovery API
+
+    enum FWDeviceState: UInt8 {
+        case created = 0
+        case ready = 1
+        case suspended = 2
+        case terminated = 3
+
+        var description: String {
+            switch self {
+            case .created: return "Created"
+            case .ready: return "Ready"
+            case .suspended: return "Suspended"
+            case .terminated: return "Terminated"
+            }
+        }
+    }
+
+    enum FWUnitState: UInt8 {
+        case created = 0
+        case ready = 1
+        case suspended = 2
+        case terminated = 3
+
+        var description: String {
+            switch self {
+            case .created: return "Created"
+            case .ready: return "Ready"
+            case .suspended: return "Suspended"
+            case .terminated: return "Terminated"
+            }
+        }
+    }
+
+    struct FWDeviceInfo: Identifiable {
+        let id: UInt64  // GUID
+        let guid: UInt64
+        let vendorId: UInt32
+        let modelId: UInt32
+        let vendorName: String
+        let modelName: String
+        let nodeId: UInt8
+        let generation: UInt32
+        let state: FWDeviceState
+        let units: [FWUnitInfo]
+
+        var stateString: String { state.description }
+    }
+
+    struct FWUnitInfo: Identifiable {
+        let id = UUID()
+        let specId: UInt32
+        let swVersion: UInt32
+        let state: FWUnitState
+        let romOffset: UInt32
+        let vendorName: String?
+        let productName: String?
+
+        var specIdHex: String { String(format: "0x%06X", specId) }
+        var swVersionHex: String { String(format: "0x%06X", swVersion) }
+        var stateString: String { state.description }
+    }
+
+    func getDiscoveredDevices() -> [FWDeviceInfo]? {
+        guard isConnected else {
+            log("getDiscoveredDevices: Not connected", level: .warning)
+            return nil
+        }
+
+        // Use callStruct to get wire format data (4KB limit for IOConnectCallStructMethod)
+        guard let wireData = callStruct(.getDiscoveredDevices, initialCap: 4096) else {
+            log("getDiscoveredDevices: callStruct failed", level: .error)
+            return nil
+        }
+
+        guard !wireData.isEmpty else {
+            log("getDiscoveredDevices: no data returned", level: .warning)
+            return []
+        }
+
+        print("[Connector] 📦 Received \(wireData.count) bytes of wire format data")
+
+        // Parse wire format
+        return parseDeviceDiscoveryWire(wireData)
+    }
+
+    /// Parse wire format data from driver
+    private func parseDeviceDiscoveryWire(_ data: Data) -> [FWDeviceInfo]? {
+        var offset = 0
+
+        // Read header
+        guard offset + 8 <= data.count else {
+            print("[Connector] ❌ Data too small for header")
+            return nil
+        }
+
+        let deviceCount = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt32.self) }
+        offset += 8  // deviceCount + padding
+
+        print("[Connector] 📋 Device count: \(deviceCount)")
+
+        var devices: [FWDeviceInfo] = []
+
+        // Read each device
+        for _ in 0..<deviceCount {
+            guard offset + 152 <= data.count else {  // sizeof(FWDeviceWire) = 152
+                print("[Connector] ❌ Data truncated while reading device")
+                return nil
+            }
+
+            let guid = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt64.self) }
+            let vendorId = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 8, as: UInt32.self) }
+            let modelId = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 12, as: UInt32.self) }
+            let generation = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 16, as: UInt32.self) }
+            let nodeId = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 20, as: UInt8.self) }
+            let stateRaw = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 21, as: UInt8.self) }
+            let unitCount = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 22, as: UInt8.self) }
+
+            // Read vendor name (64 bytes at offset 24)
+            let vendorNameData = data.subdata(in: (offset + 24)..<(offset + 88))
+            let vendorName = String(cString: vendorNameData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
+
+            // Read model name (64 bytes at offset 88)
+            let modelNameData = data.subdata(in: (offset + 88)..<(offset + 152))
+            let modelName = String(cString: modelNameData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
+
+            let state = FWDeviceState(rawValue: stateRaw) ?? .created
+
+            offset += 152  // sizeof(FWDeviceWire)
+
+            // Read units
+            var units: [FWUnitInfo] = []
+            for _ in 0..<unitCount {
+                guard offset + 144 <= data.count else {  // sizeof(FWUnitWire) = 144
+                    print("[Connector] ❌ Data truncated while reading unit")
+                    return nil
+                }
+
+                let specId = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt32.self) }
+                let swVersion = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 4, as: UInt32.self) }
+                let romOffset = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 8, as: UInt32.self) }
+                let unitStateRaw = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 12, as: UInt8.self) }
+
+                // Read unit vendor name (64 bytes at offset 16)
+                let unitVendorData = data.subdata(in: (offset + 16)..<(offset + 80))
+                let unitVendorName = String(cString: unitVendorData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
+
+                // Read unit product name (64 bytes at offset 80)
+                let unitProductData = data.subdata(in: (offset + 80)..<(offset + 144))
+                let unitProductName = String(cString: unitProductData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
+
+                let unitState = FWUnitState(rawValue: unitStateRaw) ?? .created
+
+                units.append(FWUnitInfo(
+                    specId: specId,
+                    swVersion: swVersion,
+                    state: unitState,
+                    romOffset: romOffset,
+                    vendorName: unitVendorName.isEmpty ? nil : unitVendorName,
+                    productName: unitProductName.isEmpty ? nil : unitProductName
+                ))
+
+                offset += 144  // sizeof(FWUnitWire)
+            }
+
+            devices.append(FWDeviceInfo(
+                id: guid,
+                guid: guid,
+                vendorId: vendorId,
+                modelId: modelId,
+                vendorName: vendorName,
+                modelName: modelName,
+                nodeId: nodeId,
+                generation: generation,
+                state: state,
+                units: units
+            ))
+        }
+
+        print("[Connector] ✅ Parsed \(devices.count) devices")
+        return devices
     }
 }

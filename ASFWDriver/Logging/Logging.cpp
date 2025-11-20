@@ -21,5 +21,8 @@ os_log_t Metrics()    { static os_log_t log = MakeCategory("metrics");    return
 os_log_t Async()      { static os_log_t log = MakeCategory("async");      return log; }
 os_log_t UserClient() { static os_log_t log = MakeCategory("userclient"); return log; }
 os_log_t Discovery()  { static os_log_t log = MakeCategory("discovery");  return log; }
+os_log_t IRM()        { static os_log_t log = MakeCategory("irm");        return log; }
+os_log_t BusManager() { static os_log_t log = MakeCategory("busmanager"); return log; }
+os_log_t ConfigROM()  { static os_log_t log = MakeCategory("configrom");  return log; }
 
 } // namespace ASFW::Driver::Logging

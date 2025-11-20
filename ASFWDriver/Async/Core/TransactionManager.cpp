@@ -1,6 +1,8 @@
 #include "TransactionManager.hpp"
 
 #include <DriverKit/IOLib.h>
+// logging
+#include "../../Logging/Logging.hpp"
 
 namespace ASFW::Async {
 
@@ -133,6 +135,27 @@ void TransactionManager::Remove(TLabel label) noexcept {
     IOLockUnlock(lock_);
 }
 
+std::unique_ptr<Transaction> TransactionManager::Extract(TLabel label) noexcept {
+    if (!lock_ || !initialized_) {
+        return nullptr;
+    }
+
+    if (label.value >= 64) {
+        return nullptr;
+    }
+
+    IOLockLock(lock_);
+
+    // Move ownership out of array
+    auto txn = std::move(transactions_[label.value]);
+    
+    // Slot is now nullptr (handled by unique_ptr move)
+
+    IOLockUnlock(lock_);
+
+    return txn;
+}
+
 void TransactionManager::CancelAll() noexcept {
     if (!lock_ || !initialized_) {
         return;
@@ -183,12 +206,12 @@ void TransactionManager::DumpAll() const noexcept {
     IOLockLock(lock_);
 
     size_t count = Count();
-    IOLog("=== TransactionManager: %zu in-flight transactions ===\n", count);
+    ASFW_LOG(Async, "=== TransactionManager: %zu in-flight transactions ===", count);
 
     for (size_t i = 0; i < 64; ++i) {
         const auto& txn = transactions_[i];
         if (txn) {
-            IOLog("  tLabel=%zu state=%{public}s nodeID=0x%04x gen=%u\n",
+            ASFW_LOG(Async, "  tLabel=%zu state=%{public}s nodeID=0x%04x gen=%u",
                   i,
                   ToString(txn->state()),
                   txn->nodeID().value,

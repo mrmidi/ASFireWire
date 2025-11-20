@@ -6,6 +6,6 @@ namespace ASFW::Async {
 class AsyncSubsystem;
 class ChannelBundle;
 class LabelAllocator;
-class CompletionQueue;
+// Note: CompletionQueue is now a template alias - include CompletionQueue.hpp instead of forward declaring
 
 } // namespace ASFW::Async

@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include "../Core/FWCommon.hpp"  // Single source of truth for all constants
+#include "../Common/FWCommon.hpp"  // Single source of truth for all constants
 
 // ============================================================================
 // ROM Reader Configuration
@@ -50,4 +50,3 @@ namespace BIBFields = ::ASFW::FW::BIBFields;
 namespace MaxPayload = ::ASFW::FW::MaxPayload;
 
 } // namespace ASFW::Discovery
-

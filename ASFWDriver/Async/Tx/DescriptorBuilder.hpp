@@ -3,15 +3,52 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include "../../Shared/Rings/DescriptorRing.hpp"
+#include "../../Shared/Memory/DMAMemoryManager.hpp"
 
 namespace ASFW::Async {
 
-class DescriptorRing;
-class DMAMemoryManager;
+// Import Shared types used by DescriptorBuilder
+using ASFW::Shared::DescriptorRing;
+using ASFW::Shared::DMAMemoryManager;
 
 namespace HW {
 struct OHCIDescriptor;
 }
+
+// ============================================================================
+// CONTRACT: DescriptorBuilder
+// ----------------------------------------------------------------------------
+// Responsibility:
+//   - Convert packet headers + optional payloads into OHCI descriptor chains.
+//   - Encode Branch/Control fields per OHCI 1.1 and Agere/LSI quirks:
+//       * OUTPUT_MORE relies on physical contiguity (BranchNever, branchWord unused).
+//       * OUTPUT_LAST terminates chains with BranchAlways + branchWord==0.
+//   - Never overwrite descriptors that hardware may still own.
+// Inputs:
+//   - DescriptorRing (ring_): exposes At(index) lookups and the [tail, head) free window.
+//   - DMAMemoryManager (dmaManager_): publishes cachelines and resolves Virt→IOVA.
+// Invariants:
+//   - ReserveBlocks(N) returns a contiguous region fully inside the free window or
+//     kInvalidRingIndex; it never wraps across live descriptors.
+//   - Immediate-only packets consume two descriptor blocks (OHCIDescriptorImmediate)
+//     and emit OUTPUT_LAST + BranchAlways + branchWord==0 to mark EOL.
+//   - Header+payload packets reserve exactly three blocks: immediate header (OUTPUT_MORE,
+//     BranchNever) followed by payload descriptor (OUTPUT_LAST, BranchAlways, branchWord==0).
+//   - LinkChain/LinkTailTo patch ONLY the prior OUTPUT_LAST descriptor: branchWord first,
+//     release fence, then control.b forced to BranchAlways, followed by PublishRange().
+//   - UnlinkTail reverts branchWord→0 while leaving control.b=BranchAlways to restore EOL.
+// Threading:
+//   - DescriptorBuilder itself is not thread-safe; callers serialize access relative to
+//     DescriptorRing head/tail updates. Branch patch helpers are safe while AT RUNNING
+//     because they only touch coherent cachelines and publish them immediately.
+// Error handling:
+//   - BuildTransactionChain returns an Empty() chain on validation/space failures; callers
+//     must treat Empty() as "no submission".
+// Ownership:
+//   - DescriptorBuilder never advances ring head/tail; ContextManager owns that policy.
+//   - DMA buffers stay owned by DMAMemoryManager; DescriptorBuilder only flushes ranges.
+// ============================================================================
 
 class DescriptorBuilder {
 public:
@@ -66,7 +103,7 @@ public:
     // Helper: patch existing tail descriptor at `tailIndex` to point to newChain
     // This is a convenience wrapper which locates the tail descriptor inside the ring,
     // patches branchWord and flushes as necessary.
-    void LinkTailTo(size_t tailIndex, const DescriptorChain& newChain) noexcept;
+    bool LinkTailTo(size_t tailIndex, const DescriptorChain& newChain) noexcept;
 
     // Helper: revert (unlink) the tail descriptor's branch back to EOL state
     // Used when PATH 2→1 fallback occurs to remove stale linkage before re-arming via CommandPtr

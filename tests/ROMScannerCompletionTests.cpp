@@ -2,10 +2,10 @@
 #include <vector>
 #include <functional>
 #include <span>
-#include "../ASFWDriver/Discovery/ROMScanner.hpp"
+#include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
 #include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
 #include "../ASFWDriver/Discovery/DiscoveryTypes.hpp"
-#include "../ASFWDriver/Core/ControllerTypes.hpp"
+#include "../ASFWDriver/Controller/ControllerTypes.hpp"
 
 using namespace ASFW::Discovery;
 using namespace ASFW::Driver;

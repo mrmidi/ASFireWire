@@ -23,10 +23,11 @@ TxMetadata ReadCommand::BuildMetadata(const TransactionContext& txCtx) {
     return meta;
 }
 
-size_t ReadCommand::BuildHeader(uint8_t label, const PacketContext& pktCtx, uint8_t* buffer) {
-    // Delegate to PacketBuilder for IEEE 1394 header construction
-    PacketBuilder builder;
-    
+size_t ReadCommand::BuildHeader(uint8_t label,
+                                const PacketContext& pktCtx,
+                                PacketBuilder& builder,
+                                uint8_t* buffer) {
+    // Delegate to shared PacketBuilder for IEEE 1394 header construction
     const bool isQuadlet = (params_.length == 0 || params_.length == 4);
     if (isQuadlet) {
         return builder.BuildReadQuadlet(params_, label, pktCtx, buffer, 16);

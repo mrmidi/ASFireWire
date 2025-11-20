@@ -191,6 +191,26 @@ protected:
         : AsyncCommand<Derived>(std::move(callback)) {}
 };
 
+template<typename Derived>
+class PHYCommand : public AsyncCommand<Derived> {
+public:
+    static constexpr CompletionStrategy GetCompletionStrategy() noexcept {
+        return CompletionStrategy::CompleteOnPHY;
+    }
+
+    static constexpr bool RequiresARResponse() noexcept {
+        return false;
+    }
+
+    static constexpr bool CompletesOnATAck() noexcept {
+        return true;
+    }
+
+protected:
+    explicit PHYCommand(CompletionCallback callback)
+        : AsyncCommand<Derived>(std::move(callback)) {}
+};
+
 // Compile-time validation using concepts
 namespace detail {
     // Mock transaction for concept checking
@@ -205,6 +225,12 @@ namespace detail {
             return CompletionStrategy::CompleteOnAT;
         }
     };
+
+    struct MockPHYTransaction {
+        static constexpr CompletionStrategy GetCompletionStrategy() noexcept {
+            return CompletionStrategy::CompleteOnPHY;
+        }
+    };
 }
 
 // Verify concepts work correctly
@@ -214,5 +240,9 @@ static_assert(ATCompletingTransaction<detail::MockATTransaction>,
               "MockATTransaction should satisfy ATCompletingTransaction");
 static_assert(!ATCompletingTransaction<detail::MockARTransaction>,
               "MockARTransaction should NOT satisfy ATCompletingTransaction");
+static_assert(PHYCompletingTransaction<detail::MockPHYTransaction>,
+              "MockPHYTransaction should satisfy PHYCompletingTransaction");
+static_assert(!PHYCompletingTransaction<detail::MockARTransaction>,
+              "MockARTransaction should NOT satisfy PHYCompletingTransaction");
 
 } // namespace ASFW::Async

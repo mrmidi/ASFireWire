@@ -1,7 +1,7 @@
 #include "WriteCommand.hpp"
 #include "../Track/Tracking.hpp"
 #include "../Tx/PacketBuilder.hpp"
-#include "../../Core/HardwareInterface.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 #include <DriverKit/IOLib.h>
 
 namespace ASFW::Async {
@@ -20,10 +20,11 @@ TxMetadata WriteCommand::BuildMetadata(const TransactionContext& txCtx) {
     return meta;
 }
 
-size_t WriteCommand::BuildHeader(uint8_t label, const PacketContext& pktCtx, uint8_t* buffer) {
-    // Delegate to PacketBuilder for IEEE 1394 header construction
-    PacketBuilder builder;
-    
+size_t WriteCommand::BuildHeader(uint8_t label,
+                                 const PacketContext& pktCtx,
+                                 PacketBuilder& builder,
+                                 uint8_t* buffer) {
+    // Delegate to shared PacketBuilder for IEEE 1394 header construction
     const bool isQuadlet = (params_.length == 4);
     if (isQuadlet) {
         return builder.BuildWriteQuadlet(params_, label, pktCtx, buffer, 20);

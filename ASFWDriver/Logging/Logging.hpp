@@ -2,7 +2,51 @@
 
 #include <os/log.h>
 #include <atomic>
+#ifdef ASFW_HOST_TEST
+#include <mach/mach_time.h>
+#else
 #include <DriverKit/IOLib.h> // mach_time
+#endif
+
+#ifndef OS_LOG_TYPE_DEFAULT
+#define OS_LOG_TYPE_DEFAULT static_cast<os_log_type_t>(0x00)
+#endif
+
+#ifndef OS_LOG_TYPE_INFO
+#define OS_LOG_TYPE_INFO static_cast<os_log_type_t>(0x01)
+#endif
+
+#ifndef OS_LOG_TYPE_ERROR
+#define OS_LOG_TYPE_ERROR static_cast<os_log_type_t>(0x10)
+#endif
+
+#ifndef OS_LOG_TYPE_FAULT
+#define OS_LOG_TYPE_FAULT static_cast<os_log_type_t>(0x11)
+#endif
+
+#ifndef OS_LOG_TYPE_DEBUG
+#define OS_LOG_TYPE_DEBUG OS_LOG_TYPE_DEFAULT
+#endif
+
+#ifndef os_log_info
+#define os_log_info(log, fmt, ...) os_log_with_type((log), OS_LOG_TYPE_INFO, fmt, ##__VA_ARGS__)
+#endif
+
+#ifndef os_log_error
+#define os_log_error(log, fmt, ...) os_log_with_type((log), OS_LOG_TYPE_ERROR, fmt, ##__VA_ARGS__)
+#endif
+
+#ifndef os_log_debug
+#define os_log_debug(log, fmt, ...) os_log_with_type((log), OS_LOG_TYPE_DEBUG, fmt, ##__VA_ARGS__)
+#endif
+
+#ifndef os_log_warning
+#define os_log_warning(log, fmt, ...) os_log_with_type((log), OS_LOG_TYPE_DEFAULT, fmt, ##__VA_ARGS__)
+#endif
+
+#ifndef os_log_with_type
+#define os_log_with_type(log, type, fmt, ...) os_log((log), fmt, ##__VA_ARGS__)
+#endif
 
 #ifndef ASFW_DEBUG_BUS_RESET_PACKET
 #define ASFW_DEBUG_BUS_RESET_PACKET 0
@@ -13,11 +57,7 @@
 #endif
 
 #ifndef ASFW_DEBUG_PHY_INIT
-#define ASFW_DEBUG_PHY_INIT 0
-#endif
-
-#ifndef OS_LOG_TYPE_DEBUG
-#define OS_LOG_TYPE_DEBUG OS_LOG_TYPE_DEFAULT
+#define ASFW_DEBUG_PHY_INIT 1
 #endif
 
 #ifndef ASFW_DEBUG_SELF_ID
@@ -46,6 +86,9 @@ os_log_t Metrics();
 os_log_t Async();
 os_log_t UserClient();
 os_log_t Discovery();
+os_log_t IRM();
+os_log_t BusManager();
+os_log_t ConfigROM();
 } // namespace ASFW::Driver::Logging
 
 // ----- time helpers (header-only, safe in DriverKit) -----
@@ -137,7 +180,7 @@ struct RlState {
 #endif
 
 #if ASFW_DEBUG_CONFIG_ROM
-#define ASFW_LOG_CONFIG_ROM(fmt, ...) ASFW_LOG_DEBUG(Hardware, fmt, ##__VA_ARGS__)
+#define ASFW_LOG_CONFIG_ROM(fmt, ...) ASFW_LOG_DEBUG(ConfigROM, fmt, ##__VA_ARGS__)
 #else
 #define ASFW_LOG_CONFIG_ROM(fmt, ...)
 #endif

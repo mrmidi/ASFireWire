@@ -9,6 +9,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(ASFW_TESTS_DIR "${CMAKE_CURRENT_LIST_DIR}")
 set(ASFW_ROOT_DIR "${ASFW_TESTS_DIR}/..")
 set(ASFW_DRIVER_DIR "${ASFW_ROOT_DIR}/ASFWDriver")
+set(ASFW_DRIVERKIT_DIR "${ASFW_ROOT_DIR}/docs")
+
+set(ASFW_COMMON_INCLUDES
+    "${ASFW_ROOT_DIR}"
+    "${ASFW_DRIVER_DIR}"
+    "${ASFW_DRIVER_DIR}/Async"
+    "${ASFW_DRIVER_DIR}/Core"
+    "${ASFW_DRIVER_DIR}/Bus"
+    "${ASFW_DRIVERKIT_DIR}"
+    "${ASFW_DRIVER_DIR}/Hardware"
+    "${ASFW_ROOT_DIR}/AppleHeaders"
+    "${ASFW_TESTS_DIR}/mocks"
+)
 
 enable_testing()
 
@@ -33,14 +46,7 @@ add_library(asfw_packet_serdes STATIC
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
-target_include_directories(asfw_packet_serdes
-    PUBLIC
-        "${ASFW_ROOT_DIR}"
-        "${ASFW_DRIVER_DIR}"
-        "${ASFW_DRIVER_DIR}/Async"
-        "${ASFW_ROOT_DIR}/AppleHeaders"
-        "${ASFW_TESTS_DIR}/mocks"
-)
+target_include_directories(asfw_packet_serdes PUBLIC ${ASFW_COMMON_INCLUDES})
 
 target_compile_features(asfw_packet_serdes PUBLIC cxx_std_23)
 target_compile_definitions(asfw_packet_serdes PUBLIC ASFW_HOST_TEST)
@@ -48,6 +54,7 @@ target_compile_definitions(asfw_packet_serdes PUBLIC ASFW_HOST_TEST)
 add_executable(ASFWPacketTests
     "${ASFW_TESTS_DIR}/PacketSerDesTests.cpp"
     "${ASFW_TESTS_DIR}/AsyncPacketSerDesLinuxCompatTests.cpp"
+    "${ASFW_TESTS_DIR}/CompareAndSwapPacketTests.cpp"
 )
 
 target_link_libraries(ASFWPacketTests
@@ -61,14 +68,7 @@ target_compile_definitions(ASFWPacketTests
         ASFW_HOST_TEST
 )
 
-target_include_directories(ASFWPacketTests
-    PRIVATE
-        "${ASFW_ROOT_DIR}"
-        "${ASFW_DRIVER_DIR}"
-        "${ASFW_DRIVER_DIR}/Async"
-        "${ASFW_ROOT_DIR}/AppleHeaders"
-        "${ASFW_TESTS_DIR}/mocks"
-)
+target_include_directories(ASFWPacketTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 # TLabel Matching Tests - Critical bug fix verification
 add_executable(TLabelMatchingTests
@@ -86,14 +86,7 @@ target_compile_definitions(TLabelMatchingTests
         ASFW_HOST_TEST
 )
 
-target_include_directories(TLabelMatchingTests
-    PRIVATE
-        "${ASFW_ROOT_DIR}"
-        "${ASFW_DRIVER_DIR}"
-        "${ASFW_DRIVER_DIR}/Async"
-        "${ASFW_ROOT_DIR}/AppleHeaders"
-        "${ASFW_TESTS_DIR}/mocks"
-)
+target_include_directories(TLabelMatchingTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 # Completion Callback Pattern Tests - Documents the Apple-style fix
 add_executable(CompletionCallbackPatternTests
@@ -125,15 +118,67 @@ target_compile_definitions(CompletionStrategyTests
         ASFW_HOST_TEST
 )
 
-target_include_directories(CompletionStrategyTests
-    PRIVATE
-        "${ASFW_ROOT_DIR}"
-        "${ASFW_DRIVER_DIR}"
-        "${ASFW_TESTS_DIR}/mocks"
+target_include_directories(CompletionStrategyTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+# Gap Count Optimizer Tests - Bus reset storm fix
+add_executable(GapCountOptimizerTests
+    "${ASFW_TESTS_DIR}/GapCountOptimizerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GapCountOptimizer.cpp"
 )
+
+target_link_libraries(GapCountOptimizerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(GapCountOptimizerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(GapCountOptimizerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+# Topology Gap Extraction Tests - Real-world FireBug data validation
+add_executable(TopologyGapExtractionTests
+    "${ASFW_TESTS_DIR}/TopologyGapExtractionTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(TopologyGapExtractionTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TopologyGapExtractionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TopologyGapExtractionTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+# PHY Packets Tests - Encoding/decoding validation, gap=0 bug regression
+add_executable(PhyPacketsTests
+    "${ASFW_TESTS_DIR}/PhyPacketsTests.cpp"
+)
+
+target_link_libraries(PhyPacketsTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(PhyPacketsTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(PhyPacketsTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 include(GoogleTest)
 gtest_discover_tests(ASFWPacketTests)
 gtest_discover_tests(TLabelMatchingTests)
 gtest_discover_tests(CompletionCallbackPatternTests)
 gtest_discover_tests(CompletionStrategyTests)
+gtest_discover_tests(GapCountOptimizerTests)
+gtest_discover_tests(TopologyGapExtractionTests)
+gtest_discover_tests(PhyPacketsTests)

@@ -8,8 +8,8 @@
 #include "../Tx/PacketBuilder.hpp"
 #include "../Tx/DescriptorBuilder.hpp"
 #include "../Tx/Submitter.hpp"
-#include "../Bus/GenerationTracker.hpp"
-#include "../../Core/HardwareInterface.hpp"
+#include "../../Bus/GenerationTracker.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Async {
@@ -26,6 +26,17 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     
     // Step 2: Build transaction metadata (CRTP dispatch to derived class)
     TxMetadata meta = static_cast<Derived*>(this)->BuildMetadata(txCtx);
+
+    // Normalize destination NodeID: ensure bus number bits (15:6) match local bus
+    // hardware expects full 16-bit NodeID for tracking/matching; ROMScanner passes
+    // only the 6-bit node value. Pull bus bits from sourceNodeID when absent.
+    constexpr uint16_t kNodeMask = 0x003F;
+    constexpr uint16_t kBusMask  = 0xFFC0;
+    if ((meta.destinationNodeID & kBusMask) == 0) {
+        const uint16_t sourceBusBits = static_cast<uint16_t>(txCtx.sourceNodeID & kBusMask);
+        meta.destinationNodeID = static_cast<uint16_t>(sourceBusBits | (meta.destinationNodeID & kNodeMask));
+    }
+
     meta.callback = callback_;
 
     ASFW_LOG(Async, "🔍 [AsyncCommand] Submitting with callback=%p (valid=%d)",
@@ -48,9 +59,15 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     const uint8_t label = labelOpt.value();
     
     // Step 5: Build IEEE 1394 packet header (CRTP dispatch)
+    auto* packetBuilder = subsys.GetPacketBuilder();
+    if (packetBuilder == nullptr) {
+        ASFW_LOG_ERROR(Async, "Command submit failed: PacketBuilder unavailable");
+        return AsyncHandle{0};
+    }
+
     uint8_t headerBuffer[20]{};  // Max header size (block write: 16 bytes + alignment)
     const size_t headerSize = static_cast<Derived*>(this)->BuildHeader(
-        label, txCtx.packetContext, headerBuffer);
+        label, txCtx.packetContext, *packetBuilder, headerBuffer);
     if (headerSize == 0) {
         ASFW_LOG_ERROR(Async, "Command submit failed: BuildHeader returned 0 for handle=0x%x", 
                        handle.value);

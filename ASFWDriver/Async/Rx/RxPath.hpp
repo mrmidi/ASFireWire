@@ -8,8 +8,8 @@
 #include "../Contexts/ARResponseContext.hpp"
 #include "PacketRouter.hpp"
 #include "ARPacketParser.hpp"
-#include "../OHCIEventCodes.hpp"
-#include "../Bus/GenerationTracker.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
+#include "../../Bus/GenerationTracker.hpp"
 #include <memory>
 
 namespace ASFW::Async::Rx {

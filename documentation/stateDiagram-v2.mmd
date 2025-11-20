@@ -1,0 +1,34 @@
+stateDiagram-v2
+    direction LR
+
+    %% Compact, readable bus-reset state machine: R0 left, R1 center, T0 right
+
+    powerReset: powerReset
+    resetDetected: resetDetected
+    ibrCond: ibr && !(phyResponse || immediatePhyRequest)
+    maxArbStateTimeout: maxArbStateTimeout()
+
+    R0: R0 — Reset Start\nresetStartActions()
+    R1: R1 — Reset Wait\nresetWaitActions()
+    T0: T0 — Tree ID Start
+
+    %% Triggers to R0 (left side)
+    powerReset --> R0: arbPowerReset()
+    resetDetected --> R0: initiatedReset = FALSE
+    ibrCond --> R0: initiatedReset = TRUE / resetDuration = RESET_TIME
+    maxArbStateTimeout --> R0: initiatedReset = TRUE / resetDuration = RESET_TIME; PH_EVENT_INDICATION
+
+    %% Core transitions
+    R0 --> R1: arbTimer >= resetDuration / resetStartActions()
+    R1 --> T0: resetComplete() / arbTimer = 0
+
+    %% Back-transition and timeout
+    R1 --> R0: arbTimer >= resetDuration + RESET_WAIT / resetDuration = RESET_TIME
+
+    note left of R0
+      External triggers to R0:\n• powerReset (arbPowerReset())\n• resetDetected (initiatedReset = FALSE)\n• ibr && !(phyResponse || immediatePhyRequest) (initiatedReset = TRUE)\n• maxArbStateTimeout() (initiatedReset = TRUE; resetDuration = RESET_TIME)\n• from TX: Transmit → -TX:R0
+    end note
+
+    note right of R1
+      Timeout/Recovery:\n• R1→R0 sets resetDuration = RESET_TIME\n• R1→T0 on resetComplete() sets arbTimer = 0
+    end note

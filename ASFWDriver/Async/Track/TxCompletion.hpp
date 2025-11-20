@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "OHCIEventCodes.hpp"
-#include "OHCI_HW_Specs.hpp"
+#include "OHCIDescriptors.hpp"
 
 namespace ASFW::Async {
 

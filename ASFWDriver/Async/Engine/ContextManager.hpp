@@ -8,13 +8,13 @@
 #include <expected>   // C++23
 
 #include "../../Logging/Logging.hpp"
-#include "../Rings/DescriptorRing.hpp"
-#include "../Rings/BufferRing.hpp"
+#include "../../Shared/Rings/DescriptorRing.hpp"
+#include "../../Shared/Rings/BufferRing.hpp"
 #include "../Contexts/ContextBase.hpp"  // For ATRequestTag, ATResponseTag full definitions
+#include "../../Shared/Memory/DMAMemoryManager.hpp"
 
 // Forward declarations for light-weight accessors
 namespace ASFW::Async {
-    class DMAMemoryManager;
     class ATRequestContext;
     class ATResponseContext;
     class ARRequestContext;
@@ -27,6 +27,11 @@ namespace ASFW::Async {
 namespace ASFW::Driver { class HardwareInterface; }
 
 namespace ASFW::Async::Engine {
+
+// Import Shared types used by ContextManager
+using ASFW::Shared::DescriptorRing;
+using ASFW::Shared::BufferRing;
+using ASFW::Shared::DMAMemoryManager;
 
 // Forward declarations for FSM-based managers
 template<typename ContextT, typename RingT, typename RoleTag> class ATManager;
@@ -79,7 +84,7 @@ public:
     DescriptorRing* AtResponseRing() noexcept;
     BufferRing*     ArRequestRing() noexcept;
     BufferRing*     ArResponseRing() noexcept;
-    ASFW::Async::DMAMemoryManager* DmaManager() noexcept;
+    ASFW::Shared::DMAMemoryManager* DmaManager() noexcept;
     ASFW::Async::ATRequestContext*  GetAtRequestContext() noexcept;
     ASFW::Async::ATResponseContext* GetAtResponseContext() noexcept;
     ASFW::Async::ARRequestContext*  GetArRequestContext() noexcept;

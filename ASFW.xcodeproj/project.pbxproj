@@ -10,6 +10,8 @@
 		3A1693F02E808765000BD368 /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693EF2E808765000BD368 /* DriverKit.framework */; };
 		3A1693F92E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */; };
+		3A27C5302ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
+		3A27C5322ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +43,7 @@
 		3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.mrmidi.ASFW.ASFWDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A1693EF2E808765000BD368 /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
 		3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PCIDriverKit.framework; path = Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.0.sdk/System/DriverKit/System/Library/Frameworks/PCIDriverKit.framework; sourceTree = DEVELOPER_DIR; };
+		3A27C52E2ECDE045009CA664 /* bump.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = bump.sh; sourceTree = "<group>"; };
 		ASFWAPPENTITLEMENTS /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		ASFWDRIVERENTITLEMENTS /* ASFWDriver.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ASFWDriver.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -100,6 +103,7 @@
 				3A1693D92E808727000BD368 /* Products */,
 				ASFWAPPENTITLEMENTS /* App.entitlements */,
 				ASFWDRIVERENTITLEMENTS /* ASFWDriver.entitlements */,
+				3A27C52E2ECDE045009CA664 /* bump.sh */,
 			);
 			sourceTree = "<group>";
 		};
@@ -138,9 +142,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3A1693E52E80872C000BD368 /* Build configuration list for PBXNativeTarget "ASFW" */;
 			buildPhases = (
+				3A27C5372ECDECB0009CA664 /* ShellScript */,
+				3A1693D62E808727000BD368 /* Resources */,
 				3A1693D42E808727000BD368 /* Sources */,
 				3A1693D52E808727000BD368 /* Frameworks */,
-				3A1693D62E808727000BD368 /* Resources */,
 				3A1693FE2E808765000BD368 /* Embed System Extensions */,
 			);
 			buildRules = (
@@ -152,8 +157,6 @@
 				3A1693DA2E808727000BD368 /* ASFW */,
 			);
 			name = ASFW;
-			packageProductDependencies = (
-			);
 			productName = ASFW;
 			productReference = 3A1693D82E808727000BD368 /* ASFW.app */;
 			productType = "com.apple.product-type.application";
@@ -162,10 +165,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3A1693FB2E808765000BD368 /* Build configuration list for PBXNativeTarget "ASFWDriver" */;
 			buildPhases = (
+				3A1693EB2E808765000BD368 /* Resources */,
+				3A27C5392ECDED18009CA664 /* ShellScript */,
 				3A1693E82E808765000BD368 /* Headers */,
 				3A1693E92E808765000BD368 /* Sources */,
 				3A1693EA2E808765000BD368 /* Frameworks */,
-				3A1693EB2E808765000BD368 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -175,8 +179,6 @@
 				3A1693F12E808765000BD368 /* ASFWDriver */,
 			);
 			name = ASFWDriver;
-			packageProductDependencies = (
-			);
 			productName = ASFWDriver;
 			productReference = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */;
 			productType = "com.apple.product-type.driver-extension";
@@ -196,6 +198,7 @@
 					};
 					3A1693EC2E808765000BD368 = {
 						CreatedOnToolsVersion = 26.0;
+						LastSwiftMigration = 2610;
 					};
 				};
 			};
@@ -224,6 +227,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A27C5302ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -231,10 +235,50 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A27C5322ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		3A27C5372ECDECB0009CA664 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "
+";
+		};
+		3A27C5392ECDED18009CA664 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ls ${SRCROOT}\n$SRCROOT/bump.sh\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3A1693D42E808727000BD368 /* Sources */ = {
@@ -457,12 +501,15 @@
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
@@ -477,6 +524,8 @@
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -485,12 +534,15 @@
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
@@ -505,6 +557,7 @@
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};

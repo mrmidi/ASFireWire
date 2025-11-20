@@ -37,7 +37,7 @@ enum class ARContextType : uint8_t {
  * Invoked by PacketRouter when packet with matching tCode is received.
  * Handler receives zero-copy view of packet data.
  *
- * \par Thread Safety
+ * **Thread Safety**
  * Handlers are invoked from interrupt context. Must complete quickly and
  * avoid blocking operations.
  */
@@ -49,11 +49,11 @@ using PacketHandler = std::function<void(const ARPacketView&)>;
  * Routes received packets to registered handlers based on tCode and context type.
  * Supports registration of separate handlers for request and response packets.
  *
- * \par OHCI Specification References
+ * **OHCI Specification References**
  * - §8.4.2: AR DMA packet stream format
  * - §8.7: AR packet formats (Figures 8-7 through 8-14)
  *
- * \par IEEE 1394 Transaction Codes
+ * **IEEE 1394 Transaction Codes**
  * Per IEEE 1394-1995 §6.2, Table 6-1:
  * - 0x0: Write request (quadlet)
  * - 0x1: Write request (block)
@@ -68,25 +68,25 @@ using PacketHandler = std::function<void(const ARPacketView&)>;
  * - 0xB: Lock response
  * - 0xE: PHY packet
  *
- * \par Design Rationale
+ * **Design Rationale**
  * - **Zero-copy**: Uses std::span to avoid copying packet data
  * - **Functional handlers**: std::function allows lambdas and captures
  * - **Separate request/response tables**: Different tCode space for each context
  * - **Single-threaded**: No locking (caller must serialize)
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * Similar to AppleFWOHCI packet dispatch:
  * - processPacket() extracts tCode and routes to handler
  * - Separate paths for requests vs responses
  * - Handlers invoked synchronously from interrupt context
  *
- * \par Linux Pattern
+ * **Linux Pattern**
  * See drivers/firewire/ohci.c handle_ar_packet():
  * - Switch on tCode (lines 1680-1710)
  * - Dispatches to fw_core_handle_request() or fw_core_handle_response()
  * - Zero-copy packet forwarding to core layer
  *
- * \par Usage Example
+ * **Usage Example**
  * \code
  * PacketRouter router;
  *
@@ -121,7 +121,7 @@ public:
      * \param tCode Transaction code (0x0-0xF)
      * \param handler Callback to invoke when packet received
      *
-     * \par Usage
+     * **Usage**
      * Register handlers for incoming requests that need servicing:
      * - 0x0/0x1: Write requests (handle CSR/config ROM writes)
      * - 0x4/0x5: Read requests (handle CSR/config ROM reads)
@@ -138,7 +138,7 @@ public:
      * \param tCode Transaction code (0x2, 0x6, 0x7, 0xB)
      * \param handler Callback to invoke when packet received
      *
-     * \par Usage
+     * **Usage**
      * Register handlers for responses to local AT requests:
      * - 0x2: Write response (complete pending write)
      * - 0x6: Read response quadlet (extract data, complete read)
@@ -157,9 +157,8 @@ public:
      *
      * \param contextType AR Request or AR Response context
      * \param packetData Buffer containing packet stream (may have multiple packets)
-     * \param packetSize Size of buffer in bytes
      *
-     * \par Implementation
+     * **Implementation**
      * 1. Use ARPacketParser::ParseNext() to extract packets from buffer
      * 2. For each packet:
      *    a. Extract tCode from header first byte (bits[7:4])
@@ -168,18 +167,18 @@ public:
      *    d. Invoke handler(view) if registered, else log warning
      * 3. Continue until buffer exhausted
      *
-     * \par OHCI §8.4.2
+     * **OHCI §8.4.2**
      * "AR buffers contain a stream of packets. Each packet consists of:
      *  - Packet header (variable length based on tCode)
      *  - Packet data (optional, based on tCode and data_length)
      *  - 4-byte trailer (xferStatus | timeStamp)
      * Software must parse the stream to extract individual packets."
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Not thread-safe. Caller must serialize RoutePacket() calls (typically
      * invoked from single interrupt handler thread).
      *
-     * \par Phase 2.2
+     * **Phase 2.2**
      * Signature updated to use std::span for type-safe buffer access.
      */
     void RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData);
@@ -207,7 +206,7 @@ private:
      * \param header Packet header bytes (big-endian)
      * \return tCode value (4 bits, range 0-15)
      *
-     * \par IEEE 1394 Wire Format
+     * **IEEE 1394 Wire Format**
      * Per IEEE 1394-1995 §6.2, control quadlet format:
      * - Byte 0: destID[15:10]
      * - Byte 1: destID[9:2]
@@ -224,7 +223,7 @@ private:
      * \param header Packet header bytes (big-endian)
      * \return Source node ID (16 bits, big-endian)
      *
-     * \par IEEE 1394 Wire Format
+     * **IEEE 1394 Wire Format**
      * sourceID is at bytes [4-5] of async packet header (OHCI Figure 8-7).
      */
     static uint16_t ExtractSourceID(std::span<const uint8_t> header) noexcept;
@@ -235,7 +234,7 @@ private:
      * \param header Packet header bytes (big-endian)
      * \return Destination node ID (16 bits, big-endian)
      *
-     * \par IEEE 1394 Wire Format
+     * **IEEE 1394 Wire Format**
      * destinationID is at bytes [0-1] of async packet header.
      */
     static uint16_t ExtractDestID(std::span<const uint8_t> header) noexcept;
@@ -246,7 +245,7 @@ private:
      * \param header Packet header bytes (big-endian)
      * \return tLabel value (6 bits, range 0-63)
      *
-     * \par IEEE 1394 Wire Format
+     * **IEEE 1394 Wire Format**
      * tLabel is split across bytes 2-3:
      * - Byte 2 bits[7:2]: tLabel[5:0] upper bits
      * - Byte 3 bits[7:6]: tLabel[1:0] lower bits

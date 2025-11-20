@@ -12,8 +12,8 @@
 #include <DriverKit/IOLib.h>
 
 #include "../AsyncTypes.hpp"
-#include "../Core/DMAMemoryManager.hpp"
-#include "../../Core/FWCommon.hpp"  // For FW::Response, FW::RespName, FW::ResponseFromByte
+#include "../../Shared/Memory/DMAMemoryManager.hpp"
+#include "../../Common/FWCommon.hpp"  // For FW::Response, FW::RespName, FW::ResponseFromByte
 #include "CompletionQueue.hpp"
 #include "TxCompletion.hpp"
 #include "LabelAllocator.hpp"
@@ -103,10 +103,13 @@ public:
 
         ::IOLockLock(lock_);
 
-        // Allocate label using sequential rotation (2,3,4,5...) for transaction hygiene
-        // This avoids label reuse when pipelining transactions, reducing risk of
-        // mismatches with late/stale responses. Labels wrap around after 63.
-        uint8_t label = labelAllocator_->NextLabel();
+        // Allocate a free label from the bitmap allocator to avoid collisions
+        uint8_t label = labelAllocator_->Allocate();
+        if (label == LabelAllocator::kInvalidLabel) {
+            ::IOLockUnlock(lock_);
+            ASFW_LOG(Async, "ERROR: RegisterTx failed - no available tLabels");
+            return AsyncHandle{0};
+        }
 
         // Phase 2.0: tLabel is the identifier (matches Apple's pattern)
         // No need for synthetic txid
@@ -331,6 +334,12 @@ public:
         // Cancel collected transactions
         for (TLabel label : victims) {
             txnMgr_->WithTransaction(label, [](Transaction* txn) {
+                if (!txn) {
+                    return;
+                }
+                if (IsTerminalState(txn->state())) {
+                    return;
+                }
                 txn->TransitionTo(TransactionState::Cancelled, "CancelByGeneration");
                 txn->InvokeResponseHandler(kIOReturnAborted, {});
             });

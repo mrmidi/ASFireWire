@@ -58,4 +58,12 @@ os_log_t Discovery() {
     return stub_log;
 }
 
+os_log_t IRM() {
+    return stub_log;
+}
+
+os_log_t BusManager() {
+    return stub_log;
+}
+
 } // namespace ASFW::Driver::Logging

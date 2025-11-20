@@ -7,9 +7,9 @@
 #include <cstdio>
 #include <limits>
 
-#include "../Core/DMAMemoryManager.hpp"
-#include "../Rings/DescriptorRing.hpp"
-#include "../OHCI_HW_Specs.hpp"
+#include "../../Shared/Memory/DMAMemoryManager.hpp"
+#include "../../Shared/Rings/DescriptorRing.hpp"
+#include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Async {
@@ -424,6 +424,26 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                     kImmediateCapacity - headerSize);
     }
 
+    // DIAGNOSTIC: Log header quadlets for Lock transactions (detect CAS Q3 corruption)
+    // This helps debug IRM CAS failures (rCode 6 TYPE_ERROR)
+    uint32_t q3_initial = 0;
+    if (headerSize == 16) {
+        ASFW_LOG(Async,
+                 "🔍 Lock descriptor header copied: Q0=0x%08x Q1=0x%08x Q2=0x%08x Q3=0x%08x",
+                 headerImmDesc->immediateData[0],
+                 headerImmDesc->immediateData[1],
+                 headerImmDesc->immediateData[2],
+                 headerImmDesc->immediateData[3]);
+
+        // Parse Q3 to show critical CAS fields
+        q3_initial = headerImmDesc->immediateData[3];
+        const uint16_t dataLength = static_cast<uint16_t>(q3_initial >> 16);
+        const uint16_t extTcode = static_cast<uint16_t>(q3_initial & 0xFFFFu);
+        ASFW_LOG(Async,
+                 "   Q3 decode: dataLength=%u extTcode=0x%04x (expected: dataLength=8 extTcode=0x0002 for CAS)",
+                 dataLength, extTcode);
+    }
+
     // With b=00, hardware advances to physically contiguous next descriptor
     // branchWord is ignored, so set to 0 to avoid confusion
     headerImmDesc->common.branchWord = 0;
@@ -463,6 +483,36 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
     );
 
     dmaManager_.PublishRange(payloadDescriptor, sizeof(OHCIDescriptor));
+
+    // DIAGNOSTIC: Log descriptor control words for Lock transactions
+    if (headerSize == 16) {
+        const uint16_t headerReqCount = static_cast<uint16_t>(headerImmDesc->common.control & 0xFFFFu);
+        const uint16_t payloadReqCount = static_cast<uint16_t>(payloadDescriptor->control & 0xFFFFu);
+        ASFW_LOG(Async,
+                 "🔍 Lock descriptor chain configured:");
+        ASFW_LOG(Async,
+                 "   Header descriptor: reqCount=%u (expected 16 for lock header)",
+                 headerReqCount);
+        ASFW_LOG(Async,
+                 "   Payload descriptor: reqCount=%u dataAddr=0x%08x (expected reqCount=8 for CAS)",
+                 payloadReqCount, payloadDescriptor->dataAddress);
+
+        // Validate critical values
+        if (headerReqCount != 16) {
+            ASFW_LOG(Async, "   ❌ ERROR: Header reqCount is %u, should be 16!", headerReqCount);
+        }
+        if (payloadReqCount != 8) {
+            ASFW_LOG(Async, "   ❌ ERROR: Payload reqCount is %u, should be 8!", payloadReqCount);
+        }
+
+        // Re-check Q3 after descriptor configuration (ensure it wasn't corrupted)
+        const uint32_t q3_after = headerImmDesc->immediateData[3];
+        if (q3_after != q3_initial) {
+            ASFW_LOG(Async,
+                     "   ❌ CRITICAL: Q3 changed after descriptor config! was=0x%08x now=0x%08x",
+                     q3_initial, q3_after);
+        }
+    }
 
     chain.first = &headerImmDesc->common;
     chain.last = payloadDescriptor;
@@ -566,8 +616,10 @@ void DescriptorBuilder::TagSoftware(HW::OHCIDescriptor* tail, uint32_t /*tag*/) 
 // CRITICAL: Per OHCI spec and Apple's implementation, must patch the LAST descriptor
 // of the previous chain, because only OUTPUT_LAST* descriptors read branchWord.
 // OUTPUT_MORE* descriptors have b=00 and hardware ignores their branchWord field.
-void DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newChain) noexcept {
-    if (ring_.Capacity() == 0 || newChain.Empty()) return;
+bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newChain) noexcept {
+    if (ring_.Capacity() == 0 || newChain.Empty()) {
+        return false;
+    }
 
     HW::OHCIDescriptor* prevLast = nullptr;
     size_t prevLastIndex = 0;
@@ -577,7 +629,7 @@ void DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
                  "LinkTailTo: no previous LAST descriptor to link (txid=%u tail=%zu)",
                  newChain.txid,
                  tailIndex);
-        return;
+        return false;
     }
 
     const bool prevImmediate = HW::IsImmediate(*prevLast);
@@ -589,7 +641,7 @@ void DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
                  newChain.txid,
                  nextPacketBlocks,
                  newChain.firstIOVA32);
-        return;
+        return false;
     }
 
     const uint8_t zNibble = static_cast<uint8_t>(branch & 0xFu);
@@ -641,6 +693,8 @@ void DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
                  controlAfter,
                  branchAfter);
     }
+
+    return true;
 }
 
 // Revert (unlink) the tail descriptor's branch back to EOL state

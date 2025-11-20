@@ -31,7 +31,7 @@ namespace ASFW::Async {
 class TransactionCompletionHandler {
 public:
     explicit TransactionCompletionHandler(TransactionManager* txnMgr, LabelAllocator* labelAllocator) noexcept
-        : txnMgr_(txnMgr), labelAllocator_(labelAllocator), pendingLabelFree_(0xFF) {}
+        : txnMgr_(txnMgr), labelAllocator_(labelAllocator) {}
 
     /**
      * \brief Handle AT descriptor completion (gotAck equivalent).
@@ -66,11 +66,20 @@ public:
                  "🔄 OnATCompletion: tLabel=%u ackCode=0x%X eventCode=0x%02X ts=%u ackCount=%u",
                  comp.tLabel, ackCode, eventCode, comp.timeStamp, comp.ackCount);
 
-        // CRITICAL: Reset pending label free before lambda (prevents stale value from previous completion)
-        pendingLabelFree_ = 0xFF;
+
 
         // Find transaction by tLabel
         bool found = txnMgr_->WithTransactionByLabel(TLabel{comp.tLabel}, [&](Transaction* txn) {
+            const auto state = txn->state();
+            if (state == TransactionState::Completed ||
+                state == TransactionState::TimedOut ||
+                state == TransactionState::Failed ||
+                state == TransactionState::Cancelled) {
+                ASFW_LOG(Async, "  ⏭️  OnATCompletion: Transaction already terminal (%{public}s), ignoring",
+                         ToString(state));
+                return;
+            }
+
             // Store ACK code in transaction for timeout handler
             txn->SetAckCode(ackCode);
 
@@ -109,9 +118,14 @@ public:
                 } else {
                     // True hardware failure
                     ASFW_LOG(Async, "  → Failed (hw timeout, ackCode=0x%X)", ackCode);
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout");
-                    txn->TransitionTo(TransactionState::Failed, "OnATCompletion: hw_timeout");
-                    CompleteTransaction_(txn, kIOReturnTimeout, {});
+                    
+                    // Extract transaction to complete it safely outside lock
+                    auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
+                    if (txnPtr) {
+                        txnPtr->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout");
+                        txnPtr->TransitionTo(TransactionState::Failed, "OnATCompletion: hw_timeout");
+                        txnPtr->InvokeResponseHandler(kIOReturnTimeout, {});
+                    }
                     return;
                 }
             }
@@ -119,8 +133,13 @@ public:
             // Other hardware errors: fail immediately
             if (eventCode == static_cast<uint8_t>(OHCIEventCode::kEvtFlushed)) {
                 ASFW_LOG(Async, "  → Cancelled (flushed)");
-                txn->TransitionTo(TransactionState::Cancelled, "OnATCompletion: flushed");
-                CompleteTransaction_(txn, kIOReturnAborted, {});
+                
+                // Extract transaction to complete it safely outside lock
+                auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
+                if (txnPtr) {
+                    txnPtr->TransitionTo(TransactionState::Cancelled, "OnATCompletion: flushed");
+                    txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+                }
                 return;
             }
 
@@ -136,8 +155,17 @@ public:
 
                 case 0x0:  // kFWAckComplete (unified transaction)
                     ASFW_LOG(Async, "  → Completed (ackComplete, immediate)");
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackComplete");
-                    CompleteTransaction_(txn, kIOReturnSuccess, {});
+                    
+                    // Extract transaction to complete it safely outside lock
+                    // Note: We can't use 'txn' after this block because Extract moves it
+                    {
+                        auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
+                        if (txnPtr) {
+                            txnPtr->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackComplete");
+                            txnPtr->TransitionTo(TransactionState::Completed, "OnATCompletion: ackComplete");
+                            txnPtr->InvokeResponseHandler(kIOReturnSuccess, {});
+                        }
+                    }
                     break;
 
                 case 0x4:  // kFWAckBusyX
@@ -169,9 +197,16 @@ public:
                 case 0xD:  // kFWAckDataError
                 case 0xE:  // kFWAckTypeError
                     ASFW_LOG(Async, "  → Failed (ackError 0x%X)", ackCode);
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackError");
-                    txn->TransitionTo(TransactionState::Failed, "OnATCompletion: ackError");
-                    CompleteTransaction_(txn, kIOReturnError, {});
+                    
+                    // Extract transaction to complete it safely outside lock
+                    {
+                        auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
+                        if (txnPtr) {
+                            txnPtr->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackError");
+                            txnPtr->TransitionTo(TransactionState::Failed, "OnATCompletion: ackError");
+                            txnPtr->InvokeResponseHandler(kIOReturnError, {});
+                        }
+                    }
                     break;
 
                 default:
@@ -184,14 +219,6 @@ public:
                     break;
             }
         });
-
-        // CRITICAL: Free label AFTER WithTransactionByLabel completes (prevents early reuse)
-        // This ensures label is not reused until transaction is fully processed
-        if (pendingLabelFree_ != 0xFF && labelAllocator_) {
-            labelAllocator_->Free(pendingLabelFree_);
-            ASFW_LOG(Async, "  🔓 Freed label=%u (after lambda completion)", pendingLabelFree_);
-            pendingLabelFree_ = 0xFF;
-        }
 
         if (!found) {
             ASFW_LOG(Async, "⚠️  OnATCompletion: No transaction for tLabel=%u", comp.tLabel);
@@ -225,8 +252,7 @@ public:
                  "📥 OnARResponse: tLabel=%u nodeID=0x%04X gen=%u rcode=0x%X len=%zu",
                  key.label.value, key.node.value, key.generation.value, rcode, data.size());
 
-        // CRITICAL: Reset pending label free before processing
-        pendingLabelFree_ = 0xFF;
+
 
         Transaction* txn = txnMgr_->FindByMatchKey(key);
         if (!txn) {
@@ -244,20 +270,37 @@ public:
         }
 
         // Transition: AwaitingAR → ARReceived
-        txn->TransitionTo(TransactionState::ARReceived, "OnARResponse");
+        // Transition: AwaitingAR → ARReceived
+        
+        // Extract transaction to complete it safely outside lock
+        // This avoids holding the lock while invoking the callback
+        auto txnPtr = txnMgr_->Extract(key.label);
+        if (!txnPtr) {
+            ASFW_LOG(Async, "⚠️  OnARResponse: Failed to extract transaction (concurrent removal?)");
+            return;
+        }
+
+        txnPtr->TransitionTo(TransactionState::ARReceived, "OnARResponse");
 
         // Convert rcode to kern_return_t
         kern_return_t kr = (rcode == 0) ? kIOReturnSuccess : kIOReturnError;
 
         // Complete transaction
         ASFW_LOG(Async, "  → Completed (rcode=0x%X, kr=0x%08X)", rcode, kr);
-        CompleteTransaction_(txn, kr, data);
+        
+        if (txnPtr->state() != TransactionState::Completed &&
+            txnPtr->state() != TransactionState::Failed &&
+            txnPtr->state() != TransactionState::Cancelled &&
+            txnPtr->state() != TransactionState::TimedOut) {
+            txnPtr->TransitionTo(TransactionState::Completed, "OnARResponse");
+        }
 
-        // CRITICAL: Free label AFTER transaction completion (prevents early reuse)
-        if (pendingLabelFree_ != 0xFF && labelAllocator_) {
-            labelAllocator_->Free(pendingLabelFree_);
-            ASFW_LOG(Async, "  🔓 Freed label=%u (after AR completion)", pendingLabelFree_);
-            pendingLabelFree_ = 0xFF;
+        // Invoke callback
+        txnPtr->InvokeResponseHandler(kr, data);
+
+        // Free label (allocator is thread-safe)
+        if (labelAllocator_) {
+            labelAllocator_->Free(key.label.value);
         }
     }
 
@@ -279,7 +322,7 @@ public:
         }
 
         // CRITICAL: Reset pending label free before lambda
-        pendingLabelFree_ = 0xFF;
+        bool shouldFail = false;
 
         bool found = txnMgr_->WithTransaction(label, [&](Transaction* txn) {
             uint8_t ackCode = txn->ackCode();
@@ -319,15 +362,27 @@ public:
             }
 
             // Timeout is terminal
-            txn->TransitionTo(TransactionState::TimedOut, "OnTimeout");
-            CompleteTransaction_(txn, kIOReturnTimeout, {});
+            // Timeout is terminal
+            
+            // Extract transaction to complete it safely outside lock
+            // We can't do this inside WithTransaction because it invalidates 'txn'
+            // So we mark a flag and do it after
+            shouldFail = true;
         });
 
-        // CRITICAL: Free label AFTER WithTransaction completes (prevents early reuse)
-        if (pendingLabelFree_ != 0xFF && labelAllocator_) {
-            labelAllocator_->Free(pendingLabelFree_);
-            ASFW_LOG(Async, "  🔓 Freed label=%u (after timeout)", pendingLabelFree_);
-            pendingLabelFree_ = 0xFF;
+        if (shouldFail) {
+            auto txnPtr = txnMgr_->Extract(label);
+            if (txnPtr) {
+                txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
+                
+                // Invoke callback
+                txnPtr->InvokeResponseHandler(kIOReturnTimeout, {});
+                
+                // Free label
+                if (labelAllocator_) {
+                    labelAllocator_->Free(label.value);
+                }
+            }
         }
 
         if (!found) {
@@ -336,55 +391,8 @@ public:
     }
 
 private:
-    /**
-     * \brief Complete transaction and invoke callback.
-     *
-     * \param txn Transaction to complete
-     * \param kr Result code
-     * \param data Response payload
-     *
-     * \par Lifecycle
-     * - Transitions to Completed state
-     * - Invokes response handler callback
-     * - Removes transaction from manager (frees resources)
-     */
-    void CompleteTransaction_(Transaction* txn, kern_return_t kr, std::span<const uint8_t> data) noexcept {
-        if (!txn) {
-            return;
-        }
-
-        // Transition to Completed (if not already in terminal state)
-        if (txn->state() != TransactionState::Completed &&
-            txn->state() != TransactionState::Failed &&
-            txn->state() != TransactionState::Cancelled &&
-            txn->state() != TransactionState::TimedOut) {
-            txn->TransitionTo(TransactionState::Completed, "CompleteTransaction");
-        }
-
-        // Invoke callback
-        ASFW_LOG(Async, "🔍 [CompleteTransaction_] About to invoke: txn=%p tLabel=%u kr=0x%x",
-                 txn, txn->label().value, kr);
-        txn->InvokeResponseHandler(kr, data);
-
-        // CRITICAL FIX (Issue #3): Defer label freeing until AFTER WithTransactionByLabel completes
-        //
-        // Previous bug: Freed label immediately, allowing reuse before labelToTxid_ was cleared
-        // Apple's behavior: Ties label lifetime to command, frees atomically with command teardown
-        //
-        // Fix: Store label for deferred freeing. The caller (OnATCompletion/OnARResponse/OnTimeout)
-        // will free it AFTER the WithTransactionByLabel/WithTransaction lambda exits, preventing
-        // early label reuse and labelToTxid_ mismatch races.
-        //
-        // The Transaction stays in the manager for debugging/history and will be cleaned up on
-        // bus reset (CancelAll) or when explicitly removed.
-        pendingLabelFree_ = txn->label().value;
-        ASFW_LOG(Async, "  📋 Marked tLabel=%u for deferred free (txn still in manager)",
-                 txn->label().value);
-    }
-
     TransactionManager* txnMgr_;
     LabelAllocator* labelAllocator_;
-    uint8_t pendingLabelFree_;  // Label to free after lambda completes (0xFF = none)
 };
 
 } // namespace ASFW::Async

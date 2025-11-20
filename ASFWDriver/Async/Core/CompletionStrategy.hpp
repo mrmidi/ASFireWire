@@ -39,6 +39,11 @@ enum class CompletionStrategy : uint8_t {
     CompleteOnAT = 0,
 
     /**
+     * Complete on AT acknowledgment only (PHY packets).
+     */
+    CompleteOnPHY = 1,
+
+    /**
      * Complete on AR response only (split transaction).
      *
      * Used for:
@@ -54,7 +59,7 @@ enum class CompletionStrategy : uint8_t {
      *
      * Reference: IOFWReadQuadCommand.cpp gotAck() + gotPacket() pattern
      */
-    CompleteOnAR = 1,
+    CompleteOnAR = 2,
 
     /**
      * Require both AT and AR paths (complex split transaction).
@@ -69,7 +74,7 @@ enum class CompletionStrategy : uint8_t {
      *
      * State flow: Submitted → ATPosted → ATCompleted → AwaitingAR → ARReceived → Completed
      */
-    RequireBoth = 2
+    RequireBoth = 3
 };
 
 /**
@@ -85,6 +90,7 @@ constexpr bool RequiresARResponse(CompletionStrategy strategy) noexcept {
  */
 constexpr bool ProcessesATCompletion(CompletionStrategy strategy) noexcept {
     return strategy == CompletionStrategy::CompleteOnAT ||
+           strategy == CompletionStrategy::CompleteOnPHY ||
            strategy == CompletionStrategy::RequireBoth;
 }
 
@@ -92,7 +98,8 @@ constexpr bool ProcessesATCompletion(CompletionStrategy strategy) noexcept {
  * @brief Trait to determine if AT completion should immediately complete the transaction.
  */
 constexpr bool CompletesOnATAck(CompletionStrategy strategy) noexcept {
-    return strategy == CompletionStrategy::CompleteOnAT;
+    return strategy == CompletionStrategy::CompleteOnAT ||
+           strategy == CompletionStrategy::CompleteOnPHY;
 }
 
 /**
@@ -100,9 +107,10 @@ constexpr bool CompletesOnATAck(CompletionStrategy strategy) noexcept {
  */
 constexpr const char* ToString(CompletionStrategy strategy) noexcept {
     switch (strategy) {
-        case CompletionStrategy::CompleteOnAT: return "CompleteOnAT";
-        case CompletionStrategy::CompleteOnAR: return "CompleteOnAR";
-        case CompletionStrategy::RequireBoth: return "RequireBoth";
+        case CompletionStrategy::CompleteOnAT:  return "CompleteOnAT";
+        case CompletionStrategy::CompleteOnPHY: return "CompleteOnPHY";
+        case CompletionStrategy::CompleteOnAR:  return "CompleteOnAR";
+        case CompletionStrategy::RequireBoth:   return "RequireBoth";
     }
     return "Unknown";
 }
@@ -123,20 +131,25 @@ constexpr const char* ToString(CompletionStrategy strategy) noexcept {
  * @endcode
  */
 template<typename T>
-concept ARCompletingTransaction = requires(T t) {
-    { t.GetCompletionStrategy() } -> std::same_as<CompletionStrategy>;
-} && requires(const T& t) {
-    requires RequiresARResponse(t.GetCompletionStrategy());
+concept ARCompletingTransaction = requires {
+    { T::GetCompletionStrategy() } -> std::same_as<CompletionStrategy>;
+    requires RequiresARResponse(T::GetCompletionStrategy());
 };
 
 /**
  * @brief Concept for commands that complete on AT acknowledgment.
  */
 template<typename T>
-concept ATCompletingTransaction = requires(T t) {
-    { t.GetCompletionStrategy() } -> std::same_as<CompletionStrategy>;
-} && requires(const T& t) {
-    requires CompletesOnATAck(t.GetCompletionStrategy());
+concept ATCompletingTransaction = requires {
+    { T::GetCompletionStrategy() } -> std::same_as<CompletionStrategy>;
+    requires CompletesOnATAck(T::GetCompletionStrategy());
+};
+
+template<typename T>
+concept PHYCompletingTransaction = requires {
+    { T::GetCompletionStrategy() } -> std::same_as<CompletionStrategy>;
+    requires CompletesOnATAck(T::GetCompletionStrategy());
+    requires !RequiresARResponse(T::GetCompletionStrategy());
 };
 
 /**
@@ -166,9 +179,12 @@ constexpr CompletionStrategy StrategyFromTCode(uint8_t tCode, bool expectsDeferr
             return expectsDeferred ? CompletionStrategy::RequireBoth
                                    : CompletionStrategy::CompleteOnAT;
 
-        case 0x1:  // Write block
+        case 0x1:
             return expectsDeferred ? CompletionStrategy::RequireBoth
                                    : CompletionStrategy::CompleteOnAT;
+
+        case 0xE:
+            return CompletionStrategy::CompleteOnPHY;
 
         default:
             return CompletionStrategy::CompleteOnAT;
@@ -184,5 +200,7 @@ static_assert(StrategyFromTCode(0x0) == CompletionStrategy::CompleteOnAT,
               "Write quadlet defaults to AT completion");
 static_assert(StrategyFromTCode(0x1, true) == CompletionStrategy::RequireBoth,
               "Deferred write block requires both paths");
+static_assert(StrategyFromTCode(0xE) == CompletionStrategy::CompleteOnPHY,
+              "PHY packets should use CompleteOnPHY strategy");
 
 } // namespace ASFW::Async

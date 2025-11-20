@@ -60,6 +60,7 @@ enum class CfgKey : uint8_t {
     Unit_Sw_Version = 0x13,
     Logical_Unit_Number = 0x14,
     Node_Capabilities = 0x0C,
+    Unit_Directory = 0xD1,  // IEEE 1212 Unit_Directory (keyId=0x11 when keyType=3)
 };
 
 struct RomEntry {

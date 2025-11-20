@@ -6,12 +6,17 @@
 #include <span>
 
 #include <DriverKit/IOReturn.h>
-#include "PayloadPolicy.hpp"  // Phase 1.3: UniquePayload ownership
-#include "PayloadHandle.hpp"  // Required for UniquePayload<PayloadHandle> instantiation
+#include "../../Shared/Memory/PayloadPolicy.hpp"  // Phase 1.3: UniquePayload ownership
+#include "../../Shared/Memory/PayloadHandle.hpp"  // Required for UniquePayload<PayloadHandle> instantiation
 #include "CompletionStrategy.hpp"  // Explicit two-path completion model
 #include "../../Logging/Logging.hpp"  // For ASFW_LOG
 
 namespace ASFW::Async {
+
+// Import Shared types used by Transaction (PayloadHandle, PayloadPolicy concepts)
+using ASFW::Shared::PayloadHandle;
+using ASFW::Shared::UniquePayload;
+using ASFW::Shared::BorrowedPayload;
 
 // Forward declarations (PayloadHandle now fully defined above)
 
@@ -71,22 +76,26 @@ enum class TransactionState : uint8_t {
 constexpr bool IsValidTransition(TransactionState from, TransactionState to) noexcept {
     switch (from) {
         case TransactionState::Created:
-            return to == TransactionState::Submitted;
+            return to == TransactionState::Submitted ||
+                   to == TransactionState::Cancelled;
 
         case TransactionState::Submitted:
-            return to == TransactionState::ATPosted;
+            return to == TransactionState::ATPosted ||
+                   to == TransactionState::Cancelled;
 
         case TransactionState::ATPosted:
             return to == TransactionState::ATCompleted ||
                    to == TransactionState::Failed ||
-                   to == TransactionState::TimedOut;
+                   to == TransactionState::TimedOut ||
+                   to == TransactionState::Cancelled;
 
         case TransactionState::ATCompleted:
             // gotAck() logic: pending → wait for AR, complete → done
             return to == TransactionState::AwaitingAR ||     // ackCode==0x1 (pending)
                    to == TransactionState::Completed ||       // ackCode==0x0 (complete)
                    to == TransactionState::Failed ||          // ackCode error
-                   to == TransactionState::TimedOut;          // Timeout
+                   to == TransactionState::TimedOut ||        // Timeout
+                   to == TransactionState::Cancelled;
 
         case TransactionState::AwaitingAR:
             return to == TransactionState::ARReceived ||
@@ -94,7 +103,8 @@ constexpr bool IsValidTransition(TransactionState from, TransactionState to) noe
                    to == TransactionState::Cancelled;
 
         case TransactionState::ARReceived:
-            return to == TransactionState::Completed;
+            return to == TransactionState::Completed ||
+                   to == TransactionState::Cancelled;
 
         case TransactionState::Completed:
         case TransactionState::TimedOut:
@@ -112,6 +122,18 @@ static_assert(IsValidTransition(TransactionState::ATCompleted, TransactionState:
               "Split transactions must wait for AR response");
 static_assert(!IsValidTransition(TransactionState::ARReceived, TransactionState::ATCompleted),
               "Cannot go backwards from AR to AT");
+
+constexpr bool IsTerminalState(TransactionState state) noexcept {
+    switch (state) {
+        case TransactionState::Completed:
+        case TransactionState::TimedOut:
+        case TransactionState::Failed:
+        case TransactionState::Cancelled:
+            return true;
+        default:
+            return false;
+    }
+}
 
 // State history for debugging (circular buffer)
 struct TransactionStateHistory {

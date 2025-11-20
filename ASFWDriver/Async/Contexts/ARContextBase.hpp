@@ -6,16 +6,20 @@
 #include <DriverKit/IOLib.h>
 
 #include "ContextBase.hpp"
-#include "../Rings/BufferRing.hpp"
-#include "../../Core/HardwareInterface.hpp"
+#include "../../Shared/Rings/BufferRing.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Core/BarrierUtils.hpp"
-#include "../../Core/OHCIConstants.hpp"
+#include "../../Common/BarrierUtils.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 
 // Forward declare IOLock (included from IOLib.h)
 struct IOLock;
 
 namespace ASFW::Async {
+
+// Import Shared types used by AR contexts
+using ASFW::Shared::BufferRing;
+using ASFW::Shared::FilledBufferInfo;
 
 // Use global OHCI bit constants as single source of truth
 using ASFW::Driver::kContextControlWakeBit;

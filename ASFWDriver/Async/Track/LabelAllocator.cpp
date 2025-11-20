@@ -1,7 +1,7 @@
 #include "LabelAllocator.hpp"
 
 #include <bit>
-#include "../../Core/FWCommon.hpp"
+#include "../../Common/FWCommon.hpp"
 
 namespace ASFW::Async {
 
@@ -40,7 +40,21 @@ uint8_t LabelAllocator::Allocate() {
 }
 
 uint8_t LabelAllocator::NextLabel() noexcept {
-    return next_label_.fetch_add(1, std::memory_order_relaxed) & 0x3F;
+    // IEEE-1394 tLabel is 6-bit (0-63), must wrap properly.
+    // Use compare-exchange to ensure both returned value AND stored counter wrap at 63→0.
+    uint8_t current = next_label_.load(std::memory_order_relaxed);
+    uint8_t next;
+
+    do {
+        next = (current + 1) & 0x3F;  // Wrap at 64 (6-bit field)
+    } while (!next_label_.compare_exchange_weak(
+        current,
+        next,
+        std::memory_order_relaxed,
+        std::memory_order_relaxed
+    ));
+
+    return current;  // Return the label we reserved (before increment)
 }
 
 void LabelAllocator::Free(uint8_t label) {
@@ -78,4 +92,3 @@ bool LabelAllocator::IsLabelInUse(uint8_t label) const {
 }
 
 } // namespace ASFW::Async
-
