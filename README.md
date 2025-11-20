@@ -156,7 +156,7 @@ Build scripts or CMakeLists are for quick testing and creating compile_commands.
 
 NOTE: You need an Apple Developer account (paid) and appropriate entitlements — or a free account plus SIP disabled — to build/load the driver on your machine. See Apple's documentation for details: https://developer.apple.com/documentation/driverkit/debugging-and-testing-system-extensions
 
-Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build folder rather than copying it to '/Applications'
+Enabling `systemextensionsctl developer on` is recommended — it allows installing system extensions from the build
 
 ## Contributing
 

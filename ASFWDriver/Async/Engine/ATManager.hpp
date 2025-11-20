@@ -1,16 +1,20 @@
 #pragma once
 
-#include "DmaContextManagerBase.hpp"
+#include "../../Shared/Contexts/DmaContextManagerBase.hpp"
 #include "ATTrace.hpp"
 #include "../AsyncTypes.hpp"
 #include "../Tx/DescriptorBuilder.hpp"
 #include "../Contexts/ATRequestContext.hpp"
 #include "../Contexts/ATResponseContext.hpp"
-#include "../Rings/DescriptorRing.hpp"
-#include "../../Core/OHCIConstants.hpp"
+#include "../../Shared/Rings/DescriptorRing.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Async::Engine {
+
+// Import Shared types used by ATManager
+using ASFW::Shared::DmaContextManagerBase;
+using ASFW::Shared::DescriptorRing;
 
 /**
  * ATState - AT context state machine enum
@@ -140,7 +144,7 @@ private:
     void UpdateRingTail_(const DescriptorChain& chain);
 
     // Helper: Link tail to new chain (PATH 2)
-    void LinkTailTo_(const DescriptorChain& chain);
+    kern_return_t LinkTailTo_(const DescriptorChain& chain);
 
     // Helper: Unlink tail (PATH 2 fallback)
     void UnlinkTail_() noexcept;

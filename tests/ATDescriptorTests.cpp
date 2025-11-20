@@ -2,8 +2,7 @@
 #include <cstring>
 #include <gtest/gtest.h>
 
-#include "ASFWDriver/Async/OHCI_HW_Specs.hpp"
-#include "ASFWDriver/Async/OHCIDescriptor.hpp"
+#include "ASFWDriver/Hardware/OHCIDescriptors.hpp"
 
 using namespace ASFW::Async::HW;
 

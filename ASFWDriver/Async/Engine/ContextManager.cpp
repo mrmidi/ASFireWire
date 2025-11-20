@@ -1,12 +1,11 @@
 #include "ContextManager.hpp"
 
-#include "../OHCIEventCodes.hpp"
-#include "../OHCI_HW_Specs.hpp"
-#include "../OHCIDescriptor.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
+#include "../../Hardware/OHCIDescriptors.hpp"
 
-#include "../Core/DMAMemoryManager.hpp"
-#include "../Rings/DescriptorRing.hpp"
-#include "../Rings/BufferRing.hpp"
+#include "../../Shared/Memory/DMAMemoryManager.hpp"
+#include "../../Shared/Rings/DescriptorRing.hpp"
+#include "../../Shared/Rings/BufferRing.hpp"
 
 #include "../Contexts/ATRequestContext.hpp"
 #include "../Contexts/ATResponseContext.hpp"
@@ -18,8 +17,8 @@
 #include "../Tx/DescriptorBuilder.hpp"
 #include "ATManager.hpp"  // New FSM-based AT manager
 
-#include "../../Core/HardwareInterface.hpp"
-#include "../../Core/OHCIConstants.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOReturn.h>
@@ -32,18 +31,6 @@
 #include <atomic>
 #include <span>
 #include <expected>
-
-#ifdef ASFW_HOST_TEST
-  #include <thread>
-  #include <chrono>
-  static inline void sleep_ms(uint32_t ms) {
-    if (ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-  }
-#else
-  static inline void sleep_ms(uint32_t ms) {
-    if (ms) IOSleep(ms);
-  }
-#endif
 
 namespace ASFW::Async::Engine {
 
@@ -414,7 +401,7 @@ BufferRing* ContextManager::ArResponseRing() noexcept {
     return &state_->arRspRing;
 }
 
-ASFW::Async::DMAMemoryManager* ContextManager::DmaManager() noexcept {
+ASFW::Shared::DMAMemoryManager* ContextManager::DmaManager() noexcept {
     if (!state_ || !state_->provisioned) return nullptr;
     // State currently stores a DMAMemoryManager instance; return its address.
     return &state_->dmaManager;

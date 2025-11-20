@@ -2,6 +2,7 @@
 build/
 **/build/
 **/build_*/
+tests_build/
 
 # .DS_Store
 .DS_Store
@@ -16,6 +17,13 @@ compile_commands.json
 .PVS-Studio*
 
 # Scripts for private repo management
+push-to-public.shtests/simple_mock_test
 push-to-public.sh
-# Exclude docs from public repository
+# Version metadata (auto-generated)
+ASFWDriver/Version/DriverVersion.hpp
+
+# Exclude docs/ from public repository
 docs/
+
+# Exclude Plugins/VersionGeneratorPlugin from public repository
+Plugins/VersionGeneratorPlugin

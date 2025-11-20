@@ -1,0 +1,1624 @@
+# IEEE 1394 Bus Reset Specification
+
+## Overview
+
+This document provides detailed coverage of **Bus Reset** and **Self-Identification** as defined in IEEE 1394-2008 specification. Bus reset is the fundamental mechanism for topology discovery, arbitration reset, and bus initialization in FireWire networks.
+
+**References:**
+- IEEE 1394-2008: Complete specification (consolidates 1394-1995, 1394a-2000, 1394b-2002)
+
+
+
+
+**Related Documentation:** See [README.md](README.md) for implementation details in ASFWDriver.
+
+---
+
+## Table of Contents
+
+1. [Bus Reset Fundamentals](#bus-reset-fundamentals)
+2. [Bus Reset Triggers](#bus-reset-triggers)
+3. [Bus Reset State Machine](#bus-reset-state-machine)
+4. [Self-Identification Process](#self-identification-process)
+5. [Self-ID State Machine (S0-S4)](#self-id-state-machine-s0-s4)
+6. [Tree Identification](#tree-identification)
+7. [Bus Configuration](#bus-configuration)
+8. [Timing Requirements](#timing-requirements)
+9. [PHY Configuration Packets](#phy-configuration-packets)
+10. [Error Handling](#error-handling)
+
+---
+
+## Bus Reset Fundamentals
+
+### Purpose
+
+Bus reset serves three critical functions:
+
+1. **Topology Discovery**: All nodes broadcast their physical layer capabilities and port connectivity via Self-ID packets
+2. **Arbitration Reset**: Clears all pending arbitration state, ensuring fair bus access after topology changes
+3. **Node ID Assignment**: Assigns unique 6-bit physical IDs to all nodes based on tree topology
+
+### Key Concepts
+
+```mermaid
+graph TD
+    A[Bus Reset Event] --> B[All nodes enter Reset State]
+    B --> C[Bus Arbitration]
+    C --> D[Root Node Identified]
+    D --> E[Self-ID Transmission]
+    E --> F[Tree ID Complete]
+    F --> G[Normal Operation]
+    
+    style A fill:#ff6b6b
+    style D fill:#4ecdc4
+    style G fill:#95e1d3
+```
+
+### Bus Reset Duration
+
+IEEE 1394-2008:
+
+| Parameter | Symbol | Value | Description |
+|-----------|--------|-------|-------------|
+| **Reset Time** | `RESET_TIME` | ≥166 μs | Minimum duration of BUS_RESET signal |
+| **Short Reset** | `SHORT_RESET_TIME` | ≥1.28 μs | Abbreviated reset after arbitration |
+| **Reset Wait** | `RESET_WAIT` | ≤10 ms | Maximum wait in R1: Reset Wait state |
+| **Arbitration Timeout** | `ARB_STATE_TIMEOUT` | Variable | Based on topology depth |
+
+---
+
+## Bus Reset Triggers
+
+### Hardware Triggers
+
+IEEE 1394-2008:
+
+```mermaid
+flowchart LR
+    A[Power-On Reset] --> BR[Bus Reset]
+    B[Cable Hotplug] --> BR
+    C[Cable Disconnect] --> BR
+    D[PHY Register Write] --> BR
+    E[Senior Port Disconnect] --> BR
+    
+    style BR fill:#ff6b6b,color:#fff
+```
+
+### Software-Initiated Reset
+
+**Long Reset**:
+- Triggered by Link Layer via `PH_CONTROL.request` with long reset parameter
+- Forces complete bus re-initialization
+- All nodes participate in Self-ID
+
+**Short Reset**:
+- Triggered after successful arbitration
+- Abbreviated reset sequence
+- Only root node sends BUS_RESET
+- Faster than long reset (~1.28 μs vs 166 μs)
+
+### PHY-Level Detection
+
+IEEE 1394-2008:
+
+```cpp
+// Transition All:R0a (from IEEE 1394-2008 Figure 16-16)
+// Entry point if PHY senses BUS_RESET on any active/resuming port
+// or port waiting to attach
+```
+
+Conditions for `All:R0a` transition:
+- BUS_RESET detected on **any** active port
+- BUS_RESET on resuming port
+- BUS_RESET on port attempting to attach
+- **Highest priority** transition (preempts all other state transitions)
+
+---
+
+## Bus Reset State Machine
+
+### State Definitions
+
+Figure 16-16 (Bus Reset State Machine):
+
+```mermaid
+stateDiagram-v2
+    [*] --> R0_ResetStart : All:R0a (powerReset)<br/>All:R0b (initiatedReset)<br/>All:R0c (maxArbStateTimeout)<br/>TX:R0 (arbitration success)
+    
+    R0_ResetStart : R0: Reset Start
+    R0_ResetStart : resetStartActions()
+    R0_ResetStart : Send BUS_RESET signal
+    R0_ResetStart : Duration = resetDuration
+    
+    R0_ResetStart --> R1_ResetWait : R0:R1<br/>arbTimer >= resetDuration
+    
+    R1_ResetWait : R1: Reset Wait
+    R1_ResetWait : resetWaitActions()
+    R1_ResetWait : Send IDLE or PARENT_NOTIFY
+    
+    R1_ResetWait --> R0_ResetStart : R1:R0<br/>arbTimer >= (resetDuration + RESET_WAIT)
+    R1_ResetWait --> T0_TreeIDStart : R1:T0<br/>resetComplete() && arbTimer = 0
+    
+    T0_TreeIDStart : T0: Tree ID Start
+    T0_TreeIDStart : page 448 (IEEE 1394-2008)
+    
+    style R0_ResetStart fill:#ff6b6b,color:#fff
+    style R1_ResetWait fill:#ffd93d
+    style T0_TreeIDStart fill:#95e1d3
+```
+
+### State Transitions (Detailed)
+
+#### All:R0a - Detected Bus Reset
+
+**Trigger**: PHY detects BUS_RESET on any active or resuming port
+
+**Actions**:
+```
+resetDetected()
+initiatedReset = FALSE
+```
+
+**Priority**: **Highest** - preempts any other transition
+
+#### All:R0b - Initiated Bus Reset (Local)
+
+**Trigger**: Link layer requests long reset OR PHY detects senior port disconnect
+
+**Conditions**:
+- `SBM makes a PH_CONTROL.request that specifies a long reset`, OR
+- `The PHY detects a disconnect on its senior port`
+
+**Actions**:
+```
+ibr&& (!phyResponse || immediatePhyRequest)
+initiatedReset = TRUE
+resetDuration = RESET_TIME
+```
+
+**Wait**: Current state's actions must complete before transition
+
+#### All:R0c - Arbitration State Timeout
+
+**Trigger**: PHY stays in A0: Idle state with `idleArbStateTimeout` for too long
+
+**Conditions**:
+- In A0: Idle state
+- `idleArbStateTimeout = false`
+- Stayed idle for `MAX_ARB_STATE_TIME`
+- Local request pending (link or PHY)
+
+**Actions**:
+```
+maxArbStateTimeout()
+initiatedReset = TRUE
+resetDuration = RESET_TIME
+if (!timeout) {
+    timeout = TRUE
+    PH_EVENT.indication(PH_MAX_ARB_STATE_TIMEOUT, 0, 0)
+}
+```
+
+**Purpose**: Prevents indefinite stalls in arbitration state
+
+#### TX:R0 - Arbitrated Reset (Short)
+
+**Trigger**: Node won arbitration and `isbrOk` variable is set
+
+**Conditions**:
+- Arbitration succeeded
+- `isbrOk = TRUE`
+- No packet exists to transmit
+
+**Actions**: Short bus reset commences immediately
+
+**Duration**: `SHORT_RESET_TIME` (significantly shorter than `RESET_TIME`)
+
+**Note**: Bus already in known state after arbitration, so shorter reset is sufficient
+
+---
+
+### R0: Reset Start State
+
+**Purpose**: Node sends BUS_RESET signal for a duration governed by `resetDuration`
+
+**Duration**:
+- **Standard reset**: `RESET_TIME` (≥166 μs) - long enough for all bus activity to settle
+- **Short reset**: `SHORT_RESET_TIME` (≥1.28 μs) - after arbitration
+
+**Why RESET_TIME is long**:
+- Must exceed worst-case packet transmission time
+- Must exceed worst-case bus turnaround time
+- Ensures all nodes detect the reset signal
+
+**Exit Condition**: `arbTimer >= resetDuration` → Transition R0:R1
+
+---
+
+### R1: Reset Wait State
+
+**Purpose**: Node sends IDLE signals and waits for all active ports to receive IDLE or PARENT_NOTIFY
+
+**Signals Sent**:
+- **IDLE**: Standard quiescent signal
+- **PARENT_NOTIFY**: Indicates connected PHYs have left R0: Reset Start
+
+**Exit Conditions**:
+
+1. **R1:T0** - Normal completion:
+   - All connected ports receiving IDLE or PARENT_NOTIFY
+   - `resetComplete() = TRUE`
+   - `arbTimer = 0`
+   - **Proceeds to Tree ID process**
+
+2. **R1:R0** - Timeout:
+   - Waited too long (`arbTimer >= resetDuration + RESET_WAIT`)
+   - Could be transient condition (multiple nodes being reset)
+   - **Returns to R0: Reset Start** and tries again
+
+**Timeout Period**: Slightly longer than R0:R1 timeout to avoid oscillation between two nodes
+
+---
+
+## Self-Identification Process
+
+
+
+### Overview
+
+After tree identification completes (T0 → Self-ID states), each node broadcasts its capabilities and port connectivity in ascending node ID order (0 → 62).
+
+```mermaid
+sequenceDiagram
+    participant Root as Root Node (ID=2)
+    participant Node1 as Node 1
+    participant Node0 as Node 0
+    participant Bus as FireWire Bus
+    
+    Note over Root,Bus: Tree ID Complete
+    
+    Node0->>Bus: Self-ID Packet 0 (ID=0)
+    Node0->>Bus: Self-ID Packet 1+ (if >3 ports)
+    
+    Node1->>Bus: Self-ID Packet 0 (ID=1)
+    Node1->>Bus: Self-ID Packet 1+ (if >3 ports)
+    
+    Root->>Bus: Self-ID Packet 0 (ID=2)
+    Root->>Bus: Self-ID Packet 1+ (if >3 ports)
+    
+    Note over Root,Bus: Self-ID Complete
+    Note over Root,Bus: Enter A0: Idle State
+```
+
+### Self-ID Packet Format
+
+#### Packet 0 (Mandatory)
+
+
+
+| Bits | Field | Description |
+|------|-------|-------------|
+| 31-30 | `10` | Packet identifier (Self-ID) |
+| 29-24 | `phy_ID` | Physical node ID (0-62) |
+| 23 | `L` | **Link active** bit |
+| 22 | `gap_cnt_master` | Gap count master capability |
+| 21-16 | `gap_cnt` | Gap count value (0-63) |
+| 15-14 | `sp` | Speed capability (00=S100, 01=S200, 10=S400) |
+| 13-11 | `000` | Reserved |
+| 10 | `c` | **Contender bit** (IRM candidate) |
+| 9-8 | `pwr` | Power class |
+| 7-6 | `00` | Reserved |
+| 5-3 | `p0..p2` | Port status (ports 0-2) |
+| 2 | `r` | Reserved |
+| 1 | `m` | More packets indicator |
+| 0 | `i` | **Initiated reset** flag |
+
+**Example Packet 0**:
+```
+Bits:  10 NNNNNN L G GGGGGG SP 000 C PP 00 PPP R M I
+Value: 10 000010 1 0 001000 10 000 1 00 00 011 0 0 0
+       ↑  ↑      ↑ ↑ ↑      ↑  ↑   ↑ ↑  ↑  ↑   ↑ ↑ ↑
+       |  |      | | |      |  |   | |  |  |   | | └─ Initiated: No
+       |  |      | | |      |  |   | |  |  |   | └─── More: No
+       |  |      | | |      |  |   | |  |  |   └───── Reserved
+       |  |      | | |      |  |   | |  |  └───────── Ports 0-2: 011
+       |  |      | | |      |  |   | |  └──────────── Reserved
+       |  |      | | |      |  |   | └─────────────── Power: 00
+       |  |      | | |      |  |   └───────────────── Contender: Yes
+       |  |      | | |      |  └───────────────────── Reserved
+       |  |      | | |      └──────────────────────── Speed: S400
+       |  |      | | └─────────────────────────────── Gap count: 8
+       |  |      | └───────────────────────────────── Gap master: No
+       |  |      └─────────────────────────────────── Link active: Yes
+       |  └────────────────────────────────────────── Node ID: 2
+       └───────────────────────────────────────────── Self-ID packet
+```
+
+#### Packet 1+ (Extended Port Info)
+
+For nodes with >3 ports:
+
+| Bits | Field | Description |
+|------|-------|-------------|
+| 31-30 | `11` | More packets identifier |
+| 29-24 | `phy_ID` | Physical node ID (matches packet 0) |
+| 23-22 | `pa` | Port a status |
+| 21-20 | `pb` | Port b status |
+| 19-18 | `pc` | Port c status |
+| 17-16 | `pd` | Port d status |
+| 15-14 | `pe` | Port e status |
+| 13-12 | `pf` | Port f status |
+| 11-10 | `pg` | Port g status |
+| 9-8 | `ph` | Port h status |
+| 7-6 | `00` | Reserved |
+| 5 | `n` | Sequence number |
+| 4-2 | `000` | Reserved |
+| 1 | `m` | More packets |
+| 0 | `00` | Reserved |
+
+**Port Status Encoding**:
+```
+00 = Not connected / not present
+01 = Parent (connected to parent node)
+10 = Child (connected to child node)  
+11 = Connected to another port on this node
+```
+
+### Self-ID Packet Sequence Example
+
+3-port hub (node ID 1) with all ports connected:
+
+```
+Packet 0: 10 000001 1 0 001000 10 000 1 00 00 101010 0 0 0
+          Self-ID, ID=1, Link=1, Gap=8, S400, Contender=1, Ports[0-2]=child/parent/child
+```
+
+16-port switch (node ID 5) requires multiple packets:
+
+```
+Packet 0: 10 000101 1 ... [ports 0-2] ... 1  (more=1)
+Packet 1: 11 000101 [ports 3-10, n=0] ... 1  (more=1)
+Packet 2: 11 000101 [ports 11-15, n=1] ... 0 (more=0, last packet)
+```
+
+---
+
+## Self-ID State Machine (S0-S4)
+
+Figure 16-18 (Self-identification State Machine):
+
+### Overview
+
+After Tree Identification completes, nodes enter the Self-ID state machine to broadcast their physical layer capabilities in ascending node ID order. This distributed protocol ensures deterministic packet transmission without centralized coordination.
+
+### State Machine Diagram
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    
+    T2 --> S0: from T2: Parent Handshake<br/>page 448
+    
+    S0: S0: Self-ID Start
+    S0: self_ID_startActions()
+    S0: Wait for grant or packet
+    
+    S0 --> S1: S0:S1<br/>root || portRArb[parentPort] == SELF_ID_GRANT
+    S0 --> S2: S0:S2<br/>dataComingOn(parentPort)
+    S0 --> A0: to A0: Idle<br/>page 453
+    
+    S1: S1: Self-ID Grant
+    S1: self_ID_grantActions()
+    S1: Grant to lowest child
+    
+    S1 --> S2: S1:S2<br/>dataComingOn(lowestUnidentifiedChild)
+    S1 --> S0: S1:S0<br/>idleReceivePort
+    S1 --> S4: S1:S4<br/>allChildPortsIdentified
+    
+    S2: S2: Self-ID Receive
+    S2: self_ID_receiveActions()
+    S2: Receive Self-ID packets
+    
+    S2 --> S0: S2:S0<br/>portRArb[receivePort] == IDLE ||<br/>SELF_ID_GRANT ||<br/>dataComingOn(receivePort)
+    S2 --> S3: S2:S3<br/>portRArb[receivePort] == IDENT_DONE
+    
+    S3: S3: Send Speed Capabilities
+    S3: Transmit speed signal
+    S3: arbTimer >= legacyTime(SPEED_SIGNAL_LENGTH)
+    
+    S3 --> S0: S3:S0<br/>Timer expired
+    
+    S4: S4: Self-ID Transmit
+    S4: self_ID_transmitActions()
+    S4: Send own Self-ID packet(s)
+    
+    S4 --> A0_ping: S4:A0a<br/>pingResponse
+    S4 --> A0_normal: S4:A0b<br/>!pingResponse && conditions
+    
+    A0_ping: to A0: Idle (ping response)<br/>page 453
+    A0_normal: to A0: Idle (normal)<br/>page 453
+    
+    style S0 fill:#e3f2fd
+    style S1 fill:#fff9c4
+    style S2 fill:#f3e5f5
+    style S3 fill:#ffe0b2
+    style S4 fill:#c8e6c9
+    style A0_ping fill:#95e1d3
+    style A0_normal fill:#95e1d3
+```
+
+### State Descriptions
+
+#### S0: Self-ID Start
+
+**Purpose**: PHY waits for a grant from parent OR receives Self-ID packet from another node
+
+**Entry Conditions**:
+- At start of self-identify process
+- After finishing receiving a Self-ID packet and all children have not yet finished
+
+**State Actions**: `self_ID_startActions()`
+
+**Exit Transitions**:
+
+1. **S0:S1** - Received SELF_ID_GRANT:
+   ```
+   Condition: root || portRArb[parentPort] == SELF_ID_GRANT
+   ```
+   - If node is root, automatically proceed
+   - If non-root receives GRANT from parent
+
+2. **S0:S2** - Self-ID packet incoming from parent:
+   ```
+   Condition: dataComingOn(parentPort)
+   ```
+   - Another node (in different branch) is transmitting Self-ID
+   
+3. **To A0: Idle** - Early termination (error cases)
+
+---
+
+#### S1: Self-ID Grant
+
+**Purpose**: Node has permission to send Self-ID packet. Grants lowest numbered unidentified child or transmits own packet.
+
+**State Actions**: `self_ID_grantActions()`
+
+**Node Behavior**:
+- If has unidentified children → send GRANT to lowest numbered child
+- If no unidentified children OR is proxy for parent port → transmit own Self-ID
+- Other connected ports receive DATA_PREFIX (warning of incoming packet)
+
+**Exit Transitions**:
+
+1. **S1:S2** - Receiving Self-ID from lowest child:
+   ```
+   Condition: dataComingOn(lowestUnidentifiedChild)<br/>
+              receivePort = lowestUnidentifiedChild
+   ```
+   
+2. **S1:S0** - Proxy transmission complete:
+   ```
+   Condition: idleReceivePort
+   ```
+   - Transmitted proxy Self-ID, return to S0
+   
+3. **S1:S4** - All children identified, transmit own packet:
+   ```
+   Condition: allChildPortsIdentified
+   Action: if (!root && !betaMode[parentPort])
+           portSpeed[parentPort] = portRSpeed[parentPort]
+   ```
+
+---
+
+#### S2: Self-ID Receive
+
+**Purpose**: Receive Self-ID packet(s) from bus and pass to link layer
+
+**State Actions**: `self_ID_receiveActions()`
+
+**Behavior**:
+- Data symbols passed to link layer as PHY data indications
+- Multiple Self-ID packets may be received
+- Parent PHY monitors received speed signal when IDENT_DONE received from child
+- Resynchronization delays may cause parent to miss child's speed signal
+  - Parent samples for up to 144ns (or more per PHY_DELAY) after IDENT_DONE
+  - Child sends speed for no more than 120ns from IDENT_DONE start
+- If PHY gets IDENT_DONE from receive port:
+  - Flags port as identified
+  - If port in DS mode, starts sending speed capabilities signal
+  - Starts speed signaling timer
+
+**Exit Transitions**:
+
+1. **S2:S0** - Port goes idle or new packet starts:
+   ```
+   Condition: portRArb[receivePort] == IDLE ||
+              portRArb[receivePort] == SELF_ID_GRANT ||
+              dataComingOn(receivePort)
+   ```
+   - Continue self-identify with next child
+   - Guards against failure to observe IDLE signal
+
+2. **S2:S3** - Received IDENT_DONE:
+   ```
+   Condition: portRArb[receivePort] == IDENT_DONE
+   Action: child_ID_complete[receivePort] = TRUE
+           portTSpeedRaw(receivePort, dsPortSpeed[receivePort])
+           arbTimer = 0
+   ```
+   - Child completed Self-ID transmission
+
+---
+
+#### S3: Send Speed Capabilities
+
+**Purpose**: If node capable of >S100 AND receiving port is DS mode, transmit speed capability signal
+
+**Transmission**:
+- Duration: fixed time `SPEED_SIGNAL_LENGTH`
+- Content: Speed capability signals for `SPEED_SIGNAL_LENGTH`
+- Parent monitors received speed signal from child
+
+**Speed Negotiation**:
+- Highest indicated speed recorded as `speedCapability` of parent
+- After transmit, parent sends only IDLE to children
+
+**Exit Transition**:
+
+1. **S3:S0** - Timer expired:
+   ```
+   Condition: arbTimer >= legacyTime(SPEED_SIGNAL_LENGTH)
+   Action: portTSpeedRaw(receivePort, S100)
+           if (!betaMode[receivePort])
+               portSpeed[receivePort] = portSpeed[receivePort]
+           arbTimer = 0
+   ```
+   - Speed signaling complete, continue with next child
+   - `negotiatedSpeed` field in port register map set for DS-mode operation
+
+---
+
+#### S4: Self-ID Transmit
+
+**Purpose**: Transmit own Self-ID packet(s)
+
+**State Actions**: `self_ID_transmitActions()`
+
+**Entry Scenarios**:
+1. Part of self-identify process (all child ports flagged as identified)
+2. Receipt of PHY ping packet (cancels pending Alpha link requests)
+
+**Behavior** (Normal Self-ID):
+- All child ports flagged as identified → can send own Self-ID
+- **Non-root node**:
+  - Sends IDENT_DONE to parent while simultaneously:
+    - Transmitting speed capability signal to parent
+    - Sending IDLE to children
+  - Speed signal transmitted for fixed duration `SPEED_SIGNAL_LENGTH`
+  - Monitors bus for speed capability from parent
+  - Highest indicated speed recorded as `speedCapability` of parent
+- **Root node**:
+  - Sends only IDLE to children
+  - Children enter A0: Idle 
+  - Children never start arbitration on DS ports until self-identify completes for all nodes
+
+**Child Behavior During Parent Transmission**:
+- While transmitting IDENT_DONE (in S4), child monitors received speed from parent
+- Child PHY transitions to A0: Idle when receives DATA_PREFIX from parent
+- Parent PHY in S2: Self-ID Receive to receive self-ID packet(s) from child
+- When parent receives IDENT_DONE from child, parent transitions to S3: Send Speed Capabilities
+  - In S3, parent transmits speed signal for 100ns to 120ns to indicate own capability
+  - Monitors received speed from child
+  - Highest indicated speed recorded as `speedCapability` of child
+- After transmitting own speed signal, parent transitions to S0: Self-ID Start
+
+**Exit Transitions**:
+
+1. **S4:A0a** - Ping response:
+   ```
+   Condition: pingResponse
+   ```
+   - Entered A0: Idle as ping packet response
+   
+2. **S4:A0b** - Normal completion:
+   ```
+   Condition: self-ID packet transmitted && 
+              !pingResponse &&
+              (node is root || starts receiving new Self-ID packet)
+   ```
+   - **If node is root**:
+     - All nodes now sending IDLE signals
+     - Gap timers eventually large enough to allow normal arbitration
+   - **If node starts receiving new Self-ID packet**:
+     - Packet will be Self-ID for parent node or another child of parent
+     - PHY transitions immediately out of A0: Idle into RX: Receive 
+     
+   - **When parent port will operate in DS mode**:
+     - `negotiatedSpeed` field in port register map for parent port is set
+
+---
+
+### Timing: Speed Signal Exchange
+
+IEEE 1394-2008 self-ID timing:
+
+```mermaid
+sequenceDiagram
+    participant Child as Child PHY
+    participant Parent as Parent PHY
+    
+    Note over Child,Parent: Child in S4: Self-ID Transmit
+    
+    Child->>Parent: IDENT_DONE signal
+    Child->>Parent: Speed signal (100-120ns)
+    Child->>Child: Monitor parent speed
+    
+    Note over Parent: Receives IDENT_DONE
+    Note over Parent: Enter S3: Send Speed Capabilities
+    
+    Parent->>Child: Speed signal (100-120ns)
+    Parent->>Parent: Monitor child speed
+    
+    Note over Child,Parent: Record highest indicated speed
+    Note over Child,Parent: Set negotiatedSpeed in port register
+    
+    Parent->>Child: IDLE signal
+    Child->>Parent: IDLE signal
+    
+    Note over Parent: Transition to S0
+    Note over Child: Transition to A0: Idle
+```
+
+**Critical Timing Constraints**:
+
+|  Parameter | Value | Notes |
+|-----------|-------|-------|
+| **SPEED_SIGNAL_LENGTH** | 100-120 ns | Fixed transmission duration |
+| **PHY_DELAY** | ≥144 ns | Parent sampling window |
+| **Child signal duration** | ≤120 ns | From IDENT_DONE start |
+| **Parent sample window** | ≤144 ns | After ID ENT_DONE |
+
+**Resynchronization Risk**:
+- Delays in repeating packets may cause parent to miss child's speed signal
+- Parent samples for extended period (144ns+)
+- Child transmits for shorter period (120ns max)
+- Ensures parent can capture child's speed capability
+
+---
+
+### Self-ID Packet Transmission Order
+
+
+
+```mermaid
+graph TD
+    A[S0: Lowest node ID waiting] --> B[S1: Receives GRANT]
+    B --> C{Has unidentified<br/>children?}
+    C -->|Yes| D[Grant to lowest child]
+    C -->|No| E[S4: Transmit own packet]
+    
+    D --> F[S2: Receive child packet]
+    F --> G[S3: Speed exchange]
+    G --> A
+    
+    E --> H[Send IDENT_DONE]
+    H --> I{Is root?}
+    I -->|Yes| J[All nodes → A0: Idle]
+    I -->|No| K[Wait for parent packet]
+    K --> A
+    
+    style E fill:#c8e6c9
+    style J fill:#95e1d3
+```
+
+**Deterministic Order**:
+1. Node 0 (lowest ID) transmits first
+2. Node 1 transmits second
+3. ...
+4. Node N-1 (root, highest ID) transmits last
+
+**Tree Traversal**:
+- Depth-first traversal of tree topology
+- Leaves transmit before branches
+- Root transmits last
+- All nodes maintain ascending ID order
+
+---
+
+### Transition Summary Table
+
+| From State | To State | Transition | Condition | Notes |
+|-----------|---------|-----------|-----------|-------|
+| T2 | S0 | - | Parent handshake complete | Entry from Tree ID |
+| S0 | S1 | S0:S1 | `root \|\| SELF_ID_GRANT` | Permission to transmit |
+| S0 | S2 | S0:S2 | `dataComingOn(parentPort)` | Packet from another branch |
+| S0 | A0 | - | Early termination | Error recovery |
+| S1 | S2 | S1:S2 | `dataComingOn(lowestChild)` | Receive from child |
+| S1 | S0 | S1:S0 | `idleReceivePort` | Proxy packet complete |
+| S1 | S4 | S1:S4 | `allChildPortsIdentified` | Ready to transmit |
+| S2 | S0 | S2:S0 | `IDLE \|\| GRANT \|\| dataComingOn` | Continue with next |
+| S2 | S3 | S2:S3 | `IDENT_DONE` | Child transmission done |
+| S3 | S0 | S3:S0 | `arbTimer >= SPEED_SIGNAL_LENGTH` | Speed exchange complete |
+| S4 | A0 | S4:A0a | `pingResponse` | Ping packet response |
+| S4 | A0 | S4:A0b | Normal completion | Self-ID protocol complete |
+
+---
+
+## Tree Identification
+
+IEEE 1394-2008 Figure 16-17
+
+### Overview
+
+Tree Identification is the distributed election process that establishes parent-child relationships between nodes and selects the root node. This happens after bus reset (R1: Reset Wait) and before Self-ID.
+
+### Tree ID State Machine (T0-T3)
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    
+    R1 --> T0: from R1: Reset Wait<br/>page 446
+    
+    T0: T0: Tree ID Start
+    T0: tree_ID_startActions()
+    T0: Wait for PARENT_NOTIFY
+    
+    T0 --> T1: T0:T1<br/>forceRoot || arbTimer >= FORCE_ROOT_TIMEOUT<br/>children == NPORT
+    T0 --> T0_loop: T0:T0<br/>T0_timeout && arbTimer == configTimeout<br/>loop = 1; PH_EVENT(PH_CONFIG_TIMEOUT)
+    
+    T1: T1: Child Handshake
+    T1: childHandshakeActions()
+    T1: Send CHILD_NOTIFY to parent
+    
+    T1 --> T2: T1:T2<br/>childHandshakeComplete()
+    
+    T2: T2: Parent Handshake
+    T2: Wait for PARENT_HANDSHAKE
+    
+    T2 --> T3: T2:T3<br/>!root && portRArb[parentPort] == ROOT_CONTENTION
+    T2 --> S0: T2:S0<br/>root || portRArb[parentPort] == PARENT_HANDSHAKE<br/>to S0: Self-ID Start
+    
+    T3: T3: Root Contention
+    T3: rootContendActions()
+    T3: Contention resolution
+    
+    T3 --> T2: T3:T2<br/>portRArb[contention port] == IDLE<br/>send PARENT_NOTIFY
+    T3 --> T1: T3:T1<br/>portRArb[contention port] == PARENT_NOTIFY<br/>become root
+    
+    style T0 fill:#e3f2fd
+    style T1 fill:#fff9c4
+    style T2 fill:#f3e5f5
+    style T3 fill:#ffe0b2
+    style S0 fill:#c8e6c9
+```
+
+### State Descriptions
+
+#### T0: Tree ID Start
+
+**Purpose**: Node waits to receive PARENT_NOTIFY signal from all but one of its active ports
+
+**Entry**: From R1: Reset Wait when bus reset complete
+
+**State Actions**: `tree_ID_startActions()`
+
+**Behavior**:
+- When PARENT_NOTIFY is observed on a port, that port is marked as a **child port**
+
+**Exit Transitions**:
+
+1. **T0:T1** - Timeout or Force Root:
+   ```
+   Condition: (forceRoot || arbTimer >= FORCE_ROOT_TIMEOUT) &&
+              children == NPORT
+   ```
+   - If loop of active ports exists on bus → configuration timeout occurs
+   - Sets `T0_timeout` flag  
+   - All active ports in Beta mode forced back to P11: Untested state
+   - May directly result in bus initialization completion
+   - May allow loop-free build process to set appropriate Beta ports into P12: Loop Disabled state
+   - Allows fresh bus reset to complete
+
+2. **T0:T0** - Configuration Timeout Loop:
+   ```
+   Condition: T0_timeout && arbTimer == configTimeout
+   Action: loop = 1
+           PH_EVENT.indication(PH_CONFIG_TIMEOUT, 0, 0)
+   ```
+
+**Transition T0:T1 Details**:
+- Detects PARENT_NOTIFY on all but one port (or on all ports for root nodes)
+- Leaf nodes (only one connected port) OR root nodes (PARENT_NOTIFY on all ports) take this transition immediately
+- If `forceRoot` flag is set, test for all-but-one-port condition is delayed long enough so all other nodes will have transitioned to T1: Child Handshake
+- All ports should be receiving PARENT_NOTIFY signal
+- Extra delay happens when `forceRoot` is set (value is `FORCE_ROOT_TIMEOUT`)
+
+---
+
+#### T1: Child Handshake
+
+**Purpose**: All ports labeled as child ports transmit CHILD_NOTIFY signal
+
+**State Actions**: `childHandshakeActions()`
+
+**Behavior**:
+- Receipt of CHILD_NOTIFY signal allows nodes attached to this node's child port(s) to transition from T2: Parent Handshake to S0: Self-ID Start
+- **Leaf nodes** have no children → exit immediately via T1:T2 transition
+- If all ports are labeled child ports → node knows it is the **root**
+
+**Exit Transition**:
+
+1. **T1:T2** - Child notification complete:
+   ```
+   Condition: All child ports stop sending PARENT_NOTIFY signals
+   Action: Wait to receive CHILD_HANDSHAKE signal on child ports
+           Node can now handshake with own parent
+   ```
+
+---
+
+#### T2: Parent Handshake
+
+**Purpose**: Node waits to receive PARENT_HANDSHAKE signal or handle ROOT_CONTENTION
+
+**Behavior**:
+- Node is waiting to receive PARENT_HANDSHAKE signal from parent
+- For DS connections, this is the result of node's parent sending PARENT_NOTIFY and parent's parent sending CHILD_NOTIFY signal
+- Another way  this state can exit: if node receives ROOT_CONTENTION signal from parent
+
+**Exit Transitions**:
+
+1. **T2:S0** - Parent handshake received:
+   ```
+   Condition: root || portRArb[parentPort] == PARENT_HANDSHAKE
+   Action: Starts self-identify process sending IDLE signal
+   ```
+   - Transition to S0: Self-ID Start state
+   - Also taken if node is root (doesn't have a parent)
+
+2. **T2:T3** - Root contention detected:
+   ```
+   Condition: !root && portRArb[parentPort] == ROOT_CONTENTION
+   ```
+   - Node receives PARENT_NOTIFY signal on same port it's sending PARENT_NOTIFY
+   - Merged signal interpreted as ROOT_CONTENTION
+   - Can happen for single pair of nodes only if each bids to make the other its parent
+
+---
+
+#### T3: Root Contention
+
+**Purpose**: Handle root contention when two nodes both try to make each other the parent
+
+**State Actions**: `rootContendActions()`
+
+**Behavior**:
+- Both nodes back off by sending IDLE signal, starting a timer, and picking a random bit
+- If random bit is one, node waits longer than if zero
+- When timer expires, node samples contention port once again
+
+**Exit Transitions**:
+
+1. **T3:T2** - Lost contention (become child):
+   ```
+   Condition: portRArb[contention port] == IDLE at end of delay
+   Action: Send PARENT_NOTIFY signal
+   ```
+   - If node took longer delay, it takes this path
+   - Allows node to exit T2: Parent Handshake state via Self-ID Start path
+   - Otherwise two nodes see ROOT_CONTENTION again and repeat process with new random bits
+
+2. **T3:T1** - Won contention (become root):
+   ```
+   Condition: portRArb[contention port] == PARENT_NOTIFY at end of delay
+   Action: Other node already transitioned to T2: Parent Handshake
+           First node returns to T1: Child Handshake and becomes root
+   ```
+
+---
+
+### Tree ID Signals
+
+| Signal | Direction | Purpose |
+|--------|-----------|---------|
+| **PARENT_NOTIFY** | Child → Parent | "I acknowledge you as parent" |
+| **CHILD_NOTIFY** | Parent → Child | "I acknowledge you as child" |
+| **PARENT_HANDSHAKE** | Parent → Child | "Handshake complete, proceed to Self-ID" |
+| **ROOT_CONTENTION** | Bidirectional | Both nodes trying to be children (collision) |
+| **IDLE** | Any | Quiescent state, no active signaling |
+
+### Tree ID Timing Parameters
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| **FORCE_ROOT_TIMEOUT** | Variable | Delay when `forceRoot` flag set |
+| **CONFIG_TIMEOUT** | Variable | Loop detection timeout |
+| **Contention backoff** | Random | Root contention resolution |
+
+### Tree Identification Process Flow
+
+```mermaid
+sequenceDiagram
+    participant Leaf as Leaf Node
+    participant Branch as Branch Node
+    participant Root as Root Node (will be elected)
+    
+    Note over Leaf,Root: All nodes in T0: Tree ID Start
+    
+    Leaf->>Branch: PARENT_NOTIFY (one port only)
+    Note over Leaf: Enter T1: Child Handshake
+    
+    Branch->>Root: PARENT_NOTIFY (to designated parent)
+    Note over Branch: Waiting for PARENT_NOTIFY from all ports except one
+    
+    Root->>Root: Received PARENT_NOTIFY on all ports
+    Note over Root: Become root, enter T1: Child Handshake
+    
+    Root->>Branch: CHILD_NOTIFY
+    Note over Root: Enter T2: Parent Handshake
+    
+    Branch->>Leaf: CHILD_NOTIFY
+    Note over Branch: Enter T2: Parent Handshake
+    
+    Note over Branch: Wait for PARENT_HANDSHAKE
+    Note over Leaf: Wait for PARENT_HANDSHAKE
+    
+    Root->>Branch: PARENT_HANDSHAKE (root becomes parent)
+    Note over Root: Enter S0: Self-ID Start
+    
+    Branch->>Leaf: PARENT_HANDSHAKE
+    Note over Branch: Enter S0: Self-ID Start
+    
+    Note over Leaf: Enter S0: Self-ID Start
+    Note over Leaf,Root: Tree Identification Complete
+    Note over Leaf,Root: Proceed to Self-ID Process
+```
+
+### Node Roles After Tree ID
+
+**Root Node**:
+- No parent port (all ports are children or disconnected)
+- Highest physical ID in the topology
+- Controls bus arbitration fairness
+- Designated as node ID = `nodeCount - 1`
+
+**Branch Node**:
+- One parent port, one or more child ports
+- Intermediate in tree hierarchy
+
+**Leaf Node**:
+- One parent port, no child ports
+- Endpoints in tree hierarchy
+
+### Physical ID Assignment
+
+After tree identification, nodes proceed to Self-ID where physical IDs are assigned:
+
+| Position | Node ID | Description |
+|----------|---------|-------------|
+| Root | `nodeCount - 1` | Highest ID |
+| Branch/Leaf | `0 ... nodeCount - 2` | Ascending from leaves |
+
+**Example Topology**:
+```
+       [Node 2] ← Root (ID assigned during Self-ID)
+          |
+    ┌─────┴─────┐
+    |           |
+ [Node 1]    [Node 0]
+ 
+After Self-ID:
+  Node 0 (leaf) → ID = 0
+  Node 1 (leaf) → ID = 1  
+  Node 2 (root) → ID = 2
+```
+
+### Root Contention Example
+
+```mermaid
+sequenceDiagram
+    participant NodeA as Node A
+    participant NodeB as Node B
+    
+    Note over NodeA,NodeB: Both in T2: Parent Handshake
+    
+    NodeA->>NodeB: PARENT_NOTIFY
+    NodeB->>NodeA: PARENT_NOTIFY
+    
+    Note over NodeA,NodeB: Both detect ROOT_CONTENTION
+    Note over NodeA,NodeB: Enter T3: Root Contention
+    
+    NodeA->>NodeA: Random bit = 0 (short delay)
+    NodeB->>NodeB: Random bit = 1 (long delay)
+    
+    NodeA->>NodeB: IDLE (backoff)
+    NodeB->>NodeA: IDLE (backoff)
+    
+    Note over NodeA: Short timer expires
+    NodeA->>NodeA: Sample port → sees IDLE
+    NodeA->>NodeB: PARENT_NOTIFY (become child)
+    Note over NodeA: T3:T2 transition
+    
+    Note over NodeB: Long timer expires
+    NodeB->>NodeB: Sample port → sees PARENT_NOTIFY
+    Note over NodeB: T3:T1 transition (become root)
+```
+
+---
+
+## Bus Configuration
+
+### Isochronous Resource Manager (IRM)
+
+IRM Selection:
+
+**Selection Criteria**:
+1. Node with **contender bit = 1** (capable of being IRM)
+2. **Highest physical ID** among contenders
+3. If root is contender → root becomes IRM
+4. If root is not contender → find highest contender ID
+
+**IRM Responsibilities**:
+- Manage isochronous channel allocation (CSR `CHANNELS_AVAILABLE`)
+- Manage isochronous bandwidth allocation (CSR `BANDWIDTH_AVAILABLE`)
+- Accept IRM lock requests (compare-and-swap operations)
+
+**IRM Lock Protocol**:
+```cpp
+// Lock request to BUS_MANAGER_ID
+// Lock request to BUS_MANAGER_ID (0xFFC0003F)
+transaction = LockRequest(
+    destination = BUS_MANAGER_ID,
+    offset = CSR_BUS_MANAGER_ID,
+    data_value = local_node_id,
+    arg_value = 0x3F  // Bus manager ID
+);
+
+if (response == RESP_COMPLETE && result == local_node_id) {
+    // Successfully became IRM
+} else {
+    // Another node is IRM
+}
+```
+
+### Bus Manager (BM)
+
+Bus Manager:
+
+**Selection**:
+- Node that successfully completes IRM lock becomes eligible
+- May implement bus optimization (gap count, power management)
+- Optional role (not all implementations support BM)
+
+**Bus Manager Functions**:
+1. **Gap Count Optimization**: Adjust `gap_cnt` via PHY configuration packet
+2. **Power Management**: Coordinate node power states
+3. **Topology Optimization**: Force root node selection for performance
+
+---
+
+## Timing Requirements
+
+### Critical Timing Parameters
+
+IEEE 1394-2008 Timing Parameters:
+
+| Parameter | Symbol | Min | Typical | Max | Unit |
+|-----------|--------|-----|---------|-----|------|
+| **Bus Reset Time** | `RESET_TIME` | 166 | - | - | μs |
+| **Short Reset Time** | `SHORT_RESET_TIME` | 1.28 | - | - | μs |
+| **Reset Wait** | `RESET_WAIT` | - | - | 10 | ms |
+| **Arbitration Reset Gap** | `ARB_RESET_GAP` | 2.173 | - | - | μs |
+| **Subaction Gap** | `SUBACTION_GAP` | 10 | - | - | μs |
+| **Data Prefix** | `DATA_PREFIX` | 0.48 | 0.64 | 0.80 | μs |
+| **Data End** | `DATA_END` | 0.40 | 0.52 | 0.64 | μs |
+
+### State Timing Diagram
+
+```mermaid
+gantt
+    title Bus Reset Timing Sequence
+    dateFormat X
+    axisFormat %L
+    
+    section PHY Layer
+    BUS_RESET Signal    :active, 0, 166
+    IDLE Signal         :166, 200
+    
+    section State Machine
+    R0: Reset Start     :crit, 0, 166
+    R1: Reset Wait      :166, 200
+    T0: Tree ID Start   :200, 250
+    Self-ID Process     :250, 350
+    
+    section Bus Recovery
+    A0: Idle Arbitration :350, 400
+```
+
+### Gap Count Timing Impact
+
+IEEE 1394-2008 Table C-2:
+
+**Gap Count Formula**:
+```
+gap_time = gap_count × base_rate
+
+Where:
+  base_rate = 48.8 ns (per subaction gap)
+  gap_count = 0-63 (6-bit value)
+  
+Example:
+  gap_count = 63 → 3.074 μs
+  gap_count = 8  → 390.4 ns
+```
+
+**Bandwidth Impact**:
+```
+overhead_per_packet = gap_count × 48.8 ns
+packet_rate = 8000 packets/sec (isochronous)
+
+Total overhead = 8000 × (gap_count × 48.8 ns)
+
+gap_count = 63: 24.6 ms/sec (2.46% overhead)
+gap_count = 8:  3.1 ms/sec (0.31% overhead)
+```
+
+---
+
+## PHY Configuration Packets
+
+PHY Configuration Packets:
+
+### Purpose
+
+Allow bus manager or IRM to optimize bus parameters after Self-ID.
+
+### Packet Format
+
+```
+Bits   Field           Description
+31-30  00              PHY packet identifier
+29-24  root_ID         Force root node (if R=1)
+23     R               Force root bit
+22     T               Gap count valid bit  
+21-16  gap_cnt         Gap count value (0-63)
+15-0   reserved        Reserved (set to 0)
+```
+
+**Encoding Example**:
+```cpp
+uint32_t EncodePhyConfig(uint8_t root_id, uint8_t gap_count) {
+    uint32_t packet = 0x00000000;  // PHY packet ID
+    
+    // Set force root
+    packet |= (1u << 23);                      // R = 1
+    packet |= ((root_id & 0x3F) << 24);       // root_ID
+    
+    // Set gap count
+    packet |= (1u << 22);                      // T = 1
+    packet |= ((gap_count & 0x3F) << 16);     // gap_cnt
+    
+    return packet;
+}
+```
+
+### Transmission Timing
+
+PHY Configuration Packets:
+
+**Constraints**:
+1. Must be sent **after** Self-ID complete
+2. Must be sent **before** arbitration begins
+3. All nodes must process PHY config before normal traffic
+
+**Sequence**:
+```mermaid
+sequenceDiagram
+    participant IRM
+    participant Root as Root Node
+    participant Node as Other Nodes
+    participant Bus
+    
+    Note over IRM,Bus: Self-ID Complete
+    
+    IRM->>Bus: PHY Config Packet<br/>(gap_cnt=8, root_ID=2)
+    
+    Note over Root,Node: All nodes update gap count
+    Note over Root: May trigger bus reset if root_ID != self
+    
+    Root->>Bus: BUS_RESET (if forced to become root)
+    
+    Note over IRM,Bus: Bus Reset (short)
+    Note over IRM,Bus: Tree ID + Self-ID
+    Note over IRM,Bus: Normal Traffic Resumes
+```
+
+### Force Root Behavior
+
+When `R = 1` in PHY config:
+
+```cpp
+// Node receives PHY config packet
+if (packet.R == 1 && packet.root_ID == my_physical_ID) {
+    // I am designated as root
+    if (current_role != ROOT) {
+        // Initiate short bus reset
+        InitiateBusReset(SHORT_RESET);
+        
+        // In next tree ID, this node will win
+        // (force all ports to be children)
+    }
+} else if (packet.R == 1) {
+    // Another node is designated root
+    // Defer in tree ID algorithm
+}
+```
+
+**Effect**: Designated node forces all its ports to be parent ports during next tree ID, guaranteeing it becomes root.
+
+---
+
+## Error Handling
+
+### Timeout Recovery
+
+IEEE 1394-2008:
+
+#### R1:R0 Timeout
+
+**Condition**: `arbTimer >= resetDuration + RESET_WAIT`
+
+**Action**: Return to R0: Reset Start
+
+**Reason**: 
+- Possible transient condition (cables being inserted)
+- Multiple nodes in reset simultaneously
+- Retry with fresh BUS_RESET signal
+
+**Avoid Oscillation**: `RESET_WAIT` timeout is **longer** than R0:R1 timeout to prevent two nodes from bouncing between R0 and R1.
+
+#### Arbitration State Timeout (All:R0c)
+
+**Condition**: Stayed in A0: Idle for `MAX_ARB_STATE_TIME`
+
+**Trigger**: Local request pending (from link or PHY)
+
+**Action**:
+```
+1. Set initiatedReset = TRUE
+2. Set resetDuration = RESET_TIME  
+3. Generate PH_EVENT.indication(PH_MAX_ARB_STATE_TIMEOUT)
+4. Transition to R0: Reset Start
+```
+
+**Purpose**: Break deadlock in arbitration state
+
+**Example Scenario**:
+- IRM lock failed
+- Bus manager trying to send PHY config
+- Other nodes not granting bus access
+- Timeout ensures forward progress
+
+### Self-ID CRC Errors
+
+
+
+**Detection**: Each Self-ID packet includes CRC-8
+
+**Recovery**:
+1. Node detects CRC error in received Self-ID
+2. Discard corrupted packet
+3. Request bus reset (goto R0: Reset Start)
+4. Retry topology discovery
+
+**Implementation** (OHCI):
+```cpp
+std::optional<SelfIDCapture::Result> Decode() {
+    // Validate CRC for each quadlet
+    for (auto quad : selfIDQuads) {
+        uint8_t receivedCRC = quad & 0xFF;
+        uint8_t calculatedCRC = CalculateCRC8(quad >> 8);
+        
+        if (receivedCRC != calculatedCRC) {
+            result.crcError = true;
+            return std::nullopt;  // Discard
+        }
+    }
+    
+    result.valid = true;
+    return result;
+}
+```
+
+### Incomplete Self-ID Sequence
+
+**Scenario**: selfIDComplete IRQ fires but insufficient packets received
+
+**Detection**:
+```cpp
+uint32_t selfIDCountReg = hw.Read(kSelfIDCount);
+uint32_t selfIDGeneration = selfIDCountReg & 0xFF;
+uint32_t selfIDCount = (selfIDCountReg >> 16) & 0xFF;
+
+if (selfIDCount == 0) {
+    // No Self-ID packets - bus reset mid-sequence
+    return std::nullopt;
+}
+```
+
+**Recovery**: Generation counter mismatch indicates racing reset → retry
+
+---
+
+## Bus Reset State Machine (Detailed)
+
+Based on provided images (Figure 16-16):
+
+### Complete State Diagram
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    
+    [*] --> R0: All:R0a (resetDetected)<br/>All:R0b (initiatedReset)<br/>All:R0c (maxArbStateTimeout)<br/>TX:R0 (arbitration)
+    
+    state R0 {
+        [*] --> ResetStart
+        ResetStart: resetStartActions()
+        ResetStart: Send BUS_RESET
+        ResetStart: resetDuration timer
+    }
+    
+    R0 --> R1: R0:R1<br/>arbTimer >= resetDuration
+    
+    state R1 {
+        [*] --> ResetWait
+        ResetWait: resetWaitActions()
+        ResetWait: Send IDLE/PARENT_NOTIFY
+        ResetWait: Wait for all ports
+    }
+    
+    R1 --> R0: R1:R0<br/>arbTimer >= (resetDuration + RESET_WAIT)<br/>Timeout retry
+    
+    R1 --> T0: R1:T0<br/>resetComplete() && arbTimer = 0<br/>All ports signaled
+    
+    state T0 {
+        [*] --> TreeIDStart
+        TreeIDStart: Begin tree identification
+        TreeIDStart: See Tree Identification section
+    }
+    
+    T0 --> A0: Tree ID Complete
+    
+    state A0 {
+        [*] --> Idle
+        Idle: Normal arbitration
+        Idle: See IEEE 1394a §16.4.7
+    }
+    
+    note right of R0
+        resetDuration values:
+        - RESET_TIME (166μs): long reset
+        - SHORT_RESET_TIME (1.28μs): short reset
+    end note
+    
+    note right of R1
+        RESET_WAIT: max 10ms
+        Prevents oscillation between
+        R0 and R1 states
+    end note
+```
+
+### Critical Transitions Detail
+
+#### Transition All:R0a - Power/Detected Reset
+
+**From**: Any state
+**Priority**: Highest (preempts all transitions)
+**Condition**: `BUS_RESET` signal detected on any active/resuming port
+
+**Actions**:
+```
+arbPowerReset()
+```
+
+**Implementation**:
+```cpp
+void arbPowerReset() {
+    // IEEE 1394a-2000 §16.4.5
+    initiatedReset = FALSE;
+    
+    // All ports marked disconnected
+    for (auto& port : ports) {
+        port.status = DISCONNECTED;
+    }
+    
+    // Enter R0: Reset Start
+    // Will transition through reset → tree ID → self ID
+    // Eventually reach A0: Idle as root and proxy_root
+}
+```
+
+**Special Case**: On power-on, solitary node transitions through full sequence and enters A0: Idle as both root and proxy_root.
+
+#### Transition All:R0b - Local Initiated Reset
+
+**Triggers**:
+- SBM (Serial Bus Management) requests long reset via `PH_CONTROL.request`
+- PHY detects disconnect on senior port
+
+**Condition**:
+```cpp
+ibr && (!phyResponse || immediatePhyRequest)
+```
+
+Where:
+- `ibr` = initiated bus reset flag
+- `phyResponse` = PHY packet response pending
+- `immediatePhyRequest` = immediate PHY request
+
+**Actions**:
+```
+initiatedReset = TRUE
+resetDuration = RESET_TIME  // Full 166μs reset
+```
+
+**Wait**: Current state's actions must complete first
+
+#### Transition All:R0c - Arbitration Timeout
+
+**Trigger**: Stayed in A0: Idle too long with pending request
+
+**Full Condition**:
+```cpp
+maxArbStateTimeout()
+
+bool maxArbStateTimeout() {
+    return (idleArbStateTimeout == FALSE) &&
+           (stayed_in_A0_for > MAX_ARB_STATE_TIME) &&
+           (local_request_pending == TRUE);
+}
+```
+
+**Actions**:
+```
+initiatedReset = TRUE
+resetDuration = RESET_TIME
+
+if (!timeout) {
+    timeout = TRUE
+    PH_EVENT.indication(PH_MAX_ARB_STATE_TIMEOUT, 0, 0)
+}
+```
+
+**Purpose**: Recovery from arbitration deadlock
+
+**Reset Arbitration Timer**: Timer resets on exit from **all states**, including self-transitions (e.g., RX:RX)
+
+#### Transition TX:R0 - Short Reset After Arbitration
+
+**Trigger**: Won arbitration, `isbrOk` set, no packet to send
+
+**Condition**:
+```cpp
+arbitration_succeeded && isbrOk && !packet_exists
+```
+
+**Action**: Immediately begin short bus reset
+
+**resetDuration**: `SHORT_RESET_TIME` (1.28 μs)
+
+**Rationale**: Bus already in known state from arbitration, so abbreviated reset sufficient
+
+---
+
+## Appendix: Timing Calculations
+
+### Gap Count Optimization Table
+
+Per IEEE 1394a-2000 Table C-2 (4.5m cables, 144ns PHY delay):
+
+| Max Hops | Optimal Gap Count | Gap Time (μs) | Round-Trip Time (μs) |
+|----------|-------------------|---------------|----------------------|
+| 0 (single node) | 63 | 3.074 | - |
+| 1 | 5 | 0.244 | 0.433 |
+| 2 | 7 | 0.342 | 0.721 |
+| 3 | 8 | 0.390 | 1.009 |
+| 4 | 10 | 0.488 | 1.297 |
+| 5 | 11 | 0.537 | 1.585 |
+| 6 | 13 | 0.634 | 1.873 |
+| 7 | 14 | 0.683 | 2.161 |
+| 8 | 16 | 0.781 | 2.449 |
+| 16 | 32 | 1.562 | 4.897 |
+| 25+ | 63 | 3.074 | - |
+
+### Bus Reset Latency Budget
+
+Typical reset sequence timing:
+
+```
+Component                           Duration      Cumulative
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hardware detects cable insertion    ~10 μs        10 μs
+PHY enters R0: Reset Start           0 μs          10 μs
+BUS_RESET signal (RESET_TIME)        166 μs        176 μs
+R0:R1 transition                     ~1 μs         177 μs
+R1: Reset Wait (port settling)       5-50 μs       182-227 μs
+Tree ID arbitration                  10-100 μs     192-327 μs
+Self-ID transmission (3 nodes)       ~50 μs        242-377 μs
+selfIDComplete IRQ → driver          10-50 μs      252-427 μs
+OHCI selfIDComplete2 IRQ             5-20 μs       257-447 μs
+Driver decode + topology build       100-200 μs    357-647 μs
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TOTAL (IRQ → topology ready)         ~10-25 ms
+```
+
+**Dominated By**: Hardware arbitration and BUS_RESET signal duration
+
+---
+
+## Cross-References
+
+### Implementation Details
+
+For ASFWDriver implementation of this specification, see:
+
+- [Bus/README.md](README.md) - Complete implementation architecture
+- [BusResetCoordinator](README.md#1-busresetcoordinator) - FSM implementation (9 states)
+- [SelfIDCapture](README.md#2-selfidcapture) - DMA buffer management
+- [TopologyManager](README.md#3-topologymanager) - Snapshot construction
+- [BusManager](README.md#4-busmanager) - PHY config and root delegation
+- [GapCountOptimizer](README.md#5-gapcountoptimizer) - Table C-2 implementation
+
+### IEEE Standards References
+
+- **IEEE 1394-2008**: Complete FireWire specification (consolidates 1394-1995, 1394a-2000, 1394b-2002)
+  - §8.3.2: Bus Reset
+  - §8.4.6: Self-Identification Process  
+  - §8.4.6.2.4: Self-ID Packet Format
+  - §8.4.6.3: PHY Configuration Packets
+  - §16.4.5: Bus Reset State Machine (Figure 16-16)
+  - §16.4.6: Tree Identification
+  - §16.4.7: Self-identification State Machine (Figure 16-18)
+  - §16.4.8: Arbitration States
+  - Annex C: Gap Count Optimization (Table C-2)
+  
+- **OHCI 1.1**: Host Controller Interface
+  - §11: Self-ID Receive
+  - §6.1.1: Bus Reset Interrupt Handling
+  - §7.2.3.2: Context Management
+
+---
+
+## Summary
+
+Bus reset and self-identification are the foundational synchronization mechanisms in IEEE 1394, providing:
+
+1. **Topology Discovery**: Self-ID state machine broadcasts physical capabilities in deterministic order
+2. **Node Addressing**: Distributed tree identification assigns unique physical IDs (0 to N-1)
+3. **Speed Negotiation**: Parent-child speed capability exchange during S3/S4 states
+4. **Bus Optimization**: Gap count optimization and root forcing improve performance
+5. **Error Recovery**: Timeout mechanisms (R1:R0, All:R0c) ensure forward progress
+
+**State Machine Progression**:
+```
+Power-On → R0: Reset Start → R1: Reset Wait → T0-T2: Tree ID → 
+S0-S4: Self-ID → A0: Idle (Normal Operation)
+```
+
+**Key Principle**: Distributed state machines where all nodes cooperate to establish coherent topology without centralized coordination.
+
+**Implementation Complexity**: Requires precise OHCI register sequencing, DMA management, FSM coordination, and sub-microsecond timing for speed signal exchange.
+
+**Performance Impact**: 
+- Gap count optimization: 8x bandwidth improvement in typical topologies
+- Speed negotiation: Enables S100/S200/S400/S800 operation per link
+- Self-ID overhead: ~50-200μs for typical 3-10 node networks
+
+---
+
+*This documentation is based on **IEEE 1394-2008** specification with implementation details from ASFireWire Driver (ASFWDriver) for macOS DriverKit.*

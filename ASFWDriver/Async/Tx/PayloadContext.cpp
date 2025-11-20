@@ -1,5 +1,5 @@
 #include "PayloadContext.hpp"
-#include "../../Core/HardwareInterface.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOMemoryMap.h>

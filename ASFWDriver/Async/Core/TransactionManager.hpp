@@ -17,20 +17,20 @@ namespace ASFW::Async {
  * Single source of truth for transaction state. Replaces the scattered
  * state tracking across OutstandingTable, TimeoutEngine, PayloadRegistry.
  *
- * \par Thread Safety
+ * **Thread Safety**
  * All operations are serialized via internal IOLock.
  *
- * \par Error Handling (Phase 2.1)
+ * **Error Handling (Phase 2.1)**
  * Uses Result<T, Error> for rich error context with source location tracking.
  * Errors include file, line, function, and human-readable messages.
  *
- * \par Design
+ * **Design**
  * - Allocate(): Create new transaction with unique txid
  * - Find(): Lookup by txid or tLabel
  * - Remove(): Delete completed/failed transactions
  * - State transitions tracked via Transaction::TransitionTo()
  *
- * \par Migration Path
+ * **Migration Path**
  * Phase 1.1 introduces this alongside OutstandingTable. Later phases
  * will deprecate OutstandingTable entirely.
  */
@@ -44,7 +44,7 @@ public:
      *
      * \return Result<void> - Success or error with context
      *
-     * \par Example
+     * **Example**
      * \code
      * auto result = txnMgr->Initialize();
      * if (!result) {
@@ -68,16 +68,16 @@ public:
      * \param nodeID Destination node ID
      * \return Result<Transaction*> - Transaction pointer or error with context
      *
-     * \par Error Cases
+     * **Error Cases**
      * - label >= 64: ASFW_ERROR_INVALID("tLabel out of range")
      * - Not initialized: ASFW_ERROR_NOT_READY("TransactionManager not initialized")
      * - Allocation failed: ASFW_ERROR_NO_MEMORY("Failed to allocate Transaction")
      * - Slot occupied: ASFW_ERROR_INVALID("Transaction with tLabel=... already exists")
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Serialized via lock. Safe to call concurrently.
      *
-     * \par Example
+     * **Example**
      * \code
      * auto result = txnMgr->Allocate(label, gen, nodeID);
      * if (!result) {
@@ -96,7 +96,7 @@ public:
      * \param label FireWire tLabel (0-63)
      * \return Transaction pointer or nullptr if not found
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Caller must hold lock or ensure transaction won't be deleted.
      * For safe access, use WithTransaction() instead.
      */
@@ -111,7 +111,7 @@ public:
      * \param key Match key (nodeID + generation + tLabel)
      * \return Transaction pointer or nullptr if not found
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Caller must hold lock or ensure transaction won't be deleted.
      */
     [[nodiscard]] Transaction* FindByMatchKey(const MatchKey& key) noexcept;
@@ -123,7 +123,7 @@ public:
      * \param fn Callback to invoke with transaction
      * \return true if transaction found and callback invoked, false otherwise
      *
-     * \par Example
+     * **Example**
      * \code
      * txnMgr->WithTransaction(label, [](Transaction* txn) {
      *     txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion");
@@ -145,11 +145,11 @@ public:
      *
      * \param label tLabel (0-63) of transaction to remove
      *
-     * \par Lifecycle
+     * **Lifecycle**
      * Called after transaction reaches terminal state (Completed, Failed, etc.)
      * to free resources.
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Serialized via lock. Safe to call concurrently.
      */
     void Remove(TLabel label) noexcept;
@@ -157,10 +157,23 @@ public:
     /**
      * \brief Cancel all transactions.
      *
-     * \par Usage
+     * **Usage**
      * Called on bus reset or driver shutdown.
      */
     void CancelAll() noexcept;
+
+    /**
+     * \brief Extract transaction from manager (transfer ownership).
+     *
+     * \param label tLabel (0-63) of transaction to extract
+     * \return Unique pointer to transaction, or nullptr if not found
+     *
+     * **Usage**
+     * Use this to remove a transaction from the manager BEFORE invoking
+     * callbacks that might re-enter the manager (e.g. Retry -> Allocate).
+     * This prevents deadlocks.
+     */
+    [[nodiscard]] std::unique_ptr<Transaction> Extract(TLabel label) noexcept;
 
     /**
      * \brief Get count of in-flight transactions.
@@ -172,10 +185,10 @@ public:
      *
      * \param fn Callback to invoke for each transaction
      *
-     * \par Usage (Phase 2.0)
+     * **Usage (Phase 2.0)**
      * Used by OnTimeoutTick to check all transactions for expiration.
      *
-     * \par Example
+     * **Example**
      * \code
      * txnMgr->ForEachTransaction([](Transaction* txn) {
      *     if (txn->deadlineUs() < nowUs) {
@@ -184,7 +197,7 @@ public:
      * });
      * \endcode
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Holds lock during entire iteration. Keep callback fast!
      */
     template<typename F>

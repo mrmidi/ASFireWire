@@ -30,29 +30,33 @@
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h> // generated from .iig
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h> // generated from .iig
 
-#include "Core/ControllerTypes.hpp"
-#include "Core/ControllerCore.hpp"
-#include "Core/ControllerConfig.hpp"
-#include "Core/HardwareInterface.hpp"
-#include "Core/InterruptManager.hpp"
-#include "Core/Scheduler.hpp"
-#include "Core/BusResetCoordinator.hpp"
-#include "Core/SelfIDCapture.hpp"
-#include "Core/TopologyManager.hpp"
-#include "Core/MetricsSink.hpp"
-#include "Core/ControllerStateMachine.hpp"
-#include "Core/ConfigROMBuilder.hpp"
-#include "Core/ConfigROMStager.hpp"
+#include "Controller/ControllerTypes.hpp"
+#include "Controller/ControllerCore.hpp"
+#include "Controller/ControllerConfig.hpp"
+#include "Hardware/HardwareInterface.hpp"
+#include "Hardware/InterruptManager.hpp"
+#include "Scheduling/Scheduler.hpp"
+#include "Bus/BusResetCoordinator.hpp"
+#include "Bus/SelfIDCapture.hpp"
+#include "Bus/TopologyManager.hpp"
+#include "Bus/BusManager.hpp"
+#include "Diagnostics/MetricsSink.hpp"
+#include "Controller/ControllerStateMachine.hpp"
+#include "ConfigROM/ConfigROMBuilder.hpp"
+#include "ConfigROM/ConfigROMStager.hpp"
 #include "Logging/Logging.hpp"
-#include "Core/OHCIConstants.hpp"
-#include "Core/RegisterMap.hpp"
+#include "Hardware/OHCIConstants.hpp"
+#include "Hardware/RegisterMap.hpp"
 #include "Async/AsyncSubsystem.hpp"
-#include "Async/Core/DMAMemoryManager.hpp"
+#include "Shared/Memory/DMAMemoryManager.hpp"
 #include "Discovery/SpeedPolicy.hpp"
-#include "Discovery/ConfigROMStore.hpp"
 #include "Discovery/DeviceRegistry.hpp"
-#include "Discovery/ROMScanner.hpp"
-#include "Discovery/ROMReader.hpp"
+#include "Discovery/DeviceManager.hpp"
+#include "ConfigROM/ConfigROMStore.hpp"
+#include "ConfigROM/ROMScanner.hpp"
+#include "ConfigROM/ROMReader.hpp"
+#include "Protocols/AVC/AVCDiscovery.hpp"
+#include "Protocols/AVC/FCPResponseRouter.hpp"
 
 using namespace ASFW::Driver;
 
@@ -95,6 +99,7 @@ struct ServiceContext {
         controller.reset();
         deps.hardware.reset();
         deps.busReset.reset();
+        deps.busManager.reset();
         deps.selfId.reset();
         deps.scheduler.reset();
         deps.metrics.reset();
@@ -102,7 +107,10 @@ struct ServiceContext {
         deps.configRom.reset();
         deps.configRomStager.reset();
         deps.interrupts.reset();
-        deps.asyncSubsystem.reset();  // Stop and cleanup asyncSubsystem
+        deps.topology.reset();
+        deps.fcpResponseRouter.reset();  // Clean up FCP router
+        deps.avcDiscovery.reset();       // Clean up AV/C discovery
+        deps.asyncSubsystem.reset();     // Stop and cleanup asyncSubsystem
         statusListener = nullptr;
         statusBlock = nullptr;
         statusMemory.reset();
@@ -120,7 +128,6 @@ struct ServiceContext {
 };
 
 namespace {
-constexpr uint64_t kSharedStatusMemoryType = 0;
 
 kern_return_t PrepareStatusBlock(ServiceContext& ctx) {
     if (ctx.statusBlock != nullptr) {
@@ -297,6 +304,9 @@ void EnsureDeps(ServiceContext& ctx) {
     if (!d.topology) {
         d.topology = std::make_shared<TopologyManager>();
     }
+    if (!d.busManager) {
+        d.busManager = std::make_shared<BusManager>();
+    }
 
     // Phase 2A: Enable AsyncSubsystem creation (memory allocation only)
     // DMA context arming still disabled - that's Phase 2B/2D
@@ -314,13 +324,29 @@ void EnsureDeps(ServiceContext& ctx) {
     if (!d.deviceRegistry) {
         d.deviceRegistry = std::make_shared<ASFW::Discovery::DeviceRegistry>();
     }
-    if (!d.romScanner) {
-        // ROMScanner manages its own parameters internally (SSOT)
-        // ROM size determined dynamically from BIB crc_length field
-        d.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
-            *d.asyncSubsystem,
-            *d.speedPolicy
+    if (!d.deviceManager) {
+        d.deviceManager = std::make_shared<ASFW::Discovery::DeviceManager>();
+    }
+    // NOTE: ROMScanner creation deferred until after ControllerCore instantiation
+    // (needs IFireWireBus facade which is created by ControllerCore constructor)
+
+    // AV/C Protocol Layer (requires DeviceManager + AsyncSubsystem)
+    if (!d.avcDiscovery && d.deviceManager && d.asyncSubsystem) {
+        d.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
+            *d.deviceManager,
+            *d.asyncSubsystem
         );
+        ASFW_LOG(Controller, "[Controller] ✅ AVCDiscovery initialized (will auto-detect AV/C units)");
+    }
+
+    // FCP Response Router (requires AVCDiscovery)
+    // NOTE: Packet routing wiring deferred until AsyncSubsystem::RxPath is ready
+    if (!d.fcpResponseRouter && d.avcDiscovery && d.asyncSubsystem) {
+        d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
+            *d.avcDiscovery,
+            d.asyncSubsystem->GetGenerationTracker()
+        );
+        ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter initialized (ready for FCP responses)");
     }
 }
 
@@ -512,7 +538,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
             CleanupStartFailure(ctx);
             return kr;
         }
-        const bool traceActive = ASFW::Async::DMAMemoryManager::IsTracingEnabled();
+        const bool traceActive = ASFW::Shared::DMAMemoryManager::IsTracingEnabled();
         ASFW_LOG(Controller,
                  "ASFWDriver::Start(): DMA coherency tracing %{public}s (requested=%{public}s)",
                  traceActive ? "ENABLED" : "disabled",
@@ -528,6 +554,30 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 
     ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.deps);
+
+    // Phase 2: Create ROMScanner with IFireWireBus interface (deferred until after facades exist)
+    if (ctx.deps.speedPolicy) {
+        if (!ctx.deps.romScanner) {
+            OSSharedPtr<IODispatchQueue> discoveryQueue = nullptr;
+            if (ctx.deps.scheduler) {
+                discoveryQueue = ctx.deps.scheduler->Queue();
+            }
+            ctx.deps.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
+                ctx.controller->Bus(),  // Use interface facade instead of AsyncSubsystem
+                *ctx.deps.speedPolicy,
+                nullptr,
+                discoveryQueue
+            );
+            ASFW_LOG(Controller, "✅ ROMScanner created with IFireWireBus interface");
+        } else {
+            ASFW_LOG(Controller, "Reusing existing ROMScanner instance");
+        }
+
+        if (ctx.deps.romScanner) {
+            ctx.controller->AttachROMScanner(ctx.deps.romScanner);
+        }
+    }
+
     kr = ctx.controller->Start(provider);
     if (kr != kIOReturnSuccess) { CleanupStartFailure(ctx); return kr; }
     

@@ -1,8 +1,10 @@
 #include "RxPath.hpp"
 #include "ARPacketParser.hpp"
-#include "../OHCIEventCodes.hpp"
-#include "../OHCI_HW_Specs.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
+#include "../../Hardware/OHCIDescriptors.hpp"
+#include "../../Hardware/IEEE1394.hpp"
 #include "../../Debug/BusResetPacketCapture.hpp"
+#include "../../Phy/PhyPackets.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <cstring>
@@ -370,10 +372,11 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
         // CRITICAL: Event code comes from TRAILER xferStatus[4:0], NOT from packet body!
         if (tCode == HW::AsyncRequestHeader::kTcodePhyPacket && info.totalLength >= 16) {
             // Load quadlets from LE DMA buffer
-            uint32_t q0_le, q1_le;
+            uint32_t q0_le;
+            uint32_t q1_le;
             __builtin_memcpy(&q0_le, info.packetStart, 4);
             __builtin_memcpy(&q1_le, info.packetStart + 4, 4);
-            
+
             // Convert to host order (no-op on ARM64, but explicit for clarity)
             const uint32_t q0 = OSSwapLittleToHostInt32(q0_le);
             const uint32_t q1 = OSSwapLittleToHostInt32(q1_le);
@@ -395,8 +398,27 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
             }
 
             // Other PHY packets (not Bus-Reset)
-            ASFW_LOG(Async,
-                   "RxPath AR/RQ: PHY packet (event=0x%02X) - not Bus-Reset, ignoring", eventCode);
+            const bool isAlphaConfig = ASFW::Driver::AlphaPhyConfig::IsConfigQuadletHostOrder(q0);
+            if (isAlphaConfig) {
+                const auto cfg = ASFW::Driver::AlphaPhyConfig::DecodeHostOrder(q0);
+                ASFW_LOG(Async,
+                         "RxPath AR/RQ: PHY CONFIG (non-reset): rootId=%u R=%d T=%d gap=%u event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
+                         cfg.rootId,
+                         cfg.forceRoot ? 1 : 0,
+                         cfg.gapCountOptimization ? 1 : 0,
+                         cfg.gapCount,
+                         eventCode,
+                         q0,
+                         q1,
+                         info.totalLength);
+            } else {
+                ASFW_LOG(Async,
+                         "RxPath AR/RQ: PHY packet (non-reset): event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
+                         eventCode,
+                         q0,
+                         q1,
+                         info.totalLength);
+            }
             return;
         }
 

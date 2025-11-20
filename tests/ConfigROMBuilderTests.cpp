@@ -10,15 +10,15 @@
 
 #include <gtest/gtest.h>
 
-#include "ASFWDriver/Core/ConfigROMBuilder.hpp"
-#include "ASFWDriver/Core/ConfigROMTypes.hpp"
+#include "ASFWDriver/ConfigROM/ConfigROMBuilder.hpp"
+#include "ASFWDriver/ConfigROM/ConfigROMTypes.hpp"
 #include "TestDataUtils.hpp"
 
 using ASFW::Driver::ConfigROMBuilder;
-using ASFW::Driver::MakeDirectoryEntry;
-using ASFW::Driver::ROMEntryType;
-using ASFW::Driver::ROMRootKey;
-using ASFW::Driver::kBusNameQuadlet;
+using ASFW::FW::MakeDirectoryEntry;
+using ASFW::FW::EntryType;
+using ASFW::FW::ConfigKey;
+using ASFW::FW::kBusNameQuadlet;
 
 namespace {
 
@@ -29,7 +29,7 @@ constexpr uint32_t kMaxRomMask = 0xFu << kMaxRomShift;
 constexpr uint32_t kMaxRecShift = 12;
 constexpr uint32_t kMaxRecMask = 0xFu << kMaxRecShift;
 
-constexpr uint16_t kPolynomial = ASFW::Driver::kConfigROMCRCPolynomial;
+constexpr uint16_t kPolynomial = ASFW::FW::kConfigROMCRCPolynomial;
 
 constexpr uint32_t Swap32(uint32_t value) noexcept {
 #if defined(__clang__) || defined(__GNUC__)
@@ -100,7 +100,7 @@ void ValidateDirectory(std::span<const uint32_t> words,
         const uint32_t type = value >> 30;
         const uint32_t offset = value & 0x00FFFFFFu;
 
-        if (type == static_cast<uint32_t>(ROMEntryType::Leaf)) {
+        if (type == static_cast<uint32_t>(ASFW::FW::EntryType::kLeaf)) {
             EXPECT_NE(offset, 0u) << "Leaf entry at index " << entryIndex << " has zero offset";
             const size_t leafHeaderIndex = entryIndex + static_cast<size_t>(offset);
             ASSERT_LT(leafHeaderIndex, words.size());
@@ -109,7 +109,7 @@ void ValidateDirectory(std::span<const uint32_t> words,
             ASSERT_LE(leafHeaderIndex + 1 + payloadQuadlets, words.size());
             EXPECT_EQ(static_cast<uint16_t>(leafHeader & 0xFFFFu),
                       ComputeCRC(words, leafHeaderIndex + 1, payloadQuadlets));
-        } else if (type == static_cast<uint32_t>(ROMEntryType::Directory)) {
+        } else if (type == static_cast<uint32_t>(ASFW::FW::EntryType::kDirectory)) {
             EXPECT_NE(offset, 0u) << "Directory entry at index " << entryIndex << " has zero offset";
             const size_t directoryHeaderIndex = entryIndex + static_cast<size_t>(offset);
             ValidateDirectory(words, directoryHeaderIndex, visited);
@@ -149,17 +149,17 @@ TEST(ConfigROMBuilderTests, BuildProducesExpectedLayout) {
     EXPECT_EQ(maxRec, maxRom);
 
     const uint32_t expectedVendorIdEntry = MakeDirectoryEntry(
-        ROMRootKey::Vendor_ID, ROMEntryType::Immediate,
+        ASFW::FW::ConfigKey::kModuleVendorId, ASFW::FW::EntryType::kImmediate,
         static_cast<uint32_t>((guid >> 40) & 0xFFFFFFu));
     EXPECT_EQ(native[6], expectedVendorIdEntry);
 
     const uint32_t expectedNodeCapsEntry = MakeDirectoryEntry(
-        ROMRootKey::Node_Capabilities, ROMEntryType::Immediate, nodeCapabilities);
+        ASFW::FW::ConfigKey::kNodeCapabilities, ASFW::FW::EntryType::kImmediate, nodeCapabilities);
     EXPECT_EQ(native[7], expectedNodeCapsEntry);
 
     const uint32_t leafEntry = native[8];
     const uint32_t expectedLeafEntry = MakeDirectoryEntry(
-        ROMRootKey::Vendor_Text, ROMEntryType::Leaf, 9u);
+        ASFW::FW::ConfigKey::kTextualDescriptor, ASFW::FW::EntryType::kLeaf, 9u);
     EXPECT_EQ(leafEntry, expectedLeafEntry);
 
     const uint32_t rootHeader = native[5];
@@ -214,11 +214,11 @@ TEST_P(ConfigROMBuilderLeafCrcTests, LeafHeaderCrcMatchesPolynomial) {
     constexpr uint32_t nodeCapabilities = 0x0055AAFFu;
 
     builder.Begin(busOptions, guid, nodeCapabilities);
-    ASSERT_TRUE(builder.AddImmediateEntry(ROMRootKey::Vendor_ID, static_cast<uint32_t>((guid >> 40) & 0xFFFFFFu)));
-    ASSERT_TRUE(builder.AddImmediateEntry(ROMRootKey::Node_Capabilities, nodeCapabilities));
+    ASSERT_TRUE(builder.AddImmediateEntry(ASFW::FW::ConfigKey::kModuleVendorId, static_cast<uint32_t>((guid >> 40) & 0xFFFFFFu)));
+    ASSERT_TRUE(builder.AddImmediateEntry(ASFW::FW::ConfigKey::kNodeCapabilities, nodeCapabilities));
 
     const std::string vendorText = MakePatternString(textLength);
-    const auto leafHandle = builder.AddTextLeaf(ROMRootKey::Vendor_Text, vendorText);
+    const auto leafHandle = builder.AddTextLeaf(ASFW::FW::ConfigKey::kTextualDescriptor, vendorText);
     ASSERT_TRUE(leafHandle.valid());
     builder.Finalize();
 

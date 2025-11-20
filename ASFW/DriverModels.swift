@@ -123,7 +123,7 @@ struct TopologyNodeWire {
 }
 
 /// Wire format for topology snapshot (matches C++ __attribute__((packed)) TopologySnapshotWire)
-/// Total size: 20 bytes (4+8+6+2 padding)
+/// Total size: 20 bytes (4+8+6+2)
 struct TopologySnapshotWire {
     var generation: UInt32       // offset 0, size 4
     var capturedAt: UInt64       // offset 4, size 8
@@ -133,8 +133,7 @@ struct TopologySnapshotWire {
     var localNodeId: UInt8       // offset 15
     var gapCount: UInt8          // offset 16
     var warningCount: UInt8      // offset 17
-    var _padding0: UInt8         // offset 18
-    var _padding1: UInt8         // offset 19
+    var busBase16: UInt16        // offset 18, size 2
 }
 
 // MARK: - Swift Data Models
@@ -523,6 +522,7 @@ struct TopologySnapshot: Identifiable {
     let irmNodeId: UInt8?
     let localNodeId: UInt8?
     let gapCount: UInt8
+    let busBase16: UInt16         // Bus base (bus << 6), ready to OR with node ID
     let nodes: [TopologyNode]
     let warnings: [String]
     
@@ -531,7 +531,7 @@ struct TopologySnapshot: Identifiable {
         print("🔍 TopologySnapshot.decode: got \(data.count) bytes")
         print("🔍 First 32 bytes (hex): \(data.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))")
         
-        // Expected packed C++ layout: 20 bytes
+        // Expected packed C++ layout: 20 bytes (4+8+6+2)
         let expectedHeaderSize = 20
         guard data.count >= expectedHeaderSize else {
             print("❌ TopologySnapshot.decode: data too small (\(data.count) bytes, need \(expectedHeaderSize))")
@@ -553,7 +553,7 @@ struct TopologySnapshot: Identifiable {
                 precondition(offset < raw.count)
                 return raw[offset]
             }
-            
+
             let generation: UInt32 = read(0, as: UInt32.self)
             let capturedAt: UInt64 = read(4, as: UInt64.self)
             let nodeCount: UInt8 = readUInt8(12)
@@ -562,6 +562,7 @@ struct TopologySnapshot: Identifiable {
             let localNodeId: UInt8 = readUInt8(15)
             let gapCount: UInt8 = readUInt8(16)
             let warningCount: UInt8 = readUInt8(17)
+            let busBase16: UInt16 = read(18, as: UInt16.self)
             
             print("🔍 Raw header fields:")
             print("  generation=\(generation)")
@@ -572,6 +573,7 @@ struct TopologySnapshot: Identifiable {
             print("  localNodeId=\(localNodeId)")
             print("  gapCount=\(gapCount)")
             print("  warningCount=\(warningCount)")
+            print("  busBase16=0x\(String(format: "%04X", busBase16))")
             print("✅ TopologySnapshot.decode: header loaded - gen=\(generation) nodeCount=\(nodeCount)")
             var offset = expectedHeaderSize
             
@@ -642,6 +644,7 @@ struct TopologySnapshot: Identifiable {
                 irmNodeId: irmNodeId != 0xFF ? irmNodeId : nil,
                 localNodeId: localNodeId != 0xFF ? localNodeId : nil,
                 gapCount: gapCount,
+                busBase16: busBase16,
                 nodes: nodes,
                 warnings: warnings
             )

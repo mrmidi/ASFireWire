@@ -22,9 +22,9 @@ if (NOT GTest_FOUND)
 endif()
 
 add_library(asfw_core_host STATIC
-    ../ASFWDriver/Core/ConfigROMBuilder.cpp
-    ../ASFWDriver/Core/TopologyManager.cpp
-    ../ASFWDriver/Core/InterruptManager.cpp
+    ../ASFWDriver/ConfigROM/ConfigROMBuilder.cpp
+    ../ASFWDriver/Bus/TopologyManager.cpp
+    ../ASFWDriver/Hardware/InterruptManager.cpp
     ../ASFWDriver/Async/Tx/PacketBuilder.cpp
     ../ASFWDriver/Async/Rx/ARPacketParser.cpp
     ../ASFWDriver/Async/Rx/PacketRouter.cpp
@@ -36,7 +36,11 @@ target_include_directories(asfw_core_host
     PUBLIC
         ..
         ../ASFWDriver
-        ../ASFWDriver/Core
+        ../ASFWDriver/Common
+        ../ASFWDriver/Hardware
+        ../ASFWDriver/Bus
+        ../ASFWDriver/ConfigROM
+        ../ASFWDriver/Scheduling
         ../ASFWDriver/Async
         ../ASFWDriver/Async/Tx
         ../ASFWDriver/Async/Rx
@@ -48,10 +52,10 @@ target_compile_definitions(asfw_core_host PUBLIC ASFW_HOST_TEST)
 
 # Discovery subsystem library for testing
 add_library(asfw_discovery_host STATIC
-    ../ASFWDriver/Discovery/ROMScanner.cpp
-    ../ASFWDriver/Discovery/ROMReader.cpp
+    ../ASFWDriver/ConfigROM/ROMScanner.cpp
+    ../ASFWDriver/ConfigROM/ROMReader.cpp
     ../ASFWDriver/Discovery/SpeedPolicy.cpp
-    ../ASFWDriver/Discovery/ConfigROMStore.cpp
+    ../ASFWDriver/ConfigROM/ConfigROMStore.cpp
     ../ASFWDriver/Discovery/DeviceRegistry.cpp
     LoggingStubs.cpp
 )
@@ -60,7 +64,8 @@ target_include_directories(asfw_discovery_host
     PUBLIC
         ..
         ../ASFWDriver
-        ../ASFWDriver/Core
+        ../ASFWDriver/Common
+        ../ASFWDriver/ConfigROM
         ../ASFWDriver/Discovery
         ../ASFWDriver/Async
         ../AppleHeaders
@@ -95,7 +100,11 @@ target_include_directories(ASFWCoreHostTests
     PRIVATE
         ..
         ../ASFWDriver
-        ../ASFWDriver/Core
+        ../ASFWDriver/Common
+        ../ASFWDriver/Hardware
+        ../ASFWDriver/Bus
+        ../ASFWDriver/ConfigROM
+        ../ASFWDriver/Scheduling
         ../ASFWDriver/Async
         ../ASFWDriver/Async/Tx
         ../ASFWDriver/Async/Rx
@@ -125,7 +134,8 @@ target_include_directories(ROMScannerCompletionTests
     PRIVATE
         ..
         ../ASFWDriver
-        ../ASFWDriver/Core
+        ../ASFWDriver/Common
+        ../ASFWDriver/ConfigROM
         ../ASFWDriver/Discovery
         ../ASFWDriver/Async
         ../AppleHeaders

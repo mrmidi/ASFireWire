@@ -2,7 +2,7 @@
 
 #include <gmock/gmock.h>
 #include <optional>
-#include "../../ASFWDriver/Core/SelfIDCapture.hpp"
+#include "../../ASFWDriver/Bus/SelfIDCapture.hpp"
 
 // Mock for SelfIDCapture to test bus reset coordination
 namespace ASFW::Driver::Tests {

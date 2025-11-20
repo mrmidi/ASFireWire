@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "../ASFWDriver/Core/TopologyManager.hpp"
-#include "../ASFWDriver/Core/SelfIDCapture.hpp"
+#include "../ASFWDriver/Bus/TopologyManager.hpp"
+#include "../ASFWDriver/Bus/SelfIDCapture.hpp"
 
 using namespace ASFW::Driver;
 

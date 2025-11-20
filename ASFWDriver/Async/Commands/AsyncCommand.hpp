@@ -9,6 +9,7 @@ namespace ASFW::Async {
 // Forward declarations
 class AsyncSubsystem;
 struct TxMetadata;
+class PacketBuilder;
 
 /**
  * AsyncCommand - CRTP base class for async transaction commands.
@@ -16,7 +17,10 @@ struct TxMetadata;
  * DESIGN: Template-based polymorphism (zero runtime overhead, no vtable).
  * Derived classes implement:
  *   - TxMetadata BuildMetadata(const TransactionContext&)
- *   - size_t BuildHeader(uint8_t label, const PacketContext&, uint8_t* buffer)
+ *   - size_t BuildHeader(uint8_t label,
+ *                        const PacketContext&,
+ *                        PacketBuilder& builder,
+ *                        uint8_t* buffer)
  *   - std::unique_ptr<PayloadContext> PreparePayload(Driver::HardwareInterface&)
  * 
  * Submit() calls derived implementations via static_cast<Derived*>(this)->Method().
@@ -43,7 +47,7 @@ public:
      * 2. BuildMetadata() - populate TxMetadata (tCode, length, destination)
      * 3. RegisterTx() - allocate slot in OutstandingTable, get handle
      * 4. GetLabelFromHandle() - extract 6-bit transaction label
-     * 5. BuildHeader() - construct IEEE 1394 packet header (PacketBuilder delegation)
+ * 5. BuildHeader() - construct IEEE 1394 packet header via shared PacketBuilder
      * 6. PreparePayload() - allocate DMA buffer for Write/Lock (null for Read/Phy)
      * 7. BuildTransactionChain() - create OHCI descriptor chain
      * 8. Tag descriptor.softwareTag with handle (for completion matching)

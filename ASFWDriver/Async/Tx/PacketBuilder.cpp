@@ -2,8 +2,8 @@
 
 #include <cstring>
 
-#include "../OHCI_HW_Specs.hpp"
-#include "../../Core/OHCIConstants.hpp"
+#include "../../Hardware/IEEE1394.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Async {
@@ -86,9 +86,12 @@ struct HeaderBlockData {
 static_assert(sizeof(HeaderBlockData) == 16);
 
 struct HeaderPhyPacket {
-    uint32_t control;
+    uint32_t tCodeQuadlet;  // Quadlet 0: 0x000000E0 (tCode = 0xE for PHY_PACKET)
+    uint32_t dataQuadlet1;  // Quadlet 1: PHY configuration data 1
+    uint32_t dataQuadlet2;  // Quadlet 2: PHY configuration data 2
+    uint32_t reserved;      // Quadlet 3: Reserved (padding, not transmitted due to reqCount=12)
 };
-static_assert(sizeof(HeaderPhyPacket) == 4);
+static_assert(sizeof(HeaderPhyPacket) == 16);
 
 [[nodiscard]] bool ValidateAddressHigh(uint32_t addressHigh) {
     return addressHigh <= 0xFFFFu;
@@ -292,6 +295,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
     }
 
     auto* header = static_cast<HeaderQuadletData*>(headerBuffer);
+    std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
     // CRITICAL FIX: tLabel at bits[15:10] to match ExtractTLabel
@@ -422,7 +426,11 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
     if (bufferSize < headerSize || headerBuffer == nullptr) {
         return 0;
     }
-    if (params.length == 0 || params.length > 0xFFFFu) {
+    if (params.operandLength == 0 || params.operandLength > 0xFFFFu) {
+        return 0;
+    }
+    if ((params.operandLength & 0x3u) != 0) {
+        // Operand must be quadlet-aligned per IEEE 1394-1995 §6.2.4.2
         return 0;
     }
     if (!ValidateAddressHigh(params.addressHigh)) {
@@ -433,6 +441,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
     }
 
     auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
     // CRITICAL FIX: tLabel at bits[15:10] to match ExtractTLabel
@@ -468,9 +477,9 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
     // Quadlet 2: offset low
     const uint32_t quadlet2 = params.addressLow;
 
-    // Quadlet 3: dataLength and extendedTcode
+    // Quadlet 3: dataLength (in bytes) and extendedTcode
     const uint32_t quadlet3 =
-        (static_cast<uint32_t>(params.length) << 16) |
+        (static_cast<uint32_t>(params.operandLength) << 16) |
         static_cast<uint32_t>(extendedTCode & 0xFFFFu);
 
     // Write all four quadlets in native byte order
@@ -485,33 +494,44 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
 std::size_t PacketBuilder::BuildPhyPacket(const PhyParams& params,
                                           void* headerBuffer,
                                           std::size_t bufferSize) const {
+    // PHY packet: 12 bytes transmitted (3 quadlets) per OHCI §7.8.1.4 Figure 7-14
+    // Apple's implementation: reqCount=12 (not 16!)
+    // Quadlets: [0]=tCode 0xE0, [1]=data1, [2]=data2
+    // The 4th quadlet is reserved padding (not transmitted)
+    //
+    // CRITICAL: PHY packets in immediate descriptors use WIRE FORMAT (big-endian bytes),
+    // NOT OHCI internal format. The descriptor data is transmitted as-is on the wire.
+    // On little-endian systems, writing uint32_t 0x000000E0 to memory gives bytes [0xE0, 0x00, 0x00, 0x00].
+    constexpr std::size_t kPhyPacketSize = 12;  // 3 quadlets only
     constexpr std::size_t headerSize = sizeof(HeaderPhyPacket);
+
     if (headerBuffer == nullptr || bufferSize < headerSize) {
         return 0;
     }
 
-    auto* header = static_cast<HeaderPhyPacket*>(headerBuffer);
+    // Use byte pointer for direct big-endian wire format construction
+    auto* bytes = static_cast<uint8_t*>(headerBuffer);
 
-    // PHY packets have different format - see OHCI Figure 7-14
-    // For now, just set tCode = 0xE and zeros for other fields
-    const uint8_t tCode = AsyncRequestHeader::kTcodePhyPacket;
-    const uint8_t rt = 0;
-    const uint8_t pri = 0;
-    const uint8_t label = 0;
+    // Quadlet 0: tCode = 0xE in bits [7:4] → wire bytes [0xE0, 0x00, 0x00, 0x00]
+    // On little-endian system, uint32_t 0x000000E0 stored in memory = [0xE0, 0x00, 0x00, 0x00]
+    const uint32_t tCodeQuadlet = 0x000000E0u;
+    std::memcpy(bytes + 0, &tCodeQuadlet, 4);
 
-    // Build the control quadlet
-    const uint16_t destID = 0;  // PHY packets don't have destination
-    const uint8_t byte2 = (label << 2) | (rt & 0x03);
-    const uint8_t byte3 = ((tCode & 0x0F) << 4) | (pri & 0x0F);
+    // Quadlets 1-2: PHY configuration data in big-endian wire format
+    // params.quadlet1/2 are already in the format expected on the wire (big-endian)
+    // So convert them to wire format using ToBigEndian32
+    const uint32_t data1Wire = ToBigEndian32(params.quadlet1);
+    const uint32_t data2Wire = ToBigEndian32(params.quadlet2);
+    std::memcpy(bytes + 4, &data1Wire, 4);
+    std::memcpy(bytes + 8, &data2Wire, 4);
 
-    // Pack into uint32_t
-    uint32_t control = (static_cast<uint32_t>(destID) << 16) |
-                       (static_cast<uint32_t>(byte2) << 8) |
-                       static_cast<uint32_t>(byte3);
+    // Quadlet 3: Reserved (padding, not transmitted - omitted from copy by returning 12)
+    const uint32_t reserved = 0;
+    std::memcpy(bytes + 12, &reserved, 4);
 
-    header->control = ToBigEndian32(control);
-    (void)params; // payload is provided separately via descriptor builder
-    return headerSize;
+    // Return 12 bytes (3 quadlets) - DescriptorBuilder will set reqCount=12
+    // Only the first 12 bytes will be copied to immediate descriptor and transmitted
+    return kPhyPacketSize;
 }
 
 } // namespace ASFW::Async

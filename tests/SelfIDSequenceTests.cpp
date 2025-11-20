@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "ASFWDriver/Core/TopologyTypes.hpp"
+#include "ASFWDriver/Bus/TopologyTypes.hpp"
 #include "TestDataUtils.hpp"
 
 using ASFW::Driver::HasMorePackets;

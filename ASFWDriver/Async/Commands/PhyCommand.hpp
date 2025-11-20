@@ -26,7 +26,10 @@ public:
     
     // CRTP interface implementation
     TxMetadata BuildMetadata(const TransactionContext& txCtx);
-    size_t BuildHeader(uint8_t label, const PacketContext& pktCtx, uint8_t* buffer);
+    size_t BuildHeader(uint8_t label,
+                       const PacketContext& pktCtx,
+                       PacketBuilder& builder,
+                       uint8_t* buffer);
     std::unique_ptr<PayloadContext> PreparePayload(ASFW::Driver::HardwareInterface&) {
         return nullptr;  // PHY packets use immediate data only
     }

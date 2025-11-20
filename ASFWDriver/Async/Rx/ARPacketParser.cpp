@@ -1,7 +1,12 @@
 #include "ARPacketParser.hpp"
-#include "../OHCI_HW_Specs.hpp"
+#include "../../Hardware/IEEE1394.hpp"
 #include "../../Logging/Logging.hpp"
-#include <DriverKit/IOLib.h> // OSSwapLittleToHostInt32
+
+#ifdef ASFW_HOST_TEST
+#include <libkern/OSByteOrder.h> // OSSwapLittleToHostInt32 for host tests
+#else
+#include <DriverKit/IOLib.h> // OSSwapLittleToHostInt32 for DriverKit
+#endif
 
 #include <cstring>
 

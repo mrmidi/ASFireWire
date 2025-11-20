@@ -11,20 +11,20 @@ namespace ASFW::Async {
  * Handles asynchronous response packet transmission (replies to received requests).
  * Inherits all functionality from ATContextBase via CRTP pattern.
  *
- * \par OHCI Specification References
+ * **OHCI Specification References**
  * - §7.2: Asynchronous Transmit DMA (AT Response context)
  * - §7.2.3: AsRspTrContextControlSet register (0x1A0)
  * - §7.2.3: AsRspTrContextControlClear register (0x1A4)
  * - §7.2.4: AsRspTrCommandPtr register (0x1AC)
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * Equivalent to AppleFWOHCI_AsyncTransmitResponse context in IOFireWireFamily.
  * Handles:
  * - Read response packets (with payload data)
  * - Write response packets (ack-only, no payload)
  * - Lock response packets (old value return)
  *
- * \par Usage
+ * **Usage**
  * \code
  * ATResponseContext rspCtx;
  * rspCtx.Initialize(hw, responseRing);
@@ -41,7 +41,7 @@ namespace ASFW::Async {
  * }
  * \endcode
  *
- * \par Design Rationale
+ * **Design Rationale**
  * Minimal class definition - all logic resides in ATContextBase template.
  * RoleTag typedef enables CRTP deduction in ContextBase.
  *

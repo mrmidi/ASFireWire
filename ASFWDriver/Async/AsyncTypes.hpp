@@ -200,7 +200,7 @@ inline std::string AddressToString(const ::ASFW::Async::FWAddress& addr) {
 } // namespace ASFW::FW
 
 // Now include FWCommon.hpp for other constants and helpers
-#include "../Core/FWCommon.hpp"
+#include "../Common/FWCommon.hpp"
 
 namespace ASFW::Async {
 
@@ -330,8 +330,19 @@ struct LockParams {
     uint32_t addressHigh{0};
     uint32_t addressLow{0};
     const void* operand{nullptr};
-    uint32_t length{0};
-    uint8_t speedCode{0xFF};  // 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
+    uint32_t operandLength{0};      ///< Bytes transmitted with the request (e.g., 8 for compare-swap)
+    uint32_t responseLength{0};     ///< Expected response bytes (0 = infer from operand / tCode)
+    uint8_t speedCode{0xFF};        ///< 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
+};
+
+/** Parameters for a compare-and-swap convenience helper. */
+struct CompareSwapParams {
+    uint16_t destinationID{0};
+    uint16_t addressHigh{0};
+    uint32_t addressLow{0};
+    uint32_t compareValue{0};      ///< Host-order compare value
+    uint32_t swapValue{0};         ///< Host-order replacement value
+    uint8_t speedCode{0xFF};       ///< 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
 };
 
 /** Parameters for a fire-and-forget asynchronous stream packet. */
@@ -366,6 +377,10 @@ struct PhyParams {
 using CompletionCallback = std::function<void(AsyncHandle handle,
                                               AsyncStatus status,
                                               std::span<const uint8_t> responsePayload)>;
+
+using CompareSwapCallback = std::function<void(AsyncStatus status,
+                                               uint32_t oldValue,
+                                               bool compareMatched)>;
 
 } // namespace ASFW::Async
 

@@ -14,7 +14,7 @@
 #include <DriverKit/IODispatchQueue.h>
 
 #include "AsyncTypes.hpp"
-#include "Bus/GenerationTracker.hpp"
+#include "../Bus/GenerationTracker.hpp"
 #include "Track/CompletionQueue.hpp"
 #include "Track/Tracking.hpp"
 #include "Rx/RxPath.hpp"
@@ -28,6 +28,12 @@ class BusResetPacketCapture;
 }
 
 namespace ASFW::Async {
+
+// Import Shared types used by AsyncSubsystem
+using ASFW::Shared::DescriptorRing;
+using ASFW::Shared::BufferRing;
+using ASFW::Shared::DMAMemoryManager;
+
 // Forward declarations
 class ResetHook;
 class AsyncMetricsSink;
@@ -39,9 +45,9 @@ class PacketRouter;
 namespace Tx { class Submitter; }
 
 // Forward declarations - new architecture
-class DMAMemoryManager;
-class DescriptorRing;
-class BufferRing;
+#include "../Shared/Rings/DescriptorRing.hpp"
+#include "../Shared/Rings/BufferRing.hpp"
+#include "../Shared/Memory/DMAMemoryManager.hpp"
 class ATRequestContext;
 class ATResponseContext;
 class ARRequestContext;
@@ -55,6 +61,46 @@ template <typename TCompletionQueue> class Track_Tracking;
 
 // Forward declaration for CRTP command access
 template <typename Derived> class AsyncCommand;
+
+// ============================================================================
+// CONTRACT: AsyncSubsystem
+// ----------------------------------------------------------------------------
+// Responsibility:
+//   - Own the async transmit/receive pipeline (DMA rings, descriptor builder,
+//     submitter, transaction tracking, bus-reset coordination) for OHCI.
+//   - Provide high-level Read/Write/Lock/Phy APIs while enforcing bus state
+//     invariants (NodeID valid bit, generation tracking, reset sequencing).
+// Lifecycle:
+//   - Start(): allocates Tracking/ContextManager/DescriptorBuilder/Submitter,
+//     activates CompletionQueue, enables interrupts, and leaves AT contexts idle
+//     until ArmDMAContexts(). Failure unwinds everything via Teardown.
+//   - ArmDMAContexts()/ArmARContextsOnly(): program CommandPtr after LinkEnable;
+//     only safe post-Start. Stop() disables interrupts, cancels transactions,
+//     tears down DMA, and clears hardware_ references.
+// Bus reset sequencing:
+//   - OnBusResetBegin(): gates submissions (is_bus_reset_in_progress_=1), cancels
+//     outstanding transactions for the previous generation, and advances the
+//     payload epoch so stale payloads can be reaped.
+//   - ConfirmBusGeneration(): called after Self-ID; updates GenerationTracker,
+//     synchronizes PayloadRegistry epoch, and records the authoritative gen.
+//   - OnBusResetComplete(): clears the gate, allowing submissions again.
+//   - StopATContextsOnly()/FlushATContexts()/RearmATContexts() mirror the OHCI
+//     §7.2.3.2 steps (AT halt → drain → re-arm) and must be invoked in order.
+// Transaction flow:
+//   - PrepareTransactionContext() validates reset gate + NodeID valid bit,
+//     captures generation/speed, and supplies PacketContext for PacketBuilder.
+//   - AsyncCommand::Submit() obtains PacketBuilder/DescriptorBuilder/Submitter
+//     via getters, ensuring all invariants are satisfied before touching DMA.
+// Threading:
+//   - All public methods are expected to run on the controller workloop unless
+//     noted; sharedLock_ protects cross-thread access where needed.
+//   - commandQueue_ serializes ReadWithRetry() operations to avoid re-entrancy.
+// Ownership:
+//   - AsyncSubsystem owns ContextManager, Tracking actor, CompletionQueue,
+//     DescriptorBuilder, PacketBuilder, Submitter, RxPath, etc.
+//   - HardwareInterface is supplied by the controller and must outlive the
+//     subsystem; AsyncSubsystem never deletes it.
+// ============================================================================
 
 class AsyncSubsystem {
 public:
@@ -108,6 +154,7 @@ public:
 
     AsyncHandle Write(const WriteParams& params, CompletionCallback callback);
     AsyncHandle Lock(const LockParams& params, uint16_t extendedTCode, CompletionCallback callback);
+    AsyncHandle CompareSwap(const CompareSwapParams& params, CompareSwapCallback callback);
     AsyncHandle Stream(const StreamParams& params);
     AsyncHandle PhyRequest(const PhyParams& params, CompletionCallback callback);
     bool Cancel(AsyncHandle handle);
@@ -180,12 +227,31 @@ public:
     
     /// Get current monotonic time in microseconds (for timeout scheduling)
     [[nodiscard]] uint64_t GetCurrentTimeUsec() const;
-    
+
+    /// Get current bus state (generation, local node ID)
+    /// @return BusState with generation and local node ID
+    [[nodiscard]] Bus::GenerationTracker::BusState GetBusState() const {
+        return generationTracker_->GetCurrentState();
+    }
+
+    /// Get GenerationTracker (for protocol layers like AV/C)
+    /// @return Reference to GenerationTracker
+    [[nodiscard]] Bus::GenerationTracker& GetGenerationTracker() {
+        return *generationTracker_;
+    }
+
     // Subsystem component accessors for command submission
     [[nodiscard]] Track_Tracking<CompletionQueue>* GetTracking() { return tracking_.get(); }
     [[nodiscard]] DescriptorBuilder* GetDescriptorBuilder() { return descriptorBuilder_.get(); }
+    [[nodiscard]] PacketBuilder* GetPacketBuilder() { return packetBuilder_.get(); }
     [[nodiscard]] Tx::Submitter* GetSubmitter() { return submitter_.get(); }
     [[nodiscard]] Driver::HardwareInterface* GetHardware() { return hardware_; }
+
+    /// Get DMA memory manager for facade construction
+    /// @return Pointer to DMA manager (nullptr if not yet initialized)
+    [[nodiscard]] DMAMemoryManager* GetDMAManager() {
+        return contextManager_ ? contextManager_->DmaManager() : nullptr;
+    }
 
 private:
     std::atomic<uint32_t> is_bus_reset_in_progress_{0};

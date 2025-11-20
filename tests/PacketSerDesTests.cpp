@@ -303,3 +303,128 @@ TEST_F(PacketSerDesTest, FormatDifference_OHCI_vs_IEEE) {
     // PacketBuilder encodes using OHCI format (bits[23:18])
     // PacketRouter must decode using IEEE format (byte 2 bits[7:2])
 }
+
+// =============================================================================
+// PHY Packet Tests (Immediate Descriptor Format)
+// =============================================================================
+
+TEST_F(PacketSerDesTest, PHYPacket_BuildPhyPacket_MatchesAppleImplementation) {
+    // Test PHY packet building to match Apple's AppleFWOHCI_AsyncTransmitRequest::asyncPHYPacket
+    //
+    // Expected format per OHCI §7.8.1.4 Figure 7-14 and IDA analysis:
+    // - 16-byte immediate descriptor payload structure
+    // - 12 bytes transmitted (reqCount=12)
+    // - Quadlet 0: 0x000000E0 (tCode = 0xE for PHY_PACKET)
+    // - Quadlets 1-2: PHY configuration data
+    // - Quadlet 3: Reserved (not transmitted)
+    //
+    // Apple's descriptor control field: 0x120C000C
+    //   cmd=1 (OUTPUT_LAST), key=2 (Immediate), i=3 (IntAlways)
+    //   b=3 (BranchAlways), reqCount=12
+
+    PhyParams params{};
+    params.quadlet1 = 0x00401234;  // Example: Force root node (bit 22) + root ID = 0x1234
+    params.quadlet2 = 0x00000000;  // Reserved for PHY config packets
+
+    uint8_t buffer[32] = {};  // Oversized for safety
+    size_t returnedSize = builder_.BuildPhyPacket(params, buffer, sizeof(buffer));
+
+    // Verify returned size (should be 12 for reqCount)
+    EXPECT_EQ(12u, returnedSize) << "BuildPhyPacket should return 12 bytes for reqCount";
+
+    // Verify tCode quadlet (big-endian 0x000000E0)
+    // Wire format: E0 00 00 00 (tCode=0xE in bits[7:4] of byte 0)
+    EXPECT_EQ(0xE0, buffer[0]) << "Quadlet 0 byte 0 should be 0xE0 (tCode)";
+    EXPECT_EQ(0x00, buffer[1]) << "Quadlet 0 byte 1 should be 0x00";
+    EXPECT_EQ(0x00, buffer[2]) << "Quadlet 0 byte 2 should be 0x00";
+    EXPECT_EQ(0x00, buffer[3]) << "Quadlet 0 byte 3 should be 0x00";
+
+    // Verify data quadlet 1 (big-endian)
+    // Wire format: 00 40 12 34
+    EXPECT_EQ(0x00, buffer[4]) << "Quadlet 1 byte 0 should match params.quadlet1";
+    EXPECT_EQ(0x40, buffer[5]) << "Quadlet 1 byte 1 should match params.quadlet1";
+    EXPECT_EQ(0x12, buffer[6]) << "Quadlet 1 byte 2 should match params.quadlet1";
+    EXPECT_EQ(0x34, buffer[7]) << "Quadlet 1 byte 3 should match params.quadlet1";
+
+    // Verify data quadlet 2 (big-endian)
+    // Wire format: 00 00 00 00
+    EXPECT_EQ(0x00, buffer[8]) << "Quadlet 2 byte 0 should match params.quadlet2";
+    EXPECT_EQ(0x00, buffer[9]) << "Quadlet 2 byte 1 should match params.quadlet2";
+    EXPECT_EQ(0x00, buffer[10]) << "Quadlet 2 byte 2 should match params.quadlet2";
+    EXPECT_EQ(0x00, buffer[11]) << "Quadlet 2 byte 3 should match params.quadlet2";
+}
+
+TEST_F(PacketSerDesTest, PHYPacket_GapCountOptimization_MatchesLinuxTestVector) {
+    // Linux kernel test vector: test_phy_packet_phy_config_gap_count_optimization
+    // Expected: 0x00833f05 (gap count optimization, gap_count=5)
+    //
+    // IEEE 1394a-2000 §5.5.3.2 PHY configuration packet format:
+    // Quadlet 0:
+    //   bits[31:24] = 0x00 (packet ID type)
+    //   bits[23:22] = 0x2  (PHY configuration packet)
+    //   bits[21:16] = root_id
+    //   bits[15]    = 0    (reserved)
+    //   bits[14]    = T    (force root)
+    //   bits[13]    = 0    (reserved)
+    //   bits[12]    = 1    (gap count optimization enable)
+    //   bits[11:6]  = gap_count
+    //   bits[5:0]   = 0x05 (inverse quadlet for validation)
+    //
+    // Decoded from Linux test vector 0x00833f05:
+    //   root_id = 0x00
+    //   force_root = 0 (T bit)
+    //   gap_count_opt = 1 (bit 12)
+    //   gap_count = 0x3f (63)
+
+    // For ASFW, we send PHY packets as raw data via asyncPHYPacket
+    // The quadlets are already formatted according to IEEE 1394a spec
+    PhyParams params{};
+    params.quadlet1 = 0x00833f05;  // Gap count optimization packet
+    params.quadlet2 = 0x00000000;  // Inverse/reserved
+
+    uint8_t buffer[32] = {};
+    size_t returnedSize = builder_.BuildPhyPacket(params, buffer, sizeof(buffer));
+
+    EXPECT_EQ(12u, returnedSize) << "PHY packet should return 12 bytes";
+
+    // Verify tCode quadlet
+    EXPECT_EQ(0xE0, buffer[0]) << "tCode should be 0xE";
+
+    // Verify PHY config data (big-endian)
+    uint32_t quadlet1 = (static_cast<uint32_t>(buffer[4]) << 24) |
+                        (static_cast<uint32_t>(buffer[5]) << 16) |
+                        (static_cast<uint32_t>(buffer[6]) << 8) |
+                        static_cast<uint32_t>(buffer[7]);
+    EXPECT_EQ(0x00833f05u, quadlet1) << "Quadlet 1 should match Linux test vector";
+}
+
+TEST_F(PacketSerDesTest, PHYPacket_ForceRootNode_MatchesLinuxTestVector) {
+    // Linux kernel test vector: test_phy_packet_phy_config_force_root_node
+    // Expected: 0x0083401e (force root node, root_id=0x00)
+    //
+    // Decoded from Linux test vector 0x0083401e:
+    //   root_id = 0x00
+    //   force_root = 1 (T bit set, bit 14)
+    //   gap_count_opt = 0
+    //   gap_count = 0x00
+    //   inverse = 0x1e
+
+    PhyParams params{};
+    params.quadlet1 = 0x0083401e;  // Force root node packet
+    params.quadlet2 = 0x00000000;  // Inverse/reserved
+
+    uint8_t buffer[32] = {};
+    size_t returnedSize = builder_.BuildPhyPacket(params, buffer, sizeof(buffer));
+
+    EXPECT_EQ(12u, returnedSize) << "PHY packet should return 12 bytes";
+
+    // Verify tCode quadlet
+    EXPECT_EQ(0xE0, buffer[0]) << "tCode should be 0xE";
+
+    // Verify PHY config data (big-endian)
+    uint32_t quadlet1 = (static_cast<uint32_t>(buffer[4]) << 24) |
+                        (static_cast<uint32_t>(buffer[5]) << 16) |
+                        (static_cast<uint32_t>(buffer[6]) << 8) |
+                        static_cast<uint32_t>(buffer[7]);
+    EXPECT_EQ(0x0083401eu, quadlet1) << "Quadlet 1 should match Linux test vector";
+}

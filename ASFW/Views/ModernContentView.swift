@@ -30,6 +30,7 @@ struct ModernContentView: View {
 
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
+        case devices = "Device Discovery"
         case ping = "Ping"
         case controller = "Controller Status"
         case async = "Async Commands"
@@ -43,6 +44,7 @@ struct ModernContentView: View {
         var systemImage: String {
             switch self {
             case .overview: return "info.circle"
+            case .devices: return "externaldrive.connected.to.line.below"
             case .ping: return "waveform.path"
             case .controller: return "cpu"
             case .async: return "bolt.horizontal.circle"
@@ -72,12 +74,14 @@ struct ModernContentView: View {
                 switch selectedSection {
                 case .overview:
                     OverviewView(viewModel: driverVM)
+                case .devices:
+                    DeviceDiscoveryView(viewModel: debugVM)
                 case .ping:
                     PingView(viewModel: debugVM)
                 case .controller:
                     ControllerDetailView(viewModel: debugVM)
                 case .async:
-                    AsyncTransactionView(viewModel: debugVM)
+                    CommandsView(viewModel: debugVM)
                 case .topology:
                     TopologyView(viewModel: topologyVM)
                 case .romExplorer:
@@ -129,7 +133,7 @@ struct ModernContentView: View {
             debugVM.disconnect()
             topologyVM.stopAutoRefresh()
         }
-        .onChange(of: topologyVM.topology?.generation) { _ in
+        .onChange(of: topologyVM.topology?.generation) {
             // Update available nodes when topology generation changes
             romExplorerVM.refreshAvailableNodes()
         }

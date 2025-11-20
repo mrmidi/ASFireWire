@@ -1,0 +1,127 @@
+//
+//  ASFWDriverUserClient.iig
+//  ASFWDriver
+//
+//  User client for GUI application communication
+//
+
+#include <DriverKit/IOUserClient.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
+
+class ASFWDriver;
+
+class ASFWDriverUserClient : public IOUserClient
+{
+public:
+    bool init() override;
+    void free() override;
+
+    kern_return_t Start(IOService* provider) override;
+    kern_return_t Stop(IOService* provider) override;
+
+    // Method selectors for ExternalMethod
+    enum {
+        kMethodGetBusResetCount        = 0,
+        kMethodGetBusResetHistory      = 1,
+        kMethodGetControllerStatus     = 2,
+        kMethodGetMetricsSnapshot      = 3,
+        kMethodClearHistory            = 4,
+        kMethodGetSelfIDCapture        = 5,
+        kMethodGetTopologySnapshot     = 6,
+        kMethodPing                    = 7,
+        kMethodAsyncRead               = 8,
+        kMethodAsyncWrite              = 9,
+        kMethodRegisterStatusListener  = 10,
+        kMethodCopyStatusSnapshot      = 11,
+        kMethodGetTransactionResult    = 12,
+        kMethodRegisterTransactionListener = 13,
+        kMethodExportConfigROM         = 14,
+        kMethodTriggerROMRead          = 15,
+        kMethodGetDiscoveredDevices    = 16,
+        kMethodAsyncCompareSwap        = 17,
+    };
+
+    kern_return_t
+    ExternalMethod(uint64_t selector,
+                   IOUserClientMethodArguments* arguments,
+                   const IOUserClientMethodDispatch* dispatch,
+                   OSObject* target,
+                   void* reference) override;
+
+    // Optional: Shared memory support for high-frequency updates
+    kern_return_t
+    CopyClientMemoryForType(uint64_t type,
+                           uint64_t* options,
+                           IOMemoryDescriptor** memory) override;
+
+    // Async transaction methods for GUI integration
+    // AsyncRead: Initiate an async read transaction
+    // Input: destinationID[16], addressHi[16], addressLo[32], length[32]
+    // Output: handle[16] (transaction handle for tracking)
+    kern_return_t
+    AsyncRead(uint16_t destinationID,
+              uint16_t addressHi,
+              uint32_t addressLo,
+              uint32_t length,
+              uint16_t* handle) LOCALONLY;
+
+    // AsyncWrite: Initiate an async write transaction
+    // Input: destinationID[16], addressHi[16], addressLo[32], length[32], payload[buffer]
+    // Output: handle[16] (transaction handle for tracking)
+    kern_return_t
+    AsyncWrite(uint16_t destinationID,
+               uint16_t addressHi,
+               uint32_t addressLo,
+               uint32_t length,
+               const void* payload,
+               uint16_t* handle) LOCALONLY;
+
+    // AsyncCompareSwap: Initiate an async compare-and-swap (lock) transaction
+    // Input: destinationID[16], addressHi[16], addressLo[32], size[8], compareValue[buffer], newValue[buffer]
+    // Output: handle[16], locked[8] (transaction handle + lock success flag)
+    kern_return_t
+    AsyncCompareSwap(uint16_t destinationID,
+                     uint16_t addressHi,
+                     uint32_t addressLo,
+                     uint8_t size,
+                     const void* compareValue,
+                     const void* newValue,
+                     uint16_t* handle,
+                     uint8_t* locked) LOCALONLY;
+
+    // GetTransactionResult: Retrieve result of completed transaction
+    // Input: handle[16]
+    // Output: status[32], dataLength[32], data[buffer]
+    kern_return_t
+    GetTransactionResult(uint16_t handle,
+                        uint32_t* status,
+                        uint32_t* dataLength,
+                        void* data,
+                        uint32_t maxDataLength) LOCALONLY;
+
+    void NotifyStatus(uint64_t sequence,
+                      uint32_t reason) LOCALONLY;
+
+    void NotifyTransactionComplete(uint16_t handle,
+                                   uint32_t status) LOCALONLY;
+
+    // Note: GetDiscoveredDevices (selector 16) is handled purely through ExternalMethod
+    // It returns wire format device data via structureOutput (like GetSelfIDCapture, GetTopologySnapshot)
+};
+
+struct ASFWDriverUserClient_IVars {
+    ASFWDriver* driver;  // Typed pointer back to ASFWDriver
+    OSAction* statusAction;
+    bool statusRegistered;
+    OSAction* transactionAction;
+    bool transactionListenerRegistered;
+    void* transactionStorage;  // TransactionStorage* (opaque)
+
+    // Handler instances
+    void* busResetHandler;     // BusResetHandler* (opaque)
+    void* topologyHandler;     // TopologyHandler* (opaque)
+    void* statusHandler;       // StatusHandler* (opaque)
+    void* transactionHandler;  // TransactionHandler* (opaque)
+    void* configROMHandler;    // ConfigROMHandler* (opaque)
+    void* deviceDiscoveryHandler;  // DeviceDiscoveryHandler* (opaque)
+};

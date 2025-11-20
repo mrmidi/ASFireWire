@@ -10,12 +10,12 @@
 
 #include "ContextBase.hpp"
 #include "../Tx/DescriptorBuilder.hpp"
-#include "../OHCIEventCodes.hpp"
-#include "../OHCI_HW_Specs.hpp"
-#include "../Rings/DescriptorRing.hpp"
-#include "../Core/DMAMemoryManager.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
+#include "../../Hardware/OHCIDescriptors.hpp"
+#include "../../Shared/Rings/DescriptorRing.hpp"
+#include "../../Shared/Memory/DMAMemoryManager.hpp"
 #include "../Track/TxCompletion.hpp"
-#include "../../Core/OHCIConstants.hpp"
+#include "../../Hardware/OHCIConstants.hpp"
 
 namespace ASFW::Async {
 
@@ -25,9 +25,6 @@ using ASFW::Driver::kContextControlWakeBit;
 using ASFW::Driver::kContextControlActiveBit;
 using ASFW::Driver::kContextControlDeadBit;
 using ASFW::Driver::kContextControlEventMask;
-
-// Forward declarations
-class DMAMemoryManager;
 
 /**
  * \brief CRTP base class for AT (Asynchronous Transmit) contexts.
@@ -42,25 +39,25 @@ class DMAMemoryManager;
  * \tparam Derived Concrete context class (ATRequestContext or ATResponseContext)
  * \tparam Tag Context role tag (ATRequestTag or ATResponseTag)
  *
- * \par OHCI Specification References
+ * **OHCI Specification References**
  * - §7.2.3: ContextControl register (run/wake/active/dead bits)
  * - §7.2.4: CommandPtr register and arming sequence
  * - §7.1.5.1: branchWord field for descriptor linking
  * - §7.1.5.2: xferStatus field written by hardware on completion
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * Similar to AppleFWOHCI ChannelBundle methods:
  * - SubmitTransmitRequest(): Links descriptors and wakes context
  * - ScanNextATReqCompletion(): Scans for completed descriptors
  * - StopTransmitContext(): Stops context with timeout polling
  *
- * \par Linux Pattern
+ * **Linux Pattern**
  * See drivers/firewire/ohci.c:
  * - context_append(): Appends descriptors by linking branchWord
  * - handle_at_packet(): Processes completed AT descriptors
  * - context_stop(): Clears run bit and polls active bit
  *
- * \par Design Rationale
+ * **Design Rationale**
  * - **CRTP**: Zero-overhead polymorphism for context-specific behavior
  * - **RAII Lock**: std::unique_ptr<IOLock> ensures cleanup on destruction
  * - **Move Semantics**: SubmitChain takes DescriptorChain&& to prevent copies
@@ -83,17 +80,17 @@ public:
      * Allocates IOLock for submission serialization and initializes the
      * descriptor ring for storing in-flight chains.
      *
-            * \param hw Hardware register interface
-            * \param ring Pre-allocated descriptor ring (must be initialized)
-            * \param dmaManager Shared DMA allocator providing phys/virt mapping
+     * \param hw Hardware register interface
+     * \param ring Pre-allocated descriptor ring (must be initialized)
+     * \param dmaManager Shared DMA allocator providing phys/virt mapping
      * \return kIOReturnSuccess or error code
      *
-     * \par Implementation
+     * **Implementation**
      * - Calls ContextBase::Initialize() for register setup
      * - Allocates IOLock for SubmitChain() serialization
      * - Validates ring is initialized and not empty
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Must be called before any SubmitChain() or ScanCompletion() calls.
      * Not thread-safe; caller must ensure exclusive access during init.
      */
@@ -111,13 +108,13 @@ public:
      *                    (use MakeBranchWordAT for encoding)
      * \return kIOReturnSuccess or error code
      *
-     * \par OHCI Arming Sequence (§7.2.4)
+     * **OHCI Arming Sequence (§7.2.4)**
      * 1. If context is running, call Stop() first
      * 2. Write CommandPtr register with descriptor physical address + Z
      * 3. Memory barrier (OSSynchronizeIO) to ensure write completes
      * 4. Write ContextControl.run=1 to start DMA
      *
-     * \par Sequence Rationale
+     * **Sequence Rationale**
      * OHCI hardware fetches from CommandPtr immediately upon run=1, so
      * CommandPtr MUST be written first. Barrier ensures ordering.
      *
@@ -132,21 +129,20 @@ public:
      * Clears ContextControl.run bit and polls ContextControl.active until
      * hardware finishes current descriptor or timeout expires.
      *
-     * \param timeoutMs Maximum milliseconds to wait for active bit to clear
      * \return kIOReturnSuccess if stopped, kIOReturnTimeout if timed out
      *
-     * \par OHCI Stop Sequence (§7.2.3)
+     * **OHCI Stop Sequence (§7.2.3)**
      * 1. Write ContextControl.run=0 to prevent new descriptor fetches
      * 2. Poll ContextControl.active with 100µs delay between reads
      * 3. If active=0, context has stopped gracefully
      * 4. If timeout expires, return kIOReturnTimeout (hardware may be stuck)
      *
-     * \par Timeout Behavior
+     * **Timeout Behavior**
      * - Default timeout: 100ms (1000 iterations × 100µs)
      * - If timeout occurs, hardware may be in dead state (check dead bit)
      * - Caller should inspect ContextControl.dead and consider bus reset
      *
-     * \par Linux Pattern
+     * **Linux Pattern**
      * drivers/firewire/ohci.c:context_stop() uses similar polling with
      * 10ms timeout (CONTEXT_STOP_TIMEOUT).
      */
@@ -161,19 +157,19 @@ public:
      *
      * \return kIOReturnSuccess if quiesced, kIOReturnTimeout if still active
      *
-     * \par Apple's Pattern (AppleFWOHCI_AsyncTransmit::waitForDMA)
+     * **Apple's Pattern (AppleFWOHCI_AsyncTransmit::waitForDMA)**
      * - Initial check: Return immediately if already inactive
      * - Initial delay: 5µs
      * - Escalating poll: 250 iterations with delays 6→255µs
      * - Total timeout: ~32ms (5µs + Σ(6..255µs))
      *
-     * \par Rationale
+     * **Rationale**
      * Hardware typically quiesces in <100µs. Escalating delays optimize for:
      * - Fast path: Minimal latency when hardware responds quickly
      * - Slow path: Adequate timeout for busy hardware
      * - Power efficiency: Longer delays reduce bus traffic
      *
-     * \par Modern C++23 Implementation
+     * **Modern C++23 Implementation**
      * - constexpr for compile-time constants
      * - [[nodiscard]] to prevent ignoring timeout errors
      * - noexcept for hard real-time guarantee
@@ -190,7 +186,7 @@ public:
      * \param chain Descriptor chain to submit (moved, will be empty on return)
      * \return kIOReturnSuccess or error code
      *
-     * \par OHCI Submission Sequence (§7.1.5.1)
+     * **OHCI Submission Sequence (§7.1.5.1)**
      * 1. Lock context (serialize with concurrent SubmitChain)
      * 2. Check ring capacity (fail if full)
      * 3. Write tail descriptor's branchWord to link new chain
@@ -199,19 +195,19 @@ public:
      * 6. If context is running, write ContextControl.wake=1
      * 7. Unlock context
      *
-     * \par Memory Barrier Rationale
+     * **Memory Barrier Rationale**
      * Release fence ensures descriptor writes (step 3) are visible to hardware
      * before wake bit (step 6) signals new descriptors available. Without this,
      * hardware might read stale branchWord values.
      *
-     * \par Apple Pattern
+     * **Apple Pattern**
      * Similar to ChannelBundle::SubmitTransmitRequest():
      * - Locks transmit queue
      * - Updates tail descriptor branchWord
      * - Issues OSSynchronizeIO() barrier
      * - Writes wake bit if context active
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Serialized via IOLock. Safe to call concurrently from multiple threads.
      *
      * \warning After return, chain.first/last are invalidated (moved).
@@ -237,11 +233,11 @@ public:
      *
      * \return TxCompletion if descriptor completed, std::nullopt if none ready
      *
-     * \par OHCI Completion Detection (§7.1.5.2)
+     * **OHCI Completion Detection (§7.1.5.2)**
      * Hardware writes xferStatus field when descriptor completes. A non-zero
      * xferStatus[15:0] indicates completion (contains event code and ack code).
      *
-     * \par Scan Algorithm
+     * **Scan Algorithm**
      * 1. Lock context (serialize with SubmitChain)
      * 2. Load head index (atomic acquire)
      * 3. If head == tail, ring is empty → return nullopt
@@ -253,14 +249,14 @@ public:
      * 9. Advance head index: (head + N) % capacity, where N = descriptor block count
      * 10. Unlock context, return TxCompletion
      *
-     * \par Apple Pattern
+     * **Apple Pattern**
      * ChannelBundle::ScanNextATReqCompletion():
      * - Checks xferStatus != 0 for completion
      * - Extracts ack code and event code from status word
      * - Extracts tLabel from packet header for response matching
      * - Advances completion cursor
      *
-     * \par Thread Safety
+     * **Thread Safety**
      * Serialized via IOLock. Safe to call concurrently with SubmitChain().
      *
      * \note Caller must repeatedly call ScanCompletion() until it returns
@@ -791,7 +787,6 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
 
             const size_t newHead = (headIndex + blocks) % capacity;
             ring_->SetHead(newHead);
-            ring_->SetPrevLastBlocks(blocks);
 
             // ✅ Apple's pattern: Stop context when ring becomes empty (non-OUTPUT_LAST path)
             if (ring_->IsEmpty()) {
@@ -876,7 +871,6 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         }
 
         ring_->SetHead(newHead);
-        ring_->SetPrevLastBlocks(blocksConsumed);
 
         // ✅ Apple's stopDMAAfterTransmit pattern: Stop context when ring becomes empty
         // After advancing head, if ring is now empty (head==tail), we must:

@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <string_view>
 
-#include "../../Core/HardwareInterface.hpp"
-#include "../../Core/RegisterMap.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
+#include "../../Hardware/RegisterMap.hpp"
 
 namespace ASFW::Async {
 
@@ -15,11 +15,11 @@ namespace ASFW::Async {
  * Enforces compile-time contract: each context role must define register
  * offsets and a human-readable name for logging/diagnostics.
  *
- * \par Design Rationale
+ * **Design Rationale**
  * Using concepts instead of runtime polymorphism (virtual functions) ensures
  * zero overhead for context operations while maintaining type safety.
  *
- * \par Usage Example
+ * **Usage Example**
  * \code
  * struct MyContextTag {
  *     static constexpr Driver::Register32 kControlSetReg = ...;
@@ -41,12 +41,12 @@ concept ContextRole = requires {
 /**
  * \brief Register offset tag for AT Request context.
  *
- * \par OHCI Specification
+ * **OHCI Specification**
  * - AsReqTrContextControlSet: 0x180 (§7.2.3 Table 7-6)
  * - AsReqTrContextControlClear: 0x184
  * - AsReqTrCommandPtr: 0x18C (§7.2.4)
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * AppleFWOHCI_AsyncTransmitRequest uses these register offsets.
  */
 struct ATRequestTag {
@@ -62,12 +62,12 @@ struct ATRequestTag {
 /**
  * \brief Register offset tag for AT Response context.
  *
- * \par OHCI Specification
+ * **OHCI Specification**
  * - AsRspTrContextControlSet: 0x1A0 (§7.2.3 Table 7-6)
  * - AsRspTrContextControlClear: 0x1A4
  * - AsRspTrCommandPtr: 0x1AC (§7.2.4)
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * AppleFWOHCI_AsyncTransmitResponse uses these register offsets.
  */
 struct ATResponseTag {
@@ -83,15 +83,15 @@ struct ATResponseTag {
 /**
  * \brief Register offset tag for AR Request context.
  *
- * \par OHCI Specification
+ * **OHCI Specification**
  * - AsReqRcvContextControlSet: 0x400 (§8.2 Table 8-2)
  * - AsReqRcvContextControlClear: 0x404
  * - AsReqRcvCommandPtr: 0x40C (§8.2)
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * AppleFWOHCI_AsyncReceiveRequest uses these register offsets.
  *
- * \par Special Behavior
+ * **Special Behavior**
  * AR Request context receives PHY packets and synthetic bus-reset packets
  * when LinkControl.rcvPhyPkt=1 (OHCI §8.4.2.3, §C.3).
  */
@@ -108,12 +108,12 @@ struct ARRequestTag {
 /**
  * \brief Register offset tag for AR Response context.
  *
- * \par OHCI Specification
+ * **OHCI Specification**
  * - AsRspRcvContextControlSet: 0x420 (§8.2 Table 8-2)
  * - AsRspRcvContextControlClear: 0x424
  * - AsRspRcvCommandPtr: 0x42C (§8.2)
  *
- * \par Apple Pattern
+ * **Apple Pattern**
  * AppleFWOHCI_AsyncReceiveResponse uses these register offsets.
  */
 struct ARResponseTag {
@@ -141,16 +141,16 @@ static_assert(ContextRole<ARResponseTag>);
  * \tparam Derived Concrete context class (e.g., ATRequestContext)
  * \tparam Tag Context role tag (e.g., ATRequestTag) defining register offsets
  *
- * \par Design Rationale
+ * **Design Rationale**
  * - **CRTP**: Compile-time polymorphism avoids vtable overhead
  * - **Concepts**: ContextRole ensures type safety without runtime checks
  * - **Constexpr**: Register offsets resolved at compile time
  *
- * \par OHCI Specification References
+ * **OHCI Specification References**
  * - §7.2.3: ContextControl register (run/wake/active/dead bits)
  * - §7.2.4: CommandPtr register (descriptor chain head)
  *
- * \par Linux Pattern
+ * **Linux Pattern**
  * See drivers/firewire/ohci.c:
  * - reg_read() / reg_write() for register access
  * - context_run() / context_stop() for lifecycle
@@ -180,7 +180,7 @@ public:
      *
      * \return Current ContextControl value
      *
-     * \par OHCI §7.2.3 / §8.2
+     * **OHCI §7.2.3 / §8.2**
      * ContextControl bits:
      * - [15] run: Context active when 1
      * - [13] active: Hardware processing descriptors
@@ -196,7 +196,7 @@ public:
      *
      * \param bits Bits to set (write-1-to-set semantics)
      *
-     * \par Usage
+     * **Usage**
      * - Set run bit: WriteControlSet(1 << 15)
      * - Set wake bit: WriteControlSet(1 << 12)
      */
@@ -209,7 +209,7 @@ public:
      *
      * \param bits Bits to clear (write-1-to-clear semantics)
      *
-     * \par Usage
+     * **Usage**
      * - Clear run bit: WriteControlClear(1 << 15)
      */
     void WriteControlClear(uint32_t bits) noexcept {

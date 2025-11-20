@@ -201,6 +201,9 @@ run_build() {
     -arch "${ARCH_NAME}" \
     -derivedDataPath "${DERIVED}" \
     -resultBundlePath "${RESULT_BUNDLE}" \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY="" \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"

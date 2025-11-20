@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "ASFWDriver/Async/AsyncTypes.hpp"
-#include "ASFWDriver/Async/OHCI_HW_Specs.hpp"
+#include "ASFWDriver/Hardware/IEEE1394.hpp"
 #include "ASFWDriver/Async/Rx/ARPacketParser.hpp"
 #include "ASFWDriver/Async/Rx/PacketRouter.hpp"
 #include "ASFWDriver/Async/Tx/PacketBuilder.hpp"
@@ -175,7 +175,8 @@ TEST(AsyncPacketSerDesLinuxCompat, LockRequestMatchesLinuxVector) {
     params.destinationID = 0xFFC0;
     params.addressHigh = 0xFFFF;
     params.addressLow = 0xF0000984;
-    params.length = 0x0008;
+    params.operandLength = 0x0008;
+    params.responseLength = 0x0004;
 
     const PacketContext context = MakeDefaultContext(0xFFC1, 0x02);
     constexpr uint8_t kLabel = 0x0B;
@@ -192,7 +193,8 @@ TEST(AsyncPacketSerDesLinuxCompat, LockRequestMatchesLinuxVector) {
     EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);  // tLabel at bits[15:10]
     EXPECT_EQ((hostWords[0] >> 4) & 0xFu, HW::AsyncRequestHeader::kTcodeLockRequest);  // tCode at bits[7:4]
     EXPECT_EQ(hostWords[3],
-              (static_cast<uint32_t>(params.length) << 16) | static_cast<uint32_t>(kExtendedTCode));
+              (static_cast<uint32_t>(params.operandLength) << 16) |
+                  static_cast<uint32_t>(kExtendedTCode));
 
     EXPECT_EQ(static_cast<uint16_t>((hostWords[1] >> 16) & 0xFFFFu),
               MakeDestinationID(context.sourceNodeID, params.destinationID));

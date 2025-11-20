@@ -1,6 +1,6 @@
 #include "AsyncSubsystem.hpp"
 #include "Engine/ContextManager.hpp"
-#include "../Core/FWCommon.hpp"  // For FW::Ack, FW::AckName, FW::AckFromByte
+#include "../Common/FWCommon.hpp"  // For FW::Ack, FW::AckName, FW::AckFromByte
 
 // Command architecture
 #include "Commands/ReadCommand.hpp"
@@ -15,17 +15,17 @@
 #include "Tx/PacketBuilder.hpp"
 #include "Track/CompletionQueue.hpp"
 #include "Core/TransactionManager.hpp"  // Phase 2.0
-#include "OHCIEventCodes.hpp"
-#include "OHCI_HW_Specs.hpp"
-#include "../Core/HardwareInterface.hpp"
+#include "../Hardware/OHCIEventCodes.hpp"
+#include "../Hardware/OHCIDescriptors.hpp"
+#include "../Hardware/HardwareInterface.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Debug/BusResetPacketCapture.hpp"
 #include "Track/Tracking.hpp"
 
 // New context architecture
-#include "Core/DMAMemoryManager.hpp"
-#include "Rings/DescriptorRing.hpp"
-#include "Rings/BufferRing.hpp"
+#include "../Shared/Memory/DMAMemoryManager.hpp"
+#include "../Shared/Rings/DescriptorRing.hpp"
+#include "../Shared/Rings/BufferRing.hpp"
 #include "Contexts/ATRequestContext.hpp"
 #include "Contexts/ATResponseContext.hpp"
 #include "Contexts/ARRequestContext.hpp"
@@ -34,6 +34,7 @@
 // Context manager (optional incremental wiring)
 #include "Engine/ContextManager.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <memory>
@@ -68,10 +69,6 @@ uint64_t GetCurrentMonotonicTimeUsec() {
     return (ticks * timebase.numer) / timebase.denom / 1000;
 }
 
-constexpr OHCIEventCode kStaleGenerationEvent = static_cast<OHCIEventCode>(0xFE);
-constexpr OHCIEventCode kSoftwareTimeoutEvent = static_cast<OHCIEventCode>(0xFD);
-constexpr uint64_t kDefaultRequestTimeoutUsec = 200'000ULL;
-constexpr uint8_t kSlotClassLock = 0x01;
 constexpr uint32_t kAsyncInterruptMask = 0x0000000Du;
 constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
 // TODO: S100 hardcoded for maximum hardware compatibility (especially Agere/LSI FW643E).
@@ -483,16 +480,9 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     hardware_->SetInterruptMask(kAsyncInterruptMask, true);
     hardware_->SetLinkControlBits(kLinkControlRcvPhyPktBit);
 
-    // Report whether DMA slab is cache-inhibited (if provisioned)
-    {
-        int uncached = 0;
-        if (contextManager_ && contextManager_->DmaManager()) {
-            uncached = contextManager_->DmaManager()->IsCacheInhibitActive() ? 1 : 0;
-        }
-        ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO,
-                      "AsyncSubsystem::Start complete (DMA uncached=%{public}d)",
-                      uncached);
-    }
+    // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
+    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO,
+                  "AsyncSubsystem::Start complete (DMA always uncached)");
 
     watchdogTickCount_.store(0, std::memory_order_relaxed);
     watchdogExpiredCount_.store(0, std::memory_order_relaxed);
@@ -699,6 +689,54 @@ AsyncHandle AsyncSubsystem::Lock(const LockParams& params,
                                  uint16_t extendedTCode,
                                  CompletionCallback callback) {
     return LockCommand{params, extendedTCode, std::move(callback)}.Submit(*this);
+}
+
+namespace {
+struct CompareSwapOperandStorage {
+    std::array<uint32_t, 2> beOperands{};
+    uint32_t compareHost{0};
+};
+} // namespace
+
+AsyncHandle AsyncSubsystem::CompareSwap(const CompareSwapParams& params,
+                                        CompareSwapCallback callback) {
+    auto storage = std::make_shared<CompareSwapOperandStorage>();
+    storage->compareHost      = params.compareValue;
+    storage->beOperands[0]    = OSSwapHostToBigInt32(params.compareValue);
+    storage->beOperands[1]    = OSSwapHostToBigInt32(params.swapValue);
+
+    LockParams lockParams{};
+    lockParams.destinationID   = params.destinationID;
+    lockParams.addressHigh     = params.addressHigh;
+    lockParams.addressLow      = params.addressLow;
+    lockParams.operand         = storage->beOperands.data();
+    lockParams.operandLength   = static_cast<uint32_t>(storage->beOperands.size() * sizeof(uint32_t));
+    lockParams.responseLength  = sizeof(uint32_t);
+    lockParams.speedCode       = params.speedCode;
+
+    const uint16_t kExtendedTCodeCompareSwap = 0x02;
+
+    CompletionCallback internalCallback = [callback, storage](AsyncHandle,
+                                                             AsyncStatus status,
+                                                             std::span<const uint8_t> payload) {
+        if (status != AsyncStatus::kSuccess) {
+            callback(status, 0u, false);
+            return;
+        }
+
+        if (payload.size() != sizeof(uint32_t)) {
+            callback(AsyncStatus::kHardwareError, 0u, false);
+            return;
+        }
+
+        uint32_t raw = 0;
+        std::memcpy(&raw, payload.data(), sizeof(uint32_t));
+        uint32_t oldValueHost = OSSwapBigToHostInt32(raw);
+        const bool matched = (oldValueHost == storage->compareHost);
+        callback(AsyncStatus::kSuccess, oldValueHost, matched);
+    };
+
+    return Lock(lockParams, kExtendedTCodeCompareSwap, std::move(internalCallback));
 }
 
 AsyncHandle AsyncSubsystem::PhyRequest(const PhyParams& params,

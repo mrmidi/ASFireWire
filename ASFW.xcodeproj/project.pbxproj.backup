@@ -1,0 +1,566 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3A1693F02E808765000BD368 /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693EF2E808765000BD368 /* DriverKit.framework */; };
+		3A1693F92E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */; };
+		8A69AC781E8247D185EB8AB5 /* ASFWDriver/UserClient/Core/ASFWDriverUserClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 85D07213D66C4851A5A59B3F /* ASFWDriver/UserClient/Core/ASFWDriverUserClient.cpp */; };
+		0D429905B21A408EB35E48D7 /* ASFWDriver/UserClient/Handlers/BusResetHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0475DD18206C4C8594721D02 /* ASFWDriver/UserClient/Handlers/BusResetHandler.cpp */; };
+		C4F368A25FAE4ABFAB28F9DD /* ASFWDriver/UserClient/Handlers/TopologyHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8E953731403A479EBAD80EC5 /* ASFWDriver/UserClient/Handlers/TopologyHandler.cpp */; };
+		7B2F2E103A0140AABDF8B0BC /* ASFWDriver/UserClient/Handlers/StatusHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2DE784920C65464489278F2A /* ASFWDriver/UserClient/Handlers/StatusHandler.cpp */; };
+		545EAB07205A42E6B4B2EABB /* ASFWDriver/UserClient/Handlers/TransactionHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F36BCDB94302404A95E38CF4 /* ASFWDriver/UserClient/Handlers/TransactionHandler.cpp */; };
+		D0084CEF1ED34C369918970C /* ASFWDriver/UserClient/Handlers/ConfigROMHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4690B0A2045E4A0AB0E0AD8C /* ASFWDriver/UserClient/Handlers/ConfigROMHandler.cpp */; };
+		1E6F9D1FF6CE4AF39F86B9F3 /* ASFWDriver/UserClient/Storage/TransactionStorage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E9D27C5E5C2C49D2A7E77FFB /* ASFWDriver/UserClient/Storage/TransactionStorage.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		3A1693F72E808765000BD368 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3A1693D02E808727000BD368 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3A1693EC2E808765000BD368;
+			remoteInfo = ASFWDriver;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3A1693FE2E808765000BD368 /* Embed System Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(SYSTEM_EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				3A1693F92E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext in Embed System Extensions */,
+			);
+			name = "Embed System Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		3A1693D82E808727000BD368 /* ASFW.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ASFW.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.mrmidi.ASFW.ASFWDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A1693EF2E808765000BD368 /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
+		3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PCIDriverKit.framework; path = Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.0.sdk/System/DriverKit/System/Library/Frameworks/PCIDriverKit.framework; sourceTree = DEVELOPER_DIR; };
+		ASFWAPPENTITLEMENTS /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		ASFWDRIVERENTITLEMENTS /* ASFWDriver.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ASFWDriver.entitlements; sourceTree = "<group>"; };
+		FF8AE8E4AFCA4EC0A322A92F /* ASFWDriverUserClient.iig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.iig; path = ASFWDriverUserClient.iig; sourceTree = "<group>"; };
+		85D07213D66C4851A5A59B3F /* ASFWDriverUserClient.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ASFWDriverUserClient.cpp; sourceTree = "<group>"; };
+		0475DD18206C4C8594721D02 /* BusResetHandler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BusResetHandler.cpp; sourceTree = "<group>"; };
+		8E953731403A479EBAD80EC5 /* TopologyHandler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TopologyHandler.cpp; sourceTree = "<group>"; };
+		2DE784920C65464489278F2A /* StatusHandler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = StatusHandler.cpp; sourceTree = "<group>"; };
+		F36BCDB94302404A95E38CF4 /* TransactionHandler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TransactionHandler.cpp; sourceTree = "<group>"; };
+		4690B0A2045E4A0AB0E0AD8C /* ConfigROMHandler.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ConfigROMHandler.cpp; sourceTree = "<group>"; };
+		E9D27C5E5C2C49D2A7E77FFB /* TransactionStorage.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TransactionStorage.cpp; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3A1693FA2E808765000BD368 /* Exceptions for "ASFWDriver" folder in "ASFWDriver" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3A1693EC2E808765000BD368 /* ASFWDriver */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		3A1693DA2E808727000BD368 /* ASFW */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ASFW;
+			sourceTree = "<group>";
+		};
+		3A1693F12E808765000BD368 /* ASFWDriver */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3A1693FA2E808765000BD368 /* Exceptions for "ASFWDriver" folder in "ASFWDriver" target */,
+			);
+			path = ASFWDriver;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3A1693D52E808727000BD368 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3A1693EA2E808765000BD368 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */,
+				3A1693F02E808765000BD368 /* DriverKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		3A1693CF2E808727000BD368 = {
+			isa = PBXGroup;
+			children = (
+				3A1693DA2E808727000BD368 /* ASFW */,
+				3A1693F12E808765000BD368 /* ASFWDriver */,
+				3A1693EE2E808765000BD368 /* Frameworks */,
+				3A1693D92E808727000BD368 /* Products */,
+				ASFWAPPENTITLEMENTS /* App.entitlements */,
+				ASFWDRIVERENTITLEMENTS /* ASFWDriver.entitlements */,
+			);
+			sourceTree = "<group>";
+		};
+		3A1693D92E808727000BD368 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3A1693D82E808727000BD368 /* ASFW.app */,
+				3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3A1693EE2E808765000BD368 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */,
+				3A1693EF2E808765000BD368 /* DriverKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		3A1693E82E808765000BD368 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		3A1693D72E808727000BD368 /* ASFW */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3A1693E52E80872C000BD368 /* Build configuration list for PBXNativeTarget "ASFW" */;
+			buildPhases = (
+				3A1693D42E808727000BD368 /* Sources */,
+				3A1693D52E808727000BD368 /* Frameworks */,
+				3A1693D62E808727000BD368 /* Resources */,
+				3A1693FE2E808765000BD368 /* Embed System Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3A1693F82E808765000BD368 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				3A1693DA2E808727000BD368 /* ASFW */,
+			);
+			name = ASFW;
+			packageProductDependencies = (
+			);
+			productName = ASFW;
+			productReference = 3A1693D82E808727000BD368 /* ASFW.app */;
+			productType = "com.apple.product-type.application";
+		};
+		3A1693EC2E808765000BD368 /* ASFWDriver */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3A1693FB2E808765000BD368 /* Build configuration list for PBXNativeTarget "ASFWDriver" */;
+			buildPhases = (
+				3A1693E82E808765000BD368 /* Headers */,
+				3A1693E92E808765000BD368 /* Sources */,
+				3A1693EA2E808765000BD368 /* Frameworks */,
+				3A1693EB2E808765000BD368 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3A1693F12E808765000BD368 /* ASFWDriver */,
+			);
+			name = ASFWDriver;
+			packageProductDependencies = (
+			);
+			productName = ASFWDriver;
+			productReference = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */;
+			productType = "com.apple.product-type.driver-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3A1693D02E808727000BD368 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					3A1693D72E808727000BD368 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					3A1693EC2E808765000BD368 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = 3A1693D32E808727000BD368 /* Build configuration list for PBXProject "ASFW" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 3A1693CF2E808727000BD368;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 3A1693D92E808727000BD368 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3A1693D72E808727000BD368 /* ASFW */,
+				3A1693EC2E808765000BD368 /* ASFWDriver */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3A1693D62E808727000BD368 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3A1693EB2E808765000BD368 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3A1693D42E808727000BD368 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+							8A69AC781E8247D185EB8AB5 /* ASFWDriverUserClient.cpp in Sources */,
+				0D429905B21A408EB35E48D7 /* BusResetHandler.cpp in Sources */,
+				C4F368A25FAE4ABFAB28F9DD /* TopologyHandler.cpp in Sources */,
+				7B2F2E103A0140AABDF8B0BC /* StatusHandler.cpp in Sources */,
+				545EAB07205A42E6B4B2EABB /* TransactionHandler.cpp in Sources */,
+				D0084CEF1ED34C369918970C /* ConfigROMHandler.cpp in Sources */,
+				1E6F9D1FF6CE4AF39F86B9F3 /* TransactionStorage.cpp in Sources */,
+);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3A1693E92E808765000BD368 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3A1693F82E808765000BD368 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3A1693EC2E808765000BD368 /* ASFWDriver */;
+			targetProxy = 3A1693F72E808765000BD368 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		3A1693E32E80872C000BD368 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		3A1693E42E80872C000BD368 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		3A1693E62E80872C000BD368 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFW;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		3A1693E72E80872C000BD368 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFW;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		3A1693FC2E808765000BD368 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
+				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ASFWDriver/Info.plist;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
+				PRODUCT_NAME = "$(inherited)";
+				RUN_CLANG_STATIC_ANALYZER = YES;
+				SDKROOT = driverkit;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		3A1693FD2E808765000BD368 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
+				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F6YA6B56LR;
+				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ASFWDriver/Info.plist;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
+				PRODUCT_NAME = "$(inherited)";
+				RUN_CLANG_STATIC_ANALYZER = YES;
+				SDKROOT = driverkit;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3A1693D32E808727000BD368 /* Build configuration list for PBXProject "ASFW" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3A1693E32E80872C000BD368 /* Debug */,
+				3A1693E42E80872C000BD368 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3A1693E52E80872C000BD368 /* Build configuration list for PBXNativeTarget "ASFW" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3A1693E62E80872C000BD368 /* Debug */,
+				3A1693E72E80872C000BD368 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3A1693FB2E808765000BD368 /* Build configuration list for PBXNativeTarget "ASFWDriver" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3A1693FC2E808765000BD368 /* Debug */,
+				3A1693FD2E808765000BD368 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3A1693D02E808727000BD368 /* Project object */;
+}
