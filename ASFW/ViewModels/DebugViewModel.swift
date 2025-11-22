@@ -32,6 +32,9 @@ class DebugViewModel: ObservableObject {
                 self?.isConnected = connected
                 if !connected {
                     self?.sharedStatus = nil
+                    self?.driverViewModel?.driverVersion = nil
+                } else {
+                    self?.fetchDriverVersion()
                 }
             }
             .store(in: &cancellables)
@@ -115,6 +118,25 @@ class DebugViewModel: ObservableObject {
             let topology = self.connector.getTopologySnapshot()
             Task { @MainActor in
                 self.topologyCache = topology
+            }
+        }
+    }
+
+    private func fetchDriverVersion() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            // Retry a few times if needed, as connection might be fresh
+            var version: DriverVersionInfo? = nil
+            for _ in 0..<3 {
+                version = self.connector.getDriverVersion()
+                if version != nil { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            
+            if let v = version {
+                Task { @MainActor in
+                    self.driverViewModel?.driverVersion = v
+                }
             }
         }
     }

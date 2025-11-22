@@ -7,6 +7,7 @@
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../Core/LockPolicy.hpp"  // Phase 1.2: Fine-grained locking
+#include "../../Logging/LogConfig.hpp"  // For ASFW_LOG_V1 macro
 
 using ASFW::Driver::kContextControlRunBit;
 using ASFW::Driver::kContextControlWakeBit;
@@ -74,6 +75,11 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::Submit(DescriptorChain&& chai
         ASFW_LOG(Async, "[%{public}s] PATH 2 failed, falling back to PATH 1", RoleTag::kContextName.data());
     }
 
+    // V1: Compact AT transmit one-liner for packet flow visibility
+    const uint8_t totalBlocks = chain.TotalBlocks();
+    ASFW_LOG_V1(Async, "📤 AT/TX: txid=%u blocks=%u (%{public}s)",
+               txid, totalBlocks, canP2 ? "PATH2" : "PATH1");
+
     // PATH 1: First submission or re-arm
     // Lock held only during FSM state updates, NOT during hardware operations
     return SubmitPath1_(chain, txid, opts);
@@ -92,7 +98,8 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
     }
 
     // Hardware operations WITHOUT lock
-    const uint8_t z = ATSubmitPolicy::ComputeZ(chain.firstBlocks == 2);
+    // Z nibble must be total blocks per OHCI; use TotalBlocks() not firstBlocks
+    const uint8_t z = ATSubmitPolicy::ComputeZ(chain.TotalBlocks());
     PublishChain_(chain);
     this->IoWriteFence();
 
@@ -285,7 +292,9 @@ template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::UpdateRingTail_(const DescriptorChain& chain) {
     const size_t newTail = (chain.lastRingIndex + 1) % ring().Capacity();
     ring().SetTail(newTail);
-    ring().SetPrevLastBlocks(static_cast<uint8_t>(chain.TotalBlocks()));
+    // PrevLastBlocks is intended to track the block count of the LAST descriptor
+    // in the previous chain. Use lastBlocks (1 or 2), not total packet blocks.
+    ring().SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
 }
 
 template<typename ContextT, typename RingT, typename RoleTag>
@@ -311,8 +320,12 @@ void ATManager<ContextT, RingT, RoleTag>::PublishPrevLast_(const DescriptorChain
     
     if (ring().LocatePreviousLast(tailIndex, prevLast, prevLastIndex, blocks)) {
         prevIsImmediate = HW::IsImmediate(*prevLast);
+        // Use the actual number of blocks for the previous LAST descriptor
+        builder_.FlushTail(prevLastIndex, blocks);
+        return;
     }
-    
+
+    // Fallback: flush using cached prevBlocks (should not typically happen)
     builder_.FlushTail(prevLastIndex, static_cast<uint8_t>(prevBlocks));
 }
 

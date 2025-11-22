@@ -117,6 +117,39 @@ struct DriverStatus {
     var linkActive: Bool { (flags & SharedStatusFlags.linkActive) != 0 }
 }
 
+struct DriverVersionInfo {
+    let semanticVersion: String
+    let gitCommitShort: String
+    let gitCommitFull: String
+    let gitBranch: String
+    let buildTimestamp: String
+    let buildHost: String
+    let gitDirty: Bool
+    
+    init?(data: Data) {
+        // Expect at least 242 bytes (up to gitDirty)
+        guard data.count >= 242 else { return nil }
+        
+        func readString(offset: Int, length: Int) -> String {
+            let subdata = data.subdata(in: offset..<(offset + length))
+            return subdata.withUnsafeBytes { ptr in
+                if let base = ptr.baseAddress {
+                    return String(cString: base.bindMemory(to: CChar.self, capacity: length))
+                }
+                return ""
+            }
+        }
+        
+        self.semanticVersion = readString(offset: 0, length: 32)
+        self.gitCommitShort = readString(offset: 32, length: 8)
+        self.gitCommitFull = readString(offset: 40, length: 41)
+        self.gitBranch = readString(offset: 81, length: 64)
+        self.buildTimestamp = readString(offset: 145, length: 32)
+        self.buildHost = readString(offset: 177, length: 64)
+        self.gitDirty = data[241] != 0
+    }
+}
+
 final class ASFWDriverConnector: ObservableObject {
     // MARK: - Types
 
@@ -165,6 +198,11 @@ final class ASFWDriverConnector: ObservableObject {
         case triggerROMRead = 15
         case getDiscoveredDevices = 16
         case asyncCompareSwap = 17
+        case getDriverVersion = 18
+        case setAsyncVerbosity = 19
+        case setHexDumps = 20
+        case getLogConfig = 21
+        case getAVCUnits = 22
     }
 
     // MARK: - Published Properties
@@ -522,6 +560,104 @@ final class ASFWDriverConnector: ObservableObject {
             log("ping response: \(message)", level: .success)
         }
         return message
+    }
+
+    // MARK: - Logging Configuration
+
+    func setAsyncVerbosity(_ level: UInt32) -> Bool {
+        guard isConnected else {
+            log("setAsyncVerbosity: Not connected", level: .warning)
+            return false
+        }
+
+        var input: UInt64 = UInt64(level)
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.setAsyncVerbosity.rawValue,
+            &input,
+            1,
+            nil,
+            nil
+        )
+
+        guard kr == KERN_SUCCESS else {
+            log("setAsyncVerbosity failed: \(interpretIOReturn(kr))", level: .error)
+            return false
+        }
+
+        log("Async verbosity set to \(level)", level: .success)
+        return true
+    }
+
+    func setHexDumps(enabled: Bool) -> Bool {
+        guard isConnected else {
+            log("setHexDumps: Not connected", level: .warning)
+            return false
+        }
+
+        var input: UInt64 = enabled ? 1 : 0
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.setHexDumps.rawValue,
+            &input,
+            1,
+            nil,
+            nil
+        )
+
+        guard kr == KERN_SUCCESS else {
+            log("setHexDumps failed: \(interpretIOReturn(kr))", level: .error)
+            return false
+        }
+
+        log("Hex dumps \(enabled ? "enabled" : "disabled")", level: .success)
+        return true
+    }
+
+    func getLogConfig() -> (asyncVerbosity: UInt32, hexDumpsEnabled: Bool)? {
+        guard isConnected else {
+            log("getLogConfig: Not connected", level: .warning)
+            return nil
+        }
+
+        var output = [UInt64](repeating: 0, count: 2)
+        var outputCount: UInt32 = 2
+
+        let kr = IOConnectCallScalarMethod(
+            connection,
+            Method.getLogConfig.rawValue,
+            nil,
+            0,
+            &output,
+            &outputCount
+        )
+
+        guard kr == KERN_SUCCESS else {
+            log("getLogConfig failed: \(interpretIOReturn(kr))", level: .error)
+            return nil
+        }
+
+        return (UInt32(output[0]), output[1] != 0)
+    }
+    
+    func getDriverVersion() -> DriverVersionInfo? {
+        guard isConnected else {
+            log("getDriverVersion: Not connected", level: .warning)
+            return nil
+        }
+        
+        // DriverVersionInfo is 280 bytes
+        guard let data = callStruct(.getDriverVersion, initialCap: 280) else {
+            log("getDriverVersion: callStruct failed", level: .error)
+            return nil
+        }
+        
+        guard let info = DriverVersionInfo(data: data) else {
+            log("getDriverVersion: failed to decode data", level: .error)
+            return nil
+        }
+        
+        return info
     }
 
     // MARK: - Monitoring & Notifications
@@ -1237,6 +1373,91 @@ final class ASFWDriverConnector: ObservableObject {
         var swVersionHex: String { String(format: "0x%06X", swVersion) }
         var stateString: String { state.description }
     }
+
+    // MARK: - AV/C Protocol
+
+    struct AVCUnitInfo: Identifiable {
+        let id: UUID = UUID()
+        let guid: UInt64
+        let nodeID: UInt16
+        let isInitialized: Bool
+        let subunitCount: UInt8
+
+        var guidHex: String { String(format: "0x%016llX", guid) }
+        var nodeIDHex: String { String(format: "0x%04X", nodeID) }
+    }
+
+    func getAVCUnits() -> [AVCUnitInfo]? {
+        guard isConnected else {
+            log("getAVCUnits: Not connected", level: .warning)
+            return nil
+        }
+
+        // Use callStruct to get wire format data
+        guard let wireData = callStruct(.getAVCUnits, initialCap: 1024) else {
+            log("getAVCUnits: callStruct failed", level: .error)
+            return nil
+        }
+
+        guard !wireData.isEmpty else {
+            log("getAVCUnits: no data returned", level: .warning)
+            return []
+        }
+
+        print("[Connector] 📦 Received \(wireData.count) bytes of AV/C wire format data")
+
+        // Parse wire format
+        return parseAVCUnitsWire(wireData)
+    }
+
+    /// Parse AV/C units wire format data from driver
+    private func parseAVCUnitsWire(_ data: Data) -> [AVCUnitInfo]? {
+        guard data.count >= 8 else {
+            log("parseAVCUnitsWire: data too small (\(data.count) bytes)", level: .error)
+            return nil
+        }
+
+        // Read header (8 bytes: unitCount + padding)
+        let unitCount = data.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self).littleEndian }
+        print("[Connector] 🔍 Parsing \(unitCount) AV/C units")
+
+        guard unitCount <= 64 else {
+            log("parseAVCUnitsWire: unreasonable unit count \(unitCount)", level: .error)
+            return nil
+        }
+
+        let expectedSize = 8 + (Int(unitCount) * 16)  // header (8) + units (16 each)
+        guard data.count >= expectedSize else {
+            log("parseAVCUnitsWire: data too small for \(unitCount) units (have \(data.count), need \(expectedSize))", level: .error)
+            return nil
+        }
+
+        var units: [AVCUnitInfo] = []
+        var offset = 8  // Skip header
+
+        for _ in 0..<unitCount {
+            guard offset + 16 <= data.count else { break }
+
+            let guid = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt64.self).littleEndian }
+            let nodeID = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 8, as: UInt16.self).littleEndian }
+            let isInitialized = data[offset + 10] != 0
+            let subunitCount = data[offset + 11]
+
+            units.append(AVCUnitInfo(
+                guid: guid,
+                nodeID: nodeID,
+                isInitialized: isInitialized,
+                subunitCount: subunitCount
+            ))
+
+            offset += 16
+        }
+
+        print("[Connector] ✅ Parsed \(units.count) AV/C units successfully")
+        return units
+    }
+
+    // MARK: - Device Discovery
 
     func getDiscoveredDevices() -> [FWDeviceInfo]? {
         guard isConnected else {

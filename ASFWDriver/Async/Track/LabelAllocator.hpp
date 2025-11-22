@@ -18,6 +18,7 @@ public:
     void Reset();
     uint8_t Allocate();
     void Free(uint8_t label);
+    void ClearBitmap();  // Clear all allocation bits but keep generation as-is
 
     /**
      * \brief Get next label using simple counter rotation (0-63).
@@ -62,4 +63,3 @@ private:
 };
 
 } // namespace ASFW::Async
-

@@ -5,6 +5,7 @@
 #include "../../Hardware/IEEE1394.hpp"
 #include "../../Debug/BusResetPacketCapture.hpp"
 #include "../../Phy/PhyPackets.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <cstring>
@@ -63,15 +64,15 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             // CRITICAL: AR DMA stream semantics - startOffset indicates where NEW packets begin
             const std::size_t startOffset = info.startOffset;
 
-            ASFW_LOG_BUS_RESET_PACKET("RxPath AR Request Buffer #%u: vaddr=%p startOffset=%zu size=%zu index=%zu",
-                                      buffersProcessed,
-                                      info.virtualAddress,
-                                      startOffset,
-                                      info.bytesFilled,
-                                      info.descriptorIndex);
+            ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u: vaddr=%p startOffset=%zu size=%zu index=%zu",
+                         buffersProcessed,
+                         info.virtualAddress,
+                         startOffset,
+                         info.bytesFilled,
+                         info.descriptorIndex);
 
             if (!info.virtualAddress) {
-                ASFW_LOG_BUS_RESET_PACKET("RxPath AR Request Buffer #%u: NULL virtual address, recycling", buffersProcessed);
+                ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u: NULL virtual address, recycling", buffersProcessed);
                 recycle(info.descriptorIndex);
                 continue;
             }
@@ -85,33 +86,32 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
                 continue;
             }
 
-#if ASFW_DEBUG_BUS_RESET_PACKET
+            // V4/HEX: AR Request buffer hex dump (runtime controlled)
             if (bufferSize >= 32) {
-                ASFW_LOG_BUS_RESET_PACKET("RxPath AR Request Buffer #%u first 128 bytes (showing 32-byte chunks):", buffersProcessed);
+                ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u first 128 bytes (showing 32-byte chunks):", buffersProcessed);
                 const size_t dumpSize = (bufferSize < 128) ? bufferSize : 128;
                 for (size_t i = 0; i < dumpSize; i += 32) {
                     const size_t chunkSize = ((i + 32) <= dumpSize) ? 32 : (dumpSize - i);
                     const uint8_t* chunk = bufferStart + i;
 
                     if (chunkSize >= 16) {
-                        ASFW_LOG_BUS_RESET_PACKET("  [%04zx] %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-                               i,
-                               chunk[0], chunk[1], chunk[2], chunk[3],
-                               chunk[4], chunk[5], chunk[6], chunk[7],
-                               chunk[8], chunk[9], chunk[10], chunk[11],
-                               chunk[12], chunk[13], chunk[14], chunk[15]);
+                        ASFW_LOG_HEX(Async, "  [%04zx] %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                                     i,
+                                     chunk[0], chunk[1], chunk[2], chunk[3],
+                                     chunk[4], chunk[5], chunk[6], chunk[7],
+                                     chunk[8], chunk[9], chunk[10], chunk[11],
+                                     chunk[12], chunk[13], chunk[14], chunk[15]);
                         if (chunkSize == 32) {
-                            ASFW_LOG_BUS_RESET_PACKET("  [%04zx] %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-                                   i + 16,
-                                   chunk[16], chunk[17], chunk[18], chunk[19],
-                                   chunk[20], chunk[21], chunk[22], chunk[23],
-                                   chunk[24], chunk[25], chunk[26], chunk[27],
-                                   chunk[28], chunk[29], chunk[30], chunk[31]);
+                            ASFW_LOG_HEX(Async, "  [%04zx] %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                                         i + 16,
+                                         chunk[16], chunk[17], chunk[18], chunk[19],
+                                         chunk[20], chunk[21], chunk[22], chunk[23],
+                                         chunk[24], chunk[25], chunk[26], chunk[27],
+                                         chunk[28], chunk[29], chunk[30], chunk[31]);
                         }
                     }
                 }
             }
-#endif
 
             // Per OHCI §8.4.2: Buffer may contain MULTIPLE packets
             // Parse buffer as stream, extracting packets one-by-one
@@ -125,14 +125,12 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
                 auto packetInfo = ARPacketParser::ParseNext(std::span<const uint8_t>(bufferStart, bufferSize), offset);
 
                 if (!packetInfo.has_value()) {
-#if ASFW_DEBUG_BUS_RESET_PACKET
                     if (offset < bufferSize) {
                         const size_t remaining = bufferSize - offset;
-                        ASFW_LOG_BUS_RESET_PACKET(
-                            "RxPath AR buffer exhausted: %zu bytes remaining (incomplete packet or padding)",
-                            remaining);
+                        ASFW_LOG_HEX(Async,
+                                     "RxPath AR buffer exhausted: %zu bytes remaining (incomplete packet or padding)",
+                                     remaining);
                     }
-#endif
                     break;
                 }
 
@@ -145,8 +143,8 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
                 offset += packetInfo->totalLength;
             }
 
-            ASFW_LOG_BUS_RESET_PACKET("RxPath AR Request Buffer #%u: Extracted %u NEW packets from offset %zu→%zu (total %zu bytes)",
-                                      buffersProcessed, packetsFound, startOffset, offset, bufferSize);
+            ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u: Extracted %u NEW packets from offset %zu→%zu (total %zu bytes)",
+                         buffersProcessed, packetsFound, startOffset, offset, bufferSize);
 
             // CRITICAL: Do NOT recycle AR Request buffers prematurely!
             // Same stream semantics as AR Response - let hardware fill buffer completely.
@@ -175,30 +173,30 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
                 const uint16_t resCount = HW::AR_resCount(desc);
                 const uint16_t reqCount = static_cast<uint16_t>(desc.control & 0xFFFF);
                 const uint16_t xferStatus = HW::AR_xferStatus(desc);
-                ASFW_LOG(Async, "🔍 AR/RSP interrupt: Descriptor[0] BEFORE cache invalidation:");
-                ASFW_LOG(Async, "    statusWord=0x%08X control=0x%08X",
-                    desc.statusWord, desc.control);
-                ASFW_LOG(Async, "    resCount=%u reqCount=%u xferStatus=0x%04X %{public}s",
-                    resCount, reqCount, xferStatus,
-                    (resCount == reqCount) ? "(EMPTY)" : "(FILLED)");
+                ASFW_LOG_HEX(Async, "🔍 AR/RSP interrupt: Descriptor[0] BEFORE cache invalidation:");
+                ASFW_LOG_HEX(Async, "    statusWord=0x%08X control=0x%08X",
+                             desc.statusWord, desc.control);
+                ASFW_LOG_HEX(Async, "    resCount=%u reqCount=%u xferStatus=0x%04X %{public}s",
+                             resCount, reqCount, xferStatus,
+                             (resCount == reqCount) ? "(EMPTY)" : "(FILLED)");
             }
 
             void* firstBuffer = bufferRing.GetBufferAddress(0);
             if (firstBuffer) {
                 const uint8_t* bytes = static_cast<const uint8_t*>(firstBuffer);
-                ASFW_LOG(Async, "🔍 AR/RSP interrupt: Buffer[0] first 64 bytes (RAW, before dequeue):");
-                ASFW_LOG(Async, "  [00] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                    bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
-                ASFW_LOG(Async, "  [16] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
-                    bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31]);
-                ASFW_LOG(Async, "  [32] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38], bytes[39],
-                    bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47]);
-                ASFW_LOG(Async, "  [48] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
-                    bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63]);
+                ASFW_LOG_HEX(Async, "🔍 AR/RSP interrupt: Buffer[0] first 64 bytes (RAW, before dequeue):");
+                ASFW_LOG_HEX(Async, "  [00] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
+                ASFW_LOG_HEX(Async, "  [16] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+                             bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31]);
+                ASFW_LOG_HEX(Async, "  [32] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38], bytes[39],
+                             bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47]);
+                ASFW_LOG_HEX(Async, "  [48] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
+                             bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63]);
             }
         }
 
@@ -243,8 +241,7 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             const uint8_t* newDataStart = bufferStart + startOffset;
             const std::size_t newDataSize = bufferSize - startOffset;
 
-#if 1
-            // Hexdump AR Response NEW packet data for diagnostics
+            // V4/HEX: Hexdump AR Response NEW packet data for diagnostics (runtime controlled)
             // CRITICAL: OHCI AR DMA stores each quadlet in little-endian format
             if (newDataSize >= 16) {
                 uint32_t q0, q1;
@@ -260,19 +257,18 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
                 const uint8_t tLabel_dbg = static_cast<uint8_t>((q0 >> 10) & 0x3F);
                 const uint8_t rCode_dbg  = static_cast<uint8_t>((q1 >> 12) & 0xF);
 
-                ASFW_LOG(Async, "AR/RSP NEW data at offset %zu (total=%zu):"
-                                " %02X %02X %02X %02X  %02X %02X %02X %02X"
-                                " %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    startOffset, bufferSize,
-                    newDataStart[0], newDataStart[1], newDataStart[2], newDataStart[3],
-                    newDataStart[4], newDataStart[5], newDataStart[6], newDataStart[7],
-                    newDataStart[8], newDataStart[9], newDataStart[10], newDataStart[11],
-                    newDataStart[12], newDataStart[13], newDataStart[14], newDataStart[15]);
+                ASFW_LOG_HEX(Async, "AR/RSP NEW data at offset %zu (total=%zu):"
+                                    " %02X %02X %02X %02X  %02X %02X %02X %02X"
+                                    " %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             startOffset, bufferSize,
+                             newDataStart[0], newDataStart[1], newDataStart[2], newDataStart[3],
+                             newDataStart[4], newDataStart[5], newDataStart[6], newDataStart[7],
+                             newDataStart[8], newDataStart[9], newDataStart[10], newDataStart[11],
+                             newDataStart[12], newDataStart[13], newDataStart[14], newDataStart[15]);
 
-                ASFW_LOG(Async, "AR/RSP NEW q0=0x%08X q1=0x%08X  → tCode=0x%X, tLabel=%u, rCode=0x%X",
-                    q0, q1, tCode_dbg, tLabel_dbg, rCode_dbg);
+                ASFW_LOG_HEX(Async, "AR/RSP NEW q0=0x%08X q1=0x%08X  → tCode=0x%X, tLabel=%u, rCode=0x%X",
+                             q0, q1, tCode_dbg, tLabel_dbg, rCode_dbg);
             }
-#endif
 
             // Per OHCI §8.4.2: Buffer may contain MULTIPLE packets
             // Parse ONLY the NEW packets from [startOffset, bytesFilled)
@@ -334,21 +330,21 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             if (firstBuffer) {
                 // Dump first 64 bytes for diagnostics
                 const uint8_t* bytes = static_cast<const uint8_t*>(firstBuffer);
-                ASFW_LOG(Async, "AR Response Buffer[0] first 64 bytes:");
-                ASFW_LOG(Async, "  [00] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                    bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
-                ASFW_LOG(Async, "  [16] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
-                    bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31]);
-                ASFW_LOG(Async, "  [32] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38], bytes[39],
-                    bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47]);
-                ASFW_LOG(Async, "  [48] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                    bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
-                    bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63]);
+                ASFW_LOG_HEX(Async, "AR Response Buffer[0] first 64 bytes:");
+                ASFW_LOG_HEX(Async, "  [00] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
+                ASFW_LOG_HEX(Async, "  [16] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+                             bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31]);
+                ASFW_LOG_HEX(Async, "  [32] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[32], bytes[33], bytes[34], bytes[35], bytes[36], bytes[37], bytes[38], bytes[39],
+                             bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47]);
+                ASFW_LOG_HEX(Async, "  [48] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                             bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
+                             bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63]);
             } else {
-                ASFW_LOG(Async, "⚠️  AR Response: Cannot get buffer address for dump");
+                ASFW_LOG_HEX(Async, "⚠️  AR Response: Cannot get buffer address for dump");
             }
         }
     } else {
@@ -461,7 +457,7 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     const auto busState = generationTracker_.GetCurrentState();
     const uint16_t currentGen = busState.generation16;
 
-    ASFW_LOG(Async, "🔍 RxPath AR response: tCode=0x%X rCode=0x%X tLabel=%u generation=%u srcID=0x%04X dstID=0x%04X - attempting match",
+    ASFW_LOG_V3(Async, "🔍 RxPath AR response: tCode=0x%X rCode=0x%X tLabel=%u generation=%u srcID=0x%04X dstID=0x%04X - attempting match",
              tCode, rCode, tLabel, currentGen, sourceID, destinationID);
 
     // Create RxResponse struct using PacketInfo fields directly
@@ -486,6 +482,10 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     }
 
     rxResponse.payload = std::span<const uint8_t>(payloadPtr, payloadLen);
+
+    // V1: Compact AR response one-liner for packet flow visibility
+    ASFW_LOG_V1(Async, "📥 AR/RSP: tCode=0x%X rCode=0x%X tLabel=%u src=0x%04X→dst=0x%04X payload=%zu bytes",
+               tCode, rCode, tLabel, sourceID, destinationID, payloadLen);
 
     // Delegate to Tracking actor
     tracking_.OnRxResponse(rxResponse);
@@ -515,11 +515,11 @@ void RxPath::HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t new
 
     const uint8_t genFromPacket = static_cast<uint8_t>((q1 >> 16) & 0xFF);
 
-    ASFW_LOG_BUS_RESET_PACKET("RxPath Bus-Reset packet parsing:");
-    ASFW_LOG_BUS_RESET_PACKET("  q0 (host): 0x%08X wireByte0=0x%02X", q0, wireByte0);
-    ASFW_LOG_BUS_RESET_PACKET("  q1 (host): 0x%08X", q1);
-    ASFW_LOG_BUS_RESET_PACKET("  tCode: 0x%X (should be 0xE)", tCode);
-    ASFW_LOG_BUS_RESET_PACKET("  generation from packet: %u (arg: %u)", genFromPacket, newGeneration);
+    ASFW_LOG_HEX(Async, "RxPath Bus-Reset packet parsing:");
+    ASFW_LOG_HEX(Async, "  q0 (host): 0x%08X wireByte0=0x%02X", q0, wireByte0);
+    ASFW_LOG_HEX(Async, "  q1 (host): 0x%08X", q1);
+    ASFW_LOG_HEX(Async, "  tCode: 0x%X (should be 0xE)", tCode);
+    ASFW_LOG_HEX(Async, "  generation from packet: %u (arg: %u)", genFromPacket, newGeneration);
 
     ASFW_LOG(Async, "RxPath: Synthetic bus reset packet: tCode=0x%X gen=%u (controller=%u)",
              tCode, genFromPacket, newGeneration);

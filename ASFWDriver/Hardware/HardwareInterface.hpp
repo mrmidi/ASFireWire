@@ -76,9 +76,15 @@ public:
         void IntMaskSet(uint32_t bits);
 
         void IntMaskClear(uint32_t bits);
-        
+
         // PHY Register 4 access (Contender bit)
         void SetContender(bool enable);
+
+        // Initialize PHY Register 4 cache (call after hardware init)
+        void InitializePhyReg4Cache();
+
+        // PHY Register 1 access (Root Hold-Off bit)
+        void SetRootHoldOff(bool enable);
 
     // PHY register access (per OHCI §5.12)
     [[nodiscard]] std::optional<uint8_t> ReadPhyRegister(uint8_t address);
@@ -166,7 +172,11 @@ public:
         // Per Linux phy_reg_mutex (ohci.c): serialize all PHY register access via PhyControl
         // OHCI §5.12: Only one PHY transaction can be outstanding at a time
         IOLock* phyLock_{nullptr};
-        
+
+        // PHY Register 4 cache (matches Apple's implementation at AppleFWOHCI+2633)
+        // Used by SetContender() for cached write operations
+        uint8_t phyReg4Cache_{0};
+
         // Hardware quirk detection: Agere/LSI FW643E reports invalid eventCode 0x10
         bool quirk_agere_lsi_{false};
         

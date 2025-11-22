@@ -110,6 +110,9 @@ public:
     Discovery::IDeviceManager* GetDeviceManager() const;
     Discovery::IUnitRegistry* GetUnitRegistry() const;
 
+    // AV/C Protocol accessors
+    Protocols::AVC::AVCDiscovery* GetAVCDiscovery() const;
+
 private:
     kern_return_t PerformSoftReset();
     kern_return_t InitialiseHardware(IOService* provider);

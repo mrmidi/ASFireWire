@@ -10,6 +10,7 @@
 #include "../../Shared/Memory/PayloadHandle.hpp"  // Required for UniquePayload<PayloadHandle> instantiation
 #include "CompletionStrategy.hpp"  // Explicit two-path completion model
 #include "../../Logging/Logging.hpp"  // For ASFW_LOG
+#include "../../Logging/LogConfig.hpp"  // For V0-V4 macros
 
 namespace ASFW::Async {
 
@@ -237,22 +238,22 @@ public:
     // Response handling (concept-validated callback)
     template<typename F>
     void SetResponseHandler(F&& handler) noexcept {
-        ASFW_LOG(Async, "🔍 [SetResponseHandler] tLabel=%u this=%p BEFORE: responseHandler_=%d",
-                 label_.value, this, responseHandler_ ? 1 : 0);
+        ASFW_LOG_V3(Async, "🔍 [SetResponseHandler] tLabel=%u this=%p BEFORE: responseHandler_=%d",
+                    label_.value, this, responseHandler_ ? 1 : 0);
         responseHandler_ = std::forward<F>(handler);
-        ASFW_LOG(Async, "🔍 [SetResponseHandler] tLabel=%u this=%p AFTER: responseHandler_=%d",
-                 label_.value, this, responseHandler_ ? 1 : 0);
+        ASFW_LOG_V3(Async, "🔍 [SetResponseHandler] tLabel=%u this=%p AFTER: responseHandler_=%d",
+                    label_.value, this, responseHandler_ ? 1 : 0);
     }
 
     void InvokeResponseHandler(kern_return_t kr, std::span<const uint8_t> data) noexcept {
-        ASFW_LOG(Async, "🔍 [InvokeResponseHandler] tLabel=%u this=%p responseHandler_valid=%d kr=0x%x dataLen=%zu",
-                 label_.value, this, responseHandler_ ? 1 : 0, kr, data.size());
+        ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] tLabel=%u this=%p responseHandler_valid=%d kr=0x%x dataLen=%zu",
+                    label_.value, this, responseHandler_ ? 1 : 0, kr, data.size());
         if (responseHandler_) {
-            ASFW_LOG(Async, "🔍 [InvokeResponseHandler] Invoking responseHandler_ for tLabel=%u", label_.value);
+            ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] Invoking responseHandler_ for tLabel=%u", label_.value);
             responseHandler_(kr, data);
-            ASFW_LOG(Async, "🔍 [InvokeResponseHandler] responseHandler_ returned for tLabel=%u", label_.value);
+            ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] responseHandler_ returned for tLabel=%u", label_.value);
         } else {
-            ASFW_LOG(Async, "⚠️ [InvokeResponseHandler] responseHandler_ is NULL for tLabel=%u!", label_.value);
+            ASFW_LOG_V0(Async, "⚠️ [InvokeResponseHandler] responseHandler_ is NULL for tLabel=%u!", label_.value);
         }
     }
 

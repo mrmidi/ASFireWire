@@ -62,10 +62,9 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     uint64_t guid = GetUnitGUID(unit);
 
     ASFW_LOG(Async,
-             "⚠️  AV/C DETECTED: GUID=%llx, specID=0x%06x - SCAN DEFERRED",
+             "✅ AV/C DETECTED: GUID=%llx, specID=0x%06x - SCANNING...",
              guid, unit->GetUnitSpecID());
 
-    /*
     // Get parent device
     auto device = unit->GetDevice();
     if (!device) {
@@ -101,7 +100,6 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
 
     // Rebuild node ID map (unit now has transport)
     RebuildNodeIDMap();
-    */
 }
 
 void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {

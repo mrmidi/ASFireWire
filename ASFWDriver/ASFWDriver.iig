@@ -55,6 +55,12 @@ public:
     kern_return_t CopySharedStatusMemory(uint64_t* options,
                                          IOMemoryDescriptor** memory) LOCALONLY;
 
+    // Runtime logging configuration
+    kern_return_t SetAsyncVerbosity(uint32_t level) LOCALONLY;
+    kern_return_t SetHexDumps(uint32_t enabled) LOCALONLY;
+    kern_return_t GetLogConfig(uint32_t* asyncVerbosity,
+                              uint32_t* hexDumpsEnabled) LOCALONLY;
+
 };
 
 struct ASFWDriver_IVars {

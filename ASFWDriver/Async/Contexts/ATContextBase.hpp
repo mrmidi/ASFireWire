@@ -16,6 +16,8 @@
 #include "../../Shared/Memory/DMAMemoryManager.hpp"
 #include "../Track/TxCompletion.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
+#include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Async {
 
@@ -541,7 +543,8 @@ kern_return_t ATContextBase<Derived, Tag>::SubmitChain(
 
     // Step 3: Two-path execution model (per Apple's implementation @ DECOMPILATION.md)
     const bool ringEmpty = (headIndex == tailIndex);
-    const uint32_t commandPtr = HW::MakeBranchWordAT(chain.firstIOVA32, chain.firstBlocks);
+    // Use TotalBlocks as the Z nibble per OHCI; chain.firstBlocks alone is incorrect for header+payload chains
+    const uint32_t commandPtr = HW::MakeBranchWordAT(chain.firstIOVA32, chain.TotalBlocks());
     if (commandPtr == 0) {
         ASFW_LOG(Async, "  ❌ SubmitChain FAILED: invalid CommandPtr encoding (iova=0x%08x blocks=%u)",
                  chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
@@ -581,7 +584,8 @@ kern_return_t ATContextBase<Derived, Tag>::SubmitChain(
         }
         const size_t newTail = (chain.lastRingIndex + 1) % capacity;
         ring_->SetTail(newTail);
-        ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.TotalBlocks()));
+        // PrevLastBlocks should record the number of blocks in the LAST descriptor (1 or 2)
+        ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
         if (submitLock_) {
             IOLockUnlock(submitLock_);
         }
@@ -635,7 +639,7 @@ kern_return_t ATContextBase<Derived, Tag>::SubmitChain(
         // Step 4: Update tail index under lock
         const size_t newTail = (chain.lastRingIndex + 1) % capacity;
         ring_->SetTail(newTail);
-        ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.TotalBlocks()));
+        ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
 
         if (submitLock_) {
             IOLockUnlock(submitLock_);
@@ -810,10 +814,10 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
             continue;
         }
 
-        ASFW_LOG(Async,
+        ASFW_LOG_V3(Async,
                  "🔍 ScanCompletion: head=%zu tail=%zu desc=%p",
                  headIndex, tailIndex, desc);
-        ASFW_LOG(Async,
+        ASFW_LOG_V3(Async,
                  "  xferStatus=0x%04x → ackCount=%u eventCode=0x%02x (%{public}s)",
                  xferStatus, ackCount, eventCodeRaw, ToString(eventCode));
 
@@ -830,11 +834,11 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
                      ToString(eventCode));
         } else if (ackCount == 3 && (eventCodeRaw == 0x1B || eventCodeRaw == 0x14 ||
                                      eventCodeRaw == 0x15 || eventCodeRaw == 0x16)) {
-            ASFW_LOG(Async,
+            ASFW_LOG_V3(Async,
                      "  ✓ ackCount=3: Hardware exhausted retries for %{public}s (expected)",
                      ToString(eventCode));
         } else if (ackCount > 0) {
-            ASFW_LOG(Async, "  ℹ️  Transmission attempts: %u", ackCount + 1);
+            ASFW_LOG_V3(Async, "  ℹ️  Transmission attempts: %u", ackCount + 1);
         }
 
         const uint16_t timeStamp = HW::AT_timeStamp(*desc);
@@ -887,7 +891,7 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
 
             if (quiesceResult == kIOReturnSuccess) {
                 contextRunning_ = false;
-                ASFW_LOG(Async,
+                ASFW_LOG_V3(Async,
                          "  ✅ ScanCompletion: Ring empty (head=%zu tail=%zu), context quiesced",
                          newHead, ring_->Tail());
             } else {
@@ -897,7 +901,7 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
                 // Keep contextRunning_=true to force re-arm on next submit
             }
         } else {
-            ASFW_LOG(Async,
+            ASFW_LOG_V3(Async,
                      "  🔧 ScanCompletion: Ring has data (head=%zu tail=%zu), context continues",
                      newHead, ring_->Tail());
         }

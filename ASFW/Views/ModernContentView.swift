@@ -14,6 +14,7 @@ struct ModernContentView: View {
     @StateObject private var topologyVM: TopologyViewModel
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @State private var selectedSection: SidebarSection? = .overview
+    @State private var loggingPreset: LoggingPreset = .standard
 
     init() {
         let driverViewModel = DriverViewModel()
@@ -31,6 +32,8 @@ struct ModernContentView: View {
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
         case devices = "Device Discovery"
+        case avcUnits = "AV/C Units"
+        case avcCommands = "AV/C Commands"
         case ping = "Ping"
         case controller = "Controller Status"
         case async = "Async Commands"
@@ -38,6 +41,7 @@ struct ModernContentView: View {
         case romExplorer = "ROM Explorer"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
+        case loggingSettings = "Logging Settings"
 
         var id: String { rawValue }
 
@@ -45,6 +49,8 @@ struct ModernContentView: View {
             switch self {
             case .overview: return "info.circle"
             case .devices: return "externaldrive.connected.to.line.below"
+            case .avcUnits: return "music.note"
+            case .avcCommands: return "command"
             case .ping: return "waveform.path"
             case .controller: return "cpu"
             case .async: return "bolt.horizontal.circle"
@@ -52,6 +58,7 @@ struct ModernContentView: View {
             case .romExplorer: return "memorychip"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
+            case .loggingSettings: return "slider.horizontal.3"
             }
         }
 
@@ -76,6 +83,10 @@ struct ModernContentView: View {
                     OverviewView(viewModel: driverVM)
                 case .devices:
                     DeviceDiscoveryView(viewModel: debugVM)
+                case .avcUnits:
+                    AVCDebugView(viewModel: debugVM)
+                case .avcCommands:
+                    AVCCommandView(viewModel: debugVM)
                 case .ping:
                     PingView(viewModel: debugVM)
                 case .controller:
@@ -90,6 +101,8 @@ struct ModernContentView: View {
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:
                     SystemLogsView(viewModel: driverVM)
+                case .loggingSettings:
+                    LoggingSettingsView(connector: debugVM.connector)
                 case .none:
                     Text("Select a section")
                         .foregroundStyle(.secondary)
@@ -120,6 +133,19 @@ struct ModernContentView: View {
                         .tint(.red)
                         .keyboardShortcut("u", modifiers: .command)
                     }
+                    }
+                
+                ToolbarItem(placement: .automatic) {
+                    Picker("Logging", selection: $loggingPreset) {
+                        ForEach(LoggingPreset.allCases) { preset in
+                            Text(preset.rawValue).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                    .onChange(of: loggingPreset) { newValue in
+                        applyLoggingPreset(newValue)
+                    }
                 }
             }
         }
@@ -128,6 +154,7 @@ struct ModernContentView: View {
             debugVM.connect()
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
+            loadLoggingPreset()
         }
         .onDisappear {
             debugVM.disconnect()
@@ -136,6 +163,49 @@ struct ModernContentView: View {
         .onChange(of: topologyVM.topology?.generation) {
             // Update available nodes when topology generation changes
             romExplorerVM.refreshAvailableNodes()
+        }
+    }
+    
+    enum LoggingPreset: String, CaseIterable, Identifiable {
+        case standard = "Standard"
+        case debug = "Debug"
+        var id: String { rawValue }
+    }
+    
+    private func applyLoggingPreset(_ preset: LoggingPreset) {
+        let connector = debugVM.connector
+        guard connector.isConnected else { return }
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            switch preset {
+            case .standard:
+                _ = connector.setAsyncVerbosity(1)
+                _ = connector.setHexDumps(enabled: false)
+            case .debug:
+                _ = connector.setAsyncVerbosity(4)
+                _ = connector.setHexDumps(enabled: true)
+            }
+        }
+    }
+    
+    private func loadLoggingPreset() {
+        let connector = debugVM.connector
+        // We can try to load even if not fully connected yet, but it might fail.
+        // The connector handles isConnected check internally for methods usually, 
+        // but getLogConfig checks isConnected.
+        // We'll retry a bit later if needed or just rely on user interaction.
+        // For now, just try.
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let config = connector.getLogConfig() {
+                DispatchQueue.main.async {
+                    if config.asyncVerbosity >= 4 && config.hexDumpsEnabled {
+                        self.loggingPreset = .debug
+                    } else {
+                        self.loggingPreset = .standard
+                    }
+                }
+            }
         }
     }
 }

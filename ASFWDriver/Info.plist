@@ -19,6 +19,16 @@
 			</dict>
 			<key>ASFWTraceDMACoherency</key>
 			<false/>
+			<key>ASFWAsyncVerbosity</key>
+			<integer>4</integer>
+			<key>ASFWControllerVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWHardwareVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWEnableHexDumps</key>
+			<true/>
+			<key>ASFWLogStatistics</key>
+			<true/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>

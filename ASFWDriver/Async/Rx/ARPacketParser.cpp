@@ -1,6 +1,7 @@
 #include "ARPacketParser.hpp"
 #include "../../Hardware/IEEE1394.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include <libkern/OSByteOrder.h> // OSSwapLittleToHostInt32 for host tests
@@ -34,21 +35,22 @@ std::optional<ARPacketParser::PacketInfo> ARPacketParser::ParseNext(
     const uint8_t* packetStart = buffer.data() + offset;
 
     // HEX DUMP: Complete AR packet as received (first 32 bytes or less)
+    // V4/HEX: Only show raw dumps in debug mode or when explicitly enabled
     const size_t dumpSize = (bufferSize - offset > 32) ? 32 : (bufferSize - offset);
-    ASFW_LOG(Async, "🔍 AR RX PACKET (offset=%zu size=%zu):", offset, dumpSize);
+    ASFW_LOG_HEX(Async, "🔍 AR RX PACKET (offset=%zu size=%zu):", offset, dumpSize);
     for (size_t i = 0; i < dumpSize; i += 16) {
         const size_t chunkSize = (i + 16 <= dumpSize) ? 16 : (dumpSize - i);
         const uint8_t* bytes = packetStart + i;
-        ASFW_LOG(Async, "  [%02zu] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
-                 i,
-                 chunkSize > 0 ? bytes[0] : 0, chunkSize > 1 ? bytes[1] : 0,
-                 chunkSize > 2 ? bytes[2] : 0, chunkSize > 3 ? bytes[3] : 0,
-                 chunkSize > 4 ? bytes[4] : 0, chunkSize > 5 ? bytes[5] : 0,
-                 chunkSize > 6 ? bytes[6] : 0, chunkSize > 7 ? bytes[7] : 0,
-                 chunkSize > 8 ? bytes[8] : 0, chunkSize > 9 ? bytes[9] : 0,
-                 chunkSize > 10 ? bytes[10] : 0, chunkSize > 11 ? bytes[11] : 0,
-                 chunkSize > 12 ? bytes[12] : 0, chunkSize > 13 ? bytes[13] : 0,
-                 chunkSize > 14 ? bytes[14] : 0, chunkSize > 15 ? bytes[15] : 0);
+        ASFW_LOG_HEX(Async, "  [%02zu] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+                     i,
+                     chunkSize > 0 ? bytes[0] : 0, chunkSize > 1 ? bytes[1] : 0,
+                     chunkSize > 2 ? bytes[2] : 0, chunkSize > 3 ? bytes[3] : 0,
+                     chunkSize > 4 ? bytes[4] : 0, chunkSize > 5 ? bytes[5] : 0,
+                     chunkSize > 6 ? bytes[6] : 0, chunkSize > 7 ? bytes[7] : 0,
+                     chunkSize > 8 ? bytes[8] : 0, chunkSize > 9 ? bytes[9] : 0,
+                     chunkSize > 10 ? bytes[10] : 0, chunkSize > 11 ? bytes[11] : 0,
+                     chunkSize > 12 ? bytes[12] : 0, chunkSize > 13 ? bytes[13] : 0,
+                     chunkSize > 14 ? bytes[14] : 0, chunkSize > 15 ? bytes[15] : 0);
     }
 
     // AR DMA stores each quadlet in little-endian format in memory
@@ -62,11 +64,12 @@ std::optional<ARPacketParser::PacketInfo> ARPacketParser::ParseNext(
     // Per-byte view: header[0]=(tcode<<4)|pri, header[1] has tLabel bits[7:2]
     const uint8_t tCode = static_cast<uint8_t>((q0 >> 4) & 0xF);
 
-    ASFW_LOG(Async, "🔍 AR DECODED: q0=0x%08X q1=0x%08X tCode=0x%X", q0, q1, tCode);
+    // V3: Show decoded values (more useful than raw hex for normal debugging)
+    ASFW_LOG_V3(Async, "🔍 AR DECODED: q0=0x%08X q1=0x%08X tCode=0x%X", q0, q1, tCode);
 
     const size_t headerLength = GetHeaderLength(tCode);
     if (headerLength == 0) {
-        ASFW_LOG(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu, dropping buffer", tCode, offset);
+        ASFW_LOG_V0(Async, "❌ ARPacketParser::ParseNext: Unknown tCode=0x%X at offset %zu, dropping buffer", tCode, offset);
         return std::nullopt;
     }
 
@@ -196,11 +199,11 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
             break;
 
         default:
-            ASFW_LOG(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
+            ASFW_LOG_V0(Async, "❌ GetHeaderLength: Unknown tCode=0x%X", tCode);
             return 0;   // Unknown tCode
     }
 
-    ASFW_LOG(Async, "GetHeaderLength(tCode=0x%X) → %zu bytes", tCode, length);
+    ASFW_LOG_V3(Async, "GetHeaderLength(tCode=0x%X) → %zu bytes", tCode, length);
     return length;
 }
 
@@ -224,7 +227,7 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             // Linux: p.header_length=12, p.payload_length=0
             // All PHY-specific data is considered part of the header
             dataLen = 0;  // No separate data payload!
-            ASFW_LOG(Async, "GetDataLength: PHY packet → 0 bytes data (all in 12-byte header)");
+            ASFW_LOG_V3(Async, "GetDataLength: PHY packet → 0 bytes data (all in 12-byte header)");
             break;
 
         case kTCodeWriteBlock:             // 0x1 TCODE_WRITE_BLOCK_REQUEST
@@ -235,7 +238,7 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             // Extract data_length from quadlet 3, bits[31:16]
             // Header quadlet 3 is at offset 12 (bytes 12-15)
             if (header.size() < 16) {
-                ASFW_LOG(Async, "❌ GetDataLength: Header too small (%zu bytes) for block tCode=0x%X",
+                ASFW_LOG_V0(Async, "❌ GetDataLength: Header too small (%zu bytes) for block tCode=0x%X",
                          header.size(), tCode);
                 return 0;
             }
@@ -246,7 +249,7 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             const uint16_t length = static_cast<uint16_t>((q3 >> 16) & 0xFFFF);
             dataLen = length;
 
-            ASFW_LOG(Async, "GetDataLength: Block tCode=0x%X q3=0x%08X (LE) → data_length=%u bytes",
+            ASFW_LOG_V3(Async, "GetDataLength: Block tCode=0x%X q3=0x%08X (LE) → data_length=%u bytes",
                    tCode, q3, length);
             break;
         }
@@ -256,20 +259,20 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             // Header length is 16 bytes, and q3 contains the 4-byte data value
             // Since data is part of header, dataLength is 0 (no separate payload follows)
             dataLen = 0;
-            ASFW_LOG(Async, "GetDataLength: tCode=0x6 (Read Quadlet Response) → 0 bytes (data in header q3)");
+            ASFW_LOG_V3(Async, "GetDataLength: tCode=0x6 (Read Quadlet Response) → 0 bytes (data in header q3)");
             break;
 
         case kTCodeWriteResponse:          // 0x2 TCODE_WRITE_RESPONSE
             // No separate payload. (Write-compare is LOCK, not a write response.)
             dataLen = 0;
-            ASFW_LOG(Async, "GetDataLength: tCode=0x2 (Write Response) → 0 bytes");
+            ASFW_LOG_V3(Async, "GetDataLength: tCode=0x2 (Write Response) → 0 bytes");
             break;
 
         case kTCodeIsochronousBlock:       // 0xA
         {
             // Isochronous: data_length in quadlet 1, bits[31:16]
             if (header.size() < 8) {
-                ASFW_LOG(Async, "❌ GetDataLength: Header too small (%zu bytes) for iso tCode=0x%X",
+                ASFW_LOG_V0(Async, "❌ GetDataLength: Header too small (%zu bytes) for iso tCode=0x%X",
                          header.size(), tCode);
                 return 0;
             }
@@ -281,7 +284,7 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             const uint16_t length = static_cast<uint16_t>((quadlet1 >> 16) & 0xFFFF);
             dataLen = length;
 
-            ASFW_LOG(Async, "GetDataLength: Iso quadlet1=0x%08X → data_length=%u bytes",
+            ASFW_LOG_V3(Async, "GetDataLength: Iso quadlet1=0x%08X → data_length=%u bytes",
                    quadlet1, length);
             break;
         }
@@ -290,7 +293,7 @@ size_t ARPacketParser::GetDataLength(std::span<const uint8_t> header, uint8_t tC
             // No separate data (quadlet transactions, simple responses)
             // Per Linux: p.payload_length = 0 for these tCodes
             dataLen = 0;
-            ASFW_LOG(Async, "GetDataLength: tCode=0x%X → no payload (0 bytes)", tCode);
+            ASFW_LOG_V3(Async, "GetDataLength: tCode=0x%X → no payload (0 bytes)", tCode);
             break;
     }
 

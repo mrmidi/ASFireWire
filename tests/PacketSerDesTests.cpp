@@ -327,15 +327,16 @@ TEST_F(PacketSerDesTest, PHYPacket_BuildPhyPacket_MatchesAppleImplementation) {
     params.quadlet2 = 0x00000000;  // Reserved for PHY config packets
 
     uint8_t buffer[32] = {};  // Oversized for safety
-    size_t returnedSize = builder_.BuildPhyPacket(params, buffer, sizeof(buffer));
+    const uint8_t label = 5;
+    size_t returnedSize = builder_.BuildPhyPacket(label, params, buffer, sizeof(buffer));
 
     // Verify returned size (should be 12 for reqCount)
     EXPECT_EQ(12u, returnedSize) << "BuildPhyPacket should return 12 bytes for reqCount";
 
-    // Verify tCode quadlet (big-endian 0x000000E0)
-    // Wire format: E0 00 00 00 (tCode=0xE in bits[7:4] of byte 0)
-    EXPECT_EQ(0xE0, buffer[0]) << "Quadlet 0 byte 0 should be 0xE0 (tCode)";
-    EXPECT_EQ(0x00, buffer[1]) << "Quadlet 0 byte 1 should be 0x00";
+    // Verify tCode quadlet contains tCode and tLabel (label=5 → bits[15:10]=0b000101)
+    // Host-order quadlet = (label<<10) | (tCode<<4) = 0x000014E0 → bytes [E0,14,00,00] on little-endian host.
+    EXPECT_EQ(0xE0, buffer[0]) << "Quadlet 0 byte 0 should carry tCode nibble";
+    EXPECT_EQ(0x14, buffer[1]) << "Quadlet 0 byte 1 should carry tLabel bits[15:8]";
     EXPECT_EQ(0x00, buffer[2]) << "Quadlet 0 byte 2 should be 0x00";
     EXPECT_EQ(0x00, buffer[3]) << "Quadlet 0 byte 3 should be 0x00";
 
@@ -383,7 +384,7 @@ TEST_F(PacketSerDesTest, PHYPacket_GapCountOptimization_MatchesLinuxTestVector) 
     params.quadlet2 = 0x00000000;  // Inverse/reserved
 
     uint8_t buffer[32] = {};
-    size_t returnedSize = builder_.BuildPhyPacket(params, buffer, sizeof(buffer));
+    size_t returnedSize = builder_.BuildPhyPacket(/*label=*/0, params, buffer, sizeof(buffer));
 
     EXPECT_EQ(12u, returnedSize) << "PHY packet should return 12 bytes";
 
@@ -414,7 +415,7 @@ TEST_F(PacketSerDesTest, PHYPacket_ForceRootNode_MatchesLinuxTestVector) {
     params.quadlet2 = 0x00000000;  // Inverse/reserved
 
     uint8_t buffer[32] = {};
-    size_t returnedSize = builder_.BuildPhyPacket(params, buffer, sizeof(buffer));
+    size_t returnedSize = builder_.BuildPhyPacket(/*label=*/0, params, buffer, sizeof(buffer));
 
     EXPECT_EQ(12u, returnedSize) << "PHY packet should return 12 bytes";
 

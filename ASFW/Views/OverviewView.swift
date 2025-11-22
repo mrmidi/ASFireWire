@@ -63,6 +63,26 @@ struct OverviewView: View {
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 
+                // Build Metadata Card
+                if let version = viewModel.driverVersion {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Build Metadata", systemImage: "hammer.fill")
+                            .font(.headline)
+                        
+                        InfoRow(label: "Version", value: version.semanticVersion)
+                        InfoRow(label: "Commit", value: "\(version.gitCommitShort) (\(version.gitBranch))")
+                        InfoRow(label: "Built", value: version.buildTimestamp)
+                        InfoRow(label: "Host", value: version.buildHost)
+                        if version.gitDirty {
+                            Text("⚠️ Built with uncommitted changes")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .padding()
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+                
                 // Help Text
                 Text("💡 You may need to allow the system extension in **System Settings > Privacy & Security** after first activation.")
                     .font(.caption)

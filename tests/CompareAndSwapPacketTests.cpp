@@ -31,6 +31,7 @@
 #include "ASFWDriver/Async/AsyncTypes.hpp"
 #include "ASFWDriver/Hardware/IEEE1394.hpp"
 #include "ASFWDriver/Async/Tx/PacketBuilder.hpp"
+#include "ASFWDriver/Hardware/OHCIDescriptors.hpp"
 
 using namespace ASFW::Async;
 
@@ -73,6 +74,55 @@ protected:
                ((value & 0x000000FFu) << 24);
     }
 };
+
+// =============================================================================
+// New Spec Validation: Lock Header Field Positions (tCode=0x9, extTcode=0x2)
+// =============================================================================
+
+TEST_F(CompareAndSwapPacketTest, LockHeader_SpecFields_AreInPlace) {
+    // Parameters mirror the observed CAS attempt: src=0xffc0, dst node=0x02 (0xffc2),
+    // address 0xffff:f0000228, operand length=8 (CAS old+new), extTCode=0x0002.
+    LockParams params{};
+    params.destinationID = MakeDestinationID(/*sourceNodeID=*/0xffc0, /*destNode=*/0x02);
+    params.addressHigh = 0xFFFF;
+    params.addressLow = 0xF0000228;
+    params.operandLength = 8;
+
+    const uint16_t label = 0x21;   // arbitrary but deterministic
+    const uint8_t speed = 0x00;    // S100 for compatibility
+    const uint8_t extendedTCode = 0x02;  // CAS
+    const PacketContext context = MakeContext(/*sourceNodeID=*/0xffc0, speed);
+
+    uint8_t headerBuffer[20]{};
+    const std::size_t headerSize = builder_.BuildLock(params, label, extendedTCode, context, headerBuffer, sizeof(headerBuffer));
+    ASSERT_EQ(headerSize, 16u) << "Lock header must be 16 bytes";
+
+    const auto words = LoadHostQuadlets<4>(headerBuffer);
+
+    // Quadlet 0: srcBusID|spd|tLabel|rt|tCode|priority
+    const uint32_t expectedQ0 =
+        (static_cast<uint32_t>(speed & 0x7) << 16) |          // spd
+        (static_cast<uint32_t>(label & 0x3F) << 10) |         // tLabel
+        (static_cast<uint32_t>(0x1) << 8) |                   // rt = retry_X (01b)
+        (static_cast<uint32_t>(0x9) << 4) |                   // tCode = 0x9 (LOCK)
+        0x0;                                                  // priority = 0
+    EXPECT_EQ(words[0], expectedQ0) << "q0 control/label/tCode fields must match OHCI 7.8.1.3";
+
+    // Quadlet 1: destinationID | addressHigh
+    const uint32_t expectedQ1 =
+        (static_cast<uint32_t>(params.destinationID) << 16) |
+        static_cast<uint32_t>(params.addressHigh);
+    EXPECT_EQ(words[1], expectedQ1) << "q1 must pack destinationID and addressHigh";
+
+    // Quadlet 2: destinationOffsetLow
+    EXPECT_EQ(words[2], params.addressLow) << "q2 must equal destinationOffsetLow";
+
+    // Quadlet 3: dataLength (bytes) | extendedTCode
+    const uint32_t expectedQ3 =
+        (static_cast<uint32_t>(params.operandLength) << 16) |
+        static_cast<uint32_t>(extendedTCode);
+    EXPECT_EQ(words[3], expectedQ3) << "q3 must encode dataLength=8 and extTCode=0x0002 for CAS";
+}
 
 // =============================================================================
 // Test 1: CAS Header Construction (IRM Channel Allocation)

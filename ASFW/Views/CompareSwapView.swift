@@ -42,275 +42,276 @@ struct CompareSwapView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            // Operation Info
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Atomic Lock Operation", systemImage: "lock.shield")
-                        .font(.headline)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Operation Info
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Atomic Lock Operation", systemImage: "lock.shield")
+                            .font(.headline)
 
-                    Text("Compare-and-Swap (CAS) atomically compares memory with an expected value and swaps it with a new value if they match. This is the foundation of lock-free data structures.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Divider()
-
-                    // Operation Size Selector
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Operation Size")
+                        Text("Compare-and-Swap (CAS) atomically compares memory with an expected value and swaps it with a new value if they match. This is the foundation of lock-free data structures.")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Picker("Size", selection: $operationSize) {
-                            ForEach(OperationSize.allCases, id: \.self) { size in
-                                Text(size.rawValue).tag(size)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                }
-                .padding()
-            } label: {
-                Label("About Compare-and-Swap", systemImage: "info.circle")
-                    .font(.headline)
-            }
+                            .fixedSize(horizontal: false, vertical: true)
 
-            // Transaction Parameters
-            GroupBox {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Destination Node ID
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Destination Node ID")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text("0x")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField("ffc0", text: $destinationID)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                        }
-                        Text("Bus + Node (e.g., ffc0 = local bus, node 0)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Divider()
-
-                    // Address High
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Address High (16-bit)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text("0x")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField("ffff", text: $addressHigh)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                        }
-                    }
-
-                    // Address Low
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Address Low (32-bit)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text("0x")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField("f0010000", text: $addressLow)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                        }
-                        Text("Lock address in device memory")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-
-                    Divider()
-
-                    // Compare Value
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Compare Value (hex)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text("0x")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField(operationSize == .bits32 ? "00000000" : "0000000000000000", text: $compareValue)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                        }
-                        Text("Expected current value in memory")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-
-                    // New Value
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("New Value (hex)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack {
-                            Text("0x")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                            TextField(operationSize == .bits32 ? "00000001" : "0000000000000001", text: $newValue)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.system(.body, design: .monospaced))
-                        }
-                        Text("Value to write if comparison succeeds")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding()
-            } label: {
-                Label("Parameters", systemImage: "slider.horizontal.3")
-                    .font(.headline)
-            }
-
-            // Preset Button
-            Button {
-                loadIRMPreset()
-            } label: {
-                if isLoadingPreset {
-                    ProgressView()
-                        .controlSize(.small)
-                        .padding(.trailing, 4)
-                    Text("Loading...")
-                } else {
-                    Label("Use IRM + BANDWIDTH_AVAILABLE (Safe Test)", systemImage: "wand.and.stars")
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!connector.isConnected || isLoadingPreset)
-
-            // Preset Status
-            if let status = presetStatus {
-                HStack {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundColor(.blue)
-                    Text(status)
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-                .padding(.horizontal)
-            }
-
-            // Topology Warning
-            if let warning = topologyWarning {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(warning)
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-                .padding()
-                .background(Color.orange.opacity(0.1))
-                .cornerRadius(8)
-            }
-
-            // Status Display
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    if connector.isConnected {
-                        Label("Connected to driver", systemImage: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                    } else {
-                        Label("Driver not connected", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                    }
-
-                    if let handle = lastHandle {
-                        HStack {
-                            Label("Transaction Handle", systemImage: "number")
-                                .font(.headline)
-                            Spacer()
-                            Text(String(format: "0x%04X", handle))
-                                .font(.system(.body, design: .monospaced))
-                        }
-
-                        if let date = lastTransactionDate {
-                            Text("Sent: \(date.formatted(date: .omitted, time: .standard))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-
-                    if let result = lockResult {
                         Divider()
 
-                        HStack(spacing: 12) {
-                            Image(systemName: result.locked ? "lock.fill" : "lock.open.fill")
-                                .font(.title2)
-                                .foregroundColor(result.locked ? .green : .red)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(result.locked ? "Lock Acquired ✓" : "Lock Failed ✗")
-                                    .font(.headline)
-                                    .foregroundColor(result.locked ? .green : .red)
-
-                                Text(result.locked
-                                     ? "Memory matched expected value and was updated"
-                                     : "Memory value did not match (lock held by another)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-
-                                if result.oldValue.count > 0 {
-                                    Text("Old Value: \(formatHex(result.oldValue))")
-                                        .font(.caption)
-                                        .fontDesign(.monospaced)
-                                        .foregroundColor(.secondary)
+                        // Operation Size Selector
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Operation Size")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Picker("Size", selection: $operationSize) {
+                                ForEach(OperationSize.allCases, id: \.self) { size in
+                                    Text(size.rawValue).tag(size)
                                 }
                             }
+                            .pickerStyle(.segmented)
                         }
-                        .padding()
-                        .background(result.locked ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
-                        .cornerRadius(8)
                     }
+                    .padding()
+                } label: {
+                    Label("About Compare-and-Swap", systemImage: "info.circle")
+                        .font(.headline)
+                }
 
-                    if let error = lastError {
-                        HStack {
-                            Image(systemName: "xmark.octagon.fill")
-                                .foregroundColor(.red)
-                            Text(error)
+                // Transaction Parameters
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Destination Node ID
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Destination Node ID")
                                 .font(.caption)
-                                .foregroundColor(.red)
+                                .foregroundColor(.secondary)
+                            HStack {
+                                Text("0x")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                TextField("ffc0", text: $destinationID)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                            Text("Bus + Node (e.g., ffc0 = local bus, node 0)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Divider()
+
+                        // Address High
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Address High (16-bit)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            HStack {
+                                Text("0x")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                TextField("ffff", text: $addressHigh)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                        }
+
+                        // Address Low
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Address Low (32-bit)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            HStack {
+                                Text("0x")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                TextField("f0010000", text: $addressLow)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                            Text("Lock address in device memory")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Divider()
+
+                        // Compare Value
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Compare Value (hex)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            HStack {
+                                Text("0x")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                TextField(operationSize == .bits32 ? "00000000" : "0000000000000000", text: $compareValue)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                            Text("Expected current value in memory")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        // New Value
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("New Value (hex)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            HStack {
+                                Text("0x")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                TextField(operationSize == .bits32 ? "00000001" : "0000000000000001", text: $newValue)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                            Text("Value to write if comparison succeeds")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
                     }
+                    .padding()
+                } label: {
+                    Label("Parameters", systemImage: "slider.horizontal.3")
+                        .font(.headline)
                 }
-                .padding()
-            } label: {
-                Label("Status", systemImage: "info.circle")
-                    .font(.headline)
-            }
 
-            // Send Button
-            Button {
-                sendCompareSwap()
-            } label: {
-                if isSending {
-                    ProgressView()
-                        .controlSize(.regular)
-                        .padding(.trailing, 8)
-                    Text("Sending…")
-                } else {
-                    Label("Execute Compare-and-Swap", systemImage: "lock.rectangle")
+                // Preset Button
+                Button {
+                    loadIRMPreset()
+                } label: {
+                    if isLoadingPreset {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(.trailing, 4)
+                        Text("Loading...")
+                    } else {
+                        Label("Use IRM + BANDWIDTH_AVAILABLE (Safe Test)", systemImage: "wand.and.stars")
+                    }
                 }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isSending || !connector.isConnected)
+                .buttonStyle(.bordered)
+                .disabled(!connector.isConnected || isLoadingPreset)
 
-            Spacer()
+                // Preset Status
+                if let status = presetStatus {
+                    HStack {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text(status)
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                    .padding(.horizontal)
+                }
+
+                // Topology Warning
+                if let warning = topologyWarning {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                }
+
+                // Status Display
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if connector.isConnected {
+                            Label("Connected to driver", systemImage: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        } else {
+                            Label("Driver not connected", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                        }
+
+                        if let handle = lastHandle {
+                            HStack {
+                                Label("Transaction Handle", systemImage: "number")
+                                    .font(.headline)
+                                Spacer()
+                                Text(String(format: "0x%04X", handle))
+                                    .font(.system(.body, design: .monospaced))
+                            }
+
+                            if let date = lastTransactionDate {
+                                Text("Sent: \(date.formatted(date: .omitted, time: .standard))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        if let result = lockResult {
+                            Divider()
+
+                            HStack(spacing: 12) {
+                                Image(systemName: result.locked ? "lock.fill" : "lock.open.fill")
+                                    .font(.title2)
+                                    .foregroundColor(result.locked ? .green : .red)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(result.locked ? "Lock Acquired ✓" : "Lock Failed ✗")
+                                        .font(.headline)
+                                        .foregroundColor(result.locked ? .green : .red)
+
+                                    Text(result.locked
+                                         ? "Memory matched expected value and was updated"
+                                         : "Memory value did not match (lock held by another)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+
+                                    if result.oldValue.count > 0 {
+                                        Text("Old Value: \(formatHex(result.oldValue))")
+                                            .font(.caption)
+                                            .fontDesign(.monospaced)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .padding()
+                            .background(result.locked ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                        }
+
+                        if let error = lastError {
+                            HStack {
+                                Image(systemName: "xmark.octagon.fill")
+                                    .foregroundColor(.red)
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                            }
+                        }
+                    }
+                    .padding()
+                } label: {
+                    Label("Status", systemImage: "info.circle")
+                        .font(.headline)
+                }
+
+                // Send Button
+                Button {
+                    sendCompareSwap()
+                } label: {
+                    if isSending {
+                        ProgressView()
+                            .controlSize(.regular)
+                            .padding(.trailing, 8)
+                        Text("Sending…")
+                    } else {
+                        Label("Execute Compare-and-Swap", systemImage: "lock.rectangle")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isSending || !connector.isConnected)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding()
         .navigationTitle("Compare & Swap")
     }
 

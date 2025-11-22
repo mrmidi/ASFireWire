@@ -11,6 +11,7 @@
 #include "../../Shared/Rings/DescriptorRing.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Async {
 
@@ -207,11 +208,11 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         std::memcpy(immDesc->immediateData, headerData, headerSize);
 
         // HEX DUMP: Complete AT packet before transmission
-        ASFW_LOG(Async, "🔍 AT TX PACKET (txid=%u headerSize=%zu):", chain.txid, headerSize);
+        ASFW_LOG_V3(Async, "🔍 AT TX PACKET (txid=%u headerSize=%zu):", chain.txid, headerSize);
         for (size_t i = 0; i < headerSize; i += 16) {
             const size_t chunkSize = (i + 16 <= headerSize) ? 16 : (headerSize - i);
             const uint8_t* bytes = reinterpret_cast<const uint8_t*>(immDesc->immediateData) + i;
-            ASFW_LOG(Async, "  [%02zu] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
+            ASFW_LOG_V3(Async, "  [%02zu] %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X  %02X %02X %02X %02X",
                      i,
                      chunkSize > 0 ? bytes[0] : 0, chunkSize > 1 ? bytes[1] : 0,
                      chunkSize > 2 ? bytes[2] : 0, chunkSize > 3 ? bytes[3] : 0,
@@ -313,7 +314,7 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
 
         // Get device-visible address from DMAMemoryManager
         const uint64_t descriptorIOVA = dmaManager_.VirtToIOVA(descriptor);
-        ASFW_LOG(Async,
+        ASFW_LOG_V3(Async,
                  "DescriptorBuilder: txid=%u ring[%zu] virt=%p -> iova=0x%llx (slabBase=0x%llx)",
                  chain.txid,
                  ringIndex,
@@ -399,7 +400,7 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
     // Get device-visible addresses
     const uint64_t headerPhys = dmaManager_.VirtToIOVA(headerDescriptor);
     const uint64_t payloadDescriptorPhys = dmaManager_.VirtToIOVA(payloadDescriptor);
-    ASFW_LOG(Async,
+    ASFW_LOG_V3(Async,
              "DescriptorBuilder: txid=%u header ring[%zu] virt=%p -> iova=0x%llx; payload ring[%zu] virt=%p -> iova=0x%llx (slabBase=0x%llx)",
              chain.txid,
              headerRingIndex,
@@ -444,8 +445,8 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                  dataLength, extTcode);
     }
 
-    // With b=00, hardware advances to physically contiguous next descriptor
-    // branchWord is ignored, so set to 0 to avoid confusion
+    // OUTPUT_MORE relies on physical contiguity; branchWord is ignored per OHCI §7.1.
+    // Keep b=00 and a zero branchWord to match spec.
     headerImmDesc->common.branchWord = 0;
 
     std::atomic_thread_fence(std::memory_order_release);
