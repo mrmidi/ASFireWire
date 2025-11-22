@@ -58,7 +58,7 @@ FCPTransport::FCPTransport(Async::AsyncSubsystem& async,
                 config_.responseAddress);
 }
 
-FCPTransport::~FCPTransport() {
+FCPTransport::~FCPTransport() noexcept {
     shuttingDown_ = true;
 
     // Cancel any pending command
@@ -83,7 +83,7 @@ FCPTransport::~FCPTransport() {
         timeoutQueue_.reset();
     }
 
-    // Free lock
+    // Free lock (cannot throw in DriverKit)
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;

@@ -491,7 +491,8 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
     return headerSize;
 }
 
-std::size_t PacketBuilder::BuildPhyPacket(const PhyParams& params,
+std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
+                                          const PhyParams& params,
                                           void* headerBuffer,
                                           std::size_t bufferSize) const {
     // PHY packet: 12 bytes transmitted (3 quadlets) per OHCI §7.8.1.4 Figure 7-14
@@ -512,10 +513,11 @@ std::size_t PacketBuilder::BuildPhyPacket(const PhyParams& params,
     // Use byte pointer for direct big-endian wire format construction
     auto* bytes = static_cast<uint8_t*>(headerBuffer);
 
-    // Quadlet 0: tCode = 0xE in bits [7:4] → wire bytes [0xE0, 0x00, 0x00, 0x00]
-    // On little-endian system, uint32_t 0x000000E0 stored in memory = [0xE0, 0x00, 0x00, 0x00]
-    const uint32_t tCodeQuadlet = 0x000000E0u;
-    std::memcpy(bytes + 0, &tCodeQuadlet, 4);
+    // Quadlet 0: include tLabel in host-order word so ExtractTLabel() (bits[15:10]) matches tracking.
+    // Retry/priority left at zero; tCode=0xE in bits [7:4].
+    const uint32_t quadlet0 = (static_cast<uint32_t>(label & 0x3F) << 10) |
+                              (static_cast<uint32_t>(0xE) << 4);
+    std::memcpy(bytes + 0, &quadlet0, 4);
 
     // Quadlets 1-2: PHY configuration data in big-endian wire format
     // params.quadlet1/2 are already in the format expected on the wire (big-endian)

@@ -3,6 +3,7 @@
 #include "../Tx/PacketBuilder.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOMemoryDescriptor.h>
 
 namespace ASFW::Async {
 
@@ -43,8 +44,8 @@ std::unique_ptr<PayloadContext> WriteCommand::PreparePayload(
     }
     
     // Block write: allocate DMA buffer for payload
-    constexpr uint64_t kIOMemoryDirectionOut = 0;  // Host→Device
-    return PayloadContext::Create(hw, params_.payload, params_.length, kIOMemoryDirectionOut);
+    constexpr uint64_t kWritePayloadDirection = kIOMemoryDirectionInOut;  // host writes, controller reads
+    return PayloadContext::Create(hw, params_.payload, params_.length, kWritePayloadDirection);
 }
 
 } // namespace ASFW::Async

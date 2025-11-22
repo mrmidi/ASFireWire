@@ -14,6 +14,7 @@ class DriverViewModel: ObservableObject {
     @Published var activationStatus: String = "Idle"
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
+    @Published var driverVersion: DriverVersionInfo?
     
     struct LogEntry: Identifiable, Equatable {
         let id = UUID()

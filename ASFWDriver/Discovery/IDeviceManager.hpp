@@ -306,7 +306,7 @@ public:
     }
 
     // Unregister on destruction
-    ~ObserverGuard() {
+    ~ObserverGuard() noexcept {
         if (unregister_) {
             unregister_();
         }

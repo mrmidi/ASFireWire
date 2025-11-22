@@ -20,6 +20,7 @@
 #include "PayloadRegistry.hpp"
 #include "../Engine/ContextManager.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 // Phase 2.0: Transaction infrastructure (sole source of truth)
 #include "../Core/Transaction.hpp"
@@ -103,6 +104,13 @@ public:
 
         ::IOLockLock(lock_);
 
+        // If no transactions are in flight but the bitmap isn't empty, reset it
+        // to avoid stale bits pinning allocation (observed stuck tLabel).
+        if (txnMgr_->Count() == 0 && labelAllocator_->IsLabelInUse(0 /*ignored, uses bitmap*/)) {
+            ASFW_LOG(Async, "Label bitmap non-empty with zero transactions; resetting allocator");
+            labelAllocator_->Reset();
+        }
+
         // Allocate a free label from the bitmap allocator to avoid collisions
         uint8_t label = labelAllocator_->Allocate();
         if (label == LabelAllocator::kInvalidLabel) {
@@ -131,8 +139,8 @@ public:
 
         Transaction* txn = *result;
 
-        ASFW_LOG(Async, "🔍 [RegisterTx] Allocated Transaction: txn=%p tLabel=%u",
-                 txn, label);
+        ASFW_LOG_V3(Async, "🔍 [RegisterTx] Allocated Transaction: txn=%p tLabel=%u",
+                    txn, label);
 
         // Set transaction parameters
         txn->SetTimeout(200);  // TODO: Get from config or meta
@@ -142,18 +150,18 @@ public:
         // EXPLICIT: Mark read operations to skip AT completion
         if (meta.completionStrategy == CompletionStrategy::CompleteOnAR) {
             txn->SetSkipATCompletion(true);
-            ASFW_LOG(Async, "🔍 [RegisterTx] Read operation: will skip AT completion, strategy=%{public}s",
-                     ToString(meta.completionStrategy));
+            ASFW_LOG_V3(Async, "🔍 [RegisterTx] Read operation: will skip AT completion, strategy=%{public}s",
+                        ToString(meta.completionStrategy));
         }
 
-        ASFW_LOG(Async, "🔍 [RegisterTx] meta.callback valid=%d for tLabel=%u",
-                 meta.callback ? 1 : 0, label);
+        ASFW_LOG_V3(Async, "🔍 [RegisterTx] meta.callback valid=%d for tLabel=%u",
+                    meta.callback ? 1 : 0, label);
 
         // Set response handler (wraps meta.callback)
         txn->SetResponseHandler([callback = meta.callback, label]
                                 (kern_return_t kr, std::span<const uint8_t> data) {
-            ASFW_LOG(Async, "🔍 [Wrapper Lambda] ENTRY: tLabel=%u callback=%p valid=%d kr=0x%x",
-                     label, &callback, callback ? 1 : 0, kr);
+            ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] ENTRY: tLabel=%u callback=%p valid=%d kr=0x%x",
+                        label, &callback, callback ? 1 : 0, kr);
             if (callback) {
                 // Convert kern_return_t to AsyncStatus for Phase 2.3 callback
                 AsyncStatus status = (kr == kIOReturnSuccess) ? AsyncStatus::kSuccess :
@@ -161,10 +169,10 @@ public:
                                     AsyncStatus::kHardwareError;
                 // Phase 2.3: CompletionCallback now takes (handle, status, span)
                 // Encode handle as (label + 1) to ensure handle is never 0
-                ASFW_LOG(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u",
-                         static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status));
+                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u",
+                            static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status));
                 callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, data);
-                ASFW_LOG(Async, "🔍 [Wrapper Lambda] Callback returned");
+                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] Callback returned");
             } else {
                 ASFW_LOG(Async, "⚠️ [Wrapper Lambda] callback is NULL!");
             }
@@ -173,9 +181,9 @@ public:
         // Transition to Submitted state (Created → Submitted)
         txn->TransitionTo(TransactionState::Submitted, "RegisterTx");
 
-        ASFW_LOG(Async,
-                 "✅ RegisterTx: Created txn (tLabel=%u gen=%u nodeID=0x%04X tCode=0x%02X)",
-                 label, meta.generation, meta.destinationNodeID, meta.tCode);
+        ASFW_LOG_V2(Async,
+                    "✅ RegisterTx: Created txn (tLabel=%u gen=%u nodeID=0x%04X tCode=0x%02X)",
+                    label, meta.generation, meta.destinationNodeID, meta.tCode);
 
         ::IOLockUnlock(lock_);
 
@@ -229,18 +237,18 @@ public:
             if (txn->GetCompletionStrategy() == CompletionStrategy::CompleteOnAR) {
                 txn->TransitionTo(TransactionState::ATCompleted, "OnTxPosted: CompleteOnAR bypass");
                 txn->TransitionTo(TransactionState::AwaitingAR, "OnTxPosted: CompleteOnAR bypass");
-                ASFW_LOG(Async, "  📤 Read operation: bypassing AT completion, going to AwaitingAR");
+                ASFW_LOG_V3(Async, "  📤 Read operation: bypassing AT completion, going to AwaitingAR");
             }
 
             // Set deadline for timeout
             txn->SetDeadline(nowUsec + timeoutUsec);
 
-            ASFW_LOG(Async,
-                     "📤 OnTxPosted: tLabel=%u deadline=%llu state=%{public}s strategy=%{public}s",
-                     txn->label().value,
-                     static_cast<unsigned long long>(nowUsec + timeoutUsec),
-                     ToString(txn->state()),
-                     ToString(txn->GetCompletionStrategy()));
+            ASFW_LOG_V3(Async,
+                        "📤 OnTxPosted: tLabel=%u deadline=%llu state=%{public}s strategy=%{public}s",
+                        txn->label().value,
+                        static_cast<unsigned long long>(nowUsec + timeoutUsec),
+                        ToString(txn->state()),
+                        ToString(txn->GetCompletionStrategy()));
         });
 
         if (!found) {
@@ -300,11 +308,11 @@ public:
                 // Transaction has timed out
                 timedOutLabels.push_back(txn->label());
 
-                ASFW_LOG(Async,
-                         "⏱️ Timeout: tLabel=%u state=%{public}s deadline=%llu now=%llu",
-                         txn->label().value, ToString(txn->state()),
-                         static_cast<unsigned long long>(deadline),
-                         static_cast<unsigned long long>(nowUsec));
+                ASFW_LOG_V2(Async,
+                            "⏱️ Timeout: tLabel=%u state=%{public}s deadline=%llu now=%llu",
+                            txn->label().value, ToString(txn->state()),
+                            static_cast<unsigned long long>(deadline),
+                            static_cast<unsigned long long>(nowUsec));
             }
         });
 
@@ -319,8 +327,12 @@ public:
             return;
         }
 
-        // Phase 2.0: Cancel all transactions with old generation
-        ASFW_LOG(Async, "🔄 CancelByGeneration: gen=%u", oldGeneration);
+        // Phase 2.0: Cancel all transactions with old generation and FREE their labels.
+        // Previously we transitioned transactions to Cancelled but left them in the manager,
+        // which leaked label allocations across bus resets. That forced subsequent requests
+        // to reuse a single label (e.g. tLabel=3 forever). Extract and free here to release
+        // the bitmap slots.
+        ASFW_LOG(Async, "🔄 CancelByGeneration: gen=%u (will extract and free labels)", oldGeneration);
 
         // Collect labels to cancel (avoid modifying during iteration)
         std::vector<TLabel> victims;
@@ -333,20 +345,57 @@ public:
 
         // Cancel collected transactions
         for (TLabel label : victims) {
-            txnMgr_->WithTransaction(label, [](Transaction* txn) {
-                if (!txn) {
-                    return;
-                }
-                if (IsTerminalState(txn->state())) {
-                    return;
-                }
-                txn->TransitionTo(TransactionState::Cancelled, "CancelByGeneration");
-                txn->InvokeResponseHandler(kIOReturnAborted, {});
-            });
+            auto txnPtr = txnMgr_->Extract(label);
+            if (!txnPtr) {
+                continue;
+            }
+
+            if (!IsTerminalState(txnPtr->state())) {
+                txnPtr->TransitionTo(TransactionState::Cancelled, "CancelByGeneration");
+                txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+            }
+
+            // Free the label so subsequent transactions can rotate through all 0-63 slots.
+            if (labelAllocator_) {
+                labelAllocator_->Free(label.value);
+            }
         }
 
         ASFW_LOG(Async, "✅ CancelByGeneration: Cancelled %zu transactions", victims.size());
     }
+
+    // Cancel ALL transactions regardless of generation and free labels.
+    void CancelAllAndFreeLabels() {
+        if (!txnMgr_) {
+            return;
+        }
+
+        std::vector<TLabel> victims;
+        txnMgr_->ForEachTransaction([&](Transaction* txn) {
+            if (!txn) return;
+            victims.push_back(txn->label());
+        });
+
+        for (TLabel label : victims) {
+            auto txnPtr = txnMgr_->Extract(label);
+            if (!txnPtr) {
+                continue;
+            }
+
+            if (!IsTerminalState(txnPtr->state())) {
+                txnPtr->TransitionTo(TransactionState::Cancelled, "CancelAll");
+                txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+            }
+
+            if (labelAllocator_) {
+                labelAllocator_->Free(label.value);
+            }
+        }
+
+        ASFW_LOG(Async, "✅ CancelAllAndFreeLabels: cancelled %zu transactions", victims.size());
+    }
+
+    LabelAllocator* GetLabelAllocator() const { return labelAllocator_; }
 
     void OnTxCompletion(const TxCompletion& completion) {
         if (!txnHandler_) {
@@ -358,7 +407,6 @@ public:
     }
 
     // Accessors
-    LabelAllocator* GetLabelAllocator() const { return labelAllocator_; }
     TransactionManager* GetTransactionManager() const { return txnMgr_; }  // Phase 2.0
     // Payload registry access (owned by tracking actor)
     PayloadRegistry* Payloads() const { return payloads_.get(); }

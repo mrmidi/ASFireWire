@@ -2,6 +2,7 @@
 #include "../Track/Tracking.hpp"
 #include "../Tx/PacketBuilder.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
+#include <DriverKit/IOMemoryDescriptor.h>
 
 namespace ASFW::Async {
 
@@ -53,8 +54,8 @@ std::unique_ptr<PayloadContext> LockCommand::PreparePayload(
     }
     
     // Lock operand: allocate DMA buffer for compare-and-swap data
-    constexpr uint64_t kIOMemoryDirectionOut = 0;  // Host→Device
-    return PayloadContext::Create(hw, params_.operand, params_.operandLength, kIOMemoryDirectionOut);
+    constexpr uint64_t kLockPayloadDirection = kIOMemoryDirectionInOut;  // host writes, controller reads
+    return PayloadContext::Create(hw, params_.operand, params_.operandLength, kLockPayloadDirection);
 }
 
 } // namespace ASFW::Async

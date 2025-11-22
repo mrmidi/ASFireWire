@@ -790,9 +790,6 @@ AsyncHandle AsyncSubsystem::ReadWithRetry(const ReadParams& params,
 }
 
 bool AsyncSubsystem::Cancel(AsyncHandle /*handle*/) {
-    if (is_bus_reset_in_progress_.load(std::memory_order_acquire)) {
-        return false;
-    }
     // TODO: locate outstanding request and issue cancel workflow.
     return false;
 }
@@ -885,10 +882,17 @@ void AsyncSubsystem::OnBusResetBegin(uint8_t nextGen) {
     // Step 2: Cancel transactions from OLD generation only
     // Read current generation from tracker (set by previous bus reset)
     const uint8_t oldGen = generationTracker_ ? generationTracker_->GetCurrentState().generation8 : 0;
-    
+
     if (tracking_) {
+        // Cancel any lingering transactions (all generations) to guarantee label bitmap is clean.
+        tracking_->CancelAllAndFreeLabels();
         // Cancel transactions belonging to oldGen (precise, not ~0u!)
         tracking_->CancelByGeneration(oldGen);
+
+        // Hard-clear bitmap to evict any leaked bits that lack corresponding transactions
+        if (auto* alloc = tracking_->GetLabelAllocator()) {
+            alloc->ClearBitmap();
+        }
     }
     
     // Step 3: Bump payload epoch for deferred cleanup (to nextGen)

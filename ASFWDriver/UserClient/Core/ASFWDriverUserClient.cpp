@@ -14,6 +14,7 @@
 #include "../Handlers/TransactionHandler.hpp"
 #include "../Handlers/ConfigROMHandler.hpp"
 #include "../Handlers/DeviceDiscoveryHandler.hpp"
+#include "../Handlers/AVCHandler.hpp"
 #include "../Storage/TransactionStorage.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/DriverVersionInfo.hpp"
@@ -44,6 +45,10 @@ enum {
     kMethodGetDiscoveredDevices    = 16,
     kMethodAsyncCompareSwap        = 17,
     kMethodGetDriverVersion        = 18,
+    kMethodSetAsyncVerbosity       = 19,
+    kMethodSetHexDumps             = 20,
+    kMethodGetLogConfig            = 21,
+    kMethodGetAVCUnits             = 22,
 };
 
 bool ASFWDriverUserClient::init()
@@ -78,6 +83,7 @@ bool ASFWDriverUserClient::init()
     ivars->transactionHandler = nullptr;
     ivars->configROMHandler = nullptr;
     ivars->deviceDiscoveryHandler = nullptr;
+    ivars->avcHandler = nullptr;
 
     return true;
 }
@@ -104,6 +110,7 @@ void ASFWDriverUserClient::free()
         delete static_cast<ASFW::UserClient::TransactionHandler*>(ivars->transactionHandler);
         delete static_cast<ASFW::UserClient::ConfigROMHandler*>(ivars->configROMHandler);
         delete static_cast<ASFW::UserClient::DeviceDiscoveryHandler*>(ivars->deviceDiscoveryHandler);
+        delete static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler);
 
         if (ivars->transactionStorage) {
             delete static_cast<ASFW::UserClient::TransactionStorage*>(ivars->transactionStorage);
@@ -143,10 +150,12 @@ kern_return_t IMPL(ASFWDriverUserClient, Start)
         static_cast<TransactionStorage*>(ivars->transactionStorage)));
     ivars->configROMHandler = static_cast<void*>(new ConfigROMHandler(ivars->driver));
     ivars->deviceDiscoveryHandler = static_cast<void*>(new DeviceDiscoveryHandler(ivars->driver));
+    ivars->avcHandler = static_cast<void*>(new AVCHandler(ivars->driver));
 
     if (!ivars->busResetHandler || !ivars->topologyHandler ||
         !ivars->statusHandler || !ivars->transactionHandler ||
-        !ivars->configROMHandler || !ivars->deviceDiscoveryHandler) {
+        !ivars->configROMHandler || !ivars->deviceDiscoveryHandler ||
+        !ivars->avcHandler) {
         ASFW_LOG(UserClient, "Start() failed to create handlers");
         return kIOReturnNoMemory;
     }
@@ -167,7 +176,9 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop)
         ivars->statusAction = nullptr;
     }
 
-    ivars->driver = nullptr;
+    if (ivars) {
+        ivars->driver = nullptr;
+    }
 
     ASFW_LOG(UserClient, "Stop() completed");
     return Stop(provider, SUPERDISPATCH);
@@ -184,14 +195,18 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
     (void)target;
     (void)reference;
 
+    ASFW_LOG(UserClient, "ExternalMethod called: selector=%llu", selector);
+
     if (!ivars || !ivars->driver) {
+        ASFW_LOG(UserClient, "ExternalMethod: Not ready (ivars=%p driver=%p)", ivars, ivars ? ivars->driver : nullptr);
         return kIOReturnNotReady;
     }
 
     // Verify handlers are initialized
     if (!ivars->busResetHandler || !ivars->topologyHandler ||
         !ivars->statusHandler || !ivars->transactionHandler ||
-        !ivars->configROMHandler || !ivars->deviceDiscoveryHandler) {
+        !ivars->configROMHandler || !ivars->deviceDiscoveryHandler ||
+        !ivars->avcHandler) {
         return kIOReturnNotReady;
     }
 
@@ -254,16 +269,20 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
         case kMethodGetDiscoveredDevices:
             return static_cast<ASFW::UserClient::DeviceDiscoveryHandler*>(ivars->deviceDiscoveryHandler)->GetDiscoveredDevices(arguments);
 
+        // AVCHandler methods (22)
+        case kMethodGetAVCUnits:
+            return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->GetAVCUnits(arguments);
+
         // TransactionHandler methods - CompareSwap (17)
         case kMethodAsyncCompareSwap:
             return static_cast<ASFW::UserClient::TransactionHandler*>(ivars->transactionHandler)->AsyncCompareSwap(arguments, this);
 
         // Version query (18)
         case kMethodGetDriverVersion: {
-            if (!arguments->structureOutput) {
-                return kIOReturnBadArgument;
-            }
-
+            ASFW_LOG(UserClient, "GetDriverVersion called");
+            ASFW_LOG(UserClient, "  structureOutput=%p", arguments->structureOutput);
+            ASFW_LOG(UserClient, "  structureOutputDescriptor=%p", arguments->structureOutputDescriptor);
+            
             // Create version info
             ASFW::Shared::DriverVersionInfo versionInfo{};
             std::strncpy(versionInfo.semanticVersion, ASFW::Version::kSemanticVersion, sizeof(versionInfo.semanticVersion) - 1);
@@ -274,17 +293,54 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
             std::strncpy(versionInfo.buildHost, ASFW::Version::kBuildHost, sizeof(versionInfo.buildHost) - 1);
             versionInfo.gitDirty = ASFW::Version::kGitDirty;
 
-            // Use OSData pattern like other handlers
+            ASFW_LOG(UserClient, "  Creating OSData with %zu bytes", sizeof(versionInfo));
+            
+            // Create OSData to return structure output
+            // Note: structureOutput is initially NULL. We must create and assign the OSData object.
+            // The kernel will copy the data from this object to the user's buffer.
             OSData* data = OSData::withBytes(&versionInfo, sizeof(versionInfo));
             if (!data) {
+                ASFW_LOG(UserClient, "  OSData::withBytes failed!");
                 return kIOReturnNoMemory;
             }
             
+            ASFW_LOG(UserClient, "  OSData created successfully, assigning to structureOutput");
             arguments->structureOutput = data;
-            arguments->structureOutputDescriptor = nullptr;
 
-            ASFW_LOG(UserClient, "GetDriverVersion: %s", ASFW::Version::kFullVersionString);
+            ASFW_LOG(UserClient, "GetDriverVersion: %{public}s", ASFW::Version::kFullVersionString);
             return kIOReturnSuccess;
+        }
+
+        // Logging configuration (19, 20, 21)
+        case kMethodSetAsyncVerbosity: {
+            if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t level = static_cast<uint32_t>(arguments->scalarInput[0]);
+            return ivars->driver->SetAsyncVerbosity(level);
+        }
+
+        case kMethodSetHexDumps: {
+            if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
+            return ivars->driver->SetHexDumps(enabled);
+        }
+
+        case kMethodGetLogConfig: {
+            if (!arguments->scalarOutput) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t asyncVerbosity = 0;
+            uint32_t hexDumpsEnabled = 0;
+            kern_return_t kr = ivars->driver->GetLogConfig(&asyncVerbosity, &hexDumpsEnabled);
+            if (kr == kIOReturnSuccess) {
+                arguments->scalarOutput[0] = asyncVerbosity;
+                arguments->scalarOutput[1] = hexDumpsEnabled;
+                arguments->scalarOutputCount = 2;
+            }
+            return kr;
         }
 
         default:

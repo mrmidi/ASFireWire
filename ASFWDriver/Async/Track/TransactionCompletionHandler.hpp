@@ -59,6 +59,20 @@ public:
             return;
         }
 
+        enum class PostAction {
+            kNone,
+            kCompleteSuccess,
+            kCompleteError,
+            kCompleteTimeout,
+            kCompleteCancelled,
+            kCompletePhySuccess,
+        };
+
+        PostAction postAction = PostAction::kNone;
+        const char* transitionTag1 = nullptr;
+        const char* transitionTag2 = nullptr;
+        kern_return_t postKr = kIOReturnSuccess;
+
         uint8_t eventCode = static_cast<uint8_t>(comp.eventCode);
         uint8_t ackCode = comp.ackCode;
 
@@ -82,6 +96,15 @@ public:
 
             // Store ACK code in transaction for timeout handler
             txn->SetAckCode(ackCode);
+
+            // PHY packets complete on AT path only (no AR response expected).
+            if (txn->GetCompletionStrategy() == CompletionStrategy::CompleteOnPHY) {
+                ASFW_LOG(Async, "  → Completed (PHY, AT-only) ackCode=0x%X event=0x%02X", ackCode, eventCode);
+                postAction = PostAction::kCompletePhySuccess;
+                transitionTag1 = "OnATCompletion: phy";
+                transitionTag2 = "OnATCompletion: phy";
+                return;
+            }
 
             // CRITICAL FIX: For READ operations that were already transitioned to AwaitingAR in OnTxPosted,
             // skip AT completion processing entirely. Transaction is already in correct state.
@@ -120,12 +143,10 @@ public:
                     ASFW_LOG(Async, "  → Failed (hw timeout, ackCode=0x%X)", ackCode);
                     
                     // Extract transaction to complete it safely outside lock
-                    auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
-                    if (txnPtr) {
-                        txnPtr->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout");
-                        txnPtr->TransitionTo(TransactionState::Failed, "OnATCompletion: hw_timeout");
-                        txnPtr->InvokeResponseHandler(kIOReturnTimeout, {});
-                    }
+                    postAction = PostAction::kCompleteTimeout;
+                    transitionTag1 = "OnATCompletion: hw_timeout";
+                    transitionTag2 = "OnATCompletion: hw_timeout";
+                    postKr = kIOReturnTimeout;
                     return;
                 }
             }
@@ -135,11 +156,9 @@ public:
                 ASFW_LOG(Async, "  → Cancelled (flushed)");
                 
                 // Extract transaction to complete it safely outside lock
-                auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
-                if (txnPtr) {
-                    txnPtr->TransitionTo(TransactionState::Cancelled, "OnATCompletion: flushed");
-                    txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
-                }
+                postAction = PostAction::kCompleteCancelled;
+                transitionTag1 = "OnATCompletion: flushed";
+                postKr = kIOReturnAborted;
                 return;
             }
 
@@ -156,16 +175,9 @@ public:
                 case 0x0:  // kFWAckComplete (unified transaction)
                     ASFW_LOG(Async, "  → Completed (ackComplete, immediate)");
                     
-                    // Extract transaction to complete it safely outside lock
-                    // Note: We can't use 'txn' after this block because Extract moves it
-                    {
-                        auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
-                        if (txnPtr) {
-                            txnPtr->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackComplete");
-                            txnPtr->TransitionTo(TransactionState::Completed, "OnATCompletion: ackComplete");
-                            txnPtr->InvokeResponseHandler(kIOReturnSuccess, {});
-                        }
-                    }
+                    postAction = PostAction::kCompleteSuccess;
+                    transitionTag1 = "OnATCompletion: ackComplete";
+                    transitionTag2 = "OnATCompletion: ackComplete";
                     break;
 
                 case 0x4:  // kFWAckBusyX
@@ -198,15 +210,10 @@ public:
                 case 0xE:  // kFWAckTypeError
                     ASFW_LOG(Async, "  → Failed (ackError 0x%X)", ackCode);
                     
-                    // Extract transaction to complete it safely outside lock
-                    {
-                        auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
-                        if (txnPtr) {
-                            txnPtr->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackError");
-                            txnPtr->TransitionTo(TransactionState::Failed, "OnATCompletion: ackError");
-                            txnPtr->InvokeResponseHandler(kIOReturnError, {});
-                        }
-                    }
+                    postAction = PostAction::kCompleteError;
+                    transitionTag1 = "OnATCompletion: ackError";
+                    transitionTag2 = "OnATCompletion: ackError";
+                    postKr = kIOReturnError;
                     break;
 
                 default:
@@ -222,6 +229,35 @@ public:
 
         if (!found) {
             ASFW_LOG(Async, "⚠️  OnATCompletion: No transaction for tLabel=%u", comp.tLabel);
+        }
+
+        if (postAction != PostAction::kNone) {
+            auto txnPtr = txnMgr_->Extract(TLabel{comp.tLabel});
+            if (txnPtr) {
+                switch (postAction) {
+                    case PostAction::kCompleteSuccess:
+                    case PostAction::kCompletePhySuccess:
+                        txnPtr->TransitionTo(TransactionState::ATCompleted, transitionTag1 ? transitionTag1 : "OnATCompletion");
+                        txnPtr->TransitionTo(TransactionState::Completed, transitionTag2 ? transitionTag2 : "OnATCompletion");
+                        txnPtr->InvokeResponseHandler(postKr, {});
+                        break;
+                    case PostAction::kCompleteError:
+                    case PostAction::kCompleteTimeout:
+                        txnPtr->TransitionTo(TransactionState::ATCompleted, transitionTag1 ? transitionTag1 : "OnATCompletion");
+                        txnPtr->TransitionTo(TransactionState::Failed, transitionTag2 ? transitionTag2 : "OnATCompletion");
+                        txnPtr->InvokeResponseHandler(postKr, {});
+                        break;
+                    case PostAction::kCompleteCancelled:
+                        txnPtr->TransitionTo(TransactionState::Cancelled, transitionTag1 ? transitionTag1 : "OnATCompletion");
+                        txnPtr->InvokeResponseHandler(postKr, {});
+                        break;
+                    case PostAction::kNone:
+                        break;
+                }
+                if (labelAllocator_) {
+                    labelAllocator_->Free(comp.tLabel);
+                }
+            }
         }
     }
 
@@ -371,18 +407,18 @@ public:
         });
 
         if (shouldFail) {
-            auto txnPtr = txnMgr_->Extract(label);
-            if (txnPtr) {
-                txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
-                
-                // Invoke callback
-                txnPtr->InvokeResponseHandler(kIOReturnTimeout, {});
-                
-                // Free label
-                if (labelAllocator_) {
-                    labelAllocator_->Free(label.value);
-                }
+        auto txnPtr = txnMgr_->Extract(label);
+        if (txnPtr) {
+            txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
+            
+            // Invoke callback
+            txnPtr->InvokeResponseHandler(kIOReturnTimeout, {});
+            
+            // Free label
+            if (labelAllocator_) {
+                labelAllocator_->Free(label.value);
             }
+        }
         }
 
         if (!found) {

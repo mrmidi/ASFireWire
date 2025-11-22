@@ -21,10 +21,9 @@ size_t PhyCommand::BuildHeader(uint8_t label,
                                const PacketContext& pktCtx,
                                PacketBuilder& builder,
                                uint8_t* buffer) {
-    (void)label;
     (void)pktCtx;
     // Delegate to shared PacketBuilder for IEEE 1394 header construction
-    return builder.BuildPhyPacket(params_, buffer, 16);
+    return builder.BuildPhyPacket(label, params_, buffer, 16);
 }
 
 } // namespace ASFW::Async

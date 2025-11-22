@@ -46,11 +46,11 @@ struct ATSubmitPolicy {
 
     /**
      * Compute Z field for CommandPtr/branchWord
-     * @param firstIsImmediate true if first descriptor is 32-byte immediate
-     * @return Z value: 0x2 for immediate, 0x0 for standard
+     * @param totalBlocks total number of 16B descriptor blocks in the chain
+     * @return Z value: totalBlocks masked to 4-bit nibble
      */
-    static uint8_t ComputeZ(bool firstIsImmediate) noexcept {
-        return firstIsImmediate ? 0x2 : 0x0;
+    static uint8_t ComputeZ(uint8_t totalBlocks) noexcept {
+        return static_cast<uint8_t>(totalBlocks & 0x0Fu);
     }
 
     /**

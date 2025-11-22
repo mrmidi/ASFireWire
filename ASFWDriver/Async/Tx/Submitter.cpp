@@ -6,6 +6,7 @@
 #include "DescriptorBuilder.hpp"
 #include "../Contexts/ATRequestContext.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Async::Tx {
 
@@ -57,7 +58,7 @@ SubmitResult Submitter::submit_tx_chain(ATRequestContext* ctx, DescriptorBuilder
         return res;
     }
 
-    ASFW_LOG(Async, "✓ ATManager::Submit succeeded for txid=%u (blocks=%u)", txid, totalBlocks);
+    ASFW_LOG_V2(Async, "✓ ATManager::Submit succeeded for txid=%u (blocks=%u)", txid, totalBlocks);
     res.kr = kIOReturnSuccess;
     res.desc_count = totalBlocks;
     res.armed_path = true;

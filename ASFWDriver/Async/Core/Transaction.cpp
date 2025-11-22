@@ -1,5 +1,6 @@
 #include "Transaction.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 #include <cassert>
 
 namespace ASFW::Async {
@@ -25,12 +26,38 @@ void Transaction::TransitionTo(TransactionState newState, const char* reason) no
     history_[historyIdx_].reason = reason;
     historyIdx_ = (historyIdx_ + 1) % 16;
 
-    ASFW_LOG(Async,
-             "  🔄 Transaction tLabel=%u: %{public}s → %{public}s (%{public}s)",
-             static_cast<unsigned>(label_.value),
-             ToString(state_),
-             ToString(newState),
-             reason ? reason : "no reason");
+    // V0: Always log errors/failures/timeouts
+    if (newState == TransactionState::Failed || newState == TransactionState::TimedOut) {
+        ASFW_LOG_V0(Async,
+                    "t%u: %{public}s → %{public}s (%{public}s)",
+                    static_cast<unsigned>(label_.value),
+                    ToString(state_),
+                    ToString(newState),
+                    reason ? reason : "no reason");
+    }
+
+    // V2: Log key transitions
+    bool isKeyTransition = (newState == TransactionState::Failed) ||
+                           (newState == TransactionState::TimedOut) ||
+                           (newState == TransactionState::Cancelled) ||
+                           (state_ == TransactionState::Created && newState == TransactionState::Submitted) ||
+                           (state_ == TransactionState::AwaitingAR && newState == TransactionState::ARReceived);
+
+    if (isKeyTransition) {
+        ASFW_LOG_V2(Async,
+                    "t%u: %{public}s→%{public}s",
+                    static_cast<unsigned>(label_.value),
+                    ToString(state_),
+                    ToString(newState));
+    }
+
+    // V3: Log all transitions (current verbosity)
+    ASFW_LOG_V3(Async,
+                "  🔄 Transaction tLabel=%u: %{public}s → %{public}s (%{public}s)",
+                static_cast<unsigned>(label_.value),
+                ToString(state_),
+                ToString(newState),
+                reason ? reason : "no reason");
 
     state_ = newState;
 
@@ -47,9 +74,9 @@ void Transaction::ReleaseResources() noexcept {
     // Phase 1.3: UniquePayload automatically releases on destruction/reset
     // Just reset the payload wrapper (triggers automatic cleanup if owned)
     if (payload_.IsValid()) {
-        ASFW_LOG(Async,
-                 "  🗑️  Transaction tLabel=%u: releasing payload (automatic via UniquePayload)",
-                 static_cast<unsigned>(label_.value));
+        ASFW_LOG_V4(Async,
+                    "  🗑️  Transaction tLabel=%u: releasing payload (automatic via UniquePayload)",
+                    static_cast<unsigned>(label_.value));
         payload_.Reset();  // Automatic cleanup via RAII
     }
 
@@ -67,11 +94,12 @@ std::span<const TransactionStateHistory> Transaction::GetHistory() const noexcep
 }
 
 void Transaction::DumpHistory() const noexcept {
-    ASFW_LOG(Async,
-             "📜 Transaction tLabel=%u (gen=%u, node=0x%04x) State History:",
-             static_cast<unsigned>(label_.value),
-             generation_.value,
-             nodeID_.value);
+    // Dump history at V4 level (debug diagnostics)
+    ASFW_LOG_V4(Async,
+                "📜 Transaction tLabel=%u (gen=%u, node=0x%04x) State History:",
+                static_cast<unsigned>(label_.value),
+                generation_.value,
+                nodeID_.value);
 
     for (uint8_t i = 0; i < 16; ++i) {
         uint8_t idx = (historyIdx_ + i) % 16;
@@ -81,13 +109,13 @@ void Transaction::DumpHistory() const noexcept {
             continue; // Empty slot
         }
 
-        ASFW_LOG(Async,
-                 "  [%2u] %llu μs: %{public}s → %{public}s (%{public}s)",
-                 i,
-                 static_cast<unsigned long long>(entry.timestampUs),
-                 ToString(entry.oldState),
-                 ToString(entry.newState),
-                 entry.reason ? entry.reason : "none");
+        ASFW_LOG_V4(Async,
+                    "  [%2u] %llu μs: %{public}s → %{public}s (%{public}s)",
+                    i,
+                    static_cast<unsigned long long>(entry.timestampUs),
+                    ToString(entry.oldState),
+                    ToString(entry.newState),
+                    entry.reason ? entry.reason : "none");
     }
 }
 

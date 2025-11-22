@@ -45,7 +45,8 @@ public:
                                         void* headerBuffer,
                                         std::size_t bufferSize) const;
 
-    [[nodiscard]] std::size_t BuildPhyPacket(const PhyParams& params,
+    [[nodiscard]] std::size_t BuildPhyPacket(uint8_t label,
+                                             const PhyParams& params,
                                              void* headerBuffer,
                                              std::size_t bufferSize) const;
 };

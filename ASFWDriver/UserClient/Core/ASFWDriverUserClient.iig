@@ -39,6 +39,11 @@ public:
         kMethodTriggerROMRead          = 15,
         kMethodGetDiscoveredDevices    = 16,
         kMethodAsyncCompareSwap        = 17,
+        kMethodGetDriverVersion        = 18,
+        kMethodSetAsyncVerbosity       = 19,
+        kMethodSetHexDumps             = 20,
+        kMethodGetLogConfig            = 21,
+        kMethodGetAVCUnits             = 22,
     };
 
     kern_return_t
@@ -124,4 +129,5 @@ struct ASFWDriverUserClient_IVars {
     void* transactionHandler;  // TransactionHandler* (opaque)
     void* configROMHandler;    // ConfigROMHandler* (opaque)
     void* deviceDiscoveryHandler;  // DeviceDiscoveryHandler* (opaque)
+    void* avcHandler;          // AVCHandler* (opaque)
 };

@@ -6,6 +6,7 @@
 #include "../../Common/BarrierUtils.hpp"
 #include "../Memory/DMAMemoryManager.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Shared {
 
@@ -106,10 +107,10 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // If next buffer has data, hardware has moved to it
     if (next_resCount != next_reqCount) {
         // Hardware advanced to next buffer! Recycle current buffer.
-        ASFW_LOG(Async,
-                 "🔄 BufferRing::Dequeue: Hardware advanced to buffer[%zu] (resCount=%u/%u). "
-                 "Auto-recycling buffer[%zu]...",
-                 next_index, next_resCount, next_reqCount, index);
+        ASFW_LOG_V4(Async,
+                    "🔄 BufferRing::Dequeue: Hardware advanced to buffer[%zu] (resCount=%u/%u). "
+                    "Auto-recycling buffer[%zu]...",
+                    next_index, next_resCount, next_reqCount, index);
 
         // Recycle current buffer (resets resCount=reqCount)
         auto& desc_to_recycle = descriptors_[index];
@@ -126,9 +127,9 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
         last_dequeued_bytes_ = 0;  // Reset tracking for new buffer
         index = next_index;  // Process the new buffer now
 
-        ASFW_LOG(Async,
-                 "✅ BufferRing: Auto-recycled buffer, advanced head_ →%zu",
-                 index);
+        ASFW_LOG_V4(Async,
+                    "✅ BufferRing: Auto-recycled buffer, advanced head_ →%zu",
+                    index);
     }
 
     // Now process current buffer (either same as before, or newly advanced)
@@ -144,8 +145,8 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // For uncached memory, IoBarrier (DSB) is sufficient. Adding DMB may cause issues.
 
     if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG(Async,
-                 "  🔍 BufferRing::Dequeue: ReadBarrier NOT used (uncached device memory, DSB sufficient)");
+        ASFW_LOG_V4(Async,
+                    "  🔍 BufferRing::Dequeue: ReadBarrier NOT used (uncached device memory, DSB sufficient)");
     }
 
     // Extract resCount and xferStatus using AR-specific accessors
@@ -178,11 +179,11 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     }
 
     if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG(Async,
-                 "🧭 BufferRing::Dequeue idx=%zu desc=%p reqCount=%u resCount=%u "
-                 "total=%zu last_dequeued=%zu startOffset=%zu newBytes=%zu",
-                 index, &desc, reqCount, resCount,
-                 total_bytes_in_buffer, last_dequeued_bytes_, start_offset, new_bytes);
+        ASFW_LOG_V4(Async,
+                    "🧭 BufferRing::Dequeue idx=%zu desc=%p reqCount=%u resCount=%u "
+                    "total=%zu last_dequeued=%zu startOffset=%zu newBytes=%zu",
+                    index, &desc, reqCount, resCount,
+                    total_bytes_in_buffer, last_dequeued_bytes_, start_offset, new_bytes);
     }
 
     // Get virtual address of buffer START (caller will add startOffset)
@@ -246,15 +247,15 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
     Driver::WriteBarrier();
 
     // CRITICAL DIAGNOSTIC: Always log recycle operation to trace buffer lifecycle
-    ASFW_LOG(Async,
-             "♻️  BufferRing::Recycle[%zu]: BEFORE statusWord=0x%08X (resCount=%u xferStatus=0x%04X)",
-             index, statusWordBefore, resCountBefore, xferStatusBefore);
-    ASFW_LOG(Async,
-             "♻️  BufferRing::Recycle[%zu]: AFTER  statusWord=0x%08X (resCount=%u xferStatus=0x%04X) reqCount=%u",
-             index, statusWordAfter, resCountAfter, xferStatusAfter, reqCount);
-    ASFW_LOG(Async,
-             "♻️  BufferRing::Recycle[%zu]: head_ %zu → %zu (next buffer)",
-             index, head_, (head_ + 1) % bufferCount_);
+    ASFW_LOG_V4(Async,
+                "♻️  BufferRing::Recycle[%zu]: BEFORE statusWord=0x%08X (resCount=%u xferStatus=0x%04X)",
+                index, statusWordBefore, resCountBefore, xferStatusBefore);
+    ASFW_LOG_V4(Async,
+                "♻️  BufferRing::Recycle[%zu]: AFTER  statusWord=0x%08X (resCount=%u xferStatus=0x%04X) reqCount=%u",
+                index, statusWordAfter, resCountAfter, xferStatusAfter, reqCount);
+    ASFW_LOG_V4(Async,
+                "♻️  BufferRing::Recycle[%zu]: head_ %zu → %zu (next buffer)",
+                index, head_, (head_ + 1) % bufferCount_);
 
     if (resCountAfter != reqCount) {
         ASFW_LOG(Async,
@@ -263,11 +264,11 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
     }
 
     if (DMAMemoryManager::IsTracingEnabled()) {
-        ASFW_LOG(Async,
-                 "🧭 BufferRing::Recycle idx=%zu desc=%p reqCount=%u",
-                 index,
-                 &desc,
-                 reqCount);
+        ASFW_LOG_V4(Async,
+                    "🧭BufferRing::Recycle idx=%zu desc=%p reqCount=%u",
+                    index,
+                    &desc,
+                    reqCount);
     }
 
     // Advance head to next buffer (circular)
@@ -276,9 +277,9 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
     // CRITICAL: Reset stream tracking for new buffer
     last_dequeued_bytes_ = 0;
 
-    ASFW_LOG(Async,
-             "♻️  BufferRing::Recycle[%zu]: Advanced to next buffer, reset last_dequeued_bytes_=0",
-             index);
+    ASFW_LOG_V4(Async,
+                "♻️  BufferRing::Recycle[%zu]: Advanced to next buffer, reset last_dequeued_bytes_=0",
+                index);
 
     return kIOReturnSuccess;
 }

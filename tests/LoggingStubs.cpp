@@ -5,6 +5,8 @@
 #include <cstdarg>
 #include <cstdio>
 
+#include "Logging/LogConfig.hpp"
+
 namespace ASFW::Driver::Logging {
 
 // Stub log handles - just use default log for host tests
@@ -67,3 +69,35 @@ os_log_t BusManager() {
 }
 
 } // namespace ASFW::Driver::Logging
+
+namespace ASFW {
+
+// Minimal LogConfig stub for host tests (no plist, fixed defaults)
+LogConfig& LogConfig::Shared() {
+    static LogConfig instance;
+    return instance;
+}
+
+// Constructors are defined inline for the stub; atomics default to zero/false.
+LogConfig::LogConfig() = default;
+LogConfig::~LogConfig() = default;
+
+void LogConfig::Initialize(IOService*) {}
+
+uint8_t LogConfig::GetAsyncVerbosity() const { return 0; }
+uint8_t LogConfig::GetControllerVerbosity() const { return 0; }
+uint8_t LogConfig::GetHardwareVerbosity() const { return 0; }
+bool LogConfig::IsHexDumpsEnabled() const { return false; }
+bool LogConfig::IsStatisticsEnabled() const { return false; }
+
+void LogConfig::SetAsyncVerbosity(uint8_t) {}
+void LogConfig::SetControllerVerbosity(uint8_t) {}
+void LogConfig::SetHardwareVerbosity(uint8_t) {}
+void LogConfig::SetHexDumps(bool) {}
+void LogConfig::SetStatistics(bool) {}
+
+uint8_t LogConfig::ReadUInt8Property(IOService*, const char*, uint8_t defaultValue) { return defaultValue; }
+bool LogConfig::ReadBoolProperty(IOService*, const char*, bool defaultValue) { return defaultValue; }
+uint8_t LogConfig::ClampLevel(uint8_t level) { return level > 4 ? 4 : level; }
+
+} // namespace ASFW

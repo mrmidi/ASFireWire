@@ -150,7 +150,7 @@ kern_return_t ControllerCore::Start(IOService* provider) {
     }
 
     if (!deps_.interrupts) {
-        ASFW_LOG(Controller, "❌ CRITICAL: No InterruptManager - cannot enable interrupts!");
+        ASFW_LOG_V0(Controller, "❌ CRITICAL: No InterruptManager - cannot enable interrupts!");
         if (deps_.stateMachine) {
             deps_.stateMachine->TransitionTo(ControllerState::kFailed, "ControllerCore::Start missing InterruptManager", mach_absolute_time());
         }
@@ -239,35 +239,35 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     const uint32_t events = rawEvents & currentMask;
 
     if (rawEvents != events) {
-        ASFW_LOG(Controller, "Filtered masked interrupts: raw=0x%08x enabled=0x%08x mask=0x%08x",
+        ASFW_LOG_V3(Controller, "Filtered masked interrupts: raw=0x%08x enabled=0x%08x mask=0x%08x",
                rawEvents, events, currentMask);
     }
 
     // RAW INTERRUPT LOGGING: Log every interrupt during bus reset for diagnostics
     // This helps diagnose timing issues, missing interrupts, and hardware quirks
     if (deps_.busReset && deps_.busReset->GetState() != BusResetCoordinator::State::Idle) {
-        ASFW_LOG(Controller, "🔍 BUS RESET ACTIVE - Raw interrupt: 0x%08x @ %llu ns (mask=0x%08x filtered=0x%08x)",
+        ASFW_LOG_V2(Controller, "🔍 BUS RESET ACTIVE - Raw interrupt: 0x%08x @ %llu ns (mask=0x%08x filtered=0x%08x)",
                  rawEvents, snapshot.timestamp, currentMask, events);
     }
     
-    ASFW_LOG(Controller, "HandleInterrupt: events=0x%08x AsyncSubsystem=%p", events, deps_.asyncSubsystem.get());
+    ASFW_LOG_V3(Controller, "HandleInterrupt: events=0x%08x AsyncSubsystem=%p", events, deps_.asyncSubsystem.get());
 
     // Detailed interrupt decode (adapted from Linux log_irqs)
     const std::string eventDecode = DiagnosticLogger::DecodeInterruptEvents(events);
-    ASFW_LOG(Controller, "%{public}s", eventDecode.c_str());
+    ASFW_LOG_V3(Controller, "%{public}s", eventDecode.c_str());
 
     // Check for critical hardware errors first
     if (events & IntEventBits::kUnrecoverableError) {
-        ASFW_LOG(Controller, "❌ CRITICAL: UnrecoverableError interrupt - hardware fault detected!");
+        ASFW_LOG_V0(Controller, "❌ CRITICAL: UnrecoverableError interrupt - hardware fault detected!");
         DiagnoseUnrecoverableError();
         // TODO(ASFW-Error): Implement error recovery or halt driver
     }
-    
+
     // Check for CSR register access failures (often occurs with UnrecoverableError)
     if (events & IntEventBits::kRegAccessFail) {
-        ASFW_LOG(Controller, "❌ CRITICAL: regAccessFail - CSR register access failed!");
-        ASFW_LOG(Controller, "This indicates hardware could not complete a register read/write operation");
-        ASFW_LOG(Controller, "Common causes: Self-ID buffer access, Config ROM mapping, or context register access");
+        ASFW_LOG_V0(Controller, "❌ CRITICAL: regAccessFail - CSR register access failed!");
+        ASFW_LOG_V0(Controller, "This indicates hardware could not complete a register read/write operation");
+        ASFW_LOG_V0(Controller, "Common causes: Self-ID buffer access, Config ROM mapping, or context register access");
     }
 
     // Check for cycle timing errors (adapted from Linux irq handler)
@@ -303,14 +303,14 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
 
     // Dispatch AT Request completions
     if ((events & IntEventBits::kReqTxComplete) && deps_.asyncSubsystem) {
-        ASFW_LOG(Controller, "AT Request complete interrupt (transmit done)");
+        ASFW_LOG_V3(Controller, "AT Request complete interrupt (transmit done)");
         deps_.asyncSubsystem->OnTxInterrupt();
         // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
 
     // Dispatch AT Response completions
     if ((events & IntEventBits::kRespTxComplete) && deps_.asyncSubsystem) {
-        ASFW_LOG(Controller, "AT Response complete interrupt (transmit done)");
+        ASFW_LOG_V3(Controller, "AT Response complete interrupt (transmit done)");
         deps_.asyncSubsystem->OnTxInterrupt();
         // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
@@ -320,14 +320,14 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     // kRQPkt = "request packet received into AR Request context"
     // kARRQ = "AR Request context active" (different semantics)
     if ((events & IntEventBits::kRQPkt) && deps_.asyncSubsystem) {
-        ASFW_LOG(Controller, "AR Request interrupt (RQPkt: async receive packet available)");
+        ASFW_LOG_V3(Controller, "AR Request interrupt (RQPkt: async receive packet available)");
         deps_.asyncSubsystem->OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType::Request);
         // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
 
     // Dispatch AR Response interrupts (OHCI §6.1.2: RSPkt indicates packet available)
     if ((events & IntEventBits::kRSPkt) && deps_.asyncSubsystem) {
-        ASFW_LOG(Controller, "AR Response interrupt (RSPkt: async receive packet available)");
+        ASFW_LOG_V3(Controller, "AR Response interrupt (RSPkt: async receive packet available)");
         deps_.asyncSubsystem->OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType::Response);
         // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
@@ -418,6 +418,10 @@ Discovery::IDeviceManager* ControllerCore::GetDeviceManager() const {
 
 Discovery::IUnitRegistry* ControllerCore::GetUnitRegistry() const {
     return deps_.deviceManager.get();
+}
+
+Protocols::AVC::AVCDiscovery* ControllerCore::GetAVCDiscovery() const {
+    return deps_.avcDiscovery.get();
 }
 
 // Phase 2: Interface facade accessors
@@ -660,14 +664,28 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
             // Step 4: Configure PHY register 4 (Link Active + Contender)
             // Use constants from IEEE1394.hpp
             // (kPhyReg4Address, kPhyLinkActive, kPhyContender)
+            //
+            // CRITICAL FIX: Only set Contender bit if allowCycleMasterEligibility is true
+            // - This matches Apple's behavior (conditional PHY reg 4 setup)
+            // - Prevents two-contender bus topology issues with devices like Apogee Duet
+            // - Default config has allowCycleMasterEligibility=false (delegate mode)
 
-            ASFW_LOG_PHY("Configuring PHY register 4 (link_on + contender)");
+            const uint8_t phyReg4Bits = config_.allowCycleMasterEligibility
+                ? (kPhyLinkActive | kPhyContender)  // Want to be cycle master: L=1, C=1
+                : kPhyLinkActive;                    // Delegate mode: L=1, C=0
+
+            ASFW_LOG_PHY("Configuring PHY register 4 (link_on=1 contender=%d)",
+                         config_.allowCycleMasterEligibility ? 1 : 0);
             phyConfigOk = hw.UpdatePhyRegister(kPhyReg4Address,
                                                 0,
-                                                kPhyLinkActive | kPhyContender);
+                                                phyReg4Bits);
 
             if (phyConfigOk) {
-                ASFW_LOG_PHY("PHY reg4 configured: link_on=1 contender=1");
+                ASFW_LOG_PHY("PHY reg4 configured: link_on=1 contender=%d",
+                             config_.allowCycleMasterEligibility ? 1 : 0);
+
+                // Initialize PHY reg 4 cache for SetContender() cached writes
+                hw.InitializePhyReg4Cache();
             } else {
                 ASFW_LOG(Hardware, "Failed to configure PHY register 4");
             }
@@ -962,7 +980,7 @@ void ControllerCore::DiagnoseUnrecoverableError() {
             const auto codeEnum = static_cast<ASFW::Async::OHCIEventCode>(eventCode);
             const char* codeName = ASFW::Async::ToString(codeEnum);
             char buf[32];
-            std::snprintf(buf, sizeof(buf), "DEAD(0x%02x:%{public}s)", eventCode, codeName);
+            std::snprintf(buf, sizeof(buf), "DEAD(0x%02x:%s)", eventCode, codeName);
             contextSummary.append(buf);
         } else {
             contextSummary.append("OK");

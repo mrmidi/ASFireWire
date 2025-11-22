@@ -174,6 +174,25 @@ target_compile_definitions(PhyPacketsTests
 
 target_include_directories(PhyPacketsTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+# Label Allocator / tLabel lifecycle tests
+add_executable(LabelAllocatorTests
+    "${ASFW_TESTS_DIR}/LabelAllocatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(LabelAllocatorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(LabelAllocatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(LabelAllocatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
 include(GoogleTest)
 gtest_discover_tests(ASFWPacketTests)
 gtest_discover_tests(TLabelMatchingTests)
@@ -182,3 +201,4 @@ gtest_discover_tests(CompletionStrategyTests)
 gtest_discover_tests(GapCountOptimizerTests)
 gtest_discover_tests(TopologyGapExtractionTests)
 gtest_discover_tests(PhyPacketsTests)
+gtest_discover_tests(LabelAllocatorTests)

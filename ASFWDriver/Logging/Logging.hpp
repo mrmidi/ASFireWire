@@ -190,3 +190,82 @@ struct RlState {
 #else
 #define ASFW_LOG_PHY(fmt, ...)
 #endif
+
+// ============================================================================
+// Runtime Verbosity-Aware Logging Macros
+// ============================================================================
+//
+// These macros check runtime verbosity levels before logging.
+// They work with any category (Async, Controller, Hardware, etc.)
+//
+// Usage:
+//   ASFW_LOG_V0(Async, "Critical error");      // Level 0+ (always logs errors)
+//   ASFW_LOG_V1(Async, "TX t5 OK");            // Level 1+ (compact summaries)
+//   ASFW_LOG_V2(Async, "State transition");   // Level 2+ (key transitions)
+//   ASFW_LOG_V3(Async, "Detailed flow");      // Level 3+ (verbose)
+//   ASFW_LOG_V4(Async, "Debug dump");         // Level 4+ (full diagnostics)
+//   ASFW_LOG_HEX(Async, "Packet: %02x", b);   // Hex dumps (respects flag + level)
+//
+// Verbosity levels are configured via Info.plist properties:
+//   ASFWAsyncVerbosity, ASFWControllerVerbosity, ASFWHardwareVerbosity
+//
+
+// Forward declaration (LogConfig defined in LogConfig.hpp)
+namespace ASFW {
+class LogConfig;
+}
+
+// Helper macro to get verbosity for a specific category
+// This uses token concatenation to call Get##category##Verbosity()
+#define ASFW_GET_VERBOSITY(category) \
+    (ASFW::LogConfig::Shared().Get##category##Verbosity())
+
+// Level 0: Critical (errors, failures, timeouts - always logged at this level)
+#define ASFW_LOG_V0(category, fmt, ...) \
+    do { \
+        if (ASFW_GET_VERBOSITY(category) >= 0) { \
+            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+// Level 1: Compact (one-line summaries, aggregate stats)
+#define ASFW_LOG_V1(category, fmt, ...) \
+    do { \
+        if (ASFW_GET_VERBOSITY(category) >= 1) { \
+            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+// Level 2: Transitions (key state changes only)
+#define ASFW_LOG_V2(category, fmt, ...) \
+    do { \
+        if (ASFW_GET_VERBOSITY(category) >= 2) { \
+            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+// Level 3: Verbose (all transitions, detailed flow)
+#define ASFW_LOG_V3(category, fmt, ...) \
+    do { \
+        if (ASFW_GET_VERBOSITY(category) >= 3) { \
+            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+// Level 4: Debug (hex dumps, buffer dumps, full diagnostics)
+#define ASFW_LOG_V4(category, fmt, ...) \
+    do { \
+        if (ASFW_GET_VERBOSITY(category) >= 4) { \
+            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+// Hex dumps: respects both explicit flag and verbosity level 4
+// This allows forcing hex dumps on/off independent of verbosity level
+#define ASFW_LOG_HEX(category, fmt, ...) \
+    do { \
+        if (ASFW::LogConfig::Shared().IsHexDumpsEnabled() || \
+            ASFW_GET_VERBOSITY(category) >= 4) { \
+            ASFW_LOG(category, fmt, ##__VA_ARGS__); \
+        } \
+    } while (0)

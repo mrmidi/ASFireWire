@@ -249,7 +249,7 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
                                       std::string_view caller) {
     // MAKE IT NO-OP FOR NOW
     // ASFW_LOG(Hardware,
-    //          "PHY CONFIG requested by %.*s (gapCount=%s forceRootPhyId=%s) - NO-OP",
+    //          "PHY CONFIG requested by %.*s (gapCount=%{public}s forceRootPhyId=%{public}s) - NO-OP",
     //          static_cast<int>(caller.size()),
     //          caller.data(),
     //          gapCount.has_value() ? std::to_string(*gapCount).c_str() : "none",
@@ -418,19 +418,96 @@ void HardwareInterface::SetContender(bool enable) {
     // PHY Register 4:
     // Bit 7: L (Link Active)
     // Bit 6: C (Contender)
-    // Bit 5-0: Gap Count (read-only in this register usually, or mirrored)
-    
-    // We use UpdatePhyRegister to be safe.
-    // To set: setBits = 0x40, clearBits = 0
-    // To clear: setBits = 0, clearBits = 0x40
-    
-    uint8_t setBits = enable ? 0x40 : 0;
-    uint8_t clearBits = enable ? 0 : 0x40;
-    
-    if (UpdatePhyRegister(4, clearBits, setBits)) {
-        ASFW_LOG(Hardware, "PHY Register 4 updated: Contender=%d", enable);
+    // Bit 5-0: Gap Count (managed separately)
+    //
+    // IMPLEMENTATION NOTE: Matches Apple's AppleFWOHCI::setContender (0x57da)
+    // - Uses cached value from phyReg4Cache_ (AppleFWOHCI+2633)
+    // - Direct write via WritePhyRegister, NOT hardware RMW
+    // - Updates cache only on successful write
+    //
+    // Why cache instead of RMW?
+    // - Gap count bits [5:0] must be preserved
+    // - PHY reg 4 reads can be unreliable on some chips
+    // - Apple uses cache to avoid spurious gap count changes
+
+    // Modify bit 6 (0x40) in cached value
+    uint8_t newValue = enable ? (phyReg4Cache_ | 0x40)    // Set contender bit
+                              : (phyReg4Cache_ & 0xBF);   // Clear contender bit (0xBF = ~0x40)
+
+    if (WritePhyRegister(4, newValue)) {
+        phyReg4Cache_ = newValue;  // Update cache on success
+        ASFW_LOG(Hardware, "PHY Register 4 updated: Contender=%d (cached write: 0x%02x)", enable, newValue);
     } else {
-        ASFW_LOG_ERROR(Hardware, "Failed to update PHY Register 4 (Contender=%d)", enable);
+        ASFW_LOG_ERROR(Hardware, "Failed to update PHY Register 4 (Contender=%d, attempted value: 0x%02x)", enable, newValue);
+    }
+}
+
+void HardwareInterface::InitializePhyReg4Cache() {
+    // Read PHY register 4 and populate cache
+    // Call this after PHY initialization to sync cache with hardware state
+    const auto value = ReadPhyRegister(4);
+    if (value.has_value()) {
+        phyReg4Cache_ = *value;
+        ASFW_LOG_V2(Hardware, "PHY Register 4 cache initialized: 0x%02x (L=%d C=%d gap=0x%02x)",
+                 *value,
+                 (*value & 0x80) ? 1 : 0,  // Link Active bit
+                 (*value & 0x40) ? 1 : 0,  // Contender bit
+                 *value & 0x3F);           // Gap count bits
+    } else {
+        ASFW_LOG_ERROR(Hardware, "Failed to initialize PHY Register 4 cache - read failed");
+    }
+}
+
+void HardwareInterface::SetRootHoldOff(bool enable) {
+    // PHY Register 1:
+    // Bit 7: RHB (Root Hold-Off Bit) - prevents node from becoming root
+    // Bit 6: IBR (Initiate Bus Reset)
+    // Bit 5-0: Gap Count
+    //
+    // IMPLEMENTATION NOTE: Matches Apple's AppleFWOHCI::setRootHoldOff (0x586e)
+    // - Enabling: Hardware RMW (read, check, write if needed)
+    // - Disabling: Triggers bus reset (Apple calls resetBus instead of direct clear)
+    // - Early return if bit already in desired state (optimization)
+    //
+    // Why bus reset for disable?
+    // - Root Hold-Off is topology state that persists across transactions
+    // - Apple clears it via bus reset to ensure clean topology re-election
+    // - Direct bit clear could leave PHY in inconsistent state
+
+    // Read current PHY register 1 value
+    const auto currentOpt = ReadPhyRegister(1);
+    if (!currentOpt.has_value()) {
+        ASFW_LOG_ERROR(Hardware, "Failed to read PHY Register 1 for SetRootHoldOff(%d)", enable);
+        return;
+    }
+
+    const uint8_t current = currentOpt.value();
+    const bool rhbSet = (current & 0x80) != 0;  // Check bit 7
+
+    if (enable) {
+        // Enable RHB: set bit 7 if not already set
+        if (rhbSet) {
+            ASFW_LOG(Hardware, "PHY Register 1 RHB already set (0x%02x), no action needed", current);
+            return;
+        }
+
+        const uint8_t newValue = current | 0x80;  // Set bit 7
+        if (WritePhyRegister(1, newValue)) {
+            ASFW_LOG(Hardware, "PHY Register 1 RHB enabled (0x%02x → 0x%02x)", current, newValue);
+        } else {
+            ASFW_LOG_ERROR(Hardware, "Failed to enable RHB in PHY Register 1");
+        }
+    } else {
+        // Disable RHB: trigger bus reset if bit is currently set
+        if (!rhbSet) {
+            ASFW_LOG(Hardware, "PHY Register 1 RHB already clear (0x%02x), no action needed", current);
+            return;
+        }
+
+        // Apple's approach: trigger bus reset to clear topology state
+        // (matches AppleFWOHCI::setRootHoldOff calling resetBus via vtable offset 1220)
+        ASFW_LOG(Hardware, "PHY Register 1 RHB set (0x%02x), triggering bus reset to clear", current);
+        InitiateBusReset(false);  // Short reset
     }
 }
 
@@ -563,7 +640,7 @@ bool HardwareInterface::UpdatePhyRegister(uint8_t address, uint8_t clearBits, ui
     // Read current value (use unlocked version - we already hold phyLock_)
     const auto currentOpt = ReadPhyRegisterUnlocked(address);
     if (!currentOpt.has_value()) {
-        ASFW_LOG(Hardware, "PHY register %u update failed - read failed", address);
+        ASFW_LOG_V0(Hardware, "PHY register %u update failed - read failed", address);
         return false;
     }
 
@@ -632,7 +709,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     // Use IODMACommand with maxAddressBits=32 to get IOMMU-mapped addresses
 
     if (!device_) {
-        ASFW_LOG(Hardware, "DMA allocation failed - no PCI device");
+        ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
 
@@ -645,7 +722,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     IOBufferMemoryDescriptor* buffer = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer);
     if (kr != kIOReturnSuccess || buffer == nullptr) {
-        ASFW_LOG(Hardware, "IOBufferMemoryDescriptor::Create failed: 0x%08x", kr);
+        ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::Create failed: 0x%08x", kr);
         return std::nullopt;
     }
 
@@ -659,7 +736,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     IODMACommand* dmaCmd = nullptr;
     kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &dmaCmd);
     if (kr != kIOReturnSuccess || dmaCmd == nullptr) {
-        ASFW_LOG(Hardware, "IODMACommand::Create failed: 0x%08x", kr);
+        ASFW_LOG_V0(Hardware, "IODMACommand::Create failed: 0x%08x", kr);
         buffer->release();
         return std::nullopt;
     }
@@ -679,7 +756,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
                                 segments);
 
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Hardware,
+        ASFW_LOG_V0(Hardware,
                "IODMACommand::PrepareForDMA failed: 0x%08x - IOMMU mapping failed",
                kr);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
@@ -689,21 +766,21 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
 
     // Verify we got exactly one segment and it's within 32-bit range
     if (segmentCount == 0) {
-        ASFW_LOG(Hardware, "IODMACommand::PrepareForDMA returned zero segments");
+        ASFW_LOG_V0(Hardware, "IODMACommand::PrepareForDMA returned zero segments");
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
     if (segmentCount > 1) {
-        ASFW_LOG(Hardware,
+        ASFW_LOG_V2(Hardware,
                "WARNING: DMA buffer fragmented into %u segments - using first segment only",
                segmentCount);
     }
 
     uint64_t mappedAddress = segments[0].address;
     if (mappedAddress > 0xFFFFFFFFULL) {
-        ASFW_LOG(Hardware,
+        ASFW_LOG_V0(Hardware,
                "DMA segment paddr=0x%llx exceeds 32-bit range - IOMMU failed to map below 4GB",
                mappedAddress);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
@@ -713,7 +790,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
 
     // Verify alignment matches request (critical for OHCI descriptor/ROM requirements)
     if ((mappedAddress & (alignment - 1)) != 0) {
-        ASFW_LOG(Hardware,
+        ASFW_LOG_V0(Hardware,
                "❌ CRITICAL: DMA buffer misaligned! paddr=0x%llx requested=%zu actual=%llu",
                mappedAddress, alignment, mappedAddress & (alignment - 1));
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
@@ -725,7 +802,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     // to maintain the IOMMU mapping. CompleteDMA() will unmap the address and
     // the IOMMU will reuse it for the next allocation, causing address collisions.
 
-    ASFW_LOG(Hardware,
+    ASFW_LOG_V2(Hardware,
            "DMA buffer allocated: IOMMU-mapped paddr=0x%llx size=%zu",
            mappedAddress, length);
 

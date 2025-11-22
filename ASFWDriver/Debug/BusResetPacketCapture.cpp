@@ -118,8 +118,9 @@ void BusResetPacketCapture::Clear()
     count_.store(0, std::memory_order_release);
 
     // Zero out snapshots for clean state
+    // Use assignment instead of memset for non-trivially copyable types
     for (auto& snapshot : ring_) {
-        std::memset(&snapshot, 0, sizeof(snapshot));
+        snapshot = BusResetPacketSnapshot{};
     }
 }
 
