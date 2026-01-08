@@ -83,6 +83,20 @@ static_assert((kContextControlRunBit & kContextControlWakeBit) == 0, "Bit overla
 static_assert((kContextControlRunBit & kContextControlDeadBit) == 0, "Bit overlap detected");
 static_assert((kContextControlRunBit & kContextControlActiveBit) == 0, "Bit overlap detected");
 
+// ContextControl struct for cleaner call sites (matches IsochReceiveContext usage)
+struct ContextControl {
+    static constexpr uint32_t kRun = kContextControlRunBit;
+    static constexpr uint32_t kWake = kContextControlWakeBit;
+    static constexpr uint32_t kDead = kContextControlDeadBit;
+    static constexpr uint32_t kActive = kContextControlActiveBit;
+    static constexpr uint32_t kEventCodeMask = kContextControlEventMask;
+    static constexpr uint32_t kEventCodeShift = 0;
+    static constexpr uint32_t kIsochHeader = 1u << 30;     // IR: includes isoch header (OHCI §10.2.2)
+    static constexpr uint32_t kCycleMatchEnable = 1u << 30; // IT: stall until cycle match (OHCI §9.2)
+    // Mask of all writable bits (for safe clearing without hitting reserved bits)
+    static constexpr uint32_t kWritableBits = kRun | kWake | kCycleMatchEnable;
+};
+
 // ============================================================================
 // IEEE 1394 Wire Format Constants - Asynchronous Packet Headers
 // ============================================================================

@@ -1,0 +1,59 @@
+//
+// ASFWAudioNub.iig
+// ASFWDriver
+//
+// Audio nub published by ASFWDriver when music subunit is discovered.
+// ASFWAudioDriver (IOUserAudioDriver) matches on this nub.
+//
+// Cross-process communication:
+//   ASFWAudioNub allocates shared memory (IOBufferMemoryDescriptor) for the
+//   TX audio queue. Both ASFWAudioDriver and IsochTransmitContext map this
+//   memory and communicate via lock-free SPSC queue.
+//
+
+#ifndef ASFWAudioNub_h
+#define ASFWAudioNub_h
+
+#include <DriverKit/IOService.iig>
+#include <DriverKit/IOBufferMemoryDescriptor.iig>
+#include <DriverKit/OSString.iig>
+#include <DriverKit/OSArray.iig>
+
+// Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
+// Properties set by ASFWDriver:
+//   - ASFWDeviceName (OSString): Device name from config ROM
+//   - ASFWChannelCount (OSNumber): Number of audio channels
+//   - ASFWSampleRates (OSArray of OSNumber): Supported sample rates
+//   - ASFWGUID (OSNumber): Device GUID for identification
+
+class ASFWAudioNub: public IOService
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+
+    // RPC method: AudioDriver calls this to get shared TX queue memory
+    // Returns a retained IOBufferMemoryDescriptor that the caller must release
+    // This is NOT LOCALONLY - it's callable across process boundaries
+    virtual kern_return_t CopyTransmitQueueMemory(
+        IOBufferMemoryDescriptor** outMemory,
+        uint64_t* outBytes);
+
+    // LOCALONLY methods for ASFWDriver-side access (same process)
+    void* GetParentDriver() const LOCALONLY;
+
+    // Get the local mapping of the TX queue for IT context to consume
+    void* GetTxQueueLocalMapping() const LOCALONLY;
+    uint64_t GetTxQueueBytes() const LOCALONLY;
+};
+
+struct ASFWAudioNub_IVars {
+    IOService* parentDriver;              // ASFWDriver instance (not retained, provider lifetime)
+    IOBufferMemoryDescriptor* txQueueMem; // Shared memory for TX audio queue
+    IOMemoryMap* txQueueMap;              // Local mapping of txQueueMem
+    uint64_t txQueueBytes;                // Size of shared memory
+};
+
+#endif /* ASFWAudioNub_h */

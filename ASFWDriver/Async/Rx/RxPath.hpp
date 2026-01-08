@@ -51,6 +51,12 @@ private:
 
     // RxPath owns the parser.
     std::unique_ptr<ARPacketParser> packetParser_;
+
+    // Handle synthetic / general PHY packets coming via PacketRouter
+    void HandlePhyRequestPacket(const ARPacketView& view);
+
+    // Current bus-reset capture target for this interrupt pass
+    Debug::BusResetPacketCapture* currentBusResetCapture_ = nullptr;
 };
 
 } // namespace ASFW::Async::Rx

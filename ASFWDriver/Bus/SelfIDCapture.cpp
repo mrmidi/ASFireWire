@@ -90,16 +90,8 @@ kern_return_t SelfIDCapture::PrepareBuffers(size_t quadCapacity, HardwareInterfa
         const uint64_t addr = map_->GetAddress();
         if (addr != 0) {
             std::memset(reinterpret_cast<void*>(addr), 0, allocBytes);
-            // Clearing the buffer upfront prevents stale generation metadata from a
-            // previous capture from confusing the first post-reset decode. Linux
-            // keeps its self_id_buffer zeroed for the same reason before arming.
         }
     }
-
-    // Per OHCI §11.3: Controller owns the buffer once armed; don't CPU-write to it
-    // Linux never touches the buffer between arming and Self-ID completion
-    // Hardware writes generation|timestamp header at buffer[0] during Self-ID
-    // Any CPU writes race with hardware DMA and can cause postedWriteErr
 
     armed_ = false;
     return kIOReturnSuccess;
@@ -173,21 +165,8 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
 
     const size_t cappedQuads = std::min<size_t>(quadCount, quadCapacity_);
 
-    // DMA cache coherency for CPU reads after device DMA
-    // Per DriverKit documentation: PerformOperation with kIODMACommandPerformOperationOptionRead
-    // ensures cache coherency by copying from DMA buffer (with cache invalidation) to dest buffer
-    // We pass NULL dest buffer because we want to read directly, but the operation still
-    // triggers the necessary cache invalidation on the source DMA buffer
-    // Alternative: We could PerformOperation to temp buffer, but that's wasteful
-    // Instead, we rely on the fact that PrepareForDMA set up the mapping with proper coherency
-    // and FullBarrier() ensures memory ordering for direct buffer access
-    
-    // Memory ordering barrier ensures DMA completion before CPU reads
-    // This is the DriverKit equivalent of cache synchronization
     FullBarrier();
 
-    // Null check for map address before dereference
-    // GetAddress() returns uint64_t, not pointer - cast to check validity
     const uint64_t addr = map_->GetAddress();
     if (addr == 0) {
         ASFW_LOG(Hardware, "Self-ID map address is NULL - buffer mapping failed");
@@ -198,21 +177,15 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
     
     const auto* base = reinterpret_cast<const uint32_t*>(addr);
     
-    // ENHANCED VALIDATION per OHCI §11.3: Double-read generation check to detect racing bus resets
-    // Algorithm: Read buffer generation → read register generation → compare all three values
-    // If any mismatch occurs, a bus reset happened between DMA completion and our read
     if (cappedQuads > 0) {
         const uint32_t headerQuad = base[0];
         const uint32_t genMem = (headerQuad >> 16) & 0xFF;
         
-        // CRITICAL: Re-read SelfIDCount register AFTER reading buffer to detect racing resets
-        // If hardware started a new bus reset between DMA completion and now, the generation
-        // in the register will have incremented while the buffer still contains old data
         const uint32_t selfIDCountReg2 = hw.Read(Register32::kSelfIDCount);
         const uint32_t generation2 = (selfIDCountReg2 & SelfIDCountBits::kGenerationMask) >> SelfIDCountBits::kGenerationShift;
         
         if (generation != genMem) {
-            ASFW_LOG(Hardware, "Self-ID generation mismatch (buffer vs initial read): buffer=%u register1=%u (racing bus reset detected)", 
+            ASFW_LOG(Hardware, "Self-ID generation mismatch (buffer vs initial read): buffer=%u register1=%u", 
                      genMem, generation);
             result.valid = false;
             result.crcError = false;
@@ -221,7 +194,7 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
         }
         
         if (generation != generation2) {
-            ASFW_LOG(Hardware, "Self-ID generation mismatch (initial vs double-read): register1=%u register2=%u (racing bus reset detected)",
+            ASFW_LOG(Hardware, "Self-ID generation mismatch (initial vs double-read): register1=%u register2=%u",
                      generation, generation2);
             result.valid = false;
             result.crcError = false;
@@ -229,41 +202,14 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
             return result;
         }
         
-        ASFW_LOG(Hardware, "Self-ID generation VALIDATED (double-read): %u matches (buffer=register1=register2)", generation);
-        
-#if ASFW_DEBUG_SELF_ID
-        // Debug: Log first few quadlets to verify data
-        ASFW_LOG_SELF_ID("Self-ID buffer header[0]=0x%08x (gen=%u ts=%u)",
-                          headerQuad, genMem, (headerQuad & 0xFFFF));
-        if (cappedQuads > 1) {
-            ASFW_LOG_SELF_ID("Self-ID buffer[1]=0x%08x tag=%u", base[1], (base[1] >> 30) & 0x3);
-        }
-        if (cappedQuads > 2) {
-            ASFW_LOG_SELF_ID("Self-ID buffer[2]=0x%08x tag=%u", base[2], (base[2] >> 30) & 0x3);
-        }
-
-        ASFW_LOG_SELF_ID("=== 🧾 Self-ID Debug ===");
-        ASFW_LOG_SELF_ID("🧮 SelfIDCount=0x%08x generation=%u quadlets=%zu",
-                          selfIDCountReg, generation, static_cast<size_t>(cappedQuads));
-
-        const size_t preview = std::min<size_t>(cappedQuads, static_cast<size_t>(8));
-        for (size_t index = 0; index < preview; ++index) {
-            const uint32_t quad = base[index];
-            const uint32_t tag = (quad >> 30) & 0x3u;
-            ASFW_LOG_SELF_ID("  • [%02zu] 0x%08x tag=%u more=%u", index, quad, tag, static_cast<uint32_t>(quad & 0x1u));
-        }
-#endif
-
+        ASFW_LOG(Hardware, "Self-ID generation VALIDATED: %u", generation);
     }
     
     result.quads.assign(base, base + cappedQuads);
 
-    // Enumerate Self-ID sequences inside the captured quad buffer and validate
-    // extended chaining/sequence numbers using SelfIDSequenceEnumerator.
-    // IMPORTANT: Skip header quadlet (quads[0]) - enumerator expects Self-ID packets only (start at quads[1])
     SelfIDSequenceEnumerator enumerator;
     if (result.quads.size() > 1) {
-        enumerator.cursor = result.quads.data() + 1;  // Skip header at [0]
+        enumerator.cursor = result.quads.data() + 1;
         enumerator.quadlet_count = static_cast<unsigned int>(result.quads.size() - 1);
     } else {
         enumerator.cursor = nullptr;
@@ -272,8 +218,6 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
 
     bool enumeratorError = false;
     while (enumerator.quadlet_count > 0) {
-        // Skip non-Self-ID quadlets (e.g., link-on packets with tag=01b)
-        // OHCI §11: Self-ID buffer may contain other packet types
         if (enumerator.cursor && !IsSelfIDTag(*enumerator.cursor)) {
             ASFW_LOG_SELF_ID("Skipping non-Self-ID quadlet: 0x%08x tag=%u",
                               *enumerator.cursor, (*enumerator.cursor >> 30) & 0x3);
@@ -292,8 +236,6 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
         result.sequences.emplace_back(startIndex, count);
     }
 
-    // Validation: Don't check Self-ID tag on header quadlet (quads[0]) - it has NO tag field!
-    // Header is generation|timestamp metadata (OHCI §11.3). Self-ID packets with tag=10b start at quads[1].
     result.valid = !result.quads.empty() && !enumeratorError;
     result.timedOut = false;
     

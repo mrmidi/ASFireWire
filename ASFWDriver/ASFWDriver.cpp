@@ -49,6 +49,7 @@
 #include "Hardware/OHCIConstants.hpp"
 #include "Hardware/RegisterMap.hpp"
 #include "Async/AsyncSubsystem.hpp"
+#include "Async/ResponseCode.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
 #include "Discovery/SpeedPolicy.hpp"
 #include "Discovery/DeviceRegistry.hpp"
@@ -58,13 +59,23 @@
 #include "ConfigROM/ROMReader.hpp"
 #include "Protocols/AVC/AVCDiscovery.hpp"
 #include "Protocols/AVC/FCPResponseRouter.hpp"
+#include "IRM/IRMClient.hpp"
+#include "Protocols/AVC/CMP/CMPClient.hpp"
+#include "Async/Interfaces/IFireWireBus.hpp"
+#include "Isoch/IsochReceiveContext.hpp"
+#include "Isoch/Transmit/IsochTransmitContext.hpp"
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include "Async/DMAMemoryImpl.hpp"
+#include "Isoch/Memory/IsochDMAMemoryManager.hpp"
+#include "Discovery/FWDevice.hpp"
+#include "Discovery/DeviceManager.hpp"
 
 using namespace ASFW::Driver;
 
 class ASFWDriverUserClient;
 
 namespace {
-constexpr uint64_t kAsyncWatchdogPeriodUsec = 2000; // 2 ms tick
+constexpr uint64_t kAsyncWatchdogPeriodUsec = 1000; // 1 ms tick (hybrid: interrupt + timer backup)
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -91,12 +102,14 @@ struct ServiceContext {
     OSSharedPtr<IOMemoryMap> statusMap;
     SharedStatusBlock* statusBlock{nullptr};
     std::atomic<uint64_t> statusSequence{0};
-    ASFWDriverUserClient* statusListener{nullptr};
+    std::atomic<bool> stopping{false};
+    OSSharedPtr<ASFWDriverUserClient> statusListener;
     uint64_t lastAsyncCompletionMach{0};
     uint32_t asyncTimeoutCount{0};
     uint64_t watchdogTickCount{0};
     uint64_t watchdogLastTickUsec{0};
     void Reset() {
+        stopping.store(true, std::memory_order_release);
         controller.reset();
         deps.hardware.reset();
         deps.busReset.reset();
@@ -111,8 +124,9 @@ struct ServiceContext {
         deps.topology.reset();
         deps.fcpResponseRouter.reset();  // Clean up FCP router
         deps.avcDiscovery.reset();       // Clean up AV/C discovery
+        deps.irmClient.reset();          // Clean up IRM client
         deps.asyncSubsystem.reset();     // Stop and cleanup asyncSubsystem
-        statusListener = nullptr;
+        statusListener.reset();
         statusBlock = nullptr;
         statusMemory.reset();
         statusMap.reset();
@@ -125,7 +139,21 @@ struct ServiceContext {
         watchdogAction.reset();
         workQueue.reset();
         interruptAction.reset();
+        if (isochReceiveContext) {
+            isochReceiveContext->Stop();
+            isochReceiveContext = nullptr; 
+        }
+        if (isochTransmitContext) {
+            isochTransmitContext->Stop();
+            isochTransmitContext.reset();
+        }
     }
+    
+    OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext;
+    uint32_t isochLogDivider{0};
+    
+    std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext;
+    uint32_t itLogDivider{0};
 };
 
 namespace {
@@ -245,12 +273,16 @@ void PublishStatus(ServiceContext& ctx,
 }
 
 void BindStatusListener(ServiceContext& ctx, ASFWDriverUserClient* client) {
-    ctx.statusListener = client;
+    if (client) {
+        ctx.statusListener = OSSharedPtr(client, OSRetain);
+    } else {
+        ctx.statusListener.reset();
+    }
 }
 
 void UnbindStatusListener(ServiceContext& ctx, ASFWDriverUserClient* client) {
-    if (ctx.statusListener == client) {
-        ctx.statusListener = nullptr;
+    if (ctx.statusListener && ctx.statusListener.get() == client) {
+        ctx.statusListener.reset();
     }
 }
 
@@ -273,7 +305,7 @@ kern_return_t CopyStatusSharedMemory(ServiceContext& ctx,
     return kIOReturnSuccess;
 }
 
-void EnsureDeps(ServiceContext& ctx) {
+void EnsureDeps(ASFWDriver* driver, ServiceContext& ctx) {
     auto& d = ctx.deps;
     if (!d.hardware) {
         d.hardware = std::make_shared<HardwareInterface>();
@@ -309,13 +341,10 @@ void EnsureDeps(ServiceContext& ctx) {
         d.busManager = std::make_shared<BusManager>();
     }
 
-    // Phase 2A: Enable AsyncSubsystem creation (memory allocation only)
-    // DMA context arming still disabled - that's Phase 2B/2D
     if (!d.asyncSubsystem) {
         d.asyncSubsystem = std::make_shared<ASFW::Async::AsyncSubsystem>();
     }
 
-    // Discovery subsystem (requires AsyncSubsystem for ROMReader)
     if (!d.speedPolicy) {
         d.speedPolicy = std::make_shared<ASFW::Discovery::SpeedPolicy>();
     }
@@ -328,26 +357,37 @@ void EnsureDeps(ServiceContext& ctx) {
     if (!d.deviceManager) {
         d.deviceManager = std::make_shared<ASFW::Discovery::DeviceManager>();
     }
-    // NOTE: ROMScanner creation deferred until after ControllerCore instantiation
-    // (needs IFireWireBus facade which is created by ControllerCore constructor)
 
-    // AV/C Protocol Layer (requires DeviceManager + AsyncSubsystem)
     if (!d.avcDiscovery && d.deviceManager && d.asyncSubsystem) {
         d.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
+            driver,
             *d.deviceManager,
             *d.asyncSubsystem
         );
-        ASFW_LOG(Controller, "[Controller] ✅ AVCDiscovery initialized (will auto-detect AV/C units)");
+        ASFW_LOG(Controller, "[Controller] ✅ AVCDiscovery initialized");
     }
 
-    // FCP Response Router (requires AVCDiscovery)
-    // NOTE: Packet routing wiring deferred until AsyncSubsystem::RxPath is ready
     if (!d.fcpResponseRouter && d.avcDiscovery && d.asyncSubsystem) {
         d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
             *d.avcDiscovery,
             d.asyncSubsystem->GetGenerationTracker()
         );
-        ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter initialized (ready for FCP responses)");
+        ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter initialized");
+    }
+
+    if (d.fcpResponseRouter && d.asyncSubsystem) {
+        if (auto* router = d.asyncSubsystem->GetPacketRouter()) {
+            router->RegisterRequestHandler(
+                0x1, // tCode for Block Write Request
+                [fcpRouter = d.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
+                    if (fcpRouter) {
+                        return fcpRouter->RouteBlockWrite(packet);
+                    }
+                    return ASFW::Async::ResponseCode::NoResponse;
+                }
+            );
+            ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
+        }
     }
 }
 
@@ -436,6 +476,7 @@ kern_return_t PrepareWatchdog(ASFWDriver& service, ServiceContext& ctx) {
 }
 
 void CleanupStartFailure(ServiceContext& ctx) {
+    ctx.stopping.store(true, std::memory_order_release);
     if (ctx.controller) { ctx.controller->Stop(); ctx.controller.reset(); }
 
     // CRITICAL: Stop asyncSubsystem BEFORE cancelling watchdog
@@ -456,7 +497,7 @@ void CleanupStartFailure(ServiceContext& ctx) {
     ctx.watchdogAction.reset();
     ctx.watchdogTimer.reset();
     ctx.workQueue.reset();
-    ctx.statusListener = nullptr;
+    ctx.statusListener.reset();
     ctx.statusBlock = nullptr;
     ctx.statusMap.reset();
     ctx.statusMemory.reset();
@@ -499,7 +540,8 @@ kern_return_t IMPL(ASFWDriver, Start) {
     if (kr != kIOReturnSuccess) return kr;
     if (!ivars || !ivars->context) return kIOReturnNoMemory;
     auto& ctx = *ivars->context;
-    EnsureDeps(ctx);
+    ctx.stopping.store(false, std::memory_order_release);
+    EnsureDeps(this, ctx);
     bool traceProperty = false;
     OSDictionary* serviceProperties = nullptr;
     if (CopyProperties(&serviceProperties) == kIOReturnSuccess && serviceProperties != nullptr) {
@@ -544,6 +586,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
                  "ASFWDriver::Start(): DMA coherency tracing %{public}s (requested=%{public}s)",
                  traceActive ? "ENABLED" : "disabled",
                  traceProperty ? "true" : "false");
+
+        // CRITICAL: Re-run EnsureDeps to wire up PacketRouter handlers now that AsyncSubsystem is started
+        // This ensures FCPResponseRouter registers its handler with the newly created PacketRouter
+        EnsureDeps(this, ctx);
     }
 
     kr = PrepareWatchdog(*this, ctx);
@@ -556,7 +602,6 @@ kern_return_t IMPL(ASFWDriver, Start) {
 
     ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.deps);
 
-    // Phase 2: Create ROMScanner with IFireWireBus interface (deferred until after facades exist)
     if (ctx.deps.speedPolicy) {
         if (!ctx.deps.romScanner) {
             OSSharedPtr<IODispatchQueue> discoveryQueue = nullptr;
@@ -564,12 +609,12 @@ kern_return_t IMPL(ASFWDriver, Start) {
                 discoveryQueue = ctx.deps.scheduler->Queue();
             }
             ctx.deps.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
-                ctx.controller->Bus(),  // Use interface facade instead of AsyncSubsystem
+                ctx.controller->Bus(),
                 *ctx.deps.speedPolicy,
                 nullptr,
                 discoveryQueue
             );
-            ASFW_LOG(Controller, "✅ ROMScanner created with IFireWireBus interface");
+            ASFW_LOG(Controller, "✅ ROMScanner created");
         } else {
             ASFW_LOG(Controller, "Reusing existing ROMScanner instance");
         }
@@ -582,14 +627,29 @@ kern_return_t IMPL(ASFWDriver, Start) {
     kr = ctx.controller->Start(provider);
     if (kr != kIOReturnSuccess) { CleanupStartFailure(ctx); return kr; }
 
-    // Initialize logging configuration from Info.plist properties
+    if (!ctx.deps.irmClient) {
+        ctx.deps.irmClient = std::shared_ptr<ASFW::IRM::IRMClient>(
+            new ASFW::IRM::IRMClient(ctx.controller->Bus()));
+        ctx.controller->SetIRMClient(ctx.deps.irmClient);
+        ASFW_LOG(Controller, "✅ IRMClient initialized");
+    }
+    
+    if (!ctx.deps.cmpClient) {
+        ctx.deps.cmpClient = std::shared_ptr<ASFW::CMP::CMPClient>(
+            new ASFW::CMP::CMPClient(ctx.controller->Bus()));
+        ctx.controller->SetCMPClient(ctx.deps.cmpClient);
+        ASFW_LOG(Controller, "✅ CMPClient initialized");
+    }
+
     ASFW::LogConfig::Shared().Initialize(this);
 
     PublishStatus(ctx, SharedStatusReason::Boot);
     
-    // CRITICAL: Register service to enable IOKit matching and UserClient connections
+    const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
+    ctx.deps.hardware->IntMaskSet(initialMask);
+    
     RegisterService();
-    ASFW_LOG(Controller, "ASFWDriver::Start() complete - service registered");
+    ASFW_LOG(Controller, "ASFWDriver::Start() complete");
     
     return kIOReturnSuccess;
 }
@@ -597,25 +657,30 @@ kern_return_t IMPL(ASFWDriver, Start) {
 kern_return_t IMPL(ASFWDriver, Stop) {
     if (ivars && ivars->context) {
         auto& ctx = *ivars->context;
+        ctx.stopping.store(true, std::memory_order_release);
+        ctx.statusListener.reset();
         PublishStatus(ctx, SharedStatusReason::Disconnect);
+        if (ctx.deps.asyncSubsystem) {
+            ctx.deps.asyncSubsystem->Stop();
+        }
         if (ctx.controller) {
             ctx.controller->Stop();
-            ctx.controller.reset();
         }
-        if (ctx.deps.interrupts) ctx.deps.interrupts->Disable();
+        if (ctx.deps.interrupts) {
+            // Disable master interrupt before teardown
+            ctx.deps.hardware->IntMaskClear(IntMaskBits::kMasterIntEnable | 0xFFFFFFFF);
+            ctx.deps.interrupts->Disable();
+        }
         if (ctx.deps.selfId && ctx.deps.hardware) ctx.deps.selfId->Disarm(*ctx.deps.hardware);
         if (ctx.deps.selfId) ctx.deps.selfId->ReleaseBuffers();
         if (ctx.deps.configRomStager && ctx.deps.hardware) ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
         if (ctx.deps.hardware) ctx.deps.hardware->Detach();
-        ctx.interruptAction.reset();
         if (ctx.watchdogTimer) {
+            ctx.watchdogTimer->SetEnableWithCompletion(false, nullptr);
             ctx.watchdogTimer->Cancel(nullptr);
         }
-        ctx.watchdogAction.reset();
-        ctx.watchdogTimer.reset();
-        ctx.workQueue.reset();
     }
-    return super::Stop(provider);
+    return Stop(provider, SUPERDISPATCH);
 }
 
 kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
@@ -748,20 +813,71 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     (void)count;
     
     // DIAGNOSTIC: Log every interrupt invocation
-    ASFW_LOG(Controller, "InterruptOccurred called: time=%llu count=%llu", time, count);
+    ASFW_LOG_V3(Controller, "InterruptOccurred called: time=%llu count=%llu", time, count);
     
     if (!ivars || !ivars->context) {
         ASFW_LOG(Controller, "InterruptOccurred: no ivars or context");
         return;
     }
     auto& ctx = *ivars->context;
+    if (ctx.stopping.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!ctx.controller || !ctx.deps.hardware) {
         ASFW_LOG(Controller, "InterruptOccurred: no controller or hardware");
         return;
     }
     auto snap = ctx.deps.hardware->CaptureInterruptSnapshot(time);
-    ASFW_LOG(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x", snap.intEvent);
+    ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x", snap.intEvent);
     ctx.controller->HandleInterrupt(snap);
+    
+    // ===== ISOCHRONOUS RECEIVE INTERRUPT =====
+    // Per OHCI §9.1: kIsochRx (bit 7) indicates one or more IR contexts have completed descriptors.
+    // We read isoRecvEvent to determine which contexts, clear it, then dispatch processing.
+    if ((snap.intEvent & IntEventBits::kIsochRx) && snap.isoRecvEvent != 0) {
+        
+        // DEBUG: Verify interrupt rate (sample every 100th)
+        static uint32_t rxIrqCtr = 0;
+        if ((++rxIrqCtr % 100) == 0) {
+             ASFW_LOG(Controller, "[IRQ] IsoRx Fired! Count=%u Event=0x%08x IsoEvent=0x%08x", rxIrqCtr, snap.intEvent, snap.isoRecvEvent);
+        }
+
+        // Clear the per-context event bits to acknowledge
+        ctx.deps.hardware->Write(Register32::kIsoRecvIntEventClear, snap.isoRecvEvent);
+        
+        // Context 0 is our single IR context for now
+        if ((snap.isoRecvEvent & 0x01) && ctx.isochReceiveContext) {
+            // Dispatch descriptor processing to workqueue (deferred from ISR)
+            ctx.workQueue->DispatchAsync(^{
+                if (ctx.isochReceiveContext) {
+                    ctx.isochReceiveContext->Poll();
+                }
+            });
+        }
+    }
+
+    // ===== ISOCHRONOUS TRANSMIT INTERRUPT =====
+    // Per OHCI §9.2: kIsochTx (bit 6) indicates IT context completion.
+    // Similar to IR, we read IsoXmitEvent, clear it, and process.
+    if ((snap.intEvent & IntEventBits::kIsochTx) && snap.isoXmitEvent != 0) {
+        
+        // DEBUG: Sample interrupt rate
+        static uint32_t txIrqCtr = 0;
+        if ((++txIrqCtr % 100) == 0) {
+            ASFW_LOG(Controller, "[IRQ] IsoTx Fired! Count=%u IsoTxEvent=0x%08x", txIrqCtr, snap.isoXmitEvent);
+        }
+
+        // Clear event bits to acknowledge
+        ctx.deps.hardware->Write(Register32::kIsoXmitIntEventClear, snap.isoXmitEvent);
+        
+        // Context 0 is our single IT context
+        if ((snap.isoXmitEvent & 0x01) && ctx.isochTransmitContext) {
+            // Process IT directly in ISR context for lowest latency.
+            // IT RefillRing is fast (atomic assemble + mem writes).
+            // DispatchAsync adds latency which might cause underruns if buffers are small.
+            ctx.isochTransmitContext->HandleInterrupt();
+        }
+    }
 
     if (snap.intEvent != 0) {
         const uint32_t asyncMask = IntEventBits::kReqTxComplete | IntEventBits::kRespTxComplete |
@@ -789,6 +905,9 @@ void ASFWDriver::ScheduleAsyncWatchdog(uint64_t delayUsec) {
         return;
     }
     auto& ctx = *ivars->context;
+    if (ctx.stopping.load(std::memory_order_acquire)) {
+        return;
+    }
     if (!ctx.watchdogTimer) {
         return;
     }
@@ -804,6 +923,9 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
 
     if (ivars && ivars->context) {
         auto& ctx = *ivars->context;
+        if (ctx.stopping.load(std::memory_order_acquire)) {
+            return;
+        }
         if (ctx.deps.asyncSubsystem) {
             ctx.deps.asyncSubsystem->OnTimeoutTick();
             const auto stats = ctx.deps.asyncSubsystem->GetWatchdogStats();
@@ -811,6 +933,42 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
             ctx.watchdogTickCount = stats.tickCount;
             ctx.watchdogLastTickUsec = stats.lastTickUsec;
         }
+        
+        // Phase 1: Poll Isoch Context (Simple Polling)
+        if (ctx.isochReceiveContext) {
+            // Only poll if running
+            if (ctx.isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
+                ctx.isochReceiveContext->Poll();
+            }
+            // Periodic Logging (every ~1s = 500 ticks @ 2ms)
+            if (++ctx.isochLogDivider >= 500) {
+                ctx.isochLogDivider = 0;
+                if (ctx.isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
+                     // Log high-level stats
+                     ctx.isochReceiveContext->GetStreamProcessor().LogStatistics();
+                     // EXPERT DEBUG: Log raw hardware state (registers + descriptor)
+                     ctx.isochReceiveContext->LogHardwareState();
+                }
+            }
+        }
+        
+        // Phase 1.5/2: Poll Isoch Transmit Context
+        if (ctx.isochTransmitContext) {
+            // Poll to refill descriptors as hardware consumes them
+            // The 1ms watchdog provides reliable refill timing
+            if (ctx.isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running) {
+                ctx.isochTransmitContext->Poll();
+            }
+
+            // Periodic logging every ~1s (1000 ticks @ 1ms)
+            if (++ctx.itLogDivider >= 1000) {
+                ctx.itLogDivider = 0;
+                if (ctx.isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running) {
+                    ctx.isochTransmitContext->LogStatistics();
+                }
+            }
+        }
+        
         PublishStatus(ctx, SharedStatusReason::Watchdog);
     }
 
@@ -869,4 +1027,226 @@ kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity,
     ASFW_LOG_INFO(Controller, "UserClient: Reading log configuration (Async=%u, HexDumps=%d)",
                   *asyncVerbosity, *hexDumpsEnabled);
     return kIOReturnSuccess;
+}
+
+kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    if (!ivars->context->isochReceiveContext) {
+        if (!ivars->context->deps.asyncSubsystem) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Subsystems not ready");
+             return kIOReturnNotReady;
+        }
+        
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
+        config.packetSizeBytes = ASFW::Isoch::IsochReceiveContext::kMaxPacketSize;
+        config.descriptorAlignment = 16;
+        config.payloadPageAlignment = 16384;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Failed to create Memory Manager");
+             return kIOReturnNoMemory;
+        }
+        
+        if (!isochMem->Initialize(*ivars->context->deps.hardware)) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Failed to initialize DMA slabs");
+             return kIOReturnNoMemory;
+        }
+
+        ivars->context->isochReceiveContext = ASFW::Isoch::IsochReceiveContext::Create(
+            ivars->context->deps.hardware.get(), 
+            isochMem
+        );
+        
+        if (!ivars->context->isochReceiveContext) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Context creation failed");
+             return kIOReturnNoMemory;
+        }
+        ASFW_LOG(Controller, "[Isoch] ✅ provisioned Isoch Context with Dedicated Memory");
+    }
+    
+    if (!ivars->context->isochReceiveContext) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Context not initialized");
+        return kIOReturnNotReady;
+    }
+    
+    auto& ctx = *ivars->context;
+    
+    // Configure for Channel N, Context 0 (first IR context)
+    auto result = ctx.isochReceiveContext->Configure(channel, 0); 
+    if (result != kIOReturnSuccess) {
+         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IR Context: 0x%x", result);
+         return result;
+    }
+    
+    result = ctx.isochReceiveContext->Start();
+    if (result != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[Isoch] ❌ Failed to Start IR Context: 0x%x", result);
+        return result;
+    }
+    
+    ASFW_LOG(Controller, "[Isoch] ✅ Started IR Context 0 for Channel %u!", channel);
+    
+    return kIOReturnSuccess;
+}
+
+kern_return_t ASFWDriver::StopIsochReceive() {
+    if (!ivars || !ivars->context || !ivars->context->isochReceiveContext) {
+        return kIOReturnNotReady;
+    }
+    ivars->context->isochReceiveContext->Stop();
+    ASFW_LOG(Controller, "[Isoch] Stopped IR Context 0");
+    return kIOReturnSuccess;
+}
+
+void* ASFWDriver::GetIsochReceiveContext() const {
+    if (!ivars || !ivars->context) {
+        return nullptr;
+    }
+    return ivars->context->isochReceiveContext.get();
+}
+
+// =============================================================================
+// MARK: - Isochronous Transmit
+// =============================================================================
+
+kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    
+    if (!ivars->context->isochTransmitContext) {
+        if (!ivars->context->deps.asyncSubsystem) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Subsystems not ready");
+             return kIOReturnNotReady;
+        }
+        
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::IsochTransmitContext::kNumDescriptors;
+        config.packetSizeBytes = ASFW::Isoch::IsochTransmitContext::kMaxPacketSize;
+        config.descriptorAlignment = 16;
+        config.payloadPageAlignment = 16384;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Failed to create Memory Manager");
+             return kIOReturnNoMemory;
+        }
+        
+        if (!isochMem->Initialize(*ivars->context->deps.hardware)) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Failed to initialize DMA slabs");
+             return kIOReturnNoMemory;
+        }
+
+        ivars->context->isochTransmitContext = ASFW::Isoch::IsochTransmitContext::Create(
+            ivars->context->deps.hardware.get(), 
+            isochMem
+        );
+        
+        if (!ivars->context->isochTransmitContext) {
+             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Context creation failed");
+             return kIOReturnNoMemory;
+        }
+        ASFW_LOG(Controller, "[Isoch] ✅ provisioned IT Context with Dedicated Memory");
+    }
+    
+    if (!ivars->context->isochTransmitContext) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Context not initialized");
+        return kIOReturnNotReady;
+    }
+    
+    auto& ctx = *ivars->context;
+    
+    uint8_t localNodeId = 0;
+    
+    auto result = ctx.isochTransmitContext->Configure(channel, localNodeId);
+    if (result != kIOReturnSuccess) {
+         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
+         return result;
+    }
+
+    if (ctx.deps.avcDiscovery) {
+        ASFWAudioNub* audioNub = ctx.deps.avcDiscovery->GetFirstAudioNub();
+        if (audioNub) {
+            void* txQueueBase = audioNub->GetTxQueueLocalMapping();
+            uint64_t txQueueBytes = audioNub->GetTxQueueBytes();
+
+            if (txQueueBase && txQueueBytes > 0) {
+                ctx.isochTransmitContext->SetSharedTxQueue(txQueueBase, txQueueBytes);
+                ASFW_LOG(Controller, "[Isoch] Wired shared TX queue to IT context (bytes=%llu)",
+                         txQueueBytes);
+            }
+        }
+    }
+
+    uint32_t fillLevel = 0;
+    const uint32_t targetFill = 512;
+    const int maxWaitMs = 100;
+
+    for (int waitMs = 0; waitMs < maxWaitMs; waitMs += 5) {
+        fillLevel = ctx.isochTransmitContext->SharedTxFillLevelFrames();
+        if (fillLevel >= targetFill) {
+            break;
+        }
+        IOSleep(5);
+    }
+
+    result = ctx.isochTransmitContext->Start();
+    if (result != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[Isoch] Failed to Start IT Context: 0x%x", result);
+        return result;
+    }
+
+    ASFW_LOG(Controller, "[Isoch] ✅ Started IT Context for Channel %u!", channel);
+
+    if (ctx.deps.deviceManager && ctx.deps.cmpClient) {
+        auto devices = ctx.deps.deviceManager->GetReadyDevices();
+        if (!devices.empty()) {
+            auto target = devices.front();
+            uint16_t nodeId = target->GetNodeID();
+            ASFW::IRM::Generation gen = target->GetGeneration();
+            
+            ctx.deps.cmpClient->SetDeviceNode(static_cast<uint8_t>(nodeId & 0x3F), gen);
+            ctx.deps.cmpClient->ConnectIPCR(0, channel, [](ASFW::CMP::CMPStatus status) {
+                if (status == ASFW::CMP::CMPStatus::Success) {
+                    ASFW_LOG(Controller, "[Isoch] ✅ CMP ConnectIPCR Success!");
+                } else {
+                    ASFW_LOG(Controller, "[Isoch] ❌ CMP ConnectIPCR Failed: %d", static_cast<int>(status));
+                }
+            });
+        }
+    }
+
+    return kIOReturnSuccess;
+}
+
+kern_return_t ASFWDriver::StopIsochTransmit() {
+    if (!ivars || !ivars->context || !ivars->context->isochTransmitContext) {
+        return kIOReturnNotReady;
+    }
+
+    ivars->context->isochTransmitContext->Stop();
+    ASFW_LOG(Controller, "[Isoch] Stopped IT Context");
+
+    if (ivars->context->deps.cmpClient) {
+         ivars->context->deps.cmpClient->DisconnectIPCR(0, [](ASFW::CMP::CMPStatus status){
+              if (status == ASFW::CMP::CMPStatus::Success) {
+                    ASFW_LOG(Controller, "[Isoch] ✅ CMP DisconnectIPCR Success!");
+                } else {
+                    ASFW_LOG(Controller, "[Isoch] ❌ CMP DisconnectIPCR Failed: %d", static_cast<int>(status));
+                }
+         });
+    }
+
+    return kIOReturnSuccess;
+}
+
+void* ASFWDriver::GetIsochTransmitContext() const {
+    if (!ivars || !ivars->context) {
+        return nullptr;
+    }
+    return ivars->context->isochTransmitContext.get();
 }

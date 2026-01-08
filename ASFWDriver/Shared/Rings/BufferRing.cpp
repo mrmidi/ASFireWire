@@ -5,6 +5,7 @@
 
 #include "../../Common/BarrierUtils.hpp"
 #include "../Memory/DMAMemoryManager.hpp"
+#include "../Memory/IDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 
@@ -98,7 +99,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     auto& next_desc = descriptors_[next_index];
 
     if (dma_) {
-        dma_->FetchRange(&next_desc, sizeof(next_desc));
+        dma_->FetchFromDevice(&next_desc, sizeof(next_desc));
     }
 
     const uint16_t next_resCount = HW::AR_resCount(next_desc);
@@ -118,7 +119,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
         HW::AR_init_status(desc_to_recycle, reqCount_recycle);
 
         if (dma_) {
-            dma_->PublishRange(&desc_to_recycle, sizeof(desc_to_recycle));
+            dma_->PublishToDevice(&desc_to_recycle, sizeof(desc_to_recycle));
         }
         Driver::WriteBarrier();
 
@@ -138,16 +139,18 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // CRITICAL FIX: Invalidate CPU cache before reading descriptor status
     // Hardware wrote statusWord via DMA, must fetch fresh data to avoid reading stale cache
     if (dma_) {
-        dma_->FetchRange(&desc, sizeof(desc));
+        dma_->FetchFromDevice(&desc, sizeof(desc));
     }
 
     // CRITICAL: Do NOT add ReadBarrier() after FetchRange for uncached device memory!
     // For uncached memory, IoBarrier (DSB) is sufficient. Adding DMB may cause issues.
 
+    #ifndef ASFW_HOST_TEST
     if (DMAMemoryManager::IsTracingEnabled()) {
         ASFW_LOG_V4(Async,
                     "  🔍 BufferRing::Dequeue: ReadBarrier NOT used (uncached device memory, DSB sufficient)");
     }
+    #endif
 
     // Extract resCount and xferStatus using AR-specific accessors
     // CRITICAL: statusWord is in BIG-ENDIAN per OHCI §8.4.2, Table 8-1
@@ -178,6 +181,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
         return std::nullopt;
     }
 
+    #ifndef ASFW_HOST_TEST
     if (DMAMemoryManager::IsTracingEnabled()) {
         ASFW_LOG_V4(Async,
                     "🧭 BufferRing::Dequeue idx=%zu desc=%p reqCount=%u resCount=%u "
@@ -185,6 +189,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
                     index, &desc, reqCount, resCount,
                     total_bytes_in_buffer, last_dequeued_bytes_, start_offset, new_bytes);
     }
+    #endif
 
     // Get virtual address of buffer START (caller will add startOffset)
     void* bufferAddr = GetBufferAddress(index);
@@ -196,7 +201,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // CRITICAL FIX: Invalidate buffer cache ONLY for the NEW bytes
     if (dma_) {
         auto* byte_ptr = static_cast<uint8_t*>(bufferAddr);
-        dma_->FetchRange(byte_ptr + start_offset, new_bytes);
+        dma_->FetchFromDevice(byte_ptr + start_offset, new_bytes);
     }
 
     // Update tracking: remember how many total bytes we've now returned
@@ -242,7 +247,7 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
 
     // Sync descriptor to device after AR_init_status (publish to HC)
     if (dma_) {
-        dma_->PublishRange(&desc, sizeof(desc));
+        dma_->PublishToDevice(&desc, sizeof(desc));
     }
     Driver::WriteBarrier();
 
@@ -263,6 +268,7 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
                  index, resCountAfter, reqCount);
     }
 
+    #ifndef ASFW_HOST_TEST
     if (DMAMemoryManager::IsTracingEnabled()) {
         ASFW_LOG_V4(Async,
                     "🧭BufferRing::Recycle idx=%zu desc=%p reqCount=%u",
@@ -270,6 +276,7 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
                     &desc,
                     reqCount);
     }
+    #endif
 
     // Advance head to next buffer (circular)
     head_ = (head_ + 1) % bufferCount_;
@@ -296,11 +303,11 @@ uint32_t BufferRing::CommandPtrWord() const noexcept {
     return HW::MakeBranchWordAR(static_cast<uint64_t>(descIOVABase_), 1);
 }
 
-void BufferRing::BindDma(DMAMemoryManager* dma) noexcept { dma_ = dma; }
+void BufferRing::BindDma(IDMAMemory* dma) noexcept { dma_ = dma; }
 
 void BufferRing::PublishAllDescriptorsOnce() noexcept {
     if (!dma_ || descriptors_.empty()) return;
-    dma_->PublishRange(descriptors_.data(), descriptors_.size_bytes());
+    dma_->PublishToDevice(descriptors_.data(), descriptors_.size_bytes());
     ::ASFW::Driver::IoBarrier();
 }
 

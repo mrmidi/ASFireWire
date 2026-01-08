@@ -1,0 +1,51 @@
+# ASFW IT DMA Debugging Script
+# Usage: sudo lldb -p $(pgrep -n 'net.mrmidi.ASFW.ASFWDriver') -s tools/debug/lldb_it.txt
+
+settings set stop-line-count-before 3
+settings set stop-line-count-after 3
+
+# Break in HandleInterrupt to catch the driver in action
+breakpoint set -n 'ASFW::Isoch::IsochTransmitContext::HandleInterrupt'
+
+breakpoint command add
+# === IT Context State ===
+# Adjust 'this' cast if needed, assuming we are in IsochTransmitContext method
+# Or access via the hardware pointer if available
+
+# 1. Dump Registers
+expr -R -- uint32_t $ctl = (uint32_t)this->hardware_->Read(ASFW::Driver::Register32::kIsoXmitContextControl0)
+expr -R -- uint32_t $cmd = (uint32_t)this->hardware_->Read(ASFW::Driver::Register32::kIsoXmitCommandPtr0)
+
+# Decode Control
+expr -R -- (const char*)("Run: " + std::to_string(($ctl >> 31) & 1))
+expr -R -- (const char*)("Active: " + std::to_string(($ctl >> 10) & 1))
+expr -R -- (const char*)("Dead: " + std::to_string(($ctl >> 11) & 1))
+expr -R -- (const char*)("Wake: " + std::to_string(($ctl >> 12) & 1))
+expr -R -- (const char*)("Event: " + std::to_string($ctl & 0x1F))
+
+# Decode CommandPtr
+expr -R -- uint32_t $dAddr = $cmd & 0xFFFFFFF0
+expr -R -- uint32_t $Z = $cmd & 0xF
+expr -R -- (const char*)("Descriptor Address: " + std::to_string($dAddr))
+expr -R -- (const char*)("Z (Blocks): " + std::to_string($Z))
+
+# 2. Dump Current Descriptor Block
+# Assuming we can map PA to VA or just read from the known ring buffer base
+# Accessing descriptorRing_ storage directly
+expr -R -- auto* $ring = this->descriptorRing_.Storage().data()
+# Calculate index (simplified, assuming linear ring)
+expr -R -- uint32_t $base = (uint32_t)this->descRegion_.deviceBase
+expr -R -- int $idx = ($dAddr - $base) / 16
+
+# Dump Descriptor 0 (OUTPUT_MORE-Immediate?)
+memory read -s4 -fx -c4 (void*)($ring + $idx)
+
+# Dump Descriptor 1 (OUTPUT_LAST? or padding?)
+memory read -s4 -fx -c4 (void*)($ring + $idx + 1)
+
+# Dump Descriptor 2 (OUTPUT_LAST if Z=3?)
+memory read -s4 -fx -c4 (void*)($ring + $idx + 2)
+
+DONE
+
+continue

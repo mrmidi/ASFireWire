@@ -8,5 +8,8 @@
   <true/>
   <key>com.apple.developer.driverkit.transport.pci.bridge</key>
   <true/>
+  <key>com.apple.developer.driverkit.family.audio</key>
+  <true/>
 </dict>
 </plist>
+    

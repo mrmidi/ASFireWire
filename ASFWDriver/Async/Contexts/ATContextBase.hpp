@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <DriverKit/IOLib.h>
 
 #include "ContextBase.hpp"
@@ -715,36 +716,64 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
 
         const uint16_t xferStatus = HW::AT_xferStatus(*desc);
         if (xferStatus == 0) {
-            if (dmaManager_ && DMAMemoryManager::IsTracingEnabled()) {
-                const uint32_t controlSnapshot = this->ReadControl();
-                const uint32_t commandPtrSnapshot = this->ReadCommandPtr();
-                const uint8_t eventField = static_cast<uint8_t>(controlSnapshot & kContextControlEventMask);
-                const bool runBit = (controlSnapshot & kContextControlRunBit) != 0;
-                const bool activeBit = (controlSnapshot & kContextControlActiveBit) != 0;
-                const bool wakeBit = (controlSnapshot & kContextControlWakeBit) != 0;
-                const bool deadBit = (controlSnapshot & kContextControlDeadBit) != 0;
-                const uint32_t statusWord = desc->statusWord;
-                const uint32_t branchWord = desc->branchWord;
-                const uint16_t reqCountField = static_cast<uint16_t>(desc->control & 0xFFFFu);
-
-                ASFW_LOG(Async,
-                         "🧭 %.*s pending: head=%zu tail=%zu CommandPtr=0x%08x Control=0x%08x(run=%u active=%u wake=%u dead=%u event=0x%02x) desc.control=0x%08x reqCount=%u branch=0x%08x status=0x%08x",
-                         static_cast<int>(this->ContextName().size()),
-                         this->ContextName().data(),
-                         headIndex,
-                         tailIndex,
-                         commandPtrSnapshot,
-                         controlSnapshot,
-                         runBit ? 1 : 0,
-                         activeBit ? 1 : 0,
-                         wakeBit ? 1 : 0,
-                         deadBit ? 1 : 0,
-                         eventField,
-                         desc->control,
-                         reqCountField,
-                         branchWord,
-                         statusWord);
+            // Per Apple's handleCompletedCommand (DecompilationAnalysis_handleCompletedCommand.md):
+            // When statusWord==0, hardware hasn't completed. But check if this is an
+            // ORPHANED descriptor - one that was cancelled/timed out and hardware skipped over.
+            //
+            // Detection: If CommandPtr has advanced past this descriptor, it's orphaned.
+            // Hardware processes descriptors sequentially via branch_address linkage.
+            // If CommandPtr > head descriptor's IOVA, the head descriptor was skipped.
+            
+            const uint32_t commandPtr = this->ReadCommandPtr();
+            const uint32_t headIOVA = ring_->CommandPtrWordTo(desc, 0) & 0xFFFFFFF0u;
+            const uint32_t commandPtrAddr = commandPtr & 0xFFFFFFF0u;
+            
+            // Check if CommandPtr has moved beyond head (orphaned descriptor)
+            // OR if context is idle (CommandPtr == 0 or context not running)
+            const uint32_t controlReg = this->ReadControl();
+            const bool isRunning = (controlReg & kContextControlRunBit) != 0;
+            const bool isActive = (controlReg & kContextControlActiveBit) != 0;
+            
+            // Descriptor is orphaned if:
+            // 1. Context is not running/active (hardware bypassed this descriptor), OR
+            // 2. CommandPtr has moved past this descriptor
+            const bool isOrphaned = (!isRunning && !isActive) ||
+                                    (commandPtrAddr != headIOVA && commandPtrAddr != 0);
+            
+            if (isOrphaned) {
+                // Skip orphaned descriptor by advancing head
+                ASFW_LOG_V3(Async,
+                         "ScanCompletion: Skipping ORPHANED descriptor at head=%zu (cmdPtr=0x%08x headIOVA=0x%08x run=%d active=%d)",
+                         headIndex, commandPtrAddr, headIOVA, isRunning ? 1 : 0, isActive ? 1 : 0);
+                
+                // Clear the descriptor status and advance head (like Apple's deferred completion)
+                const bool isImm = HW::IsImmediate(*desc);
+                const uint8_t blocks = isImm ? 2 : 1;
+                
+                for (uint8_t i = 0; i < blocks; ++i) {
+                    const size_t clearIndex = (headIndex + i) % ring_->Capacity();
+                    HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
+                    if (clearDesc) {
+                        ClearDescriptorStatus(*clearDesc);
+                        if (dmaManager_) {
+                            const size_t flushSize = HW::IsImmediate(*clearDesc) 
+                                ? sizeof(HW::OHCIDescriptorImmediate) : sizeof(HW::OHCIDescriptor);
+                            dmaManager_->PublishRange(clearDesc, flushSize);
+                        }
+                    }
+                }
+                
+                const size_t newHead = (headIndex + blocks) % ring_->Capacity();
+                ring_->SetHead(newHead);
+                ASFW_LOG_V3(Async, "ScanCompletion: head %zu→%zu (ORPHANED, %u blocks)", headIndex, newHead, blocks);
+                
+                unlock();
+                // Return a synthetic completion with evt_no_status for orphaned descriptors
+                // This signals to caller that descriptor was cleaned up but had no real completion
+                return std::nullopt;  // Caller should loop to check next descriptor
             }
+            
+            // Not orphaned - hardware is still processing, return without advancing
             unlock();
             return std::nullopt;
         }
@@ -791,6 +820,7 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
 
             const size_t newHead = (headIndex + blocks) % capacity;
             ring_->SetHead(newHead);
+            ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (non-OUTPUT_LAST, %u blocks)", headIndex, newHead, blocks);
 
             // ✅ Apple's pattern: Stop context when ring becomes empty (non-OUTPUT_LAST path)
             if (ring_->IsEmpty()) {
@@ -875,6 +905,7 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         }
 
         ring_->SetHead(newHead);
+        ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (OUTPUT_LAST, %u blocks)", headIndex, newHead, blocksConsumed);
 
         // ✅ Apple's stopDMAAfterTransmit pattern: Stop context when ring becomes empty
         // After advancing head, if ring is now empty (head==tail), we must:
@@ -913,6 +944,7 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         completion.ackCode = ackCode;
         completion.tLabel = tLabel;
         completion.descriptor = desc;
+        completion.isResponseContext = std::is_same_v<Tag, ATResponseTag>;
         unlock();
         return completion;
     }

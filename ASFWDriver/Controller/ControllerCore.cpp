@@ -28,7 +28,10 @@
 #include "../ConfigROM/ConfigROMStore.hpp"
 #include "../ConfigROM/ROMScanner.hpp"
 #include "../Version/DriverVersion.hpp"
+#include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Hardware/IEEE1394.hpp"
+#include "../IRM/IRMClient.hpp"
+#include "../Protocols/AVC/CMP/CMPClient.hpp"
 
 namespace {
 // NOTE: OHCI hardware constants moved to OHCIConstants.hpp
@@ -40,8 +43,6 @@ namespace ASFW::Driver {
 ControllerCore::ControllerCore(const ControllerConfig& config, Dependencies deps)
     : config_(config), deps_(std::move(deps)) {
 
-    // Phase 2: Instantiate interface facades
-    // These provide stable API boundaries over the async engine internals
     if (deps_.asyncSubsystem && deps_.topology) {
         busImpl_ = std::make_unique<Async::FireWireBusImpl>(
             *deps_.asyncSubsystem,
@@ -72,7 +73,6 @@ kern_return_t ControllerCore::Start(IOService* provider) {
         deps_.stateMachine->TransitionTo(ControllerState::kStarting, "ControllerCore::Start", mach_absolute_time());
     }
 
-    // Log driver version information for debugging and verification
     ASFW_LOG(Controller, "═══════════════════════════════════════════════════════════");
     ASFW_LOG(Controller, "%{public}s", Version::kFullVersionString);
     ASFW_LOG(Controller, "%{public}s", Version::kBuildInfoString);
@@ -82,17 +82,11 @@ kern_return_t ControllerCore::Start(IOService* provider) {
     ASFW_LOG(Controller, "Build host: %{public}s", Version::kBuildHost);
     ASFW_LOG(Controller, "═══════════════════════════════════════════════════════════");
 
-    ASFW_LOG(Controller, "Sleeping for 5 seconds - Attach debugger NOW");
-    IOSleep(5000);
-
-    // FSM requires asyncSubsystem, selfIdCapture, configRomStager for actions to function
-    // NEW: Add TopologyManager for building topology snapshot after Self-ID decode
     if (deps_.busReset && deps_.hardware && deps_.scheduler &&
         deps_.asyncSubsystem && deps_.selfId && deps_.configRomStager && deps_.interrupts && deps_.topology) {
         
         auto workQueue = deps_.scheduler->Queue();
-        ASFW_LOG(Controller, "Initializing BusResetCoordinator: workQueue=%p (from scheduler=%p)",
-                 workQueue.get(), deps_.scheduler.get());
+        ASFW_LOG(Controller, "Initializing BusResetCoordinator");
         
         deps_.busReset->Initialize(deps_.hardware.get(),
                                   workQueue,
@@ -104,31 +98,23 @@ kern_return_t ControllerCore::Start(IOService* provider) {
                                   deps_.busManager.get(),
                                   deps_.romScanner.get());
 
-        // Bind topology callback to trigger Discovery when topology is ready
         ASFW_LOG(Controller, "Binding topology callback for Discovery integration");
         deps_.busReset->BindCallbacks([this](const TopologySnapshot& snap) {
             this->OnTopologyReady(snap);
         });
 
-        // Wire TopologyManager to ROMScanner for bad IRM reporting (Phase 3)
         if (deps_.romScanner && deps_.topology) {
-            ASFW_LOG(Controller, "✅ Wiring TopologyManager to ROMScanner for bad IRM reporting");
             deps_.romScanner->SetTopologyManager(deps_.topology.get());
         }
 
-        // Bind ROMScanner completion callback (Apple-style immediate completion)
         if (deps_.romScanner) {
-            ASFW_LOG(Controller, "Binding ROMScanner completion callback (Apple pattern)");
+            ASFW_LOG(Controller, "Binding ROMScanner completion callback");
             deps_.romScanner->SetCompletionCallback([this](Discovery::Generation gen) {
                 this->OnDiscoveryScanComplete(gen);
             });
         }
     } else {
         ASFW_LOG(Controller, "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
-        ASFW_LOG(Controller, "  busReset=%p hardware=%p scheduler=%p async=%p selfId=%p configRom=%p interrupts=%p topology=%p",
-                 deps_.busReset.get(), deps_.hardware.get(), deps_.scheduler.get(),
-                 deps_.asyncSubsystem.get(), deps_.selfId.get(), deps_.configRomStager.get(),
-                 deps_.interrupts.get(), deps_.topology.get());
         return kIOReturnNoResources;
     }
 
@@ -312,52 +298,35 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     if ((events & IntEventBits::kRespTxComplete) && deps_.asyncSubsystem) {
         ASFW_LOG_V3(Controller, "AT Response complete interrupt (transmit done)");
         deps_.asyncSubsystem->OnTxInterrupt();
-        // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
 
-    // Dispatch AR Request interrupts (OHCI §6.1.2: RQPkt indicates packet available)
-    // Use kRQPkt (bit 4), NOT kARRQ (bit 2)
-    // kRQPkt = "request packet received into AR Request context"
-    // kARRQ = "AR Request context active" (different semantics)
     if ((events & IntEventBits::kRQPkt) && deps_.asyncSubsystem) {
         ASFW_LOG_V3(Controller, "AR Request interrupt (RQPkt: async receive packet available)");
         deps_.asyncSubsystem->OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType::Request);
-        // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
 
-    // Dispatch AR Response interrupts (OHCI §6.1.2: RSPkt indicates packet available)
     if ((events & IntEventBits::kRSPkt) && deps_.asyncSubsystem) {
         ASFW_LOG_V3(Controller, "AR Response interrupt (RSPkt: async receive packet available)");
         deps_.asyncSubsystem->OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType::Response);
-        // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet headers
     }
 
     if (events & IntEventBits::kBusReset) {
         ASFW_LOG(Controller, "Bus reset detected @ %llu ns", snapshot.timestamp);
         
-        // Narrow the masked window: disable busReset source in top-half,
-        // re-enable in FSM after event is cleared. Mirrors Linux pattern.
         if (deps_.interrupts) {
             deps_.interrupts->MaskInterrupts(&hw, IntEventBits::kBusReset);
         }
         
-        // NOTE: All bus reset handling delegated to BusResetCoordinator FSM via OnIrq()
-        // FSM owns: AsyncSubsystem flush/rearm, selfIDComplete2 clearing, Self-ID decode,
-        // Config ROM restoration, topology updates, and metrics tracking
     }
 
     if (events & IntEventBits::kSelfIDComplete) {       // 0x0001_0000 bit 16
         ASFW_LOG(Hardware, "Self-ID Complete (bit16)");
-        // NOTE: All Self-ID processing delegated to BusResetCoordinator FSM
     }
 
     if (events & IntEventBits::kSelfIDComplete2) {      // 0x0000_8000 bit 15
         ASFW_LOG(Hardware, "Self-ID Complete2 (bit15, sticky)");
-        // NOTE: FSM tracks both completion phases via OnIrq() and processes accordingly
     }
 
-    // FSM handles all of the above through proper state machine transitions
-    
     // FSM handles all of the above through proper state machine transitions
     
     // Only clear non-reset events here (AR/AT completions, errors, etc.)
@@ -420,27 +389,41 @@ Discovery::IUnitRegistry* ControllerCore::GetUnitRegistry() const {
     return deps_.deviceManager.get();
 }
 
-Protocols::AVC::AVCDiscovery* ControllerCore::GetAVCDiscovery() const {
+Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
     return deps_.avcDiscovery.get();
+}
+
+IRM::IRMClient* ControllerCore::GetIRMClient() const {
+    return deps_.irmClient.get();
+}
+
+void ControllerCore::SetIRMClient(std::shared_ptr<IRM::IRMClient> client) {
+    deps_.irmClient = std::move(client);
+}
+
+CMP::CMPClient* ControllerCore::GetCMPClient() const {
+    return deps_.cmpClient.get();
+}
+
+void ControllerCore::SetCMPClient(std::shared_ptr<CMP::CMPClient> client) {
+    deps_.cmpClient = std::move(client);
 }
 
 // Phase 2: Interface facade accessors
 Async::IFireWireBus& ControllerCore::Bus() {
     if (!busImpl_) {
         ASFW_LOG(Controller, "❌ CRITICAL: Bus() called before facade initialized");
-        // This should never happen if ControllerCore is properly constructed
         __builtin_trap();
     }
     return *busImpl_;
 }
 
-Async::IDMAMemory& ControllerCore::DMA() {
-    // Lazy initialization: DMAMemoryManager only available after AsyncSubsystem::Start()
+Shared::IDMAMemory& ControllerCore::DMA() {
     if (!dmaImpl_ && deps_.asyncSubsystem) {
         auto* dmaManager = deps_.asyncSubsystem->GetDMAManager();
         if (dmaManager) {
             dmaImpl_ = std::make_unique<Async::DMAMemoryImpl>(*dmaManager);
-            ASFW_LOG(Controller, "✅ DMAMemoryImpl facade created (lazy)");
+            ASFW_LOG(Controller, "✅ DMAMemoryImpl facade created");
         } else {
             ASFW_LOG(Controller, "❌ CRITICAL: DMA() called before DMAMemoryManager initialized");
             __builtin_trap();
@@ -832,8 +815,6 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
 }
 
 kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
-    // log entery
-    ASFW_LOG(Hardware, "Entering ControllerCore::EnableInterruptsAndStartBus() ");
     if (hardwareInitialised_) {
         return kIOReturnSuccess;
     }
@@ -844,9 +825,6 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
 
     auto& hw = *deps_.hardware;
 
-    // Seed IntMask with baseline policy + masterIntEnable
-    // Per OHCI §5.7: After reset, IntMask is undefined and masterIntEnable=0.
-    // Clear any stale state, then establish deterministic baseline.
     hw.Write(Register32::kIntMaskClear, 0xFFFFFFFFu);   // Clear all mask bits
     hw.Write(Register32::kIntEventClear, 0xFFFFFFFFu);  // Clear all pending events
     
@@ -855,43 +833,28 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     if (deps_.interrupts) {
         deps_.interrupts->EnableInterrupts(initialMask);  // Update software shadow
     }
-    ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x (busReset=%d master=%d)",
-             initialMask,
-             (initialMask >> 17) & 1,
-             (initialMask >> 31) & 1);
+    ASFW_LOG(Hardware, "IntMask seeded: base|master=0x%08x", initialMask);
 
-    // LinkEnable + BIBimageValid must be asserted atomically once the Config ROM
-    // has been staged. OHCI §5.7.3 notes this transition triggers a bus reset, so
-    // we wait until interrupts are armed to avoid missing Self-ID events.
     ASFW_LOG(Hardware, "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
     hw.SetHCControlBits(HCControlBits::kLinkEnable | HCControlBits::kBibImageValid);
-    ASFW_LOG(Hardware, "HCControl.linkEnable + BIBimageValid set - auto bus reset should initiate (OHCI §5.7.3)");
 
-    // Some controllers require an explicit PHY initiated reset to kick the
-    // Config ROM shadow. Follow linux logic by only attempting if the PHY was
-    // responsive during configuration.
     if (phyProgramSupported_ && phyConfigOk_) {
         ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
-        const bool forced = hw.InitiateBusReset(false);  // long reset per OHCI §7.2.3.1
+        const bool forced = hw.InitiateBusReset(false);
         if (!forced) {
             ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
-        } else {
-            ASFW_LOG(Hardware, "Bus reset initiated via PHY control - shadow update will occur");
         }
     } else {
-        ASFW_LOG(Hardware, "Skipping forced reset (PHY not confirmed); relying on auto reset from linkEnable");
+        ASFW_LOG(Hardware, "Skipping forced reset; relying on auto reset from linkEnable");
     }
-    ASFW_LOG_CONFIG_ROM("Config ROM shadow update will complete during bus reset (OHCI §5.5.6)");
 
-    // Phase 2B: arm Async receive contexts now that the link is live. Requests
-    // will remain quiescent until the FSM finishes the first reset cycle.
     if (deps_.asyncSubsystem) {
         const kern_return_t armStatus = deps_.asyncSubsystem->ArmARContextsOnly();
         if (armStatus != kIOReturnSuccess) {
             ASFW_LOG(Hardware, "Failed to arm AR contexts: 0x%08x", armStatus);
             return armStatus;
         }
-        ASFW_LOG(Hardware, "AR contexts armed successfully (receive enabled, transmit disabled)");
+        ASFW_LOG(Hardware, "AR contexts armed successfully");
     } else {
         ASFW_LOG(Controller, "No AsyncSubsystem - DMA contexts not armed");
     }
@@ -1047,9 +1010,21 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     
     deps_.romScanner->Begin(snap.generation, snap, localNodeId);
 
-    // Note: ROMScanner uses immediate completion callback (Apple pattern)
-    // No polling needed - SetCompletionCallback at line 108 handles completion
-    // Polling would cause duplicate OnDiscoveryScanComplete() calls
+    if (deps_.irmClient) {
+        const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
+        deps_.irmClient->SetIRMNode(irmNodeId, snap.generation);
+        ASFW_LOG(Discovery, "IRMClient updated: IRM node=%u, generation=%u",
+                 irmNodeId, snap.generation);
+    }
+    
+    if (deps_.cmpClient) {
+        const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
+        if (irmNodeId != 0xFF) {
+            deps_.cmpClient->SetDeviceNode(irmNodeId, snap.generation);
+            ASFW_LOG(Discovery, "CMPClient updated: device node=%u, generation=%u",
+                     irmNodeId, snap.generation);
+        }
+    }
 }
 
 void ControllerCore::ScheduleDiscoveryPoll(Discovery::Generation gen) {
@@ -1058,7 +1033,6 @@ void ControllerCore::ScheduleDiscoveryPoll(Discovery::Generation gen) {
         return;
     }
     
-    // Schedule poll in 100ms using DispatchAsync
     deps_.scheduler->DispatchAsync([this, gen]() {
         IOSleep(100);  // 100ms delay
         PollDiscovery(gen);
@@ -1071,13 +1045,11 @@ void ControllerCore::PollDiscovery(Discovery::Generation gen) {
     }
     
     if (!deps_.romScanner->IsIdleFor(gen)) {
-        // Still scanning, reschedule
         ASFW_LOG(Discovery, "ROM scan still in progress for gen=%u, rescheduling...", gen);
         ScheduleDiscoveryPoll(gen);
         return;
     }
     
-    // Scan complete - drain results
     ASFW_LOG(Discovery, "ROM scan complete for gen=%u, draining results", gen);
     OnDiscoveryScanComplete(gen);
 }
@@ -1095,16 +1067,12 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
     ASFW_LOG(Discovery, "Discovered %zu ROMs", roms.size());
 
     for (const auto& rom : roms) {
-        // Store ROM
         deps_.romStore->Insert(rom);
 
-        // Get link policy
         auto policy = deps_.speedPolicy->ForNode(rom.nodeId);
 
-        // Upsert device in registry
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
 
-        // Upsert device in device manager (creates FWDevice + FWUnits)
         if (deps_.deviceManager) {
             auto fwDevice = deps_.deviceManager->UpsertDevice(deviceRecord, rom);
 
@@ -1114,7 +1082,6 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
             }
         }
 
-        // Log result (detailed)
         ASFW_LOG(Discovery, "═══════════════════════════════════════");
         ASFW_LOG(Discovery, "Device Discovered:");
         ASFW_LOG(Discovery, "  GUID: 0x%016llx", deviceRecord.guid);

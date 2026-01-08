@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <optional>
 
-namespace ASFW::Async {
+namespace ASFW::Shared {
 
 /**
  * @brief DMA memory region with CPU virtual and device IOVA addresses.
@@ -43,12 +43,13 @@ public:
      * @brief Allocate DMA-coherent memory region.
      *
      * @param size Bytes to allocate (will be rounded up to alignment)
-     * @param alignment Alignment requirement (must be power of 2, min 16)
+     * @param alignment Desired start address alignment (must be power of 2, min 16).
+     *                  Larger alignments are supported and will consume extra padding.
      * @return DMARegion on success, std::nullopt if insufficient space
      *
      * Note: Allocation is permanent (no free). Driver allocates 2MB slab at init.
      *
-     * Thread Safety: Safe to call from any context (internally gated)
+     * Thread Safety: Intended for init-time use only; not currently locked.
      */
     virtual std::optional<DMARegion> AllocateRegion(
         size_t size,
@@ -84,26 +85,24 @@ public:
     // -------------------------------------------------------------------------
 
     /**
-     * @brief Publish CPU writes to device (flush cache to RAM).
+     * @brief Ensure ordering of CPU writes before device access.
      *
      * @param address Start of memory range (must be 16-byte aligned)
      * @param length Bytes to flush (will be rounded up to cache line)
      *
-     * Use before programming OHCI to access CPU-written data (e.g., descriptors, payloads).
-     *
-     * Implementation: IODMACommand::PerformOperation(kIODMAMapOptionCompletionSync)
+     * For uncached mappings (current implementation) this is a lightweight
+     * memory barrier; no cache flush is needed.
      */
     virtual void PublishToDevice(const void* address, size_t length) const noexcept = 0;
 
     /**
-     * @brief Fetch device writes to CPU (invalidate cache, read from RAM).
+     * @brief Ensure ordering of device writes before CPU reads.
      *
      * @param address Start of memory range
      * @param length Bytes to invalidate
      *
-     * Use after OHCI writes data (e.g., AR receive buffers, response payloads).
-     *
-     * Implementation: IODMACommand::PerformOperation(kIODMAMapOptionFlushCache)
+     * For uncached mappings (current implementation) this is a lightweight
+     * memory barrier; no cache invalidation is needed.
      */
     virtual void FetchFromDevice(const void* address, size_t length) const noexcept = 0;
 
@@ -126,4 +125,4 @@ public:
     virtual size_t AvailableSize() const noexcept = 0;
 };
 
-} // namespace ASFW::Async
+} // namespace ASFW::Shared

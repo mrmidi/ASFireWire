@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "68101470-79D0-48C5-ACA4-8865D9C3B598",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:ASFW.xcodeproj",
+      "identifier" : "3A1693D72E808727000BD368",
+      "name" : "ASFW"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:ASFW.xcodeproj",
+        "identifier" : "3AB4713E2EE31CF0003A4E2A",
+        "name" : "ASFWTests"
+      }
+    }
+  ],
+  "version" : 1
+}

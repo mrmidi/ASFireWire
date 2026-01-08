@@ -4,6 +4,7 @@
 
 #include "ARPacketParser.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../Tx/ResponseSender.hpp"
 
 namespace ASFW::Async {
 
@@ -41,54 +42,57 @@ void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_
     // Parse packet stream - buffer may contain multiple packets
     // Per OHCI §8.4.2: AR buffers are packet streams, not single packets
     size_t offset = 0;
-    const size_t packetSize = packetData.size();  // Cache for loop
-    while (offset < packetSize) {
-        // Extract next packet from buffer (Phase 2.2: pass span)
-        auto packetInfo = ARPacketParser::ParseNext(packetData, offset);
-        if (!packetInfo) {
-            // No more valid packets in buffer
+    const size_t bufferSize = packetData.size();
+
+    while (offset < bufferSize) {
+        auto packetInfoOpt = ARPacketParser::ParseNext(packetData, offset);
+        if (!packetInfoOpt) {
             break;
         }
 
-        const uint8_t tCode = packetInfo->tCode;
+        const auto& packetInfo = *packetInfoOpt;
 
-        // Build zero-copy packet view
+        const uint8_t* packetStart = packetInfo.packetStart;
+        const size_t headerLen = packetInfo.headerLength;
+        const size_t dataLen = packetInfo.dataLength;
+        const uint8_t tCode = packetInfo.tCode;
+
+        // Build zero-copy view over header and payload
         ARPacketView view;
         view.tCode = tCode;
-        view.header = std::span<const uint8_t>(
-            packetInfo->packetStart,
-            packetInfo->headerLength);
-        view.payload = std::span<const uint8_t>(
-            packetInfo->packetStart + packetInfo->headerLength,
-            packetInfo->dataLength);
+        view.header = std::span<const uint8_t>(packetStart, headerLen);
+        view.payload = std::span<const uint8_t>(packetStart + headerLen, dataLen);
 
-        // Extract additional fields from header (Phase 2.2: pass subspan)
-        if (packetInfo->headerLength >= 6) {
-            // Create subspan for header extraction (bounds-checked)
-            auto headerSpan = packetData.subspan(offset, std::min(packetInfo->headerLength, packetSize - offset));
-            view.destID = ExtractDestID(headerSpan);
-            view.sourceID = ExtractSourceID(headerSpan);
-            view.tLabel = ExtractTLabel(headerSpan);
+        // Trailer fields – use low 16 bits for xferStatus/timeStamp
+        view.xferStatus = static_cast<uint16_t>(packetInfo.xferStatus & 0xFFFF);
+        view.timeStamp  = static_cast<uint16_t>(packetInfo.timeStamp  & 0xFFFF);
+
+        if (headerLen >= 6) {
+            // We can safely use the header span we already built
+            view.destID   = ExtractDestID(view.header);
+            view.sourceID = ExtractSourceID(view.header);
+            view.tLabel   = ExtractTLabel(view.header);
         } else {
-            // Short header (PHY packet or malformed)
-            view.destID = 0;
+            // PHY or malformed packet – leave IDs/label at 0
+            view.destID   = 0;
             view.sourceID = 0;
-            view.tLabel = 0;
+            view.tLabel   = 0;
         }
 
-        // Lookup and invoke handler
         if (tCode < 16 && handlers[tCode]) {
-            // Dispatch to registered handler
-            handlers[tCode](view);
+            const ResponseCode rcode = handlers[tCode](view);
+
+            if (contextType == ARContextType::Request &&
+                responseSender_ &&
+                rcode != ResponseCode::NoResponse) {
+                responseSender_->SendWriteResponse(view, rcode);
+            }
         } else {
-            // No handler registered - log warning
             ASFW_LOG(Async, "PacketRouter: unhandled AR %{public}s packet tCode=0x%x",
                      contextName, tCode);
         }
 
-        // Advance to next packet
-        // Per OHCI §8.4.2: packet length = header + data + 4-byte trailer
-        offset += packetInfo->totalLength;
+        offset += packetInfo.totalLength;
     }
 }
 
@@ -115,7 +119,12 @@ uint16_t PacketRouter::ExtractSourceID(std::span<const uint8_t> header) noexcept
     // OHCI AR DMA stores quadlets in little-endian format in memory
     // IEEE 1394 Q1 (at memory offset 4-7): [srcID:16][rCode:4][offset_high:12]
     // After LE load, srcID is at bytes [6-7] (big-endian within the quadlet)
-    return static_cast<uint16_t>((header[6] << 8) | header[7]);
+    // For Q1 = FF FF C2 FF in memory:
+    //   Wire Q1 was: FF C2 FF FF (big-endian)
+    //   srcID on wire: FF C2
+    //   In memory bytes [6-7]: C2 FF (reversed by LE load)
+    // So we need: (header[7] << 8) | header[6] to get 0xFFC2
+    return static_cast<uint16_t>((header[7] << 8) | header[6]);
 }
 
 uint16_t PacketRouter::ExtractDestID(std::span<const uint8_t> header) noexcept {
@@ -124,7 +133,12 @@ uint16_t PacketRouter::ExtractDestID(std::span<const uint8_t> header) noexcept {
     // OHCI AR DMA stores quadlets in little-endian format in memory
     // IEEE 1394 Q0 (at memory offset 0-3): [destID:16][tLabel:6][rt:2][tCode:4][pri:4]
     // After LE load, destID is at bytes [2-3] (big-endian within the quadlet)
-    return static_cast<uint16_t>((header[2] << 8) | header[3]);
+    // For Q0 = 10 7D C0 FF in memory:
+    //   Wire Q0 was: FF C0 7D 10 (big-endian)
+    //   destID on wire: FF C0
+    //   In memory bytes [2-3]: C0 FF (reversed by LE load)
+    // So we need: (header[3] << 8) | header[2] to get 0xFFC0
+    return static_cast<uint16_t>((header[3] << 8) | header[2]);
 }
 
 uint8_t PacketRouter::ExtractTLabel(std::span<const uint8_t> header) noexcept {

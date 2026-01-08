@@ -24,5 +24,11 @@ os_log_t Discovery()  { static os_log_t log = MakeCategory("discovery");  return
 os_log_t IRM()        { static os_log_t log = MakeCategory("irm");        return log; }
 os_log_t BusManager() { static os_log_t log = MakeCategory("busmanager"); return log; }
 os_log_t ConfigROM()  { static os_log_t log = MakeCategory("configrom");  return log; }
+os_log_t MusicSubunit() { static os_log_t log = MakeCategory("musicsubunit"); return log; }
+os_log_t FCP()        { static os_log_t log = MakeCategory("fcp");        return log; }
+os_log_t CMP()        { static os_log_t log = MakeCategory("cmp");        return log; }
+os_log_t AVC()        { static os_log_t log = MakeCategory("avc");        return log; }
+os_log_t Isoch()      { static os_log_t log = MakeCategory("isoch");      return log; }
+os_log_t Audio()      { static os_log_t log = MakeCategory("audio");      return log; }
 
 } // namespace ASFW::Driver::Logging

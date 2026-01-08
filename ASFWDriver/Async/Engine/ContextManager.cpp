@@ -7,6 +7,8 @@
 #include "../../Shared/Rings/DescriptorRing.hpp"
 #include "../../Shared/Rings/BufferRing.hpp"
 
+#include "../DMAMemoryImpl.hpp"
+
 #include "../Contexts/ATRequestContext.hpp"
 #include "../Contexts/ATResponseContext.hpp"
 #include "../Contexts/ARRequestContext.hpp"
@@ -43,6 +45,7 @@ using ExVoid = std::expected<void, kern_return_t>;
 // ============================================================================
 struct ContextManager::State {
     DMAMemoryManager dmaManager{};
+    DMAMemoryImpl dmaImpl{dmaManager};
 
     std::span<HW::OHCIDescriptor> atReqDesc{};
     std::span<HW::OHCIDescriptor> atRspDesc{};
@@ -62,7 +65,8 @@ struct ContextManager::State {
     ARResponseContext arRspCtx{};
 
     // New FSM-based AT managers (replace old manual state tracking)
-    std::unique_ptr<DescriptorBuilder> descriptorBuilder{nullptr};
+    std::unique_ptr<DescriptorBuilder> descriptorBuilderReq{nullptr};
+    std::unique_ptr<DescriptorBuilder> descriptorBuilderRsp{nullptr};
     std::unique_ptr<ATManager<ATRequestContext, DescriptorRing, ASFW::Async::ATRequestTag>> atReqMgr{nullptr};
     std::unique_ptr<ATManager<ATResponseContext, DescriptorRing, ASFW::Async::ATResponseTag>> atRspMgr{nullptr};
 
@@ -211,8 +215,8 @@ kern_return_t ContextManager::provision(ASFW::Driver::HardwareInterface& hw,
             return std::unexpected(kIOReturnInternalError);
 
         // Bind DMA manager to AR rings and publish all descriptors before arming
-        state_->arReqRing.BindDma(&state_->dmaManager);
-        state_->arRspRing.BindDma(&state_->dmaManager);
+        state_->arReqRing.BindDma(&state_->dmaImpl);
+        state_->arRspRing.BindDma(&state_->dmaImpl);
         state_->arReqRing.PublishAllDescriptorsOnce();
         state_->arRspRing.PublishAllDescriptorsOnce();
 
@@ -257,16 +261,18 @@ kern_return_t ContextManager::provision(ASFW::Driver::HardwareInterface& hw,
         kr = state_->arRspCtx.Initialize(hw, state_->arRspRing);
         if (kr != kIOReturnSuccess) return std::unexpected(kr);
 
-        // Initialize DescriptorBuilder for AT chain building
-        state_->descriptorBuilder = std::make_unique<DescriptorBuilder>(
+        // Initialize DescriptorBuilders for AT chain building (separate rings)
+        state_->descriptorBuilderReq = std::make_unique<DescriptorBuilder>(
             state_->atReqRing, state_->dmaManager);
+        state_->descriptorBuilderRsp = std::make_unique<DescriptorBuilder>(
+            state_->atRspRing, state_->dmaManager);
 
         // Initialize FSM-based AT managers (replaces old manual state tracking)
         state_->atReqMgr = std::make_unique<ATManager<ATRequestContext, DescriptorRing, ASFW::Async::ATRequestTag>>(
-            state_->atReqCtx, state_->atReqRing, *state_->descriptorBuilder);
+            state_->atReqCtx, state_->atReqRing, *state_->descriptorBuilderReq);
 
         state_->atRspMgr = std::make_unique<ATManager<ATResponseContext, DescriptorRing, ASFW::Async::ATResponseTag>>(
-            state_->atRspCtx, state_->atRspRing, *state_->descriptorBuilder);
+            state_->atRspCtx, state_->atRspRing, *state_->descriptorBuilderRsp);
 
         ASFW_LOG(Async, "ContextManager::provision - ATManager instances created");
 
@@ -473,9 +479,14 @@ ATManager<ATResponseContext, DescriptorRing, ASFW::Async::ATResponseTag>* Contex
     return state_->atRspMgr.get();
 }
 
-DescriptorBuilder* ContextManager::GetDescriptorBuilder() noexcept {
+DescriptorBuilder* ContextManager::GetDescriptorBuilderRequest() noexcept {
     if (!state_ || !state_->provisioned) return nullptr;
-    return state_->descriptorBuilder.get();
+    return state_->descriptorBuilderReq.get();
+}
+
+DescriptorBuilder* ContextManager::GetDescriptorBuilderResponse() noexcept {
+    if (!state_ || !state_->provisioned) return nullptr;
+    return state_->descriptorBuilderRsp.get();
 }
 
 } // namespace ASFW::Async::Engine

@@ -30,7 +30,6 @@ public:
 
 private:
     struct NodeSpeedState {
-        // TODO: S100 hardcoded for maximum hardware compatibility.
         FwSpeed currentSpeed{FwSpeed::S100};
         uint8_t timeoutCount{0};
         uint8_t successCount{0};

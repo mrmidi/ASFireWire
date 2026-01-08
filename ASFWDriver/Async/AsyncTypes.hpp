@@ -199,181 +199,106 @@ inline std::string AddressToString(const ::ASFW::Async::FWAddress& addr) {
 
 } // namespace ASFW::FW
 
-// Now include FWCommon.hpp for other constants and helpers
 #include "../Common/FWCommon.hpp"
 
 namespace ASFW::Async {
 
-/**
- * AsyncCmdOptions - Apple-mirrored command options contract
- * Matches IOFWUserCommand.h lines 79-106 and IOFWUserCommand.cpp submit() patterns.
- * 
- * Reference: IOFWUserCommand.cpp submit() uses flags parameter:
- *   - kFWCommandInterfaceSyncExecute (syncExecute)
- *   - kFireWireCommandUseCopy (useCopy)
- *   - kFireWireCommandAbsolute (absolute)
- *   - setFlush() (needsFlush) - line 412-422
- *   - kFWCommandInterfaceForceBlockRequest (forceBlock)
- */
 struct AsyncCmdOptions {
-    bool syncExecute{false};      ///< kFWCommandInterfaceSyncExecute - block until complete
-    bool useCopy{false};          ///< kFireWireCommandUseCopy - inline payload (quadlets)
-    bool absolute{false};         ///< kFireWireCommandAbsolute - includes generation
-    bool failOnReset{false};      ///< IOFWUserCommand.cpp line 122 - fail if bus resets
-    bool needsFlush{true};        ///< setFlush() - true=immediate stop, false=keep running
-    bool forceBlock{false};       ///< kFWCommandInterfaceForceBlockRequest - force block transfer
-    uint32_t timeoutMs{1000};     ///< setTimeout() - transaction timeout in milliseconds
-    uint8_t retries{0};           ///< setRetries() - max retry attempts
-    uint8_t maxSpeed{0};          ///< setMaxSpeed() - speed code (0=S100, 1=S200, 2=S400, 3=S800)
-    uint16_t maxPacket{0};        ///< setMaxPacket() - max packet size (0=auto)
+    bool syncExecute{false};
+    bool useCopy{false};
+    bool absolute{false};
+    bool failOnReset{false};
+    bool needsFlush{true};
+    bool forceBlock{false};
+    uint32_t timeoutMs{1000};
+    uint8_t retries{0};
+    uint8_t maxSpeed{0};
+    uint16_t maxPacket{0};
 };
 
-/**
- * AsyncCmdResult - Apple-mirrored command result contract
- * Matches IOFWUserCommand.cpp CommandSubmitResult and async completion patterns.
- * 
- * Reference: IOFWUserCommand.cpp asyncReadWriteCommandCompletion() lines 97-109
- *            IOFWUserCommand.cpp asyncReadQuadletCommandCompletion() lines 121-130
- */
 struct AsyncCmdResult {
-    IOReturn status{kIOReturnSuccess};   ///< IOKit return code
-    uint32_t bytesTransferred{0};        ///< Actual bytes transferred
-    uint8_t ackCode{0};                  ///< IEEE 1394 ack code (ACK_COMPLETE, etc.)
-    uint8_t responseCode{0};             ///< IEEE 1394 response code (rCode)
-    bool locked{false};                  ///< For compare-swap: true if lock succeeded
-    uint32_t lockValueLo{0};             ///< For compare-swap: low 32 bits of read value
-    uint32_t lockValueHi{0};             ///< For compare-swap: high 32 bits of read value
+    IOReturn status{kIOReturnSuccess};
+    uint32_t bytesTransferred{0};
+    uint8_t ackCode{0};
+    uint8_t responseCode{0};
+    bool locked{false};
+    uint32_t lockValueLo{0};
+    uint32_t lockValueHi{0};
 };
 
-/**
- * Retry policy configuration for async transactions.
- * Matches Apple's IOFWAsyncCommand retry pattern (fCurRetries/fMaxRetries) but modernized
- * for DriverKit with explicit policy objects instead of per-command counters.
- *
- * Reference: IOFWAsyncCommand.cpp lines 285-305 (retry logic in complete())
- *            IOFWCommand.h lines 314-315 (fCurRetries/fMaxRetries fields)
- */
 struct RetryPolicy {
-    uint8_t maxRetries{3};           ///< Max retry attempts (Apple default: kFWCmdDefaultRetries = 3)
-    uint64_t retryDelayUsec{1000};   ///< Delay between retries in microseconds (1ms default)
-    bool retryOnBusy{true};          ///< Retry on ACK_BUSY_X/A/B (Apple default: yes)
-    bool retryOnTimeout{true};       ///< Retry on timeout (Apple default: yes)
-    bool speedFallback{false};       ///< Downgrade speed on type error like Apple (ROM quirks)
+    uint8_t maxRetries{3};
+    uint64_t retryDelayUsec{1000};
+    bool retryOnBusy{true};
+    bool retryOnTimeout{true};
+    bool speedFallback{false};
     
-    /// Default policy: 3 retries, 1ms delay (Apple's kFWCmdDefaultRetries)
     static RetryPolicy Default() { return {3, 1000, true, true, false}; }
-    
-    /// Reduced retries for unreliable operations (Apple's kFWCmdReducedRetries = 2)
     static RetryPolicy Reduced() { return {2, 500, true, false, false}; }
-    
-    /// No retries (Apple's kFWCmdZeroRetries = 0)
     static RetryPolicy None() { return {0, 0, false, false, false}; }
-    
-    /// Increased retries for challenging operations (Apple's kFWCmdIncreasedRetries = 6)
     static RetryPolicy Increased() { return {6, 1000, true, true, true}; }
 };
 
-/**
- * PacketContext - IEEE 1394 packet construction parameters.
- * Contains source node ID, generation, and speed code for building packet headers.
- * Used by PacketBuilder to construct OHCI-compliant packet headers.
- */
 struct PacketContext {
-    uint16_t sourceNodeID{0};   ///< Local node ID (bus[15:10] | node[5:0])
-    uint8_t generation{0};      ///< 8-bit bus generation counter
-    uint8_t speedCode{0};       ///< Speed: 0=S100, 1=S200, 2=S400, 3=S800
+    uint16_t sourceNodeID{0};
+    uint8_t generation{0};
+    uint8_t speedCode{0};
 };
 
-/**
- * TransactionContext - Pre-validated bus state snapshot for transaction submission.
- * 
- * Obtained via AsyncSubsystem::PrepareTransactionContext() matching Apple's
- * executeCommandElement() gate check pattern (see DECOMPILATION.md §Command Execution).
- * Ensures:
- *   - NodeID valid bit set (OHCI NodeID register bit 31)
- *   - Bus not in reset (atomic flag check)
- *   - Generation stable (8-bit counter from GenerationTracker)
- *   - Speed code resolved (topology query or default S100)
- * 
- * Reference: AppleFWOHCI::executeCommandElement @ 0xDBBE validates controller
- *            awake and service running before accessing pending list.
- */
 struct TransactionContext {
-    uint16_t sourceNodeID{0};      ///< Local node ID with valid bit confirmed
-    uint8_t generation{0};         ///< Current bus generation (8-bit)
-    uint8_t speedCode{0};          ///< Transaction speed (0=S100...3=S800)
-    PacketContext packetContext{}; ///< Packet builder parameters (convenience)
+    uint16_t sourceNodeID{0};
+    uint8_t generation{0};
+    uint8_t speedCode{0};
+    PacketContext packetContext{};
 };
 
-/** Parameters for an asynchronous read request (quadlet or block). */
 struct ReadParams {
     uint16_t destinationID{0};
     uint32_t addressHigh{0};
     uint32_t addressLow{0};
     uint32_t length{0};
-    uint8_t speedCode{0xFF};  // 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
+    uint8_t speedCode{0xFF};
 };
 
-/** Parameters for an asynchronous write request (quadlet or block). */
 struct WriteParams {
     uint16_t destinationID{0};
     uint32_t addressHigh{0};
     uint32_t addressLow{0};
     const void* payload{nullptr};
     uint32_t length{0};
-    uint8_t speedCode{0xFF};  // 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
+    uint8_t speedCode{0xFF};
 };
 
-/** Parameters for an asynchronous lock (compare-and-swap) request. */
 struct LockParams {
     uint16_t destinationID{0};
     uint32_t addressHigh{0};
     uint32_t addressLow{0};
     const void* operand{nullptr};
-    uint32_t operandLength{0};      ///< Bytes transmitted with the request (e.g., 8 for compare-swap)
-    uint32_t responseLength{0};     ///< Expected response bytes (0 = infer from operand / tCode)
-    uint8_t speedCode{0xFF};        ///< 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
+    uint32_t operandLength{0};
+    uint32_t responseLength{0};
+    uint8_t speedCode{0xFF};
 };
 
-/** Parameters for a compare-and-swap convenience helper. */
 struct CompareSwapParams {
     uint16_t destinationID{0};
     uint16_t addressHigh{0};
     uint32_t addressLow{0};
-    uint32_t compareValue{0};      ///< Host-order compare value
-    uint32_t swapValue{0};         ///< Host-order replacement value
-    uint8_t speedCode{0xFF};       ///< 0xFF = use context default, else 0=S100, 1=S200, 2=S400, 3=S800
+    uint32_t compareValue{0};
+    uint32_t swapValue{0};
+    uint8_t speedCode{0xFF};
 };
 
-/** Parameters for a fire-and-forget asynchronous stream packet. */
 struct StreamParams {
     uint32_t channel{0};
     const void* payload{nullptr};
     uint32_t length{0};
 };
 
-/** Parameters for a PHY configuration packet. */
 struct PhyParams {
     uint32_t quadlet1{0};
     uint32_t quadlet2{0};
 };
 
-/**
- * Completion callback invoked when an async transaction reaches a terminal state.
- * responsePayload is populated for reads and locks when data returns.
- *
- * Phase 2.3: Modernized with std::function for type-safe callbacks.
- * - Removed void* context (captured in lambda)
- * - Changed const void* + uint32_t to std::span<const uint8_t>
- *
- * Usage:
- *   auto cb = [this](AsyncHandle h, AsyncStatus s, std::span<const uint8_t> data) {
- *       if (s == AsyncStatus::Success) {
- *           ProcessResponse(data);
- *       }
- *   };
- *   subsystem.Read(params, cb);
- */
 using CompletionCallback = std::function<void(AsyncHandle handle,
                                               AsyncStatus status,
                                               std::span<const uint8_t> responsePayload)>;
@@ -383,14 +308,3 @@ using CompareSwapCallback = std::function<void(AsyncStatus status,
                                                bool compareMatched)>;
 
 } // namespace ASFW::Async
-
-/*
- * OHCI Specification References (IEEE 1394 Open HCI 1.1):
- * - Async transactions, headers, and payload rules: Chapter 7 (Transmit) and Chapter 8 (Receive).
- * - Status/event codes surfaced via ContextControl.event_code: Section 3.1.1, Table 3-2.
- * - Read request formats: Section 7.8.1.1 (Figures 7-9, 7-11).
- * - Write request formats: Section 7.8.1.2 (Figures 7-10, 7-12).
- * - Lock request formats: Section 7.8.1.3 (Figure 7-13).
- * - PHY packet transmit: Section 7.8.1.4 (Figure 7-14).
- * - Async stream packets: Section 7.8.3 (Figure 7-19).
- */

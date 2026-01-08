@@ -7,7 +7,11 @@
 
 #include "FCPTransport.hpp"
 #include "../../Logging/Logging.hpp"
+#ifndef ASFW_HOST_TEST
 #include <DriverKit/OSCollections.h>
+#include <DriverKit/IOLib.h>
+#endif
+#include <time.h>
 
 using namespace ASFW::Protocols::AVC;
 
@@ -15,16 +19,28 @@ using namespace ASFW::Protocols::AVC;
 // Constructor / Destructor
 //==============================================================================
 
-FCPTransport::FCPTransport(Async::AsyncSubsystem& async,
-                           Discovery::FWDevice& device,
-                           const FCPTransportConfig& config)
-    : async_(async), device_(device), config_(config) {
+// OSDefineMetaClassAndStructors(FCPTransport, OSObject);
+
+//==============================================================================
+// Init / Free
+//==============================================================================
+
+bool FCPTransport::init(Async::AsyncSubsystem* async,
+                        Discovery::FWDevice* device,
+                        const FCPTransportConfig& config) {
+    if (!OSObject::init()) {
+        return false;
+    }
+
+    async_ = async;
+    device_ = device;
+    config_ = config;
 
     // Allocate lock (DriverKit IOLock)
     lock_ = IOLockAlloc();
     if (!lock_) {
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Failed to allocate lock");
+        ASFW_LOG_V1(FCP, "FCPTransport: Failed to allocate lock");
+        return false;
     }
 
     // Create dedicated DriverKit dispatch queue for timeout handling
@@ -32,33 +48,21 @@ FCPTransport::FCPTransport(Async::AsyncSubsystem& async,
     IODispatchQueueName queueName = "com.asfw.fcp.timeout";
     auto kr = IODispatchQueue::Create(queueName, 0, 0, &queue);
     if (kr != kIOReturnSuccess || !queue) {
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Failed to create timeout queue (kr=0x%08x)",
-                     kr);
+        ASFW_LOG_V1(FCP, "FCPTransport: Failed to create timeout queue (kr=0x%08x)", kr);
     } else {
         timeoutQueue_ = OSSharedPtr(queue, OSNoRetain);
     }
 
-    // Create timer source
-    IOTimerDispatchSource* timer = nullptr;
-    kr = IOTimerDispatchSource::Create(timeoutQueue_.get(), &timer);
-    if (kr != kIOReturnSuccess || !timer) {
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Failed to create timer source (kr=0x%08x)",
-                     kr);
-    } else {
-        timer_ = OSSharedPtr(timer, OSNoRetain);
-        // Timer will be scheduled with WakeAtTime when needed
-    }
-
-    ASFW_LOG_INFO(Async,
+    ASFW_LOG_V1(FCP,
                 "FCPTransport: Initialized for device nodeID=%u, "
                 "cmdAddr=0x%llx, rspAddr=0x%llx",
-                device_.GetNodeID(), config_.commandAddress,
+                device_->GetNodeID(), config_.commandAddress,
                 config_.responseAddress);
+    
+    return true;
 }
 
-FCPTransport::~FCPTransport() noexcept {
+void FCPTransport::free() {
     shuttingDown_ = true;
 
     // Cancel any pending command
@@ -66,22 +70,8 @@ FCPTransport::~FCPTransport() noexcept {
         CompleteCommand(FCPStatus::kTransportError, {});
     }
 
-    // Drain and release timeout queue
-    if (timer_) {
-        timer_->Cancel(^(void) {
-            // Cancellation complete
-        });
-        timer_.reset();
-    }
-
-    if (timeoutQueue_) {
-        if (!timeoutQueue_->OnQueue()) {
-            timeoutQueue_->DispatchSync(^{
-                // Ensure all pending timeout work completes before destruction
-            });
-        }
-        timeoutQueue_.reset();
-    }
+    // Release queue
+    timeoutQueue_.reset();
 
     // Free lock (cannot throw in DriverKit)
     if (lock_) {
@@ -89,7 +79,9 @@ FCPTransport::~FCPTransport() noexcept {
         lock_ = nullptr;
     }
 
-    ASFW_LOG_INFO(Async, "FCPTransport: Destroyed");
+    ASFW_LOG_V1(FCP, "FCPTransport: Destroyed");
+    
+    OSObject::free();
 }
 
 //==============================================================================
@@ -98,60 +90,84 @@ FCPTransport::~FCPTransport() noexcept {
 
 FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
                                       FCPCompletion completion) {
-    // Validate payload size
     if (!command.IsValid()) {
-        ASFW_LOG_ERROR(Async,
+        ASFW_LOG_V1(FCP,
                      "FCPTransport: Invalid command size %zu (must be 3-512)",
                      command.length);
         completion(FCPStatus::kInvalidPayload, {});
         return {};
     }
 
+    if (shuttingDown_) {
+        completion(FCPStatus::kTransportError, {});
+        return {};
+    }
+
     IOLockLock(lock_);
 
-    // v1: Reject if command already pending (single outstanding only)
     if (pending_) {
         IOLockUnlock(lock_);
 
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Command already pending (v1 concurrency limit)");
+        ASFW_LOG_V1(FCP,
+                     "FCPTransport: Command already pending");
         completion(FCPStatus::kBusy, {});
         return {};
     }
 
-    // Create outstanding command state
     auto cmd = std::make_unique<OutstandingCommand>();
     cmd->command = command;
     cmd->completion = std::move(completion);
-    cmd->generation = device_.GetGeneration();
+    cmd->generation = device_->GetGeneration();
     cmd->retriesLeft = config_.maxRetries;
     cmd->allowBusResetRetry = config_.allowBusResetRetry;
     cmd->gotInterim = false;
 
-    ASFW_LOG_INFO(Async,
-                "FCPTransport: Submitting command: opcode=0x%02x, length=%zu, "
-                "generation=%u, retries=%u",
-                command.data[2], command.length,
-                cmd->generation, cmd->retriesLeft);
+    {
+        char hexbuf[64] = {0};
+        size_t hexlen = std::min(command.length, static_cast<size_t>(16));
+        for (size_t i = 0; i < hexlen; i++) {
+            snprintf(hexbuf + i*3, 4, "%02x ", command.data[i]);
+        }
+        ASFW_LOG_HEX(FCP,
+                    "FCPTransport: Submitting command: opcode=0x%02x, length=%zu, "
+                    "generation=%u, retries=%u, data=[%{public}s]",
+                    command.data[2], command.length,
+                    cmd->generation, cmd->retriesLeft, hexbuf);
+    }
 
-    // Store as pending before issuing asynchronous write
     pending_ = std::move(cmd);
 
-    auto handle = SubmitWriteCommand(pending_->command);
+    FCPFrame commandCopy = pending_->command;
+
+    IOLockUnlock(lock_);
+
+    auto handle = SubmitWriteCommand(commandCopy);
     if (!handle.value) {
-        auto completion = std::move(pending_->completion);
+        IOLockLock(lock_);
+        if (!pending_) {
+            IOLockUnlock(lock_);
+            return {};
+        }
+
+        auto completionCallback = std::move(pending_->completion);
         pending_.reset();
 
         IOLockUnlock(lock_);
-        ASFW_LOG_ERROR(Async,
+        ASFW_LOG_V1(FCP,
                      "FCPTransport: Failed to submit async write");
-        completion(FCPStatus::kTransportError, {});
+        completionCallback(FCPStatus::kTransportError, {});
+        return {};
+    }
+
+    IOLockLock(lock_);
+    if (!pending_) {
+        IOLockUnlock(lock_);
+        async_->Cancel(handle);
         return {};
     }
 
     pending_->asyncHandle = handle;
 
-    // Schedule timeout
     ScheduleTimeout(config_.timeoutMs);
 
     IOLockUnlock(lock_);
@@ -161,13 +177,13 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 
 ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame) {
     ASFW::Async::WriteParams params{};
-    params.destinationID = device_.GetNodeID();
+    params.destinationID = device_->GetNodeID();
     params.addressHigh = static_cast<uint32_t>((config_.commandAddress >> 32) & 0xFFFFFFFFULL);
     params.addressLow = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFULL);
     params.payload = frame.Payload().data();
     params.length = static_cast<uint32_t>(frame.length);
 
-    return async_.Write(params,
+    return async_->Write(params,
         [this](ASFW::Async::AsyncHandle handle,
                ASFW::Async::AsyncStatus status,
                std::span<const uint8_t> response) {
@@ -191,20 +207,15 @@ bool FCPTransport::CancelCommand(FCPHandle handle) {
         return false;
     }
 
-    ASFW_LOG_INFO(Async,
+    ASFW_LOG_V2(FCP,
                 "FCPTransport: Cancelling command");
 
     // Cancel async operation
-    async_.Cancel(pending_->asyncHandle);
-
-    // Complete with error
-    auto completion = std::move(pending_->completion);
-    pending_.reset();
+    async_->Cancel(pending_->asyncHandle);
 
     IOLockUnlock(lock_);
 
-    // Invoke completion OUTSIDE lock
-    completion(FCPStatus::kTransportError, {});
+    CompleteCommand(FCPStatus::kTransportError, {});
 
     return true;
 }
@@ -220,53 +231,56 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
 
     if (!pending_) {
         IOLockUnlock(lock_);
-        ASFW_LOG_DEBUG(Async,
+        ASFW_LOG_V3(FCP,
                      "FCPTransport: Spurious response (no pending command)");
         return;
     }
 
-    // Validate source node matches target
-    if (srcNodeID != device_.GetNodeID()) {
+    const uint16_t expectedNodeID = device_->GetNodeID();
+    const bool exactMatch = srcNodeID == expectedNodeID;
+    const bool nodeNumberMatch = (srcNodeID & 0x3F) == (expectedNodeID & 0x3F);
+    if (!exactMatch && !nodeNumberMatch) {
         IOLockUnlock(lock_);
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Response from wrong node: %u (expected %u)",
-                     srcNodeID, device_.GetNodeID());
+        ASFW_LOG_V1(FCP,
+                     "FCPTransport: Response from wrong node: 0x%04x (expected node 0x%02x)",
+                     srcNodeID, expectedNodeID & 0x3F);
         return;
     }
+    if (!exactMatch && nodeNumberMatch) {
+        ASFW_LOG_V3(FCP,
+                     "FCPTransport: Accepting response with matching node number but different bus ID "
+                     "(src=0x%04x expected=0x%04x)",
+                     srcNodeID, expectedNodeID);
+    }
 
-    // Validate generation (if not allowing cross-generation)
     if (!pending_->allowBusResetRetry &&
         generation != pending_->generation) {
         IOLockUnlock(lock_);
-        ASFW_LOG_ERROR(Async,
+        ASFW_LOG_V1(FCP,
                      "FCPTransport: Response generation mismatch: %u (expected %u)",
                      generation, pending_->generation);
         return;
     }
 
-    // Validate response payload
     if (!ValidateResponse(payload)) {
         IOLockUnlock(lock_);
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Response validation failed");
+        ASFW_LOG_V3(FCP,
+                     "FCPTransport: Response validation failed (likely stale/duplicate response)");
         return;
     }
 
-    // Copy response payload
     FCPFrame response;
     response.length = std::min(payload.size(), response.data.size());
     std::copy_n(payload.begin(), response.length, response.data.begin());
 
-    ASFW_LOG_INFO(Async,
+    ASFW_LOG_V2(FCP,
                 "FCPTransport: Received response: ctype=0x%02x, length=%zu",
                 response.data[0], response.length);
 
-    // Check for interim response (ctype == 0x0F)
     if (response.data[0] == static_cast<uint8_t>(AVCResponseType::kInterim)) {
-        // Extend timeout for final response
         pending_->gotInterim = true;
 
-        ASFW_LOG_INFO(Async,
+        ASFW_LOG_V2(FCP,
                     "FCPTransport: Got INTERIM response, extending timeout to %u ms",
                     config_.interimTimeoutMs);
 
@@ -276,14 +290,9 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
         return;
     }
 
-    // Final response received
-    auto completion = std::move(pending_->completion);
-    pending_.reset();
-
     IOLockUnlock(lock_);
 
-    // Invoke completion OUTSIDE lock
-    completion(FCPStatus::kOk, response);
+    CompleteCommand(FCPStatus::kOk, response);
 }
 
 //==============================================================================
@@ -299,37 +308,30 @@ void FCPTransport::OnAsyncWriteComplete(Async::AsyncHandle handle,
 
     if (!pending_) {
         IOLockUnlock(lock_);
-        return;  // Already completed/cancelled
+        return;
     }
 
     if (status != Async::AsyncStatus::kSuccess) {
-        ASFW_LOG_ERROR(Async,
+        ASFW_LOG_V1(FCP,
                      "FCPTransport: Async write failed: %d",
                      static_cast<int>(status));
 
-        // Retry or fail
         if (pending_->retriesLeft > 0) {
             pending_->retriesLeft--;
-            ASFW_LOG_INFO(Async,
+            ASFW_LOG_V2(FCP,
                         "FCPTransport: Retrying command (%u retries left)",
                         pending_->retriesLeft);
 
             IOLockUnlock(lock_);
             RetryCommand();
             return;
-        } else {
-            auto completion = std::move(pending_->completion);
-            pending_.reset();
-
-            IOLockUnlock(lock_);
-
-            completion(FCPStatus::kTransportError, {});
-            return;
         }
-    }
 
-    // Async write succeeded, waiting for FCP response
-    // (response will arrive via OnFCPResponse)
+        IOLockUnlock(lock_);
+
+        CompleteCommand(FCPStatus::kTransportError, {});
+        return;
+    }
 
     IOLockUnlock(lock_);
 }
@@ -343,17 +345,16 @@ void FCPTransport::OnCommandTimeout() {
 
     if (!pending_) {
         IOLockUnlock(lock_);
-        return;  // Already completed
+        return;
     }
 
-    ASFW_LOG_ERROR(Async,
+    ASFW_LOG_V1(FCP,
                  "FCPTransport: Command timeout (interim=%d, retries=%u)",
                  pending_->gotInterim, pending_->retriesLeft);
 
-    // Retry or fail
     if (pending_->retriesLeft > 0) {
         pending_->retriesLeft--;
-        ASFW_LOG_INFO(Async,
+        ASFW_LOG_V2(FCP,
                     "FCPTransport: Retrying command after timeout (%u retries left)",
                     pending_->retriesLeft);
 
@@ -361,59 +362,47 @@ void FCPTransport::OnCommandTimeout() {
         RetryCommand();
         return;
     } else {
-        auto completion = std::move(pending_->completion);
-        pending_.reset();
-        completion(FCPStatus::kTimeout, {});
+        IOLockUnlock(lock_);
+        CompleteCommand(FCPStatus::kTimeout, {});
         return;
     }
 }
 
-
 void FCPTransport::ScheduleTimeout(uint32_t timeoutMs) {
-    // Must be called with lock held
-
     if (!pending_) {
         return;
     }
 
     pending_->timeoutToken = ++nextTimeoutToken_;
 
-    if (!timeoutQueue_) {
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Timeout queue unavailable");
+    auto queue = timeoutQueue_;
+    if (!queue) {
+        ASFW_LOG_V1(FCP,
+                     "FCPTransport: Timeout queue unavailable (timeoutMs=%u)",
+                     timeoutMs);
         return;
     }
 
     const uint64_t token = pending_->timeoutToken;
-    
-    // Schedule timeout on dispatch queue
-    timeoutQueue_->DispatchAsync(^{
-        // Calculate deadline
-        uint64_t start = mach_continuous_time();
-        uint64_t timeoutNs = timeoutMs * 1000000ULL;
-        uint64_t deadline = start + timeoutNs;
-        
-        // Wait until deadline
-        while (mach_continuous_time() < deadline) {
-            // Busy wait (no sleep available in DriverKit)
-            // Check cancellation periodically
-            IOLockLock(lock_);
-            bool cancelled = (!pending_ || pending_->timeoutToken != token);
-            IOLockUnlock(lock_);
-            
-            if (cancelled) {
-                return;
-            }
+
+    queue->DispatchAsync(^{
+        IOLockLock(lock_);
+        bool stillPending = (pending_ && pending_->timeoutToken == token);
+        IOLockUnlock(lock_);
+
+        if (!stillPending) {
+            return;
         }
-        
-        // Timeout expired - check if still valid
+
+        IOSleep(static_cast<uint64_t>(timeoutMs));
+
         IOLockLock(lock_);
         bool shouldFire = (pending_ && pending_->timeoutToken == token);
         if (shouldFire) {
             pending_->timeoutToken = 0;
         }
         IOLockUnlock(lock_);
-        
+
         if (shouldFire) {
             OnCommandTimeout();
         }
@@ -421,15 +410,8 @@ void FCPTransport::ScheduleTimeout(uint32_t timeoutMs) {
 }
 
 void FCPTransport::CancelTimeout() {
-    // Must be called with lock held
     if (pending_) {
         pending_->timeoutToken = 0;
-    }
-    
-    if (timer_) {
-        timer_->Cancel(^(void) {
-            // Cancellation complete
-        });
     }
 }
 
@@ -445,30 +427,33 @@ void FCPTransport::RetryCommand() {
         return;
     }
 
-    // Update generation (may have changed after bus reset)
-    pending_->generation = device_.GetGeneration();
+    pending_->generation = device_->GetGeneration();
     pending_->gotInterim = false;
 
-    ASFW_LOG_INFO(Async,
+    ASFW_LOG_V2(FCP,
                 "FCPTransport: Retrying command with generation=%u",
                 pending_->generation);
 
-    // Resubmit async write
-    auto handle = SubmitWriteCommand(pending_->command);
-    if (!handle.value) {
-        auto completion = std::move(pending_->completion);
-        pending_.reset();
+    FCPFrame commandCopy = pending_->command;
+    IOLockUnlock(lock_);
 
-        IOLockUnlock(lock_);
-        ASFW_LOG_ERROR(Async,
+    auto handle = SubmitWriteCommand(commandCopy);
+    if (!handle.value) {
+        ASFW_LOG_V1(FCP,
                      "FCPTransport: Async write submission failed during retry");
-        completion(FCPStatus::kTransportError, {});
+        CompleteCommand(FCPStatus::kTransportError, {});
+        return;
+    }
+
+    IOLockLock(lock_);
+    if (!pending_) {
+        IOLockUnlock(lock_);
+        async_->Cancel(handle);
         return;
     }
 
     pending_->asyncHandle = handle;
 
-    // Schedule new timeout
     ScheduleTimeout(config_.timeoutMs);
 
     IOLockUnlock(lock_);
@@ -486,71 +471,82 @@ void FCPTransport::OnBusReset(uint32_t newGeneration) {
         return;
     }
 
-    ASFW_LOG_INFO(Async,
+    ASFW_LOG_V2(FCP,
                 "FCPTransport: Bus reset during command (gen %u → %u, "
                 "allowRetry=%d, retriesLeft=%u)",
                 pending_->generation, newGeneration,
                 pending_->allowBusResetRetry, pending_->retriesLeft);
 
     if (pending_->allowBusResetRetry && pending_->retriesLeft > 0) {
-        // Safe to retry (e.g., STATUS query)
         pending_->retriesLeft--;
         pending_->generation = newGeneration;
         pending_->gotInterim = false;
 
-        ASFW_LOG_INFO(Async,
+        ASFW_LOG_V2(FCP,
                     "FCPTransport: Retrying command after bus reset");
 
         IOLockUnlock(lock_);
         RetryCommand();
         return;
     } else {
-        // Fail command
-        auto completion = std::move(pending_->completion);
-        pending_.reset();
-
         IOLockUnlock(lock_);
 
-        completion(FCPStatus::kBusReset, {});
+        CompleteCommand(FCPStatus::kBusReset, {});
         return;
     }
 }
 
-//==============================================================================
-// Response Validation
-//==============================================================================
-
 bool FCPTransport::ValidateResponse(std::span<const uint8_t> response) const {
-    // Must be called with lock held
-
-    // Check size
     if (response.size() < kAVCFrameMinSize) {
-        ASFW_LOG_ERROR(Async,
+        ASFW_LOG_V3(FCP,
                      "FCPTransport: Response too small: %zu bytes",
                      response.size());
         return false;
     }
 
     if (response.size() > kAVCFrameMaxSize) {
-        ASFW_LOG_ERROR(Async,
+        ASFW_LOG_V3(FCP,
                      "FCPTransport: Response too large: %zu bytes",
                      response.size());
         return false;
     }
 
-    // Check that opcode matches (byte[2] in response should match command)
-    // Some devices change the subunit byte (byte[1]), but opcode should match
-    uint8_t cmdOpcode = pending_->command.data[2];
-    uint8_t rspOpcode = response[2];
+    uint8_t cmdAddress = pending_->command.data[1];
+    uint8_t rspAddress = response[1];
 
-    if ((rspOpcode & 0x7F) != (cmdOpcode & 0x7F)) {
-        ASFW_LOG_ERROR(Async,
-                     "FCPTransport: Response opcode mismatch: 0x%02x (expected 0x%02x)",
-                     rspOpcode, cmdOpcode);
+    if (cmdAddress != rspAddress) {
+        ASFW_LOG_V3(FCP,
+                     "FCPTransport: Response address mismatch: 0x%02x (expected 0x%02x)",
+                     rspAddress, cmdAddress);
         return false;
     }
 
-    return true;
+    uint8_t cmdOpcode = pending_->command.data[2];
+    uint8_t rspOpcode = response[2];
+
+    bool opcodeMatches = false;
+
+    if (((cmdAddress & 0xF8) == 0x20) && (cmdOpcode == 0xD0)) {
+        opcodeMatches = (rspOpcode == 0xD0 || rspOpcode == 0xC1 ||
+                        rspOpcode == 0xC2 || rspOpcode == 0xC3 ||
+                        rspOpcode == 0xC4);
+
+        if (!opcodeMatches) {
+            ASFW_LOG_V3(FCP,
+                         "FCPTransport: Tape transport-state response opcode invalid: 0x%02x",
+                         rspOpcode);
+        }
+    } else {
+        opcodeMatches = ((rspOpcode & 0x7F) == (cmdOpcode & 0x7F));
+
+        if (!opcodeMatches) {
+            ASFW_LOG_V3(FCP,
+                         "FCPTransport: Response opcode mismatch: 0x%02x (expected 0x%02x)",
+                         rspOpcode, cmdOpcode);
+        }
+    }
+
+    return opcodeMatches;
 }
 
 //==============================================================================

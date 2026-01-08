@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <cstddef>
 
 namespace ASFW::Protocols::AVC {
 
@@ -140,6 +141,7 @@ inline AVCResult CTypeToResult(uint8_t ctype) {
 /// Common AV/C command opcodes
 enum class AVCOpcode : uint8_t {
     kPlugInfo = 0x02,               ///< Query plug count
+    kUnitInfo = 0x30,               ///< Unit info
     kConnect = 0x24,                ///< Connect plugs
     kDisconnect = 0x25,             ///< Disconnect plugs
     kConnections = 0x26,            ///< Query connections
@@ -163,7 +165,7 @@ enum class AVCSubunitType : uint8_t {
     kCamera = 0x07,             ///< Digital camera
     kPanel = 0x0A,              ///< Control panel
     kBulletinBoard = 0x0B,      ///< Info display
-    kCameraStorage = 0x0C,      ///< Camera with storage
+    kMusic0C = 0x0C,            ///< Music subunit (devices sometimes report 0x0C)
     kMusic = 0x1C,              ///< Audio interface (pro audio)
     kUnit = 0x1F,               ///< Whole unit (not a subunit)
 };
@@ -204,7 +206,7 @@ constexpr size_t kAVCOperandMaxLength = kAVCFrameMaxSize - kAVCFrameMinSize;
 //==============================================================================
 
 /// Initial FCP timeout (milliseconds)
-constexpr uint32_t kFCPTimeoutInitial = 250;
+constexpr uint32_t kFCPTimeoutInitial = 1000;
 
 /// FCP timeout after interim response (milliseconds)
 constexpr uint32_t kFCPTimeoutAfterInterim = 10000;

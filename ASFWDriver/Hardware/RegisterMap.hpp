@@ -237,9 +237,13 @@ struct DMAContextHelpers {
     static constexpr uint32_t AsRspRcvCommandPtr = 0x1EC;
     
     // Isochronous Transmit Contexts (base 0x200 + 16*n)
+    // OHCI layout: offset 0x00 = ContextControl (read) / ContextControlSet (write sets bits)
+    //              offset 0x04 = ContextControlClear (write clears bits)
+    //              offset 0x0C = CommandPtr
     static constexpr uint32_t IsoXmitContextBase(uint32_t n) { return 0x200u + 16u * n; }
-    static constexpr uint32_t IsoXmitContextControlSet(uint32_t n) { return 0x200u + 16u * n; }
-    static constexpr uint32_t IsoXmitContextControlClear(uint32_t n) { return 0x204u + 16u * n; }
+    static constexpr uint32_t IsoXmitContextControl(uint32_t n) { return 0x200u + 16u * n; }  // For READS
+    static constexpr uint32_t IsoXmitContextControlSet(uint32_t n) { return 0x200u + 16u * n; }  // For WRITES (set bits)
+    static constexpr uint32_t IsoXmitContextControlClear(uint32_t n) { return 0x204u + 16u * n; }  // For WRITES (clear bits)
     static constexpr uint32_t IsoXmitCommandPtr(uint32_t n) { return 0x20Cu + 16u * n; }
 
     // Isochronous Receive Contexts (base 0x400 + 32*n)

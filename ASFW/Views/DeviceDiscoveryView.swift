@@ -66,8 +66,8 @@ struct DeviceDiscoveryView: View {
                         DeviceRowView(device: device)
                             .tag(device.id)
                     }
-                    .listStyle(.sidebar)
-                    .frame(minWidth: 300)
+                    .listStyle(.inset)
+                    .frame(minWidth: 220, idealWidth: 250, maxWidth: 280)
 
                     // Right: Device details
                     if let selectedDevice = devices.first(where: { $0.id == selectedDeviceId }) {

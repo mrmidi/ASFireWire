@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <memory>
 
 #include <DriverKit/IOLib.h>
 
@@ -11,7 +12,7 @@
 
 namespace ASFW::Shared {
 
-class DMAMemoryManager;
+class IDMAMemory;
 
 struct FilledBufferInfo {
     void* virtualAddress;
@@ -33,10 +34,32 @@ public:
     [[nodiscard]] size_t BufferCount() const noexcept { return bufferCount_; }
     [[nodiscard]] size_t BufferSize() const noexcept { return bufferSize_; }
     [[nodiscard]] uint32_t CommandPtrWord() const noexcept;
-    void BindDma(DMAMemoryManager* dma) noexcept;
+    void BindDma(IDMAMemory* dma) noexcept;
     void PublishAllDescriptorsOnce() noexcept;
     [[nodiscard]] void* DescriptorBaseVA() noexcept { return descriptors_.data(); }
     [[nodiscard]] const void* DescriptorBaseVA() const noexcept { return descriptors_.data(); }
+    
+    // Low-level access for custom programming (Isoch, etc.)
+    [[nodiscard]] HW::OHCIDescriptor* GetDescriptor(size_t index) noexcept {
+        if (index >= bufferCount_) return nullptr;
+        return &descriptors_[index];
+    }
+    
+    [[nodiscard]] uint64_t GetElementIOVA(size_t index) const noexcept {
+        if (index >= bufferCount_) return 0;
+        return bufIOVABase_ + (index * bufferSize_);
+    }
+
+    [[nodiscard]] uint64_t GetDescriptorIOVA(size_t index) const noexcept {
+        if (index >= bufferCount_) return 0;
+        return descIOVABase_ + (index * sizeof(HW::OHCIDescriptor));
+    }
+
+    [[nodiscard]] void* GetElementVA(size_t index) const noexcept {
+        return GetBufferAddress(index);
+    }
+    
+    [[nodiscard]] size_t Capacity() const noexcept { return bufferCount_; }
     BufferRing(const BufferRing&) = delete;
     BufferRing& operator=(const BufferRing&) = delete;
 private:
@@ -48,7 +71,7 @@ private:
     size_t last_dequeued_bytes_{0};
     uint32_t descIOVABase_{0};
     uint32_t bufIOVABase_{0};
-    DMAMemoryManager* dma_{nullptr};
+    IDMAMemory* dma_{nullptr};
 };
 
 } // namespace ASFW::Shared

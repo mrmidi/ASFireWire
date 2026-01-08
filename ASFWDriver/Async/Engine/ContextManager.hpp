@@ -94,7 +94,8 @@ public:
     // These replace the old manual state tracking methods
     ATManager<ASFW::Async::ATRequestContext, DescriptorRing, ASFW::Async::ATRequestTag>* GetATRequestManager() noexcept;
     ATManager<ASFW::Async::ATResponseContext, DescriptorRing, ASFW::Async::ATResponseTag>* GetATResponseManager() noexcept;
-    ASFW::Async::DescriptorBuilder* GetDescriptorBuilder() noexcept;
+    ASFW::Async::DescriptorBuilder* GetDescriptorBuilderRequest() noexcept;
+    ASFW::Async::DescriptorBuilder* GetDescriptorBuilderResponse() noexcept;
 
 private:
     struct State;

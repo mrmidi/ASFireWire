@@ -39,7 +39,7 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
 
     meta.callback = callback_;
 
-    ASFW_LOG(Async, "🔍 [AsyncCommand] Submitting with callback=%p (valid=%d)",
+    ASFW_LOG_V3(Async, "🔍 [AsyncCommand] Submitting with callback=%p (valid=%d)",
              &callback_, callback_ ? 1 : 0);
 
     // Step 3: Register transaction with Tracking actor
@@ -114,7 +114,7 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     
     // Step 10: Schedule timeout
     const uint64_t now = subsys.GetCurrentTimeUsec();
-    constexpr uint64_t kDefaultTimeoutUsec = 200'000;  // 200ms
+    constexpr uint64_t kDefaultTimeoutUsec = 1'000'000;  // 1000ms (relaxed from 200ms)
     subsys.GetTracking()->OnTxPosted(handle, now, kDefaultTimeoutUsec);
     
     // Step 11: Attach payload to PayloadRegistry (if non-null)

@@ -13,8 +13,6 @@ LinkPolicy SpeedPolicy::ForNode(uint8_t nodeId) const {
     if (it != nodeStates_.end()) {
         policy.localToNode = it->second.currentSpeed;
     } else {
-        // TODO: S100 hardcoded for maximum hardware compatibility (matches AsyncSubsystem policy).
-        // Replace with topology-based speed queries when TopologyManager is available.
         policy.localToNode = FwSpeed::S100;
     }
     

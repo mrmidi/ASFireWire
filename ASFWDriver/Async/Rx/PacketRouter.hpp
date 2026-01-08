@@ -6,7 +6,11 @@
 #include <functional>
 #include <span>
 
+#include "../ResponseCode.hpp"
+
 namespace ASFW::Async {
+
+class ResponseSender;
 
 /**
  * \brief Zero-copy view of an AR packet for handler dispatch.
@@ -21,6 +25,10 @@ struct ARPacketView {
     uint16_t sourceID;                 ///< Source node ID (big-endian)
     uint16_t destID;                   ///< Destination node ID (big-endian)
     uint8_t tLabel;                    ///< Transaction label (6 bits)
+
+    // New: OHCI trailer fields (raw)
+    uint16_t xferStatus;               ///< Low 16 bits of xferStatus (includes event code)
+    uint16_t timeStamp;                ///< Low 16 bits of timeStamp
 };
 
 /**
@@ -41,7 +49,7 @@ enum class ARContextType : uint8_t {
  * Handlers are invoked from interrupt context. Must complete quickly and
  * avoid blocking operations.
  */
-using PacketHandler = std::function<void(const ARPacketView&)>;
+using PacketHandler = std::function<ResponseCode(const ARPacketView&)>;
 
 /**
  * \brief Central dispatcher for AR (Asynchronous Receive) packets.
@@ -190,6 +198,9 @@ public:
      */
     void ClearAllHandlers();
 
+    /// Configure optional response sender for automatic WrResp emission.
+    void SetResponseSender(ResponseSender* sender) noexcept { responseSender_ = sender; }
+
     PacketRouter(const PacketRouter&) = delete;
     PacketRouter& operator=(const PacketRouter&) = delete;
 
@@ -199,6 +210,9 @@ private:
 
     /// Registered handlers for AR Response packets, indexed by tCode
     std::array<PacketHandler, 16> responseHandlers_;
+
+    /// Optional responder used to transmit WrResp packets for handled requests
+    ResponseSender* responseSender_{nullptr};
 
     /**
      * \brief Extract tCode from packet header first byte (Phase 2.2: std::span).
@@ -215,6 +229,7 @@ private:
      *
      * tCode is in bits[3:0] of byte 3 (fourth byte).
      */
+    public:
     static uint8_t ExtractTCode(std::span<const uint8_t> header) noexcept;
 
     /**

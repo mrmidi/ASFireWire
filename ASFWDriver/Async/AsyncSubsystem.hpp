@@ -6,12 +6,16 @@
 #include <memory>
 #include <optional>
 
+#ifdef ASFW_HOST_TEST
+#include "../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSObject.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <DriverKit/OSAction.h>
 #include <DriverKit/IODispatchQueue.h>
+#endif
 
 #include "AsyncTypes.hpp"
 #include "../Bus/GenerationTracker.hpp"
@@ -40,6 +44,7 @@ class AsyncMetricsSink;
 class DescriptorBuilder;
 class PacketBuilder;
 class PacketRouter;
+class ResponseSender;
 
 // Forward declaration for Tx Submitter (two-path TX FSM)
 namespace Tx { class Submitter; }
@@ -53,61 +58,17 @@ class ATResponseContext;
 class ARRequestContext;
 class ARResponseContext;
 
-// Forward declaration for ContextManager (incremental wiring)
 namespace Engine { class ContextManager; }
 
-// Forward declarations - Tracking actor
 template <typename TCompletionQueue> class Track_Tracking;
 
-// Forward declaration for CRTP command access
 template <typename Derived> class AsyncCommand;
-
-// ============================================================================
-// CONTRACT: AsyncSubsystem
-// ----------------------------------------------------------------------------
-// Responsibility:
-//   - Own the async transmit/receive pipeline (DMA rings, descriptor builder,
-//     submitter, transaction tracking, bus-reset coordination) for OHCI.
-//   - Provide high-level Read/Write/Lock/Phy APIs while enforcing bus state
-//     invariants (NodeID valid bit, generation tracking, reset sequencing).
-// Lifecycle:
-//   - Start(): allocates Tracking/ContextManager/DescriptorBuilder/Submitter,
-//     activates CompletionQueue, enables interrupts, and leaves AT contexts idle
-//     until ArmDMAContexts(). Failure unwinds everything via Teardown.
-//   - ArmDMAContexts()/ArmARContextsOnly(): program CommandPtr after LinkEnable;
-//     only safe post-Start. Stop() disables interrupts, cancels transactions,
-//     tears down DMA, and clears hardware_ references.
-// Bus reset sequencing:
-//   - OnBusResetBegin(): gates submissions (is_bus_reset_in_progress_=1), cancels
-//     outstanding transactions for the previous generation, and advances the
-//     payload epoch so stale payloads can be reaped.
-//   - ConfirmBusGeneration(): called after Self-ID; updates GenerationTracker,
-//     synchronizes PayloadRegistry epoch, and records the authoritative gen.
-//   - OnBusResetComplete(): clears the gate, allowing submissions again.
-//   - StopATContextsOnly()/FlushATContexts()/RearmATContexts() mirror the OHCI
-//     §7.2.3.2 steps (AT halt → drain → re-arm) and must be invoked in order.
-// Transaction flow:
-//   - PrepareTransactionContext() validates reset gate + NodeID valid bit,
-//     captures generation/speed, and supplies PacketContext for PacketBuilder.
-//   - AsyncCommand::Submit() obtains PacketBuilder/DescriptorBuilder/Submitter
-//     via getters, ensuring all invariants are satisfied before touching DMA.
-// Threading:
-//   - All public methods are expected to run on the controller workloop unless
-//     noted; sharedLock_ protects cross-thread access where needed.
-//   - commandQueue_ serializes ReadWithRetry() operations to avoid re-entrancy.
-// Ownership:
-//   - AsyncSubsystem owns ContextManager, Tracking actor, CompletionQueue,
-//     DescriptorBuilder, PacketBuilder, Submitter, RxPath, etc.
-//   - HardwareInterface is supplied by the controller and must outlive the
-//     subsystem; AsyncSubsystem never deletes it.
-// ============================================================================
 
 class AsyncSubsystem {
 public:
     AsyncSubsystem();
     ~AsyncSubsystem();
     
-    // Friend declaration: Allow CRTP commands to access private helpers
     template <typename Derived> friend class AsyncCommand;
 
     enum class ARContextType {
@@ -121,33 +82,14 @@ public:
                         ::OSAction* completionAction,
                         size_t completionQueueCapacityBytes = 64 * 1024);
     
-    // CRITICAL: Must be called AFTER HCControl.linkEnable is set (OHCI §5.5.6, §7.2.1)
-    // Arms all DMA contexts (AT Request/Response, AR Request/Response) by writing CommandPtr
-    // Calling before linkEnable may cause UnrecoverableError interrupt (descriptor fetch fails)
     kern_return_t ArmDMAContexts();
     
-    // Phase 2B: Arm ONLY AR contexts (receive), leaving AT contexts (transmit) disabled
-    // Allows testing receive pipeline independently before enabling transmission
     kern_return_t ArmARContextsOnly();
     
     void Stop();
 
-    /// Basic read without retry (single attempt) (Phase 2.3: std::function, no void* context)
     AsyncHandle Read(const ReadParams& params, CompletionCallback callback);
 
-    /// Read with automatic retry on transient errors (BUSY_X, timeout).
-    /// Follows Apple's IOFWAsyncCommand retry pattern (fCurRetries/fMaxRetries) but
-    /// implemented at transaction level with configurable retry policy.
-    ///
-    /// @param params      Read parameters (address, size, speed, etc.)
-    /// @param retryPolicy Retry configuration (max attempts, backoff strategy)
-    /// @param callback    Completion callback (invoked after final attempt)
-    /// @return AsyncHandle for tracking/cancellation
-    ///
-    /// Phase 2.3: Removed void* context (captured in callback lambda)
-    ///
-    /// Reference: IOFWAsyncCommand.cpp complete() method implements retry logic
-    ///            at command level; we implement at transaction level for DriverKit.
     AsyncHandle ReadWithRetry(const ReadParams& params,
                              const RetryPolicy& retryPolicy,
                              CompletionCallback callback);
@@ -159,9 +101,6 @@ public:
     AsyncHandle PhyRequest(const PhyParams& params, CompletionCallback callback);
     bool Cancel(AsyncHandle handle);
 
-    /// Post a block to the workloop queue for deferred execution
-    /// Used to avoid inline re-entry during completion callbacks
-    /// @param block Block to execute on workloop queue
     void PostToWorkloop(void (^block)()) {
         if (workloopQueue_) {
             workloopQueue_->DispatchAsync(block);
@@ -171,12 +110,8 @@ public:
     void OnTxInterrupt();
     void OnRxInterrupt(ARContextType contextType);
     void OnBusReset();
-    // Bus reset lifecycle hooks (called by BusResetCoordinator FSM)
     void OnBusResetBegin(uint8_t nextGen);
     void OnBusResetComplete(uint8_t stableGen);
-    // Public entry to confirm a new bus generation (called after Self-ID decoding)
-    // This will update the generation via GenerationTracker and perform subsystem-level
-    // coordination (invalidate outstanding transactions, reset response matcher, etc.).
     void ConfirmBusGeneration(uint8_t confirmedGeneration);
     void OnTimeoutTick();
 
@@ -190,65 +125,47 @@ public:
 
     [[nodiscard]] WatchdogStats GetWatchdogStats() const;
 
-    // Bus reset recovery (OHCI §7.2.3.2): Must be called in this exact sequence:
-    // 1. StopATContextsOnly() - halts AT contexts (clears .run, polls .active)
-    // 2. FlushATContexts() - processes pending descriptors before busReset clear
-    // 3. RearmATContexts() - re-arms AT contexts AFTER busReset cleared
-    
-    // Internal: Stop AT contexts (clear .run, poll .active until stopped)
-    // Per Linux context_stop(): Synchronous blocking call, max 100ms timeout
     void StopATContextsOnly();
     
-    // Internal: Flush AT contexts before clearing busReset (Phase 2C-2E)
     void FlushATContexts();
 
-    // Bus reset recovery: Re-arm AT contexts after busReset cleared (OHCI §7.2.3.2 step 7)
-    // CRITICAL: Must be called AFTER IntEvent.busReset is cleared and AT contexts are inactive
-    // Called by ControllerCore after verifying contexts stopped and clearing busReset interrupt
     void RearmATContexts();
 
     void DumpState();
 
-    // Access to bus reset packet capture for debugging/metrics
     Debug::BusResetPacketCapture* GetBusResetCapture() const {
         return busResetCapture_.get();
     }
 
     [[nodiscard]] std::optional<AsyncStatusSnapshot> GetStatusSnapshot() const;
     
-    // ========================================================================
-    // Helper Accessors for CRTP Commands (friend access only)
-    // ========================================================================
-    
-    /// Prepare transaction context - validates bus state, reads NodeID, queries generation.
-    /// Matches Apple's executeCommandElement() gate check pattern (DECOMPILATION.md §Command Execution).
-    /// @return TransactionContext with validated bus state, or nullopt on failure
     [[nodiscard]] std::optional<TransactionContext> PrepareTransactionContext();
     
-    /// Get current monotonic time in microseconds (for timeout scheduling)
     [[nodiscard]] uint64_t GetCurrentTimeUsec() const;
 
-    /// Get current bus state (generation, local node ID)
-    /// @return BusState with generation and local node ID
     [[nodiscard]] Bus::GenerationTracker::BusState GetBusState() const {
         return generationTracker_->GetCurrentState();
     }
 
-    /// Get GenerationTracker (for protocol layers like AV/C)
-    /// @return Reference to GenerationTracker
     [[nodiscard]] Bus::GenerationTracker& GetGenerationTracker() {
+        if (!labelAllocator_) {
+            labelAllocator_ = std::make_unique<LabelAllocator>();
+            labelAllocator_->Reset();
+        }
+        if (!generationTracker_) {
+            generationTracker_ = std::make_unique<Bus::GenerationTracker>(*labelAllocator_);
+            generationTracker_->Reset();
+        }
         return *generationTracker_;
     }
 
-    // Subsystem component accessors for command submission
     [[nodiscard]] Track_Tracking<CompletionQueue>* GetTracking() { return tracking_.get(); }
-    [[nodiscard]] DescriptorBuilder* GetDescriptorBuilder() { return descriptorBuilder_.get(); }
+    [[nodiscard]] DescriptorBuilder* GetDescriptorBuilder() { return descriptorBuilder_; }
     [[nodiscard]] PacketBuilder* GetPacketBuilder() { return packetBuilder_.get(); }
     [[nodiscard]] Tx::Submitter* GetSubmitter() { return submitter_.get(); }
     [[nodiscard]] Driver::HardwareInterface* GetHardware() { return hardware_; }
+    [[nodiscard]] PacketRouter* GetPacketRouter() { return packetRouter_.get(); }
 
-    /// Get DMA memory manager for facade construction
-    /// @return Pointer to DMA manager (nullptr if not yet initialized)
     [[nodiscard]] DMAMemoryManager* GetDMAManager() {
         return contextManager_ ? contextManager_->DmaManager() : nullptr;
     }
@@ -261,21 +178,19 @@ private:
     ::IODispatchQueue* workloopQueue_{nullptr};
     ::IOLock* sharedLock_{nullptr};
 
+    std::unique_ptr<LabelAllocator> labelAllocator_;
     std::unique_ptr<ASFW::Async::Bus::GenerationTracker> generationTracker_;
-    std::unique_ptr<DescriptorBuilder> descriptorBuilder_;
+    DescriptorBuilder* descriptorBuilder_{nullptr};
+    DescriptorBuilder* descriptorBuilderResponse_{nullptr};
     std::unique_ptr<PacketBuilder> packetBuilder_;
 
-    // Phase 2.0: Transaction infrastructure (owned by AsyncSubsystem)
     std::unique_ptr<TransactionManager> txnMgr_;
 
-    // Tracking Actor (Phase 5)
     std::unique_ptr<Track_Tracking<CompletionQueue>> tracking_;
 
-    // New Context Architecture is now fully owned by ContextManager.
-    // AsyncSubsystem no longer directly owns DMA slabs, rings, or context objects.
-    // Packet routing and RxPath remain top-level helpers created from ContextManager.
-    std::unique_ptr<PacketRouter> packetRouter_;         ///< Packet dispatcher
-    std::unique_ptr<Rx::RxPath> rxPath_;                 ///< Receive path actor
+    std::unique_ptr<PacketRouter> packetRouter_;
+    std::unique_ptr<Rx::RxPath> rxPath_;
+    std::unique_ptr<ResponseSender> responseSender_;
 
     std::unique_ptr<CompletionQueue> completionQueue_{};
     OSSharedPtr<::OSAction> completionAction_{};
@@ -284,17 +199,10 @@ private:
     std::unique_ptr<Debug::BusResetPacketCapture> busResetCapture_{};
     bool isRunning_{false};
     
-    // Context manager (exclusive owner of DMA/rings/contexts)
-    // Forward-declared type in Engine namespace
     std::unique_ptr<ASFW::Async::Engine::ContextManager> contextManager_;
 
-    // Transmit submitter: encapsulates two-path TX FSM (first-arm vs link+wake)
     std::unique_ptr<ASFW::Async::Tx::Submitter> submitter_;
 
-    // NOTE: bus generation and local NodeID are now owned by GenerationTracker
-
-    // Bus-Reset packet processing (OHCI §8.4.2.3, Linux handle_ar_packet)
-    // Parses synthetic Bus-Reset packet injected by controller into AR Request
     void HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t newGeneration);
     void Teardown(bool disableHardware);
 
@@ -302,8 +210,6 @@ private:
 
     uint32_t DrainTxCompletions(const char* reason);
 
-    // Resolver helpers — prefer ContextManager when present, else fall back to
-    // previously-owned context pointers. These return non-owning raw pointers.
     ATRequestContext* ResolveAtRequestContext() noexcept;
     ATResponseContext* ResolveAtResponseContext() noexcept;
     ARRequestContext* ResolveArRequestContext() noexcept;
@@ -315,24 +221,13 @@ private:
     std::atomic<uint64_t> watchdogContextsRearmed_{0};
     std::atomic<uint64_t> watchdogLastTickUsec_{0};
     
-    // ========================================================================
-    // Command Queue Architecture (Apple IOFWCmdQ pattern)
-    // ========================================================================
-    // Serializes async transactions to prevent concurrent RUN/WAKE strobing.
-    // Commands are queued and executed sequentially with completion-driven
-    // advancement (similar to Apple's IOFWCmdQ::executeQueue).
-    //
-    // Reference: IOFWCmdQ.cpp executeQueue() - processes one command at a time,
-    //            removing from queue before startExecution().
-    
-    /// Pending command structure (queued for sequential execution)
     struct PendingCommand {
         ReadParams params;
         RetryPolicy retryPolicy;
         CompletionCallback userCallback;
         uint8_t retriesRemaining;
-        AsyncHandle handle;  // Pre-allocated handle for tracking
-        AsyncSubsystem* subsystem;  // Back-pointer for retry/queue advancement
+        AsyncHandle handle;
+        AsyncSubsystem* subsystem;
         
         PendingCommand(const ReadParams& p, const RetryPolicy& pol,
                       CompletionCallback cb, AsyncHandle h, AsyncSubsystem* sub)
@@ -340,16 +235,12 @@ private:
             , retriesRemaining(pol.maxRetries), handle(h), subsystem(sub) {}
     };
     
-    std::unique_ptr<std::deque<PendingCommand>> commandQueue_{};  // FIFO command queue
-    IOLock* commandQueueLock_{nullptr};                           // Protects queue access
-    std::atomic<bool> commandInFlight_{false};                    // True when command executing
+    std::unique_ptr<std::deque<PendingCommand>> commandQueue_{};
+    IOLock* commandQueueLock_{nullptr};
+    std::atomic<bool> commandInFlight_{false};
     
-    /// Execute next queued command (called after completion or on first submit)
-    /// Follows Apple's executeQueue pattern: dequeue → execute → await completion
     void ExecuteNextCommand();
     
-    /// Internal completion wrapper for retry logic and queue advancement
-    /// Replaces user callback to handle retries before invoking user code
     void OnCommandCompleteInternal(AsyncHandle handle, AsyncStatus status,
                                    const void* payload, uint32_t payloadSize,
                                    PendingCommand* cmd);

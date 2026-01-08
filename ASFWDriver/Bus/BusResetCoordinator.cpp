@@ -24,9 +24,6 @@ namespace ASFW::Driver {
 BusResetCoordinator::BusResetCoordinator() = default;
 BusResetCoordinator::~BusResetCoordinator() = default;
 
-// Add TopologyManager for building topology snapshot after Self-ID decode
-// Add BusManager for cycle master assignment and gap count optimization
-// Add ROMScanner for aborting in-flight discovery on bus reset
 void BusResetCoordinator::Initialize(HardwareInterface* hw,
                                     OSSharedPtr<IODispatchQueue> workQueue,
                                     Async::AsyncSubsystem* asyncSys,
@@ -49,11 +46,8 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw,
     pendingPhyReason_.clear();
     pendingManagedReset_ = false;
 
-    // Validate critical dependencies (romScanner and busManager are optional for now)
     if (!hardware_ || !workQueue_ || !asyncSubsystem_ || !selfIdCapture_ || !configRomStager_ || !interruptManager_ || !topologyManager_) {
         ASFW_LOG(BusReset, "ERROR: BusResetCoordinator initialized with null dependencies!");
-        ASFW_LOG(BusReset, "  hardware=%p workQueue=%p async=%p selfId=%p configRom=%p interrupts=%p topology=%p busManager=%p romScanner=%p",
-                 hardware_, workQueue_.get(), asyncSubsystem_, selfIdCapture_, configRomStager_, interruptManager_, topologyManager_, busManager_, romScanner_);
     }
     
     state_ = State::Idle;
@@ -169,19 +163,12 @@ const char* BusResetCoordinator::StateString(State s) {
 }
 
 void BusResetCoordinator::ProcessEvent(Event event) {
-    // ProcessEvent is called from OnIrq (ISR context) and should NOT
-    // manipulate workInProgress_ - that's RunStateMachine's job!
-    // Old code cleared workInProgress_ here, racing with RunStateMachine's lock acquisition
-    
-    // Global re-entrancy rule: busReset event at any time restarts the flow
     if (event == Event::IrqBusReset) {
-        // Abort in-flight ROM scanning from previous generation before starting new reset
         if (romScanner_ && lastGeneration_ > 0) {
-            ASFW_LOG(BusReset, "Aborting ROM scan for gen=%u (new bus reset detected)", lastGeneration_);
+            ASFW_LOG(BusReset, "Aborting ROM scan for gen=%u", lastGeneration_);
             romScanner_->Abort(lastGeneration_);
         }
         
-        // Clear software latches for discovery readiness (will be set again during reset flow)
         filtersEnabled_ = false;
         atArmed_ = false;
         
@@ -193,15 +180,11 @@ void BusResetCoordinator::ProcessEvent(Event event) {
         return;
     }
 
-    // CRITICAL: Record Self-ID complete events REGARDLESS of current state
-    // They may arrive before FSM transitions to WaitingSelfID (simultaneous interrupt delivery)
-    // Per OHCI §6.1.1: selfIDComplete and selfIDComplete2 set SIMULTANEOUSLY by hardware
     if (event == Event::IrqSelfIDComplete) {
         selfIDComplete1_ = true;
         selfIDComplete1Time_ = MonotonicNow();
-        ASFW_LOG(BusReset, "[FSM] Self-ID phase 1 complete (event recorded)");
+        ASFW_LOG(BusReset, "[FSM] Self-ID phase 1 complete");
         
-        // Drain stray Self-ID when not in reset flow (prevents infinite IRQ loop)
         if (state_ == State::Idle || state_ == State::Complete) {
             if (workQueue_) {
                 workQueue_->DispatchAsync(^{
@@ -210,13 +193,12 @@ void BusResetCoordinator::ProcessEvent(Event event) {
             }
         }
     }
-    // TODO: we should read this bit instead of reading interrupt(?)
+    
     if (event == Event::IrqSelfIDComplete2) {
         selfIDComplete2_ = true;
         selfIDComplete2Time_ = MonotonicNow();
-        ASFW_LOG(BusReset, "[FSM] Self-ID phase 2 complete (event recorded)");
+        ASFW_LOG(BusReset, "[FSM] Self-ID phase 2 complete");
         
-        // Drain stray Self-ID when not in reset flow (prevents infinite IRQ loop)
         if (state_ == State::Idle || state_ == State::Complete) {
             if (workQueue_) {
                 workQueue_->DispatchAsync(^{
@@ -228,17 +210,15 @@ void BusResetCoordinator::ProcessEvent(Event event) {
 
     switch (state_) {
         case State::Error:
-            ASFW_LOG(BusReset, "[FSM] Error state - ignoring events until reset");
+            ASFW_LOG(BusReset, "[FSM] Error state - ignoring events");
             break;
 
         default:
-            // All other events are handled by guards in RunStateMachine
             break;
     }
 }
 
 void BusResetCoordinator::RunStateMachine() {
-    // Reentrancy protection with atomic exchange
     if (workInProgress_.exchange(true, std::memory_order_acq_rel)) {
         ASFW_LOG(BusReset, "FSM already running, ignoring reentrant call");
         return;
@@ -251,10 +231,7 @@ void BusResetCoordinator::RunStateMachine() {
         return;
     }
 
-    // CRITICAL: FSM may transition states multiple times in one call
-    // Loop until we reach a stable state (waiting for external event)
-    // This prevents needing to reschedule after every transition
-    constexpr int kMaxIterations = 10;  // Prevent infinite loops
+    constexpr int kMaxIterations = 10;
     int iteration = 0;
     
     while (iteration++ < kMaxIterations) {
@@ -263,135 +240,103 @@ void BusResetCoordinator::RunStateMachine() {
 
         switch (state_) {
             case State::Idle:
-                // Drain stray Self-ID bits to prevent infinite IRQ loop
-                // If sticky Self-ID bits are set while Idle, ACK them to clear interrupt source
                 if (selfIDComplete1_ || selfIDComplete2_) {
-                    ASFW_LOG(BusReset, "[FSM] Idle state - draining stray Self-ID bits (complete1=%d complete2=%d)",
-                             selfIDComplete1_, selfIDComplete2_);
+                    ASFW_LOG(BusReset, "[FSM] Idle state - draining stray Self-ID bits");
                     if (G_NodeIDValid()) {
-                        A_DecodeSelfID();  // Optionally decode if NodeID is valid
+                        A_DecodeSelfID();
                     }
-                    A_AckSelfIDPair();  // Clear sticky bits to stop IRQ re-assertion
+                    A_AckSelfIDPair();
                 }
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] Idle state - no action");
                 ForceUnmaskBusResetIfNeeded();
                 workInProgress_.store(false, std::memory_order_release);
-                return;  // Exit loop - stable state
+                return;
 
             case State::Detecting:
-                // Entry actions: mask busReset, clear stale selfIDComplete2
-                // Transition to WaitingSelfID after arming Self-ID buffer
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] Detecting state - arming Self-ID buffer");
                 if (selfIdCapture_) {
                     A_ArmSelfIDBuffer();
                 }
                 TransitionTo(State::WaitingSelfID, "Self-ID buffer armed");
-                // Continue loop - process WaitingSelfID immediately
                 continue;
 
             case State::WaitingSelfID:
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] WaitingSelfID state - checking guards: selfID1=%d selfID2=%d",
                                          selfIDComplete1_, selfIDComplete2_);
                 
-                // Normal path: both bits (OHCI §6.1.1)
                 if (G_HaveSelfIDPair()) {
-                    // Decode Self-ID data BEFORE transitioning
                     if (!selfIDComplete1Time_) {
                         selfIDComplete1Time_ = MonotonicNow();
                     }
                     A_DecodeSelfID();
-                    A_AckSelfIDPair();  // Clear sticky interrupt bits after decode
+                    A_AckSelfIDPair();
                     TransitionTo(State::QuiescingAT, "Self-ID pair received + acked");
-                    continue;  // Continue loop - process QuiescingAT immediately
+                    continue;
                 }
                 
-                // Poll NodeID.iDValid as implicit phase-2 completion (§7.2.3.2)
-                // Per OHCI §7.2.3.2: NodeID.iDValid=1 marks completion of entire Self-ID phase
-                // This handles controllers where selfIDComplete2 interrupt is dropped/masked
                 if (G_NodeIDValid()) {
                     if (!selfIDComplete2_) {
                         selfIDComplete2_ = true;
                         selfIDComplete2Time_ = MonotonicNow();
-                    ASFW_LOG_BUSRESET_DETAIL("[FSM] Self-ID phase 2 synthesized via NodeID valid");
+                        ASFW_LOG_BUSRESET_DETAIL("[FSM] Self-ID phase 2 synthesized via NodeID valid");
                     }
                     if (!selfIDComplete1Time_) {
                         selfIDComplete1Time_ = MonotonicNow();
                     }
-                    // Decode Self-ID data BEFORE transitioning
                     A_DecodeSelfID();
-                    A_AckSelfIDPair();  // Clear sticky interrupt bits after decode
+                    A_AckSelfIDPair();
                     TransitionTo(State::QuiescingAT, "NodeID valid + acked — proceed");
-                    continue;  // Continue loop
+                    continue;
                 }
                 
-                // Failsafe: if one bit arrived and the other is masked/absent for >2 ms,
-                // proceed (some HCs are quirky). This does NOT violate §6.1.1; phase 2
-                // (`selfIDComplete2`) is sticky, and HW already clears phase 1 on reset.
                 if ((selfIDComplete1_ || selfIDComplete2_) &&
                     (MonotonicNow() - stateEntryTime_) > 2'000'000) {
                     ASFW_LOG_BUSRESET_DETAIL("[FSM] Single-bit grace path: complete1=%d complete2=%d",
                                              selfIDComplete1_, selfIDComplete2_);
-                    A_AckSelfIDPair();  // Clear sticky interrupt bits (grace path)
+                    A_AckSelfIDPair();
                     TransitionTo(State::QuiescingAT, "Self-ID single-bit grace path + acked");
-                    continue;  // Continue loop
+                    continue;
                 } else {
                     ASFW_LOG_BUSRESET_DETAIL("[FSM] WaitingSelfID - no guard satisfied, waiting...");
                     workInProgress_.store(false, std::memory_order_release);
-                    return;  // Exit - waiting for interrupt
+                    return;
                 }
 
         case State::QuiescingAT:
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] QuiescingAT state - stopping AT contexts");
                 
-                // Stop AT contexts and flush pending descriptors (Linux: context_stop + at_context_flush)
                 A_StopFlushAT();
                 
-                // Poll AT .active bits per OHCI §7.2.3.1 (hardware clears on reset/stop)
                 if (G_ATInactive()) {
                     ASFW_LOG_BUSRESET_DETAIL("[FSM] AT contexts inactive - continuing to ConfigROM restore");
                     TransitionTo(State::RestoringConfigROM, "AT contexts quiesced");
-                    continue;  // Continue loop - process RestoringConfigROM immediately
+                    continue;
                 } else {
-                    // Hardware still active - reschedule and wait
                     ASFW_LOG_BUSRESET_DETAIL("[FSM] AT contexts still active - rescheduling");
-                    ScheduleDeferredRun(/*delayMs=*/1, "AT contexts active during QuiescingAT");
+                    ScheduleDeferredRun(1, "AT contexts active during QuiescingAT");
                     workInProgress_.store(false, std::memory_order_release);
-                    return;  // Exit - waiting for AT contexts to quiesce
+                    return;
                 }
 
             case State::RestoringConfigROM:
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] RestoringConfigROM state");
 
-                // Restore Config ROM (Self-ID already decoded in WaitingSelfID)
                 if (configRomStager_) {
                     A_RestoreConfigROM();
                 }
-                // Build topology from Self-ID data after decode completes
                 A_BuildTopology();
                 if (lastTopology_.has_value()) {
                     EvaluateRootDelegation(*lastTopology_);
                 }
 
-                // Perform bus management (cycle master assignment and gap optimization)
-                // If bus manager triggers a reset, we'll re-enter the FSM
                 ASFW_LOG(BusReset, "🔍 BusManager check: busManager_=%p lastTopology_=%d (gen=%u)",
                          busManager_, lastTopology_.has_value(),
                          lastTopology_.has_value() ? lastTopology_->generation : 0xFF);
                 if (busManager_ && lastTopology_.has_value()) {
-                    // First: Assign cycle master (may change root node)
-                    // First: Assign cycle master (may change root node)
                     if (auto phyCmd = busManager_->AssignCycleMaster(*lastTopology_,
                                                                      topologyManager_->GetBadIRMFlags())) {
                         StageDelayedPhyPacket(*phyCmd, "AssignCycleMaster");
                     }
-                    // ASFW_LOG(BusReset, "TODO: Re-Build Topology with Mac device is root.");
-
-                    // Second: Optimize gap count (must be after cycle master is stable)
-                    // if (!pendingManagedReset_) {
-                    //     if (auto gapCmd = busManager_->OptimizeGapCount(*lastTopology_, lastSelfId_->quads)) {
-                    //         StageDelayedPhyPacket(*gapCmd, "GapOptimization");
-                    //     }
-                    // }
 
                     if (pendingManagedReset_) {
                         ASFW_LOG(BusReset, "[FSM] BusManager staged PHY packet; will trigger reset after completion");
@@ -399,64 +344,53 @@ void BusResetCoordinator::RunStateMachine() {
                 }
 
                 TransitionTo(State::ClearingBusReset, "Config ROM restored + topology built + bus managed");
-                continue;  // Continue loop - process ClearingBusReset immediately
+                continue;
 
             case State::ClearingBusReset:
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] ClearingBusReset state - checking AT inactive");
                 
-                // Guard: Ensure AT contexts inactive before clearing busReset flag
                 if (G_ATInactive()) {
                     A_ClearBusReset();
-                    
-                    // Re-enable busReset detection ASAP to not miss a subsequent reset edge.
-                    // unmask busReset immediately after you clear the event
                     A_UnmaskBusReset();
                     
                     TransitionTo(State::Rearming, "busReset cleared & re-enabled");
-                    continue;  // Continue loop - process Rearming immediately
+                    continue;
                 } else {
                     ASFW_LOG_BUSRESET_DETAIL("[FSM] ClearingBusReset - AT still active, waiting");
-                    ScheduleDeferredRun(/*delayMs=*/1, "AT contexts active during ClearingBusReset");
+                    ScheduleDeferredRun(1, "AT contexts active during ClearingBusReset");
                     workInProgress_.store(false, std::memory_order_release);
-                    return;  // Exit - waiting for AT contexts
+                    return;
                 }
 
             case State::Rearming:
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] Rearming state - verifying NodeID valid before AT.run");
                 
-                // OHCI §7.2.3.2: NodeID.iDValid MUST be set before setting ContextControl.run
-                // This ensures Self-ID phase is fully complete and node addressing is stable
                 if (!G_NodeIDValid()) {
                     ASFW_LOG_BUSRESET_DETAIL("[FSM] Rearming - NodeID not valid yet, rescheduling");
-                    // Reschedule and wait; do NOT re-arm AT contexts yet
-                    ScheduleDeferredRun(/*delayMs=*/1, "Waiting for NodeID valid");
+                    ScheduleDeferredRun(1, "Waiting for NodeID valid");
                     workInProgress_.store(false, std::memory_order_release);
-                    return;  // Exit - waiting for NodeID.iDValid
+                    return;
                 }
                 
-                // Re-enable filters and re-arm AT contexts (NodeID now valid)
                 A_EnableFilters();
                 A_RearmAT();
                 
-                // Notify AsyncSubsystem that bus reset is complete
                 if (asyncSubsystem_ && lastGeneration_ != 0xFF) {
                     asyncSubsystem_->OnBusResetComplete(lastGeneration_);
                 }
                 
                 TransitionTo(State::Complete, "AT contexts re-armed (NodeID valid)");
-                continue;  // Continue loop - process Complete immediately
+                continue;
 
             case State::Complete:
                 ASFW_LOG_BUSRESET_DETAIL("[FSM] Complete state - finalizing bus reset cycle");
                 
-                // Log metrics (busReset already unmasked in ClearingBusReset)
                 A_MetricsLog();
 
                 if (pendingManagedReset_ && pendingPhyCommand_.has_value()) {
-                    ASFW_LOG(BusReset, "Dispatching staged PHY packet (reason=%{public}s)",
+                    ASFW_LOG(BusReset, "Dispatching staged PHY packet (reason=%s)",
                              pendingPhyReason_.c_str());
                     if (DispatchPendingPhyPacket()) {
-                        // New bus reset initiated; wait for next interrupt
                         workInProgress_.store(false, std::memory_order_release);
                         return;
                     } else {
@@ -473,11 +407,9 @@ void BusResetCoordinator::RunStateMachine() {
                 
                 TransitionTo(State::Idle, "bus reset cycle complete");
 
-                // Post discovery kickoff to workloop (deferred from FSM to avoid reentrancy)
-                // Bus is ready: NodeID is valid (set in Rearming state), interrupts unmasked, AT contexts armed
                 if (topologyCallback_ && lastTopology_.has_value() && workQueue_) {
-                    auto topo = *lastTopology_;  // Copy snapshot
-                    const auto gen = topo.generation;  // Capture generation for guard
+                    auto topo = *lastTopology_;
+                    const auto gen = topo.generation;
                     ASFW_LOG(BusReset, "Post-reset hooks scheduled for gen=%u", gen);
                     workQueue_->DispatchAsync(^{
                         if (ReadyForDiscovery(gen)) {
@@ -485,38 +417,29 @@ void BusResetCoordinator::RunStateMachine() {
                             ASFW_LOG(BusReset, "Discovery start gen=%u local=%u", gen, localNode);
                             topologyCallback_(topo);
                         } else {
-                            ASFW_LOG(BusReset, "Discovery deferred gen=%u (invariants: NodeID=%d filters=%d at=%d gen_match=%d)",
-                                     gen, G_NodeIDValid(), filtersEnabled_, atArmed_, (gen == lastGeneration_));
+                            ASFW_LOG(BusReset, "Discovery deferred gen=%u", gen);
                         }
                     });
-                } else if (topologyCallback_ && lastTopology_.has_value() && !workQueue_) {
-                    ASFW_LOG(BusReset, "WARNING: Cannot schedule discovery - workQueue_ is null");
-                } else if (!topologyCallback_) {
-                    ASFW_LOG(BusReset, "WARNING: No topology callback bound - ROM scanning will not start");
-                } else if (!lastTopology_.has_value()) {
-                    ASFW_LOG(BusReset, "WARNING: No topology snapshot available - ROM scanning cannot start");
                 }
                 
-                continue;  // Continue loop - Idle will return and exit
+                continue;
 
             case State::Error:
-                ASFW_LOG_BUSRESET_DETAIL("[FSM] Error state - terminal, requires external recovery");
+                ASFW_LOG_BUSRESET_DETAIL("[FSM] Error state - terminal");
                 ForceUnmaskBusResetIfNeeded();
                 workInProgress_.store(false, std::memory_order_release);
-                return;  // Exit - terminal state
+                return;
         }
         
-        // Safeguard: If we reach here without continue/return, something is wrong
-        ASFW_LOG(BusReset, "[FSM] WARNING: State %d fell through without explicit control flow", static_cast<int>(state_));
-        ForceUnmaskBusResetIfNeeded();  // Ensure busReset unmasked on abnormal exit
+        ASFW_LOG(BusReset, "[FSM] WARNING: State %d fell through", static_cast<int>(state_));
+        ForceUnmaskBusResetIfNeeded();
         workInProgress_.store(false, std::memory_order_release);
         return;
     }
     
-    // Max iterations reached
     ASFW_LOG(BusReset, "[FSM] Max iterations (%u) reached in state %d - rescheduling", kMaxIterations, static_cast<int>(state_));
-    ForceUnmaskBusResetIfNeeded();  // Ensure busReset unmasked on abnormal exit
-    ScheduleDeferredRun(/*delayMs=*/1, "max iteration guard");
+    ForceUnmaskBusResetIfNeeded();
+    ScheduleDeferredRun(1, "max iteration guard");
     workInProgress_.store(false, std::memory_order_release);
 }
 
@@ -605,16 +528,10 @@ void BusResetCoordinator::A_AckSelfIDPair() {
 void BusResetCoordinator::A_StopFlushAT() {
     if (!asyncSubsystem_) return;
     
-    // Notify AsyncSubsystem that bus reset is beginning
-    // Track next generation (will be confirmed after Self-ID decode)
     const uint8_t nextGen = (lastGeneration_ == 0xFF) ? 0 : static_cast<uint8_t>(lastGeneration_ + 1);
     asyncSubsystem_->OnBusResetBegin(nextGen);
     
-    // Per Linux ohci.c bus_reset_work() and OHCI §7.2.3.2:
-    // 1. StopATContextsOnly() - clears .run bit, polls .active bit until stopped (synchronous)
-    // 2. FlushATContexts() - processes pending descriptors before clearing busReset
-    // This matches Linux context_stop() + at_context_flush() sequence
-    ASFW_LOG(BusReset, "[Action] Stopping AT contexts (clearing .run, polling .active)");
+    ASFW_LOG(BusReset, "[Action] Stopping AT contexts");
     asyncSubsystem_->StopATContextsOnly();
     
     ASFW_LOG(BusReset, "[Action] Flushing AT context descriptors");
@@ -629,63 +546,45 @@ void BusResetCoordinator::A_DecodeSelfID() {
     const uint32_t countReg = hardware_->Read(Register32::kSelfIDCount);
     pendingSelfIDCountReg_ = countReg;
     
-    // EXPERIMENTAL: Read NodeID register to test FW642E chip compatibility
-    // Per OHCI 1.1 §5.11: NodeID register contains iDValid, root, CPS, busNumber, nodeNumber
-    // Testing hypothesis: Newer chips (FW642E) still implement standard OHCI NodeID register
-    // OHCI §5.11 Table 47: bit 31=iDValid, bit 30=root, bits 15:6=busNumber, bits 5:0=nodeNumber
     const uint32_t nodeIDReg = hardware_->Read(Register32::kNodeID);
     const bool iDValid = (nodeIDReg & 0x80000000) != 0;
-    const bool isRoot = (nodeIDReg & 0x40000000) != 0;
-    const uint8_t busNumber = static_cast<uint8_t>((nodeIDReg >> 6) & 0x3FF);
-    const uint8_t nodeNumber = static_cast<uint8_t>(nodeIDReg & 0x3F);
     
-    ASFW_LOG(BusReset, "🧪 EXPERIMENTAL NodeID read (testing FW642E): raw=0x%08x iDValid=%d root=%d bus=%u node=%u",
-             nodeIDReg, iDValid, isRoot, busNumber, nodeNumber);
-    if (nodeNumber == 63) {
-        ASFW_LOG(BusReset, "  ⚠️ nodeNumber=63 indicates invalid/unset node ID");
-    }
     if (!iDValid) {
-        ASFW_LOG(BusReset, "  ⚠️ iDValid=0 indicates Self-ID phase not complete (unexpected at this point!)");
+        ASFW_LOG(BusReset, "  ⚠️ iDValid=0 indicates Self-ID phase not complete");
     }
     
     auto result = selfIdCapture_->Decode(countReg, *hardware_);
-    lastSelfId_ = result;  // Cache for A_BuildTopology() and A_MetricsLog()
+    lastSelfId_ = result;
     
     if (result && result->valid) {
-        lastGeneration_ = result->generation;  // Track for ROMScanner abort
+        lastGeneration_ = result->generation;
         ASFW_LOG(BusReset, "[Action] Self-ID decoded: gen=%u, %zu quads",
                result->generation, result->quads.size());
         if (asyncSubsystem_) {
-            // Confirm generation with AsyncSubsystem's coordinator path which delegates
-            // to GenerationTracker.
             asyncSubsystem_->ConfirmBusGeneration(static_cast<uint8_t>(result->generation & 0xFF));
         }
 
-        // Reactive gap count fix (Apple fallback): some PHYs forget register writes once
-        // linkEnable asserts, so detect a zero gap in our own Self-ID and immediately
-        // push a corrective PHY Config + managed reset sequence.
         if (hardware_ && result->quads.size() > 1) {
-            constexpr uint32_t kGapMask = 0x003F0000u;  // Self-ID bits 21-16 per IEEE 1394-1995 §4.3.2
+            constexpr uint32_t kGapMask = 0x003F0000u;
             const uint32_t localSelfId = result->quads[1];
             const uint8_t gapCount = static_cast<uint8_t>((localSelfId & kGapMask) >> 16);
-            ASFW_LOG(BusReset, "Local Self-ID gap count=%u (reactive check)", gapCount);
 
             if (gapCount == 0) {
                 ASFW_LOG(BusReset,
-                         "⚠️ Local gap count reported as zero after reset – sending reactive PHY fix immediately");
+                         "⚠️ Local gap count zero – sending reactive PHY fix");
 
                 BusManager::PhyConfigCommand fix{};
-                fix.gapCount = std::uint8_t{0x3F};  // Always drive 0x3F onto the bus
+                fix.gapCount = std::uint8_t{0x3F};
 
                 if (hardware_->SendPhyConfig(fix.gapCount,
                                              fix.forceRootNodeID,
                                              "GapCountZeroFix")) {
                     ASFW_LOG(BusReset, "Reactive gap fix PHY packet sent; initiating short bus reset");
-                    const bool resetOk = hardware_->InitiateBusReset(/*shortReset=*/true);
+                    const bool resetOk = hardware_->InitiateBusReset(true);
                     if (!resetOk) {
                         ASFW_LOG_ERROR(BusReset, "Reactive short reset failed to start");
                     }
-                    return;  // Abort current generation processing; reset will restart FSM
+                    return;
                 } else {
                     ASFW_LOG_ERROR(BusReset, "Reactive gap fix PHY send failed");
                 }
@@ -694,7 +593,7 @@ void BusResetCoordinator::A_DecodeSelfID() {
     } else {
         ASFW_LOG(BusReset, "[Action] Self-ID decode failed");
         if (result && !result->crcError && !result->timedOut) {
-            metrics_.lastFailureReason = "Self-ID generation mismatch (racing bus reset)";
+            metrics_.lastFailureReason = "Self-ID generation mismatch";
         } else if (result && result->crcError) {
             metrics_.lastFailureReason = "Self-ID CRC error";
         } else if (result && result->timedOut) {
@@ -707,26 +606,16 @@ void BusResetCoordinator::A_DecodeSelfID() {
 
 void BusResetCoordinator::A_BuildTopology() {
     if (!topologyManager_ || !selfIdCapture_ || !hardware_) {
-        ASFW_LOG(Topology,
-                 "⚠️  A_BuildTopology skipped: topology=%p selfId=%p hardware=%p",
-                 topologyManager_, selfIdCapture_, hardware_);
         return;
     }
 
-    ASFW_LOG(Topology, "📡 A_BuildTopology invoked (cached lastSelfId valid=%d)",
-             lastSelfId_.has_value() && lastSelfId_->valid);
-
-    // Use cached Self-ID decode result (already decoded in A_DecodeSelfID)
     if (!lastSelfId_ || !lastSelfId_->valid) {
-        ASFW_LOG(BusReset, "[Action] Topology build skipped - no valid cached Self-ID data");
         return;
     }
     
-    // Read NodeID register to pass local node information to topology builder
     const uint32_t nodeIDReg = hardware_->Read(Register32::kNodeID);
     const uint64_t timestamp = MonotonicNow();
     
-    // Build topology snapshot from cached Self-ID data
     auto snapshot = topologyManager_->UpdateFromSelfID(*lastSelfId_, timestamp, nodeIDReg);
     
     if (snapshot.has_value()) {
@@ -737,81 +626,47 @@ void BusResetCoordinator::A_BuildTopology() {
                  snapshot->irmNodeId.has_value() ? std::to_string(*snapshot->irmNodeId).c_str() : "none",
                  snapshot->localNodeId.has_value() ? std::to_string(*snapshot->localNodeId).c_str() : "none");
         
-        // Cache topology snapshot for callback invocation after bus reset completes
-        // Callback will fire in Idle state when bus is fully operational (NodeID valid, interrupts unmasked)
         lastTopology_ = *snapshot;
     } else {
-        ASFW_LOG(BusReset, "[Action] Topology build returned nullopt - invalid Self-ID data");
-        // Clear lastTopology_ on invalid build
+        ASFW_LOG(BusReset, "[Action] Topology build returned nullopt");
         lastTopology_ = std::nullopt;
     }
 }
 
-// Single-point ConfigROM restoration with strict ordering
-// Per OHCI §5.5.6: ConfigROMheader must be written LAST to atomically publish ROM
-// Per Linux bus_reset_work (ohci.c:2168-2184): 3-step sequence prevents races
 void BusResetCoordinator::A_RestoreConfigROM() {
     if (!configRomStager_ || !hardware_) return;
     
-    // Step 1: Restore header quadlet in DMA buffer (host memory only, no register writes)
-    // This ensures subsequent hardware DMA reads get correct header value
     configRomStager_->RestoreHeaderAfterBusReset();
-    ASFW_LOG(BusReset, "[Action] Config ROM DMA buffer header restored (step 1/3)");
     
-    // Step 2: Write BusOptions register
-    // Per OHCI §5.5.6: BusOptions must be written before ConfigROMheader
     const uint32_t busOpts = configRomStager_->ExpectedBusOptions();
     hardware_->WriteAndFlush(Register32::kBusOptions, busOpts);
-    ASFW_LOG(BusReset, "[Action] BusOptions register written: 0x%08x (step 2/3)", busOpts);
     
-    // Step 3: Write ConfigROMheader register LAST (atomic publish)
-    // Per OHCI §5.5.6: Writing header signals Config ROM is ready for serving
-    // Per Linux: reg_write(ohci, OHCI1394_ConfigROMhdr, be32_to_cpu(ohci->next_header));
     const uint32_t romHeader = configRomStager_->ExpectedHeader();
     hardware_->WriteAndFlush(Register32::kConfigROMHeader, romHeader);
-    ASFW_LOG(BusReset, "[Action] ConfigROMheader written: 0x%08x (step 3/3 - ROM ready)", romHeader);
-
-    // OHCI §5.5.6 — ConfigROM restoration rules:
-    // 1. BusOptions must be written BEFORE ConfigROMheader
-    // 2. ConfigROMheader write acts as an atomic publish operation
-    // 3. Shadow update must complete before linkEnable resumes requests
-    // These ordering rules prevent invalid BIBimage reads during recovery.
+    ASFW_LOG(BusReset, "[Action] ConfigROMheader written: 0x%08x", romHeader);
 }
 
-// Per OHCI §6.1.1: Can only clear after Self-ID complete and AT contexts inactive
 void BusResetCoordinator::A_ClearBusReset() {
     if (!hardware_) return;
     hardware_->WriteAndFlush(Register32::kIntEventClear, IntEventBits::kBusReset);
     busResetClearTime_ = MonotonicNow();
     
-    // Read-back to prove event is cleared (diagnostic)
-    const uint32_t evt = hardware_->Read(Register32::kIntEvent);
-    ASFW_LOG(BusReset, "[Action] busReset interrupt event cleared (IntEvent post-clear=0x%08x)", evt);
+    ASFW_LOG(BusReset, "[Action] busReset interrupt event cleared");
 }
 
-// Re-enable AsynchronousRequestFilter after busReset cleared
-// Per OHCI §C.3: Prevents async requests arriving during bus reset state
 void BusResetCoordinator::A_EnableFilters() {
     if (!hardware_) return;
     
-    // Use shared constant from OHCIConstants.hpp
     hardware_->Write(Register32::kAsReqFilterHiSet, kAsReqAcceptAllMask);
-    filtersEnabled_ = true;  // Set software latch for discovery readiness
-    ASFW_LOG(BusReset, "[Action] AsynchronousRequestFilter enabled (accept all) - filters enabled latch set");
+    filtersEnabled_ = true;
+    ASFW_LOG(BusReset, "[Action] AsynchronousRequestFilter enabled");
 }
 
-// Per OHCI §7.2.3.2 step 7: Re-arm must happen AFTER busReset cleared
 void BusResetCoordinator::A_RearmAT() {
     if (!asyncSubsystem_) return;
     asyncSubsystem_->RearmATContexts();
-    atArmed_ = true;  // Set software latch for discovery readiness
-    ASFW_LOG(BusReset, "[Action] AT contexts re-armed - AT armed latch set");
-
-    // OHCI §7.2.3.2 — Re-arm transmit contexts:
-    // Re-arming (writing CommandPtr and setting ContextControl.run)
-    // must occur *after* busReset is cleared and ConfigROM restored.
-    // At this stage ContextControl.active == 0 (hardware cleared it)
-    // and CommandPtr descriptors are valid again. Safe restart point.
+    atArmed_ = true;
+    ASFW_LOG(BusReset, "[Action] AT contexts re-armed");
 }
 
 void BusResetCoordinator::A_MetricsLog() {

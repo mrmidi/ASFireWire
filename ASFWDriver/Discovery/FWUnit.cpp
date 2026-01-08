@@ -71,37 +71,7 @@ void FWUnit::ParseEntries(const std::vector<RomEntry>& entries)
 
 void FWUnit::ExtractTextLeaves(const std::vector<RomEntry>& entries)
 {
-    // IEEE 1212 text descriptor keys (currently unused - for future implementation):
-    // constexpr uint8_t kKeyTextLeaf = 0x81;         // Text descriptor leaf
-    // constexpr uint8_t kKeyVendorName = 0x03;       // Vendor name text
-    // constexpr uint8_t kKeyModelName = 0x17;        // Model name text
-
-    // Text leaves are encoded as:
-    // - Key type (immediate or offset)
-    // - If offset, points to text leaf structure
-    // - Text leaf contains: [spec_id, language, text_data...]
-    //
-    // For now, we do basic extraction. Full implementation would:
-    // 1. Follow offset pointers to text leaf entries
-    // 2. Parse text leaf format (language codes, character encoding)
-    // 3. Convert to UTF-8 strings
-    //
-    // Simplified: Look for immediate text entries
-
-    (void)entries;  // Suppress unused parameter warning
-
-    // Text extraction is complex and depends on ROM layout
-    // For Phase 1, we defer full text parsing
-    // Real implementation would read text leaves from ROM via parent device
-
-    // TODO: Implement full text leaf parsing
-    // - Check if entry.key indicates text descriptor
-    // - Follow offset to read text leaf from ROM
-    // - Parse language code and text encoding
-    // - Extract vendor/product strings
-
-    // Placeholder: Use empty strings for now
-    // Phase 2 will implement full text parsing when we have ROM reading infrastructure
+    (void)entries;
 }
 
 bool FWUnit::Matches(uint32_t specId, std::optional<uint32_t> swVersion) const
@@ -129,58 +99,38 @@ std::shared_ptr<FWDevice> FWUnit::GetDevice() const
 
 void FWUnit::Publish()
 {
-    // Only transition from Created state
     if (state_ != State::Created) {
         return;
     }
 
     state_ = State::Ready;
-
-    // TODO: Notify observers that unit is published
-    // This will be implemented when we add IUnitObserver in Phase 3
 }
 
 void FWUnit::Suspend()
 {
-    // Only transition from Ready state
     if (state_ != State::Ready) {
         return;
     }
 
     state_ = State::Suspended;
-
-    // TODO: Notify observers that unit is suspended
-    // Clients should stop using this unit until Resume() called
 }
 
 void FWUnit::Resume()
 {
-    // Only transition from Suspended state
     if (state_ != State::Suspended) {
         return;
     }
 
     state_ = State::Ready;
-
-    // TODO: Notify observers that unit is resumed
-    // Clients can resume using this unit
 }
 
 void FWUnit::Terminate()
 {
-    // Can transition from any state to Terminated
     if (state_ == State::Terminated) {
-        return; // Already terminated
+        return;
     }
 
     state_ = State::Terminated;
-
-    // TODO: Notify observers that unit is terminated
-    // Clients should release any references and stop using this unit
-
-    // Clear parent reference to break circular dependencies
-    // (though in our design, unit holds strong ref so no circular dependency)
-    // Keep parent reference intact so GetDevice() still works for cleanup
 }
 
 } // namespace ASFW::Discovery

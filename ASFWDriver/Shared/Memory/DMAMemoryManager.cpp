@@ -168,7 +168,7 @@ bool DMAMemoryManager::Initialize(Driver::HardwareInterface& hw, size_t totalSiz
     return true;
 }
 
-std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t size) {
+std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t size, size_t alignment) {
     if (slabVirt_ == nullptr) {
         ASFW_LOG(Async, "DMAMemoryManager: AllocateRegion called before Initialize");
         return std::nullopt;
@@ -178,28 +178,77 @@ std::optional<DMAMemoryManager::Region> DMAMemoryManager::AllocateRegion(size_t 
         ASFW_LOG(Async, "DMAMemoryManager: AllocateRegion with size=0");
         return std::nullopt;
     }
+    
+    // Ensure minimal alignment of 16 bytes per OHCI spec
+    if (alignment < 16) {
+        alignment = 16;
+    }
+    
+    // Verify power of 2
+    if ((alignment & (alignment - 1)) != 0) {
+        ASFW_LOG(Async, "DMAMemoryManager: Invalid alignment %zu (must be power of 2), forcing 16", alignment);
+        alignment = 16;
+    }
 
-    // Enforce 16-byte alignment
+    // Align cursor to requested alignment
+    size_t alignedCursor = (cursor_ + (alignment - 1)) & ~(alignment - 1);
+
+    // Enforce 16-byte alignment for size
     const size_t alignedSize = AlignSize(size);
 
-    if (cursor_ + alignedSize > slabSize_) {
+    if (alignedCursor + alignedSize > slabSize_) {
         ASFW_LOG_ERROR(Async,
-            "DMAMemoryManager: AllocateRegion would overflow - need %zu, have %zu (slab=%zu cursor=%zu)",
-            alignedSize, slabSize_ - cursor_, slabSize_, cursor_);
+            "DMAMemoryManager: AllocateRegion would overflow - need %zu (align pad %zu), have %zu (slab=%zu cursor=%zu)",
+            alignedSize, alignedCursor - cursor_, slabSize_ - cursor_, slabSize_, cursor_);
         return std::nullopt;
     }
 
     Region region{};
-    region.virtualBase = slabVirt_ + cursor_;
-    region.deviceBase = slabIOVA_ + cursor_;
+    region.virtualBase = slabVirt_ + alignedCursor;
+    region.deviceBase = slabIOVA_ + alignedCursor;
     region.size = alignedSize;
 
-    cursor_ += alignedSize;
+    cursor_ = alignedCursor + alignedSize;
 
-    ASFW_LOG(Async, "DMAMemoryManager: Allocated region - vaddr=%p iova=0x%llx size=%zu (requested %zu)",
-             region.virtualBase, region.deviceBase, region.size, size);
+    ASFW_LOG(Async, "DMAMemoryManager: Allocated region - vaddr=%p iova=0x%llx size=%zu (requested %zu, align %zu)",
+             region.virtualBase, region.deviceBase, region.size, size, alignment);
 
     return region;
+}
+
+bool DMAMemoryManager::AlignCursorToIOVA(size_t alignment) noexcept {
+    if (slabVirt_ == nullptr || slabIOVA_ == 0 || slabSize_ == 0) {
+        ASFW_LOG(Async, "DMAMemoryManager: AlignCursorToIOVA called before Initialize");
+        return false;
+    }
+
+    if (alignment < 16) {
+        alignment = 16;
+    }
+    // Verify power of 2
+    if ((alignment & (alignment - 1)) != 0) {
+        ASFW_LOG(Async, "DMAMemoryManager: AlignCursorToIOVA invalid alignment=%zu", alignment);
+        return false;
+    }
+
+    const uint64_t curIOVA = slabIOVA_ + static_cast<uint64_t>(cursor_);
+    const uint64_t alignedIOVA = (curIOVA + static_cast<uint64_t>(alignment - 1)) &
+                                ~static_cast<uint64_t>(alignment - 1);
+    const size_t delta = static_cast<size_t>(alignedIOVA - curIOVA);
+
+    if (cursor_ + delta > slabSize_) {
+        ASFW_LOG_ERROR(Async,
+            "DMAMemoryManager: AlignCursorToIOVA would overflow: cursor=%zu delta=%zu slab=%zu",
+            cursor_, delta, slabSize_);
+        return false;
+    }
+
+    cursor_ += delta;
+
+    ASFW_LOG(Async,
+             "DMAMemoryManager: AlignCursorToIOVA(%zu) -> cursor=%zu (iova now 0x%llx)",
+             alignment, cursor_, slabIOVA_ + static_cast<uint64_t>(cursor_));
+    return true;
 }
 
 uint64_t DMAMemoryManager::VirtToIOVA(const void* virt) const noexcept {

@@ -89,6 +89,12 @@ os_log_t Discovery();
 os_log_t IRM();
 os_log_t BusManager();
 os_log_t ConfigROM();
+os_log_t MusicSubunit();
+os_log_t FCP();
+os_log_t CMP();
+os_log_t AVC();
+os_log_t Isoch();
+os_log_t Audio();
 } // namespace ASFW::Driver::Logging
 
 // ----- time helpers (header-only, safe in DriverKit) -----
@@ -107,10 +113,10 @@ struct RlState {
 
 // ----- Plain logging (category-stable prefixes via your cpp) -----
 #define ASFW_LOG(cat, fmt, ...) \
-    os_log(ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat, ##__VA_ARGS__)
+    os_log(::ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat, ##__VA_ARGS__)
 
 #define ASFW_LOG_TYPE(cat, os_type, fmt, ...) \
-    os_log(ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat, ##__VA_ARGS__)
+    os_log(::ASFW::Driver::Logging::cat(), "[%{public}s] " fmt, #cat, ##__VA_ARGS__)
 
 // ----- Rate-limited logging -----
 // key: per-callsite stable string (e.g. "tx/ack_tardy"); interval_ms: throttle window
@@ -140,6 +146,7 @@ struct RlState {
 #define ASFW_LOG_ERROR(cat, fmt, ...)   ASFW_LOG_TYPE(cat, OS_LOG_TYPE_ERROR,   fmt, ##__VA_ARGS__)
 #define ASFW_LOG_DEBUG(cat, fmt, ...)   ASFW_LOG_TYPE(cat, OS_LOG_TYPE_DEFAULT, fmt, ##__VA_ARGS__)
 #define ASFW_LOG_FAULT(cat, fmt, ...)   ASFW_LOG_TYPE(cat, OS_LOG_TYPE_FAULT,   fmt, ##__VA_ARGS__)
+#define ASFW_LOG_WARNING(cat, fmt, ...) ASFW_LOG_TYPE(cat, OS_LOG_TYPE_DEFAULT, fmt, ##__VA_ARGS__)
 
 // ----- Site-aware structured logging (for AT state correlation) -----
 // Adds source file/line/function for debugging
@@ -218,7 +225,7 @@ class LogConfig;
 // Helper macro to get verbosity for a specific category
 // This uses token concatenation to call Get##category##Verbosity()
 #define ASFW_GET_VERBOSITY(category) \
-    (ASFW::LogConfig::Shared().Get##category##Verbosity())
+    (::ASFW::LogConfig::Shared().Get##category##Verbosity())
 
 // Level 0: Critical (errors, failures, timeouts - always logged at this level)
 #define ASFW_LOG_V0(category, fmt, ...) \
@@ -264,7 +271,7 @@ class LogConfig;
 // This allows forcing hex dumps on/off independent of verbosity level
 #define ASFW_LOG_HEX(category, fmt, ...) \
     do { \
-        if (ASFW::LogConfig::Shared().IsHexDumpsEnabled() || \
+        if (::ASFW::LogConfig::Shared().IsHexDumpsEnabled() || \
             ASFW_GET_VERBOSITY(category) >= 4) { \
             ASFW_LOG(category, fmt, ##__VA_ARGS__); \
         } \

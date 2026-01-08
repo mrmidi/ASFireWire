@@ -8,10 +8,14 @@
 
 #pragma once
 
+#ifdef ASFW_HOST_TEST
+#include "../../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IOLib.h>
-#include <DriverKit/IODispatchQueue.h>
-#include <DriverKit/IOTimerDispatchSource.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <DriverKit/OSObject.h>
+#include <DriverKit/IODispatchQueue.h>
+#endif
 #include <array>
 #include <functional>
 #include <memory>
@@ -114,154 +118,87 @@ struct FCPTransportConfig {
 // FCP Transport
 //==============================================================================
 
-/// FCP Transport - manages command/response exchange via async writes
-///
-/// CONCURRENCY MODEL (v1):
-/// - Enforces SINGLE outstanding command per transport instance
-/// - Response correlation is reliable (no transaction ID on wire)
-/// - Second command submission returns kBusy until first completes
-///
-/// INTERIM RESPONSE HANDLING:
-/// - When device sends interim (ctype 0x0F), automatically extends timeout
-/// - Interim response is NOT visible to caller - only final response delivered
-///
-/// BUS RESET POLICY:
-/// - Default: fail pending command on bus reset
-/// - Optional: retry if allowBusResetRetry=true (STATUS queries only)
-///
-/// THREAD SAFETY:
-/// - All methods are thread-safe (protected by IOLock)
-/// - Completion callback invoked OUTSIDE lock (never hold lock during callback)
-/// - Timeout handler runs on dedicated dispatch queue
-class FCPTransport {
+class FCPTransport : public OSObject {
+private:
+    using super = OSObject;
 public:
-    /// Constructor
-    ///
-    /// @param async Reference to async subsystem
-    /// @param device Target device (for nodeID + generation)
-    /// @param config Transport configuration
-    FCPTransport(Async::AsyncSubsystem& async,
-                 Discovery::FWDevice& device,
-                 const FCPTransportConfig& config = {});
+    FCPTransport() = default;
+    virtual ~FCPTransport() = default;
 
-    ~FCPTransport();
+    void* operator new(size_t size) { return IOMallocZero(size); }
+    void operator delete(void* ptr, size_t size) { IOFree(ptr, size); }
 
-    // Non-copyable, non-movable
+    virtual bool init() override { return super::init(); }
+
+    virtual bool init(Async::AsyncSubsystem* async,
+                      Discovery::FWDevice* device,
+                      const FCPTransportConfig& config = {});
+
+    virtual void free() override;
+
     FCPTransport(const FCPTransport&) = delete;
     FCPTransport& operator=(const FCPTransport&) = delete;
 
-    /// Submit FCP command (async block write to target's FCP_COMMAND_ADDRESS)
-    ///
-    /// CONCURRENCY: v1 allows ONLY ONE outstanding command at a time.
-    /// If a command is already pending, this returns kBusy immediately.
-    ///
-    /// @param command Command payload (3-512 bytes, validated)
-    /// @param completion Callback with response or error
-    /// @return Handle for tracking/cancellation (invalid if rejected)
     [[nodiscard]] FCPHandle SubmitCommand(const FCPFrame& command,
                                           FCPCompletion completion);
 
-    /// Cancel outstanding command
-    ///
-    /// @param handle Command handle to cancel
-    /// @return true if command was found and cancelled
     bool CancelCommand(FCPHandle handle);
 
-    /// Called by RxPath when FCP response arrives
-    /// (block write to our response CSR from target device)
-    ///
-    /// @param srcNodeID Source node ID
-    /// @param generation Generation number
-    /// @param payload Response payload
     void OnFCPResponse(uint16_t srcNodeID,
                        uint32_t generation,
                        std::span<const uint8_t> payload);
 
-    /// Called by BusResetCoordinator when bus reset occurs
-    ///
-    /// @param newGeneration New generation number
     void OnBusReset(uint32_t newGeneration);
 
-    /// Get current configuration
     const FCPTransportConfig& GetConfig() const { return config_; }
 
-    /// Get async subsystem reference (for PCRSpace)
-    Async::AsyncSubsystem& GetAsyncSubsystem() { return async_; }
+    Async::AsyncSubsystem& GetAsyncSubsystem() { return *async_; }
 
 private:
-    //==========================================================================
-    // Outstanding Command State
-    //==========================================================================
-
     struct OutstandingCommand {
-        FCPFrame command;               ///< Original command frame
-        FCPCompletion completion;       ///< User completion callback
-        uint32_t generation;            ///< Generation when submitted
-        uint8_t retriesLeft;            ///< Retries remaining
-        bool allowBusResetRetry;        ///< Allow retry after bus reset
-        bool gotInterim{false};         ///< Received interim response
+        FCPFrame command;
+        FCPCompletion completion;
+        uint32_t generation;
+        uint8_t retriesLeft;
+        bool allowBusResetRetry;
+        bool gotInterim{false};
 
-        Async::AsyncHandle asyncHandle; ///< Handle for async write
-        uint64_t timeoutToken{0};       ///< Token for timeout validation
+        Async::AsyncHandle asyncHandle;
+        uint64_t timeoutToken{0};
     };
 
-    //==========================================================================
-    // Internal Methods
-    //==========================================================================
-
-    /// Async write completion callback
     void OnAsyncWriteComplete(Async::AsyncHandle handle,
                               Async::AsyncStatus status,
                               std::span<const uint8_t> response);
 
-    /// Submit async write through AsyncSubsystem
     Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame);
 
-    /// Timeout handler (called on timeout queue)
     void OnCommandTimeout();
 
-    /// Retry command after failure
     void RetryCommand();
 
-    /// Response validation
     bool ValidateResponse(std::span<const uint8_t> response) const;
 
-    /// Complete command and invoke user completion
     void CompleteCommand(FCPStatus status, const FCPFrame& response);
 
-    /// Schedule timeout
     void ScheduleTimeout(uint32_t timeoutMs);
 
-    /// Cancel timeout
     void CancelTimeout();
 
-    //==========================================================================
-    // Member Variables
-    //==========================================================================
-
-    Async::AsyncSubsystem& async_;
-    Discovery::FWDevice& device_;
+    Async::AsyncSubsystem* async_;
+    Discovery::FWDevice* device_;
     FCPTransportConfig config_;
 
-    /// Lock protecting pending_ (DriverKit IOLock, not os_unfair_lock)
     IOLock* lock_{nullptr};
 
-    /// Dedicated DriverKit dispatch queue for timeout handling
     OSSharedPtr<IODispatchQueue> timeoutQueue_;
 
-    /// Timer source for timeouts (replaces IOSleep)
-    OSSharedPtr<IOTimerDispatchSource> timer_;
-
-    /// Unique token generator for timeout validation
     uint64_t nextTimeoutToken_{0};
 
-    /// Set to true while tearing down to prevent new timers
     bool shuttingDown_{false};
 
-    /// Single outstanding command (v1 concurrency model)
     std::unique_ptr<OutstandingCommand> pending_;
 
-    /// Transaction ID (dummy, always 1 since only one command at a time)
     static constexpr uint32_t kTransactionID = 1;
 };
 

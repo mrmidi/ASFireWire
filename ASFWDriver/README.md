@@ -162,6 +162,4 @@ The driver is built using:
 
 ## Development
 
-See [AGENTS.md](../../AGENTS.md) for development workflow, build instructions, and implementation guidelines.
-
 For user client specific information, see [UserClient/README.md](UserClient/README.md).

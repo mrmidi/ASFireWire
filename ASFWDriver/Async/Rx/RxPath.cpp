@@ -6,6 +6,7 @@
 #include "../../Debug/BusResetPacketCapture.hpp"
 #include "../../Phy/PhyPackets.hpp"
 #include "../../Logging/LogConfig.hpp"
+#include "../ResponseCode.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <cstring>
@@ -24,6 +25,14 @@ RxPath::RxPath(ARRequestContext& arReqContext,
     , packetRouter_(packetRouter)
 {
     packetParser_ = std::make_unique<ARPacketParser>();
+
+    // Route PHY packets (tCode=0xE) in AR Request context through RxPath
+    packetRouter_.RegisterRequestHandler(
+        HW::AsyncRequestHeader::kTcodePhyPacket,
+        [this](const ARPacketView& view) {
+            this->HandlePhyRequestPacket(view);
+            return ResponseCode::NoResponse;  // PHY packets never generate a response
+        });
 }
 
 void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress,
@@ -56,12 +65,14 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             }
         };
 
+        // Make capture available to PacketRouter handlers (same thread, same call stack)
+        currentBusResetCapture_ = busResetCapture;
+
         uint32_t buffersProcessed = 0;
         while (auto bufferInfo = ctx->Dequeue()) {
             const auto& info = *bufferInfo;
             buffersProcessed++;
 
-            // CRITICAL: AR DMA stream semantics - startOffset indicates where NEW packets begin
             const std::size_t startOffset = info.startOffset;
 
             ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u: vaddr=%p startOffset=%zu size=%zu index=%zu",
@@ -80,13 +91,17 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             const uint8_t* bufferStart = static_cast<const uint8_t*>(info.virtualAddress);
             const std::size_t bufferSize = info.bytesFilled;
 
+            // If we consumed everything, recycle the descriptor
+            // Note: For AR Request, we only recycle if the buffer was completely full or empty
+            // to avoid stalling the DMA engine if it's still filling the buffer.
             if (bufferSize == 0 || bufferSize <= startOffset) {
-                // No new data
+                // TODO: requires hardware testing to confirm if recycling here is safe
+                // or if it causes stalls. If AR Request gets stuck, disable this.
                 recycle(info.descriptorIndex);
                 continue;
             }
 
-            // V4/HEX: AR Request buffer hex dump (runtime controlled)
+            // Optional debug dump stays as-is…
             if (bufferSize >= 32) {
                 ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u first 128 bytes (showing 32-byte chunks):", buffersProcessed);
                 const size_t dumpSize = (bufferSize < 128) ? bufferSize : 128;
@@ -113,45 +128,23 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
                 }
             }
 
-            // Per OHCI §8.4.2: Buffer may contain MULTIPLE packets
-            // Parse buffer as stream, extracting packets one-by-one
-            // Parse ONLY the NEW packets from [startOffset, bytesFilled)
-            // Source: Linux drivers/firewire/ohci.c:1656-1720 handle_ar_packet()
-            std::size_t offset = startOffset;
-            uint32_t packetsFound = 0;
+            // Route ONLY the NEW bytes via PacketRouter
+            const uint8_t* newDataStart = bufferStart + startOffset;
+            const std::size_t newDataSize = bufferSize - startOffset;
 
-            while (offset < bufferSize) {
-                // Phase 2.2: ARPacketParser::ParseNext now takes std::span
-                auto packetInfo = ARPacketParser::ParseNext(std::span<const uint8_t>(bufferStart, bufferSize), offset);
+            ASFW_LOG_HEX(Async,
+                         "RxPath AR Request Buffer #%u: routing %zu NEW bytes from offset %zu",
+                         buffersProcessed, newDataSize, startOffset);
 
-                if (!packetInfo.has_value()) {
-                    if (offset < bufferSize) {
-                        const size_t remaining = bufferSize - offset;
-                        ASFW_LOG_HEX(Async,
-                                     "RxPath AR buffer exhausted: %zu bytes remaining (incomplete packet or padding)",
-                                     remaining);
-                    }
-                    break;
-                }
+            packetRouter_.RoutePacket(
+                ARContextType::Request,
+                std::span<const uint8_t>(newDataStart, newDataSize));
 
-                packetsFound++;
-
-                // Process this packet (pass PacketInfo directly)
-                ProcessReceivedPacket(ctxType, *packetInfo, busResetCapture);
-
-                // Advance to next packet
-                offset += packetInfo->totalLength;
-            }
-
-            ASFW_LOG_HEX(Async, "RxPath AR Request Buffer #%u: Extracted %u NEW packets from offset %zu→%zu (total %zu bytes)",
-                         buffersProcessed, packetsFound, startOffset, offset, bufferSize);
-
-            // CRITICAL: Do NOT recycle AR Request buffers prematurely!
-            // Same stream semantics as AR Response - let hardware fill buffer completely.
-            // recycle(info.descriptorIndex);  // ⚠️  DISABLED: Causes buffer to never fill!
+            // CRITICAL: still do NOT recycle AR Request buffers here.
+            // recycle(info.descriptorIndex);  // remains disabled
         }
 
-        ASFW_LOG(Async, "RxPath: Processed %u buffers from %{public}s",
+        ASFW_LOG_V2(Async, "RxPath: Processed %u buffers from %{public}s",
                  buffersProcessed, ctxLabel);
     }
 
@@ -309,19 +302,19 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             //
             // recycle(info.descriptorIndex);  // ⚠️  DISABLED: Causes buffer to never fill!
 
-            ASFW_LOG(Async,
+            ASFW_LOG_V2(Async,
                      "✅ RxPath AR/RSP: Processed %zu NEW bytes from buffer[%zu] "
                      "(offset %zu→%zu, total=%zu) - buffer NOT recycled, letting HW fill",
                      newDataSize, info.descriptorIndex, startOffset, offset, bufferSize);
         }
 
-        ASFW_LOG(Async, "RxPath: Processed %u packets in %u buffers from %{public}s",
+        ASFW_LOG_V2(Async, "RxPath: Processed %u packets in %u buffers from %{public}s",
                  packetsFound, buffersProcessed, ctxLabel);
 
         // DIAGNOSTIC: If no packets processed despite interrupt, dump first 64 bytes of buffer
         // This helps diagnose cache coherency issues or hardware problems
         if (buffersProcessed == 0 && packetsFound == 0) {
-            ASFW_LOG(Async, "⚠️  AR Response: No packets read despite interrupt! Dumping first buffer...");
+            ASFW_LOG_V3(Async, "AR Response: No packets read for this interrupt");
 
             // Get buffer ring from context
             auto& bufferRing = ctx->GetBufferRing();
@@ -350,6 +343,9 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
     } else {
         ASFW_LOG(Async, "RxPath: Skipping AR Response during bus reset");
     }
+
+    // Clear capture pointer after this interrupt batch
+    currentBusResetCapture_ = nullptr;
 }
 
 void RxPath::ProcessReceivedPacket(ARContextType contextType,
@@ -361,67 +357,9 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     const uint16_t xferStatus = static_cast<uint16_t>(info.xferStatus & 0xFFFF);
     const OHCIEventCode eventCode = static_cast<OHCIEventCode>(xferStatus & 0x1F);
 
-    // AR Request context: Handle PHY packets (including synthetic Bus-Reset packet)
-    // OHCI §8.4.2.3, §8.5: Controller injects Bus-Reset packet when LinkControl.rcvPhyPkt=1
     if (contextType == ARContextType::Request) {
-        // PHY packet (tCode=0xE): Check for Bus-Reset event
-        // CRITICAL: Event code comes from TRAILER xferStatus[4:0], NOT from packet body!
-        if (tCode == HW::AsyncRequestHeader::kTcodePhyPacket && info.totalLength >= 16) {
-            // Load quadlets from LE DMA buffer
-            uint32_t q0_le;
-            uint32_t q1_le;
-            __builtin_memcpy(&q0_le, info.packetStart, 4);
-            __builtin_memcpy(&q1_le, info.packetStart + 4, 4);
-
-            // Convert to host order (no-op on ARM64, but explicit for clarity)
-            const uint32_t q0 = OSSwapLittleToHostInt32(q0_le);
-            const uint32_t q1 = OSSwapLittleToHostInt32(q1_le);
-
-            // Bus-Reset event code (OHCI §3.1.1 Table 3-2)
-            constexpr OHCIEventCode OHCI_EVT_BUS_RESET = OHCIEventCode::kEvtBusReset;
-
-            if (eventCode == OHCI_EVT_BUS_RESET) {
-                // Extract selfIDGeneration from quadlet 1 bits[23:16] (OHCI Table 8-4)
-                const uint8_t newGeneration = static_cast<uint8_t>((q1 >> 16) & 0xFF);
-
-                ASFW_LOG(Async, "🔥 SYNTHETIC BUS-RESET PACKET: gen=%u event=0x%02X xferStatus=0x%04X",
-                         newGeneration, eventCode, xferStatus);
-
-                // Pass raw LE quadlets pointer for HandleSyntheticBusResetPacket
-                const uint32_t* quadlets_raw = reinterpret_cast<const uint32_t*>(info.packetStart);
-                HandleSyntheticBusResetPacket(quadlets_raw, newGeneration, busResetCapture);
-                return;  // Bus-Reset packet fully processed
-            }
-
-            // Other PHY packets (not Bus-Reset)
-            const bool isAlphaConfig = ASFW::Driver::AlphaPhyConfig::IsConfigQuadletHostOrder(q0);
-            if (isAlphaConfig) {
-                const auto cfg = ASFW::Driver::AlphaPhyConfig::DecodeHostOrder(q0);
-                ASFW_LOG(Async,
-                         "RxPath AR/RQ: PHY CONFIG (non-reset): rootId=%u R=%d T=%d gap=%u event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
-                         cfg.rootId,
-                         cfg.forceRoot ? 1 : 0,
-                         cfg.gapCountOptimization ? 1 : 0,
-                         cfg.gapCount,
-                         eventCode,
-                         q0,
-                         q1,
-                         info.totalLength);
-            } else {
-                ASFW_LOG(Async,
-                         "RxPath AR/RQ: PHY packet (non-reset): event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
-                         eventCode,
-                         q0,
-                         q1,
-                         info.totalLength);
-            }
-            return;
-        }
-
-        // Non-PHY async request packets
         ASFW_LOG(Async,
-               "RxPath AR/RQ: Async request packet (tCode=0x%X, event=%{public}s) - ignoring (not yet implemented)",
-               tCode, ToString(eventCode));
+                 "RxPath::ProcessReceivedPacket called with AR Request context – should not happen");
         return;
     }
 
@@ -483,8 +421,8 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
 
     rxResponse.payload = std::span<const uint8_t>(payloadPtr, payloadLen);
 
-    // V1: Compact AR response one-liner for packet flow visibility
-    ASFW_LOG_V1(Async, "📥 AR/RSP: tCode=0x%X rCode=0x%X tLabel=%u src=0x%04X→dst=0x%04X payload=%zu bytes",
+    // V2: Compact AR response one-liner for packet flow visibility
+    ASFW_LOG_V2(Async, "📥 AR/RSP: tCode=0x%X rCode=0x%X tLabel=%u src=0x%04X→dst=0x%04X payload=%zu bytes",
                tCode, rCode, tLabel, sourceID, destinationID, payloadLen);
 
     // Delegate to Tracking actor
@@ -545,6 +483,74 @@ void RxPath::HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t new
     // This prevents race where synthetic packet overwrites the real generation.
     //
     // generationTracker_.OnSyntheticBusReset(newGeneration);  // REMOVED - causes race!
+}
+
+void RxPath::HandlePhyRequestPacket(const ARPacketView& view) {
+    // Decode event code from OHCI trailer’s xferStatus low bits
+    const uint16_t xferStatus = view.xferStatus;
+    const OHCIEventCode eventCode = static_cast<OHCIEventCode>(xferStatus & 0x1F);
+
+    // Need at least q0 + q1 in header
+    if (view.header.size() < 8) {
+        ASFW_LOG(Async,
+                 "RxPath AR/RQ PHY handler: short header (len=%zu), event=0x%02X",
+                 view.header.size(), static_cast<unsigned>(eventCode));
+        return;
+    }
+
+    uint32_t q0_le = 0;
+    uint32_t q1_le = 0;
+    __builtin_memcpy(&q0_le, view.header.data(), 4);
+    __builtin_memcpy(&q1_le, view.header.data() + 4, 4);
+
+    const uint32_t q0 = OSSwapLittleToHostInt32(q0_le);
+    const uint32_t q1 = OSSwapLittleToHostInt32(q1_le);
+
+    constexpr OHCIEventCode OHCI_EVT_BUS_RESET = OHCIEventCode::kEvtBusReset;
+
+    if (eventCode == OHCI_EVT_BUS_RESET) {
+        // Extract generation from packet (OHCI Table 8-4)
+        const uint8_t genFromPacket = static_cast<uint8_t>((q1 >> 16) & 0xFF);
+
+        ASFW_LOG(Async,
+                 "🔥 SYNTHETIC BUS-RESET PACKET via PacketRouter: gen=%u event=0x%02X xferStatus=0x%04X",
+                 genFromPacket,
+                 static_cast<unsigned>(eventCode),
+                 xferStatus);
+
+        if (currentBusResetCapture_) {
+            // Reuse existing handler – header holds q0/q1 quadlets
+            const uint32_t* quadlets_raw =
+                reinterpret_cast<const uint32_t*>(view.header.data());
+            HandleSyntheticBusResetPacket(quadlets_raw,
+                                          genFromPacket,
+                                          currentBusResetCapture_);
+        }
+
+        return;
+    }
+
+    // Non-reset PHY packets (e.g. alpha PHY config)
+    const bool isAlphaConfig = ASFW::Driver::AlphaPhyConfig::IsConfigQuadletHostOrder(q0);
+    if (isAlphaConfig) {
+        const auto cfg = ASFW::Driver::AlphaPhyConfig::DecodeHostOrder(q0);
+        ASFW_LOG(Async,
+                 "RxPath AR/RQ: PHY CONFIG (non-reset): rootId=%u R=%d T=%d gap=%u event=0x%02X q0=0x%08x q1=0x%08x",
+                 cfg.rootId,
+                 cfg.forceRoot ? 1 : 0,
+                 cfg.gapCountOptimization ? 1 : 0,
+                 cfg.gapCount,
+                 static_cast<unsigned>(eventCode),
+                 q0,
+                 q1);
+    } else {
+        ASFW_LOG(Async,
+                 "RxPath AR/RQ: PHY packet (non-reset): event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
+                 static_cast<unsigned>(eventCode),
+                 q0,
+                 q1,
+                 view.header.size());
+    }
 }
 
 } // namespace ASFW::Async::Rx

@@ -139,7 +139,7 @@ Device behavior **doesn't match strategy**. Device sends AR even though strategy
 ```cpp
 void OnARResponse(...) {
     if (txn->state() != TransactionState::AwaitingAR) {
-        ASFW_LOG("⚠️ Unexpected state %s (expected AwaitingAR)", ToString(txn->state()));
+        ASFW_LOG("⚠️ Unexpected state %{public}s (expected AwaitingAR)", ToString(txn->state()));
         return;  // ❌ DISCARDS VALID RESPONSE
     }
 }
@@ -389,7 +389,7 @@ Currently missing ACK-based branching.
 `OnARResponse()` requires state `== AwaitingAR`:
 ```cpp
 if (txn->state() != TransactionState::AwaitingAR) {
-    ASFW_LOG("Unexpected state %s (expected AwaitingAR)", ...);
+    ASFW_LOG("Unexpected state %{public}s (expected AwaitingAR)", ...);
     return;  // ← Discards valid response
 }
 ```
@@ -702,12 +702,12 @@ if (state == TransactionState::Completed ||
     state == TransactionState::Cancelled ||
     state == TransactionState::TimedOut) {
     // Already terminal - AR is late/duplicate
-    ASFW_LOG("AR response for terminal txn (state=%s), ignoring", ToString(state));
+    ASFW_LOG("AR response for terminal txn (state=%{public}s), ignoring", ToString(state));
     return;
 }
 
 // Accept AR in ATPosted, ATCompleted, or AwaitingAR
-ASFW_LOG("📥 AR response in state=%s, processing", ToString(state));
+ASFW_LOG("📥 AR response in state=%{public}s, processing", ToString(state));
 ```
 
 **Rationale**: AR can arrive before or after AT completion. Only reject if transaction already finished.
@@ -890,6 +890,29 @@ OnATCompletion(ackCode) {
 **Hybrid is better**: Keep strategy for what it's good at (type safety), acknowledge ACK is authoritative.
 
 ---
+
+## Logging & Observability Plan (ASFW_LOG_V*)
+
+- **Verbosity tiers**:  
+  - V0: errors/timeouts (terminal states, deadline hits).  
+  - V1: one-line completion summaries per transaction (winner path AT/AR, ackCode, rcode).  
+  - V2: state transitions (ATPosted→AwaitingAR, ARReceived→Completed) with tLabel/gen.  
+  - V3: race diagnostics (which path won, late AR ignored, ack_pending forcing AwaitingAR).  
+  - V4: rare deep traces (dump ackCode/tCode/strategy tuple, payload length; gated on config).
+- **Placement**: `TransactionCompletionHandler` OnATCompletion/OnARResponse/OnTimeout paths; avoid new logging in hot inner loops of DMA rings.
+- **Style**: Use `ASFW_LOG_V*` from `Logging.hpp` (category `Async`), with short k=v payloads for parseability: `ASFW_LOG_V1(Async, "t=%u path=AT ack=0x%X state=%{public}s", ...)`.
+- **Noise control**: prefer `ASFW_LOG_RL` for busy/tardy storms; no legacy guard flag needed.
+
+## Test Scaffolding Plan
+
+- Add a dedicated gtest target for completion-race scenarios in `tests/CMakeLists.txt` (host-only, no DriverKit deps).  
+- Initial cases (can start as `GTEST_SKIP()` placeholders, then fill in):
+  - ack_complete write with no AR; AR arriving late is ignored (latch).  
+  - ack_pending write forces AwaitingAR; AR success completes.  
+  - AR-before-AT race for writes (AR wins, AT path no-ops).  
+  - Read/lock always require AR even with ack_complete.  
+  - Busy retry deadline extension observable (deadline moved +200ms).  
+- Keep fixtures light: construct `Transaction` + `TransactionCompletionHandler` with stubbed `TransactionManager/LabelAllocator` fakes; no MMIO.
 
 ## Next Steps
 

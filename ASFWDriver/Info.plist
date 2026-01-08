@@ -17,16 +17,25 @@
 				<key>IOUserClass</key>
 				<string>ASFWDriverUserClient</string>
 			</dict>
+			<key>ASFWAudioNubProperties</key>
+			<dict>
+				<key>IOClass</key>
+				<string>IOUserService</string>
+				<key>IOUserClass</key>
+				<string>ASFWAudioNub</string>
+				<key>ASFWNubType</key>
+				<string>Audio</string>
+			</dict>
 			<key>ASFWTraceDMACoherency</key>
 			<false/>
 			<key>ASFWAsyncVerbosity</key>
-			<integer>4</integer>
+			<integer>1</integer>
 			<key>ASFWControllerVerbosity</key>
 			<integer>1</integer>
 			<key>ASFWHardwareVerbosity</key>
 			<integer>1</integer>
 			<key>ASFWEnableHexDumps</key>
-			<true/>
+			<false/>
 			<key>ASFWLogStatistics</key>
 			<true/>
 			<key>CFBundleIdentifier</key>
@@ -43,6 +52,31 @@
 			<string>IOPCIDevice</string>
 			<key>IOUserClass</key>
 			<string>ASFWDriver</string>
+			<key>IOUserServerName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		</dict>
+		<key>ASFWAudioDriverService</key>
+		<dict>
+			<key>IOUserAudioDriverUserClientProperties</key>
+			<dict>
+				<key>IOClass</key>
+				<string>IOUserUserClient</string>
+				<key>IOUserClass</key>
+				<string>IOUserAudioDriverUserClient</string>
+			</dict>
+			<key>CFBundleIdentifier</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>IOClass</key>
+			<string>IOUserService</string>
+			<key>IOProviderClass</key>
+			<string>IOUserService</string>
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>ASFWNubType</key>
+				<string>Audio</string>
+			</dict>
+			<key>IOUserClass</key>
+			<string>ASFWAudioDriver</string>
 			<key>IOUserServerName</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 		</dict>

@@ -8,7 +8,11 @@
 
 #pragma once
 
+#ifdef ASFW_HOST_TEST
+#include "../../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IOLib.h>
+#endif
 #include <array>
 #include <functional>
 #include <memory>
@@ -62,7 +66,19 @@ struct AVCCdb {
                         frame.data.begin() + 3);
         }
 
-        frame.length = 3 + operandLength;
+        // IEC 61883-1:2008 §9.3.1 Figure 32: FCP frames require zero padding
+        // to align with IEEE 1394 quadlet (4-byte) boundaries for block writes.
+        // Unpadded frames violate IEEE 1394 alignment rules and cause transaction failures.
+        size_t unpaddedLength = 3 + operandLength;
+        size_t paddedLength = (unpaddedLength + 3) & ~3;  // Round up to nearest 4 bytes
+        
+        // Zero out padding bytes (required by spec)
+        if (paddedLength > unpaddedLength) {
+            std::fill(frame.data.begin() + unpaddedLength,
+                     frame.data.begin() + paddedLength, 0);
+        }
+        
+        frame.length = paddedLength;
         return frame;
     }
 
@@ -138,7 +154,7 @@ using AVCCompletion = std::function<void(AVCResult result,
 ///     }
 /// });
 /// ```
-class AVCCommand {
+class AVCCommand : public std::enable_shared_from_this<AVCCommand> {
 public:
     /// Constructor
     ///
@@ -163,9 +179,19 @@ public:
 
         FCPFrame frame = cdb_.Encode();
 
+        // Use weak_from_this() to check ownership without throwing bad_weak_ptr
+        auto weakSelf = weak_from_this();
+        auto self = weakSelf.lock();
+        
+        if (!self) {
+             ASFW_LOG(AVC, "AVCCommand::Submit called without shared ownership - command dropped");
+             completion(AVCResult::kTransportError, cdb_);
+             return;
+        }
+        
         fcpHandle_ = transport_.SubmitCommand(frame,
-            [this, completion](FCPStatus fcpStatus, const FCPFrame& response) {
-                OnFCPComplete(fcpStatus, response, completion);
+            [self, completion](FCPStatus fcpStatus, const FCPFrame& response) {
+                self->OnFCPComplete(fcpStatus, response, completion);
             });
     }
 

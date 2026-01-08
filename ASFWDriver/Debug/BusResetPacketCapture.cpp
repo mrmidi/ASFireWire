@@ -40,15 +40,10 @@ void BusResetPacketCapture::CapturePacket(const uint32_t* dmaQuadlets,
     const uint32_t index = writeIndex_.fetch_add(1, std::memory_order_relaxed);
     const uint32_t slot = index % kBusResetPacketHistorySize;
 
-    // Increment count (saturate at max)
-    uint32_t oldCount = count_.load(std::memory_order_acquire);
-    while (oldCount < kBusResetPacketHistorySize) {
-        if (count_.compare_exchange_weak(oldCount, oldCount + 1,
-                                        std::memory_order_release,
-                                        std::memory_order_acquire)) {
-            break;
-        }
-    }
+    // We'll increment the published count only after fully populating the
+    // snapshot to avoid readers observing a partially written snapshot.
+    // Use release ordering so readers that load with acquire observe the
+    // completed snapshot writes.
 
     // Fill snapshot
     BusResetPacketSnapshot& snapshot = ring_[slot];
@@ -81,6 +76,18 @@ void BusResetPacketCapture::CapturePacket(const uint32_t* dmaQuadlets,
     } else {
         std::snprintf(snapshot.contextInfo, sizeof(snapshot.contextInfo),
                      "Gen %u @ slot %u", generation, slot);
+    }
+
+    // Increment count (saturate at max) AFTER writing the snapshot so readers
+    // never observe a partially-written entry. Use acquire/release semantics
+    // to ensure snapshot writes are visible to readers.
+    uint32_t oldCount = count_.load(std::memory_order_acquire);
+    while (oldCount < kBusResetPacketHistorySize) {
+        if (count_.compare_exchange_weak(oldCount, oldCount + 1,
+                                        std::memory_order_release,
+                                        std::memory_order_acquire)) {
+            break;
+        }
     }
 }
 
