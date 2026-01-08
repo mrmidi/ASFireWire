@@ -8,175 +8,140 @@
 
 #pragma once
 
+#ifdef ASFW_HOST_TEST
+#include "../../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IOLib.h>
+#include <DriverKit/OSSharedPtr.h>
+#endif
 #include <memory>
 #include <vector>
 #include "FCPTransport.hpp"
 #include "AVCCommands.hpp"
+#include "IAVCCommandSubmitter.hpp"
+#include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Async/AsyncSubsystem.hpp"
+#include "AVCUnitPlugInfoCommand.hpp" // Added include here
 
 namespace ASFW::Protocols::AVC {
 
 //==============================================================================
-// AV/C Subunit Descriptor
+// Forward Declarations
+//==============================================================================
+class DescriptorAccessor;
+
+//==============================================================================
+// Unit Descriptor Information (Phase 5 Discovery)
 //==============================================================================
 
-/// AV/C Subunit representation
-struct AVCSubunit {
-    uint8_t type{0};        ///< Subunit type (AVCSubunitType enum)
-    uint8_t id{0};          ///< Subunit ID (0-7)
-    uint8_t numDestPlugs{0}; ///< Destination (input) plugs
-    uint8_t numSrcPlugs{0};  ///< Source (output) plugs
+/// Information extracted from Unit Identifier Descriptor
+/// Ref: TA Document 2002013 Section 6.2.1
+struct UnitDescriptorInfo {
+    // Descriptor sizes from Unit Identifier
+    uint8_t generationID{0};
+    uint8_t sizeOfListID{0};
+    uint8_t sizeOfObjectID{0};
+    uint8_t sizeOfEntryPosition{0};
 
-    /// Get subunit address byte for CDB
-    uint8_t Address() const {
-        return MakeSubunitAddress(static_cast<AVCSubunitType>(type), id);
-    }
+    // Root object lists
+    uint16_t numberOfRootObjectLists{0};
+    std::vector<uint64_t> rootListIDs;  // Variable-size IDs
+
+    // Traversed root list contents (object IDs in each list)
+    struct RootListContents {
+        uint64_t listID;
+        std::vector<uint64_t> objectIDs;
+    };
+    std::vector<RootListContents> rootListContents;
+
+    // Support status
+    bool descriptorMechanismSupported{false};
 };
 
 //==============================================================================
 // AV/C Unit
 //==============================================================================
 
-/// AV/C Unit - represents an AV/C-capable FireWire device
-///
-/// Wraps Discovery::FWUnit and provides:
-/// - FCP transport instance
-/// - High-level AV/C command submission API
-/// - Cached probe results (subunits, plugs)
-/// - Bus reset handling
-///
-/// **Lifecycle**:
-/// - Created when AVCDiscovery detects AV/C unit (spec ID 0x00A02D)
-/// - Initialize() probes subunits and plugs
-/// - OnBusReset() called when topology changes
-/// - Destroyed when unit terminated
-///
-/// **Usage**:
-/// ```cpp
-/// auto avcUnit = std::make_shared<AVCUnit>(device, unit, asyncSubsystem);
-///
-/// avcUnit->Initialize([](bool success) {
-///     if (success) {
-///         // Unit ready for use
-///     }
-/// });
-///
-/// // Query plugs
-/// avcUnit->GetPlugInfo([](AVCResult result, const PlugInfo& info) {
-///     os_log_info(..., "Plugs: %d in, %d out",
-///                  info.numDestPlugs, info.numSrcPlugs);
-/// });
-/// ```
-class AVCUnit : public std::enable_shared_from_this<AVCUnit> {
+class AVCUnit : public std::enable_shared_from_this<AVCUnit>, public IAVCCommandSubmitter {
 public:
-    /// Plug info (unit-level)
-    using PlugInfo = AVCPlugInfoCommand::PlugInfo;
-
-    /// Constructor
-    ///
-    /// @param device Parent FireWire device
-    /// @param unit Parent unit (must have AV/C spec ID)
-    /// @param asyncSubsystem Async subsystem for FCP transport
     AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             std::shared_ptr<Discovery::FWUnit> unit,
             Async::AsyncSubsystem& asyncSubsystem);
 
     ~AVCUnit();
 
-    // Non-copyable, non-movable
     AVCUnit(const AVCUnit&) = delete;
     AVCUnit& operator=(const AVCUnit&) = delete;
 
-    /// Initialize unit (probe subunits, plugs)
-    ///
-    /// Queries device for:
-    /// - SUBUNIT_INFO: enumerate subunits
-    /// - PLUG_INFO: query unit-level plug counts
-    ///
-    /// @param completion Called when initialization complete (success/failure)
     void Initialize(std::function<void(bool success)> completion);
 
-    /// Submit generic AV/C command
-    ///
-    /// @param cdb Command descriptor block
-    /// @param completion Callback with result and response
-    void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion);
+    void ReScan(std::function<void(bool success)> completion);
 
-    /// Get unit-level plug info (async)
-    ///
-    /// Returns cached result if already initialized, otherwise queries device.
-    ///
-    /// @param completion Callback with plug info
-    void GetPlugInfo(std::function<void(AVCResult, const PlugInfo&)> completion);
+    void ProbeUnitInfo(std::function<void(bool)> completion);
 
-    /// Get subunit list (from cache)
-    ///
-    /// Valid after Initialize() completes successfully.
-    ///
-    /// @return Vector of subunit descriptors
-    const std::vector<AVCSubunit>& GetSubunits() const { return subunits_; }
+    virtual void SubmitCommand(const AVCCdb& cdb, AVCCompletion completion);
 
-    /// Get underlying FWUnit
+    void GetPlugInfo(std::function<void(AVCResult, const UnitPlugCounts&)> completion);
+
+    const UnitPlugCounts& GetCachedPlugCounts() const { return plugCounts_; }
+
+    const std::vector<std::shared_ptr<Subunit>>& GetSubunits() const { return subunits_; }
+
+    const UnitDescriptorInfo& GetDescriptorInfo() const { return descriptorInfo_; }
+
     std::shared_ptr<Discovery::FWUnit> GetFWUnit() const { return unit_.lock(); }
 
-    /// Get underlying FWDevice
     std::shared_ptr<Discovery::FWDevice> GetDevice() const { return device_.lock(); }
 
-    /// Get FCP transport (for PCRSpace or advanced use)
     FCPTransport& GetFCPTransport() { return *fcpTransport_; }
     const FCPTransport& GetFCPTransport() const { return *fcpTransport_; }
 
-    /// Get async subsystem (for PCRSpace)
     Async::AsyncSubsystem& GetAsyncSubsystem() { return asyncSubsystem_; }
 
-    /// Bus reset notification
-    ///
-    /// Called by AVCDiscovery when bus reset occurs.
-    /// Forwards to FCPTransport and optionally invalidates cache.
-    ///
-    /// @param newGeneration New generation number
     void OnBusReset(uint32_t newGeneration);
 
-    /// Check if initialized
     bool IsInitialized() const { return initialized_; }
 
-    /// Get unit GUID
     uint64_t GetGUID() const;
 
-    /// Get unit spec ID (should be 0x00A02D for AV/C)
     uint32_t GetSpecID() const;
 
 private:
-    /// Probe subunits (SUBUNIT_INFO command)
+    void ProbeDescriptorMechanism(std::function<void(bool)> completion);
+
+    bool ParseUnitIdentifier(const std::vector<uint8_t>& data);
+
+    void TraverseRootLists(size_t listIndex, std::function<void(bool)> completion);
+
+    void ReadRootObjectList(uint64_t listID,
+                           std::function<void(bool success, std::vector<uint64_t> objectIDs)> completion);
+
     void ProbeSubunits(std::function<void(bool)> completion);
 
-    /// Probe unit-level plugs (PLUG_INFO command)
     void ProbePlugs(std::function<void(bool)> completion);
 
-    /// Parse subunit info and store in cache
+    void ProbeSignalFormat(std::function<void(bool)> completion);
+
     void StoreSubunitInfo(const AVCSubunitInfoCommand::SubunitInfo& info);
 
-    // Parent device and unit (weak pointers to avoid cycles)
+    void ParseSubunitCapabilities(size_t index, std::function<void(bool)> completion);
+
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
 
-    // Async subsystem reference
     Async::AsyncSubsystem& asyncSubsystem_;
 
-    // FCP transport (owned)
-    std::unique_ptr<FCPTransport> fcpTransport_;
+    OSSharedPtr<FCPTransport> fcpTransport_;
 
-    // Cached probe results
-    std::vector<AVCSubunit> subunits_;
-    PlugInfo unitPlugInfo_;
+    std::shared_ptr<DescriptorAccessor> descriptorAccessor_;
 
-    // Initialization state
+    std::vector<std::shared_ptr<Subunit>> subunits_;
+    UnitPlugCounts plugCounts_;
+    UnitDescriptorInfo descriptorInfo_;
+
     bool initialized_{false};
-
-    os_log_t log_{OS_LOG_DEFAULT};
 };
 
 } // namespace ASFW::Protocols::AVC

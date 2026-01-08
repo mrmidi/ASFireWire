@@ -16,6 +16,7 @@
 #include "../WireFormats/StatusWireFormats.hpp" // ASFWDriver/UserClient/WireFormats/StatusWireFormats.hpp
 #include "../../Logging/Logging.hpp" // ASFWDriver/Logging/Logging.hpp
 
+#include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
 #include <cstdio>
 #include <cstring>
@@ -195,6 +196,11 @@ kern_return_t StatusHandler::RegisterStatusListener(IOUserClientMethodArguments*
         return kIOReturnNotReady;
     }
 
+    if (!userClient->ivars->actionLock) {
+        return kIOReturnNotReady;
+    }
+
+    IOLockLock(userClient->ivars->actionLock);
     if (userClient->ivars->statusAction) {
         userClient->ivars->statusAction->release();
         userClient->ivars->statusAction = nullptr;
@@ -203,6 +209,9 @@ kern_return_t StatusHandler::RegisterStatusListener(IOUserClientMethodArguments*
     args->completion->retain();
     userClient->ivars->statusAction = args->completion;
     userClient->ivars->statusRegistered = true;
+    userClient->ivars->stopping = false;
+    IOLockUnlock(userClient->ivars->actionLock);
+
     userClient->ivars->driver->RegisterStatusListener(userClient);
     return kIOReturnSuccess;
 }

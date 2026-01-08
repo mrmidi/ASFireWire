@@ -6,6 +6,7 @@
 #include "LabelAllocator.hpp"
 #include "../Engine/ATTrace.hpp"  // For NowUs()
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 
 #include <DriverKit/IOReturn.h>
 #include <span>
@@ -59,6 +60,13 @@ public:
             return;
         }
 
+        // AT Response context completions correspond to WrResp acks we send back
+        // to devices. They are not tracked as transactions; skip quietly.
+        if (comp.isResponseContext) {
+            ASFW_LOG_V3(Async, "OnATCompletion: Ignoring AT Response completion (tLabel=%u)", comp.tLabel);
+            return;
+        }
+
         enum class PostAction {
             kNone,
             kCompleteSuccess,
@@ -76,9 +84,9 @@ public:
         uint8_t eventCode = static_cast<uint8_t>(comp.eventCode);
         uint8_t ackCode = comp.ackCode;
 
-        ASFW_LOG(Async,
-                 "🔄 OnATCompletion: tLabel=%u ackCode=0x%X eventCode=0x%02X ts=%u ackCount=%u",
-                 comp.tLabel, ackCode, eventCode, comp.timeStamp, comp.ackCount);
+        ASFW_LOG_V2(Async,
+                    "🔄 OnATCompletion: tLabel=%u ack=0x%X event=0x%02X ts=%u ackCount=%u",
+                    comp.tLabel, ackCode, eventCode, comp.timeStamp, comp.ackCount);
 
 
 
@@ -109,7 +117,7 @@ public:
             // CRITICAL FIX: For READ operations that were already transitioned to AwaitingAR in OnTxPosted,
             // skip AT completion processing entirely. Transaction is already in correct state.
             if (txn->ShouldSkipATCompletion()) {
-                ASFW_LOG(Async, "  ⏭️  OnATCompletion: Skipping (CompleteOnAR, already in %{public}s)",
+                ASFW_LOG_V3(Async, "  ⏭️  OnATCompletion: Skipping (CompleteOnAR, already in %{public}s)",
                          ToString(txn->state()));
                 return;  // Transaction already in AwaitingAR from OnTxPosted
             }
@@ -164,26 +172,39 @@ public:
 
             // Now handle ACK code (IEEE 1394 acknowledgment from target device)
             // Per COMPLETION_ARCHITECTURE.md and IEEE 1394-1995 section 6.2.4.3
+            const auto strategy = txn->GetCompletionStrategy();
+            const bool needsARData = txn->IsReadOperation() || strategy == CompletionStrategy::CompleteOnAR;
+
             switch (ackCode) {
                 case 0x1:  // kFWAckPending (split transaction)
-                    ASFW_LOG(Async, "  → AwaitingAR (ackPending, need AR response)");
+                    ASFW_LOG_V2(Async, "  → AwaitingAR (ackPending, need AR response)");
                     txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackPending");
                     txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
                     // Keep transaction alive, wait for AR response
                     break;
 
                 case 0x0:  // kFWAckComplete (unified transaction)
-                    ASFW_LOG(Async, "  → Completed (ackComplete, immediate)");
-                    
-                    postAction = PostAction::kCompleteSuccess;
-                    transitionTag1 = "OnATCompletion: ackComplete";
-                    transitionTag2 = "OnATCompletion: ackComplete";
+                    if (needsARData) {
+                        ASFW_LOG_V2(Async, "  → AwaitingAR (ackComplete but data required)");
+                        txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackComplete_read");
+                        txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackComplete_read");
+                        break;
+                    }
+                    // Only complete if AR hasn't already won the race
+                    if (txn->TryMarkCompleted()) {
+                        ASFW_LOG_V1(Async, "  → Completed (ackComplete, AT path won)");
+                        postAction = PostAction::kCompleteSuccess;
+                        transitionTag1 = "OnATCompletion: ackComplete";
+                        transitionTag2 = "OnATCompletion: ackComplete";
+                    } else {
+                        ASFW_LOG_V3(Async, "  → ackComplete but AR already completed, ignoring");
+                    }
                     break;
 
                 case 0x4:  // kFWAckBusyX
                 case 0x5:  // kFWAckBusyA
                 case 0x6:  // kFWAckBusyB
-                    ASFW_LOG(Async, "  → Busy (0x%X), extending deadline for retry", ackCode);
+                    ASFW_LOG_V2(Async, "  → Busy (0x%X), extending deadline for retry", ackCode);
                     txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: busy");
 
                     // Phase 2: Extend deadline immediately to prevent rapid timeout
@@ -200,7 +221,7 @@ public:
                     // Per Apple's IOFWAsyncCommand::gotAck(), we should NOT fail here - wait for AR response.
                     // The AT element completed successfully (packet was transmitted), now wait for the
                     // response packet to arrive via AR path.
-                    ASFW_LOG(Async, "  → AwaitingAR (ackCode=0x%X tardy/slow, wait for response)", ackCode);
+                    ASFW_LOG_V2(Async, "  → AwaitingAR (ackCode=0x%X tardy/slow, wait for response)", ackCode);
                     txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: tardy");
                     txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: tardy");
                     // Keep transaction alive, wait for AR response (don't fail!)
@@ -208,7 +229,7 @@ public:
 
                 case 0xD:  // kFWAckDataError
                 case 0xE:  // kFWAckTypeError
-                    ASFW_LOG(Async, "  → Failed (ackError 0x%X)", ackCode);
+                    ASFW_LOG_V1(Async, "  → Failed (ackError 0x%X)", ackCode);
                     
                     postAction = PostAction::kCompleteError;
                     transitionTag1 = "OnATCompletion: ackError";
@@ -217,7 +238,7 @@ public:
                     break;
 
                 default:
-                    ASFW_LOG(Async, "  → Unknown ackCode=0x%X, treating as tardy (wait for AR)", ackCode);
+                    ASFW_LOG_V2(Async, "  → Unknown ackCode=0x%X, treating as tardy (wait for AR)", ackCode);
                     // CRITICAL FIX: Unknown ACKs should wait for AR response, not fail immediately.
                     // Per Apple's split-transaction model, only explicit errors (0xD, 0xE) should fail.
                     // Everything else might still result in a valid AR response.
@@ -228,7 +249,7 @@ public:
         });
 
         if (!found) {
-            ASFW_LOG(Async, "⚠️  OnATCompletion: No transaction for tLabel=%u", comp.tLabel);
+            ASFW_LOG_V2(Async, "⚠️  OnATCompletion: No transaction for tLabel=%u", comp.tLabel);
         }
 
         if (postAction != PostAction::kNone) {
@@ -284,9 +305,9 @@ public:
             return;
         }
 
-        ASFW_LOG(Async,
-                 "📥 OnARResponse: tLabel=%u nodeID=0x%04X gen=%u rcode=0x%X len=%zu",
-                 key.label.value, key.node.value, key.generation.value, rcode, data.size());
+        ASFW_LOG_V2(Async,
+                    "📥 OnARResponse: tLabel=%u nodeID=0x%04X gen=%u rcode=0x%X len=%zu",
+                    key.label.value, key.node.value, key.generation.value, rcode, data.size());
 
 
 
@@ -297,15 +318,30 @@ public:
         }
 
         // Verify we're in correct state
-        if (txn->state() != TransactionState::AwaitingAR) {
-            ASFW_LOG(Async,
-                     "⚠️  OnARResponse: Unexpected state %{public}s (expected AwaitingAR)",
-                     ToString(txn->state()));
-            // This could be a duplicate/stale response - ignore it
+        const auto state = txn->state();
+
+        // 1. If it's already terminal, AR is too late → ignore.
+        if (state == TransactionState::Completed ||
+            state == TransactionState::Failed ||
+            state == TransactionState::Cancelled ||
+            state == TransactionState::TimedOut) {
+            ASFW_LOG_V3(Async, "OnARResponse: AR for terminal txn (state=%{public}s) – ignoring",
+                        ToString(state));
             return;
         }
 
-        // Transition: AwaitingAR → ARReceived
+        // 2. Otherwise, accept AR in ATPosted / ATCompleted / AwaitingAR.
+        if (state != TransactionState::AwaitingAR) {
+            ASFW_LOG_V2(Async, "OnARResponse: AR in state=%{public}s (not AwaitingAR) – accepting as completion",
+                        ToString(state));
+        }
+
+        // 3. Try to mark as completed (guards against double-completion with AT path)
+        if (!txn->TryMarkCompleted()) {
+            ASFW_LOG_V3(Async, "OnARResponse: AR arrived but AT already completed, ignoring");
+            return;
+        }
+
         // Transition: AwaitingAR → ARReceived
         
         // Extract transaction to complete it safely outside lock
@@ -322,7 +358,7 @@ public:
         kern_return_t kr = (rcode == 0) ? kIOReturnSuccess : kIOReturnError;
 
         // Complete transaction
-        ASFW_LOG(Async, "  → Completed (rcode=0x%X, kr=0x%08X)", rcode, kr);
+        ASFW_LOG_V2(Async, "  → Completed (rcode=0x%X, kr=0x%08X)", rcode, kr);
         
         if (txnPtr->state() != TransactionState::Completed &&
             txnPtr->state() != TransactionState::Failed &&
@@ -364,9 +400,9 @@ public:
             uint8_t ackCode = txn->ackCode();
             TransactionState state = txn->state();
 
-            ASFW_LOG(Async,
-                     "⏱️ OnTimeout: tLabel=%u state=%{public}s ackCode=0x%X retries=%u",
-                     txn->label().value, ToString(state), ackCode, txn->retryCount());
+            ASFW_LOG_V1(Async,
+                        "⏱️ OnTimeout: tLabel=%u state=%{public}s ackCode=0x%X retries=%u",
+                        txn->label().value, ToString(state), ackCode, txn->retryCount());
 
             // Smart retry based on ACK code and state
             if (ackCode == 0x4 || ackCode == 0x5 || ackCode == 0x6) {  // Busy

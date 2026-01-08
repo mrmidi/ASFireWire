@@ -10,7 +10,7 @@
 namespace ASFW::Driver {
 
 // Snapshot of OHCI interrupt registers captured in the ISR before routing
-// onto the single-threaded controller queue described in DRAFT.md §5.3.
+// onto the single-threaded controller queue.
 struct InterruptSnapshot {
     uint32_t intEvent{0};
     uint32_t intMask{0};

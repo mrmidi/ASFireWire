@@ -21,6 +21,7 @@ struct TxCompletion {
     uint8_t ackCode{0};                                     ///< IEEE 1394 ACK code from xferStatus[15:12]
     uint8_t tLabel{0xFF};                                   ///< Transaction label (0-63) or 0xFF if unavailable
     HW::OHCIDescriptor* descriptor{nullptr};                ///< Completed descriptor pointer
+    bool isResponseContext{false};                          ///< True if completion came from AT Response context (WrResp)
 };
 
 } // namespace ASFW::Async

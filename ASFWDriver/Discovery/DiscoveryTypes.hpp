@@ -17,7 +17,7 @@ using Guid64 = uint64_t;
 
 struct FwAddress {
     uint16_t bus{0};
-    uint8_t node{0xFF};
+    uint16_t node{0xFFFF};
     
     FwAddress() = default;
     FwAddress(uint16_t b, uint8_t n) : bus(b), node(n) {}
@@ -82,7 +82,7 @@ enum class ROMState : uint8_t {
 // All quadlets are stored in HOST byte order after swapping from wire (big-endian)
 struct ConfigROM {
     Generation gen{0};
-    uint8_t nodeId{0xFF};
+    uint16_t nodeId{0xFFFF};
     BusInfoBlock bib{};
 
     // Bounded slice of Root Directory (first N entries, typically 8-16)
@@ -136,7 +136,7 @@ struct DeviceRecord {
 
     // ---- Live mapping (current generation) ----
     Generation gen{0};
-    uint8_t nodeId{0xFF};        // 0xFF when not present this gen
+    uint16_t nodeId{0xFFFF};        // 0xFFFF when not present this gen
     LinkPolicy link{};
     LifeState state{LifeState::Discovered};
 
@@ -166,11 +166,9 @@ struct DiscoverySnapshot {
 // ============================================================================
 
 struct ROMScannerParams {
-    // TODO: Investigate adaptive speed based on BiB
     FwSpeed startSpeed{FwSpeed::S100};
-    uint8_t maxInflight{2};              // Limit outstanding nodes
-    uint8_t perStepRetries{2};           // Before downgrading speed
-    // ROM size determined dynamically from BIB crc_length field per IEEE 1212
+    uint8_t maxInflight{2};
+    uint8_t perStepRetries{2};
 };
 
 } // namespace ASFW::Discovery

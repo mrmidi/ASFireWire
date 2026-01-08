@@ -41,14 +41,13 @@ class ROMScanner;
 
 namespace ASFW::Driver {
 
-// Coordinates the staged workflow for handling OHCI bus resets as outlined in
-// DRAFT.md §6.8 and ASFW_BusReset_Refactor_Guide.md. Implements a deterministic
-// FSM that enforces spec-ordered steps (OHCI 1.1 §§6.1.1, 7.2.3.2, 11).
+// Coordinates the staged workflow for handling OHCI bus resets.
+// Implements a deterministic FSM that enforces spec-ordered steps
+// (OHCI 1.1 §§6.1.1, 7.2.3.2, 11).
 class BusResetCoordinator {
 public:
     using TopologyReadyCallback = std::function<void(const TopologySnapshot&)>;
 
-    // FSM States (§3 of refactor guide)
     enum class State : uint8_t {
         Idle,               // Normal operation, no reset in progress
         Detecting,          // busReset observed, mask interrupt, prime context
@@ -61,7 +60,6 @@ public:
         Error               // Unrecoverable error path
     };
 
-    // FSM Events (inputs to transitions)
     enum class Event : uint8_t {
         IrqBusReset,        // IntEvent.busReset asserted
         IrqSelfIDComplete,  // IntEvent.selfIDComplete observed
@@ -75,12 +73,6 @@ public:
     BusResetCoordinator();
     ~BusResetCoordinator();
 
-    // Initialize with all dependencies (not just hardware + queue)
-    // FSM actions require asyncSubsystem, selfIdCapture, configRomStager to function
-    // Add InterruptManager for mask synchronization
-    // Add TopologyManager for building topology snapshot after Self-ID decode
-    // Add BusManager for cycle master assignment and gap count optimization
-    // Add ROMScanner for aborting in-flight discovery on bus reset
     void Initialize(HardwareInterface* hw,
                     OSSharedPtr<IODispatchQueue> workQueue,
                     Async::AsyncSubsystem* asyncSys,
@@ -91,7 +83,6 @@ public:
                     BusManager* busManager = nullptr,
                     Discovery::ROMScanner* romScanner = nullptr);
 
-    // ISR-safe, non-blocking event dispatcher
     void OnIrq(uint32_t intEvent, uint64_t timestamp);
 
     void BindCallbacks(TopologyReadyCallback onTopology);
@@ -107,28 +98,24 @@ public:
      * Call this when:
      * 1. Gap=0 detected (critical error, bypass retry limit)
      * 2. Topology actually changes (device added/removed)
-     *
-     * Reference: Linux core-card.c:432-447, card->bm_retries = 0
      */
     void ResetDelegationRetryCounter();
 
 private:
-    // FSM transition engine
     void TransitionTo(State newState, const char* reason);
     void ProcessEvent(Event event);
     void RunStateMachine();
 
-    // FSM Actions (side effects)
     void A_MaskBusReset();
     void A_UnmaskBusReset();
     void ForceUnmaskBusResetIfNeeded();
-    void HandleStraySelfID();  // Drain stray Self-ID when FSM is Idle/Complete
+    void HandleStraySelfID();
     void A_ClearSelfID2Stale();
     void A_ArmSelfIDBuffer();
-    void A_AckSelfIDPair();       // Clear sticky Self-ID interrupt bits after decode
+    void A_AckSelfIDPair();
     void A_StopFlushAT();
     void A_DecodeSelfID();
-    void A_BuildTopology();  // NEW: Build topology snapshot from Self-ID data
+    void A_BuildTopology();
     void A_RestoreConfigROM();
     void A_ClearBusReset();
     void A_EnableFilters();
@@ -141,25 +128,21 @@ private:
     void EvaluateRootDelegation(const TopologySnapshot& topo);
     void ScheduleDeferredRun(uint32_t delayMs, const char* reason);
 
-    // FSM Guards (preconditions)
     bool G_ATInactive();
     bool G_HaveSelfIDPair();
     bool G_ROMImageReady();
     bool G_NodeIDValid() const;
     
-    // Discovery readiness check (comprehensive invariants)
     bool ReadyForDiscovery(Discovery::Generation gen) const;
 
     static uint64_t MonotonicNow();
 
-    // FSM state
     State state_{State::Idle};
     uint64_t stateEntryTime_{0};
     bool selfIDComplete1_{false};
     bool selfIDComplete2_{false};
     uint32_t pendingSelfIDCountReg_{0};
 
-    // Reentrancy protection (atomic for thread-safety)
     std::atomic<bool> workInProgress_{false};
     
     bool firstBusResetSeen_{false};
@@ -167,13 +150,12 @@ private:
 
     BusResetMetrics metrics_{};
     
-    // Reset Capsule timestamps for structured logging
     uint64_t firstIrqTime_{0};
     uint64_t selfIDComplete1Time_{0};
     uint64_t selfIDComplete2Time_{0};
     uint64_t busResetClearTime_{0};
-    std::optional<SelfIDCapture::Result> lastSelfId_;  // Cached decode result (avoid double decode)
-    std::optional<TopologySnapshot> lastTopology_;     // Cached topology snapshot (for Discovery callback)
+    std::optional<SelfIDCapture::Result> lastSelfId_;
+    std::optional<TopologySnapshot> lastTopology_;
     TopologyReadyCallback topologyCallback_;
 
     std::atomic<bool> deferredRunScheduled_{false};
@@ -193,7 +175,6 @@ private:
     bool busResetMasked_{false};
     Discovery::Generation lastGeneration_{0};
     
-    // Software latches for discovery readiness checks
     bool filtersEnabled_{false};
     bool atArmed_{false};
 
@@ -203,7 +184,7 @@ private:
     bool delegateAttemptActive_{false};
     uint8_t delegateTarget_{0xFF};
     uint32_t delegateRetryCount_{0};
-    static constexpr uint32_t kMaxDelegateRetries = 5;  // Linux pattern (core-card.c:493)
+    static constexpr uint32_t kMaxDelegateRetries = 5;
     bool delegateSuppressed_{false};
     uint32_t lastResumeGeneration_{0xFFFFFFFFu};
 };

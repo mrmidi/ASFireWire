@@ -26,10 +26,13 @@ class MetricsSink;
 
 } // namespace ASFW::Driver
 
+namespace ASFW::Shared {
+class IDMAMemory;
+}
+
 namespace ASFW::Async {
 class AsyncSubsystem;
 class IFireWireBus;
-class IDMAMemory;
 class FireWireBusImpl;
 class DMAMemoryImpl;
 }
@@ -46,14 +49,17 @@ class IUnitRegistry;
 
 namespace ASFW::Protocols::AVC {
 class AVCDiscovery;
+class IAVCDiscovery;
 class FCPResponseRouter;
 }
+
+namespace ASFW::IRM { class IRMClient; }
+namespace ASFW::CMP { class CMPClient; }
 
 namespace ASFW::Driver {
 
 // Central orchestrator that wires together hardware access, interrupt routing,
-// bus reset sequencing, and topology publication. Detailed responsibilities are
-// captured in DRAFT.md §6.1.
+// bus reset sequencing, and topology publication.
 class ControllerCore {
 public:
     struct Dependencies {
@@ -70,16 +76,18 @@ public:
         std::shared_ptr<ControllerStateMachine> stateMachine;
         std::shared_ptr<ASFW::Async::AsyncSubsystem> asyncSubsystem;
 
-        // Discovery subsystem
         std::shared_ptr<ASFW::Discovery::SpeedPolicy> speedPolicy;
         std::shared_ptr<ASFW::Discovery::ConfigROMStore> romStore;
         std::shared_ptr<ASFW::Discovery::DeviceRegistry> deviceRegistry;
         std::shared_ptr<ASFW::Discovery::ROMScanner> romScanner;
         std::shared_ptr<ASFW::Discovery::DeviceManager> deviceManager;
 
-        // AV/C Protocol Layer (forward declared above)
         std::shared_ptr<ASFW::Protocols::AVC::AVCDiscovery> avcDiscovery;
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
+
+        std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
+        
+        std::shared_ptr<ASFW::CMP::CMPClient> cmpClient;
     };
 
     ControllerCore(const ControllerConfig& config, Dependencies deps);
@@ -94,24 +102,25 @@ public:
     MetricsSink& Metrics();
     std::optional<TopologySnapshot> LatestTopology() const;
 
-    // Phase 2: Interface accessors (stable API surface)
     Async::IFireWireBus& Bus();
-    Async::IDMAMemory& DMA();
+    Shared::IDMAMemory& DMA();
 
-    // Backward compatibility: Direct access to async subsystem (for transition period)
     Async::AsyncSubsystem& AsyncSubsystem();
 
-    // Discovery subsystem accessors
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;
     void AttachROMScanner(std::shared_ptr<Discovery::ROMScanner> romScanner);
 
-    // Device/Unit management (Phase 1.5)
     Discovery::IDeviceManager* GetDeviceManager() const;
     Discovery::IUnitRegistry* GetUnitRegistry() const;
 
-    // AV/C Protocol accessors
-    Protocols::AVC::AVCDiscovery* GetAVCDiscovery() const;
+    Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
+
+    IRM::IRMClient* GetIRMClient() const;
+    void SetIRMClient(std::shared_ptr<IRM::IRMClient> client);
+    
+    CMP::CMPClient* GetCMPClient() const;
+    void SetCMPClient(std::shared_ptr<CMP::CMPClient> client);
 
 private:
     kern_return_t PerformSoftReset();
@@ -120,7 +129,6 @@ private:
     kern_return_t StageConfigROM(uint32_t busOptions, uint32_t guidHi, uint32_t guidLo);
     void DiagnoseUnrecoverableError();
     
-    // Discovery integration
     void OnTopologyReady(const TopologySnapshot& snapshot);
     void ScheduleDiscoveryPoll(Discovery::Generation gen);
     void PollDiscovery(Discovery::Generation gen);
@@ -131,19 +139,16 @@ private:
     bool running_{false};
     bool hardwareAttached_{false};
     bool hardwareInitialised_{false};
-    bool busTimeRunning_{false};  // Tracks if isochronous cycle timer is active
-    uint32_t ohciVersion_{0};     // Hardware OHCI version (masked: 0x00FF00FF)
+    bool busTimeRunning_{false};
+    uint32_t ohciVersion_{0};
     bool phyProgramSupported_{false};
     bool phyConfigOk_{false};
 
-    // Self-ID interrupt state tracking (Phase 3B)
     // OHCI generates TWO Self-ID complete interrupts: selfIDComplete (bit 16) and selfIDComplete2 (bit 15)
     // Must wait for BOTH before re-arming buffer to avoid UnrecoverableError during DMA
     bool selfIDComplete1Seen_{false};
     bool selfIDComplete2Seen_{false};
 
-    // Phase 2: Interface facades (owned by ControllerCore)
-    // These provide stable API boundaries over the async engine internals
     std::unique_ptr<Async::FireWireBusImpl> busImpl_;
     std::unique_ptr<Async::DMAMemoryImpl> dmaImpl_;
 };

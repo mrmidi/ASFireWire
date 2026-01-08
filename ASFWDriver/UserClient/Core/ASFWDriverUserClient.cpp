@@ -8,6 +8,7 @@
 
 #include "ASFWDriverUserClient.h"
 #include "ASFWDriver.h"
+#include "../../Controller/ControllerCore.hpp"
 #include "../Handlers/BusResetHandler.hpp"
 #include "../Handlers/TopologyHandler.hpp"
 #include "../Handlers/StatusHandler.hpp"
@@ -15,10 +16,14 @@
 #include "../Handlers/ConfigROMHandler.hpp"
 #include "../Handlers/DeviceDiscoveryHandler.hpp"
 #include "../Handlers/AVCHandler.hpp"
+#include "../Handlers/IsochHandler.hpp"
 #include "../Storage/TransactionStorage.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 #include "../../Shared/DriverVersionInfo.hpp"
 #include "../../Version/DriverVersion.hpp"
+#include "../../IRM/IRMClient.hpp"
+#include "../../Protocols/AVC/CMP/CMPClient.hpp"
 
 
 #include <DriverKit/IOLib.h>
@@ -49,6 +54,29 @@ enum {
     kMethodSetHexDumps             = 20,
     kMethodGetLogConfig            = 21,
     kMethodGetAVCUnits             = 22,
+    kMethodGetSubunitCapabilities  = 23,
+    kMethodGetSubunitDescriptor    = 24,
+    kMethodReScanAVCUnits          = 25,
+    // TODO: IRM test method - temporary location for Phase 0.5 testing
+    kMethodTestIRMAllocation       = 26,
+    kMethodTestIRMRelease          = 27,
+    // TODO: CMP test methods - temporary location for Phase 0.5 testing
+    kMethodTestCMPConnectOPCR      = 28,
+    kMethodTestCMPDisconnectOPCR   = 29,
+    kMethodTestCMPConnectIPCR      = 30,
+    kMethodTestCMPDisconnectIPCR   = 31,
+    
+    // Isoch Stream Control
+    kMethodStartIsochReceive       = 32,
+    kMethodStopIsochReceive        = 33,
+    
+    // Isoch Metrics
+    kMethodGetIsochRxMetrics       = 34,
+    kMethodResetIsochRxMetrics     = 35,
+    
+    // Isoch Transmit Control (IT DMA allocation only - no CMP)
+    kMethodStartIsochTransmit      = 36,
+    kMethodStopIsochTransmit       = 37,
 };
 
 bool ASFWDriverUserClient::init()
@@ -66,11 +94,21 @@ bool ASFWDriverUserClient::init()
     ivars->statusAction = nullptr;
     ivars->transactionListenerRegistered = false;
     ivars->transactionAction = nullptr;
+    ivars->actionLock = IOLockAlloc();
+    if (!ivars->actionLock) {
+        IOSafeDeleteNULL(ivars, ASFWDriverUserClient_IVars, 1);
+        return false;
+    }
+    ivars->stopping = false;
 
     // Allocate transaction storage
     auto* storage = new ASFW::UserClient::TransactionStorage();
     if (!storage || !storage->IsValid()) {
         delete storage;
+        if (ivars->actionLock) {
+            IOLockFree(ivars->actionLock);
+            ivars->actionLock = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWDriverUserClient_IVars, 1);
         return false;
     }
@@ -84,7 +122,8 @@ bool ASFWDriverUserClient::init()
     ivars->configROMHandler = nullptr;
     ivars->deviceDiscoveryHandler = nullptr;
     ivars->avcHandler = nullptr;
-
+    ivars->isochHandler = nullptr;
+    
     return true;
 }
 
@@ -94,13 +133,20 @@ void ASFWDriverUserClient::free()
         if (ivars->driver && ivars->statusRegistered) {
             ivars->driver->UnregisterStatusListener(this);
         }
-        if (ivars->statusAction) {
-            ivars->statusAction->release();
-            ivars->statusAction = nullptr;
-        }
-        if (ivars->transactionAction) {
-            ivars->transactionAction->release();
-            ivars->transactionAction = nullptr;
+        if (ivars->actionLock) {
+            IOLockLock(ivars->actionLock);
+            ivars->stopping = true;
+            if (ivars->statusAction) {
+                ivars->statusAction->release();
+                ivars->statusAction = nullptr;
+            }
+            if (ivars->transactionAction) {
+                ivars->transactionAction->release();
+                ivars->transactionAction = nullptr;
+            }
+            IOLockUnlock(ivars->actionLock);
+            IOLockFree(ivars->actionLock);
+            ivars->actionLock = nullptr;
         }
 
         // Delete handlers
@@ -111,7 +157,8 @@ void ASFWDriverUserClient::free()
         delete static_cast<ASFW::UserClient::ConfigROMHandler*>(ivars->configROMHandler);
         delete static_cast<ASFW::UserClient::DeviceDiscoveryHandler*>(ivars->deviceDiscoveryHandler);
         delete static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler);
-
+        delete static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler);
+        
         if (ivars->transactionStorage) {
             delete static_cast<ASFW::UserClient::TransactionStorage*>(ivars->transactionStorage);
             ivars->transactionStorage = nullptr;
@@ -134,6 +181,12 @@ kern_return_t IMPL(ASFWDriverUserClient, Start)
         return kIOReturnError;
     }
 
+    if (ivars->actionLock) {
+        IOLockLock(ivars->actionLock);
+        ivars->stopping = false;
+        IOLockUnlock(ivars->actionLock);
+    }
+
     ivars->statusRegistered = false;
     if (ivars->statusAction) {
         ivars->statusAction->release();
@@ -150,12 +203,17 @@ kern_return_t IMPL(ASFWDriverUserClient, Start)
         static_cast<TransactionStorage*>(ivars->transactionStorage)));
     ivars->configROMHandler = static_cast<void*>(new ConfigROMHandler(ivars->driver));
     ivars->deviceDiscoveryHandler = static_cast<void*>(new DeviceDiscoveryHandler(ivars->driver));
-    ivars->avcHandler = static_cast<void*>(new AVCHandler(ivars->driver));
+
+    // Get AVCDiscovery for AVCHandler
+    auto* controllerCore = static_cast<ASFW::Driver::ControllerCore*>(ivars->driver->GetControllerCore());
+    auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
+    ivars->avcHandler = static_cast<void*>(new AVCHandler(avcDiscovery));
+    ivars->isochHandler = static_cast<void*>(new IsochHandler(ivars->driver));
 
     if (!ivars->busResetHandler || !ivars->topologyHandler ||
         !ivars->statusHandler || !ivars->transactionHandler ||
         !ivars->configROMHandler || !ivars->deviceDiscoveryHandler ||
-        !ivars->avcHandler) {
+        !ivars->avcHandler || !ivars->isochHandler) {
         ASFW_LOG(UserClient, "Start() failed to create handlers");
         return kIOReturnNoMemory;
     }
@@ -166,17 +224,24 @@ kern_return_t IMPL(ASFWDriverUserClient, Start)
 
 kern_return_t IMPL(ASFWDriverUserClient, Stop)
 {
-    if (ivars && ivars->driver && ivars->statusRegistered) {
-        ivars->driver->UnregisterStatusListener(this);
+    if (ivars && ivars->actionLock) {
+        IOLockLock(ivars->actionLock);
+        ivars->stopping = true;
         ivars->statusRegistered = false;
+        ivars->transactionListenerRegistered = false;
+        if (ivars->statusAction) {
+            ivars->statusAction->release();
+            ivars->statusAction = nullptr;
+        }
+        if (ivars->transactionAction) {
+            ivars->transactionAction->release();
+            ivars->transactionAction = nullptr;
+        }
+        IOLockUnlock(ivars->actionLock);
     }
 
-    if (ivars && ivars->statusAction) {
-        ivars->statusAction->release();
-        ivars->statusAction = nullptr;
-    }
-
-    if (ivars) {
+    if (ivars && ivars->driver) {
+        ivars->driver->UnregisterStatusListener(this);
         ivars->driver = nullptr;
     }
 
@@ -195,7 +260,7 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
     (void)target;
     (void)reference;
 
-    ASFW_LOG(UserClient, "ExternalMethod called: selector=%llu", selector);
+    ASFW_LOG_V3(UserClient, "ExternalMethod called: selector=%llu", selector);
 
     if (!ivars || !ivars->driver) {
         ASFW_LOG(UserClient, "ExternalMethod: Not ready (ivars=%p driver=%p)", ivars, ivars ? ivars->driver : nullptr);
@@ -269,9 +334,18 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
         case kMethodGetDiscoveredDevices:
             return static_cast<ASFW::UserClient::DeviceDiscoveryHandler*>(ivars->deviceDiscoveryHandler)->GetDiscoveredDevices(arguments);
 
-        // AVCHandler methods (22)
+        // AVCHandler methods (22, 23, 24)
         case kMethodGetAVCUnits:
             return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->GetAVCUnits(arguments);
+
+        case kMethodGetSubunitCapabilities:
+            return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->GetSubunitCapabilities(arguments);
+
+        case kMethodGetSubunitDescriptor:
+            return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->GetSubunitDescriptor(arguments);
+
+        case kMethodReScanAVCUnits:
+            return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->ReScanAVCUnits(arguments);
 
         // TransactionHandler methods - CompareSwap (17)
         case kMethodAsyncCompareSwap:
@@ -279,9 +353,9 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
 
         // Version query (18)
         case kMethodGetDriverVersion: {
-            ASFW_LOG(UserClient, "GetDriverVersion called");
-            ASFW_LOG(UserClient, "  structureOutput=%p", arguments->structureOutput);
-            ASFW_LOG(UserClient, "  structureOutputDescriptor=%p", arguments->structureOutputDescriptor);
+            ASFW_LOG_V3(UserClient, "GetDriverVersion called");
+            ASFW_LOG_V3(UserClient, "  structureOutput=%p", arguments->structureOutput);
+            ASFW_LOG_V3(UserClient, "  structureOutputDescriptor=%p", arguments->structureOutputDescriptor);
             
             // Create version info
             ASFW::Shared::DriverVersionInfo versionInfo{};
@@ -293,21 +367,21 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
             std::strncpy(versionInfo.buildHost, ASFW::Version::kBuildHost, sizeof(versionInfo.buildHost) - 1);
             versionInfo.gitDirty = ASFW::Version::kGitDirty;
 
-            ASFW_LOG(UserClient, "  Creating OSData with %zu bytes", sizeof(versionInfo));
+            ASFW_LOG_V3(UserClient, "  Creating OSData with %zu bytes", sizeof(versionInfo));
             
             // Create OSData to return structure output
             // Note: structureOutput is initially NULL. We must create and assign the OSData object.
             // The kernel will copy the data from this object to the user's buffer.
             OSData* data = OSData::withBytes(&versionInfo, sizeof(versionInfo));
             if (!data) {
-                ASFW_LOG(UserClient, "  OSData::withBytes failed!");
+                ASFW_LOG_V0(UserClient, "  OSData::withBytes failed!");
                 return kIOReturnNoMemory;
             }
             
-            ASFW_LOG(UserClient, "  OSData created successfully, assigning to structureOutput");
+            ASFW_LOG_V3(UserClient, "  OSData created successfully, assigning to structureOutput");
             arguments->structureOutput = data;
 
-            ASFW_LOG(UserClient, "GetDriverVersion: %{public}s", ASFW::Version::kFullVersionString);
+            ASFW_LOG_V3(UserClient, "GetDriverVersion: %{public}s", ASFW::Version::kFullVersionString);
             return kIOReturnSuccess;
         }
 
@@ -343,6 +417,43 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
             return kr;
         }
 
+        case kMethodTestIRMAllocation:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->TestIRMAllocation(arguments);
+            
+        case kMethodTestIRMRelease:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->TestIRMRelease(arguments);
+            
+        case kMethodTestCMPConnectOPCR:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->TestCMPConnectOPCR(arguments);
+            
+        case kMethodTestCMPDisconnectOPCR:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->TestCMPDisconnectOPCR(arguments);
+            
+        case kMethodTestCMPConnectIPCR:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->TestCMPConnectIPCR(arguments);
+            
+        case kMethodTestCMPDisconnectIPCR:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->TestCMPDisconnectIPCR(arguments);
+            
+        case kMethodStartIsochReceive:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->StartIsochReceive(arguments);
+            
+        case kMethodStopIsochReceive:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->StopIsochReceive(arguments);
+            
+        case kMethodGetIsochRxMetrics:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->GetIsochRxMetrics(arguments);
+            
+        case kMethodResetIsochRxMetrics:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->ResetIsochRxMetrics(arguments);
+        
+        // IT DMA Allocation (no CMP - just allocates memory)
+        case kMethodStartIsochTransmit:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->StartIsochTransmit(arguments);
+            
+        case kMethodStopIsochTransmit:
+            return static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler)->StopIsochTransmit(arguments);
+        
         default:
             return kIOReturnBadArgument;
     }
@@ -403,29 +514,55 @@ kern_return_t ASFWDriverUserClient::AsyncCompareSwap(
 void ASFWDriverUserClient::NotifyStatus(uint64_t sequence,
                                         uint32_t reason)
 {
-    if (!ivars || !ivars->statusRegistered || !ivars->statusAction) {
+    if (!ivars || !ivars->actionLock) {
+        return;
+    }
+
+    OSAction* action = nullptr;
+    IOLockLock(ivars->actionLock);
+    if (!ivars->stopping && ivars->statusRegistered && ivars->statusAction) {
+        action = ivars->statusAction;
+        action->retain();
+    }
+    IOLockUnlock(ivars->actionLock);
+
+    if (!action) {
         return;
     }
 
     IOUserClientAsyncArgumentsArray data{};
     data[0] = sequence;
     data[1] = reason;
-    AsyncCompletion(ivars->statusAction, kIOReturnSuccess, data, 2);
+    AsyncCompletion(action, kIOReturnSuccess, data, 2);
+    action->release();
 }
 
 void ASFWDriverUserClient::NotifyTransactionComplete(uint16_t handle,
                                                      uint32_t status)
 {
-    if (!ivars || !ivars->transactionListenerRegistered || !ivars->transactionAction) {
+    if (!ivars || !ivars->actionLock) {
         return;
     }
 
     ASFW_LOG(UserClient, "NotifyTransactionComplete: handle=0x%04x status=0x%08x", handle, status);
 
+    OSAction* action = nullptr;
+    IOLockLock(ivars->actionLock);
+    if (!ivars->stopping && ivars->transactionListenerRegistered && ivars->transactionAction) {
+        action = ivars->transactionAction;
+        action->retain();
+    }
+    IOLockUnlock(ivars->actionLock);
+
+    if (!action) {
+        return;
+    }
+
     IOUserClientAsyncArgumentsArray data{};
     data[0] = handle;
     data[1] = status;
-    AsyncCompletion(ivars->transactionAction, kIOReturnSuccess, data, 2);
+    AsyncCompletion(action, kIOReturnSuccess, data, 2);
+    action->release();
 }
 
 kern_return_t ASFWDriverUserClient::GetTransactionResult(

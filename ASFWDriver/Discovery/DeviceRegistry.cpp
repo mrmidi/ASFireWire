@@ -4,26 +4,18 @@
 
 namespace ASFW::Discovery {
 
-// Well-known Unit_Spec_Id values for device classification
-// IEEE 1394 Trade Association: 0x00A02D
 constexpr uint32_t kUnitSpecId_TA = 0x00A02D;
-
-// AV/C specification IDs (used for audio/video devices)
-constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;  // Same as TA for AV/C
+constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
 
 DeviceRegistry::DeviceRegistry() = default;
 
 DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link) {
     const Guid64 guid = rom.bib.guid;
     
-    // Find or create device record
     auto& device = devicesByGuid_[guid];
     
-    // Update stable identity
     device.guid = guid;
 
-    // Extract vendor ID, model ID, and other metadata from root directory entries
-    // NOTE: Vendor ID is in root directory (key 0x03), NOT in BIB per IEEE 1212
     for (const auto& entry : rom.rootDirMinimal) {
         if (entry.key == CfgKey::VendorId) {
             device.vendorId = entry.value;
@@ -36,21 +28,17 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         }
     }
 
-    // Copy text descriptors from ROM (vendor/model names from text descriptor leafs)
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
     
-    // Classify device
     device.kind = ClassifyDevice(rom);
     device.isAudioCandidate = IsAudioCandidate(rom);
     
-    // Update live mapping
     device.gen = rom.gen;
     device.nodeId = rom.nodeId;
     device.link = link;
     device.state = LifeState::Identified;
     
-    // Update secondary index
     GenNodeKey key = MakeKey(rom.gen, rom.nodeId);
     genNodeToGuid_[key] = guid;
     
@@ -64,16 +52,15 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         default: break;
     }
 
-    // Log device with vendor/model names if available
     if (!device.vendorName.empty() && !device.modelName.empty()) {
-        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
-                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
+        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%s) model=0x%06x(%s) "
+                 "kind=%s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.vendorName.c_str(),
                  device.modelId, device.modelName.c_str(), kindStr,
                  device.isAudioCandidate, rom.nodeId, rom.gen);
     } else {
         ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
-                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
+                 "kind=%s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.modelId, kindStr,
                  device.isAudioCandidate, rom.nodeId, rom.gen);
     }
@@ -178,11 +165,9 @@ DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
         if (entry.key == CfgKey::Unit_Spec_Id) {
             const uint32_t specId = entry.value;
             
-            // Check for known specifications
             if (specId == kUnitSpecId_TA) {
                 return DeviceKind::TA_61883;
             }
-            // Could add more classification rules here
         }
     }
     

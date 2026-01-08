@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <DriverKit/DriverKit.h>
 #include "../Logging/Logging.hpp"
+#include "../Logging/LogConfig.hpp"
 
 namespace ASFW::Discovery {
 
@@ -11,7 +12,7 @@ ConfigROMStore::ConfigROMStore() = default;
 void ConfigROMStore::Insert(const ConfigROM& rom) {
     if (rom.bib.guid == 0) {
         // Invalid ROM, skip
-        ASFW_LOG(ConfigROM, "ConfigROMStore::Insert: Invalid ROM (GUID=0), skipping");
+        ASFW_LOG_V0(ConfigROM, "ConfigROMStore::Insert: Invalid ROM (GUID=0), skipping");
         return;
     }
 
@@ -37,7 +38,7 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     if (it == romsByGuid_.end() || it->second.gen < romCopy.gen) {
         romsByGuid_[romCopy.bib.guid] = romCopy;
 
-        ASFW_LOG(ConfigROM, "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u",
+        ASFW_LOG_V2(ConfigROM, "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u",
                  romCopy.bib.guid, romCopy.gen, romCopy.nodeId,
                  static_cast<uint8_t>(romCopy.state));
     }
@@ -258,7 +259,7 @@ std::optional<BusInfoBlock> ParseBIB(const uint32_t* bibQuadlets) {
     // Quadlets 3-4: GUID (64-bit) - IEEE 1394-1995 §8.3.2.2
     bib.guid = (static_cast<uint64_t>(q3) << 32) | static_cast<uint64_t>(q4);
     
-    ASFW_LOG(ConfigROM, "Parsed BIB: GUID=0x%016llx linkSpeed=%u (vendor from root dir)",
+    ASFW_LOG_V1(ConfigROM, "Parsed BIB: GUID=0x%016llx linkSpeed=%u (vendor from root dir)",
              bib.guid, bib.linkSpeedCode);
     
     return bib;
@@ -269,7 +270,7 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
     std::vector<RomEntry> entries;
     
     if (dirQuadlets == nullptr || maxQuadlets == 0) {
-        ASFW_LOG(ConfigROM, "ParseRootDirectory: null data or zero length");
+        ASFW_LOG_V0(ConfigROM, "ParseRootDirectory: null data or zero length");
         return entries;
     }
     
@@ -277,7 +278,7 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
     const uint32_t header = SwapBE32(dirQuadlets[0]);
     const uint16_t dirLength = static_cast<uint16_t>((header >> 16) & 0xFFFF);
     
-    ASFW_LOG(ConfigROM, "ParseRootDirectory: header=0x%08x dirLength=%u maxQuadlets=%u",
+    ASFW_LOG_V3(ConfigROM, "ParseRootDirectory: header=0x%08x dirLength=%u maxQuadlets=%u",
              header, dirLength, maxQuadlets);
     
     // Bound the scan to the minimum of: actual length, max requested, and safety limit
@@ -289,14 +290,14 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
         scanLimit = 16;  // Safety: never scan more than 16 entries
     }
     
-    ASFW_LOG(ConfigROM, "ParseRootDirectory: scanning %u entries (dirLength=%u maxQuadlets=%u)",
+    ASFW_LOG_V3(ConfigROM, "ParseRootDirectory: scanning %u entries (dirLength=%u maxQuadlets=%u)",
              scanLimit, dirLength, maxQuadlets);
     
     // Parse entries (start at quadlet 1, after header)
     for (uint32_t i = 1; i <= scanLimit && i < maxQuadlets; ++i) {
         const uint32_t entry = SwapBE32(dirQuadlets[i]);
         
-        ASFW_LOG(ConfigROM, "  Q[%u]: raw=0x%08x", i, entry);
+        ASFW_LOG_V3(ConfigROM, "  Q[%u]: raw=0x%08x", i, entry);
         
         // Entry format: [key_type:2][key_id:6][value:24]
         // key_type (bits 30-31): 0=immediate, 1=CSR offset, 2=leaf, 3=directory
@@ -305,7 +306,7 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
         const uint8_t keyId = static_cast<uint8_t>((entry >> 24) & 0x3F);
         const uint32_t value = entry & 0x00FFFFFF;
         
-        ASFW_LOG(ConfigROM, "       keyType=%u keyId=0x%02x value=0x%06x",
+        ASFW_LOG_V3(ConfigROM, "       keyType=%u keyId=0x%02x value=0x%06x",
                  keyType, keyId, value);
         
         // Calculate absolute ROM offset for leaf/directory entries
@@ -314,7 +315,7 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
             // value is signed 24-bit offset in quadlets from current entry
             const int32_t signedValue = (value & 0x800000) ? (value | 0xFF000000) : value;
             targetOffsetQuadlets = i + signedValue;  // Absolute offset in root dir quadlets
-            ASFW_LOG(ConfigROM, "       → Leaf/Dir offset: %d quadlets from entry %u = absolute %u",
+            ASFW_LOG_V3(ConfigROM, "       → Leaf/Dir offset: %d quadlets from entry %u = absolute %u",
                      signedValue, i, targetOffsetQuadlets);
         }
 
@@ -323,60 +324,60 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
             case 0x01:  // Textual descriptor (leaf)
                 if (keyType == EntryType::kLeaf) {
                     entries.push_back(RomEntry{CfgKey::TextDescriptor, value, keyType, targetOffsetQuadlets});
-                    ASFW_LOG(ConfigROM, "       → TextDescriptor (leaf at offset %u)", targetOffsetQuadlets);
+                    ASFW_LOG_V3(ConfigROM, "       → TextDescriptor (leaf at offset %u)", targetOffsetQuadlets);
                 }
                 break;
             case 0x03:  // Vendor ID
                 if (keyType == EntryType::kImmediate) {
                     entries.push_back(RomEntry{CfgKey::VendorId, value, keyType, 0});
-                    ASFW_LOG(ConfigROM, "       → VendorId=0x%06x", value);
+                    ASFW_LOG_V3(ConfigROM, "       → VendorId=0x%06x", value);
                 }
                 break;
             case 0x17:  // Model ID
                 if (keyType == EntryType::kImmediate) {
                     entries.push_back(RomEntry{CfgKey::ModelId, value, keyType, 0});
-                    ASFW_LOG(ConfigROM, "       → ModelId=0x%06x", value);
+                    ASFW_LOG_V3(ConfigROM, "       → ModelId=0x%06x", value);
                 }
                 break;
             case 0x12:  // Unit_Spec_Id
                 if (keyType == EntryType::kImmediate) {
                     entries.push_back(RomEntry{CfgKey::Unit_Spec_Id, value, keyType, 0});
-                    ASFW_LOG(ConfigROM, "       → Unit_Spec_Id=0x%06x", value);
+                    ASFW_LOG_V3(ConfigROM, "       → Unit_Spec_Id=0x%06x", value);
                 }
                 break;
             case 0x13:  // Unit_Sw_Version
                 if (keyType == EntryType::kImmediate) {
                     entries.push_back(RomEntry{CfgKey::Unit_Sw_Version, value, keyType, 0});
-                    ASFW_LOG(ConfigROM, "       → Unit_Sw_Version=0x%06x", value);
+                    ASFW_LOG_V3(ConfigROM, "       → Unit_Sw_Version=0x%06x", value);
                 }
                 break;
             case 0x14:  // Logical_Unit_Number
                 if (keyType == EntryType::kImmediate) {
                     entries.push_back(RomEntry{CfgKey::Logical_Unit_Number, value, keyType, 0});
-                    ASFW_LOG(ConfigROM, "       → Logical_Unit_Number=0x%06x", value);
+                    ASFW_LOG_V3(ConfigROM, "       → Logical_Unit_Number=0x%06x", value);
                 }
                 break;
             case 0x0C:  // Node_Capabilities
                 if (keyType == EntryType::kImmediate) {
                     entries.push_back(RomEntry{CfgKey::Node_Capabilities, value, keyType, 0});
-                    ASFW_LOG(ConfigROM, "       → Node_Capabilities=0x%06x", value);
+                    ASFW_LOG_V3(ConfigROM, "       → Node_Capabilities=0x%06x", value);
                 }
                 break;
             case 0x11:  // Unit_Directory (IEEE 1212 key 0xD1, keyId portion is 0x11 when keyType=3)
                 if (keyType == EntryType::kDirectory) {
                     entries.push_back(RomEntry{CfgKey::Unit_Directory, value, keyType, targetOffsetQuadlets});
-                    ASFW_LOG(ConfigROM, "       → Unit_Directory (dir at offset %u)", targetOffsetQuadlets);
+                    ASFW_LOG_V3(ConfigROM, "       → Unit_Directory (dir at offset %u)", targetOffsetQuadlets);
                 }
                 break;
             default:
-                ASFW_LOG(ConfigROM, "       → Unrecognized keyId=0x%02x, skipping", keyId);
+                ASFW_LOG_V3(ConfigROM, "       → Unrecognized keyId=0x%02x, skipping", keyId);
                 break;  // Unrecognized key, skip
         }
     }
     
-    ASFW_LOG(ConfigROM, "Parsed root directory: %zu entries found", entries.size());
+    ASFW_LOG_V1(ConfigROM, "Parsed root directory: %zu entries found", entries.size());
     for (const auto& entry : entries) {
-        ASFW_LOG(ConfigROM, "  Entry: key=0x%02x value=0x%06x",
+        ASFW_LOG_V2(ConfigROM, "  Entry: key=0x%02x value=0x%06x",
                  static_cast<uint8_t>(entry.key), entry.value);
     }
     
@@ -387,55 +388,44 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
 // Returns decoded ASCII text, or empty string if not a valid text descriptor
 std::string ParseTextDescriptorLeaf(const uint32_t* allQuadlets, uint32_t totalQuadlets,
                                     uint32_t leafOffsetQuadlets, const std::string& endianness) {
-    ASFW_LOG(ConfigROM, "    ParseTextDescriptorLeaf: offset=%u total=%u endian=%{public}s",
+    ASFW_LOG_V3(ConfigROM, "    ParseTextDescriptorLeaf: offset=%u total=%u endian=%{public}s",
              leafOffsetQuadlets, totalQuadlets, endianness.c_str());
 
-    // Validate offset
     if (leafOffsetQuadlets + 2 >= totalQuadlets) {
-        ASFW_LOG(ConfigROM, "    ❌ Validation failed: offset+2 (%u) >= total (%u)",
+        ASFW_LOG_V2(ConfigROM, "    ❌ Validation failed: offset+2 (%u) >= total (%u)",
                  leafOffsetQuadlets + 2, totalQuadlets);
-        return "";  // Not enough data
+        return "";
     }
 
-    // IEEE 1212 (spec 7.5): ALL directory and leaf data is ALWAYS big-endian
-    // This includes: leaf headers, directory entries, descriptor headers, AND text data
-    // The BIB endianness flag does NOT affect IEEE 1212 structural parsing
-    //
-    // rawQuadlets are in HOST byte order, so we must swap to read as big-endian
     auto readBE32 = [&](uint32_t idx) -> uint32_t {
         if (idx >= totalQuadlets) return 0;
-        return SwapBE32(allQuadlets[idx]);  // Always read structural elements as big-endian
+        return SwapBE32(allQuadlets[idx]);
     };
 
-    // Read leaf header: [length:16|CRC:16] (always big-endian per IEEE 1212)
     const uint32_t header = readBE32(leafOffsetQuadlets);
-    const uint16_t leafLength = (header >> 16) & 0xFFFF;  // Upper 16 bits = length
+    const uint16_t leafLength = (header >> 16) & 0xFFFF;
 
-    ASFW_LOG(ConfigROM, "    Leaf header: 0x%08x → length=%u quadlets", header, leafLength);
+    ASFW_LOG_V3(ConfigROM, "    Leaf header: 0x%08x → length=%u quadlets", header, leafLength);
 
-    // Need at least 2 quadlets: descriptor header + type/specifier
     if (leafLength < 2 || leafOffsetQuadlets + 1 + leafLength >= totalQuadlets) {
-        ASFW_LOG(ConfigROM, "    ❌ Length check failed: leafLength=%u offset+1+len=%u total=%u",
+        ASFW_LOG_V2(ConfigROM, "    ❌ Length check failed: leafLength=%u offset+1+len=%u total=%u",
                  leafLength, leafOffsetQuadlets + 1 + leafLength, totalQuadlets);
         return "";
     }
 
-    // Read descriptor type/specifier (second quadlet of leaf payload, always big-endian)
     const uint32_t typeSpec = readBE32(leafOffsetQuadlets + 2);
     const uint8_t descriptorType = (typeSpec >> 24) & 0xFF;
     const uint32_t specifierId = typeSpec & 0xFFFFFF;
 
-    ASFW_LOG(ConfigROM, "    Type/Spec: 0x%08x → type=%u specifier=0x%06x",
+    ASFW_LOG_V3(ConfigROM, "    Type/Spec: 0x%08x → type=%u specifier=0x%06x",
              typeSpec, descriptorType, specifierId);
 
-    // Only handle textual descriptors (type=0, specifier=0)
     if (descriptorType != 0 || specifierId != 0) {
-        ASFW_LOG(ConfigROM, "    ❌ Not a text descriptor: type=%u spec=0x%06x",
+        ASFW_LOG_V2(ConfigROM, "    ❌ Not a text descriptor: type=%u spec=0x%06x",
                  descriptorType, specifierId);
         return "";
     }
 
-    // Text starts at quadlet 3 of leaf (after header + desc_header + type/spec)
     const uint32_t textStartQuadlet = leafOffsetQuadlets + 3;
     const uint32_t textQuadlets = (leafLength >= 2) ? (leafLength - 2) : 0;
 
@@ -443,16 +433,12 @@ std::string ParseTextDescriptorLeaf(const uint32_t* allQuadlets, uint32_t totalQ
         return "";
     }
 
-    // Extract text bytes
-    // NOTE: TEXT DATA (unlike structural elements) is stored in big-endian byte order
-    // rawQuadlets are in host byte order, so we read as big-endian and extract bytes MSB first
     std::string text;
     text.reserve(textQuadlets * 4);
 
     for (uint32_t i = 0; i < textQuadlets; ++i) {
         const uint32_t quadlet = readBE32(textStartQuadlet + i);
 
-        // Extract bytes in big-endian order (MSB to LSB)
         for (int j = 3; j >= 0; --j) {
             const uint8_t byte = (quadlet >> (j * 8)) & 0xFF;
             if (byte != 0) {
@@ -475,12 +461,12 @@ uint32_t CalculateROMSize(const BusInfoBlock& bib) {
     // Clamp to IEEE 1394-1995 maximum Config ROM size (1024 bytes = 256 quadlets)
     const uint32_t kMaxROMBytes = 1024;
     if (totalBytes > kMaxROMBytes) {
-        ASFW_LOG(ConfigROM, "⚠️  ROM size %u exceeds IEEE 1394 max (%u), clamping",
+        ASFW_LOG_V1(ConfigROM, "⚠️  ROM size %u exceeds IEEE 1394 max (%u), clamping",
                  totalBytes, kMaxROMBytes);
         totalBytes = kMaxROMBytes;
     }
 
-    ASFW_LOG(ConfigROM, "Calculated ROM size from BIB: crcLength=%u → %u bytes (%u quadlets)",
+    ASFW_LOG_V2(ConfigROM, "Calculated ROM size from BIB: crcLength=%u → %u bytes (%u quadlets)",
              bib.crcLength, totalBytes, totalBytes / 4);
 
     return totalBytes;

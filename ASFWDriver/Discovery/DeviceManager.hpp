@@ -11,23 +11,10 @@
 
 namespace ASFW::Discovery {
 
-/**
- * @brief Concrete implementation of IDeviceManager.
- *
- * Thread-safe device and unit registry. Maintains GUID-based device identity
- * across bus resets and provides observer-based notifications.
- *
- * Threading:
- * - All public methods are thread-safe
- * - Observer callbacks invoked with lock held (observers must not block)
- * - Callbacks executed synchronously on caller's thread
- */
 class DeviceManager : public IDeviceManager {
 public:
     DeviceManager();
     ~DeviceManager() override;
-
-    // === IUnitRegistry Implementation ===
 
     std::vector<std::shared_ptr<FWUnit>> FindUnitsBySpec(
         uint32_t specId,
@@ -83,39 +70,32 @@ public:
     void TerminateDevice(Guid64 guid) override;
 
 private:
-    // Helper: Notify device observers
     void NotifyDeviceAdded(std::shared_ptr<FWDevice> device);
     void NotifyDeviceResumed(std::shared_ptr<FWDevice> device);
     void NotifyDeviceSuspended(std::shared_ptr<FWDevice> device);
     void NotifyDeviceRemoved(Guid64 guid);
 
-    // Helper: Notify unit observers and callbacks
     void NotifyUnitPublished(std::shared_ptr<FWUnit> unit);
     void NotifyUnitSuspended(std::shared_ptr<FWUnit> unit);
     void NotifyUnitResumed(std::shared_ptr<FWUnit> unit);
     void NotifyUnitTerminated(std::shared_ptr<FWUnit> unit);
 
-    // Helper: Check if unit matches callback criteria
     bool UnitMatchesCallback(
         const std::shared_ptr<FWUnit>& unit,
         uint32_t specId,
         std::optional<uint32_t> swVersion
     ) const;
 
-    // Primary storage: GUID → device
     mutable IOLock* mutex_;
     std::map<Guid64, std::shared_ptr<FWDevice>> devicesByGuid_;
 
-    // Secondary index: (generation, nodeId) → GUID for fast lookup
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
     std::map<GenNodeKey, Guid64> genNodeToGuid_;
 
-    // Observers
     std::set<IDeviceObserver*> deviceObservers_;
     std::set<IUnitObserver*> unitObservers_;
 
-    // Unit callbacks (spec-based matching)
     struct UnitCallbackEntry {
         CallbackHandle handle;
         uint32_t specId;

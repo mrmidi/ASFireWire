@@ -40,12 +40,21 @@ SELECTED_TESTS_PATTERN=""
 RUN_ANALYZER=false
 PVS_LOG="${BUILD_DIR}/PVS-Studio.log"
 PVS_JSON="${BUILD_DIR}/PVS-Studio.json"
+# When true, run only Swift/XCTest tests
+SWIFT_TEST_ONLY=false
+# When true, generate Swift code coverage
+SWIFT_COVERAGE=false
+SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 
 usage() {
   cat <<EOF
 Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
   --verbose          Show full xcodebuild output (disables quiet filtering)
   --no-bump          Skip ./bump.sh
+  --test             Run C++ tests before building
+  --test-only        Run C++ tests only (skip xcodebuild)
+  --swift-test-only  Run Swift/XCTest tests only (skip main build)
+  --swift-coverage   Run Swift tests with coverage and export to LCOV
   --commands         Generate compile_commands.json via xcpretty
   --analyze          Run PVS-Studio static analyzer after build
   --scheme NAME      Override scheme (default: ${SCHEME_NAME})
@@ -61,6 +70,8 @@ while [[ $# -gt 0 ]]; do
     --no-bump) NO_BUMP=true; shift;;
     --test) RUN_TESTS=true; shift;;
     --test-only) TEST_ONLY=true; shift;;
+    --swift-test-only) SWIFT_TEST_ONLY=true; shift;;
+    --swift-coverage) SWIFT_COVERAGE=true; shift;;
     --test-filter) SELECTED_TESTS_PATTERN="$2"; shift 2;;
     --commands) GENERATE_COMMANDS=true; shift;;
     --analyze) RUN_ANALYZER=true; shift;;
@@ -158,6 +169,88 @@ run_tests() {
     ctest --test-dir "${TEST_BUILD_DIR}" -V -R "${SELECTED_TESTS_PATTERN}"
   else
     ctest --test-dir "${TEST_BUILD_DIR}" -V
+  fi
+}
+
+# Run Swift/XCTest tests via xcodebuild. Returns non-zero on failure.
+run_swift_tests() {
+  local with_coverage=${1:-false}
+  
+  if $with_coverage; then
+    log "Running Swift/XCTest tests with coverage..."
+  else
+    log "Running Swift/XCTest tests..."
+  fi
+  
+  # Use -only-testing to avoid launching the full app
+  local XCODEBUILD_ARGS=(
+    -project "${PROJECT_NAME}.xcodeproj"
+    -scheme "${SCHEME_NAME}"
+    -configuration "${CONFIGURATION}"
+    -derivedDataPath "${DERIVED}"
+    -destination 'platform=macOS,arch=arm64'
+    -only-testing:ASFWTests
+  )
+  
+  # Add coverage flag if requested
+  if $with_coverage; then
+    XCODEBUILD_ARGS+=(-enableCodeCoverage YES)
+  fi
+  
+  XCODEBUILD_ARGS+=(test)
+  
+  set +e
+  if $VERBOSE; then
+    xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1
+  else
+    xcodebuild "${XCODEBUILD_ARGS[@]}" 2>&1 | grep -E '(Test Case|passed|failed|error:)' || true
+  fi
+  local test_status=${PIPESTATUS[0]}
+  set -e
+  
+  return $test_status
+}
+
+# Export Swift coverage to LCOV format for SonarCloud.
+export_swift_coverage() {
+  log "Exporting Swift coverage to LCOV format..."
+  
+  # Find the Coverage.profdata from xcodebuild
+  local PROFDATA
+  PROFDATA=$(find "${DERIVED}" -name 'Coverage.profdata' 2>/dev/null | head -1)
+  
+  if [[ -z "$PROFDATA" ]]; then
+    warn "No Coverage.profdata found - Swift coverage will be empty"
+    touch "${SWIFT_COVERAGE_LCOV}"
+    return 1
+  fi
+  
+  # Find the main app binary for coverage export
+  local APP_BINARY
+  APP_BINARY=$(find "${DERIVED}" -name 'ASFW' -type f -perm +111 2>/dev/null | grep -v '.dSYM' | head -1)
+  
+  if [[ -z "$APP_BINARY" ]]; then
+    warn "Could not find app binary for Swift coverage export"
+    touch "${SWIFT_COVERAGE_LCOV}"
+    return 1
+  fi
+  
+  set +e
+  xcrun llvm-cov export \
+    -format=lcov \
+    -instr-profile="$PROFDATA" \
+    "$APP_BINARY" \
+    --ignore-filename-regex='.*/DerivedData/.*' \
+    > "${SWIFT_COVERAGE_LCOV}"
+  local cov_status=$?
+  set -e
+  
+  if (( cov_status == 0 )); then
+    ok "Swift coverage exported to ${SWIFT_COVERAGE_LCOV}"
+    return 0
+  else
+    err "Failed to export Swift coverage (exit=${cov_status})"
+    return $cov_status
   fi
 }
 
@@ -332,6 +425,31 @@ main() {
       exit 0
     else
       err "Tests failed (test-only)."; exit $test_status
+    fi
+  fi
+
+  # If --swift-test-only was requested, run Swift/XCTest tests and exit.
+  if $SWIFT_TEST_ONLY; then
+    run_swift_tests false
+    local test_status=$?
+    if (( test_status == 0 )); then
+      ok "Swift tests passed."
+      exit 0
+    else
+      err "Swift tests failed."; exit $test_status
+    fi
+  fi
+
+  # If --swift-coverage was requested, run Swift tests with coverage and export.
+  if $SWIFT_COVERAGE; then
+    run_swift_tests true
+    local test_status=$?
+    if (( test_status == 0 )); then
+      ok "Swift tests passed."
+      export_swift_coverage
+      exit 0
+    else
+      err "Swift tests failed."; exit $test_status
     fi
   fi
 

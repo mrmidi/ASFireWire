@@ -61,6 +61,16 @@ public:
     kern_return_t GetLogConfig(uint32_t* asyncVerbosity,
                               uint32_t* hexDumpsEnabled) LOCALONLY;
 
+    // Isochronous Receive Control
+    kern_return_t StartIsochReceive(uint8_t channel) LOCALONLY;
+    kern_return_t StopIsochReceive() LOCALONLY;
+    void* GetIsochReceiveContext() const LOCALONLY;
+    
+    // Isochronous Transmit Control
+    kern_return_t StartIsochTransmit(uint8_t channel) LOCALONLY;
+    kern_return_t StopIsochTransmit() LOCALONLY;
+    void* GetIsochTransmitContext() const LOCALONLY;
+
 };
 
 struct ASFWDriver_IVars {

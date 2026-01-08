@@ -15,8 +15,6 @@
 #include <thread>
 #endif
 
-// RAII guard for IOLock (DriverKit C API)
-// Matches Linux phy_reg_mutex discipline (ohci.c read_phy_reg/write_phy_reg)
 namespace {
 struct IOLockGuard {
     IOLock* lock;
@@ -26,16 +24,6 @@ struct IOLockGuard {
     IOLockGuard& operator=(const IOLockGuard&) = delete;
 };
 }
-
-// MEMORY SETUP VERIFICATION STATUS:
-// ✅ PCI Command Register: Sets bus master + memory space bits (matches Linux pci_set_master)
-// ✅ BAR Configuration: Uses BAR 0 for OHCI registers (matches Linux pcim_iomap_region)
-// ✅ Register Access: 32-bit quadlet access on boundaries (complies with OHCI §4.4)
-// ✅ DMA Setup: 32-bit address space, proper DriverKit APIs
-// ✅ BAR Validation: Enforces size (≥2048) and memory-space type requirements
-// ✅ DMA Alignment: Configurable alignment (default 64-byte), supports 16-byte for descriptors
-// ✅ PCI Write Verification: Reads back command register to confirm bus master + memory enable
-// ✅ BAR Index Validation: Confirms returned memory index matches requested BAR
 
 namespace ASFW::Driver {
 
@@ -50,7 +38,6 @@ constexpr uint16_t kRequiredCommandBits = 0;
 }
 
 HardwareInterface::HardwareInterface() {
-    // Allocate PHY register access mutex per Linux phy_reg_mutex (ohci.c)
     phyLock_ = IOLockAlloc();
 }
 
@@ -78,16 +65,13 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     }
 
 #ifndef ASFW_HOST_TEST
-    // Read PCI vendor/device ID for quirk detection (before command setup)
     uint16_t vendorId = 0, deviceId = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
     
-    // Detect Agere/LSI chipset (reports invalid eventCode 0x10 in AT completion)
     quirk_agere_lsi_ = (vendorId == 0x11c1 && (deviceId == 0x5901 || deviceId == 0x5900));
     if (quirk_agere_lsi_) {
-        ASFW_LOG(Hardware, "⚠️  Agere/LSI chipset detected (vendor=0x%04x device=0x%04x) - enabling eventCode 0x10 workaround",
-                 vendorId, deviceId);
+        ASFW_LOG(Hardware, "⚠️  Agere/LSI chipset detected");
     }
     
     uint16_t command = 0;
@@ -163,11 +147,6 @@ uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
     if (!device_) {
         return 0;
     }
-    // TODO: OHCI Spec §4.4 - Ensure quadlet boundary access
-    // - All register accesses must be 32-bit on quadlet (4-byte) boundaries
-    // - Register32 enum values should all be multiples of 4
-    // - Current implementation assumes Register32 enum is correctly defined
-    // - Linux uses reg_read/write macros that ensure 32-bit access
     uint32_t value = 0;
     device_->MemoryRead32(barIndex_, static_cast<uint64_t>(reg), &value);
     return value;
@@ -177,10 +156,6 @@ void HardwareInterface::Write(Register32 reg, uint32_t value) noexcept {
     if (!device_) {
         return;
     }
-    // TODO: OHCI Spec §4.4 - Ensure quadlet boundary access
-    // - All register writes must be 32-bit on quadlet boundaries
-    // - No 8-bit or 16-bit access allowed to OHCI registers
-    // - Current implementation correctly uses MemoryWrite32
     device_->MemoryWrite32(barIndex_, static_cast<uint64_t>(reg), value);
 }
 
@@ -235,9 +210,6 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
     }
 
     device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIntEvent), &snapshot.intEvent);
-    // NOTE: IntMaskSet/Clear are write-only strobes per OHCI §5.7 - cannot read enabled mask from hardware.
-    // InterruptManager maintains a shadow mask. Caller should query InterruptManager::EnabledMask() instead.
-    // Setting intMask to 0 here to avoid confusion; real mask comes from InterruptManager shadow.
     snapshot.intMask = 0;
     device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoXmitEvent), &snapshot.isoXmitEvent);
     device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoRecvEvent), &snapshot.isoRecvEvent);
@@ -247,15 +219,6 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
 bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
                                       std::optional<uint8_t> forceRootPhyId,
                                       std::string_view caller) {
-    // MAKE IT NO-OP FOR NOW
-    // ASFW_LOG(Hardware,
-    //          "PHY CONFIG requested by %.*s (gapCount=%{public}s forceRootPhyId=%{public}s) - NO-OP",
-    //          static_cast<int>(caller.size()),
-    //          caller.data(),
-    //          gapCount.has_value() ? std::to_string(*gapCount).c_str() : "none",
-    //          forceRootPhyId.has_value() ? std::to_string(*forceRootPhyId).c_str() : "none");
-    // return true;
-    //
     if (!device_) {
         return false;
     }
@@ -274,8 +237,7 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
     if (gapCount.has_value()) {
         uint8_t gap = static_cast<uint8_t>(*gapCount & 0x3Fu);
         if (gap == 0) {
-            ASFW_LOG_ERROR(Hardware,
-                           "Rejecting PHY CONFIG gap update with value 0 (invalid per IEEE 1394a)");
+            ASFW_LOG_ERROR(Hardware, "Rejecting PHY CONFIG gap update with value 0");
             return false;
         }
         config.gapCountOptimization = true;
@@ -283,8 +245,7 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
     }
 
     if (!config.forceRoot && !config.gapCountOptimization) {
-        ASFW_LOG(Hardware,
-                 "PHY CONFIG skipped - neither forceRoot nor gap update requested");
+        ASFW_LOG(Hardware, "PHY CONFIG skipped - no requested changes");
         return false;
     }
 
@@ -348,10 +309,7 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
     packet.phyId = static_cast<uint8_t>(phyId & 0x3Fu);
     const auto quadlets = packet.EncodeBusOrder();
 
-    ASFW_LOG(Hardware,
-             "PHY GLOBAL RESUME packet: phyId=%u quad=0x%08x",
-             packet.phyId,
-             quadlets[0]);
+    ASFW_LOG(Hardware, "PHY GLOBAL RESUME packet: phyId=%u quad=0x%08x", packet.phyId, quadlets[0]);
 
     ASFW::Async::PhyParams params{};
     params.quadlet1 = quadlets[0];
@@ -361,120 +319,50 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
                                                  ASFW::Async::AsyncStatus status,
                                                  std::span<const uint8_t>) {
         if (status == ASFW::Async::AsyncStatus::kSuccess) {
-            ASFW_LOG(Hardware,
-                     "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x",
-                     handle.value,
-                     packetQuad);
+            ASFW_LOG(Hardware, "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x", handle.value, packetQuad);
         } else {
-            ASFW_LOG_ERROR(Hardware,
-                           "PHY GLOBAL RESUME handle=0x%x failed status=%u quad=0x%08x",
-                           handle.value,
-                           static_cast<unsigned>(status),
-                           packetQuad);
+            ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME handle=0x%x failed status=%u quad=0x%08x",
+                           handle.value, static_cast<unsigned>(status), packetQuad);
         }
     };
 
     const auto handle = asyncSubsystem_->PhyRequest(params, std::move(completion));
     if (!handle) {
-        ASFW_LOG_ERROR(Hardware,
-                       "PHY GLOBAL RESUME submission rejected (handle=0) quad=0x%08x",
-                       quadlets[0]);
+        ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME submission rejected (handle=0) quad=0x%08x", quadlets[0]);
         return false;
     }
 
-    ASFW_LOG(Hardware,
-             "PHY GLOBAL RESUME submitted handle=0x%x data=(0x%08x, 0x%08x)",
-             handle.value,
-             params.quadlet1,
-             params.quadlet2);
+    ASFW_LOG(Hardware, "PHY GLOBAL RESUME submitted handle=0x%x", handle.value);
     return true;
 }
 
 bool HardwareInterface::InitiateBusReset(bool shortReset) {
-    // CRITICAL FIX: Use UpdatePhyRegister (read-modify-write) instead of WritePhyRegister
-    // to preserve gap count bits [5:0] while setting IBR bit [6].
-    //
-    // Per Linux firewire/core-card.c:220 (reset_bus):
-    //   return card->driver->update_phy_reg(card, reg, 0, bit);
-    //
-    // BUGGY (old code): WritePhyRegister(1, 0x40) overwrites entire register
-    //   → Gap count bits [5:0] = 0x00 (DESTROYED!)
-    //   → Bus reset loops with IRM devices
-    //
-    // FIXED (new code): UpdatePhyRegister(1, 0, 0x40) preserves gap count
-    //   → Gap count bits [5:0] preserved
-    //   → IBR bit [6] set to trigger reset
-    //
-    // IEEE 1394a PHY Register 1 layout:
-    //   [7:6] IBR/RHB - Initiate Bus Reset / Root Hold-Off Bit
-    //   [5:0] Gap Count - MUST be preserved across reset operations
-    //
-    // Mutex is acquired inside UpdatePhyRegister for thread safety
-    (void)shortReset;  // Both short and long reset use same IBR bit
-    return UpdatePhyRegister(/*addr=*/1, /*clear=*/0, /*set=*/0x40);
+    (void)shortReset;
+    return UpdatePhyRegister(1, 0, 0x40);
 }
 
 void HardwareInterface::SetContender(bool enable) {
-    // PHY Register 4:
-    // Bit 7: L (Link Active)
-    // Bit 6: C (Contender)
-    // Bit 5-0: Gap Count (managed separately)
-    //
-    // IMPLEMENTATION NOTE: Matches Apple's AppleFWOHCI::setContender (0x57da)
-    // - Uses cached value from phyReg4Cache_ (AppleFWOHCI+2633)
-    // - Direct write via WritePhyRegister, NOT hardware RMW
-    // - Updates cache only on successful write
-    //
-    // Why cache instead of RMW?
-    // - Gap count bits [5:0] must be preserved
-    // - PHY reg 4 reads can be unreliable on some chips
-    // - Apple uses cache to avoid spurious gap count changes
-
-    // Modify bit 6 (0x40) in cached value
-    uint8_t newValue = enable ? (phyReg4Cache_ | 0x40)    // Set contender bit
-                              : (phyReg4Cache_ & 0xBF);   // Clear contender bit (0xBF = ~0x40)
+    uint8_t newValue = enable ? (phyReg4Cache_ | 0x40) : (phyReg4Cache_ & 0xBF);
 
     if (WritePhyRegister(4, newValue)) {
-        phyReg4Cache_ = newValue;  // Update cache on success
-        ASFW_LOG(Hardware, "PHY Register 4 updated: Contender=%d (cached write: 0x%02x)", enable, newValue);
+        phyReg4Cache_ = newValue;
+        ASFW_LOG(Hardware, "PHY Register 4 updated: Contender=%d (0x%02x)", enable, newValue);
     } else {
-        ASFW_LOG_ERROR(Hardware, "Failed to update PHY Register 4 (Contender=%d, attempted value: 0x%02x)", enable, newValue);
+        ASFW_LOG_ERROR(Hardware, "Failed to update PHY Register 4");
     }
 }
 
 void HardwareInterface::InitializePhyReg4Cache() {
-    // Read PHY register 4 and populate cache
-    // Call this after PHY initialization to sync cache with hardware state
     const auto value = ReadPhyRegister(4);
     if (value.has_value()) {
         phyReg4Cache_ = *value;
-        ASFW_LOG_V2(Hardware, "PHY Register 4 cache initialized: 0x%02x (L=%d C=%d gap=0x%02x)",
-                 *value,
-                 (*value & 0x80) ? 1 : 0,  // Link Active bit
-                 (*value & 0x40) ? 1 : 0,  // Contender bit
-                 *value & 0x3F);           // Gap count bits
+        ASFW_LOG_V2(Hardware, "PHY Register 4 cache initialized: 0x%02x", *value);
     } else {
-        ASFW_LOG_ERROR(Hardware, "Failed to initialize PHY Register 4 cache - read failed");
+        ASFW_LOG_ERROR(Hardware, "Failed to initialize PHY Register 4 cache");
     }
 }
 
 void HardwareInterface::SetRootHoldOff(bool enable) {
-    // PHY Register 1:
-    // Bit 7: RHB (Root Hold-Off Bit) - prevents node from becoming root
-    // Bit 6: IBR (Initiate Bus Reset)
-    // Bit 5-0: Gap Count
-    //
-    // IMPLEMENTATION NOTE: Matches Apple's AppleFWOHCI::setRootHoldOff (0x586e)
-    // - Enabling: Hardware RMW (read, check, write if needed)
-    // - Disabling: Triggers bus reset (Apple calls resetBus instead of direct clear)
-    // - Early return if bit already in desired state (optimization)
-    //
-    // Why bus reset for disable?
-    // - Root Hold-Off is topology state that persists across transactions
-    // - Apple clears it via bus reset to ensure clean topology re-election
-    // - Direct bit clear could leave PHY in inconsistent state
-
-    // Read current PHY register 1 value
     const auto currentOpt = ReadPhyRegister(1);
     if (!currentOpt.has_value()) {
         ASFW_LOG_ERROR(Hardware, "Failed to read PHY Register 1 for SetRootHoldOff(%d)", enable);
@@ -482,32 +370,28 @@ void HardwareInterface::SetRootHoldOff(bool enable) {
     }
 
     const uint8_t current = currentOpt.value();
-    const bool rhbSet = (current & 0x80) != 0;  // Check bit 7
+    const bool rhbSet = (current & 0x80) != 0;
 
     if (enable) {
-        // Enable RHB: set bit 7 if not already set
         if (rhbSet) {
-            ASFW_LOG(Hardware, "PHY Register 1 RHB already set (0x%02x), no action needed", current);
+            ASFW_LOG(Hardware, "PHY Register 1 RHB already set (0x%02x)", current);
             return;
         }
 
-        const uint8_t newValue = current | 0x80;  // Set bit 7
+        const uint8_t newValue = current | 0x80;
         if (WritePhyRegister(1, newValue)) {
-            ASFW_LOG(Hardware, "PHY Register 1 RHB enabled (0x%02x → 0x%02x)", current, newValue);
+            ASFW_LOG(Hardware, "PHY Register 1 RHB enabled");
         } else {
-            ASFW_LOG_ERROR(Hardware, "Failed to enable RHB in PHY Register 1");
+            ASFW_LOG_ERROR(Hardware, "Failed to enable RHB");
         }
     } else {
-        // Disable RHB: trigger bus reset if bit is currently set
         if (!rhbSet) {
-            ASFW_LOG(Hardware, "PHY Register 1 RHB already clear (0x%02x), no action needed", current);
+            ASFW_LOG(Hardware, "PHY Register 1 RHB already clear (0x%02x)", current);
             return;
         }
 
-        // Apple's approach: trigger bus reset to clear topology state
-        // (matches AppleFWOHCI::setRootHoldOff calling resetBus via vtable offset 1220)
-        ASFW_LOG(Hardware, "PHY Register 1 RHB set (0x%02x), triggering bus reset to clear", current);
-        InitiateBusReset(false);  // Short reset
+        ASFW_LOG(Hardware, "PHY Register 1 RHB set, triggering bus reset to clear");
+        InitiateBusReset(false);
     }
 }
 
@@ -517,62 +401,36 @@ std::optional<uint8_t> HardwareInterface::ReadPhyRegister(uint8_t address) {
 }
 
 std::optional<uint8_t> HardwareInterface::ReadPhyRegisterUnlocked(uint8_t address) {
-    // Assumes phyLock_ is already held by caller
-    // Per OHCI §5.12 / Fig 5-21: PhyControl register read operation
-    // rdReg    = bit 15 (0x8000) - set to initiate, hardware clears when done
-    // regAddr  = bits 13:8 (PHY register address)
-    // rdData   = bits 23:16 (data returned from PHY)
-    // rdDone   = bit 31 (0x80000000) - set by hardware when read completes
-    //
-    // Per Linux read_phy_reg() (ohci.c line 639):
-    //   reg_write(ohci, OHCI1394_PhyControl, OHCI1394_PhyControl_Read(addr));
-    // where OHCI1394_PhyControl_Read(a) = ((a) << 8) | 0x00008000
-
-    const uint32_t phyControl = (static_cast<uint32_t>(address) << 8) | 0x8000u;  // rdReg bit
+    const uint32_t phyControl = (static_cast<uint32_t>(address) << 8) | 0x8000u;
 
     Write(Register32::kPhyControl, phyControl);
     FlushPostedWrites();
 
     ASFW_LOG_PHY("[PHY] Read reg %u: wrote PhyControl=0x%08x", address, phyControl);
 
-    // Poll for rdDone bit (bit 31) with timeout
-    // Linux uses 3 immediate tries + 100 tries with 1ms sleep (total 103)
     constexpr int kImmediateTries = 3;
     constexpr int kTotalTries = 103;
 
     for (int i = 0; i < kTotalTries; i++) {
         const uint32_t val = Read(Register32::kPhyControl);
 
-        // Check for card ejection (all bits set)
         if (val == 0xFFFFFFFF) {
             ASFW_LOG(Hardware, "[PHY] Read reg %u failed - card ejected", address);
             return std::nullopt;
         }
 
-        // Check for rdDone (bit 31)
         if (val & 0x80000000u) {
-            // Extract data from bits 23:16 (rdData field)
             const uint8_t data = static_cast<uint8_t>((val >> 16) & 0xFF);
-            ASFW_LOG_PHY("[PHY] Read reg %u success (iter %d): rdData=0x%02x",
-                        address, i, data);
+            ASFW_LOG_PHY("[PHY] Read reg %u success: 0x%02x", address, data);
             return data;
         }
 
-        // Log slow polling for diagnostics
-        if (i == kImmediateTries) {
-            ASFW_LOG_PHY("[PHY] Read reg %u: rdDone not set after %d fast polls, entering slow poll (val=0x%08x)",
-                         address, kImmediateTries, val);
-        }
-
-        // Sleep after immediate tries (matches Linux behavior)
         if (i >= kImmediateTries) {
-            IOSleep(1);  // 1ms sleep
+            IOSleep(1);
         }
     }
 
-    const uint32_t finalVal = Read(Register32::kPhyControl);
-    ASFW_LOG(Hardware, "[PHY] Read reg %u TIMEOUT after %d iterations (final PhyControl=0x%08x)", 
-             address, kTotalTries, finalVal);
+    ASFW_LOG(Hardware, "[PHY] Read reg %u TIMEOUT", address);
     return std::nullopt;
 }
 
@@ -582,62 +440,42 @@ bool HardwareInterface::WritePhyRegister(uint8_t address, uint8_t value) {
 }
 
 bool HardwareInterface::WritePhyRegisterUnlocked(uint8_t address, uint8_t value) {
-    // Assumes phyLock_ is already held by caller
-    // OHCI §5.12 / Fig. 5-21: PhyControl register write operation
-    // wrReg    = bit 14 (0x4000) - set to initiate, hardware clears when done
-    // regAddr  = bits 15:8 (PHY register address)
-    // wrData   = bits 7:0 (data to write)
-    //
-    // Per Linux write_phy_reg() (ohci.c line 665):
-    //   reg_write(ohci, OHCI1394_PhyControl, OHCI1394_PhyControl_Write(addr, val));
-    // where OHCI1394_PhyControl_Write(a,d) = ((a) << 8) | (d) | 0x00004000
-
     const uint32_t phyControl = (static_cast<uint32_t>(address) << 8) |
-                                static_cast<uint32_t>(value) | 0x4000u;  // wrReg bit
+                                static_cast<uint32_t>(value) | 0x4000u;
 
     Write(Register32::kPhyControl, phyControl);
     FlushPostedWrites();
 
-    // Poll for wrReg bit to clear (bit 14) with timeout
-    // Linux uses 3 immediate tries + 100 tries with 1ms sleep (ohci.c line 666-672)
     constexpr int kImmediateTries = 3;
     constexpr int kTotalTries = 103;
 
     for (int i = 0; i < kTotalTries; i++) {
         const uint32_t val = Read(Register32::kPhyControl);
 
-        // Check for card ejection
         if (val == 0xFFFFFFFF) {
             ASFW_LOG(Hardware, "PHY write failed - card ejected");
             return false;
         }
 
-        // Check if wrReg cleared (bit 14) - hardware clears when transaction completes
         if ((val & 0x4000u) == 0) {
             ASFW_LOG_PHY("PHY[%u] write OK: 0x%02x", address, value);
             return true;
         }
 
-        // Sleep after immediate tries
         if (i >= kImmediateTries) {
-            IOSleep(1);  // 1ms sleep
+            IOSleep(1);
         }
     }
 
-    ASFW_LOG(Hardware, "PHY[%u] write timeout (wrReg still set): 0x%02x", address, value);
+    ASFW_LOG(Hardware, "PHY[%u] write timeout: 0x%02x", address, value);
     return false;
 }
 
 bool HardwareInterface::UpdatePhyRegister(uint8_t address, uint8_t clearBits, uint8_t setBits) {
-    // Serialize PHY access per Linux phy_reg_mutex (ohci.c update_phy_reg line 684)
     IOLockGuard guard(phyLock_);
-
-    // Per Linux ohci.c update_phy_reg() at line 684-699
-    // Read-modify-write PHY register
 
     ASFW_LOG_PHY("Updating PHY[%u]: clear=0x%02x set=0x%02x", address, clearBits, setBits);
 
-    // Read current value (use unlocked version - we already hold phyLock_)
     const auto currentOpt = ReadPhyRegisterUnlocked(address);
     if (!currentOpt.has_value()) {
         ASFW_LOG_V0(Hardware, "PHY register %u update failed - read failed", address);
@@ -646,19 +484,15 @@ bool HardwareInterface::UpdatePhyRegister(uint8_t address, uint8_t clearBits, ui
 
     uint8_t current = currentOpt.value();
 
-    // Per Linux: PHY register 5 has interrupt status bits that are cleared by writing 1
-    // Avoid clearing them unless explicitly requested in setBits
     if (address == 5) {
-        constexpr uint8_t kPhyIntStatusBits = 0x3C;  // bits 2-5 per IEEE 1394
+        constexpr uint8_t kPhyIntStatusBits = 0x3C;
         clearBits |= kPhyIntStatusBits;
     }
 
-    // Apply modifications
     const uint8_t newValue = (current & ~clearBits) | setBits;
 
     ASFW_LOG_PHY("PHY register %u: 0x%02x → 0x%02x", address, current, newValue);
 
-    // Write new value (use unlocked version - we already hold phyLock_)
     return WritePhyRegisterUnlocked(address, newValue);
 }
 
@@ -695,28 +529,20 @@ void HardwareInterface::IntMaskClear(uint32_t bits) {
 }
 
 std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {
-    // OHCI Spec §1.7 - DMA buffer alignment requirements:
-    // - Config ROM: 1KB alignment (1024 bytes)
-    // - DMA descriptors: 16-byte alignment (OHCI Table 7-3)
-    // - Default: 64-byte alignment (cache line friendly)
-    //
-    // Alignment validation per OHCI Table 7-3:
-    // - Descriptor blocks MUST be 16-byte aligned
-    // - branchAddress field bits [3:0] are Z value (not address bits)
-    // - Physical address bits [3:0] must be 0
-    //
-    // CRITICAL: OHCI supports only 32-bit DMA addressing (max 4GB physical addresses)
-    // Use IODMACommand with maxAddressBits=32 to get IOMMU-mapped addresses
-
     if (!device_) {
         ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
 
-    // Validate direction includes both read and write (bidirectional)
-    // CRITICAL: Buffer must be CPU-writable for memset/descriptor initialization
     if ((options & (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) != (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) {
-        ASFW_LOG(Hardware, "⚠️  AllocateDMA: options=0x%llx may not be bidirectional - ensure kIOMemoryDirectionInOut", options);
+        ASFW_LOG(Hardware, "⚠️  AllocateDMA: options=0x%llx may not be bidirectional", options);
+    }
+
+    if (alignment == 0) alignment = 64;
+    if (alignment < 16) alignment = 16;
+    if ((alignment & (alignment - 1)) != 0) {
+        ASFW_LOG_V0(Hardware, "AllocateDMA: alignment=%zu is not power-of-two", alignment);
+        return std::nullopt;
     }
 
     IOBufferMemoryDescriptor* buffer = nullptr;
@@ -726,9 +552,13 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
         return std::nullopt;
     }
 
-    buffer->SetLength(length);
+    kr = buffer->SetLength(length);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_V0(Hardware, "IOBufferMemoryDescriptor::SetLength failed: 0x%08x", kr);
+        buffer->release();
+        return std::nullopt;
+    }
 
-    // Create IODMACommand with 32-bit addressing constraint
     IODMACommandSpecification spec{};
     spec.options = kIODMACommandSpecificationNoOptions;
     spec.maxAddressBits = kDefaultDMAMaxAddressBits;
@@ -742,73 +572,62 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     }
     OSSharedPtr<IODMACommand> command(dmaCmd, OSNoRetain);
 
-    // Prepare the buffer for DMA - this returns IOMMU-mapped physical addresses
     IOAddressSegment segments[32];
     uint32_t segmentCount = 32;
     uint64_t flags = 0;
 
     kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
                                 buffer,
-                                0,           // offset
-                                length,      // length
+                                0,
+                                length,
                                 &flags,
                                 &segmentCount,
                                 segments);
 
     if (kr != kIOReturnSuccess) {
-        ASFW_LOG_V0(Hardware,
-               "IODMACommand::PrepareForDMA failed: 0x%08x - IOMMU mapping failed",
-               kr);
+        ASFW_LOG_V0(Hardware, "IODMACommand::PrepareForDMA failed: 0x%08x", kr);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
-    // Verify we got exactly one segment and it's within 32-bit range
-    if (segmentCount == 0) {
-        ASFW_LOG_V0(Hardware, "IODMACommand::PrepareForDMA returned zero segments");
+    if (segmentCount != 1) {
+        ASFW_LOG_V0(Hardware, "❌ AllocateDMA: invalid segment count components=%u", segmentCount);
+        command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        buffer->release();
+        return std::nullopt;
+    }
+    
+    if (segments[0].length < length) {
+        ASFW_LOG_V0(Hardware, "❌ AllocateDMA: partial mapping len=%llu need=%zu",
+                    (unsigned long long)segments[0].length, length);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
-    if (segmentCount > 1) {
-        ASFW_LOG_V2(Hardware,
-               "WARNING: DMA buffer fragmented into %u segments - using first segment only",
-               segmentCount);
-    }
+    const uint64_t mappedAddress = segments[0].address;
 
-    uint64_t mappedAddress = segments[0].address;
     if (mappedAddress > 0xFFFFFFFFULL) {
-        ASFW_LOG_V0(Hardware,
-               "DMA segment paddr=0x%llx exceeds 32-bit range - IOMMU failed to map below 4GB",
-               mappedAddress);
+        ASFW_LOG_V0(Hardware, "DMA IOVA 0x%llx exceeds 32-bit range", mappedAddress);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
-    // Verify alignment matches request (critical for OHCI descriptor/ROM requirements)
     if ((mappedAddress & (alignment - 1)) != 0) {
-        ASFW_LOG_V0(Hardware,
-               "❌ CRITICAL: DMA buffer misaligned! paddr=0x%llx requested=%zu actual=%llu",
-               mappedAddress, alignment, mappedAddress & (alignment - 1));
+        ASFW_LOG_V0(Hardware, "❌ CRITICAL: DMA buffer misaligned! iova=0x%llx requested=%zu", mappedAddress, alignment);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
-    // CRITICAL: Do NOT call CompleteDMA() - we must keep the IODMACommand alive
-    // to maintain the IOMMU mapping. CompleteDMA() will unmap the address and
-    // the IOMMU will reuse it for the next allocation, causing address collisions.
-
-    ASFW_LOG_V2(Hardware,
-           "DMA buffer allocated: IOMMU-mapped paddr=0x%llx size=%zu",
-           mappedAddress, length);
+    ASFW_LOG_V2(Hardware, "DMA buffer allocated: iova=0x%llx size=%zu align=%zu",
+                mappedAddress, length, alignment);
 
     return DMABuffer{
         .descriptor = OSSharedPtr(buffer, OSNoRetain),
-        .dmaCommand = std::move(command),  // Transfer ownership - keeps mapping alive
+        .dmaCommand = std::move(command),
         .deviceAddress = mappedAddress,
         .length = length
     };
@@ -819,11 +638,6 @@ OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
         return nullptr;
     }
 
-    // TODO: OHCI Spec - Validate DMA address bit limitations
-    // - OHCI controllers typically support 32-bit DMA addresses
-    // - kDefaultDMAMaxAddressBits = 32 is appropriate for most OHCI
-    // - Some controllers may support more, should be configurable
-    // - Linux uses dma_set_mask for this validation
     IODMACommandSpecification spec{};
     spec.maxAddressBits = kDefaultDMAMaxAddressBits;
     IODMACommand* command = nullptr;

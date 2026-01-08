@@ -12,6 +12,21 @@ namespace ASFW::Driver::Logging {
 // Stub log handles - just use default log for host tests
 static os_log_t stub_log = OS_LOG_DEFAULT;
 
+// DriverKit Stubs
+extern "C" {
+    typedef struct IOLock IOLock;
+    
+    IOLock* IOLockAlloc() { return (IOLock*)1; }
+    void IOLockFree(IOLock* lock) {}
+    void IOLockLock(IOLock* lock) {}
+    void IOLockUnlock(IOLock* lock) {}
+    
+    void IOSleep(uint64_t milliseconds) {}
+    
+    void* IOMallocZero(size_t size) { return calloc(1, size); }
+    void IOFree(void* ptr, size_t size) { free(ptr); }
+}
+
 os_log_t Core() {
     return stub_log;
 }
@@ -87,12 +102,20 @@ void LogConfig::Initialize(IOService*) {}
 uint8_t LogConfig::GetAsyncVerbosity() const { return 0; }
 uint8_t LogConfig::GetControllerVerbosity() const { return 0; }
 uint8_t LogConfig::GetHardwareVerbosity() const { return 0; }
+uint8_t LogConfig::GetDiscoveryVerbosity() const { return 0; }
+uint8_t LogConfig::GetAVCVerbosity() const { return 0; }
+uint8_t LogConfig::GetFCPVerbosity() const { return 0; }
+uint8_t LogConfig::GetMusicSubunitVerbosity() const { return 0; }
 bool LogConfig::IsHexDumpsEnabled() const { return false; }
 bool LogConfig::IsStatisticsEnabled() const { return false; }
 
 void LogConfig::SetAsyncVerbosity(uint8_t) {}
 void LogConfig::SetControllerVerbosity(uint8_t) {}
 void LogConfig::SetHardwareVerbosity(uint8_t) {}
+void LogConfig::SetDiscoveryVerbosity(uint8_t) {}
+void LogConfig::SetAVCVerbosity(uint8_t) {}
+void LogConfig::SetFCPVerbosity(uint8_t) {}
+void LogConfig::SetMusicSubunitVerbosity(uint8_t) {}
 void LogConfig::SetHexDumps(bool) {}
 void LogConfig::SetStatistics(bool) {}
 

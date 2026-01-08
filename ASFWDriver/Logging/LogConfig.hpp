@@ -65,7 +65,44 @@ public:
     uint8_t GetHardwareVerbosity() const;
 
     /**
-     * @brief Check if hex dumps are explicitly enabled
+     * @brief Get Discovery subsystem verbosity level (0-4)
+     */
+    uint8_t GetDiscoveryVerbosity() const;
+    uint8_t GetConfigROMVerbosity() const;
+
+    /**
+     * @brief Get UserClient subsystem verbosity level (0-4)
+     */
+    uint8_t GetUserClientVerbosity() const;
+
+    /**
+     * @brief Get MusicSubunit subsystem verbosity level (0-4)
+     */
+    uint8_t GetMusicSubunitVerbosity() const;
+
+    /**
+     * @brief Get FCP subsystem verbosity level (0-4)
+     */
+    uint8_t GetFCPVerbosity() const;
+
+    /**
+     * @brief Get CMP subsystem verbosity level (0-4)
+     */
+    uint8_t GetCMPVerbosity() const;
+
+    /**
+     * @brief Get IRM subsystem verbosity level (0-4)
+     */
+    uint8_t GetIRMVerbosity() const;
+
+    /**
+     * @brief Get AVC subsystem verbosity level (0-4)
+     */
+    uint8_t GetAVCVerbosity() const;
+    uint8_t GetIsochVerbosity() const;
+
+    /**
+     * @brief Check if hex dumps are enabled
      */
     bool IsHexDumpsEnabled() const;
 
@@ -95,8 +132,41 @@ public:
     void SetHardwareVerbosity(uint8_t level);
 
     /**
-     * @brief Enable or disable hex dumps at runtime
+     * @brief Set Discovery verbosity at runtime
      */
+    void SetDiscoveryVerbosity(uint8_t level);
+    void SetConfigROMVerbosity(uint8_t level);
+
+    /**
+     * @brief Set UserClient verbosity at runtime
+     */
+    void SetUserClientVerbosity(uint8_t level);
+
+    /**
+     * @brief Set MusicSubunit verbosity at runtime
+     */
+    void SetMusicSubunitVerbosity(uint8_t level);
+
+    /**
+     * @brief Set FCP verbosity at runtime
+     */
+    void SetFCPVerbosity(uint8_t level);
+
+    /**
+     * @brief Set CMP verbosity at runtime
+     */
+    void SetCMPVerbosity(uint8_t level);
+
+    /**
+     * @brief Set IRM verbosity at runtime
+     */
+    void SetIRMVerbosity(uint8_t level);
+
+    /**
+     * @brief Set AVC verbosity at runtime
+     */
+    void SetAVCVerbosity(uint8_t level);
+    void SetIsochVerbosity(uint8_t level);
     void SetHexDumps(bool enable);
 
     /**
@@ -131,6 +201,15 @@ private:
     std::atomic<uint8_t> asyncVerbosity_;
     std::atomic<uint8_t> controllerVerbosity_;
     std::atomic<uint8_t> hardwareVerbosity_;
+    std::atomic<uint8_t> discoveryVerbosity_;
+    std::atomic<uint8_t> configROMVerbosity_;
+    std::atomic<uint8_t> userClientVerbosity_;
+    std::atomic<uint8_t> musicSubunitVerbosity_;
+    std::atomic<uint8_t> fcpVerbosity_;
+    std::atomic<uint8_t> cmpVerbosity_;
+    std::atomic<uint8_t> irmVerbosity_;
+    std::atomic<uint8_t> avcVerbosity_;
+    std::atomic<uint8_t> isochVerbosity_;
     std::atomic<bool> enableHexDumps_;
     std::atomic<bool> logStatistics_;
     std::atomic<bool> initialized_;

@@ -1,0 +1,42 @@
+//
+// ASFWAudioDriver.iig
+// ASFWDriver
+//
+// AudioDriverKit driver that matches on ASFWAudioNub.
+// Creates IOUserAudioDevice when started.
+//
+
+#ifndef ASFWAudioDriver_h
+#define ASFWAudioDriver_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+#include <AudioDriverKit/IOUserAudioDriver.iig>
+#include <DriverKit/IOTimerDispatchSource.iig>
+
+using namespace AudioDriverKit;
+
+class ASFWAudioDriver: public IOUserAudioDriver
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+    
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+    
+    virtual kern_return_t NewUserClient(uint32_t in_type,
+                                        IOUserClient** out_user_client) override;
+    
+    virtual kern_return_t StartDevice(IOUserAudioObjectID in_object_id,
+                                      IOUserAudioStartStopFlags in_flags) override;
+    
+    virtual kern_return_t StopDevice(IOUserAudioObjectID in_object_id,
+                                     IOUserAudioStartStopFlags in_flags) override;
+    
+    // Timer action for timestamp generation (DriverKit generates CreateActionZtsTimerOccurred)
+    virtual void ZtsTimerOccurred(OSAction* action, uint64_t time)
+        TYPE(IOTimerDispatchSource::TimerOccurred);
+};
+
+#endif /* ASFWAudioDriver_h */

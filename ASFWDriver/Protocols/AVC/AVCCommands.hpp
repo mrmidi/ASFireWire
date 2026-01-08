@@ -73,18 +73,21 @@ private:
         AVCCdb cdb;
         cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
 
-        if (subunitType == kAVCSubunitUnit) {
-            cdb.subunit = kAVCSubunitUnit;
-        } else {
-            cdb.subunit = MakeSubunitAddress(
-                static_cast<AVCSubunitType>(subunitType),
-                subunitID
-            );
-        }
+        // Apple behavior: always query UNIT plug info (subunit 0xFF), regardless of subunitType passed
+        cdb.subunit = kAVCSubunitUnit;
 
         cdb.opcode = static_cast<uint8_t>(AVCOpcode::kPlugInfo);
-        cdb.operands[0] = 0xFF;  // Query all
-        cdb.operandLength = 1;
+        // Operands per AV/C: [plugType, plugID, (optional) subfunction...]
+        // Apple sends 01 FF 02 00 FF FF FF FF; minimum legal is two bytes.
+        cdb.operands[0] = 0x00;  // plugType: 0 = unit destination plugs (matches Apple first query)
+        cdb.operands[1] = 0xFF;  // plugID: 0xFF = entire unit (query all)
+        cdb.operands[2] = 0xFF;
+        cdb.operands[3] = 0xFF;
+        cdb.operands[4] = 0xFF;
+        cdb.operands[5] = 0xFF;
+        cdb.operands[6] = 0xFF;
+        cdb.operands[7] = 0xFF;
+        cdb.operandLength = 8;
 
         return cdb;
     }
@@ -240,8 +243,8 @@ inline const char* GetSubunitTypeName(uint8_t type) {
             return "Panel";
         case AVCSubunitType::kBulletinBoard:
             return "Bulletin Board";
-        case AVCSubunitType::kCameraStorage:
-            return "Camera Storage";
+        case AVCSubunitType::kMusic0C:
+            return "Music";
         case AVCSubunitType::kMusic:
             return "Music";
         case AVCSubunitType::kUnit:

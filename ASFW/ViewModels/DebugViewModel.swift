@@ -19,6 +19,7 @@ class DebugViewModel: ObservableObject {
     @Published var asyncInProgress: Bool = false
     @Published var sharedStatus: DriverStatus?
     @Published var topologyCache: TopologySnapshot?
+    @Published var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
 
     let connector = ASFWDriverConnector()  // Internal access for TopologyViewModel
     private var driverViewModel: DriverViewModel?
@@ -85,6 +86,7 @@ class DebugViewModel: ObservableObject {
     
     func manualRefresh() {
         fetchLatestSnapshots()
+        fetchAVCUnits()
     }
 
     private func handleStatusUpdate(_ status: DriverStatus) {
@@ -139,6 +141,22 @@ class DebugViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func fetchAVCUnits() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let units = self.connector.getAVCUnits() ?? []
+            Task { @MainActor in
+                self.avcUnits = units
+            }
+        }
+    }
+    
+    func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
+        return await Task.detached {
+            return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
+        }.value
     }
 
 

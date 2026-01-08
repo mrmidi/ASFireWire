@@ -12,6 +12,7 @@ set(ASFW_DRIVER_DIR "${ASFW_ROOT_DIR}/ASFWDriver")
 set(ASFW_DRIVERKIT_DIR "${ASFW_ROOT_DIR}/docs")
 
 set(ASFW_COMMON_INCLUDES
+    "${ASFW_TESTS_DIR}/mocks"
     "${ASFW_ROOT_DIR}"
     "${ASFW_DRIVER_DIR}"
     "${ASFW_DRIVER_DIR}/Async"
@@ -19,8 +20,8 @@ set(ASFW_COMMON_INCLUDES
     "${ASFW_DRIVER_DIR}/Bus"
     "${ASFW_DRIVERKIT_DIR}"
     "${ASFW_DRIVER_DIR}/Hardware"
+    "${ASFW_DRIVER_DIR}/Testing"
     "${ASFW_ROOT_DIR}/AppleHeaders"
-    "${ASFW_TESTS_DIR}/mocks"
 )
 
 enable_testing()
@@ -38,12 +39,15 @@ if (NOT GTest_FOUND)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+include(GoogleTest)
+
 # Minimal library for packet serdes only
 add_library(asfw_packet_serdes STATIC
     "${ASFW_DRIVER_DIR}/Async/Tx/PacketBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
     "${ASFW_DRIVER_DIR}/Async/Rx/PacketRouter.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+    "${ASFW_TESTS_DIR}/ResponseSenderStub.cpp"
 )
 
 target_include_directories(asfw_packet_serdes PUBLIC ${ASFW_COMMON_INCLUDES})
@@ -120,6 +124,33 @@ target_compile_definitions(CompletionStrategyTests
 
 target_include_directories(CompletionStrategyTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+# Completion Refactor Plan Tests - ACK/AR race coverage scaffolding
+add_executable(CompletionRefactorPlanTests
+    "${ASFW_TESTS_DIR}/CompletionRefactorPlanTests.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/Transaction.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/TransactionManager.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/PayloadHandle.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(CompletionRefactorPlanTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CompletionRefactorPlanTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CompletionRefactorPlanTests PRIVATE
+    "${ASFW_TESTS_DIR}/mocks"
+    ${ASFW_COMMON_INCLUDES}
+)
+
+gtest_discover_tests(CompletionRefactorPlanTests)
+
 # Gap Count Optimizer Tests - Bus reset storm fix
 add_executable(GapCountOptimizerTests
     "${ASFW_TESTS_DIR}/GapCountOptimizerTests.cpp"
@@ -174,6 +205,73 @@ target_compile_definitions(PhyPacketsTests
 
 target_include_directories(PhyPacketsTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+# =============================================================================
+# DMA Memory Tests - FakeDMAMemory unit tests
+# =============================================================================
+add_executable(DMAMemoryTests
+    "${ASFW_TESTS_DIR}/DMAMemoryTests.cpp"
+)
+
+target_link_libraries(DMAMemoryTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DMAMemoryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DMAMemoryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DMAMemoryTests)
+
+# =============================================================================
+# Descriptor Ring DMA Tests - Ring logic with fake DMA
+# =============================================================================
+add_executable(DescriptorRingDMATests
+    "${ASFW_TESTS_DIR}/DescriptorRingDMATests.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+)
+
+target_link_libraries(DescriptorRingDMATests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DescriptorRingDMATests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DescriptorRingDMATests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DescriptorRingDMATests)
+
+# =============================================================================
+# Buffer Ring DMA Tests - BufferRing logic with fake DMA
+# =============================================================================
+add_executable(BufferRingDMATests
+    "${ASFW_TESTS_DIR}/BufferRingDMATests.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(BufferRingDMATests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BufferRingDMATests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BufferRingDMATests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BufferRingDMATests)
+
 # Label Allocator / tLabel lifecycle tests
 add_executable(LabelAllocatorTests
     "${ASFW_TESTS_DIR}/LabelAllocatorTests.cpp"
@@ -193,12 +291,600 @@ target_compile_definitions(LabelAllocatorTests
 
 target_include_directories(LabelAllocatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
-include(GoogleTest)
-gtest_discover_tests(ASFWPacketTests)
-gtest_discover_tests(TLabelMatchingTests)
-gtest_discover_tests(CompletionCallbackPatternTests)
-gtest_discover_tests(CompletionStrategyTests)
-gtest_discover_tests(GapCountOptimizerTests)
-gtest_discover_tests(TopologyGapExtractionTests)
-gtest_discover_tests(PhyPacketsTests)
-gtest_discover_tests(LabelAllocatorTests)
+# FCP Packet Parsing Tests - Destination offset extraction and FCP response routing
+add_executable(FCPPacketParsingTests
+    "${ASFW_TESTS_DIR}/FCPPacketParsingTests.cpp"
+)
+
+target_link_libraries(FCPPacketParsingTests
+    PRIVATE
+        asfw_packet_serdes
+        GTest::gtest_main
+)
+
+target_compile_definitions(FCPPacketParsingTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(FCPPacketParsingTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+# Packet Field Extraction Tests - Comprehensive tests for ALL packet field extraction
+# (Created after sourceID byte-swap bug was discovered)
+add_executable(PacketFieldExtractionTests
+    "${ASFW_TESTS_DIR}/PacketFieldExtractionTests.cpp"
+)
+
+target_link_libraries(PacketFieldExtractionTests
+    PRIVATE
+        asfw_packet_serdes
+        GTest::gtest_main
+)
+
+target_compile_definitions(PacketFieldExtractionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(PacketFieldExtractionTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(PacketFieldExtractionTests)
+
+# Music Subunit Identifier Parser Tests
+add_executable(MusicSubunitIdentifierParserTests
+    "${ASFW_TESTS_DIR}/MusicSubunitIdentifierParserTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
+
+    "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
+    # Dependencies required by MusicSubunit.cpp (even if not used in test)
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCDiscovery.cpp" # Likely needed by AVCUnit
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp" # Stub for IOUserClient/DriverKit
+)
+
+target_link_libraries(MusicSubunitIdentifierParserTests
+    PRIVATE
+        asfw_packet_serdes # For FCPTransport dependencies if any
+        GTest::gtest_main
+)
+
+target_compile_definitions(MusicSubunitIdentifierParserTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(MusicSubunitIdentifierParserTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(MusicSubunitIdentifierParserTests)
+
+# AVC Info Block Tests - Phase 3: Recursive info block parsing
+add_executable(AVCInfoBlockTests
+    "${ASFW_TESTS_DIR}/AVCInfoBlockTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AVCInfoBlockTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AVCInfoBlockTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AVCInfoBlockTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AVCInfoBlockTests)
+
+# ClusterInfo Parsing Tests - Tests for descriptor ClusterInfo/MusicPlugInfo parsing
+add_executable(ClusterInfoParsingTests
+    "${ASFW_TESTS_DIR}/ClusterInfoParsingTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(ClusterInfoParsingTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ClusterInfoParsingTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ClusterInfoParsingTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ClusterInfoParsingTests)
+
+# ResponseSender Header Format Tests - OHCI AT format bug fix verification
+add_executable(ResponseSenderHeaderFormatTests
+    "${ASFW_TESTS_DIR}/ResponseSenderHeaderFormatTests.cpp"
+)
+
+target_link_libraries(ResponseSenderHeaderFormatTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ResponseSenderHeaderFormatTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ResponseSenderHeaderFormatTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+
+# Extended Stream Format Command Tests - TDD Phase 1
+add_executable(ExtendedStreamFormatCommandTests
+    "${ASFW_TESTS_DIR}/ExtendedStreamFormatCommandTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/ExtendedStreamFormatCommand.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(ExtendedStreamFormatCommandTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(ExtendedStreamFormatCommandTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ExtendedStreamFormatCommandTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+
+# AVC Stream Format Command Tests - Format offset bug fix verification
+# Uses real Apogee Duet response data from FWA/discovery.txt
+add_executable(AVCStreamFormatCommandTests
+    "${ASFW_TESTS_DIR}/AVCStreamFormatCommandTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AVCStreamFormatCommandTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(AVCStreamFormatCommandTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AVCStreamFormatCommandTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AVCStreamFormatCommandTests)
+
+
+# Audio Function Block Command Tests - TDD Phase 1
+add_executable(AudioFunctionBlockCommandTests
+    "${ASFW_TESTS_DIR}/AudioFunctionBlockCommandTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AudioFunctionBlockCommandTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(AudioFunctionBlockCommandTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioFunctionBlockCommandTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+
+# Music Subunit Tests - TDD Phase 1 (Integration)
+add_executable(MusicSubunitTests
+    "${ASFW_TESTS_DIR}/MusicSubunitTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+
+    # We need FCPTransport stub or similar if we link AVCUnit
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+)
+
+target_link_libraries(MusicSubunitTests
+    PRIVATE
+        asfw_packet_serdes
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(MusicSubunitTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(MusicSubunitTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(MusicSubunitTests)
+
+# Stream Format Parser Tests - Legacy format support
+add_executable(StreamFormatParserTests
+    "${ASFW_TESTS_DIR}/StreamFormatParserTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(StreamFormatParserTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(StreamFormatParserTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(StreamFormatParserTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(StreamFormatParserTests)
+
+# AsyncSubsystem Accessor Tests - Coverage improvement for simple getters
+add_executable(AsyncSubsystemAccessorTests
+    "${ASFW_TESTS_DIR}/AsyncSubsystemAccessorTests.cpp"
+    "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AsyncSubsystemAccessorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AsyncSubsystemAccessorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AsyncSubsystemAccessorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AsyncSubsystemAccessorTests)
+
+# MusicSubunit Capabilities Tests - Coverage for inline helper methods
+add_executable(MusicSubunitCapabilitiesTests
+    "${ASFW_TESTS_DIR}/MusicSubunitCapabilitiesTests.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(MusicSubunitCapabilitiesTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(MusicSubunitCapabilitiesTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(MusicSubunitCapabilitiesTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(MusicSubunitCapabilitiesTests)
+
+
+
+# AVCHandler Tests - Driver-UI Communication
+add_executable(AVCHandlerTests
+    "${ASFW_TESTS_DIR}/AVCHandlerTests.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AVCHandlerTests
+    PRIVATE
+        asfw_packet_serdes
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(AVCHandlerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AVCHandlerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AVCHandlerTests)
+
+# AVCCapabilitiesSerializerTests
+add_executable(AVCCapabilitiesSerializerTests
+    "${ASFW_TESTS_DIR}/AVCCapabilitiesSerializerTests.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Handlers/AVCHandler.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Music/MusicSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/DescriptorAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+target_link_libraries(AVCCapabilitiesSerializerTests PRIVATE
+    GTest::gtest_main
+    GTest::gmock
+    asfw_packet_serdes
+)
+target_compile_definitions(AVCCapabilitiesSerializerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+target_include_directories(AVCCapabilitiesSerializerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AVCCapabilitiesSerializerTests)
+
+# AVC Unit Plug Info Command Tests
+add_executable(AVCUnitPlugInfoCommandTests
+    "${ASFW_TESTS_DIR}/AVCUnitPlugInfoCommandTests.cpp"
+)
+
+target_link_libraries(AVCUnitPlugInfoCommandTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(AVCUnitPlugInfoCommandTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AVCUnitPlugInfoCommandTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AVCUnitPlugInfoCommandTests)
+
+# Isoch Receive Context Tests
+add_executable(IsochReceiveContextTests
+    "${ASFW_TESTS_DIR}/IsochReceiveContextTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/IsochReceiveContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(IsochReceiveContextTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(IsochReceiveContextTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IsochReceiveContextTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IsochReceiveContextTests)
+
+# Isoch DMA Memory Manager Tests
+add_executable(IsochDMAMemoryManagerTests
+    "${ASFW_TESTS_DIR}/IsochDMAMemoryManagerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+)
+
+target_link_libraries(IsochDMAMemoryManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(IsochDMAMemoryManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IsochDMAMemoryManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IsochDMAMemoryManagerTests)
+
+# =============================================================================
+# Phase 1.5: AM824/AMDTP Encoding Tests
+# =============================================================================
+
+# AM824 Encoder Tests
+add_executable(AM824EncoderTests
+    "${ASFW_TESTS_DIR}/AM824EncoderTests.cpp"
+)
+
+target_link_libraries(AM824EncoderTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AM824EncoderTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AM824EncoderTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AM824EncoderTests)
+
+# CIP Header Builder Tests
+add_executable(CIPHeaderBuilderTests
+    "${ASFW_TESTS_DIR}/CIPHeaderBuilderTests.cpp"
+)
+
+target_link_libraries(CIPHeaderBuilderTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CIPHeaderBuilderTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CIPHeaderBuilderTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CIPHeaderBuilderTests)
+
+# Blocking Cadence Tests (48 kHz)
+add_executable(BlockingCadenceTests
+    "${ASFW_TESTS_DIR}/BlockingCadenceTests.cpp"
+)
+
+target_link_libraries(BlockingCadenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BlockingCadenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BlockingCadenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BlockingCadenceTests)
+
+# Blocking DBC Generator Tests
+add_executable(BlockingDbcTests
+    "${ASFW_TESTS_DIR}/BlockingDbcTests.cpp"
+)
+
+target_link_libraries(BlockingDbcTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BlockingDbcTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BlockingDbcTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BlockingDbcTests)
+
+# Audio Ring Buffer Tests
+add_executable(AudioRingBufferTests
+    "${ASFW_TESTS_DIR}/AudioRingBufferTests.cpp"
+)
+
+target_link_libraries(AudioRingBufferTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioRingBufferTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioRingBufferTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioRingBufferTests)
+
+# Packet Assembler Integration Tests
+add_executable(PacketAssemblerTests
+    "${ASFW_TESTS_DIR}/PacketAssemblerTests.cpp"
+)
+
+target_link_libraries(PacketAssemblerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(PacketAssemblerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(PacketAssemblerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(PacketAssemblerTests)
+
+# Isoch Transmit Context Tests
+add_executable(IsochTransmitContextTests
+    "${ASFW_TESTS_DIR}/IsochTransmitContextTests.cpp"
+)
+
+target_link_libraries(IsochTransmitContextTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(IsochTransmitContextTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IsochTransmitContextTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IsochTransmitContextTests)
+
+# SimITEngine Tests (Hardware-grade offline testing)
+add_executable(SimITEngineTests
+    "${ASFW_TESTS_DIR}/SimITEngineTests.cpp"
+)
+
+target_link_libraries(SimITEngineTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SimITEngineTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SimITEngineTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SimITEngineTests)
+
+

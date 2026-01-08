@@ -5,6 +5,7 @@
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/IOLib.h>
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
 #include "../../Common/BarrierUtils.hpp"
 
 namespace ASFW::Shared {
@@ -76,7 +77,7 @@ protected:
      */
     void Transition(StateEnum newState, uint32_t txid, const char* why) {
         state_ = newState;
-        ASFW_LOG_KV(Async, RoleTag::kContextName.data(), txid, 0, "state=%{public}s: %{public}s (head=%lu tail=%lu)", PolicyT::ToStr(newState), why, (unsigned long)ring_.Head(), (unsigned long)ring_.Tail());
+        ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u state=%{public}s: %{public}s (head=%lu tail=%lu)", RoleTag::kContextName.data(), txid, 0, PolicyT::ToStr(newState), why, (unsigned long)ring_.Head(), (unsigned long)ring_.Tail());
     }
 
     /**

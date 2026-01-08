@@ -86,6 +86,7 @@ constexpr bool IsValidTransition(TransactionState from, TransactionState to) noe
 
         case TransactionState::ATPosted:
             return to == TransactionState::ATCompleted ||
+                   to == TransactionState::ARReceived ||  // Fast AR response
                    to == TransactionState::Failed ||
                    to == TransactionState::TimedOut ||
                    to == TransactionState::Cancelled;
@@ -93,6 +94,7 @@ constexpr bool IsValidTransition(TransactionState from, TransactionState to) noe
         case TransactionState::ATCompleted:
             // gotAck() logic: pending → wait for AR, complete → done
             return to == TransactionState::AwaitingAR ||     // ackCode==0x1 (pending)
+                   to == TransactionState::ARReceived ||      // Fast AR response
                    to == TransactionState::Completed ||       // ackCode==0x0 (complete)
                    to == TransactionState::Failed ||          // ackCode error
                    to == TransactionState::TimedOut ||        // Timeout
@@ -261,6 +263,18 @@ public:
     [[nodiscard]] uint8_t retryCount() const noexcept { return retryCount_; }
     void IncrementRetry() noexcept { retryCount_++; }
 
+    // Completion latch (prevents double-completion when both AT and AR try to complete)
+    /// Try to mark transaction as completed (returns true if this is first completion)
+    /// Thread-safe: uses atomic exchange to ensure only one path completes
+    [[nodiscard]] bool TryMarkCompleted() noexcept {
+        return !completedByPath_.exchange(true, std::memory_order_acq_rel);
+    }
+
+    /// Check if transaction has been completed by any path (AT or AR)
+    [[nodiscard]] bool IsCompletedByPath() const noexcept {
+        return completedByPath_.load(std::memory_order_acquire);
+    }
+
     // Debugging: state history
     [[nodiscard]] std::span<const TransactionStateHistory> GetHistory() const noexcept;
     void DumpHistory() const noexcept;
@@ -286,6 +300,7 @@ private:
     uint8_t retryCount_{0};
     CompletionStrategy completionStrategy_{CompletionStrategy::CompleteOnAT};  // Explicit two-path model
     bool skipATCompletion_{false};  // For CompleteOnAR transactions
+    std::atomic<bool> completedByPath_{false};  // Completion latch (prevents double-completion)
 
     // Resources (Phase 1.3: UniquePayload for automatic cleanup)
     UniquePayload<PayloadHandle> payload_;  // Automatically released on destruction

@@ -3,12 +3,20 @@ build/
 **/build/
 **/build_*/
 tests_build/
+*.log
 
 # .DS_Store
 .DS_Store
 
+# Coverage report
+coverage_html/
+coverage.profdata
+coverage.profraw
+default.profraw
+
 # build logs
 *.logs
+diff.txt
 
 # Other
 compile_commands.json

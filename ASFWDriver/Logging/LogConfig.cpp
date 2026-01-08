@@ -35,6 +35,15 @@ LogConfig::LogConfig()
     asyncVerbosity_.store(1);           // Default: Compact
     controllerVerbosity_.store(1);
     hardwareVerbosity_.store(1);
+    discoveryVerbosity_.store(2);       // Default: Transitions (AVC discovery needs more detail)
+    configROMVerbosity_.store(1);       // Default: Compact
+    userClientVerbosity_.store(1);      // Default: Compact
+    musicSubunitVerbosity_.store(1);    // Default: Compact
+    fcpVerbosity_.store(1);             // Default: Compact
+    cmpVerbosity_.store(1);             // Default: Compact
+    irmVerbosity_.store(1);             // Default: Compact
+    avcVerbosity_.store(1);             // Default: Compact
+    isochVerbosity_.store(1);           // Default: Compact
     enableHexDumps_.store(false);       // Default: No hex dumps
     logStatistics_.store(true);         // Default: Show statistics
     initialized_.store(false);
@@ -64,6 +73,15 @@ void LogConfig::Initialize(IOService* service) {
     asyncVerbosity_.store(ReadUInt8Property(service, "ASFWAsyncVerbosity", 1));
     controllerVerbosity_.store(ReadUInt8Property(service, "ASFWControllerVerbosity", 1));
     hardwareVerbosity_.store(ReadUInt8Property(service, "ASFWHardwareVerbosity", 1));
+    discoveryVerbosity_.store(ReadUInt8Property(service, "ASFWDiscoveryVerbosity", 2));
+    configROMVerbosity_.store(ReadUInt8Property(service, "ASFWConfigROMVerbosity", 1));
+    userClientVerbosity_.store(ReadUInt8Property(service, "ASFWUserClientVerbosity", 1));
+    musicSubunitVerbosity_.store(ReadUInt8Property(service, "ASFWMusicSubunitVerbosity", 1));
+    fcpVerbosity_.store(ReadUInt8Property(service, "ASFWFCPVerbosity", 1));
+    cmpVerbosity_.store(ReadUInt8Property(service, "ASFWCMPVerbosity", 1));
+    irmVerbosity_.store(ReadUInt8Property(service, "ASFWIRMVerbosity", 1));
+    avcVerbosity_.store(ReadUInt8Property(service, "ASFWAVCVerbosity", 1));
+    isochVerbosity_.store(ReadUInt8Property(service, "ASFWIsochVerbosity", 1));
     enableHexDumps_.store(ReadBoolProperty(service, "ASFWEnableHexDumps", false));
     logStatistics_.store(ReadBoolProperty(service, "ASFWLogStatistics", true));
 
@@ -71,8 +89,11 @@ void LogConfig::Initialize(IOService* service) {
 
     // Log configuration (always visible at INFO level)
     ASFW_LOG_INFO(Controller,
-                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u HexDumps=%d Stats=%d",
+                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u Isoch=%u HexDumps=%d Stats=%d",
                   asyncVerbosity_.load(), controllerVerbosity_.load(), hardwareVerbosity_.load(),
+                  discoveryVerbosity_.load(), configROMVerbosity_.load(), userClientVerbosity_.load(),
+                  musicSubunitVerbosity_.load(), fcpVerbosity_.load(), cmpVerbosity_.load(), irmVerbosity_.load(), avcVerbosity_.load(),
+                  isochVerbosity_.load(),
                   enableHexDumps_.load(), logStatistics_.load());
 }
 
@@ -90,6 +111,42 @@ uint8_t LogConfig::GetControllerVerbosity() const {
 
 uint8_t LogConfig::GetHardwareVerbosity() const {
     return hardwareVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetDiscoveryVerbosity() const {
+    return discoveryVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetConfigROMVerbosity() const {
+    return configROMVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetUserClientVerbosity() const {
+    return userClientVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetMusicSubunitVerbosity() const {
+    return musicSubunitVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetFCPVerbosity() const {
+    return fcpVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetCMPVerbosity() const {
+    return cmpVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetIRMVerbosity() const {
+    return irmVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetAVCVerbosity() const {
+    return avcVerbosity_.load(std::memory_order_relaxed);
+}
+
+uint8_t LogConfig::GetIsochVerbosity() const {
+    return isochVerbosity_.load(std::memory_order_relaxed);
 }
 
 bool LogConfig::IsHexDumpsEnabled() const {
@@ -120,6 +177,60 @@ void LogConfig::SetHardwareVerbosity(uint8_t level) {
     level = ClampLevel(level);
     hardwareVerbosity_.store(level, std::memory_order_relaxed);
     ASFW_LOG_INFO(Controller, "Hardware verbosity changed to %u", level);
+}
+
+void LogConfig::SetDiscoveryVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    discoveryVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "Discovery verbosity changed to %u", level);
+}
+
+void LogConfig::SetConfigROMVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    configROMVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "ConfigROM verbosity changed to %u", level);
+}
+
+void LogConfig::SetUserClientVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    userClientVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "UserClient verbosity changed to %u", level);
+}
+
+void LogConfig::SetMusicSubunitVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    musicSubunitVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "MusicSubunit verbosity changed to %u", level);
+}
+
+void LogConfig::SetFCPVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    fcpVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "FCP verbosity changed to %u", level);
+}
+
+void LogConfig::SetCMPVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    cmpVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "CMP verbosity changed to %u", level);
+}
+
+void LogConfig::SetIRMVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    irmVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "IRM verbosity changed to %u", level);
+}
+
+void LogConfig::SetAVCVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    avcVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "AVC verbosity changed to %u", level);
+}
+
+void LogConfig::SetIsochVerbosity(uint8_t level) {
+    level = ClampLevel(level);
+    isochVerbosity_.store(level, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "Isoch verbosity changed to %u", level);
 }
 
 void LogConfig::SetHexDumps(bool enable) {

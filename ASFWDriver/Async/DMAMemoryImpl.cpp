@@ -5,10 +5,7 @@ namespace ASFW::Async {
 DMAMemoryImpl::DMAMemoryImpl(DMAMemoryManager& mgr) : mgr_(mgr) {}
 
 std::optional<DMARegion> DMAMemoryImpl::AllocateRegion(size_t size, size_t alignment) {
-    // Note: alignment parameter is currently ignored as DMAMemoryManager
-    // enforces 16-byte alignment for all allocations (OHCI requirement).
-    // Future enhancement: support custom alignment if needed.
-    auto region = mgr_.AllocateRegion(size);
+    auto region = mgr_.AllocateRegion(size, alignment);
     if (!region) {
         return std::nullopt;
     }

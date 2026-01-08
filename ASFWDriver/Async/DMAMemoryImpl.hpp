@@ -1,11 +1,13 @@
 #pragma once
-#include "Interfaces/IDMAMemory.hpp"
+#include "../Shared/Memory/IDMAMemory.hpp"
 #include "../Shared/Memory/DMAMemoryManager.hpp"
 
 namespace ASFW::Async {
 
 // Import Shared type used by DMAMemoryImpl
 using ASFW::Shared::DMAMemoryManager;
+using ASFW::Shared::IDMAMemory;
+using ASFW::Shared::DMARegion;
 
 /**
  * @brief Concrete implementation of IDMAMemory using DMAMemoryManager.

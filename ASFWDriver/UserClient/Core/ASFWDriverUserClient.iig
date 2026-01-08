@@ -9,6 +9,7 @@
 #include <DriverKit/IOMemoryDescriptor.iig>
 
 class ASFWDriver;
+struct IOLock;
 
 class ASFWDriverUserClient : public IOUserClient
 {
@@ -44,6 +45,18 @@ public:
         kMethodSetHexDumps             = 20,
         kMethodGetLogConfig            = 21,
         kMethodGetAVCUnits             = 22,
+        // Note: 23, 24, 25 defined in .cpp only (GetSubunitCapabilities, GetSubunitDescriptor, ReScanAVCUnits)\n        // TODO: IRM test method - temporary for Phase 0.5 testing
+        kMethodTestIRMAllocation       = 26,
+        kMethodTestIRMRelease          = 27,
+        // TODO: CMP test methods - temporary for Phase 0.5 testing
+        kMethodTestCMPConnectOPCR      = 28,
+        kMethodTestCMPDisconnectOPCR   = 29,
+        kMethodTestCMPConnectIPCR      = 30,
+        kMethodTestCMPDisconnectIPCR   = 31,
+        
+        // Isocho Stream Control
+        kMethodStartIsochReceive       = 32,
+        kMethodStopIsochReceive        = 33,
     };
 
     kern_return_t
@@ -121,6 +134,8 @@ struct ASFWDriverUserClient_IVars {
     OSAction* transactionAction;
     bool transactionListenerRegistered;
     void* transactionStorage;  // TransactionStorage* (opaque)
+    IOLock* actionLock;
+    bool stopping;
 
     // Handler instances
     void* busResetHandler;     // BusResetHandler* (opaque)
@@ -130,4 +145,5 @@ struct ASFWDriverUserClient_IVars {
     void* configROMHandler;    // ConfigROMHandler* (opaque)
     void* deviceDiscoveryHandler;  // DeviceDiscoveryHandler* (opaque)
     void* avcHandler;          // AVCHandler* (opaque)
+    void* isochHandler;        // IsochHandler* (opaque)
 };

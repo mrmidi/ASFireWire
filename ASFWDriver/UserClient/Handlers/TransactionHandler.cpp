@@ -12,6 +12,7 @@
 #include "../Storage/TransactionStorage.hpp"
 #include "../../Logging/Logging.hpp"
 
+#include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
 
 namespace ASFW::UserClient {
@@ -76,10 +77,13 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
     params.length = length;
 
     // Initiate async read with completion callback
+    userClient->retain();
     AsyncHandle handle = asyncSys->Read(params, [userClient](AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> responsePayload) {
         AsyncCompletionCallback(handle, status, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
+        userClient->release();
     });
     if (!handle) {
+        userClient->release();
         ASFW_LOG(UserClient, "AsyncRead: Failed to initiate transaction");
         return kIOReturnError;
     }
@@ -155,10 +159,13 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
     params.length = length;
 
     // Initiate async write with completion callback
+    userClient->retain();
     AsyncHandle handle = asyncSys->Write(params, [userClient](AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> responsePayload) {
         AsyncCompletionCallback(handle, status, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
+        userClient->release();
     });
     if (!handle) {
+        userClient->release();
         ASFW_LOG(UserClient, "AsyncWrite: Failed to initiate transaction");
         return kIOReturnError;
     }
@@ -234,6 +241,11 @@ kern_return_t TransactionHandler::RegisterTransactionListener(IOUserClientMethod
         return kIOReturnNotReady;
     }
 
+    if (!userClient->ivars->actionLock) {
+        return kIOReturnNotReady;
+    }
+
+    IOLockLock(userClient->ivars->actionLock);
     if (userClient->ivars->transactionAction) {
         userClient->ivars->transactionAction->release();
         userClient->ivars->transactionAction = nullptr;
@@ -242,6 +254,8 @@ kern_return_t TransactionHandler::RegisterTransactionListener(IOUserClientMethod
     args->completion->retain();
     userClient->ivars->transactionAction = args->completion;
     userClient->ivars->transactionListenerRegistered = true;
+    userClient->ivars->stopping = false;
+    IOLockUnlock(userClient->ivars->actionLock);
 
     ASFW_LOG(UserClient, "RegisterTransactionListener: callback registered");
     return kIOReturnSuccess;
@@ -322,6 +336,7 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
 
     // Initiate async compare-swap with completion callback
     // NOTE: Lock completion includes old value in response payload
+    userClient->retain();
     AsyncHandle handle = asyncSys->Lock(params, extendedTCode, [userClient](AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> responsePayload) {
         // For compare-swap, responsePayload contains the old value read from memory
         // locked = true if compare succeeded (old == compare), false otherwise
@@ -332,9 +347,11 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
 
         ASFW_LOG(UserClient, "AsyncCompareSwap completion: handle=0x%04x locked=%{public}s",
                  handle.value, locked ? "YES" : "NO");
+        userClient->release();
     });
 
     if (!handle) {
+        userClient->release();
         ASFW_LOG(UserClient, "AsyncCompareSwap: Failed to initiate transaction");
         return kIOReturnError;
     }

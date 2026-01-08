@@ -61,28 +61,16 @@ public:
     // topology: Current topology snapshot (needed for busBase16 if scanner is idle)
     bool TriggerManualRead(uint8_t nodeId, Generation gen, const Driver::TopologySnapshot& topology);
 
-    // Set completion callback (called when scan becomes idle)
-    // Can be set after construction to support dependency injection
     void SetCompletionCallback(ScanCompletionCallback callback);
 
-    /**
-     * Set TopologyManager for bad IRM reporting.
-     *
-     * Called during initialization to provide callback for marking bad IRMs.
-     * When IRM verification fails (read/CAS test), scanner marks node as bad.
-     *
-     * @param topologyManager Pointer to TopologyManager (optional, may be nullptr)
-     *
-     * Reference: Apple IOFireWireController.cpp:2697 - sets scan->fIRMisBad
-     */
     void SetTopologyManager(Driver::TopologyManager* topologyManager);
 
 private:
     enum class NodeState : uint8_t {
         Idle,
         ReadingBIB,
-        VerifyingIRM_Read,   // Phase 1: Read CHANNELS_AVAILABLE register
-        VerifyingIRM_Lock,   // Phase 2: CAS test on CHANNELS_AVAILABLE
+        VerifyingIRM_Read,
+        VerifyingIRM_Lock,
         ReadingRootDir,
         Complete,
         Failed
@@ -91,45 +79,35 @@ private:
     struct NodeScanState {
         uint8_t nodeId{0xFF};
         NodeState state{NodeState::Idle};
-        // TODO: S100 hardcoded for maximum hardware compatibility.
         FwSpeed currentSpeed{FwSpeed::S100};
         uint8_t retriesLeft{0};
         ConfigROM partialROM{};
 
-        // IRM verification state (Phase 3)
-        bool needsIRMCheck{false};         // True if node is IRM candidate with speed > S100
-        bool irmCheckReadDone{false};      // True after read test completes
-        bool irmCheckLockDone{false};      // True after CAS test completes
-        bool irmIsBad{false};              // True if verification failed
-        uint32_t irmBitBucket{0xFFFFFFFF}; // Stores read value from CHANNELS_AVAILABLE
+        bool needsIRMCheck{false};
+        bool irmCheckReadDone{false};
+        bool irmCheckLockDone{false};
+        bool irmIsBad{false};
+        uint32_t irmBitBucket{0xFFFFFFFF};
 
-        bool bibInProgress{false};         // Tracks whether a BIB read is active
+        bool bibInProgress{false};
     };
 
-    // Advance FSM: kick off next read if capacity available
     void AdvanceFSM();
 
-    // Handle BIB read completion
     void OnBIBComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
 
-    // Handle IRM read test completion (Phase 3)
     void OnIRMReadComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
 
-    // Handle IRM lock test completion (Phase 3)
     void OnIRMLockComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
 
     void HandleIRMLockResult(NodeScanState& node, const ROMReader::ReadResult& result);
 
-    // Handle root directory read completion
     void OnRootDirComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
 
-    // Retry with speed downgrade
     void RetryWithFallback(NodeScanState& node);
 
-    // Check if we have capacity for more in-flight operations
     bool HasCapacity() const;
 
-    // Check if scan is complete and notify callback if so (Apple-style immediate completion)
     void CheckAndNotifyCompletion();
 
     Async::IFireWireBus& bus_;
@@ -138,15 +116,13 @@ private:
     std::unique_ptr<ROMReader> reader_;
 
     Generation currentGen_{0};
-    Driver::TopologySnapshot currentTopology_;  // Store snapshot for bus info access
+    Driver::TopologySnapshot currentTopology_;
     std::vector<NodeScanState> nodeScans_;
     std::vector<ConfigROM> completedROMs_;
     uint16_t inflightCount_{0};
 
-    // Completion callback (called when scan becomes idle)
     ScanCompletionCallback onScanComplete_;
 
-    // TopologyManager callback for marking bad IRMs (Phase 3)
     Driver::TopologyManager* topologyManager_{nullptr};
 };
 

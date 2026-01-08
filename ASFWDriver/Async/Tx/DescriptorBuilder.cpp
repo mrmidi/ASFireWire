@@ -185,13 +185,21 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         // Allocate descriptor from ring
         const size_t ringIndex = ReserveBlocks(kImmediateBlocks);
         if (ringIndex == kInvalidRingIndex) {
+            const size_t head = ring_.Head();
+            const size_t tail = ring_.Tail();
+            const size_t used = (tail >= head) ? (tail - head) : (capacity - head + tail);
             ASFW_LOG(Async,
-                     "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu)",
+                     "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu used=%zu)",
                      chain.txid,
                      kImmediateBlocks,
-                     ring_.Head(),
-                     ring_.Tail(),
-                     capacity);
+                     head,
+                     tail,
+                     capacity,
+                     used);
+            // Ring is full - likely a descriptor leak. Log ring state for forensics.
+            if (used > capacity - 4) {
+                ASFW_LOG(Async, "  ⚠️ RING NEARLY FULL: %zu/%zu slots used. Check ScanCompletion is advancing head.", used, capacity);
+            }
             return chain;
         }
 
@@ -260,7 +268,7 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         const uint32_t br = immDesc->common.branchWord;
         const uint16_t reqCountField = static_cast<uint16_t>(ctl & 0xFFFFu);
         const uint8_t* imm = reinterpret_cast<const uint8_t*>(immDesc->immediateData);
-        ASFW_LOG(Async,
+        ASFW_LOG_V2(Async,
                  "LAST-Imm: ctl=0x%08x br=0x%08x len=%u data[0..15]=%02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
                  ctl,
                  br,
@@ -278,7 +286,7 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         const uint8_t txRetry = static_cast<uint8_t>((quadlet0 >> 8) & 0x03);
         const uint8_t txTCode = static_cast<uint8_t>((quadlet0 >> 4) & 0x0F);
         const uint8_t txPriority = static_cast<uint8_t>(quadlet0 & 0x0F);
-        ASFW_LOG(Async,
+        ASFW_LOG_V2(Async,
                  "📤 TX Header (host order): destID=0x%04X tLabel=%u retry=%u tCode=0x%X pri=%u",
                  txDestID, txTLabel, txRetry, txTCode, txPriority);
 
@@ -366,13 +374,20 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
 
     const size_t chainStart = ReserveBlocks(kTotalBlocks);
     if (chainStart == kInvalidRingIndex) {
+        const size_t head = ring_.Head();
+        const size_t tail = ring_.Tail();
+        const size_t used = (tail >= head) ? (tail - head) : (capacity - head + tail);
         ASFW_LOG(Async,
-                 "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu)",
+                 "❌ ReserveBlocks failed (txid=%u blocks=%u head=%zu tail=%zu capacity=%zu used=%zu)",
                  chain.txid,
                  kTotalBlocks,
-                 ring_.Head(),
-                 ring_.Tail(),
-                 capacity);
+                 head,
+                 tail,
+                 capacity,
+                 used);
+        if (used > capacity - 4) {
+            ASFW_LOG(Async, "  ⚠️ RING NEARLY FULL: %zu/%zu slots used. Check ScanCompletion is advancing head.", used, capacity);
+        }
         return chain;
     }
     const size_t headerRingIndex = chainStart;
@@ -425,24 +440,47 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
                     kImmediateCapacity - headerSize);
     }
 
-    // DIAGNOSTIC: Log header quadlets for Lock transactions (detect CAS Q3 corruption)
-    // This helps debug IRM CAS failures (rCode 6 TYPE_ERROR)
+    // DIAGNOSTIC: Log header quadlets for 16-byte header transactions
+    // Extract tCode from Q0 bits[7:4] to determine transaction type
     uint32_t q3_initial = 0;
+    uint8_t tCode = 0;
+    const char* txTypeName = "Unknown";
     if (headerSize == 16) {
-        ASFW_LOG(Async,
-                 "🔍 Lock descriptor header copied: Q0=0x%08x Q1=0x%08x Q2=0x%08x Q3=0x%08x",
+        const uint32_t q0 = headerImmDesc->immediateData[0];
+        tCode = static_cast<uint8_t>((q0 >> 4) & 0x0F);
+
+        // Determine transaction type from tCode
+        switch (tCode) {
+            case 0x0: txTypeName = "Write Quadlet"; break;
+            case 0x1: txTypeName = "Block Write"; break;
+            case 0x9: txTypeName = "Lock Request (CAS)"; break;
+            default: txTypeName = "Unknown"; break;
+        }
+
+        ASFW_LOG_V3(Async,
+                 "🔍 %{public}s descriptor header (tCode=0x%X): Q0=0x%08x Q1=0x%08x Q2=0x%08x Q3=0x%08x",
+                 txTypeName, tCode,
                  headerImmDesc->immediateData[0],
                  headerImmDesc->immediateData[1],
                  headerImmDesc->immediateData[2],
                  headerImmDesc->immediateData[3]);
 
-        // Parse Q3 to show critical CAS fields
+        // Parse Q3 to show dataLength + extTcode
         q3_initial = headerImmDesc->immediateData[3];
         const uint16_t dataLength = static_cast<uint16_t>(q3_initial >> 16);
         const uint16_t extTcode = static_cast<uint16_t>(q3_initial & 0xFFFFu);
-        ASFW_LOG(Async,
-                 "   Q3 decode: dataLength=%u extTcode=0x%04x (expected: dataLength=8 extTcode=0x0002 for CAS)",
-                 dataLength, extTcode);
+
+        if (tCode == 0x9) {
+            // LOCK: expect dataLength=8, extTcode=0x0002
+            ASFW_LOG_V3(Async,
+                     "   Q3 decode: dataLength=%u extTcode=0x%04x (expected: dataLength=8 extTcode=0x0002 for CAS)",
+                     dataLength, extTcode);
+        } else {
+            // Block Write or Write Quadlet: just show values
+            ASFW_LOG_V3(Async,
+                     "   Q3 decode: dataLength=%u extTcode=0x%04x",
+                     dataLength, extTcode);
+        }
     }
 
     // OUTPUT_MORE relies on physical contiguity; branchWord is ignored per OHCI §7.1.
@@ -485,31 +523,33 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
 
     dmaManager_.PublishRange(payloadDescriptor, sizeof(OHCIDescriptor));
 
-    // DIAGNOSTIC: Log descriptor control words for Lock transactions
+    // DIAGNOSTIC: Log descriptor control words
     if (headerSize == 16) {
         const uint16_t headerReqCount = static_cast<uint16_t>(headerImmDesc->common.control & 0xFFFFu);
         const uint16_t payloadReqCount = static_cast<uint16_t>(payloadDescriptor->control & 0xFFFFu);
-        ASFW_LOG(Async,
-                 "🔍 Lock descriptor chain configured:");
-        ASFW_LOG(Async,
-                 "   Header descriptor: reqCount=%u (expected 16 for lock header)",
+        ASFW_LOG_V3(Async,
+                 "🔍 %{public}s descriptor chain configured:",
+                 txTypeName);
+        ASFW_LOG_V3(Async,
+                 "   Header descriptor: reqCount=%u (expected 16 for all 16-byte headers)",
                  headerReqCount);
-        ASFW_LOG(Async,
-                 "   Payload descriptor: reqCount=%u dataAddr=0x%08x (expected reqCount=8 for CAS)",
+        ASFW_LOG_V3(Async,
+                 "   Payload descriptor: reqCount=%u dataAddr=0x%08x",
                  payloadReqCount, payloadDescriptor->dataAddress);
 
-        // Validate critical values
         if (headerReqCount != 16) {
-            ASFW_LOG(Async, "   ❌ ERROR: Header reqCount is %u, should be 16!", headerReqCount);
+            ASFW_LOG_V1(Async, "   ❌ ERROR: Header reqCount is %u, should be 16!", headerReqCount);
         }
-        if (payloadReqCount != 8) {
-            ASFW_LOG(Async, "   ❌ ERROR: Payload reqCount is %u, should be 8!", payloadReqCount);
+
+        // Only validate payload size for LOCK transactions (tCode 0x9)
+        if (tCode == 0x9 && payloadReqCount != 8) {
+            ASFW_LOG_V1(Async, "   ❌ ERROR: LOCK payload reqCount is %u, should be 8!", payloadReqCount);
         }
 
         // Re-check Q3 after descriptor configuration (ensure it wasn't corrupted)
         const uint32_t q3_after = headerImmDesc->immediateData[3];
         if (q3_after != q3_initial) {
-            ASFW_LOG(Async,
+            ASFW_LOG_V1(Async,
                      "   ❌ CRITICAL: Q3 changed after descriptor config! was=0x%08x now=0x%08x",
                      q3_initial, q3_after);
         }
@@ -577,7 +617,7 @@ void DescriptorBuilder::PatchBranchWord(HW::OHCIDescriptor* descriptor, uint32_t
 
     if ((control & branchMask) != desiredBranch) {
         if (control == 0) {
-            ASFW_LOG(Async, "⚠️ PatchBranchWord: descriptor control word unexpectedly zero while linking");
+            ASFW_LOG_V2(Async, "⚠️ PatchBranchWord: descriptor control word unexpectedly zero while linking");
         }
         control &= ~branchMask;
         control |= desiredBranch;
@@ -626,7 +666,7 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
     size_t prevLastIndex = 0;
     uint8_t prevBlocks = 0;
     if (!ring_.LocatePreviousLast(tailIndex, prevLast, prevLastIndex, prevBlocks)) {
-        ASFW_LOG(Async,
+        ASFW_LOG_V2(Async,
                  "LinkTailTo: no previous LAST descriptor to link (txid=%u tail=%zu)",
                  newChain.txid,
                  tailIndex);
@@ -637,7 +677,7 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
     const uint8_t nextPacketBlocks = newChain.TotalBlocks();
     const uint32_t branch = HW::MakeBranchWordAT(static_cast<uint64_t>(newChain.firstIOVA32), nextPacketBlocks);
     if (branch == 0) {
-        ASFW_LOG(Async,
+        ASFW_LOG_V2(Async,
                  "LinkTailTo: invalid branch encoding (txid=%u blocks=%u iova=0x%08x)",
                  newChain.txid,
                  nextPacketBlocks,
@@ -647,7 +687,7 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
 
     const uint8_t zNibble = static_cast<uint8_t>(branch & 0xFu);
     if (zNibble != (nextPacketBlocks & 0xFu)) {
-        ASFW_LOG(Async,
+        ASFW_LOG_V2(Async,
                  "LinkTailTo: Z mismatch (txid=%u zNibble=%u blocks=%u)",
                  newChain.txid,
                  zNibble,
@@ -659,7 +699,7 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
 
     const bool tracing = DMAMemoryManager::IsTracingEnabled();
     if (tracing) {
-        ASFW_LOG(Async,
+        ASFW_LOG_V4(Async,
                  "LinkTailTo: txid=%u prevLast[%zu] prevBlocks=%u imm=%d ctrl_before=0x%08x br_before=0x%08x -> firstIOVA=0x%08x blocks=%u Z=%u branch=0x%08x",
                  newChain.txid,
                  prevLastIndex,
@@ -672,7 +712,7 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
                  zNibble,
                  branch);
     } else {
-        ASFW_LOG(Async,
+        ASFW_LOG_V3(Async,
                  "LinkTailTo: prevIdx=%zu branch=0x%08x -> 0x%08x blocks=%u",
                  prevLastIndex,
                  branchBefore,
@@ -687,7 +727,7 @@ bool DescriptorBuilder::LinkTailTo(size_t tailIndex, const DescriptorChain& newC
     if (tracing) {
         const uint32_t controlAfter = prevLast->control;
         const uint32_t branchAfter = prevLast->branchWord;
-        ASFW_LOG(Async,
+        ASFW_LOG_V4(Async,
                  "LinkTailTo: txid=%u patched prevLast[%zu] ctrl_after=0x%08x br_after=0x%08x",
                  newChain.txid,
                  prevLastIndex,
@@ -720,14 +760,14 @@ void DescriptorBuilder::UnlinkTail(size_t tailIndex) noexcept {
     const bool isImm = HW::IsImmediate(*prevLast);
     dmaManager_.PublishRange(prevLast, isImm ? sizeof(HW::OHCIDescriptorImmediate) : sizeof(HW::OHCIDescriptor));
 
-    ASFW_LOG(Async, "UnlinkTail: Reverted prevLast[%zu] to EOL (branchWord=0, b=Always unchanged, flushed %zu bytes)",
+    ASFW_LOG_V3(Async, "UnlinkTail: Reverted prevLast[%zu] to EOL (branchWord=0, b=Always unchanged, flushed %zu bytes)",
              prevLastIndex, isImm ? sizeof(HW::OHCIDescriptorImmediate) : sizeof(HW::OHCIDescriptor));
     
     // Verify b field is still BranchAlways (should not have been modified)
     const uint32_t ctlHi = prevLast->control >> HW::OHCIDescriptor::kControlHighShift;
     const uint8_t bField = (ctlHi >> HW::OHCIDescriptor::kBranchShift) & 0x3;
     if (bField != HW::OHCIDescriptor::kBranchAlways) {
-        ASFW_LOG(Async, "❌ UnlinkTail: prevLast has b=%u (expected kBranchAlways=3)", bField);
+        ASFW_LOG_V1(Async, "❌ UnlinkTail: prevLast has b=%u (expected kBranchAlways=3)", bField);
     }
 }
 

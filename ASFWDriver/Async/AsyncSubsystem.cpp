@@ -31,6 +31,7 @@
 #include "Contexts/ARRequestContext.hpp"
 #include "Contexts/ARResponseContext.hpp"
 #include "Rx/PacketRouter.hpp"
+#include "Tx/ResponseSender.hpp"
 // Context manager (optional incremental wiring)
 #include "Engine/ContextManager.hpp"
 
@@ -79,9 +80,6 @@ constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
 //   - See packet trace: 060:3279:1136 (s400) → 060:3291:0385 (s100)
 // FIXED: Speed encoding bug corrected in PacketBuilder.cpp (shift 16→24 per OHCI spec)
 constexpr uint8_t kDefaultAsyncSpeed = 0;  // S100 (98.304 Mbps)
-// DMA bases are now dynamically allocated via HardwareInterface::AllocateDMA()
-// with 16-byte alignment per OHCI §1.7, Table 7-3
-// Phase 2.0: Legacy constants removed (kOutstandingSlotCapacity, kTimeoutWheelBuckets, kTimeoutQuantumUsec, kSlotFlagHasRequestPayloadDMA)
 constexpr size_t kDefaultCompletionQueueCapacity = 64 * 1024;
 
 bool ShouldEnableCoherencyTrace(OSObject* owner) {
@@ -308,7 +306,6 @@ private:
     std::size_t length_{0};
 };
 
-// Phase 2.0: CleanupPayloadContext and AttachPayloadContext removed (replaced by PayloadHandle RAII)
 }
 
 kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
@@ -341,13 +338,11 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     kern_return_t kr = kIOReturnSuccess;
     const char* failureStage = nullptr;
 
-    // Legacy per-ring physical/virtual bookkeeping removed: ContextManager owns DMA
+    if (!labelAllocator_) {
+        labelAllocator_ = std::make_unique<LabelAllocator>();
+    }
+    labelAllocator_->Reset();
 
-    // Create components for Tracking actor (must be before goto labels)
-    auto labelAllocator = std::make_unique<LabelAllocator>();
-    labelAllocator->Reset();
-
-    // Pre-declare variables that might be jumped over by goto
     Result<void> txnMgrResult = {};
     std::unique_ptr<CompletionQueue> completionQueue;
 
@@ -358,7 +353,6 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
         goto fail;
     }
     
-    // Initialize command queue for serialized execution (Apple IOFWCmdQ pattern)
     commandQueue_ = std::make_unique<std::deque<PendingCommand>>();
     commandQueueLock_ = ::IOLockAlloc();
     if (!commandQueueLock_) {
@@ -368,22 +362,19 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     }
     commandInFlight_.store(false, std::memory_order_release);
 
-    // Phase 2.0: Initialize TransactionManager (replaces OutstandingTable, ResponseMatcher, TimeoutEngine)
     txnMgr_ = std::make_unique<TransactionManager>();
     txnMgrResult = txnMgr_->Initialize();
     if (!txnMgrResult) {
-        txnMgrResult.error().Log();  // Phase 2.1: Rich error context with source location
+        txnMgrResult.error().Log();
         kr = txnMgrResult.error().kr;
         failureStage = "TransactionManager";
         goto fail;
     }
 
-    // Create GenerationTracker after labelAllocator per dependency ordering
-    generationTracker_ = std::make_unique<ASFW::Async::Bus::GenerationTracker>(*labelAllocator);
-    // Ensure internal tracker state initialized (clears local NodeID and 8-bit generation)
-    if (generationTracker_) {
-        generationTracker_->Reset();
+    if (!generationTracker_) {
+        generationTracker_ = std::make_unique<ASFW::Async::Bus::GenerationTracker>(*labelAllocator_);
     }
+    generationTracker_->Reset();
 
     packetBuilder_ = std::make_unique<PacketBuilder>();
 
@@ -399,25 +390,17 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
         }
         completionQueue_ = std::move(completionQueue);
 
-        // CRITICAL: Activate queue and mark client as bound BEFORE starting producers
-        // This prevents crashes from enqueueing to an unactivated queue
         completionQueue_->SetClientBound();
         completionQueue_->Activate();
     }
 
-    // Initialize Tracking actor
-    // Pass raw pointers since we still need these components in AsyncSubsystem
-    // Phase 2.0: Create Tracking actor with TransactionManager
-    // NOTE: contextManager_ will be initialized later, so we pass nullptr now
-    // and update it in Start() after contextManager_ is created
     tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
-        labelAllocator.get(),
+        labelAllocator_.get(),
         txnMgr_.get(),
         *completionQueue_,
-        nullptr  // contextManager_ not yet created
+        nullptr 
     );
 
-    // NEW: Context Architecture (Phase 4) — owned by ContextManager
     {
         constexpr size_t kATReqDescCount = 256;
         constexpr size_t kATRespDescCount = 64;
@@ -448,23 +431,30 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
             ASFW_LOG(Async, "AsyncSubsystem: coherency tracing enabled (ASFWTraceDMACoherency)");
         }
 
-        // Use ContextManager-owned contexts/rings through resolver helpers.
-        // Build descriptor builder using ContextManager resources.
-        descriptorBuilder_ = std::make_unique<DescriptorBuilder>(*contextManager_->AtRequestRing(), *contextManager_->DmaManager());
+        descriptorBuilder_ = contextManager_->GetDescriptorBuilderRequest();
+        descriptorBuilderResponse_ = contextManager_->GetDescriptorBuilderResponse();
 
-        // Construct Submitter (two-path TX FSM) using ContextManager-owned resources
+        if (!descriptorBuilder_) {
+            ASFW_LOG_ERROR(Async, "AsyncSubsystem: descriptorBuilder (request) unavailable");
+            kr = kIOReturnNoResources;
+            failureStage = "DescriptorBuilderReq";
+            goto fail;
+        }
+        if (!descriptorBuilderResponse_) {
+            ASFW_LOG_ERROR(Async, "AsyncSubsystem: descriptorBuilder (response) unavailable");
+            kr = kIOReturnNoResources;
+            failureStage = "DescriptorBuilderRsp";
+            goto fail;
+        }
+
         submitter_ = std::make_unique<Tx::Submitter>(*contextManager_, *descriptorBuilder_);
-        // Wire payload registry (owned by Tracking actor) into ContextManager and Submitter
         if (tracking_ && contextManager_) {
             contextManager_->SetPayloads(tracking_->Payloads());
             if (submitter_) submitter_->SetPayloads(tracking_->Payloads());
             
-            // Wire ContextManager into Tracking so response processing can reuse
-            // shared helpers (label matcher, outstanding table, payload registry)
             tracking_->SetContextManager(contextManager_.get());
         }
 
-        // Initialize packet router and RxPath (uses contexts from ContextManager)
         packetRouter_ = std::make_unique<PacketRouter>();
         rxPath_ = std::make_unique<Rx::RxPath>(*contextManager_->GetArRequestContext(),
                                                *contextManager_->GetArResponseContext(),
@@ -472,7 +462,14 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
                                                *generationTracker_,
                                                *packetRouter_);
 
-        ASFW_LOG(Async, "✓ ContextManager provisioned and Rx/Tx helpers initialized");
+        responseSender_ = std::make_unique<ResponseSender>(
+            *descriptorBuilderResponse_,
+            *submitter_,
+            *contextManager_,
+            *generationTracker_);
+        packetRouter_->SetResponseSender(responseSender_.get());
+
+        ASFW_LOG(Async, "✓ ContextManager provisioned");
     }
 
     busResetCapture_ = std::make_unique<Debug::BusResetPacketCapture>();
@@ -580,25 +577,23 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
     if (contextManager_) {
         contextManager_->teardown(disableHardware);
     } else {
-        ASFW_LOG(Async, "Teardown: ContextManager not present - nothing to teardown (legacy owners removed)");
+        ASFW_LOG(Async, "Teardown: ContextManager not present");
     }
 
     completionQueue_.reset();
     completionAction_.reset();
 
-    // Phase 2.0: Clean up TransactionManager (replaces timeoutEngine_, responseMatcher_, outstanding_)
     if (txnMgr_) {
-        txnMgr_->CancelAll();  // Cancel all in-flight transactions
+        txnMgr_->CancelAll();
         txnMgr_.reset();
     }
 
-    descriptorBuilder_.reset();
+    responseSender_.reset();
+    descriptorBuilder_ = nullptr;
+    descriptorBuilderResponse_ = nullptr;
     packetBuilder_.reset();
 
-    // Destroy GenerationTracker
     generationTracker_.reset();
-
-    // Legacy per-ring bookkeeping removed - nothing to reset here
 
     if (sharedLock_) {
         ::IOLockFree(sharedLock_);
@@ -673,10 +668,6 @@ uint64_t AsyncSubsystem::GetCurrentTimeUsec() const {
     return GetCurrentMonotonicTimeUsec();
 }
 
-// ============================================================================
-// Transaction APIs (CRTP Command Dispatch - Phase 2.3: std::function)
-// ============================================================================
-
 AsyncHandle AsyncSubsystem::Read(const ReadParams& params, CompletionCallback callback) {
     return ReadCommand{params, std::move(callback)}.Submit(*this);
 }
@@ -745,30 +736,23 @@ AsyncHandle AsyncSubsystem::PhyRequest(const PhyParams& params,
 }
 
 AsyncHandle AsyncSubsystem::Stream(const StreamParams& /* params */) {
-    // TODO: Implement stream packet support
     ASFW_LOG_ERROR(Async, "Stream packets not yet implemented");
     return AsyncHandle{0};
 }
 
-// OLD Read() implementation below - will be removed after validation
-
-// ReadWithRetry() - Queue-based retry wrapper following Apple's IOFWCmdQ pattern
-// Reference: IOFWCmdQ::executeQueue() - enqueues command and triggers sequential execution
 AsyncHandle AsyncSubsystem::ReadWithRetry(const ReadParams& params,
                                          const RetryPolicy& retryPolicy,
                                          CompletionCallback callback) {
     if (!commandQueue_ || !commandQueueLock_) {
         ASFW_LOG_ERROR(Async, "ReadWithRetry: Queue not initialized");
-        return AsyncHandle{0};  // Invalid handle
+        return AsyncHandle{0};
     }
     
-    // Allocate placeholder handle (will be assigned when command executes)
-    static std::atomic<uint32_t> sNextQueuedHandle{0x80000000};  // High bit = queued
+    static std::atomic<uint32_t> sNextQueuedHandle{0x80000000};
     AsyncHandle placeholderHandle{sNextQueuedHandle.fetch_add(1, std::memory_order_relaxed)};
     
     ::IOLockLock(commandQueueLock_);
     
-    // Create pending command with subsystem back-pointer for callback access
     commandQueue_->emplace_back(params, retryPolicy, callback, 
                                placeholderHandle, this);
     const size_t queueDepth = commandQueue_->size();
@@ -780,7 +764,6 @@ AsyncHandle AsyncSubsystem::ReadWithRetry(const ReadParams& params,
              params.destinationID, params.addressHigh, params.addressLow,
              params.length, placeholderHandle.value, queueDepth);
     
-    // If queue was idle, kick off execution
     if (wasIdle) {
         ASFW_LOG(Async, "🚀 Queue was idle, starting execution");
         ExecuteNextCommand();
@@ -790,11 +773,8 @@ AsyncHandle AsyncSubsystem::ReadWithRetry(const ReadParams& params,
 }
 
 bool AsyncSubsystem::Cancel(AsyncHandle /*handle*/) {
-    // TODO: locate outstanding request and issue cancel workflow.
     return false;
 }
-
-// Phase 2.0: ProcessTxCompletion removed (replaced by TransactionCompletionHandler)
 
 uint32_t AsyncSubsystem::DrainTxCompletions(const char* reason) {
     if (!tracking_) {
@@ -819,10 +799,19 @@ uint32_t AsyncSubsystem::DrainTxCompletions(const char* reason) {
     scanContext(ResolveAtResponseContext());
 
     if (drained > 0 && reason) {
-        ASFW_LOG(Async,
+        ASFW_LOG_V2(Async,
                  "DrainTxCompletions: reason=%{public}s drained=%u",
                  reason,
                  drained);
+    } else if (reason && DMAMemoryManager::IsTracingEnabled()) {
+        // Log when called but nothing drained (helps diagnose leaks)
+        auto* atReq = ResolveAtRequestContext();
+        if (atReq) {
+            const auto& ring = atReq->Ring();
+            ASFW_LOG(Async,
+                     "DrainTxCompletions: reason=%{public}s drained=0 (ATReq head=%zu tail=%zu)",
+                     reason, ring.Head(), ring.Tail());
+        }
     }
 
     return drained;
@@ -1159,9 +1148,6 @@ void AsyncSubsystem::StopATContextsOnly() {
 }
 
 void AsyncSubsystem::FlushATContexts() {
-    // Phase 2C-2E: Flush AT contexts to process pending descriptors
-    // CRITICAL: Must be called BEFORE clearing busReset interrupt
-    // Process any completed descriptors in AT rings
     if (!txnMgr_) {
         return;
     }

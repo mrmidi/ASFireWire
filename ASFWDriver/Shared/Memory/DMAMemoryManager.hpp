@@ -5,10 +5,14 @@
 #include <memory>
 #include <optional>
 
+#ifdef ASFW_HOST_TEST
+#include "../../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODMACommand.h>
 #include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/OSSharedPtr.h>
+#endif
 
 namespace ASFW::Driver {
 class HardwareInterface;
@@ -86,6 +90,7 @@ public:
      * Automatically enforces 16-byte alignment for all regions.
      *
      * \param size Desired region size in bytes (will be rounded up to 16-byte alignment)
+     * \param alignment Desired start address alignment (default 16, must be power of 2)
      * \return Region descriptor on success, std::nullopt if insufficient space
      *
      * \par Usage Pattern
@@ -98,7 +103,18 @@ public:
      * \warning Once a region is allocated, it cannot be freed individually.
      *          The entire slab is released on destruction.
      */
-    [[nodiscard]] std::optional<Region> AllocateRegion(size_t size);
+    [[nodiscard]] std::optional<Region> AllocateRegion(size_t size, size_t alignment = 16);
+
+    /**
+     * \brief Align the current cursor to an absolute IOVA boundary.
+     *
+     * Advances the internal cursor such that (slabIOVA + cursor) is aligned
+     * to the specified alignment.
+     *
+     * \param alignment Desired alignment (must be >= 16 and power of 2)
+     * \return true on success, false if alignment invalid or overflow would occur
+     */
+    [[nodiscard]] bool AlignCursorToIOVA(size_t alignment) noexcept;
 
     /**
      * \brief Convert virtual address to physical address.

@@ -39,6 +39,7 @@ struct ModernContentView: View {
         case async = "Async Commands"
         case topology = "Topology & Self-ID"
         case romExplorer = "ROM Explorer"
+        case metrics = "Isoch Metrics"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
@@ -56,6 +57,7 @@ struct ModernContentView: View {
             case .async: return "bolt.horizontal.circle"
             case .topology: return "network"
             case .romExplorer: return "memorychip"
+            case .metrics: return "chart.bar.xaxis"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
@@ -97,6 +99,8 @@ struct ModernContentView: View {
                     TopologyView(viewModel: topologyVM)
                 case .romExplorer:
                     ROMExplorerView(viewModel: debugVM)
+                case .metrics:
+                    MetricsView(connector: debugVM.connector)
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:

@@ -88,7 +88,7 @@ struct AVCCommandView: View {
                             Picker("Unit", selection: $selectedUnitGUID) {
                                 Text("Select unit...").tag(nil as UInt64?)
                                 ForEach(avcUnits) { unit in
-                                    Text("GUID: \\(unit.guidHex) (Node: \\(unit.nodeIDHex))")
+                                    Text("GUID: \(unit.guidHex) (Node: \(unit.nodeIDHex))")
                                         .tag(unit.guid as UInt64?)
                                 }
                             }
@@ -211,7 +211,7 @@ struct AVCCommandView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             if let time = lastSentTime {
-                                Text("Sent: \\(time.formatted(date: .omitted, time: .standard))")
+                                Text("Sent: \(time.formatted(date: .omitted, time: .standard))")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }

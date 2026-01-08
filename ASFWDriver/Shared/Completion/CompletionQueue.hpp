@@ -9,11 +9,15 @@
 #include <type_traits>
 #include <utility>
 
+#ifdef ASFW_HOST_TEST
+#include "../../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IODataQueueDispatchSource.h>
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSAction.h>
 #include <DriverKit/OSSharedPtr.h>
+#endif
 
 #include "../../Logging/Logging.hpp"
 

@@ -233,6 +233,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
         EXPECT_EQ(view.sourceID, 0xFFC0);
         EXPECT_EQ(view.tLabel, 0x3C);
         EXPECT_EQ(view.payload.size(), 0u);
+        return ResponseCode::NoResponse;
     });
     router.RoutePacket(ARContextType::Response, buffer);
     EXPECT_TRUE(handled);
@@ -267,6 +268,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) 
         EXPECT_EQ(view.sourceID, 0xFFC0);
         EXPECT_EQ(view.tLabel, 0x38);
         EXPECT_EQ(view.payload.size(), 0x20u);
+        return ResponseCode::NoResponse;
     });
     router.RoutePacket(ARContextType::Response, buffer);
     EXPECT_TRUE(handled);
@@ -297,6 +299,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
         EXPECT_EQ(view.sourceID, 0xFFC0);
         EXPECT_EQ(view.tLabel, 0x0B);
         EXPECT_EQ(view.payload.size(), 0x4u);
+        return ResponseCode::NoResponse;
     });
     router.RoutePacket(ARContextType::Response, buffer);
     EXPECT_TRUE(handled);
@@ -317,6 +320,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
     router.RegisterResponseHandler(0x6, [&](const ARPacketView& view) {
         handled = true;
         EXPECT_EQ(view.tLabel, 48u);
+        return ResponseCode::NoResponse;
     });
     const auto responseBuffer = std::span<const uint8_t>(responseBytes.data(), responseBytes.size());
     router.RoutePacket(ARContextType::Response, responseBuffer);

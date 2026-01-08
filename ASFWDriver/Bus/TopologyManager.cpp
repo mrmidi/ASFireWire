@@ -40,15 +40,9 @@ void StorePort(NodeAccumulator& node, size_t index, PortState state) {
 }
 
 // Per IEEE 1394-1995 §8.4.3.2: Root node identification
-// Improved heuristic ported from ASFireWire/ASOHCI/Core/Topology.cpp:deriveRoot()
-// 1. Prefer node with zero Parent ports (has no parent in tree)
-// 2. Fallback to highest-ID contender with active link
-// 3. Last resort: highest-ID node with active link
 std::optional<uint8_t> FindRootNode(const std::vector<TopologyNode>& nodes) {
     std::optional<uint8_t> rootId;
 
-    // First pass: Look for node with zero parent ports (true root)
-    // Use reverse iteration to find highest-numbered root (IEEE 1394 convention)
     for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
         if (it->linkActive && it->portCount > 0) {
             bool hasParentPort = false;
@@ -59,14 +53,12 @@ std::optional<uint8_t> FindRootNode(const std::vector<TopologyNode>& nodes) {
                 }
             }
             if (!hasParentPort) {
-                // Found node with only Child ports - this is the root
                 rootId = it->nodeId;
                 break;
             }
         }
     }
 
-    // Second pass: If no zero-parent node, use highest-ID contender with active link
     if (!rootId.has_value()) {
         for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
             if (it->linkActive && it->portCount > 0 && it->isIRMCandidate) {
@@ -76,7 +68,6 @@ std::optional<uint8_t> FindRootNode(const std::vector<TopologyNode>& nodes) {
         }
     }
 
-    // Third pass: Last resort - highest-ID with active link
     if (!rootId.has_value()) {
         for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
             if (it->linkActive && it->portCount > 0) {
@@ -89,7 +80,6 @@ std::optional<uint8_t> FindRootNode(const std::vector<TopologyNode>& nodes) {
     return rootId;
 }
 
-// Per IEEE 1394-1995 §8.4.4: IRM is the contender-capable node with highest nodeID
 std::optional<uint8_t> FindIRMNode(const std::vector<TopologyNode>& nodes) {
     std::optional<uint8_t> irmId;
     for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
@@ -101,8 +91,6 @@ std::optional<uint8_t> FindIRMNode(const std::vector<TopologyNode>& nodes) {
     return irmId;
 }
 
-// Calculate optimum gap count per IEEE 1394-1995 §8.4.6.2
-// Simple heuristic: use highest gap count from Self-IDs, capped at 63
 uint8_t CalculateOptimumGapCount(const std::map<uint8_t, NodeAccumulator>& accumulators) {
     uint8_t maxGap = 0;
     for (const auto& entry : accumulators) {
@@ -113,19 +101,14 @@ uint8_t CalculateOptimumGapCount(const std::map<uint8_t, NodeAccumulator>& accum
     return maxGap > 63 ? 63 : maxGap;
 }
 
-// Calculate maximum hop count from root using BFS traversal
-// Ported from ASFireWire/ASOHCI/Core/Topology.cpp:MaxHopsFromRoot()
-// Returns topology diameter (longest path from root to any leaf)
 uint8_t CalculateMaxHops(const std::vector<TopologyNode>& nodes, uint8_t rootNodeId) {
     if (nodes.empty()) {
         return 0;
     }
 
-    // BFS to find maximum distance from root
     std::map<uint8_t, uint8_t> hopCount;
     std::vector<uint8_t> queue;
 
-    // Start BFS from root
     hopCount[rootNodeId] = 0;
     queue.push_back(rootNodeId);
 
@@ -136,7 +119,6 @@ uint8_t CalculateMaxHops(const std::vector<TopologyNode>& nodes, uint8_t rootNod
         const uint8_t currentNodeId = queue[queueHead++];
         const uint8_t currentHops = hopCount[currentNodeId];
 
-        // Find this node in topology
         const TopologyNode* currentNode = nullptr;
         for (const auto& node : nodes) {
             if (node.nodeId == currentNodeId) {
@@ -149,7 +131,6 @@ uint8_t CalculateMaxHops(const std::vector<TopologyNode>& nodes, uint8_t rootNod
             continue;
         }
 
-        // Visit all children
         for (const uint8_t childId : currentNode->childNodeIds) {
             if (hopCount.find(childId) == hopCount.end()) {
                 const uint8_t childHops = currentHops + 1;
@@ -166,15 +147,11 @@ uint8_t CalculateMaxHops(const std::vector<TopologyNode>& nodes, uint8_t rootNod
     return maxHops;
 }
 
-// Validate topology consistency
-// Ported from ASFireWire/ASOHCI/Core/Topology.cpp:IsConsistent()
-// Checks for structural validity per IEEE 1394-1995 tree requirements
 void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::string>& warnings) {
     if (nodes.empty()) {
         return;
     }
 
-    // Count nodes with zero parents (should be exactly 1 - the root)
     uint32_t rootCount = 0;
     for (const auto& node : nodes) {
         if (node.parentNodeIds.empty()) {
@@ -189,10 +166,8 @@ void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::s
                          ") - forest instead of tree");
     }
 
-    // Verify parent/child port reciprocity
     for (const auto& parent : nodes) {
         for (const uint8_t childId : parent.childNodeIds) {
-            // Find child node
             const TopologyNode* child = nullptr;
             for (const auto& node : nodes) {
                 if (node.nodeId == childId) {
@@ -208,7 +183,6 @@ void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::s
                 continue;
             }
 
-            // Verify reciprocal parent link
             bool hasReciprocalLink = std::find(
                 child->parentNodeIds.begin(),
                 child->parentNodeIds.end(),
@@ -223,13 +197,11 @@ void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::s
         }
     }
 
-    // Count total edges (each edge counted once via childNodeIds)
     uint32_t totalEdges = 0;
     for (const auto& node : nodes) {
         totalEdges += static_cast<uint32_t>(node.childNodeIds.size());
     }
 
-    // Tree property: N nodes must have exactly N-1 edges
     const uint32_t expectedEdges = static_cast<uint32_t>(nodes.size()) - 1;
     if (totalEdges != expectedEdges) {
         warnings.push_back("Edge count mismatch: " + std::to_string(totalEdges) +
@@ -238,12 +210,7 @@ void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::s
     }
 }
 
-// Build tree structure by matching Parent/Child ports between nodes
-// Ported from ASFireWire/ASOHCI/Core/Topology.cpp:buildEdgesFromPorts()
-// Per IEEE 1394-2008 Annex P: Each Parent port on node A should match
-// with exactly one Child port on node B, forming bidirectional edge.
 void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& warnings) {
-    // Clear existing adjacency lists
     for (auto& node : nodes) {
         node.parentNodeIds.clear();
         node.childNodeIds.clear();
@@ -252,7 +219,6 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
     uint32_t edgesConstructed = 0;
     uint32_t orphanedPorts = 0;
 
-    // For each node with Parent ports, find corresponding Child ports
     for (size_t i = 0; i < nodes.size(); ++i) {
         TopologyNode& nodeA = nodes[i];
 
@@ -260,15 +226,12 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
             if (nodeA.portStates[portA] == PortState::Parent) {
                 bool foundMatch = false;
 
-                // Search all other nodes for corresponding Child port
                 for (size_t j = 0; j < nodes.size(); ++j) {
-                    if (i == j) continue;  // Skip self
+                    if (i == j) continue;
                     TopologyNode& nodeB = nodes[j];
 
-                    // Look for unused Child port (not already connected)
                     for (size_t portB = 0; portB < nodeB.portStates.size(); ++portB) {
                         if (nodeB.portStates[portB] == PortState::Child) {
-                            // Verify this Child port isn't already connected
                             bool alreadyConnected = std::find(
                                 nodeB.parentNodeIds.begin(),
                                 nodeB.parentNodeIds.end(),
@@ -276,7 +239,6 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
                             ) != nodeB.parentNodeIds.end();
 
                             if (!alreadyConnected) {
-                                // Create bidirectional edge: A→B (A is parent of B)
                                 nodeA.childNodeIds.push_back(nodeB.nodeId);
                                 nodeB.parentNodeIds.push_back(nodeA.nodeId);
                                 edgesConstructed++;
@@ -298,7 +260,6 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
         }
     }
 
-    // Verify tree structure: should have exactly N-1 edges for N nodes
     if (nodes.size() > 0 && edgesConstructed != (nodes.size() - 1)) {
         warnings.push_back("Edge count " + std::to_string(edgesConstructed) +
                          " != expected " + std::to_string(nodes.size() - 1) +
@@ -575,7 +536,6 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
 #endif
     ASFW_LOG(Topology, "=== End Topology Snapshot ===");
 
-    // LOW FIX #31: Topology analysis warnings for unexpected conditions
     if (!snapshot.rootNodeId.has_value()) {
         ASFW_LOG(Topology, "⚠️  WARNING: No root node found (no active nodes with ports)");
     }
@@ -586,7 +546,6 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
         ASFW_LOG(Topology, "⚠️  WARNING: Bus number is unknown (NodeID.IDValid=0) — defer async reads until valid");
     }
     
-    // Count and log nodes that initiated reset
     unsigned int resetInitiators = 0;
     for (const auto& node : snapshot.nodes) {
         if (node.initiatedReset) {
@@ -595,12 +554,10 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
         }
     }
 
-    // LOW FIX #31: Warn about multiple reset initiators (potential bus instability)
     if (resetInitiators > 1) {
         ASFW_LOG(Topology, "⚠️  WARNING: Multiple nodes (%u) initiated bus reset - check cabling/power", resetInitiators);
     }
 
-    // LOW FIX #31: Warn about zero active ports (isolated bus)
     unsigned int totalActivePorts = 0;
     for (const auto& node : snapshot.nodes) {
         if (node.linkActive) {

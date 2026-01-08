@@ -1,5 +1,7 @@
 # ASFW project
 
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mrmidi_ASFW&metric=alert_status&token=3ca1b3d10414117bb3e75b1779090b4ea47f1585)](https://sonarcloud.io/summary/new_code?id=mrmidi_ASFW)
+
 ## Table of Contents
 
 - [Preamble](#preamble)
@@ -21,9 +23,9 @@
 
 ## Preamble
 
-TL;DR — Since macOS Tahoe (26) Apple completely removed the FireWire stack from macOS. This driver aims to restore FireWire functionality on modern macOS versions. The goal is to make the project public for historical and educational purposes, and to help people with legacy FireWire devices. [Youtube demo video](hhttps://youtu.be/hg1p_yXbfnc)
+TL;DR — Since macOS Tahoe (26) Apple completely removed the FireWire stack from macOS. This driver aims to restore FireWire functionality on modern macOS versions. The goal is to make the project public for historical and educational purposes, and to help people with legacy FireWire devices. [Youtube demo video](https://youtu.be/Q1TbehOGnW0)
 
-> WARNING: This project is in early development. It is not a working driver yet. It is intended for developers and people interested in macOS driver development.
+> WARNING: This project is in active development. Core async stack and isochronous transmit DMA are working on the test rig, but the driver is not production-ready. Expect instability and missing features.
 
 ## Overview
 
@@ -87,14 +89,17 @@ For isochronous transfers, Apple used a "language" called DCL (later NuDCL) — 
 
 ## What currently works
 
-This project is in early development. The following features are implemented:
+This project is in active development. The following features are implemented:
 
 - OHCI controller initialization and configuration
 - PCIe device probing and matching
 - DMA buffer allocation and management
 - Interrupt handling
 - Bus reset and Self-ID processing
-- Basic asynchronous data transfer (reading quadlets from devices)
+- Asynchronous data transfer
+- Isochronous transmit DMA (OUTPUT_MORE-Immediate + OUTPUT_LAST) with interrupt-driven ring refill
+- AV/C FCP request/response and CMP plug connection
+- IRM (Isochronous Resource Manager)
 
 ## Driver initialization (high level)
 
@@ -113,14 +118,13 @@ See runtime logs for example traces (DMA allocation, Config ROM staging, Self-ID
 
 ## What is planned
 
-Next steps include reading Config ROMs from attached devices and parsing them. This is required for proper device enumeration, obtaining device GUIDs and capabilities, and publishing IORegistry entries for connected devices. Existing code already supports reading quadlets, which is the minimum required for Config ROM access.
+Next steps focus on completing the isochronous receive path, bus reset recovery, and timing robustness, then hardening for broader hardware.
 
 Planned work:
 
-1. Adopt other async commands from IOFireWireFamily: block read/write, lock, PHY, etc. These are straightforward based on existing async APIs.
-2. Implement AV/C support required for the Apogee Duet FireWire audio interface to start isochronous transfers. This uses async block reads/writes and FCP (Function Control Protocol); some devices require CMP (Connection Management Procedure) negotiation.
-3. Implement isochronous transfers. There's no need to reimplement Apple's DCL/NuDCL; basic isochronous DMA programs should suffice.
-4. Add IRM (Isochronous Resource Manager) support for isochronous bandwidth allocation and management.
+1. Adopt other async commands from IOFireWireFamily: block read/write, lock, PHY, etc. These are straightforward based on existing async APIs. DONE.
+2. Complete AV/C discovery and stream format negotiation (stream format commands, plug parsing, connection management). DONE.
+3. Complete the isochronous stack: receive contexts, bus reset recovery, and timing robustness. IN PROGRESS.
 
 ## Code guidelines
 

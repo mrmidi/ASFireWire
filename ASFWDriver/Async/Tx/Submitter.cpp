@@ -66,20 +66,43 @@ SubmitResult Submitter::submit_tx_chain(ATRequestContext* ctx, DescriptorBuilder
 }
 
 SubmitResult Submitter::submit_tx_chain(ATResponseContext* ctx, DescriptorBuilder::DescriptorChain&& chain) noexcept {
-    // AT Response path maps to same AT Request behavior for submission semantics
-    // Cast to ATRequestContext if possible via ContextManager usage; fallback to thin behavior
-    // For simplicity, treat as request path using the same ring
-    // Note: ATResponseContext also inherits ContextBase and provides WriteControlSet/WriteCommandPtr
-    // We'll reuse AtRequestRing as the ring for both transmit paths if response ring is not explicit.
-    // If the Engine provides separate ring accessors for AT Response, Submitter can be extended.
-    (void)ctx; // not used explicitly here
-    // Delegating to ATRequest variant by asking ContextManager for the AT Request ring
-    DescriptorBuilder::DescriptorChain movedChain = std::move(chain);
-    ATRequestContext* reqCtx = ctxMgr_.GetAtRequestContext();
-    if (!reqCtx) {
-        SubmitResult res; res.kr = kIOReturnNotReady; return res;
+    SubmitResult res{};
+    if (!ctx) {
+        res.kr = kIOReturnNotReady;
+        return res;
     }
-    return submit_tx_chain(reqCtx, std::move(movedChain));
+
+    if (chain.Empty()) {
+        res.kr = kIOReturnBadArgument;
+        return res;
+    }
+
+    auto* atMgr = ctxMgr_.GetATResponseManager();
+    if (!atMgr) {
+        ASFW_LOG_ERROR(Async, "Submitter: ATResponseManager not available");
+        res.kr = kIOReturnNotReady;
+        return res;
+    }
+
+    AsyncCmdOptions opts{};
+    opts.needsFlush = false;
+    opts.timeoutMs = 200;
+
+    const uint32_t txid = chain.txid;
+    const uint8_t totalBlocks = chain.TotalBlocks();
+
+    const kern_return_t kr = atMgr->Submit(std::move(chain), opts);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Async, "ATResponseManager::Submit failed for txid=%u: kr=0x%x", txid, kr);
+        res.kr = kr;
+        return res;
+    }
+
+    ASFW_LOG_V2(Async, "✓ ATResponseManager::Submit succeeded for txid=%u (blocks=%u)", txid, totalBlocks);
+    res.kr = kIOReturnSuccess;
+    res.desc_count = totalBlocks;
+    res.armed_path = true;
+    return res;
 }
 
 } // namespace ASFW::Async::Tx

@@ -262,7 +262,7 @@ public:
     // Even if AT reported eventCode 0x10 or other errors, successful AR response means transaction succeeded.
     // This matches FireWire spec: split transactions complete on response, not on request ack.
     void OnRxResponse(const RxResponse& response) {
-        ASFW_LOG(Async, "📥 OnRxResponse: tLabel=%u gen=%u tCode=0x%X rCode=0x%X event=0x%02X len=%zu ts=0x%04X",
+        ASFW_LOG_V2(Async, "📥 OnRxResponse: tLabel=%u gen=%u tCode=0x%X rCode=0x%X event=0x%02X len=%zu ts=0x%04X",
                  response.tLabel, response.generation, response.tCode, response.rCode,
                  static_cast<uint8_t>(response.eventCode), response.payload.size(), response.hardwareTimeStamp);
 

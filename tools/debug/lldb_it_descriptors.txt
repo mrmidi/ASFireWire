@@ -1,0 +1,42 @@
+# IT Descriptor Memory Inspector
+# Catches Poll() every ~1 second and dumps descriptor memory
+
+settings set stop-line-count-after 2
+settings set stop-line-count-before 2
+
+# Break on Poll() which runs every ~1 second
+breakpoint set -f IsochTransmitContext.cpp -l 200
+
+breakpoint command add
+echo ========================================
+echo IT Descriptor Memory Dump
+echo ========================================
+# Get descriptor virtual address
+expr -R -- (void*)this->dmaMemory_.get()->DescriptorVAddr()
+expr -R -- (uint64_t)this->dmaMemory_.get()->DescriptorIOVA()
+# Store it
+expr void* $desc = (void*)this->dmaMemory_.get()->DescriptorVAddr()
+# Read first 32 bytes (first OMI descriptor)
+echo --- First 32 bytes (OMI descriptor) ---
+memory read -s4 -fx -c8 $desc
+# Read as structure
+echo --- Parsing as OHCIDescriptorImmediate ---
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->common.control
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->common.dataAddress
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->common.branchWord
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->common.statusWord
+echo --- immediateData[] (should contain Q0/Q1) ---
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->immediateData[0]
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->immediateData[1]
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->immediateData[2]
+expr -R -- ((ASFW::Async::HW::OHCIDescriptorImmediate*)$desc)->immediateData[3]
+# Check hardware event code
+expr uint32_t $ctx = (uint32_t)this->contextIndex_
+expr auto $ctrlReg = (ASFW::Driver::Register32)((int)ASFW::Driver::Register32::kIsoXmitContextControl0 + ($ctx * 16))
+expr uint32_t $ctrl = (uint32_t)this->hardware_->Read($ctrlReg)
+echo --- Hardware Status ---
+expr -R -- $ctrl
+expr -R -- (($ctrl >> 16) & 0x1f)
+echo ========================================
+echo Type 'c' to continue and catch next Poll()
+DONE
