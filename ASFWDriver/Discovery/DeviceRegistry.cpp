@@ -1,6 +1,7 @@
 #include "DeviceRegistry.hpp"
 #include <algorithm>
 #include "../Logging/Logging.hpp"
+#include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 
 namespace ASFW::Discovery {
 
@@ -9,7 +10,8 @@ constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
 
 DeviceRegistry::DeviceRegistry() = default;
 
-DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link) {
+DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
+                                             Async::AsyncSubsystem* asyncSubsystem) {
     const Guid64 guid = rom.bib.guid;
     
     auto& device = devicesByGuid_[guid];
@@ -31,8 +33,37 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
     
-    device.kind = ClassifyDevice(rom);
-    device.isAudioCandidate = IsAudioCandidate(rom);
+    // Check if we have a known device-specific protocol (e.g., DICE/Focusrite)
+    if (Audio::DeviceProtocolFactory::IsKnownDevice(device.vendorId, device.modelId)) {
+        ASFW_LOG(Discovery, "Known device-specific protocol available for vendor=0x%06x model=0x%06x",
+                 device.vendorId, device.modelId);
+        device.kind = DeviceKind::VendorSpecificAudio;
+        device.isAudioCandidate = true;
+        
+        // Create protocol instance if we don't have one yet AND AsyncSubsystem is available
+        if (!device.protocol && asyncSubsystem) {
+            ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
+                     guid, rom.nodeId);
+            device.protocol = Audio::DeviceProtocolFactory::Create(
+                device.vendorId, device.modelId, *asyncSubsystem, rom.nodeId);
+            
+            if (device.protocol) {
+                ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
+                         device.protocol->GetName());
+                // Start async initialization to discover device capabilities
+                device.protocol->Initialize();
+            } else {
+                ASFW_LOG(Discovery, "❌ Protocol creation failed for vendor=0x%06x model=0x%06x",
+                         device.vendorId, device.modelId);
+            }
+        } else if (!device.protocol) {
+            ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
+                     "AsyncSubsystem not provided", guid, rom.nodeId);
+        }
+    } else {
+        device.kind = ClassifyDevice(rom);
+        device.isAudioCandidate = IsAudioCandidate(rom);
+    }
     
     device.gen = rom.gen;
     device.nodeId = rom.nodeId;
@@ -53,14 +84,14 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     }
 
     if (!device.vendorName.empty() && !device.modelName.empty()) {
-        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%s) model=0x%06x(%s) "
-                 "kind=%s audioCandidate=%d node=%u gen=%u",
+        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
+                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.vendorName.c_str(),
                  device.modelId, device.modelName.c_str(), kindStr,
                  device.isAudioCandidate, rom.nodeId, rom.gen);
     } else {
         ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
-                 "kind=%s audioCandidate=%d node=%u gen=%u",
+                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.modelId, kindStr,
                  device.isAudioCandidate, rom.nodeId, rom.gen);
     }

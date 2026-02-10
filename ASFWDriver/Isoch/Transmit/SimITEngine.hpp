@@ -29,8 +29,6 @@
 
 namespace ASFW::Isoch::Sim {
 
-namespace ASFW::Isoch::Sim {
-
 struct SimITConfig final {
     uint32_t packetsPerTick            = 8;
     uint32_t cycleGroupSize            = 8;
@@ -121,7 +119,7 @@ public:
 
     SimState State() const noexcept { return state_; }
 
-    ASFW::Encoding::StereoAudioRingBuffer& RingBuffer() noexcept { return assembler_.ringBuffer(); }
+    ASFW::Encoding::AudioRingBuffer<>& RingBuffer() noexcept { return assembler_.ringBuffer(); }
 
     uint32_t WritePCMInterleavedS32(const int32_t* interleavedStereoS32, uint32_t frames) noexcept {
         const uint32_t written = assembler_.ringBuffer().write(interleavedStereoS32, frames);
@@ -320,7 +318,5 @@ private:
     uint32_t anomaliesWrite_{0};
     uint32_t anomaliesCount_{0};
 };
-
-} // namespace ASFW::Isoch::Sim
 
 } // namespace ASFW::Isoch::Sim

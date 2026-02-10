@@ -117,7 +117,10 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     auto cmd = std::make_unique<OutstandingCommand>();
     cmd->command = command;
     cmd->completion = std::move(completion);
-    cmd->generation = device_->GetGeneration();
+    // Keep generation source consistent with RX routing: both should use Async's
+    // generation tracker instead of mixing Discovery device generation.
+    cmd->generation = static_cast<uint32_t>(
+        async_->GetGenerationTracker().GetCurrentState().generation16);
     cmd->retriesLeft = config_.maxRetries;
     cmd->allowBusResetRetry = config_.allowBusResetRetry;
     cmd->gotInterim = false;
@@ -253,13 +256,25 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
                      srcNodeID, expectedNodeID);
     }
 
+    // Generation value can be unknown (0) in some receive paths while the bus is still
+    // converging; accept unknown generation as wildcard to avoid dropping valid responses.
     if (!pending_->allowBusResetRetry &&
+        generation != 0 &&
+        pending_->generation != 0 &&
         generation != pending_->generation) {
         IOLockUnlock(lock_);
         ASFW_LOG_V1(FCP,
                      "FCPTransport: Response generation mismatch: %u (expected %u)",
                      generation, pending_->generation);
         return;
+    }
+    if (!pending_->allowBusResetRetry &&
+        (generation == 0 || pending_->generation == 0)) {
+        ASFW_LOG_V3(FCP,
+                    "FCPTransport: Accepting response with unknown generation "
+                    "(rx=%u pending=%u)",
+                    generation,
+                    pending_->generation);
     }
 
     if (!ValidateResponse(payload)) {
@@ -427,7 +442,9 @@ void FCPTransport::RetryCommand() {
         return;
     }
 
-    pending_->generation = device_->GetGeneration();
+    // Keep retries aligned with Async/RX generation source.
+    pending_->generation = static_cast<uint32_t>(
+        async_->GetGenerationTracker().GetCurrentState().generation16);
     pending_->gotInterim = false;
 
     ASFW_LOG_V2(FCP,

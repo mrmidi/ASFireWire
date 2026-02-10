@@ -46,6 +46,9 @@ final class ASFWDriverConnector: ObservableObject {
         // IT DMA Allocation (no CMP)
         case startIsochTransmit = 36
         case stopIsochTransmit = 37
+        // AV/C raw FCP command (request/response)
+        case sendRawFCPCommand = 38
+        case getRawFCPCommandResult = 39
     }
 
     // MARK: - Re-exported Models

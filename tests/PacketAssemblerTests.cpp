@@ -15,7 +15,7 @@ using namespace ASFW::Encoding;
 //==============================================================================
 
 TEST(PacketAssemblerTests, InitialState) {
-    PacketAssembler assembler(0x02);  // SID = 2
+    PacketAssembler assembler(2, 0x02);  // 2 channels, SID = 2
     
     EXPECT_EQ(assembler.currentCycle(), 0);
     EXPECT_EQ(assembler.bufferFillLevel(), 0);
@@ -23,7 +23,7 @@ TEST(PacketAssemblerTests, InitialState) {
 }
 
 TEST(PacketAssemblerTests, FirstPacketIsNoData) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // First cycle in pattern is NO-DATA
     EXPECT_FALSE(assembler.nextIsData());
@@ -34,7 +34,7 @@ TEST(PacketAssemblerTests, FirstPacketIsNoData) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, FollowsNDDDPattern) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Pattern: N-D-D-D repeating
     bool expected[] = {false, true, true, true, false, true, true, true};
@@ -49,7 +49,7 @@ TEST(PacketAssemblerTests, FollowsNDDDPattern) {
 }
 
 TEST(PacketAssemblerTests, CorrectPacketSizes) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Expected sizes: 8, 72, 72, 72, 8, 72, 72, 72
     uint32_t expectedSizes[] = {8, 72, 72, 72, 8, 72, 72, 72};
@@ -67,7 +67,7 @@ TEST(PacketAssemblerTests, CorrectPacketSizes) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, DBCSequenceMatchesCapture) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     assembler.reset(0xC0);  // Start at DBC=0xC0 like capture
     
     // Expected DBC from 000-48kORIG.txt cycles 977-984:
@@ -87,7 +87,7 @@ TEST(PacketAssemblerTests, DBCSequenceMatchesCapture) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, NoDataPacketFormat) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // First packet is NO-DATA
     AssembledPacket pkt = assembler.assembleNext(0);
@@ -116,7 +116,7 @@ TEST(PacketAssemblerTests, NoDataPacketFormat) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, DataPacketFormat) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Skip first NO-DATA packet
     assembler.assembleNext(0);
@@ -132,7 +132,7 @@ TEST(PacketAssemblerTests, DataPacketFormat) {
 }
 
 TEST(PacketAssemblerTests, DataPacketWithAudio) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Write some audio to the ring buffer
     int32_t samples[16];  // 8 stereo frames
@@ -162,7 +162,7 @@ TEST(PacketAssemblerTests, DataPacketWithAudio) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, HandlesUnderrun) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Skip NO-DATA
     assembler.assembleNext(0);
@@ -186,7 +186,7 @@ TEST(PacketAssemblerTests, HandlesUnderrun) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, Full8CycleSequence) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Fill buffer with enough samples for 6 DATA packets
     // 6 DATA × 8 samples = 48 stereo frames
@@ -220,7 +220,7 @@ TEST(PacketAssemblerTests, Full8CycleSequence) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, ResetClearsAll) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Advance some cycles
     for (int i = 0; i < 10; i++) {
@@ -238,7 +238,7 @@ TEST(PacketAssemblerTests, ResetClearsAll) {
 }
 
 TEST(PacketAssemblerTests, ResetWithInitialDBC) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     assembler.reset(0xC0);
     
@@ -251,7 +251,7 @@ TEST(PacketAssemblerTests, ResetWithInitialDBC) {
 //==============================================================================
 
 TEST(PacketAssemblerTests, Produces48kSamplesPerSecond) {
-    PacketAssembler assembler(0x02);
+    PacketAssembler assembler(2, 0x02);
     
     // Fill with plenty of samples
     std::vector<int32_t> samples(10000, 0);
@@ -271,4 +271,135 @@ TEST(PacketAssemblerTests, Produces48kSamplesPerSecond) {
     // 6 DATA per 8 cycles × 8 samples = 48 per 8 cycles
     // 48 × 1000 = 48000
     EXPECT_EQ(totalSamples, 48000);
+}
+
+//==============================================================================
+// Multi-Channel Tests
+//==============================================================================
+
+TEST(PacketAssemblerTests, FourChannelPacketSize) {
+    PacketAssembler assembler(4, 0x02);  // 4 channels
+
+    EXPECT_EQ(assembler.channelCount(), 4u);
+    // Data packet size: 8 (CIP) + 8 * 4 * 4 = 8 + 128 = 136
+    EXPECT_EQ(assembler.dataPacketSize(), 136u);
+
+    // Skip NO-DATA
+    assembler.assembleNext(0);
+
+    // DATA packet should be 136 bytes
+    AssembledPacket pkt = assembler.assembleNext(0);
+    EXPECT_TRUE(pkt.isData);
+    EXPECT_EQ(pkt.size, 136u);
+}
+
+TEST(PacketAssemblerTests, EightChannelPacketSize) {
+    PacketAssembler assembler(8, 0x02);  // 8 channels
+
+    EXPECT_EQ(assembler.channelCount(), 8u);
+    // Data packet size: 8 (CIP) + 8 * 8 * 4 = 8 + 256 = 264
+    EXPECT_EQ(assembler.dataPacketSize(), 264u);
+
+    assembler.assembleNext(0);  // NO-DATA
+    AssembledPacket pkt = assembler.assembleNext(0);
+    EXPECT_TRUE(pkt.isData);
+    EXPECT_EQ(pkt.size, 264u);
+}
+
+TEST(PacketAssemblerTests, FourChannelDataWithAudio) {
+    PacketAssembler assembler(4, 0x02);  // 4 channels
+
+    // Write 8 frames of 4-channel audio
+    int32_t samples[32];  // 8 frames × 4 channels
+    for (int i = 0; i < 32; i++) {
+        samples[i] = (i + 1) << 8;
+    }
+    assembler.ringBuffer().write(samples, 8);
+    EXPECT_EQ(assembler.bufferFillLevel(), 8u);
+
+    // Skip NO-DATA
+    assembler.assembleNext(0);
+
+    // DATA should consume all 8 frames
+    AssembledPacket pkt = assembler.assembleNext(0);
+    EXPECT_TRUE(pkt.isData);
+    EXPECT_EQ(pkt.size, 136u);
+    EXPECT_EQ(assembler.bufferFillLevel(), 0u);
+    EXPECT_EQ(assembler.underrunCount(), 0u);
+}
+
+TEST(PacketAssemblerTests, CIPHeaderDBSMatchesChannelCount) {
+    // Verify CIP header DBS field equals channel count
+    PacketAssembler assembler(4, 0x05);  // 4 channels, SID=5
+
+    assembler.assembleNext(0);  // NO-DATA
+
+    AssembledPacket pkt = assembler.assembleNext(0);
+    EXPECT_TRUE(pkt.isData);
+
+    // CIP Q0 bytes: [0]=SID, [1]=DBS, [2]=flags, [3]=DBC
+    // In big-endian wire order
+    EXPECT_EQ(pkt.data[0], 0x05);  // SID
+    EXPECT_EQ(pkt.data[1], 0x04);  // DBS = 4 (channel count)
+}
+
+//==============================================================================
+// Non-Blocking Mode (48k only)
+//==============================================================================
+
+TEST(PacketAssemblerTests, NonBlockingModeAlwaysData) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.setStreamMode(StreamMode::kNonBlocking);
+
+    for (int i = 0; i < 8; ++i) {
+        SCOPED_TRACE("Cycle " + std::to_string(i));
+        EXPECT_TRUE(assembler.nextIsData());
+        AssembledPacket pkt = assembler.assembleNext(0);
+        EXPECT_TRUE(pkt.isData);
+    }
+}
+
+TEST(PacketAssemblerTests, NonBlockingModePacketSize2Ch) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.setStreamMode(StreamMode::kNonBlocking);
+
+    // 8-byte CIP + (6 frames * 2 channels * 4 bytes) = 56 bytes
+    EXPECT_EQ(assembler.samplesPerDataPacket(), 6u);
+    EXPECT_EQ(assembler.dataPacketSize(), 56u);
+
+    AssembledPacket pkt = assembler.assembleNext(0);
+    EXPECT_TRUE(pkt.isData);
+    EXPECT_EQ(pkt.size, 56u);
+}
+
+TEST(PacketAssemblerTests, NonBlockingModeDbcIncrementsBySix) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.setStreamMode(StreamMode::kNonBlocking);
+    assembler.reset(0xC0);
+
+    const uint8_t expectedDbc[] = {0xC0, 0xC6, 0xCC, 0xD2, 0xD8, 0xDE, 0xE4, 0xEA};
+    for (int i = 0; i < 8; ++i) {
+        SCOPED_TRACE("Cycle " + std::to_string(i));
+        AssembledPacket pkt = assembler.assembleNext(0);
+        EXPECT_EQ(pkt.dbc, expectedDbc[i]);
+        EXPECT_TRUE(pkt.isData);
+    }
+}
+
+TEST(PacketAssemblerTests, NonBlockingModeProduces48kSamplesPerSecond) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.setStreamMode(StreamMode::kNonBlocking);
+
+    std::vector<int32_t> samples(10000, 0);
+    assembler.ringBuffer().write(samples.data(), 5000);
+
+    uint32_t totalSamples = 0;
+    for (int i = 0; i < 8000; ++i) {
+        AssembledPacket pkt = assembler.assembleNext(0);
+        if (pkt.isData) {
+            totalSamples += assembler.samplesPerDataPacket();
+        }
+    }
+
+    EXPECT_EQ(totalSamples, 48000u);
 }

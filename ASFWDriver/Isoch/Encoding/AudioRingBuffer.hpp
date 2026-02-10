@@ -15,6 +15,12 @@
 #include <atomic>
 #include <cstring>
 
+// Forward-declare kMaxSupportedChannels if not already available
+// (PacketAssembler.hpp defines the canonical constant)
+#ifndef ASFW_MAX_SUPPORTED_CHANNELS
+#define ASFW_MAX_SUPPORTED_CHANNELS 16
+#endif
+
 namespace ASFW {
 namespace Encoding {
 
@@ -29,61 +35,75 @@ constexpr uint32_t kDefaultRingBufferFrames = 4096;
 ///   - No locks required for SPSC pattern
 ///
 /// Storage format:
-///   - Interleaved stereo: [L0][R0][L1][R1]...
+///   - Interleaved: [ch0][ch1]...[chN][ch0][ch1]...
 ///   - Each sample is int32_t (24-bit audio in 32-bit container)
 ///
-template <uint32_t FrameCount = kDefaultRingBufferFrames, uint32_t ChannelCount = 2>
+/// Channel count is runtime (1..kMaxSupportedChannels).
+/// FrameCount is compile-time (power of 2 for efficient modulo).
+///
+template <uint32_t FrameCount = kDefaultRingBufferFrames>
 class AudioRingBuffer {
 public:
-    static_assert((FrameCount & (FrameCount - 1)) == 0, 
+    static_assert((FrameCount & (FrameCount - 1)) == 0,
                   "FrameCount must be power of 2 for efficient modulo");
-    static_assert(ChannelCount > 0, "Must have at least 1 channel");
-    
-    /// Total samples in the buffer
-    static constexpr uint32_t kTotalSamples = FrameCount * ChannelCount;
-    
+
+    /// Max buffer size in samples (compile-time, uses max channel count)
+    static constexpr uint32_t kMaxTotalSamples = FrameCount * ASFW_MAX_SUPPORTED_CHANNELS;
+
     /// Mask for efficient modulo (works because FrameCount is power of 2)
     static constexpr uint32_t kFrameMask = FrameCount - 1;
-    
-    AudioRingBuffer() noexcept {
+
+    /// Construct with runtime channel count.
+    /// @param channels Number of audio channels (1..16, default 2)
+    explicit AudioRingBuffer(uint32_t channels = 2) noexcept
+        : channelCount_(channels) {
         std::memset(buffer_, 0, sizeof(buffer_));
     }
-    
+
+    /// Get channel count.
+    uint32_t channelCount() const noexcept { return channelCount_; }
+
+    /// Change channel count and reset buffer.
+    void reconfigure(uint32_t channels) noexcept {
+        channelCount_ = channels;
+        reset();
+    }
+
     /// Write frames to the ring buffer (producer side).
     ///
-    /// @param data Interleaved sample data [L0][R0][L1][R1]...
+    /// @param data Interleaved sample data
     /// @param frameCount Number of frames to write
     /// @return Number of frames actually written (may be less if buffer full)
     ///
     uint32_t write(const int32_t* data, uint32_t frameCount) noexcept {
         uint32_t writeIdx = writeIndex_.load(std::memory_order_relaxed);
         uint32_t readIdx = readIndex_.load(std::memory_order_acquire);
-        
+
         // Calculate available space
         uint32_t available = availableForWrite(writeIdx, readIdx);
         uint32_t toWrite = (frameCount < available) ? frameCount : available;
-        
+
         if (toWrite == 0) {
             overflowCount_.fetch_add(1, std::memory_order_relaxed);
             return 0;
         }
-        
+
         // Write samples
         for (uint32_t i = 0; i < toWrite; ++i) {
             uint32_t frameIdx = (writeIdx + i) & kFrameMask;
-            uint32_t sampleIdx = frameIdx * ChannelCount;
-            
-            for (uint32_t ch = 0; ch < ChannelCount; ++ch) {
-                buffer_[sampleIdx + ch] = data[i * ChannelCount + ch];
+            uint32_t sampleIdx = frameIdx * channelCount_;
+
+            for (uint32_t ch = 0; ch < channelCount_; ++ch) {
+                buffer_[sampleIdx + ch] = data[i * channelCount_ + ch];
             }
         }
-        
+
         // Update write index (release ensures data is visible before index update)
         writeIndex_.store((writeIdx + toWrite) & kFrameMask, std::memory_order_release);
-        
+
         return toWrite;
     }
-    
+
     /// Read frames from the ring buffer (consumer side).
     ///
     /// @param data Output buffer for interleaved samples
@@ -95,70 +115,70 @@ public:
         if (frameCount == 0) {
             return 0;
         }
-        
+
         uint32_t readIdx = readIndex_.load(std::memory_order_relaxed);
         uint32_t writeIdx = writeIndex_.load(std::memory_order_acquire);
-        
+
         // Calculate available data
         uint32_t available = availableForRead(writeIdx, readIdx);
         uint32_t toRead = (frameCount < available) ? frameCount : available;
-        
+
         if (toRead == 0) {
             underrunCount_.fetch_add(1, std::memory_order_relaxed);
             // Fill output with silence
-            std::memset(data, 0, frameCount * ChannelCount * sizeof(int32_t));
+            std::memset(data, 0, frameCount * channelCount_ * sizeof(int32_t));
             return 0;
         }
-        
+
         // Read samples
         for (uint32_t i = 0; i < toRead; ++i) {
             uint32_t frameIdx = (readIdx + i) & kFrameMask;
-            uint32_t sampleIdx = frameIdx * ChannelCount;
-            
-            for (uint32_t ch = 0; ch < ChannelCount; ++ch) {
-                data[i * ChannelCount + ch] = buffer_[sampleIdx + ch];
+            uint32_t sampleIdx = frameIdx * channelCount_;
+
+            for (uint32_t ch = 0; ch < channelCount_; ++ch) {
+                data[i * channelCount_ + ch] = buffer_[sampleIdx + ch];
             }
         }
-        
+
         // Partial underrun: zero-fill remainder to prevent garbage on wire
         // Per IT_BUGS.md: available < requested leaves remainder uninitialized
         if (toRead < frameCount) {
             underrunCount_.fetch_add(1, std::memory_order_relaxed);
-            const uint32_t remainStart = toRead * ChannelCount;
-            const uint32_t remainCount = (frameCount - toRead) * ChannelCount;
+            const uint32_t remainStart = toRead * channelCount_;
+            const uint32_t remainCount = (frameCount - toRead) * channelCount_;
             std::memset(&data[remainStart], 0, remainCount * sizeof(int32_t));
         }
-        
+
         // Update read index
         readIndex_.store((readIdx + toRead) & kFrameMask, std::memory_order_release);
-        
+
         return toRead;
     }
-    
+
     /// Get current fill level in frames.
     uint32_t fillLevel() const noexcept {
         uint32_t writeIdx = writeIndex_.load(std::memory_order_acquire);
         uint32_t readIdx = readIndex_.load(std::memory_order_acquire);
         return availableForRead(writeIdx, readIdx);
     }
-    
+
     /// Get available space in frames.
     uint32_t availableSpace() const noexcept {
         uint32_t writeIdx = writeIndex_.load(std::memory_order_acquire);
         uint32_t readIdx = readIndex_.load(std::memory_order_acquire);
         return availableForWrite(writeIdx, readIdx);
     }
-    
+
     /// Check if buffer is empty.
     bool isEmpty() const noexcept {
         return fillLevel() == 0;
     }
-    
+
     /// Check if buffer is full.
     bool isFull() const noexcept {
         return availableSpace() == 0;
     }
-    
+
     /// Reset the buffer to empty state.
     void reset() noexcept {
         writeIndex_.store(0, std::memory_order_relaxed);
@@ -167,22 +187,22 @@ public:
         overflowCount_.store(0, std::memory_order_relaxed);
         std::memset(buffer_, 0, sizeof(buffer_));
     }
-    
+
     /// Get underrun count (reads when buffer was empty).
     uint64_t underrunCount() const noexcept {
         return underrunCount_.load(std::memory_order_relaxed);
     }
-    
+
     /// Get overflow count (writes when buffer was full).
     uint64_t overflowCount() const noexcept {
         return overflowCount_.load(std::memory_order_relaxed);
     }
-    
+
     /// Get buffer capacity in frames.
     static constexpr uint32_t capacity() noexcept {
         return FrameCount - 1;  // One slot reserved to distinguish full from empty
     }
-    
+
 private:
     /// Calculate frames available for reading.
     static uint32_t availableForRead(uint32_t writeIdx, uint32_t readIdx) noexcept {
@@ -192,24 +212,26 @@ private:
             return FrameCount - readIdx + writeIdx;
         }
     }
-    
+
     /// Calculate frames available for writing (leave one slot empty).
     static uint32_t availableForWrite(uint32_t writeIdx, uint32_t readIdx) noexcept {
         uint32_t used = availableForRead(writeIdx, readIdx);
         return (FrameCount - 1) - used;  // -1 to leave one slot empty
     }
-    
-    alignas(64) int32_t buffer_[kTotalSamples];  ///< Sample storage (cache-aligned)
-    
+
+    uint32_t channelCount_;  ///< Runtime channel count
+
+    alignas(64) int32_t buffer_[kMaxTotalSamples];  ///< Sample storage (cache-aligned, max-sized)
+
     alignas(64) std::atomic<uint32_t> writeIndex_{0};  ///< Producer write position
     alignas(64) std::atomic<uint32_t> readIndex_{0};   ///< Consumer read position
-    
+
     std::atomic<uint64_t> underrunCount_{0};  ///< Reads when empty
     std::atomic<uint64_t> overflowCount_{0};  ///< Writes when full
 };
 
-/// Convenience alias for standard stereo 4096-frame buffer
-using StereoAudioRingBuffer = AudioRingBuffer<4096, 2>;
+/// Convenience alias for standard 4096-frame buffer (backward compat)
+using StereoAudioRingBuffer = AudioRingBuffer<4096>;
 
 } // namespace Encoding
 } // namespace ASFW

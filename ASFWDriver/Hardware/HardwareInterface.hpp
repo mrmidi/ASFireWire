@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <utility>  // for std::pair
 
 #ifdef ASFW_HOST_TEST
 #include "Testing/HostDriverKitStubs.hpp"
@@ -106,6 +107,18 @@ public:
     [[nodiscard]] uint32_t ReadLinkControl() const noexcept {
         return Read(Register32::kLinkControl);
     }
+
+    // Cycle Timer access (OHCI §5.6, offset 0xF0)
+    // Format: [seconds:7][cycles:13][offset:12] = 32 bits total
+    // - seconds: 0-127 (wraps every 128 seconds, triggers cycle64Seconds interrupt)
+    // - cycles: 0-7999 (8kHz isochronous cycle count)
+    // - offset: 0-3071 (24.576 MHz sub-cycle ticks)
+    [[nodiscard]] uint32_t ReadCycleTime() const noexcept {
+        return Read(Register32::kCycleTimer);
+    }
+
+    // Atomically read cycle timer and host uptime for timestamp correlation
+    [[nodiscard]] std::pair<uint32_t, uint64_t> ReadCycleTimeAndUpTime() const noexcept;
 
     private:
         OSSharedPtr<IOPCIDevice> device_;

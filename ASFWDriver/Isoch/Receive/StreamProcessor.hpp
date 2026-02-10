@@ -13,6 +13,11 @@
 #include "../Core/CIPHeader.hpp"
 #include "../Audio/AM824Decoder.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Shared/TxSharedQueue.hpp"
+
+#ifndef ASFW_MAX_SUPPORTED_CHANNELS
+#define ASFW_MAX_SUPPORTED_CHANNELS 16
+#endif
 
 namespace ASFW::Isoch {
 
@@ -107,15 +112,23 @@ public:
                  for (size_t ch = 0; ch < header->dataBlockSize; ++ch) {
                      uint32_t sampleQuad = dataPtr[(i * header->dataBlockSize) + ch];
                      
-                     // Just try decoding to verify format
+                     // Decode AM824 sample
                      auto sample = AM824Decoder::DecodeSample(sampleQuad);
                      if (sample) {
-                         // Valid Audio Sample
+                         // Store in temp buffer for this event
+                         eventSamples_[ch] = *sample;
                      } else if (AM824Decoder::IsMIDI(sampleQuad)) {
-                         // Valid MIDI
+                         // MIDI: ignore for now, could route elsewhere
+                         eventSamples_[ch] = 0;
                      } else {
-                         // Unknown or Empty (0x80xxxxxx etc)
+                         // Unknown or Empty
+                         eventSamples_[ch] = 0;
                      }
+                 }
+                 
+                 // Write this event (1 frame of all channels) to shared RX queue
+                 if (sharedRxQueue_) {
+                     sharedRxQueue_->Write(eventSamples_, 1);
                  }
              }
              
@@ -235,6 +248,24 @@ private:
     
     uint64_t minEvents_{UINT64_MAX};
     uint64_t maxEvents_{0};
+    
+    // Output shared queue for decoded RX samples (set by IsochReceiveContext)
+    ASFW::Shared::TxSharedQueueSPSC* sharedRxQueue_{nullptr};
+    
+    // Temp buffer for one event's worth of samples (all channels)
+    int32_t eventSamples_[ASFW_MAX_SUPPORTED_CHANNELS]{};
+    
+public:
+    /// Set the output shared queue for decoded samples.
+    /// @param queue Pointer to shared RX queue (owned externally, typically by IsochReceiveContext)
+    void SetOutputSharedQueue(ASFW::Shared::TxSharedQueueSPSC* queue) noexcept {
+        sharedRxQueue_ = queue;
+    }
+
+    /// Get current output shared queue (for diagnostics).
+    ASFW::Shared::TxSharedQueueSPSC* GetOutputSharedQueue() const noexcept {
+        return sharedRxQueue_;
+    }
 };
 
 } // namespace ASFW::Isoch

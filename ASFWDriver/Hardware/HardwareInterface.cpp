@@ -791,4 +791,13 @@ void HardwareInterface::FlushPostedWrites() const {
     FullBarrier();
 }
 
+std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const noexcept {
+    // Read cycle timer and capture host uptime as atomically as possible.
+    // Per Apple's getCycleTimeAndUpTime(): read register first, then get uptime.
+    // The order matters for accurate correlation between FireWire bus time and host time.
+    const uint32_t cycleTimer = Read(Register32::kCycleTimer);
+    const uint64_t uptime = mach_absolute_time();
+    return {cycleTimer, uptime};
+}
+
 } // namespace ASFW::Driver

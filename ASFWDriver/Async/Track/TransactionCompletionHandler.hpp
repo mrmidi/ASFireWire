@@ -249,7 +249,9 @@ public:
         });
 
         if (!found) {
-            ASFW_LOG_V2(Async, "⚠️  OnATCompletion: No transaction for tLabel=%u", comp.tLabel);
+            // Expected for split transactions: AR response completed the transaction
+            // before AT completion interrupt arrived. This is a benign race.
+            ASFW_LOG_V3(Async, "OnATCompletion: Transaction already completed for tLabel=%u (AR won race)", comp.tLabel);
         }
 
         if (postAction != PostAction::kNone) {
@@ -416,8 +418,9 @@ public:
                     const uint64_t newDeadline = Engine::NowUs() + 200000;  // +200ms
                     txn->SetDeadline(newDeadline);
 
-                    ASFW_LOG(Async, "  → Retry (busy, attempt %u/%u) - deadline extended by 200ms",
-                             txn->retryCount(), kMaxBusyRetries);
+                    ASFW_LOG_V1(Async, "🔄 RECOVERY: tLabel=%u Busy ACK (0x%X). "
+                             "Device is busy, extending deadline +200ms (attempt %u/%u)",
+                             txn->label().value, ackCode, txn->retryCount(), kMaxBusyRetries);
 
                     // Don't complete transaction - let timeout engine check again at new deadline
                     // If device becomes non-busy and sends AR response, OnARResponse will complete it
@@ -426,14 +429,63 @@ public:
                 }
             }
 
-            // Check for spurious timeout while waiting for AR response
-            if (state == TransactionState::AwaitingAR && ackCode == 0x1) {
-                ASFW_LOG(Async,
-                         "  → Timeout while AwaitingAR (ackPending), might be spurious");
-                // Could extend deadline here, but for now just fail
+            // ATPosted with ackCode=0x0: AT completion never arrived (packet wasn't sent)
+            // This can happen if AT context is backed up or hardware issue.
+            // Give it another chance - the packet might just be delayed in the queue.
+            if (state == TransactionState::ATPosted && ackCode == 0x0) {
+                constexpr uint8_t kMaxATRetries = 2;
+                if (txn->retryCount() < kMaxATRetries) {
+                    txn->IncrementRetry();
+                    
+                    // Extend deadline: give AT context more time to process
+                    const uint64_t newDeadline = Engine::NowUs() + 250000;  // +250ms
+                    txn->SetDeadline(newDeadline);
+                    
+                    ASFW_LOG_V1(Async, 
+                             "🔄 RECOVERY: tLabel=%u ATPosted timeout with no ACK. "
+                             "Packet may be queued in AT context. Extending deadline +250ms "
+                             "(attempt %u/%u)",
+                             txn->label().value, txn->retryCount(), kMaxATRetries);
+                    return;  // Don't fail, let AT complete
+                }
+                ASFW_LOG_V1(Async, 
+                         "❌ FAILED: tLabel=%u ATPosted - AT completion never arrived after %u attempts. "
+                         "Possible AT context stall or hardware issue.",
+                         txn->label().value, kMaxATRetries);
             }
 
-            // Timeout is terminal
+            // Apple-style retry: When waiting for AR response and ACK indicated device
+            // acknowledged the request (ackPending), give it more time instead of failing.
+            // This matches IOFWAsyncCommand::complete() which retries on timeout when
+            // ACK was pending/busy. See IOFireWireFamily.kmodproj/IOFWAsyncCommand.cpp:425-470
+            if (state == TransactionState::AwaitingAR) {
+                // ackCode 0x1 = ack_pending (device acknowledged, processing)
+                // ackCode 0x8 = used in some device responses (observed in logs)
+                // ackCode 0xC = ack_tardy (slow device)
+                if (ackCode == 0x1 || ackCode == 0x8 || ackCode == 0xC) {
+                    constexpr uint8_t kMaxPendingRetries = 3;  // Apple's kFWCmdDefaultRetries
+                    if (txn->retryCount() < kMaxPendingRetries) {
+                        txn->IncrementRetry();
+                        
+                        // Extend deadline: 250ms per retry (matching base timeout)
+                        const uint64_t newDeadline = Engine::NowUs() + 250000;  // +250ms
+                        txn->SetDeadline(newDeadline);
+                        
+                        // Log loudly for debugging - Apple-style recovery
+                        ASFW_LOG_V1(Async, 
+                                 "🔄 RECOVERY: tLabel=%u AwaitingAR timeout with ackCode=0x%X. "
+                                 "Device acknowledged but response late. Extending deadline +250ms "
+                                 "(attempt %u/%u)",
+                                 txn->label().value, ackCode, txn->retryCount(), kMaxPendingRetries);
+                        return;  // Don't fail, let AR response arrive or retry again
+                    }
+                    ASFW_LOG_V1(Async, 
+                             "❌ FAILED: tLabel=%u AwaitingAR with ackCode=0x%X - max retries (%u) exhausted. "
+                             "Device never sent response.",
+                             txn->label().value, ackCode, kMaxPendingRetries);
+                }
+            }
+
             // Timeout is terminal
             
             // Extract transaction to complete it safely outside lock

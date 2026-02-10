@@ -15,7 +15,42 @@ echo "🛠️  Using LLDB binary: $LLDB_BIN"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-mode="${1:-manual}"
+mode="manual"
+kill_all=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --killall|-k)
+      kill_all=true
+      shift
+      ;;
+    packet|buffer|dequeue|ue|irq|it|manual)
+      mode="$1"
+      shift
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$kill_all" == true ]]; then
+  pids_to_kill="$(pgrep -f 'net\.mrmidi\.ASFW\.ASFWDriver' || true)"
+  if [[ -z "$pids_to_kill" ]]; then
+    echo "✅ No ASFWDriver processes found to kill."
+    exit 0
+  fi
+
+  echo "🧹 Killing ASFWDriver processes: $pids_to_kill"
+  for pid in $pids_to_kill; do
+    # Force kill to ensure hung DriverKit processes are removed
+    sudo kill -9 "$pid" || true
+  done
+
+  # After cleanup, exit without starting LLDB
+  exit 0
+fi
 DRIVER_PID=""
 
 # MCP settings

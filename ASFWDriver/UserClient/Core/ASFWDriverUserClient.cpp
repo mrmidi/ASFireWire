@@ -57,6 +57,8 @@ enum {
     kMethodGetSubunitCapabilities  = 23,
     kMethodGetSubunitDescriptor    = 24,
     kMethodReScanAVCUnits          = 25,
+    kMethodSendRawFCPCommand       = 38,
+    kMethodGetRawFCPCommandResult  = 39,
     // TODO: IRM test method - temporary location for Phase 0.5 testing
     kMethodTestIRMAllocation       = 26,
     kMethodTestIRMRelease          = 27,
@@ -346,6 +348,12 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
 
         case kMethodReScanAVCUnits:
             return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->ReScanAVCUnits(arguments);
+
+        case kMethodSendRawFCPCommand:
+            return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->SendRawFCPCommand(arguments);
+
+        case kMethodGetRawFCPCommandResult:
+            return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->GetRawFCPCommandResult(arguments);
 
         // TransactionHandler methods - CompareSwap (17)
         case kMethodAsyncCompareSwap:

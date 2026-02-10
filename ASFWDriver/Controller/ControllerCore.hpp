@@ -113,6 +113,7 @@ public:
 
     Discovery::IDeviceManager* GetDeviceManager() const;
     Discovery::IUnitRegistry* GetUnitRegistry() const;
+    Discovery::DeviceRegistry* GetDeviceRegistry() const;
 
     Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
 
@@ -128,6 +129,7 @@ private:
     kern_return_t EnableInterruptsAndStartBus();
     kern_return_t StageConfigROM(uint32_t busOptions, uint32_t guidHi, uint32_t guidLo);
     void DiagnoseUnrecoverableError();
+    void HandleCycle64Seconds();  // Called on cycle64Seconds interrupt to extend 7-bit seconds
     
     void OnTopologyReady(const TopologySnapshot& snapshot);
     void ScheduleDiscoveryPoll(Discovery::Generation gen);
@@ -143,6 +145,11 @@ private:
     uint32_t ohciVersion_{0};
     bool phyProgramSupported_{false};
     bool phyConfigOk_{false};
+
+    // Extended 32-bit bus cycle time (OHCI cycle timer only has 7-bit seconds field)
+    // Updated on cycle64Seconds interrupt (every 64 seconds when 7-bit counter rolls over)
+    // Per Apple's handleCycle64Int: extends 7-bit seconds to full 32-bit counter
+    uint32_t busCycleTime_{0};
 
     // OHCI generates TWO Self-ID complete interrupts: selfIDComplete (bit 16) and selfIDComplete2 (bit 15)
     // Must wait for BOTH before re-arming buffer to avoid UnrecoverableError during DMA

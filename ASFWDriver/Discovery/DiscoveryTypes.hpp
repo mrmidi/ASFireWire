@@ -2,9 +2,15 @@
 
 #include "DiscoveryValues.hpp"  // FwSpeed enum and constants
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+// Forward declaration for device protocol
+namespace ASFW::Audio {
+    class IDeviceProtocol;
+}
 
 namespace ASFW::Discovery {
 
@@ -147,6 +153,9 @@ struct DeviceRecord {
     // ---- Optional metadata ----
     std::optional<uint8_t> unitSpecId;
     std::optional<uint8_t> unitSwVersion;
+    
+    // ---- Device-specific protocol handler (for DICE, etc.) ----
+    std::shared_ptr<Audio::IDeviceProtocol> protocol;
 };
 
 // ============================================================================

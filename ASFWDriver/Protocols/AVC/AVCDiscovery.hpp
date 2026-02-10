@@ -8,7 +8,9 @@
 
 #pragma once
 
+#include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/OSSharedPtr.h>
 #include <memory>
 #include <unordered_map>
 #include "IAVCDiscovery.hpp"
@@ -20,6 +22,8 @@
 
 // Forward declarations
 class ASFWAudioNub;
+namespace ASFW::Discovery { struct DeviceRecord; }
+namespace ASFW::Audio::Model { struct ASFWAudioDevice; }
 
 namespace ASFW::Protocols::AVC {
 
@@ -59,12 +63,21 @@ public:
 
     ASFWAudioNub* GetFirstAudioNub();
 
+    // Create audio nub from hardcoded profile for known non-AV/C bring-up.
+    void EnsureHardcodedAudioNubForDevice(const Discovery::DeviceRecord& deviceRecord);
+
 private:
     bool IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const;
 
     uint64_t GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const;
 
     void RebuildNodeIDMap();
+
+    void HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
+    bool CreateAudioNubFromModel(uint64_t guid,
+                                 const Audio::Model::ASFWAudioDevice& config,
+                                 const char* sourceTag);
+    void ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit);
 
     IOService* driver_{nullptr};
     Discovery::IDeviceManager& deviceManager_;
@@ -77,6 +90,9 @@ private:
     std::unordered_map<uint16_t, FCPTransport*> fcpTransportsByNodeID_;
 
     std::unordered_map<uint64_t, ASFWAudioNub*> audioNubs_;
+    std::unordered_map<uint64_t, uint8_t> rescanAttempts_;
+
+    OSSharedPtr<IODispatchQueue> rescanQueue_;
 
     os_log_t log_{OS_LOG_DEFAULT};
 };

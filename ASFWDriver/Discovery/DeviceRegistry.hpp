@@ -6,6 +6,11 @@
 
 #include "DiscoveryTypes.hpp"
 
+// Forward declaration
+namespace ASFW::Async {
+    class AsyncSubsystem;
+}
+
 namespace ASFW::Discovery {
 
 // Stable GUID-keyed device registry with per-generation live mapping.
@@ -17,7 +22,9 @@ public:
 
     // Create or update device record from parsed ROM
     // Returns reference to live record
-    DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link);
+    // @param asyncSubsystem Optional - if provided and device is known, creates protocol handler
+    DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
+                                 Async::AsyncSubsystem* asyncSubsystem = nullptr);
 
     // Mark device as discovered (seen in Self-ID, before ROM fetch)
     void MarkDiscovered(Generation gen, uint8_t nodeId);

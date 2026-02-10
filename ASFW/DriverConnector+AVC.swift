@@ -194,6 +194,101 @@ extension ASFWDriverConnector {
         return out
     }
 
+    func sendRawFCPCommand(guid: UInt64, frame: Data, timeoutMs: UInt32 = 15_000) -> Data? {
+        guard isConnected else {
+            log("sendRawFCPCommand: Not connected", level: .warning)
+            return nil
+        }
+        guard connection != 0 else {
+            log("sendRawFCPCommand: Invalid connection", level: .warning)
+            return nil
+        }
+        guard frame.count >= 3 && frame.count <= 512 else {
+            let message = "sendRawFCPCommand: Invalid frame length \(frame.count) (must be 3-512)"
+            log(message, level: .error)
+            lastError = message
+            return nil
+        }
+
+        let scalarInputs: [UInt64] = [
+            guid >> 32,
+            guid & 0xFFFFFFFF
+        ]
+
+        var requestID: UInt64 = 0
+        var scalarOutputCount: UInt32 = 1
+        let scalarInputCount: UInt32 = UInt32(scalarInputs.count)
+
+        let submitKR = frame.withUnsafeBytes { framePtr in
+            scalarInputs.withUnsafeBufferPointer { scalarPtr in
+                IOConnectCallMethod(
+                    connection,
+                    Method.sendRawFCPCommand.rawValue,
+                    scalarPtr.baseAddress, scalarInputCount,
+                    framePtr.baseAddress, frame.count,
+                    &requestID, &scalarOutputCount,
+                    nil, nil
+                )
+            }
+        }
+
+        guard submitKR == KERN_SUCCESS else {
+            let error = "sendRawFCPCommand submit failed: \(interpretIOReturn(submitKR))"
+            log(error, level: .error)
+            lastError = error
+            return nil
+        }
+        guard scalarOutputCount >= 1 else {
+            let error = "sendRawFCPCommand submit failed: missing request ID"
+            log(error, level: .error)
+            lastError = error
+            return nil
+        }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let timeoutNanos = UInt64(timeoutMs) * 1_000_000
+
+        while DispatchTime.now().uptimeNanoseconds - start <= timeoutNanos {
+            var pollInput: [UInt64] = [requestID]
+            var outSize = 1024
+            var out = Data(count: outSize)
+            let pollInputCount: UInt32 = 1
+
+            let pollKR = out.withUnsafeMutableBytes { outPtr in
+                pollInput.withUnsafeMutableBufferPointer { inputPtr in
+                    IOConnectCallMethod(
+                        connection,
+                        Method.getRawFCPCommandResult.rawValue,
+                        inputPtr.baseAddress, pollInputCount,
+                        nil, 0,
+                        nil, nil,
+                        outPtr.baseAddress?.assumingMemoryBound(to: UInt8.self), &outSize
+                    )
+                }
+            }
+
+            if pollKR == KERN_SUCCESS {
+                out.count = outSize
+                return out
+            }
+
+            if pollKR == kIOReturnNotReady {
+                Thread.sleep(forTimeInterval: 0.005)
+                continue
+            }
+
+            let error = "sendRawFCPCommand poll failed: \(interpretIOReturn(pollKR))"
+            log(error, level: .error)
+            lastError = error
+            return nil
+        }
+
+        let timeoutError = "sendRawFCPCommand timed out waiting for response (\(timeoutMs) ms)"
+        log(timeoutError, level: .error)
+        lastError = timeoutError
+        return nil
+    }
+
     func reScanAVCUnits() -> Bool {
         guard isConnected else { return false }
         guard connection != 0 else { return false }

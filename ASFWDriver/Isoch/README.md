@@ -314,6 +314,9 @@ The packet size is determined by the **Sample Rate** (which dictates the blockin
 > [!NOTE]
 > At **192 kHz** with 32 blocks/packet, the payload exceeds 4KB at just 32 channels. Actual feasible payload depends on bus bandwidth allocation, other devices on the bus, and packet overhead.
 
+> [!CAUTION]
+> **Full-Duplex Consideration:** The above calculations are for a **single direction** (simplex). For full-duplex audio (simultaneous TX + RX), two isochronous streams share the bus bandwidth, effectively **halving** the available channels per direction (e.g., ~15-16 ch @ 192kHz full-duplex instead of ~31 simplex).
+
 ### Context Specifics
 | Parameter | IT (Transmit) | IR (Receive) | Notes |
 |-----------|---------------|--------------|-------|

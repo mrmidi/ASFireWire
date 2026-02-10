@@ -274,7 +274,7 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     }
     
     if (events & IntEventBits::kCycle64Seconds) {
-        ASFW_LOG(Controller, "Cycle64Seconds - 64-second cycle counter rollover");
+        HandleCycle64Seconds();
     }
     
     // Feed relevant events to BusResetCoordinator FSM (it filters what it needs)
@@ -387,6 +387,10 @@ Discovery::IDeviceManager* ControllerCore::GetDeviceManager() const {
 
 Discovery::IUnitRegistry* ControllerCore::GetUnitRegistry() const {
     return deps_.deviceManager.get();
+}
+
+Discovery::DeviceRegistry* ControllerCore::GetDeviceRegistry() const {
+    return deps_.deviceRegistry.get();
 }
 
 Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
@@ -1071,7 +1075,15 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
 
         auto policy = deps_.speedPolicy->ForNode(rom.nodeId);
 
-        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
+        // Pass AsyncSubsystem to enable protocol handler creation for known devices
+        auto* asyncSubsystem = deps_.asyncSubsystem.get();
+        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy, asyncSubsystem);
+
+        // Vendor-specific (e.g. DICE/Focusrite) bring-up path:
+        // create ASFWAudioNub directly from hardcoded profile without waiting for AV/C discovery.
+        if (deps_.avcDiscovery && deviceRecord.kind == Discovery::DeviceKind::VendorSpecificAudio) {
+            deps_.avcDiscovery->EnsureHardcodedAudioNubForDevice(deviceRecord);
+        }
 
         if (deps_.deviceManager) {
             auto fwDevice = deps_.deviceManager->UpsertDevice(deviceRecord, rom);
@@ -1096,6 +1108,41 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
     ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u",
              roms.size(), gen);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
+}
+
+void ControllerCore::HandleCycle64Seconds() {
+    // Per Apple's AppleFWOHCI::handleCycle64Int():
+    // The OHCI IsochronousCycleTimer register has a 7-bit seconds field that wraps every 128 seconds.
+    // This interrupt fires every 64 seconds (when bit 6 toggles), allowing us to extend the 7-bit
+    // counter to a full 32-bit bus cycle time for accurate long-duration isochronous timing.
+    //
+    // Algorithm:
+    // 1. Read current 7-bit seconds from cycle timer (bits 31:25)
+    // 2. If current seconds < low 7 bits of our extended counter, a wrap occurred (add 128)
+    // 3. Update extended counter: preserve high bits, replace low 7 bits with current seconds
+    //
+    // This gives us a monotonically increasing 32-bit bus time counter that never wraps
+    // (unless running for ~136 years at 1 second increments).
+
+    if (!deps_.hardware) {
+        return;
+    }
+
+    const uint32_t cycleTimer = deps_.hardware->ReadCycleTime();
+    uint32_t seconds = cycleTimer >> 25;  // Extract 7-bit seconds field
+
+    // Compare with low 7 bits of our extended counter
+    const uint32_t prevLow7 = busCycleTime_ & 0x7F;
+    if (seconds < prevLow7) {
+        // Wrap-around occurred: seconds went from 127 -> 0
+        seconds += 128;
+    }
+
+    // Update extended bus cycle time: keep high bits, add current seconds delta
+    busCycleTime_ = (busCycleTime_ & 0xFFFFFF80) + seconds;
+
+    ASFW_LOG_V2(Controller, "Cycle64Seconds: timer=0x%08x sec=%u busCycleTime_=%u",
+                cycleTimer, seconds, busCycleTime_);
 }
 
 } // namespace ASFW::Driver

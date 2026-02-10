@@ -6,6 +6,7 @@
 // OR AppleFWOHCI.kext decomp!
 
 #include "IsochTransmitContext.hpp"
+#include "../Config/TxBufferProfiles.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
@@ -26,6 +27,9 @@ std::unique_ptr<IsochTransmitContext> IsochTransmitContext::Create(
 
     ctx->hardware_ = hw;
     ctx->dmaMemory_ = std::move(dmaMemory);
+    
+    // Create SYT generator (cycle-based, no HW dependency)
+    ctx->sytGenerator_ = std::make_unique<Encoding::SYTGenerator>();
 
     return ctx;
 }
@@ -37,6 +41,8 @@ void IsochTransmitContext::SetSharedTxQueue(void* base, uint64_t bytes) noexcept
     }
 
     if (sharedTxQueue_.Attach(base, bytes)) {
+        // Consumer-owned flush only: drop stale backlog on (re)attach.
+        sharedTxQueue_.ConsumerDropQueuedFrames();
         ASFW_LOG(Isoch, "IT: Shared TX queue attached - capacity=%u frames",
                  sharedTxQueue_.CapacityFrames());
     } else {
@@ -49,13 +55,59 @@ uint32_t IsochTransmitContext::SharedTxFillLevelFrames() const noexcept {
     return sharedTxQueue_.FillLevelFrames();
 }
 
-kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noexcept {
+uint32_t IsochTransmitContext::SharedTxCapacityFrames() const noexcept {
+    if (!sharedTxQueue_.IsValid()) return 0;
+    return sharedTxQueue_.CapacityFrames();
+}
+
+// ZERO-COPY: Set direct pointer to CoreAudio output buffer
+void IsochTransmitContext::SetZeroCopyOutputBuffer(void* base, uint64_t bytes, uint32_t frameCapacity) noexcept {
+    if (!base || bytes == 0 || frameCapacity == 0) {
+        zeroCopyAudioBase_ = nullptr;
+        zeroCopyAudioBytes_ = 0;
+        zeroCopyFrameCapacity_ = 0;
+        zeroCopyReadFrame_ = 0;
+        zeroCopyEnabled_ = false;
+        assembler_.setZeroCopySource(nullptr, 0);
+
+        if (base || bytes || frameCapacity) {
+            ASFW_LOG(Isoch, "IT: SetZeroCopyOutputBuffer - invalid parameters");
+        } else {
+            ASFW_LOG(Isoch, "IT: ZERO-COPY disabled; using shared TX queue");
+        }
+        return;
+    }
+
+    zeroCopyAudioBase_ = base;
+    zeroCopyAudioBytes_ = bytes;
+    zeroCopyFrameCapacity_ = frameCapacity;
+    zeroCopyReadFrame_ = 0;
+    zeroCopyEnabled_ = true;
+
+    // Wire PacketAssembler to read directly from this buffer
+    assembler_.setZeroCopySource(reinterpret_cast<const int32_t*>(base), frameCapacity);
+
+    ASFW_LOG(Isoch, "IT: ✅ ZERO-COPY enabled! AudioBuffer base=%p bytes=%llu frames=%u assembler=%s",
+             base, bytes, frameCapacity,
+             assembler_.isZeroCopyEnabled() ? "ENABLED" : "fallback");
+}
+
+kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid, uint32_t streamModeRaw) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
         return kIOReturnBusy;
     }
     
     channel_ = channel;
     assembler_.setSID(sid);
+
+    requestedStreamMode_ = (streamModeRaw == 1u)
+        ? Encoding::StreamMode::kBlocking
+        : Encoding::StreamMode::kNonBlocking;
+    effectiveStreamMode_ = requestedStreamMode_;
+    assembler_.setStreamMode(effectiveStreamMode_);
+
+    ASFW_LOG(Isoch, "IT: Stream mode=%{public}s",
+             effectiveStreamMode_ == Encoding::StreamMode::kBlocking ? "blocking" : "non-blocking");
     
     if (dmaMemory_) {
         auto result = SetupRings();
@@ -75,7 +127,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
         return kIOReturnNotReady;
     }
     
-    if (!descriptorRing_.Storage().data()) {
+    if (!descRegion_.virtualBase) {
         ASFW_LOG(Isoch, "IT: Cannot start - no DMA ring");
         return kIOReturnNoResources;
     }
@@ -86,19 +138,53 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     noDataPackets_ = 0;
     tickCount_ = 0;
     interruptCount_ = 0;
+    lastInterruptCountSeen_ = 0;
+    irqStallTicks_ = 0;
+    refillInProgress_.clear(std::memory_order_release);
+    samplesSinceStart_ = 0;
+    
+    // Initialize SYT generator (cycle-based, Linux approach)
+    if (sytGenerator_) {
+        sytGenerator_->initialize(48000.0);  // TODO: Get from actual sample rate
+        ASFW_LOG(Isoch, "IT: SYTGenerator initialized, cycle-based mode");
+    }
 
-    if (sharedTxQueue_.IsValid()) {
+    // Seed transmit cycle estimate from current bus time
+    if (hardware_) {
+        uint32_t cycleTime = hardware_->ReadCycleTime();
+        uint32_t currentCycle = (cycleTime >> 12) & 0x1FFF;  // 13-bit cycle count
+        // Add startup offset: a few cycles for DMA to begin after Run bit set
+        nextTransmitCycle_ = (currentCycle + 4) % 8000;
+        cycleTrackingValid_ = true;
+        lastHwTimestamp_ = 0;
+        ASFW_LOG(Isoch, "IT: Cycle tracking seeded: currentCycle=%u nextTxCycle=%u",
+                 currentCycle, nextTransmitCycle_);
+    }
+
+    if (sharedTxQueue_.IsValid() && !zeroCopyEnabled_) {
         uint32_t fillBefore = sharedTxQueue_.FillLevelFrames();
-        ASFW_LOG(Isoch, "IT: Pre-prime transfer - shared queue has %u frames", fillBefore);
+        const uint32_t startupPrimeLimitFrames = Config::kTxBufferProfile.startupPrimeLimitFrames;
+        uint32_t remainingPrimeFrames = startupPrimeLimitFrames;
+        ASFW_LOG(Isoch, "IT: Pre-prime transfer - shared queue has %u frames (limit=%u)",
+                 fillBefore, startupPrimeLimitFrames);
         
-        constexpr uint32_t kTransferChunk = 256;
-        int32_t transferBuf[kTransferChunk * 2];
+        constexpr uint32_t kTransferChunk = Config::kTransferChunkFrames;
+        int32_t transferBuf[kTransferChunk * Encoding::kMaxSupportedChannels];
         uint32_t totalTransferred = 0;
         uint32_t chunkCount = 0;
+        bool primeLimitHit = false;
         
         while (sharedTxQueue_.FillLevelFrames() > 0) {
+            if (startupPrimeLimitFrames != 0 && remainingPrimeFrames == 0) {
+                primeLimitHit = true;
+                break;
+            }
+
             uint32_t toRead = sharedTxQueue_.FillLevelFrames();
             if (toRead > kTransferChunk) toRead = kTransferChunk;
+            if (startupPrimeLimitFrames != 0 && toRead > remainingPrimeFrames) {
+                toRead = remainingPrimeFrames;
+            }
             
             uint32_t read = sharedTxQueue_.Read(transferBuf, toRead);
             if (read == 0) break;
@@ -115,16 +201,29 @@ kern_return_t IsochTransmitContext::Start() noexcept {
             
             uint32_t written = assembler_.ringBuffer().write(transferBuf, read);
             totalTransferred += written;
+            if (startupPrimeLimitFrames != 0) {
+                if (written >= remainingPrimeFrames) {
+                    remainingPrimeFrames = 0;
+                } else {
+                    remainingPrimeFrames -= written;
+                }
+            }
             
             if (written < read) break;
         }
         
-        ASFW_LOG(Isoch, "IT: Pre-prime transferred %u frames to assembler (fill=%u)",
-                 totalTransferred, assembler_.bufferFillLevel());
+        ASFW_LOG(Isoch, "IT: Pre-prime transferred %u frames to assembler (fill=%u limit=%u hit=%s)",
+                 totalTransferred,
+                 assembler_.bufferFillLevel(),
+                 startupPrimeLimitFrames,
+                 primeLimitHit ? "YES" : "NO");
+    } else if (zeroCopyEnabled_) {
+        ASFW_LOG(Isoch, "IT: Pre-prime skipped (ZERO-COPY mode)");
     }
 
-    memset(descRegion_.virtualBase, 0xDE, kNumDescriptors * sizeof(OHCIDescriptor));
-    ASFW_LOG(Isoch, "IT: Pre-filled descriptor ring with 0xDE pattern");
+    // Fill entire descriptor slab with 0xDE pattern (helps debug page gaps)
+    memset(descRegion_.virtualBase, 0xDE, kDescriptorRingSize);
+    ASFW_LOG(Isoch, "IT: Pre-filled descriptor slab (%zu bytes) with 0xDE pattern", kDescriptorRingSize);
 
     PrimeRing();
     ASFW_LOG(Isoch, "IT: Ring primed with %llu packets", packetsAssembled_);
@@ -191,8 +290,10 @@ void IsochTransmitContext::Stop() noexcept {
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
         
         state_ = State::Stopped;
+        refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped. Stats: %llu pkts (%lluD/%lluN) IRQs=%llu",
-                 packetsAssembled_, dataPackets_, noDataPackets_, interruptCount_);
+                 packetsAssembled_, dataPackets_, noDataPackets_,
+                 interruptCount_.load(std::memory_order_relaxed));
     }
 }
 
@@ -200,51 +301,107 @@ void IsochTransmitContext::Poll() noexcept {
     if (state_ != State::Running) return;
     ++tickCount_;
 
-    if (sharedTxQueue_.IsValid()) {
-        constexpr uint32_t kTransferChunk = 256;
-        int32_t transferBuf[kTransferChunk * 2];
-
-        uint32_t totalTransferred = 0;
-        while (sharedTxQueue_.FillLevelFrames() >= kTransferChunk) {
-            uint32_t read = sharedTxQueue_.Read(transferBuf, kTransferChunk);
-            if (read == 0) break;
-
-            uint32_t written = assembler_.ringBuffer().write(transferBuf, read);
-            totalTransferred += written;
-
-            if (written < read) {
-                break;
-            }
-        }
-
-        uint32_t remaining = sharedTxQueue_.FillLevelFrames();
-        if (remaining > 0 && remaining < kTransferChunk) {
-            uint32_t read = sharedTxQueue_.Read(transferBuf, remaining);
-            if (read > 0) {
-                totalTransferred += assembler_.ringBuffer().write(transferBuf, read);
-            }
-        }
-
-        static uint64_t lastLogTick = 0;
-        if (tickCount_ == 1 || (tickCount_ - lastLogTick) >= 1000) {
-            ASFW_LOG(Isoch, "IT: Poll tick=%llu txQ=%u asmBuf=%u transferred=%u",
-                     tickCount_, sharedTxQueue_.FillLevelFrames(),
-                     assembler_.bufferFillLevel(), totalTransferred);
-            lastLogTick = tickCount_;
-        }
+    // IRQ-stall watchdog:
+    // If IT interrupts stop arriving while context is still running, kick refill/wake
+    // from the 1ms poll path to keep DMA fed and recover from missed IRQ windows.
+    uint64_t irqNow = interruptCount_.load(std::memory_order_relaxed);
+    if (irqNow != lastInterruptCountSeen_) {
+        lastInterruptCountSeen_ = irqNow;
+        irqStallTicks_ = 0;
     } else {
-        if (tickCount_ == 1 || (tickCount_ % 1000) == 0) {
-            ASFW_LOG(Isoch, "IT: Poll tick=%llu fillLevel=%u (no shared queue)",
-                     tickCount_, assembler_.bufferFillLevel());
+        ++irqStallTicks_;
+    }
+
+    constexpr uint32_t kIrqStallThresholdTicks = 2;  // ~2ms @ 1ms watchdog tick
+    if (irqStallTicks_ >= kIrqStallThresholdTicks) {
+        if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+            RefillRing();
+            refillInProgress_.clear(std::memory_order_release);
         }
+        WakeHardware();
+        rtRefill_.irqWatchdogKicks.fetch_add(1, std::memory_order_relaxed);
+        irqStallTicks_ = 0;
+    }
+
+    // Periodic non-RT diagnostics.
+    if (tickCount_ == 1 || (tickCount_ % 1000) == 0) {
+        const uint32_t rbFill = assembler_.bufferFillLevel();
+        const uint32_t txFill = sharedTxQueue_.IsValid() ? sharedTxQueue_.FillLevelFrames() : 0;
+
+        const auto load = [](const std::atomic<uint64_t>& c) noexcept {
+            return c.load(std::memory_order_relaxed);
+        };
+
+        RTRefillSnapshot cur{};
+        cur.calls = load(rtRefill_.calls);
+        cur.exitNotRunning = load(rtRefill_.exitNotRunning);
+        cur.exitDead = load(rtRefill_.exitDead);
+        cur.exitDecodeFail = load(rtRefill_.exitDecodeFail);
+        cur.exitHwOOB = load(rtRefill_.exitHwOOB);
+        cur.exitZeroRefill = load(rtRefill_.exitZeroRefill);
+        cur.resyncApplied = load(rtRefill_.resyncApplied);
+        cur.staleFramesDropped = load(rtRefill_.staleFramesDropped);
+        cur.refills = load(rtRefill_.refills);
+        cur.packetsRefilled = load(rtRefill_.packetsRefilled);
+        cur.legacyPumpMovedFrames = load(rtRefill_.legacyPumpMovedFrames);
+        cur.legacyPumpSkipped = load(rtRefill_.legacyPumpSkipped);
+        cur.fatalPacketSize = load(rtRefill_.fatalPacketSize);
+        cur.fatalDescriptorBounds = load(rtRefill_.fatalDescriptorBounds);
+        cur.irqWatchdogKicks = load(rtRefill_.irqWatchdogKicks);
+
+        RTRefillSnapshot delta{};
+        delta.calls = cur.calls - rtRefillLast_.calls;
+        delta.exitNotRunning = cur.exitNotRunning - rtRefillLast_.exitNotRunning;
+        delta.exitDead = cur.exitDead - rtRefillLast_.exitDead;
+        delta.exitDecodeFail = cur.exitDecodeFail - rtRefillLast_.exitDecodeFail;
+        delta.exitHwOOB = cur.exitHwOOB - rtRefillLast_.exitHwOOB;
+        delta.exitZeroRefill = cur.exitZeroRefill - rtRefillLast_.exitZeroRefill;
+        delta.resyncApplied = cur.resyncApplied - rtRefillLast_.resyncApplied;
+        delta.staleFramesDropped = cur.staleFramesDropped - rtRefillLast_.staleFramesDropped;
+        delta.refills = cur.refills - rtRefillLast_.refills;
+        delta.packetsRefilled = cur.packetsRefilled - rtRefillLast_.packetsRefilled;
+        delta.legacyPumpMovedFrames = cur.legacyPumpMovedFrames - rtRefillLast_.legacyPumpMovedFrames;
+        delta.legacyPumpSkipped = cur.legacyPumpSkipped - rtRefillLast_.legacyPumpSkipped;
+        delta.fatalPacketSize = cur.fatalPacketSize - rtRefillLast_.fatalPacketSize;
+        delta.fatalDescriptorBounds = cur.fatalDescriptorBounds - rtRefillLast_.fatalDescriptorBounds;
+        delta.irqWatchdogKicks = cur.irqWatchdogKicks - rtRefillLast_.irqWatchdogKicks;
+        rtRefillLast_ = cur;
+
+        ASFW_LOG(Isoch, "IT: Poll tick=%llu zeroCopy=%{public}s rbFill=%u txFill=%u readPos=%u/%u | RefillΔ calls=%llu refills=%llu pkts=%llu legacy(moved=%llu skip=%llu) exits(nr=%llu dead=%llu dec=%llu oob=%llu zero=%llu) sync(resync=%llu drop=%llu) watchdog=%llu fatal(sz=%llu,bounds=%llu)",
+                 tickCount_,
+                 zeroCopyEnabled_ ? "YES" : "NO",
+                 rbFill,
+                 txFill,
+                 assembler_.zeroCopyReadPosition(),
+                 zeroCopyFrameCapacity_,
+                 delta.calls,
+                 delta.refills,
+                 delta.packetsRefilled,
+                 delta.legacyPumpMovedFrames,
+                 delta.legacyPumpSkipped,
+                 delta.exitNotRunning,
+                 delta.exitDead,
+                 delta.exitDecodeFail,
+                 delta.exitHwOOB,
+                 delta.exitZeroRefill,
+                 delta.resyncApplied,
+                 delta.staleFramesDropped,
+                 delta.irqWatchdogKicks,
+                 delta.fatalPacketSize,
+                 delta.fatalDescriptorBounds);
     }
 }
 
 void IsochTransmitContext::HandleInterrupt() noexcept {
     if (state_ != State::Running) return;
-    ++interruptCount_;
+    interruptCount_.fetch_add(1, std::memory_order_relaxed);
 
+    // Avoid concurrent refill from ISR + watchdog poll path.
+    if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        return;
+    }
     RefillRing();
+    refillInProgress_.clear(std::memory_order_release);
 }
 
 void IsochTransmitContext::WakeHardware() noexcept {
@@ -264,6 +421,7 @@ void IsochTransmitContext::WakeHardware() noexcept {
 kern_return_t IsochTransmitContext::SetupRings() noexcept {
     if (!dmaMemory_) return kIOReturnNoMemory;
 
+    // Allocate descriptor ring - request 4K alignment for page gap calculation
     auto descR = dmaMemory_->AllocateDescriptor(kDescriptorRingSize);
     if (!descR) return kIOReturnNoMemory;
     descRegion_ = *descR;
@@ -277,59 +435,168 @@ kern_return_t IsochTransmitContext::SetupRings() noexcept {
                  descRegion_.deviceBase, bufRegion_.deviceBase);
         return kIOReturnNoResources;
     }
+    
+    // Check 16-byte alignment (minimum for OHCI descriptors)
     if ((descRegion_.deviceBase & 0xFULL) != 0) {
         ASFW_LOG(Isoch, "IT: SetupRings - descriptor base not 16B aligned: 0x%llx",
                  descRegion_.deviceBase);
         return kIOReturnNoResources;
     }
+    
+    // CRITICAL: Check 4K alignment for page gap calculation
+    // Our GetDescriptorIOVA() assumes base is 4K-aligned so page offsets line up
+    uint64_t pageOffset = descRegion_.deviceBase & (kOHCIPageSize - 1);
+    if (pageOffset != 0) {
+        ASFW_LOG(Isoch, "❌ IT: SetupRings - descriptor base NOT 4K aligned! "
+                 "IOVA=0x%llx pageOffset=0x%llx - page gap calculation WILL BE WRONG, failing",
+                 descRegion_.deviceBase, pageOffset);
+        return kIOReturnNoResources;
+    }
 
-    std::span<OHCIDescriptor> storage(
-        reinterpret_cast<OHCIDescriptor*>(descRegion_.virtualBase),
-        kRingBlocks
-    );
-    if (!descriptorRing_.Initialize(storage)) return kIOReturnError;
-
+    // Zero the entire slab (will be filled with 0xDE in Start())
     memset(descRegion_.virtualBase, 0, kDescriptorRingSize);
 
-    ASFW_LOG(Isoch, "IT: Rings Ready. DescIOVA=0x%llx BufIOVA=0x%llx (blocks=%u packets=%u bpp=%u)",
-              descRegion_.deviceBase, bufRegion_.deviceBase, kRingBlocks, kNumPackets, kBlocksPerPacket);
+    ASFW_LOG(Isoch, "IT: Rings Ready. DescIOVA=0x%llx (pageOff=0x%llx) BufIOVA=0x%llx",
+             descRegion_.deviceBase, pageOffset, bufRegion_.deviceBase);
+    ASFW_LOG(Isoch, "IT: Layout: %u packets, %u blocks, %u pages, %zu bytes/page usable",
+             kNumPackets, kRingBlocks, kTotalPages, static_cast<size_t>(kDescriptorsPerPage * kDescriptorStride));
 
     return kIOReturnSuccess;
 }
 
+// =============================================================================
+// Page-aware descriptor access helpers (Linux-style padding)
+// =============================================================================
+
+OHCIDescriptor* IsochTransmitContext::GetDescriptorPtr(uint32_t logicalIndex) noexcept {
+    // Calculate which 4K page this descriptor is on
+    uint32_t page = logicalIndex / kDescriptorsPerPage;
+    uint32_t offsetInPage = (logicalIndex % kDescriptorsPerPage) * kDescriptorStride;
+    
+    uint8_t* base = reinterpret_cast<uint8_t*>(descRegion_.virtualBase);
+    return reinterpret_cast<OHCIDescriptor*>(base + (page * kOHCIPageSize) + offsetInPage);
+}
+
+const OHCIDescriptor* IsochTransmitContext::GetDescriptorPtr(uint32_t logicalIndex) const noexcept {
+    uint32_t page = logicalIndex / kDescriptorsPerPage;
+    uint32_t offsetInPage = (logicalIndex % kDescriptorsPerPage) * kDescriptorStride;
+    
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(descRegion_.virtualBase);
+    return reinterpret_cast<const OHCIDescriptor*>(base + (page * kOHCIPageSize) + offsetInPage);
+}
+
+uint32_t IsochTransmitContext::GetDescriptorIOVA(uint32_t logicalIndex) const noexcept {
+    uint32_t page = logicalIndex / kDescriptorsPerPage;
+    uint32_t offsetInPage = (logicalIndex % kDescriptorsPerPage) * kDescriptorStride;
+    
+    return static_cast<uint32_t>(descRegion_.deviceBase) + 
+           (page * static_cast<uint32_t>(kOHCIPageSize)) + offsetInPage;
+}
+
+bool IsochTransmitContext::DecodeCmdAddrToLogicalIndex(uint32_t cmdAddr, uint32_t& outLogicalIndex) const noexcept {
+    uint32_t baseAddr = static_cast<uint32_t>(descRegion_.deviceBase);
+    
+    // Sanity checks
+    if (cmdAddr < baseAddr) return false;
+    if ((cmdAddr & 0xFu) != 0) return false;  // Must be 16-byte aligned
+    
+    uint32_t offset = cmdAddr - baseAddr;
+    uint32_t page = offset / static_cast<uint32_t>(kOHCIPageSize);
+    uint32_t offsetInPage = offset % static_cast<uint32_t>(kOHCIPageSize);
+    
+    // Check if page is valid
+    if (page >= kTotalPages) return false;
+    
+    // Check if in padding zone (last 64 bytes of page are unused with 252 descs/page)
+    uint32_t usableBytes = kDescriptorsPerPage * kDescriptorStride;
+    if (offsetInPage >= usableBytes) return false;
+    
+    // Check alignment
+    if ((offsetInPage % kDescriptorStride) != 0) return false;
+    
+    uint32_t indexInPage = offsetInPage / kDescriptorStride;
+    outLogicalIndex = (page * kDescriptorsPerPage) + indexInPage;
+    
+    return outLogicalIndex < kRingBlocks;
+}
+
+void IsochTransmitContext::ValidateDescriptorLayout() const noexcept {
+#ifndef NDEBUG
+    // Validate all descriptors are in safe zone (offset < 0xFE0)
+    bool allSafe = true;
+    for (uint32_t i = 0; i < kRingBlocks; ++i) {
+        uint32_t iova = GetDescriptorIOVA(i);
+        uint32_t pageOffset = iova & (kOHCIPageSize - 1);
+        if (pageOffset >= (kOHCIPageSize - kOHCIPrefetchSize)) {
+            ASFW_LOG(Isoch, "❌ IT: Descriptor %u in DANGER ZONE! IOVA=0x%08x pageOff=0x%03x",
+                     i, iova, pageOffset);
+            allSafe = false;
+        }
+    }
+    
+    // Validate packet alignment: each packet's 3 blocks on same page
+    for (uint32_t pkt = 0; pkt < kNumPackets; ++pkt) {
+        uint32_t base = pkt * kBlocksPerPacket;
+        uint32_t page0 = GetDescriptorIOVA(base) / kOHCIPageSize;
+        uint32_t page1 = GetDescriptorIOVA(base + 1) / kOHCIPageSize;
+        uint32_t page2 = GetDescriptorIOVA(base + 2) / kOHCIPageSize;
+        if (page0 != page1 || page1 != page2) {
+            ASFW_LOG(Isoch, "❌ IT: Packet %u straddles pages! pages=[%u,%u,%u]",
+                     pkt, page0, page1, page2);
+            allSafe = false;
+        }
+    }
+    
+    if (allSafe) {
+        ASFW_LOG(Isoch, "✅ IT: Layout validation PASSED (%u descriptors, %u packets, %u pages)",
+                 kRingBlocks, kNumPackets, kTotalPages);
+    }
+#endif
+}
+
 void IsochTransmitContext::PrimeRing() noexcept {
-    const size_t capacity = descriptorRing_.Capacity();
-    const size_t numPackets = capacity / kBlocksPerPacket;
+    // Use kNumPackets - don't derive from capacity (incompatible with page gaps)
+    constexpr uint32_t numPackets = kNumPackets;
     
-    auto* descriptors = descriptorRing_.Storage().data();
+    ASFW_LOG(Isoch, "IT: PrimeRing - packets=%u blocks=%u pages=%u descPerPage=%u",
+             numPackets, kRingBlocks, kTotalPages, kDescriptorsPerPage);
     
-    ASFW_LOG(Isoch, "IT: PrimeRing - capacity=%zu numPackets=%zu", capacity, numPackets);
+    // Validate layout in debug builds (once, before any descriptor writes)
+    ValidateDescriptorLayout();
     
-    for (size_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
-        auto pkt = assembler_.assembleNext(0xFFFF);
+    for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
+        // Cycle-aware SYT: only for DATA packets
+        uint16_t syt = Encoding::SYTGenerator::kNoInfo;
+        bool willBeData = assembler_.nextIsData();
+        if (willBeData && sytGenerator_ && sytGenerator_->isValid() && cycleTrackingValid_) {
+            syt = sytGenerator_->computeDataSYT(nextTransmitCycle_);
+        }
+
+        auto pkt = assembler_.assembleNext(syt);
+        nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;  // One packet per bus cycle
 
         if (pkt.size > kMaxPacketSize) {
-            ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u > kMaxPacketSize=%u pktIdx=%zu",
+            ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u > kMaxPacketSize=%u pktIdx=%u",
                      pkt.size, kMaxPacketSize, pktIdx);
             return;
         }
         if (pkt.size > 0xFFFFu) {
-            ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u exceeds 16-bit dataLength pktIdx=%zu",
+            ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u exceeds 16-bit dataLength pktIdx=%u",
                      pkt.size, pktIdx);
             return;
         }
 
-        size_t descBase = pktIdx * kBlocksPerPacket;
-        size_t nextPktBase = ((pktIdx + 1) % numPackets) * kBlocksPerPacket;
+        uint32_t descBase = pktIdx * kBlocksPerPacket;
+        uint32_t nextPktBase = ((pktIdx + 1) % numPackets) * kBlocksPerPacket;
         
         if (descBase >= kRingBlocks || (descBase + kBlocksPerPacket - 1) >= kRingBlocks) {
-            ASFW_LOG(Isoch, "IT: ❌ FATAL: descBase=%zu OUT OF BOUNDS (max=%u) pktIdx=%zu",
+            ASFW_LOG(Isoch, "IT: ❌ FATAL: descBase=%u OUT OF BOUNDS (max=%u) pktIdx=%u",
                      descBase, kRingBlocks - 1, pktIdx);
             return;
         }
         
-        uint32_t nextBlockIOVA = static_cast<uint32_t>(descRegion_.deviceBase) + 
-                                 static_cast<uint32_t>(nextPktBase * sizeof(OHCIDescriptor));
+        // Use page-aware IOVA calculation for branch address
+        uint32_t nextBlockIOVA = GetDescriptorIOVA(nextPktBase);
         
         uint8_t* payloadVirt = reinterpret_cast<uint8_t*>(bufRegion_.virtualBase) + 
                                (pktIdx * kMaxPacketSize);
@@ -356,7 +623,8 @@ void IsochTransmitContext::PrimeRing() noexcept {
         const uint32_t isochHeaderQ1 =
             static_cast<uint32_t>(static_cast<uint16_t>(pkt.size)) << 16;
         
-        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(&descriptors[descBase]);
+        // Use page-aware pointer for descriptor access
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(GetDescriptorPtr(descBase));
 
         immDesc->common.control = (0x0200u << 16) | 8;
         
@@ -376,9 +644,8 @@ void IsochTransmitContext::PrimeRing() noexcept {
         immDesc->immediateData[2] = 0;
         immDesc->immediateData[3] = 0;
 
-        // No need to zero descriptors[descBase + 1] anymore - immediateData is part of immDesc
-
-        auto* lastDesc = &descriptors[descBase + 2];
+        // Use page-aware pointer for OUTPUT_LAST descriptor
+        auto* lastDesc = GetDescriptorPtr(descBase + 2);
 
         uint16_t lastReqCount = static_cast<uint16_t>(pkt.size);
 
@@ -400,7 +667,12 @@ void IsochTransmitContext::PrimeRing() noexcept {
         lastDesc->statusWord = 0;
         
         ++packetsAssembled_;
-        if (pkt.isData) ++dataPackets_; else ++noDataPackets_;
+        if (pkt.isData) {
+            ++dataPackets_;
+            samplesSinceStart_ += assembler_.samplesPerDataPacket();
+        } else {
+            ++noDataPackets_;
+        }
     }
     
     std::atomic_thread_fence(std::memory_order_release);
@@ -408,17 +680,22 @@ void IsochTransmitContext::PrimeRing() noexcept {
 }
 
 void IsochTransmitContext::RefillRing() noexcept {
-    if (!hardware_ || state_ != State::Running) return;
+    rtRefill_.calls.fetch_add(1, std::memory_order_relaxed);
+    
+    if (!hardware_ || state_ != State::Running) {
+        rtRefill_.exitNotRunning.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    if (sharedTxQueue_.IsValid() && sharedTxQueue_.ConsumerApplyPendingResync()) {
+        rtRefill_.resyncApplied.fetch_add(1, std::memory_order_relaxed);
+    }
 
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_));
     uint32_t ctrl = hardware_->Read(ctrlReg);
     bool dead = (ctrl & ContextControl::kDead) != 0;
     if (dead) {
-        static bool logged = false;
-        if (!logged) {
-            ASFW_LOG(Isoch, "IT: RefillRing - context is DEAD, skipping refill");
-            logged = true;
-        }
+        rtRefill_.exitDead.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -426,113 +703,253 @@ void IsochTransmitContext::RefillRing() noexcept {
     uint32_t cmdPtr = hardware_->Read(cmdPtrReg);
     uint32_t cmdAddr = cmdPtr & 0xFFFFFFF0u;
 
-    const uint32_t baseAddr = static_cast<uint32_t>(descRegion_.deviceBase);
-    const uint32_t numPackets = kRingBlocks / kBlocksPerPacket;
+    // Legacy (non-zero-copy) path: keep assembler ring near a target fill.
+    // This makes sharedTxQueue the effective jitter buffer instead of draining ASAP.
+    if (!zeroCopyEnabled_ && sharedTxQueue_.IsValid()) {
+        constexpr uint32_t kTargetRbFillFrames = Config::kTxBufferProfile.legacyRbTargetFrames;
+        constexpr uint32_t kMaxRbFillFrames = Config::kTxBufferProfile.legacyRbMaxFrames;
+        constexpr uint32_t kTransferChunkFrames = Config::kTransferChunkFrames;
+        constexpr uint32_t kMaxChunksPerRefill = Config::kTxBufferProfile.legacyMaxChunksPerRefill;
 
-    if (cmdAddr < baseAddr) return;
+        uint32_t rbFill = assembler_.bufferFillLevel();
+        uint32_t pumpedFrames = 0;
+        bool skipped = true;
 
-    uint32_t descOffset = cmdAddr - baseAddr;
-    uint32_t descIndex = descOffset / sizeof(OHCIDescriptor);
-    uint32_t hwPacketIndex = descIndex / kBlocksPerPacket;
+        if (rbFill < kTargetRbFillFrames) {
+            skipped = false;
+            uint32_t want = kTargetRbFillFrames - rbFill;
+            int32_t transferBuf[kTransferChunkFrames * Encoding::kMaxSupportedChannels];
+            uint32_t chunks = 0;
 
-    if (hwPacketIndex >= numPackets) return;
+            while (want > 0 && chunks < kMaxChunksPerRefill) {
+                uint32_t qFill = sharedTxQueue_.FillLevelFrames();
+                if (qFill == 0) {
+                    break;
+                }
 
-    static uint32_t refillCallCount = 0;
-    if (refillCallCount == 0) {
-        ASFW_LOG(Isoch, "IT: RefillRing FIRST CALL - hwPkt=%u swFill=%u cmdPtr=0x%08x",
-                 hwPacketIndex, softwareFillIndex_, cmdPtr);
-    }
-    refillCallCount++;
+                uint32_t rbSpace = assembler_.ringBuffer().availableSpace();
+                if (rbSpace == 0) {
+                    break;
+                }
 
-    uint32_t packetsToRefill = 0;
-    if (hwPacketIndex >= softwareFillIndex_) {
-        packetsToRefill = hwPacketIndex - softwareFillIndex_;
-    } else {
-        packetsToRefill = (numPackets - softwareFillIndex_) + hwPacketIndex;
-    }
+                uint32_t toRead = want;
+                if (toRead > qFill) toRead = qFill;
+                if (toRead > rbSpace) toRead = rbSpace;
+                if (toRead > kTransferChunkFrames) toRead = kTransferChunkFrames;
 
-    const uint32_t maxRefill = 16;
-    const uint32_t safetyGap = 8;
+                uint32_t read = sharedTxQueue_.Read(transferBuf, toRead);
+                if (read == 0) {
+                    break;
+                }
 
-    if (packetsToRefill > safetyGap) {
-        packetsToRefill -= safetyGap;
-    } else {
-        packetsToRefill = 0;
-    }
+                uint32_t written = assembler_.ringBuffer().write(transferBuf, read);
+                pumpedFrames += written;
+                if (written < read) {
+                    break;
+                }
 
-    if (packetsToRefill > maxRefill) {
-        packetsToRefill = maxRefill;
-    }
+                want -= written;
+                ++chunks;
 
-    if (packetsToRefill == 0) return;
-
-    static uint32_t actualRefillCount = 0;
-    if (actualRefillCount == 0) {
-        ASFW_LOG(Isoch, "IT: RefillRing REFILLING %u packets (hw=%u sw=%u)",
-                 packetsToRefill, hwPacketIndex, softwareFillIndex_);
-    }
-    actualRefillCount++;
-
-    auto* descriptors = descriptorRing_.Storage().data();
-
-    for (uint32_t i = 0; i < packetsToRefill; ++i) {
-        uint32_t pktIdx = (softwareFillIndex_ + i) % numPackets;
-
-        auto pkt = assembler_.assembleNext(0xFFFF);
-
-        if (pkt.size > kMaxPacketSize || pkt.size > 0xFFFFu) {
-            ASFW_LOG(Isoch, "IT: RefillRing FATAL pkt.size=%u pktIdx=%u", pkt.size, pktIdx);
-            return;
-        }
-
-        size_t descBase = pktIdx * kBlocksPerPacket;
-
-        if (descBase >= kRingBlocks || (descBase + kBlocksPerPacket - 1) >= kRingBlocks) {
-            ASFW_LOG(Isoch, "IT: ❌ RefillRing FATAL: descBase=%zu OUT OF BOUNDS pktIdx=%u",
-                     descBase, pktIdx);
-            return;
-        }
-
-        uint8_t* payloadVirt = reinterpret_cast<uint8_t*>(bufRegion_.virtualBase) +
-                               (pktIdx * kMaxPacketSize);
-        uint32_t payloadIOVA = static_cast<uint32_t>(bufRegion_.deviceBase) +
-                               static_cast<uint32_t>(pktIdx * kMaxPacketSize);
-
-        if (pkt.size > 0) {
-            uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
-            const uint32_t* src32 = reinterpret_cast<const uint32_t*>(pkt.data);
-            const size_t count32 = pkt.size / 4;
-            for (size_t k = 0; k < count32; ++k) {
-                dst32[k] = src32[k];
+                if (assembler_.bufferFillLevel() >= kMaxRbFillFrames) {
+                    break;
+                }
             }
         }
 
-        auto* lastDesc = &descriptors[descBase + 2];
-        uint16_t lastReqCount = static_cast<uint16_t>(pkt.size);
-
-        uint32_t existingControl = lastDesc->control & 0xFFFF0000u;
-        lastDesc->control = existingControl | lastReqCount;
-        lastDesc->dataAddress = payloadIOVA;
-        lastDesc->statusWord = 0;
-
-        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(&descriptors[descBase]);
-        uint32_t isochHeaderQ1 = (static_cast<uint32_t>(pkt.size) & 0xFFFFu) << 16;
-        immDesc->immediateData[1] = isochHeaderQ1;
-        // TODO: On bus reset recovery, rebuild Q0/Q1 and control fields if tag/channel/speed can change.
-
-        ++packetsAssembled_;
-        if (pkt.isData) ++dataPackets_; else ++noDataPackets_;
+        if (skipped) {
+            rtRefill_.legacyPumpSkipped.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            rtRefill_.legacyPumpMovedFrames.fetch_add(pumpedFrames, std::memory_order_relaxed);
+        }
     }
 
-    std::atomic_thread_fence(std::memory_order_release);
-    ASFW::Driver::WriteBarrier();
+    // Use page-aware inverse mapping for cmdPtr decoding (critical fix!)
+    uint32_t hwLogicalIndex;
+    if (!DecodeCmdAddrToLogicalIndex(cmdAddr, hwLogicalIndex)) {
+        rtRefill_.exitDecodeFail.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    
+    uint32_t hwPacketIndex = hwLogicalIndex / kBlocksPerPacket;
+    constexpr uint32_t numPackets = kNumPackets;
 
-    softwareFillIndex_ = (softwareFillIndex_ + packetsToRefill) % numPackets;
+    if (hwPacketIndex >= numPackets) {
+        rtRefill_.exitHwOOB.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    // ==========================================================================
+    // HARDWARE-DELTA REFILL (v8 fix)
+    // Refill exactly as many packets as hardware consumed since last call.
+    // This guarantees software refill rate == hardware consumption rate.
+    // ==========================================================================
+    
+    const uint32_t prevHwPacketIndex = lastHwPacketIndex_;
+    uint32_t deltaConsumed = 0;
+    if (hwPacketIndex >= prevHwPacketIndex) {
+        deltaConsumed = hwPacketIndex - prevHwPacketIndex;
+    } else {
+        // Wrapped around
+        deltaConsumed = (numPackets - prevHwPacketIndex) + hwPacketIndex;
+    }
+    
+    // Update tracker for next call
     lastHwPacketIndex_ = hwPacketIndex;
+    
+    if (deltaConsumed == 0) {
+        // Nothing consumed since last call - nothing to refill
+        return;
+    }
+
+    // === CYCLE RESYNC from hardware timestamp ===
+    // Before overwriting consumed descriptors, read the timeStamp from one of them.
+    // The OUTPUT_LAST descriptor (descBase + 2) has s=1, so OHCI writes timeStamp after TX.
+    if (cycleTrackingValid_) {
+        // Read timestamp from the packet just before current HW position
+        uint32_t lastProcessedPkt = (hwPacketIndex + numPackets - 1) % numPackets;
+        auto* processedOL = GetDescriptorPtr(lastProcessedPkt * kBlocksPerPacket + 2);
+
+        uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
+
+        if (processedOL->statusWord != 0) {
+            // Hardware wrote valid status — extract cycle
+            uint32_t hwCycle = hwTimestamp & 0x1FFF;  // 13-bit cycle count
+            lastHwTimestamp_ = hwTimestamp;
+
+            // Recompute nextTransmitCycle_ based on actual hardware cycle.
+            // lastProcessedPkt was transmitted at hwCycle.
+            // softwareFillIndex_ is where we'll write next.
+            // Distance from lastProcessedPkt to softwareFillIndex_ (in ring):
+            uint32_t aheadCount = (softwareFillIndex_ + numPackets - lastProcessedPkt) % numPackets;
+            nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
+        }
+    }
+
+    // Cap per-call refill to avoid excessive time in interrupt context
+    // But allow multi-pass to catch up if needed
+    const uint32_t kMaxRefillPerPass = 16;
+    const uint32_t kMaxPasses = 4;
+    
+    uint32_t packetsRemaining = deltaConsumed;
+    uint32_t passes = 0;
+    uint32_t totalRefilled = 0;
+    rtRefill_.refills.fetch_add(1, std::memory_order_relaxed);
+
+    const bool zeroCopySync = zeroCopyEnabled_ && sharedTxQueue_.IsValid() && zeroCopyFrameCapacity_ > 0;
+
+    while (packetsRemaining > 0 && passes < kMaxPasses) {
+        uint32_t packetsToRefill = (packetsRemaining > kMaxRefillPerPass) ? kMaxRefillPerPass : packetsRemaining;
+
+        for (uint32_t i = 0; i < packetsToRefill; ++i) {
+            uint32_t pktIdx = (softwareFillIndex_ + i) % numPackets;
+
+            // Cycle-aware SYT: only for DATA packets
+            uint16_t syt = Encoding::SYTGenerator::kNoInfo;
+            bool willBeData = assembler_.nextIsData();
+            if (willBeData && sytGenerator_ && sytGenerator_->isValid() && cycleTrackingValid_) {
+                syt = sytGenerator_->computeDataSYT(nextTransmitCycle_);
+            }
+
+            uint32_t zeroCopyFillBefore = 0;
+            if (zeroCopySync && willBeData) {
+                // Acquire producer progress, then align assembler read pointer
+                // to shared read index + producer-supplied phase.
+                zeroCopyFillBefore = sharedTxQueue_.FillLevelFrames();
+
+                // Zero-copy storage retains only zeroCopyFrameCapacity_ frames.
+                // If queue lag exceeds this, drop stale backlog before reading.
+                if (zeroCopyFillBefore > zeroCopyFrameCapacity_) {
+                    const uint32_t drop = zeroCopyFillBefore - zeroCopyFrameCapacity_;
+                    const uint32_t dropped = sharedTxQueue_.ConsumeFrames(drop);
+                    rtRefill_.staleFramesDropped.fetch_add(dropped, std::memory_order_relaxed);
+                    zeroCopyFillBefore -= dropped;
+                }
+
+                uint32_t readAbs = sharedTxQueue_.ReadIndexFrames();
+                const uint32_t phase = sharedTxQueue_.ZeroCopyPhaseFrames() % zeroCopyFrameCapacity_;
+                assembler_.setZeroCopyReadPosition((readAbs + phase) % zeroCopyFrameCapacity_);
+            }
+
+            auto pkt = assembler_.assembleNext(syt);
+            nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;  // One packet per bus cycle
+
+            if (zeroCopySync && pkt.isData) {
+                const uint32_t framesPerPacket = assembler_.samplesPerDataPacket();
+                uint32_t consumed = sharedTxQueue_.ConsumeFrames(framesPerPacket);
+                if (consumed < framesPerPacket ||
+                    zeroCopyFillBefore < framesPerPacket) {
+                    rtRefill_.exitZeroRefill.fetch_add(1, std::memory_order_relaxed);
+                    // Preserve DATA cadence/DBC while avoiding stale buffer data on underrun.
+                    memset(pkt.data + Encoding::kCIPHeaderSize, 0,
+                           assembler_.dataPacketSize() - Encoding::kCIPHeaderSize);
+                }
+            }
+
+            if (pkt.size > kMaxPacketSize || pkt.size > 0xFFFFu) {
+                rtRefill_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+
+            uint32_t descBase = pktIdx * kBlocksPerPacket;
+
+            if (descBase >= kRingBlocks || (descBase + kBlocksPerPacket - 1) >= kRingBlocks) {
+                rtRefill_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+
+            uint8_t* payloadVirt = reinterpret_cast<uint8_t*>(bufRegion_.virtualBase) +
+                                   (pktIdx * kMaxPacketSize);
+            uint32_t payloadIOVA = static_cast<uint32_t>(bufRegion_.deviceBase) +
+                                   static_cast<uint32_t>(pktIdx * kMaxPacketSize);
+
+            if (pkt.size > 0) {
+                uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
+                const uint32_t* src32 = reinterpret_cast<const uint32_t*>(pkt.data);
+                const size_t count32 = pkt.size / 4;
+                for (size_t k = 0; k < count32; ++k) {
+                    dst32[k] = src32[k];
+                }
+            }
+
+            // Use page-aware pointer for OUTPUT_LAST descriptor
+            auto* lastDesc = GetDescriptorPtr(descBase + 2);
+            uint16_t lastReqCount = static_cast<uint16_t>(pkt.size);
+
+            uint32_t existingControl = lastDesc->control & 0xFFFF0000u;
+            lastDesc->control = existingControl | lastReqCount;
+            lastDesc->dataAddress = payloadIOVA;
+            lastDesc->statusWord = 0;
+
+            // Use page-aware pointer for OUTPUT_MORE-Immediate descriptor
+            auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(GetDescriptorPtr(descBase));
+            uint32_t isochHeaderQ1 = (static_cast<uint32_t>(pkt.size) & 0xFFFFu) << 16;
+            immDesc->immediateData[1] = isochHeaderQ1;
+
+            ++packetsAssembled_;
+            if (pkt.isData) {
+                ++dataPackets_;
+                samplesSinceStart_ += assembler_.samplesPerDataPacket();
+            } else {
+                ++noDataPackets_;
+            }
+        }
+
+        std::atomic_thread_fence(std::memory_order_release);
+        ASFW::Driver::WriteBarrier();
+
+        softwareFillIndex_ = (softwareFillIndex_ + packetsToRefill) % numPackets;
+        totalRefilled += packetsToRefill;
+        packetsRemaining -= packetsToRefill;
+        passes++;
+    }
+    
+    rtRefill_.packetsRefilled.fetch_add(totalRefilled, std::memory_order_relaxed);
 }
     
 void IsochTransmitContext::LogStatistics() const noexcept {
-#ifndef ASFW_HOST_TEST
+#if 0
+// seems like it's working as expected, but keep this here for future diagnostics if needed
     if (hardware_) {
         uint32_t cmdPtr = hardware_->Read(static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_)));
         uint32_t ctrl = hardware_->Read(static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
@@ -550,13 +967,16 @@ void IsochTransmitContext::LogStatistics() const noexcept {
         
         static uint64_t dumpCounter = 0;
         if ((dumpCounter++ % 10) == 0) {
-            auto* descs = descriptorRing_.Storage().data();
+            // Use page-aware pointer access
+            const auto* desc0 = GetDescriptorPtr(0);
+            const auto* desc1 = GetDescriptorPtr(1);
+            const auto* desc2 = GetDescriptorPtr(2);
             ASFW_LOG(Isoch, "  Block0[0]: ctl=0x%08x dat=0x%08x br=0x%08x st=0x%08x",
-                     descs[0].control, descs[0].dataAddress, descs[0].branchWord, descs[0].statusWord);
+                     desc0->control, desc0->dataAddress, desc0->branchWord, desc0->statusWord);
             ASFW_LOG(Isoch, "  Block0[1]: ctl=0x%08x dat=0x%08x br=0x%08x st=0x%08x",
-                     descs[1].control, descs[1].dataAddress, descs[1].branchWord, descs[1].statusWord);
+                     desc1->control, desc1->dataAddress, desc1->branchWord, desc1->statusWord);
             ASFW_LOG(Isoch, "  Block0[2]: ctl=0x%08x dat=0x%08x br=0x%08x st=0x%08x",
-                     descs[2].control, descs[2].dataAddress, descs[2].branchWord, descs[2].statusWord);
+                     desc2->control, desc2->dataAddress, desc2->branchWord, desc2->statusWord);
         }
         
         if (deadSet) {
@@ -606,29 +1026,30 @@ void IsochTransmitContext::DumpAtCmdPtr() const noexcept {
 #ifndef ASFW_HOST_TEST
     if (!hardware_) return;
 
-    const uint32_t base = static_cast<uint32_t>(descRegion_.deviceBase);
-    const uint32_t end = base + static_cast<uint32_t>(kRingBlocks * sizeof(OHCIDescriptor));
-
     Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
     const uint32_t cmdPtr = hardware_->Read(cmdPtrReg);
     const uint32_t addr = cmdPtr & 0xFFFFFFF0u;
     const uint32_t z = cmdPtr & 0xF;
 
-    ASFW_LOG(Isoch, "IT: DumpAtCmdPtr: cmdPtr=0x%08x addr=0x%08x Z=%u (base=0x%08x end=0x%08x)",
-             cmdPtr, addr, z, base, end);
+    const uint32_t base = static_cast<uint32_t>(descRegion_.deviceBase);
+    
+    ASFW_LOG(Isoch, "IT: DumpAtCmdPtr: cmdPtr=0x%08x addr=0x%08x Z=%u (base=0x%08x)",
+             cmdPtr, addr, z, base);
 
-    if (addr < base || addr >= end) {
-        ASFW_LOG(Isoch, "IT: CmdPtr OUT OF RING RANGE!");
+    // Use page-aware decoding
+    uint32_t logicalIdx;
+    if (!DecodeCmdAddrToLogicalIndex(addr, logicalIdx)) {
+        ASFW_LOG(Isoch, "IT: CmdPtr decode FAILED - addr=0x%08x outside ring or in padding", addr);
         return;
     }
 
-    const size_t idx = (addr - base) / sizeof(OHCIDescriptor);
-    auto* d = reinterpret_cast<OHCIDescriptor*>(descRegion_.virtualBase);
+    ASFW_LOG(Isoch, "IT: CmdPtr decoded to logicalIdx=%u (packet=%u, block=%u)",
+             logicalIdx, logicalIdx / kBlocksPerPacket, logicalIdx % kBlocksPerPacket);
 
-    for (size_t k = 0; k < 4 && (idx + k) < kRingBlocks; ++k) {
-        const auto& b = d[idx + k];
-        ASFW_LOG(Isoch, "IT: @%zu ctl=0x%08x dat=0x%08x br=0x%08x st=0x%08x",
-                 idx + k, b.control, b.dataAddress, b.branchWord, b.statusWord);
+    for (uint32_t k = 0; k < 4 && (logicalIdx + k) < kRingBlocks; ++k) {
+        const auto* b = GetDescriptorPtr(logicalIdx + k);
+        ASFW_LOG(Isoch, "IT: @%u ctl=0x%08x dat=0x%08x br=0x%08x st=0x%08x",
+                 logicalIdx + k, b->control, b->dataAddress, b->branchWord, b->statusWord);
     }
 #endif
 }
@@ -639,7 +1060,7 @@ void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t num
         return;
     }
 
-    const uint32_t totalPackets = kRingBlocks / kBlocksPerPacket;
+    constexpr uint32_t totalPackets = kNumPackets;
     if (startPacket >= totalPackets) {
         ASFW_LOG(Isoch, "IT: DumpDescriptorRing - startPacket %u out of range (max=%u)",
                  startPacket, totalPackets - 1);
@@ -649,19 +1070,19 @@ void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t num
         numPackets = totalPackets - startPacket;
     }
 
-    auto* descriptors = reinterpret_cast<OHCIDescriptor*>(descRegion_.virtualBase);
     const uint32_t descBaseIOVA = static_cast<uint32_t>(descRegion_.deviceBase);
     const uint32_t bufBaseIOVA = static_cast<uint32_t>(bufRegion_.deviceBase);
 
-    ASFW_LOG(Isoch, "IT: DescRing Dump pkts %u-%u (total=%u) DescBase=0x%08x BufBase=0x%08x Z=%u",
-             startPacket, startPacket + numPackets - 1, totalPackets,
+    ASFW_LOG(Isoch, "IT: DescRing Dump pkts %u-%u (total=%u pages=%u) DescBase=0x%08x BufBase=0x%08x Z=%u",
+             startPacket, startPacket + numPackets - 1, totalPackets, kTotalPages,
              descBaseIOVA, bufBaseIOVA, kBlocksPerPacket);
 
     for (uint32_t pktIdx = startPacket; pktIdx < startPacket + numPackets; ++pktIdx) {
-        size_t descBase = pktIdx * kBlocksPerPacket;
+        uint32_t descBase = pktIdx * kBlocksPerPacket;
 
-        auto* desc0 = &descriptors[descBase];
-        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
+        // Use page-aware pointer access
+        auto* desc0 = GetDescriptorPtr(descBase);
+        auto* immDesc = reinterpret_cast<const OHCIDescriptorImmediate*>(desc0);
         uint32_t ctl0 = desc0->control;
         uint32_t i0 = (ctl0 >> 18) & 0x3;
         uint32_t b0 = (ctl0 >> 16) & 0x3;
@@ -678,7 +1099,7 @@ void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t num
         uint32_t sy = itQ0 & 0xF;
         uint32_t dataLen = (itQ1 >> 16) & 0xFFFF;
 
-        auto* desc2 = &descriptors[descBase + 2];
+        auto* desc2 = GetDescriptorPtr(descBase + 2);
         uint32_t ctl1 = desc2->control;
         uint32_t i1 = (ctl1 >> 18) & 0x3;
         uint32_t b1 = (ctl1 >> 16) & 0x3;
@@ -687,8 +1108,11 @@ void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t num
         uint32_t branchZ = desc2->branchWord & 0xF;
         uint16_t xferStatus = static_cast<uint16_t>(desc2->statusWord >> 16);
 
-        ASFW_LOG(Isoch, "  Pkt[%u] OMI: ctl=0x%08x i=%u b=%u skip=0x%08x|%u Q0=0x%08x(spd=%u tag=%u ch=%u tcode=0x%x sy=%u) Q1=0x%08x(len=%u)",
-                 pktIdx, ctl0, i0, b0, skipAddr, skipZ,
+        // Also show the computed vs physical IOVA for debugging page gaps
+        uint32_t computedIOVA = GetDescriptorIOVA(descBase);
+        
+        ASFW_LOG(Isoch, "  Pkt[%u] @desc%u IOVA=0x%08x OMI: ctl=0x%08x i=%u b=%u skip=0x%08x|%u Q0=0x%08x(spd=%u tag=%u ch=%u tcode=0x%x sy=%u) Q1=0x%08x(len=%u)",
+                 pktIdx, descBase, computedIOVA, ctl0, i0, b0, skipAddr, skipZ,
                  itQ0, spd, tag, chan, tcode, sy,
                  itQ1, dataLen);
         ASFW_LOG(Isoch, "         OL:  ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u st=0x%04x",
