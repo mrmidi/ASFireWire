@@ -206,7 +206,7 @@ constexpr size_t kAVCOperandMaxLength = kAVCFrameMaxSize - kAVCFrameMinSize;
 //==============================================================================
 
 /// Initial FCP timeout (milliseconds)
-constexpr uint32_t kFCPTimeoutInitial = 1000;
+constexpr uint32_t kFCPTimeoutInitial = 2000;
 
 /// FCP timeout after interim response (milliseconds)
 constexpr uint32_t kFCPTimeoutAfterInterim = 10000;

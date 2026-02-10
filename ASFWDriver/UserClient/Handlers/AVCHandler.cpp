@@ -17,6 +17,8 @@
 #include "../../Shared/SharedDataModels.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <unordered_map>
 #include <DriverKit/OSData.h>
 #include <DriverKit/OSNumber.h>
@@ -28,6 +30,57 @@ namespace {
 
 using namespace ASFW::Shared;
 constexpr size_t kMaxWireSize = 4096;  // DriverKit will drop larger structure outputs
+
+kern_return_t FCPStatusToIOReturn(ASFW::Protocols::AVC::FCPStatus status) {
+    using ASFW::Protocols::AVC::FCPStatus;
+
+    switch (status) {
+        case FCPStatus::kOk:
+            return kIOReturnSuccess;
+        case FCPStatus::kTimeout:
+            return kIOReturnTimeout;
+        case FCPStatus::kBusReset:
+            return kIOReturnAborted;
+        case FCPStatus::kTransportError:
+            return kIOReturnIOError;
+        case FCPStatus::kInvalidPayload:
+            return kIOReturnBadArgument;
+        case FCPStatus::kResponseMismatch:
+            return kIOReturnInvalid;
+        case FCPStatus::kBusy:
+            return kIOReturnBusy;
+    }
+
+    return kIOReturnError;
+}
+
+struct RawFCPResult {
+    bool ready{false};
+    kern_return_t status{kIOReturnNotReady};
+    std::array<uint8_t, ASFW::Protocols::AVC::kAVCFrameMaxSize> response{};
+    uint32_t responseLength{0};
+};
+
+struct RawFCPResultStore {
+    IOLock* lock{IOLockAlloc()};
+    uint64_t nextRequestID{1};
+    std::unordered_map<uint64_t, RawFCPResult> results;
+};
+
+RawFCPResultStore& GetRawFCPResultStore() {
+    static RawFCPResultStore store{};
+    return store;
+}
+
+#ifdef ASFW_HOST_TEST
+OSData* CastStructureInputToOSData(IOUserClientMethodArguments* args) {
+    return static_cast<OSData*>(args->structureInput);
+}
+#else
+OSData* CastStructureInputToOSData(IOUserClientMethodArguments* args) {
+    return OSDynamicCast(OSData, args->structureInput);
+}
+#endif
 
 } // anonymous namespace
 
@@ -485,6 +538,177 @@ kern_return_t AVCHandler::GetSubunitDescriptor(IOUserClientMethodArguments* args
 
     ASFW_LOG(UserClient, "GetSubunitDescriptor: subunit not found (GUID=0x%llx type=0x%02x id=%d)", guid, type, id);
     return kIOReturnNotFound;
+}
+
+kern_return_t AVCHandler::SendRawFCPCommand(IOUserClientMethodArguments* args) {
+    if (!args) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: null arguments");
+        return kIOReturnBadArgument;
+    }
+    if (!discovery_) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: discovery not available");
+        return kIOReturnNotReady;
+    }
+    if (!args->scalarInput || args->scalarInputCount < 2) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: missing scalar inputs");
+        return kIOReturnBadArgument;
+    }
+    if (!args->scalarOutput || args->scalarOutputCount < 1) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: missing scalar output buffer");
+        return kIOReturnBadArgument;
+    }
+    if (!args->structureInput) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: missing command payload");
+        return kIOReturnBadArgument;
+    }
+
+    OSData* commandData = CastStructureInputToOSData(args);
+    if (!commandData) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: structureInput is not OSData");
+        return kIOReturnBadArgument;
+    }
+
+    const size_t commandLength = static_cast<size_t>(commandData->getLength());
+    if (commandLength < Protocols::AVC::kAVCFrameMinSize ||
+        commandLength > Protocols::AVC::kAVCFrameMaxSize) {
+        ASFW_LOG(UserClient,
+                 "SendRawFCPCommand: invalid payload size=%llu",
+                 static_cast<unsigned long long>(commandLength));
+        return kIOReturnBadArgument;
+    }
+
+    const uint64_t guid = (static_cast<uint64_t>(args->scalarInput[0]) << 32) |
+                          args->scalarInput[1];
+    Protocols::AVC::AVCUnit* targetUnit = nullptr;
+    auto allUnits = discovery_->GetAllAVCUnits();
+    for (auto* unit : allUnits) {
+        if (!unit) {
+            continue;
+        }
+        auto device = unit->GetDevice();
+        if (device && device->GetGUID() == guid) {
+            targetUnit = unit;
+            break;
+        }
+    }
+
+    if (!targetUnit) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: target unit not found (guid=0x%llx)", guid);
+        return kIOReturnNotFound;
+    }
+
+    Protocols::AVC::FCPFrame command{};
+    command.length = commandLength;
+    std::memcpy(command.data.data(), commandData->getBytesNoCopy(), command.length);
+
+    auto& store = GetRawFCPResultStore();
+    if (!store.lock) {
+        ASFW_LOG(UserClient, "SendRawFCPCommand: result store lock unavailable");
+        return kIOReturnNoMemory;
+    }
+
+    IOLockLock(store.lock);
+    if (store.results.size() > 256) {
+        for (auto it = store.results.begin(); it != store.results.end();) {
+            if (it->second.ready) {
+                it = store.results.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    uint64_t requestID = store.nextRequestID++;
+    store.results.emplace(requestID, RawFCPResult{});
+    IOLockUnlock(store.lock);
+
+    const auto handle = targetUnit->GetFCPTransport().SubmitCommand(
+        command,
+        [requestID](Protocols::AVC::FCPStatus status, const Protocols::AVC::FCPFrame& response) {
+            auto& resultStore = GetRawFCPResultStore();
+            if (!resultStore.lock) {
+                return;
+            }
+
+            IOLockLock(resultStore.lock);
+            auto it = resultStore.results.find(requestID);
+            if (it != resultStore.results.end()) {
+                it->second.ready = true;
+                it->second.status = FCPStatusToIOReturn(status);
+                if (status == Protocols::AVC::FCPStatus::kOk && response.IsValid()) {
+                    it->second.responseLength = static_cast<uint32_t>(response.length);
+                    std::memcpy(it->second.response.data(),
+                                response.data.data(),
+                                response.length);
+                } else {
+                    it->second.responseLength = 0;
+                }
+            }
+            IOLockUnlock(resultStore.lock);
+        }
+    );
+
+    if (!handle.IsValid()) {
+        IOLockLock(store.lock);
+        auto it = store.results.find(requestID);
+        if (it != store.results.end()) {
+            it->second.ready = true;
+            if (it->second.status == kIOReturnNotReady) {
+                it->second.status = kIOReturnIOError;
+            }
+        }
+        IOLockUnlock(store.lock);
+    }
+
+    args->scalarOutput[0] = requestID;
+    args->scalarOutputCount = 1;
+    return kIOReturnSuccess;
+}
+
+kern_return_t AVCHandler::GetRawFCPCommandResult(IOUserClientMethodArguments* args) {
+    if (!args || !args->scalarInput || args->scalarInputCount < 1) {
+        return kIOReturnBadArgument;
+    }
+
+    auto& store = GetRawFCPResultStore();
+    if (!store.lock) {
+        return kIOReturnNoMemory;
+    }
+
+    const uint64_t requestID = args->scalarInput[0];
+    RawFCPResult result{};
+    bool found = false;
+
+    IOLockLock(store.lock);
+    auto it = store.results.find(requestID);
+    if (it != store.results.end()) {
+        found = true;
+        if (it->second.ready) {
+            result = it->second;
+            store.results.erase(it);
+        }
+    }
+    IOLockUnlock(store.lock);
+
+    if (!found) {
+        return kIOReturnNotFound;
+    }
+
+    if (!result.ready) {
+        return kIOReturnNotReady;
+    }
+
+    if (result.status != kIOReturnSuccess) {
+        return result.status;
+    }
+
+    OSData* response = OSData::withBytes(result.response.data(), result.responseLength);
+    if (!response) {
+        return kIOReturnNoMemory;
+    }
+
+    args->structureOutput = response;
+    args->structureOutputDescriptor = nullptr;
+    return kIOReturnSuccess;
 }
 
 kern_return_t AVCHandler::ReScanAVCUnits(IOUserClientMethodArguments* args) {

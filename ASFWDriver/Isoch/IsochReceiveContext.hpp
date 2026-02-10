@@ -17,6 +17,7 @@
 #include "IsochTypes.hpp"
 #include "Memory/IIsochDMAMemory.hpp"
 #include "Receive/StreamProcessor.hpp"
+#include "../Shared/TxSharedQueue.hpp"
 
 namespace ASFW::Isoch {
 
@@ -79,6 +80,9 @@ public:
 
     StreamProcessor& GetStreamProcessor() { return streamProcessor_; }
 
+    /// Attach shared RX queue from ASFWAudioNub (called before Start)
+    void SetSharedRxQueue(void* base, uint64_t bytes);
+
     void LogHardwareState();
 
 private:
@@ -100,7 +104,19 @@ private:
     ::ASFW::Shared::BufferRing bufferRing_;
 
     StreamProcessor streamProcessor_;
-    
+
+    /// Shared RX queue: producer=Poll()/ProcessPacket, consumer=ASFWAudioDriver (via shared memory)
+    ASFW::Shared::TxSharedQueueSPSC rxSharedQueue_;
+
+    /// Cycle-time rate estimation state (per Apple NUDCLREAD pattern)
+    struct CycleTimeCorrelation {
+        uint32_t prevCycleTimer{0};
+        uint64_t prevHostTicks{0};
+        bool     hasPrevious{false};
+        uint32_t pollsSinceLastUpdate{0};
+        double   sampleRate{48000.0};
+    } cycleCorr_;
+
     IsochReceiveCallback callback_{nullptr};
     
     std::atomic_flag lock_ = ATOMIC_FLAG_INIT;

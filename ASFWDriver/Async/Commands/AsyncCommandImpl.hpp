@@ -113,8 +113,10 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
     }
     
     // Step 10: Schedule timeout
+    // Increased from 250ms to 500ms: with retries, this aligns better with
+    // FCP timeout windows and avoids expiring just before valid AR responses.
     const uint64_t now = subsys.GetCurrentTimeUsec();
-    constexpr uint64_t kDefaultTimeoutUsec = 1'000'000;  // 1000ms (relaxed from 200ms)
+    constexpr uint64_t kDefaultTimeoutUsec = 500'000;  // 500ms per attempt
     subsys.GetTracking()->OnTxPosted(handle, now, kDefaultTimeoutUsec);
     
     // Step 11: Attach payload to PayloadRegistry (if non-null)

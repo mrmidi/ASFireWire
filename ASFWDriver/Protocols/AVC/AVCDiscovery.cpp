@@ -7,6 +7,9 @@
 
 #include "AVCDiscovery.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Audio/Model/ASFWAudioDevice.hpp"
+#include "../Audio/DeviceStreamModeQuirks.hpp"
+#include "../../Discovery/DiscoveryTypes.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include "Music/MusicSubunit.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
@@ -17,8 +20,95 @@
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSDictionary.h>
 #include <set>
+#include <algorithm>
 
 using namespace ASFW::Protocols::AVC;
+
+namespace {
+
+ASFW::Audio::Model::StreamMode ResolveStreamMode(
+    const ASFW::Protocols::AVC::Music::MusicSubunitCapabilities& caps,
+    uint32_t vendorId,
+    uint32_t modelId,
+    const char*& reason) noexcept {
+    if (auto forced = ASFW::Audio::Quirks::LookupForcedStreamMode(vendorId, modelId); forced.has_value()) {
+        reason = "quirk";
+        ASFW_LOG_WARNING(Audio,
+                         "AVCDiscovery: QUIRK OVERRIDE stream mode vendor=0x%06x model=0x%06x forced=%{public}s",
+                         vendorId, modelId,
+                         ASFW::Audio::Quirks::StreamModeToString(*forced));
+        return *forced;
+    }
+
+    // Use transmit capability as mode selection signal. This mode is currently
+    // used by the host IT stream and is expected to match RX in practical devices.
+    const bool supportsBlocking = caps.SupportsBlockingTransmit();
+    const bool supportsNonBlocking = caps.SupportsNonBlockingTransmit();
+
+    if (supportsBlocking && !supportsNonBlocking) {
+        reason = "avc-blocking-only";
+        return ASFW::Audio::Model::StreamMode::kBlocking;
+    }
+
+    if (supportsNonBlocking) {
+        reason = supportsBlocking ? "avc-both-prefer-nonblocking" : "avc-nonblocking-only";
+        return ASFW::Audio::Model::StreamMode::kNonBlocking;
+    }
+
+    reason = "default-nonblocking";
+    return ASFW::Audio::Model::StreamMode::kNonBlocking;
+}
+
+struct PlugChannelSummary {
+    uint32_t inputAudioMaxChannels{0};   // Subunit input audio stream width
+    uint32_t outputAudioMaxChannels{0};  // Subunit output audio stream width
+    uint32_t inputAudioPlugs{0};
+    uint32_t outputAudioPlugs{0};
+};
+
+[[nodiscard]] uint32_t ExtractPlugChannelCount(
+    const ASFW::Protocols::AVC::StreamFormats::PlugInfo& plug) noexcept {
+    if (!plug.currentFormat.has_value()) {
+        return 0;
+    }
+
+    const auto& fmt = *plug.currentFormat;
+    if (fmt.totalChannels > 0) {
+        return fmt.totalChannels;
+    }
+
+    uint32_t sum = 0;
+    for (const auto& block : fmt.channelFormats) {
+        sum += block.channelCount;
+    }
+    return sum;
+}
+
+[[nodiscard]] PlugChannelSummary SummarizePlugChannels(
+    const std::vector<ASFW::Protocols::AVC::StreamFormats::PlugInfo>& plugs) noexcept {
+    PlugChannelSummary summary{};
+    for (const auto& plug : plugs) {
+        if (plug.type != ASFW::Protocols::AVC::StreamFormats::MusicPlugType::kAudio) {
+            continue;
+        }
+
+        const uint32_t channels = ExtractPlugChannelCount(plug);
+        if (channels == 0) {
+            continue;
+        }
+
+        if (plug.IsInput()) {
+            ++summary.inputAudioPlugs;
+            summary.inputAudioMaxChannels = std::max(summary.inputAudioMaxChannels, channels);
+        } else if (plug.IsOutput()) {
+            ++summary.outputAudioPlugs;
+            summary.outputAudioMaxChannels = std::max(summary.outputAudioMaxChannels, channels);
+        }
+    }
+    return summary;
+}
+
+} // namespace
 
 //==============================================================================
 // Constants
@@ -40,6 +130,14 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
     lock_ = IOLockAlloc();
     if (!lock_) {
         os_log_error(log_, "AVCDiscovery: Failed to allocate lock");
+    }
+
+    IODispatchQueue* queue = nullptr;
+    auto kr = IODispatchQueue::Create("com.asfw.avc.rescan", 0, 0, &queue);
+    if (kr == kIOReturnSuccess && queue) {
+        rescanQueue_ = OSSharedPtr(queue, OSNoRetain);
+    } else if (kr != kIOReturnSuccess) {
+        os_log_error(log_, "AVCDiscovery: Failed to create rescan queue (0x%x)", kr);
     }
 
     // Register as unit observer
@@ -87,9 +185,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     auto avcUnit = std::make_shared<AVCUnit>(device, unit, asyncSubsystem_);
 
     // Initialize (probe subunits, plugs)
-    auto* avcUnitPtr = avcUnit.get();
-    auto* devicePtr = device.get();
-    avcUnit->Initialize([this, avcUnitPtr, devicePtr, guid](bool success) {
+    avcUnit->Initialize([this, avcUnit, guid](bool success) {
         if (!success) {
             os_log_error(log_,
                          "AVCDiscovery: AVCUnit initialization failed: GUID=%llx",
@@ -97,301 +193,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
             return;
         }
 
-        os_log_info(log_,
-                    "AVCDiscovery: AVCUnit initialized: GUID=%llx, "
-                    "%zu subunits, %d inputs, %d outputs",
-                    guid,
-                    avcUnitPtr->GetSubunits().size(),
-                    avcUnitPtr->IsInitialized() ? 2 : 0,  // Placeholder
-                    avcUnitPtr->IsInitialized() ? 2 : 0); // Placeholder
-
-        // Look for Music Subunit with audio capability
-        Music::MusicSubunit* musicSubunit = nullptr;
-        for (auto& subunit : avcUnitPtr->GetSubunits()) {
-            ASFW_LOG(Audio, "AVCDiscovery: Checking subunit type=0x%02x (kMusic=0x%02x)",
-                    static_cast<uint8_t>(subunit->GetType()),
-                    static_cast<uint8_t>(AVCSubunitType::kMusic));
-
-            // Check if this is a Music subunit by type
-            // Some devices report 0x0C, others 0x1C (both are valid Music subunit types)
-            if (subunit->GetType() == AVCSubunitType::kMusic ||
-                subunit->GetType() == AVCSubunitType::kMusic0C) {
-                auto* music = static_cast<Music::MusicSubunit*>(subunit.get());
-                const auto& caps = music->GetCapabilities();
-
-                ASFW_LOG(Audio, "AVCDiscovery: Found Music subunit - hasAudioCapability=%d",
-                        caps.HasAudioCapability());
-
-                if (caps.HasAudioCapability()) {
-                    musicSubunit = music;
-                    break;
-                }
-            }
-        }
-
-        if (!musicSubunit) {
-            os_log_debug(log_,
-                        "AVCDiscovery: No audio-capable music subunit found (GUID=%llx)",
-                        guid);
-            return;
-        }
-
-        ASFW_LOG(Audio, "AVCDiscovery: Creating ASFWAudioNub for GUID=%llx", guid);
-
-        //======================================================================
-        // Populate MusicSubunitCapabilities with discovery data
-        //======================================================================
-        
-        // Get mutable reference to capabilities for population
-        auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit->GetCapabilities());
-        
-        // Populate device identity from FWDevice (Config ROM)
-        mutableCaps.guid = guid;
-        mutableCaps.vendorName = std::string(devicePtr->GetVendorName());
-        mutableCaps.modelName = std::string(devicePtr->GetModelName());
-        
-        // Extract sample rates from supported formats (deduplicated, sorted)
-        std::set<double> rateSet;
-        for (const auto& plug : musicSubunit->GetPlugs()) {
-            for (const auto& format : plug.supportedFormats) {
-                uint32_t rateHz = format.GetSampleRateHz();
-                if (rateHz > 0) {
-                    rateSet.insert(static_cast<double>(rateHz));
-                }
-            }
-        }
-        mutableCaps.supportedSampleRates.assign(rateSet.begin(), rateSet.end());
-        if (mutableCaps.supportedSampleRates.empty()) {
-            mutableCaps.supportedSampleRates = {44100.0, 48000.0};  // Fallback
-        }
-        
-        // Extract plug names (first input/output found, or keep defaults)
-        // NOTE: Subunit perspective vs Host perspective are opposite!
-        // - MusicSubunit "Input" = audio FROM host to device = HOST OUTPUT
-        // - MusicSubunit "Output" = audio TO host from device = HOST INPUT
-        for (const auto& plug : musicSubunit->GetPlugs()) {
-            if (plug.IsInput() && !plug.name.empty() && mutableCaps.outputPlugName == "Output") {
-                // Subunit Input (from host) = Host Output
-                mutableCaps.outputPlugName = plug.name;
-            }
-            if (plug.IsOutput() && !plug.name.empty() && mutableCaps.inputPlugName == "Input") {
-                // Subunit Output (to host) = Host Input
-                mutableCaps.inputPlugName = plug.name;
-            }
-        }
-        
-        // Extract current sample rate from first plug's current format
-        // The device reports its active sample rate in the currentFormat
-        bool foundCurrentRate = false;
-        for (const auto& plug : musicSubunit->GetPlugs()) {
-            if (plug.currentFormat.has_value()) {
-                uint32_t rateHz = plug.currentFormat->GetSampleRateHz();
-                if (rateHz > 0) {
-                    mutableCaps.currentSampleRate = static_cast<double>(rateHz);
-                    ASFW_LOG(Audio, "AVCDiscovery: Current sample rate from plug %u: %u Hz",
-                             plug.plugID, rateHz);
-                    foundCurrentRate = true;
-                    break;  // Use first found
-                }
-            }
-        }
-        
-        // Fallback: Use first supported sample rate if no current rate found
-        if (!foundCurrentRate && !mutableCaps.supportedSampleRates.empty()) {
-            mutableCaps.currentSampleRate = mutableCaps.supportedSampleRates[0];
-            ASFW_LOG(Audio, "AVCDiscovery: Using first supported rate as current: %.0f Hz",
-                     mutableCaps.currentSampleRate);
-        }
-        
-        // Use GetAudioDeviceConfiguration() for device creation
-        auto audioConfig = mutableCaps.GetAudioDeviceConfiguration();
-        std::string deviceName = audioConfig.GetDeviceName();
-        uint32_t channelCount = audioConfig.GetMaxChannelCount();
-        
-        //======================================================================
-        // Phase 1.5: Set sample rate to 48kHz before creating audio nub
-        //======================================================================
-        // TODO: Make this configurable. For now, force 48kHz for encoding testing.
-        constexpr double kTargetSampleRate = 48000.0;
-        
-        // Check if device supports 48kHz
-        bool supports48k = false;
-        for (double rate : mutableCaps.supportedSampleRates) {
-            if (rate == kTargetSampleRate) {
-                supports48k = true;
-                break;
-            }
-        }
-        
-        if (supports48k && mutableCaps.currentSampleRate != kTargetSampleRate) {
-            ASFW_LOG(Audio, "AVCDiscovery: Switching sample rate from %.0f Hz to %.0f Hz (fire-and-forget)",
-                     mutableCaps.currentSampleRate, kTargetSampleRate);
-            
-            // Use Unit Plug Signal Format (Oxford/Linux style) - opcode 0x19
-            // This sets the format on Unit Plug 0 which controls both input and output
-            using namespace ASFW::Protocols::AVC;
-            
-            // Build AV/C CDB for INPUT PLUG SIGNAL FORMAT (0x19) CONTROL command
-            // Subunit 0xFF = Unit level (not Music Subunit)
-            AVCCdb cdb;
-            cdb.ctype = static_cast<uint8_t>(AVCCommandType::kControl);
-            cdb.subunit = 0xFF;  // Unit level (not Music Subunit 0x60)
-            cdb.opcode = 0x19;   // INPUT PLUG SIGNAL FORMAT (Oxford/Linux style)
-            cdb.operands[0] = 0x00;  // Plug 0
-            cdb.operands[1] = 0x90;  // AM824 format
-            cdb.operands[2] = 0x02;  // 48kHz (SFC code per IEC 61883-6)
-            cdb.operands[3] = 0xFF;  // Padding/Sync
-            cdb.operands[4] = 0xFF;  // Padding/Sync
-            cdb.operandLength = 5;
-            
-            // Create command with shared ownership (required by AVCCommand)
-            auto setRateCmd = std::make_shared<AVCCommand>(
-                avcUnitPtr->GetFCPTransport(),
-                cdb
-            );
-            
-            // Fire-and-forget: Submit and assume success
-            // Don't wait - the device will switch asynchronously
-            // The callback just logs the result
-            setRateCmd->Submit([setRateCmd](AVCResult result, const AVCCdb&) {
-                // Capture setRateCmd to keep it alive until completion
-                if (IsSuccess(result)) {
-                    ASFW_LOG(Audio, "✅ AVCDiscovery: Sample rate change command accepted");
-                } else {
-                    ASFW_LOG_WARNING(Audio, "AVCDiscovery: Sample rate change command response: %d",
-                                     static_cast<int>(result));
-                }
-            });
-            
-            // Assume success - set to 48kHz
-            // The device typically switches within milliseconds
-            mutableCaps.currentSampleRate = kTargetSampleRate;
-            ASFW_LOG(Audio, "AVCDiscovery: Assuming 48kHz - nub will use this rate");
-            
-        } else if (!supports48k) {
-            ASFW_LOG(Audio, "AVCDiscovery: Device does not support 48kHz, using %.0f Hz",
-                     mutableCaps.currentSampleRate);
-        } else {
-            ASFW_LOG(Audio, "AVCDiscovery: Device already at 48kHz");
-        }
-        
-        // Build sample rates vector for OSArray (need uint32_t for OSNumber)
-        // IMPORTANT: Put the current/target sample rate FIRST so CoreAudio HAL selects it
-        std::vector<uint32_t> sampleRates;
-        
-        // First, add the current sample rate (48kHz if we switched)
-        uint32_t currentRate = static_cast<uint32_t>(mutableCaps.currentSampleRate);
-        sampleRates.push_back(currentRate);
-        
-        // Then add other supported rates (excluding the one already added)
-        for (double rate : mutableCaps.supportedSampleRates) {
-            uint32_t rateHz = static_cast<uint32_t>(rate);
-            if (rateHz != currentRate) {
-                sampleRates.push_back(rateHz);
-            }
-        }
-
-        ASFW_LOG(Audio,
-                 "AVCDiscovery: Creating ASFWAudioNub for GUID=%llx: %{public}s, %u channels, %zu sample rates",
-                 guid, deviceName.c_str(), channelCount, sampleRates.size());
-
-        // Create property objects using OSSharedPtr for automatic memory management
-        OSSharedPtr<OSString> deviceNameStr = OSSharedPtr(
-            OSString::withCString(deviceName.c_str()), OSNoRetain);
-        OSSharedPtr<OSNumber> channelCountNum = OSSharedPtr(
-            OSNumber::withNumber(channelCount, 32), OSNoRetain);
-        OSSharedPtr<OSNumber> guidNum = OSSharedPtr(
-            OSNumber::withNumber(guid, 64), OSNoRetain);
-        OSSharedPtr<OSArray> sampleRatesArray = OSSharedPtr(
-            OSArray::withCapacity(static_cast<uint32_t>(sampleRates.size())), OSNoRetain);
-
-        if (!sampleRatesArray) {
-            os_log_error(log_, "AVCDiscovery: Failed to create sample rates array");
-            return;
-        }
-
-        for (uint32_t rate : sampleRates) {
-            OSSharedPtr<OSNumber> rateNum = OSSharedPtr(
-                OSNumber::withNumber(rate, 32), OSNoRetain);
-            if (rateNum) {
-                sampleRatesArray->setObject(rateNum.get());
-            }
-        }
-
-        // Create the nub using IOService::Create() with plist properties
-        IOService* nub = nullptr;
-        kern_return_t error = driver_->Create(
-            driver_,                      // provider
-            "ASFWAudioNubProperties",     // propertiesKey from Info.plist
-            &nub                          // result
-        );
-
-        if (error != kIOReturnSuccess || !nub) {
-            os_log_error(log_,
-                        "AVCDiscovery: Failed to create ASFWAudioNub (error=%d)",
-                        error);
-            return;
-        }
-
-        // Set properties on the nub BEFORE it starts
-        // These properties will be read by ASFWAudioDriver when it matches
-        // In DriverKit, we need to create a properties dictionary
-        OSDictionary* propertiesRaw = nullptr;
-        error = nub->CopyProperties(&propertiesRaw);
-        OSSharedPtr<OSDictionary> properties = OSSharedPtr(propertiesRaw, OSNoRetain);
-        if (error == kIOReturnSuccess && properties) {
-            if (deviceNameStr) {
-                properties->setObject("ASFWDeviceName", deviceNameStr.get());
-            }
-            if (channelCountNum) {
-                properties->setObject("ASFWChannelCount", channelCountNum.get());
-            }
-            if (sampleRatesArray) {
-                properties->setObject("ASFWSampleRates", sampleRatesArray.get());
-            }
-            if (guidNum) {
-                properties->setObject("ASFWGUID", guidNum.get());
-            }
-            
-            // Add plug names for stream/channel naming
-            OSSharedPtr<OSString> inputPlugNameStr = OSSharedPtr(
-                OSString::withCString(mutableCaps.inputPlugName.c_str()), OSNoRetain);
-            OSSharedPtr<OSString> outputPlugNameStr = OSSharedPtr(
-                OSString::withCString(mutableCaps.outputPlugName.c_str()), OSNoRetain);
-            
-            if (inputPlugNameStr) {
-                properties->setObject("ASFWInputPlugName", inputPlugNameStr.get());
-            }
-            if (outputPlugNameStr) {
-                properties->setObject("ASFWOutputPlugName", outputPlugNameStr.get());
-            }
-            
-            // Add current sample rate (from device's active format)
-            OSSharedPtr<OSNumber> currentRateNum = OSSharedPtr(
-                OSNumber::withNumber(static_cast<uint32_t>(mutableCaps.currentSampleRate), 32), OSNoRetain);
-            if (currentRateNum) {
-                properties->setObject("ASFWCurrentSampleRate", currentRateNum.get());
-                ASFW_LOG(Audio, "AVCDiscovery: Set current sample rate property: %u Hz",
-                         static_cast<uint32_t>(mutableCaps.currentSampleRate));
-            }
-            
-            // Update the nub's properties
-            nub->SetProperties(properties.get());
-        }
-
-        // Store reference for cleanup (nub is retained by IOKit)
-        // The nub's Start() method will be called automatically by DriverKit
-        // and will call RegisterService() to publish itself for matching
-        IOLockLock(lock_);
-        audioNubs_[guid] = OSDynamicCast(ASFWAudioNub, nub);
-        IOLockUnlock(lock_);
-
-        // Release our creation reference - IOKit retains it
-        nub->release();
-
-        ASFW_LOG(Audio,
-                 "✅ ASFWAudioNub created for GUID=%llx - waiting for Start/RegisterService",
-                 guid);
+        HandleInitializedUnit(guid, avcUnit);
     });
 
     // Store AVCUnit
@@ -401,6 +203,421 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
 
     // Rebuild node ID map (unit now has transport)
     RebuildNodeIDMap();
+}
+
+void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit) {
+    if (!avcUnit) {
+        return;
+    }
+
+    auto device = avcUnit->GetDevice();
+    if (!device) {
+        os_log_error(log_, "AVCDiscovery: AVCUnit missing parent device: GUID=%llx", guid);
+        return;
+    }
+
+    os_log_info(log_,
+                "AVCDiscovery: AVCUnit initialized: GUID=%llx, "
+                "%zu subunits, %d inputs, %d outputs",
+                guid,
+                avcUnit->GetSubunits().size(),
+                avcUnit->IsInitialized() ? 2 : 0,  // Placeholder
+                avcUnit->IsInitialized() ? 2 : 0); // Placeholder
+
+    // Look for Music Subunit with audio capability
+    Music::MusicSubunit* musicSubunit = nullptr;
+    for (auto& subunit : avcUnit->GetSubunits()) {
+        ASFW_LOG(Audio, "AVCDiscovery: Checking subunit type=0x%02x (kMusic=0x%02x)",
+                 static_cast<uint8_t>(subunit->GetType()),
+                 static_cast<uint8_t>(AVCSubunitType::kMusic));
+
+        // Check if this is a Music subunit by type
+        // Some devices report 0x0C, others 0x1C (both are valid Music subunit types)
+        if (subunit->GetType() == AVCSubunitType::kMusic ||
+            subunit->GetType() == AVCSubunitType::kMusic0C) {
+            auto* music = static_cast<Music::MusicSubunit*>(subunit.get());
+            const auto& caps = music->GetCapabilities();
+
+            ASFW_LOG(Audio, "AVCDiscovery: Found Music subunit - hasAudioCapability=%d",
+                     caps.HasAudioCapability());
+
+            if (caps.HasAudioCapability()) {
+                musicSubunit = music;
+                break;
+            }
+        }
+    }
+
+    if (!musicSubunit) {
+        os_log_debug(log_,
+                     "AVCDiscovery: No audio-capable music subunit found (GUID=%llx)",
+                     guid);
+        return;
+    }
+
+    if (!musicSubunit->HasCompleteDescriptorParse()) {
+        ASFW_LOG(Audio,
+                 "AVCDiscovery: MusicSubunit descriptor incomplete - scheduling re-scan (GUID=%llx)",
+                 guid);
+        // TODO: Remove this duct-tape once AV/C discovery is reliable.
+        ScheduleRescan(guid, avcUnit);
+        return;
+    }
+
+    IOLockLock(lock_);
+    rescanAttempts_.erase(guid);
+    const bool hasNub = (audioNubs_.find(guid) != audioNubs_.end());
+    IOLockUnlock(lock_);
+
+    if (hasNub) {
+        ASFW_LOG(Audio, "AVCDiscovery: Audio nub already exists for GUID=%llx", guid);
+        return;
+    }
+
+    ASFW_LOG(Audio, "AVCDiscovery: Creating ASFWAudioNub for GUID=%llx", guid);
+
+    //======================================================================
+    // Populate MusicSubunitCapabilities with discovery data
+    //======================================================================
+
+    auto* devicePtr = device.get();
+    auto& mutableCaps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit->GetCapabilities());
+
+    // Populate device identity from FWDevice (Config ROM)
+    mutableCaps.guid = guid;
+    mutableCaps.vendorName = std::string(devicePtr->GetVendorName());
+    mutableCaps.modelName = std::string(devicePtr->GetModelName());
+
+    // Extract sample rates from supported formats (deduplicated, sorted)
+    std::set<double> rateSet;
+    for (const auto& plug : musicSubunit->GetPlugs()) {
+        for (const auto& format : plug.supportedFormats) {
+            uint32_t rateHz = format.GetSampleRateHz();
+            if (rateHz > 0) {
+                rateSet.insert(static_cast<double>(rateHz));
+            }
+        }
+    }
+    mutableCaps.supportedSampleRates.assign(rateSet.begin(), rateSet.end());
+    if (mutableCaps.supportedSampleRates.empty()) {
+        mutableCaps.supportedSampleRates = {44100.0, 48000.0};  // Fallback
+    }
+
+    // Extract plug names (first input/output found, or keep defaults)
+    // NOTE: Subunit perspective vs Host perspective are opposite!
+    // - MusicSubunit "Input" = audio FROM host to device = HOST OUTPUT
+    // - MusicSubunit "Output" = audio TO host from device = HOST INPUT
+    for (const auto& plug : musicSubunit->GetPlugs()) {
+        if (plug.IsInput() && !plug.name.empty() && mutableCaps.outputPlugName == "Output") {
+            // Subunit Input (from host) = Host Output
+            mutableCaps.outputPlugName = plug.name;
+        }
+        if (plug.IsOutput() && !plug.name.empty() && mutableCaps.inputPlugName == "Input") {
+            // Subunit Output (to host) = Host Input
+            mutableCaps.inputPlugName = plug.name;
+        }
+    }
+
+    // Extract current sample rate from first plug's current format
+    // The device reports its active sample rate in the currentFormat
+    bool foundCurrentRate = false;
+    for (const auto& plug : musicSubunit->GetPlugs()) {
+        if (plug.currentFormat.has_value()) {
+            uint32_t rateHz = plug.currentFormat->GetSampleRateHz();
+            if (rateHz > 0) {
+                mutableCaps.currentSampleRate = static_cast<double>(rateHz);
+                ASFW_LOG(Audio, "AVCDiscovery: Current sample rate from plug %u: %u Hz",
+                         plug.plugID, rateHz);
+                foundCurrentRate = true;
+                break;  // Use first found
+            }
+        }
+    }
+
+    // Fallback: Use first supported sample rate if no current rate found
+    if (!foundCurrentRate && !mutableCaps.supportedSampleRates.empty()) {
+        mutableCaps.currentSampleRate = mutableCaps.supportedSampleRates[0];
+        ASFW_LOG(Audio, "AVCDiscovery: Using first supported rate as current: %.0f Hz",
+                 mutableCaps.currentSampleRate);
+    }
+
+    // Use GetAudioDeviceConfiguration() for device creation.
+    auto audioConfig = mutableCaps.GetAudioDeviceConfiguration();
+    std::string deviceName = audioConfig.GetDeviceName();
+
+    // Derive transport channel width from current plug formats.
+    // For the host TX path, subunit input plugs are the authoritative view.
+    const auto plugSummary = SummarizePlugChannels(musicSubunit->GetPlugs());
+    const uint32_t plugsDerivedMax = std::max(plugSummary.inputAudioMaxChannels,
+                                              plugSummary.outputAudioMaxChannels);
+    uint32_t channelCount = plugsDerivedMax;
+    const char* channelCountSource = "audio-plug-max-channels";
+
+    if (channelCount == 0) {
+        channelCount = audioConfig.GetMaxChannelCount();
+        channelCountSource = "capability-fallback";
+    }
+
+    if (plugSummary.inputAudioMaxChannels > 0) {
+        mutableCaps.maxAudioInputChannels = static_cast<uint16_t>(
+            std::min<uint32_t>(plugSummary.inputAudioMaxChannels, 0xFFFFu));
+    }
+    if (plugSummary.outputAudioMaxChannels > 0) {
+        mutableCaps.maxAudioOutputChannels = static_cast<uint16_t>(
+            std::min<uint32_t>(plugSummary.outputAudioMaxChannels, 0xFFFFu));
+    }
+
+    ASFW_LOG(Audio,
+             "AVCDiscovery: audio plug summary in=max%u/%u plugs out=max%u/%u plugs -> selected=%u (%{public}s)",
+             plugSummary.inputAudioMaxChannels, plugSummary.inputAudioPlugs,
+             plugSummary.outputAudioMaxChannels, plugSummary.outputAudioPlugs,
+             channelCount, channelCountSource);
+
+    //======================================================================
+    // Phase 1.5: Set sample rate to 48kHz before creating audio nub
+    //======================================================================
+    // TODO: Make this configurable. For now, force 48kHz for encoding testing.
+    constexpr double kTargetSampleRate = 48000.0;
+
+    // Check if device supports 48kHz
+    bool supports48k = false;
+    for (double rate : mutableCaps.supportedSampleRates) {
+        if (rate == kTargetSampleRate) {
+            supports48k = true;
+            break;
+        }
+    }
+
+    if (supports48k && mutableCaps.currentSampleRate != kTargetSampleRate) {
+        ASFW_LOG(Audio, "AVCDiscovery: Switching sample rate from %.0f Hz to %.0f Hz (fire-and-forget)",
+                 mutableCaps.currentSampleRate, kTargetSampleRate);
+
+        // Use Unit Plug Signal Format (Oxford/Linux style) - opcode 0x19
+        // This sets the format on Unit Plug 0 which controls both input and output
+        using namespace ASFW::Protocols::AVC;
+
+        // Build AV/C CDB for INPUT PLUG SIGNAL FORMAT (0x19) CONTROL command
+        // Subunit 0xFF = Unit level (not Music Subunit)
+        AVCCdb cdb;
+        cdb.ctype = static_cast<uint8_t>(AVCCommandType::kControl);
+        cdb.subunit = 0xFF;  // Unit level (not Music Subunit 0x60)
+        cdb.opcode = 0x19;   // INPUT PLUG SIGNAL FORMAT (Oxford/Linux style)
+        cdb.operands[0] = 0x00;  // Plug 0
+        cdb.operands[1] = 0x90;  // AM824 format
+        cdb.operands[2] = 0x02;  // 48kHz (SFC code per IEC 61883-6)
+        cdb.operands[3] = 0xFF;  // Padding/Sync
+        cdb.operands[4] = 0xFF;  // Padding/Sync
+        cdb.operandLength = 5;
+
+        // Create command with shared ownership (required by AVCCommand)
+        auto setRateCmd = std::make_shared<AVCCommand>(
+            avcUnit->GetFCPTransport(),
+            cdb
+        );
+
+        // Fire-and-forget: Submit and assume success
+        // Don't wait - the device will switch asynchronously
+        // The callback just logs the result
+        setRateCmd->Submit([setRateCmd](AVCResult result, const AVCCdb&) {
+            // Capture setRateCmd to keep it alive until completion
+            if (IsSuccess(result)) {
+                ASFW_LOG(Audio, "✅ AVCDiscovery: Sample rate change command accepted");
+            } else {
+                ASFW_LOG_WARNING(Audio, "AVCDiscovery: Sample rate change command response: %d",
+                                 static_cast<int>(result));
+            }
+        });
+
+        // Assume success - set to 48kHz
+        // The device typically switches within milliseconds
+        mutableCaps.currentSampleRate = kTargetSampleRate;
+        ASFW_LOG(Audio, "AVCDiscovery: Assuming 48kHz - nub will use this rate");
+
+    } else if (!supports48k) {
+        ASFW_LOG(Audio, "AVCDiscovery: Device does not support 48kHz, using %.0f Hz",
+                 mutableCaps.currentSampleRate);
+    } else {
+        ASFW_LOG(Audio, "AVCDiscovery: Device already at 48kHz");
+    }
+
+    // Build sample rates vector for OSArray (need uint32_t for OSNumber)
+    // IMPORTANT: Put the current/target sample rate FIRST so CoreAudio HAL selects it
+    std::vector<uint32_t> sampleRates;
+
+    // First, add the current sample rate (48kHz if we switched)
+    uint32_t currentRate = static_cast<uint32_t>(mutableCaps.currentSampleRate);
+    sampleRates.push_back(currentRate);
+
+    // Then add other supported rates (excluding the one already added)
+    for (double rate : mutableCaps.supportedSampleRates) {
+        uint32_t rateHz = static_cast<uint32_t>(rate);
+        if (rateHz != currentRate) {
+            sampleRates.push_back(rateHz);
+        }
+    }
+
+    const uint32_t vendorId = devicePtr->GetVendorID();
+    const uint32_t modelId = devicePtr->GetModelID();
+    const char* streamModeReason = "default-nonblocking";
+    const auto streamMode = ResolveStreamMode(mutableCaps, vendorId, modelId, streamModeReason);
+
+    ASFW_LOG(Audio,
+             "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
+             vendorId, modelId,
+             ASFW::Audio::Quirks::StreamModeToString(streamMode),
+             streamModeReason);
+    ASFW_LOG(Audio,
+             "AVCDiscovery: Creating ASFWAudioNub for GUID=%llx: %{public}s, %u channels, %zu sample rates",
+             guid, deviceName.c_str(), channelCount, sampleRates.size());
+
+    ASFW::Audio::Model::ASFWAudioDevice audioDeviceConfig;
+    audioDeviceConfig.guid = guid;
+    audioDeviceConfig.deviceName = deviceName;
+    audioDeviceConfig.channelCount = channelCount;
+    audioDeviceConfig.sampleRates = sampleRates;
+    audioDeviceConfig.currentSampleRate = currentRate;
+    audioDeviceConfig.inputPlugName = mutableCaps.inputPlugName;
+    audioDeviceConfig.outputPlugName = mutableCaps.outputPlugName;
+    audioDeviceConfig.streamMode = streamMode;
+    if (!CreateAudioNubFromModel(guid, audioDeviceConfig, "AVC")) {
+        ASFW_LOG(Audio, "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx", guid);
+    }
+}
+
+bool AVCDiscovery::CreateAudioNubFromModel(uint64_t guid,
+                                           const Audio::Model::ASFWAudioDevice& config,
+                                           const char* sourceTag) {
+    if (!driver_ || !lock_) {
+        return false;
+    }
+
+    // Reserve the GUID slot under lock so AV/C and hardcoded paths cannot race-create duplicates.
+    IOLockLock(lock_);
+    const bool inserted = audioNubs_.emplace(guid, nullptr).second;
+    IOLockUnlock(lock_);
+    if (!inserted) {
+        ASFW_LOG(Audio,
+                 "AVCDiscovery[%{public}s]: Audio nub already exists for GUID=%llx",
+                 sourceTag ? sourceTag : "unknown",
+                 guid);
+        return true;
+    }
+
+    IOService* nub = nullptr;
+    kern_return_t error = driver_->Create(
+        driver_,                      // provider
+        "ASFWAudioNubProperties",     // propertiesKey from Info.plist
+        &nub                          // result
+    );
+
+    if (error != kIOReturnSuccess || !nub) {
+        os_log_error(log_,
+                     "AVCDiscovery[%{public}s]: Failed to create ASFWAudioNub (GUID=%llx error=%d)",
+                     sourceTag ? sourceTag : "unknown",
+                     guid,
+                     error);
+        IOLockLock(lock_);
+        audioNubs_.erase(guid);
+        IOLockUnlock(lock_);
+        return false;
+    }
+
+    // Set properties on the nub BEFORE it starts.
+    OSDictionary* propertiesRaw = nullptr;
+    error = nub->CopyProperties(&propertiesRaw);
+    OSSharedPtr<OSDictionary> properties = OSSharedPtr(propertiesRaw, OSNoRetain);
+    if (error == kIOReturnSuccess && properties) {
+        if (!config.PopulateNubProperties(properties.get())) {
+            ASFW_LOG(Audio,
+                     "AVCDiscovery[%{public}s]: Failed to populate ASFWAudioDevice properties for GUID=%llx",
+                     sourceTag ? sourceTag : "unknown",
+                     guid);
+        } else {
+            nub->SetProperties(properties.get());
+            ASFW_LOG(Audio,
+                     "AVCDiscovery[%{public}s]: ASFWAudioDevice properties set (GUID=%llx rate=%u Hz ch=%u)",
+                     sourceTag ? sourceTag : "unknown",
+                     guid,
+                     config.currentSampleRate,
+                     config.channelCount);
+        }
+    }
+
+    ASFWAudioNub* audioNub = OSDynamicCast(ASFWAudioNub, nub);
+    if (!audioNub) {
+        ASFW_LOG(Audio,
+                 "AVCDiscovery[%{public}s]: Created service is not ASFWAudioNub for GUID=%llx",
+                 sourceTag ? sourceTag : "unknown",
+                 guid);
+        IOLockLock(lock_);
+        audioNubs_.erase(guid);
+        IOLockUnlock(lock_);
+        nub->release();
+        return false;
+    }
+    audioNub->SetChannelCount(config.channelCount);
+    audioNub->SetStreamMode(static_cast<uint32_t>(config.streamMode));
+
+    IOLockLock(lock_);
+    audioNubs_[guid] = audioNub;
+    IOLockUnlock(lock_);
+
+    // Release our creation reference - IOKit retains it.
+    nub->release();
+
+    ASFW_LOG(Audio,
+             "✅ AVCDiscovery[%{public}s]: ASFWAudioNub ready for GUID=%llx",
+             sourceTag ? sourceTag : "unknown",
+             guid);
+    return true;
+}
+
+void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit) {
+    if (!avcUnit) {
+        return;
+    }
+
+    constexpr uint8_t kMaxAutoRescanAttempts = 1;
+    constexpr uint32_t kRescanDelayMs = 250;
+
+    uint8_t attempt = 0;
+    IOLockLock(lock_);
+    auto& count = rescanAttempts_[guid];
+    if (count >= kMaxAutoRescanAttempts) {
+        IOLockUnlock(lock_);
+        ASFW_LOG(Audio,
+                 "AVCDiscovery: Auto re-scan limit reached for GUID=%llx (attempts=%u)",
+                 guid, count);
+        return;
+    }
+    count++;
+    attempt = count;
+    IOLockUnlock(lock_);
+
+    auto unit = avcUnit;
+    auto rescanWork = [this, guid, attempt, unit]() {
+        if (kRescanDelayMs > 0) {
+            IOSleep(kRescanDelayMs);
+        }
+
+        ASFW_LOG(Audio, "AVCDiscovery: Auto re-scan attempt %u for GUID=%llx", attempt, guid);
+        unit->ReScan([this, guid, unit](bool success) {
+            if (!success) {
+                os_log_error(log_,
+                             "AVCDiscovery: AVCUnit re-scan failed: GUID=%llx",
+                             guid);
+                return;
+            }
+
+            HandleInitializedUnit(guid, unit);
+        });
+    };
+
+    if (rescanQueue_) {
+        rescanQueue_->DispatchAsync(^{ rescanWork(); });
+    } else {
+        rescanWork();
+    }
 }
 
 void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
@@ -473,6 +690,7 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
                     guid);
         units_.erase(it);
     }
+    rescanAttempts_.erase(guid);
     IOLockUnlock(lock_);
 
     // Rebuild node ID map (terminated unit removed)
@@ -518,10 +736,46 @@ std::vector<AVCUnit*> AVCDiscovery::GetAllAVCUnits() {
     return result;
 }
 
+void AVCDiscovery::EnsureHardcodedAudioNubForDevice(const Discovery::DeviceRecord& deviceRecord) {
+    if (!driver_ || deviceRecord.guid == 0) {
+        return;
+    }
+
+    ASFW::Audio::Model::ASFWAudioDevice hardcoded;
+    hardcoded.guid = deviceRecord.guid;
+    if (!deviceRecord.vendorName.empty() || !deviceRecord.modelName.empty()) {
+        hardcoded.deviceName = deviceRecord.vendorName + " " + deviceRecord.modelName;
+    } else {
+        hardcoded.deviceName = "Focusrite Saffire Pro 24 DSP";
+    }
+
+    // Hardcoded bring-up profile (v1):
+    // - advertise single 48kHz / 24-bit stream format
+    // - use 16 channels end-to-end until asymmetric in/out is modeled in ADK path
+    hardcoded.channelCount = 16;
+    hardcoded.sampleRates = {48000};
+    hardcoded.currentSampleRate = 48000;
+    hardcoded.inputPlugName = "Saffire Input";
+    hardcoded.outputPlugName = "Saffire Output";
+    hardcoded.streamMode = Audio::Model::StreamMode::kNonBlocking;
+
+    ASFW_LOG(Audio,
+             "AVCDiscovery[Hardcoded]: ensuring audio nub for GUID=%llx (%{public}s)",
+             deviceRecord.guid,
+             hardcoded.deviceName.c_str());
+
+    if (!CreateAudioNubFromModel(deviceRecord.guid, hardcoded, "Hardcoded")) {
+        ASFW_LOG(Audio,
+                 "AVCDiscovery[Hardcoded]: failed to create audio nub for GUID=%llx",
+                 deviceRecord.guid);
+    }
+}
+
 void AVCDiscovery::ReScanAllUnits() {
     IOLockLock(lock_);
     
     os_log_info(log_, "AVCDiscovery: Re-scanning all %zu units", units_.size());
+    rescanAttempts_.clear();
 
     for (auto& [guid, avcUnit] : units_) {
         if (avcUnit) {

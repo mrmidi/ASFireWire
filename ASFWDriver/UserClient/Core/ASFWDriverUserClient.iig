@@ -45,7 +45,10 @@ public:
         kMethodSetHexDumps             = 20,
         kMethodGetLogConfig            = 21,
         kMethodGetAVCUnits             = 22,
-        // Note: 23, 24, 25 defined in .cpp only (GetSubunitCapabilities, GetSubunitDescriptor, ReScanAVCUnits)\n        // TODO: IRM test method - temporary for Phase 0.5 testing
+        // Note: 23, 24, 25 defined in .cpp only (GetSubunitCapabilities, GetSubunitDescriptor, ReScanAVCUnits)
+        kMethodSendRawFCPCommand       = 38,
+        kMethodGetRawFCPCommandResult  = 39,
+        // TODO: IRM test method - temporary for Phase 0.5 testing
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,
         // TODO: CMP test methods - temporary for Phase 0.5 testing

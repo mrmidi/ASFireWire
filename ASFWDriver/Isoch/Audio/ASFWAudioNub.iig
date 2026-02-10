@@ -6,9 +6,9 @@
 // ASFWAudioDriver (IOUserAudioDriver) matches on this nub.
 //
 // Cross-process communication:
-//   ASFWAudioNub allocates shared memory (IOBufferMemoryDescriptor) for the
-//   TX audio queue. Both ASFWAudioDriver and IsochTransmitContext map this
-//   memory and communicate via lock-free SPSC queue.
+//   ASFWAudioNub allocates shared memory (IOBufferMemoryDescriptor) for both
+//   TX and RX audio queues. Both ASFWAudioDriver and Isoch contexts map this
+//   memory and communicate via lock-free SPSC queues.
 //
 
 #ifndef ASFWAudioNub_h
@@ -18,6 +18,7 @@
 #include <DriverKit/IOBufferMemoryDescriptor.iig>
 #include <DriverKit/OSString.iig>
 #include <DriverKit/OSArray.iig>
+#include <atomic>
 
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
 // Properties set by ASFWDriver:
@@ -41,12 +42,51 @@ public:
         IOBufferMemoryDescriptor** outMemory,
         uint64_t* outBytes);
 
+    // RPC method: AudioDriver calls this to get shared output audio buffer
+    // This buffer is used by IOUserAudioStream AND IT DMA for ZERO-COPY
+    // CoreAudio writes here, IT DMA reads directly - no intermediate copy!
+    virtual kern_return_t CopyOutputAudioMemory(
+        IOBufferMemoryDescriptor** outMemory,
+        uint64_t* outBytes);
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     void* GetParentDriver() const LOCALONLY;
 
     // Get the local mapping of the TX queue for IT context to consume
     void* GetTxQueueLocalMapping() const LOCALONLY;
     uint64_t GetTxQueueBytes() const LOCALONLY;
+
+    // ZERO-COPY: Get the local mapping of output audio buffer for IT DMA
+    // This is the same memory that IOUserAudioStream writes to
+    void* GetOutputAudioLocalMapping() const LOCALONLY;
+    uint64_t GetOutputAudioBytes() const LOCALONLY;
+    uint32_t GetOutputAudioFrameCapacity() const LOCALONLY;
+    
+    // Set channel count directly (called by AVCDiscovery after Create())
+    // Must be called before CopyTransmitQueueMemory / CopyOutputAudioMemory
+    void SetChannelCount(uint32_t channels) LOCALONLY;
+    uint32_t GetChannelCount() const LOCALONLY;
+
+    // Stream mode selected during discovery:
+    //   0 = non-blocking, 1 = blocking
+    void SetStreamMode(uint32_t modeRaw) LOCALONLY;
+    uint32_t GetStreamMode() const LOCALONLY;
+
+    // ZERO-COPY SYNC: Write position tracking
+    // Called by ASFWAudioDriver after each CoreAudio write completes
+    void UpdateOutputWritePosition(uint32_t newWriteFrame) LOCALONLY;
+    uint32_t GetOutputWritePosition() const LOCALONLY;
+
+    // RPC method: AudioDriver calls this to get shared RX queue memory
+    // Returns a retained IOBufferMemoryDescriptor that the caller must release
+    virtual kern_return_t CopyRxQueueMemory(
+        IOBufferMemoryDescriptor** outMemory,
+        uint64_t* outBytes);
+
+    // LOCALONLY methods for controller-side RX queue access (same process)
+    void* GetRxQueueLocalMapping() const LOCALONLY;
+    uint64_t GetRxQueueBytes() const LOCALONLY;
+    void EnsureRxQueueCreated() LOCALONLY;
 };
 
 struct ASFWAudioNub_IVars {
@@ -54,6 +94,25 @@ struct ASFWAudioNub_IVars {
     IOBufferMemoryDescriptor* txQueueMem; // Shared memory for TX audio queue
     IOMemoryMap* txQueueMap;              // Local mapping of txQueueMem
     uint64_t txQueueBytes;                // Size of shared memory
+
+    // Audio channel count (read from ASFWDriver properties)
+    uint32_t channelCount{2};
+    uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
+
+    // ZERO-COPY: Shared output audio buffer for IOUserAudioStream AND IT DMA
+    IOBufferMemoryDescriptor* outputAudioMem; // Shared output audio buffer
+    IOMemoryMap* outputAudioMap;              // Local mapping for IT DMA
+    uint64_t outputAudioBytes;                // Size of buffer
+    uint32_t outputAudioFrameCapacity;        // Frame capacity (bytes / bytesPerFrame)
+
+    // ZERO-COPY SYNC: Atomic write position updated by ASFWAudioDriver
+    // IT Context reads this to know safe read zone
+    std::atomic<uint32_t> outputAudioWriteFrame{0};
+
+    // RX shared memory queue (mirrors TX queue pattern)
+    IOBufferMemoryDescriptor* rxQueueMem{nullptr};
+    IOMemoryMap* rxQueueMap{nullptr};
+    uint64_t rxQueueBytes{0};
 };
 
 #endif /* ASFWAudioNub_h */

@@ -4,6 +4,7 @@
 #include "../Hardware/RegisterMap.hpp"
 #include "../Shared/Rings/RingHelpers.hpp"
 #include "../Diagnostics/Signposts.hpp"
+#include "Encoding/TimingUtils.hpp"
 
 #include "../Hardware/OHCIDescriptors.hpp"
 #include "../Hardware/HWNamespaceAlias.hpp"
@@ -79,7 +80,15 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextInd
     contextIndex_ = contextIndex;
     channel_ = channel;
     registers_ = GetRegisters(contextIndex_);
-    
+
+    // Shared RX queue is wired externally via SetSharedRxQueue() before Start().
+    // StreamProcessor will write to it once attached.
+
+    // Initialize cycle-time correlation (hardcode 48kHz; future: derive from CIP FDF)
+    cycleCorr_ = {};
+    cycleCorr_.sampleRate = 48000.0;
+    ASFW::Timing::initializeHostTimebase();
+
     return SetupRings();
 }
 
@@ -254,7 +263,7 @@ uint32_t IsochReceiveContext::Poll() {
     
     uint64_t start = mach_absolute_time();
     
-    constexpr bool kNullProcessing = true;
+    constexpr bool kNullProcessing = false;  // Enable actual packet processing
     auto capacity = bufferRing_.Capacity();
     uint32_t idx = lastProcessedIndex_;
 
@@ -304,15 +313,53 @@ uint32_t IsochReceiveContext::Poll() {
     
     if (processed > 0) {
         ::ASFW::Driver::WriteBarrier();
-    
+
         uint64_t end = mach_absolute_time();
         uint64_t deltaTicks = end - start;
         uint64_t deltaUs = ASFW::Diagnostics::MachTicksToMicroseconds(deltaTicks);
         streamProcessor_.RecordPollLatency(deltaUs, processed);
     }
-    
+
+    // Periodic cycle-time rate estimation (~1 second intervals)
+    // Correlates FireWire bus cycle timer with host uptime to derive
+    // hostNanosPerSample for the audio driver's clock recovery.
+    cycleCorr_.pollsSinceLastUpdate++;
+    if (cycleCorr_.pollsSinceLastUpdate >= 1000) {
+        auto [ct, up] = hardware_->ReadCycleTimeAndUpTime();
+        if (cycleCorr_.hasPrevious) {
+            int64_t dFW = ASFW::Timing::deltaFWTimeNanos(ct, cycleCorr_.prevCycleTimer);
+            int64_t dHost = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(up))
+                          - static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(cycleCorr_.prevHostTicks));
+            ASFW_LOG(Isoch, "CycleCorr: ct=0x%08x prev=0x%08x dFW=%lld dHost=%lld",
+                     ct, cycleCorr_.prevCycleTimer, dFW, dHost);
+            if (dFW > 0 && dHost > 0) {
+                double ratio = static_cast<double>(dHost) / static_cast<double>(dFW);
+                double nanosPerSample = ratio * (1e9 / cycleCorr_.sampleRate);
+                uint32_t q8 = static_cast<uint32_t>(nanosPerSample * 256.0 + 0.5);
+                rxSharedQueue_.SetCorrHostNanosPerSampleQ8(q8);
+                ASFW_LOG(Isoch, "CycleCorr: ratio=%.6f nanosPerSample=%.1f q8=%u",
+                         ratio, nanosPerSample, q8);
+            }
+        } else {
+            ASFW_LOG(Isoch, "CycleCorr: baseline ct=0x%08x up=%llu", ct, up);
+        }
+        cycleCorr_.prevCycleTimer = ct;
+        cycleCorr_.prevHostTicks = up;
+        cycleCorr_.hasPrevious = true;
+        cycleCorr_.pollsSinceLastUpdate = 0;
+    }
+
     lock_.clear(std::memory_order_release);
     return processed;
+}
+
+void IsochReceiveContext::SetSharedRxQueue(void* base, uint64_t bytes) {
+    if (base && bytes > 0 && rxSharedQueue_.Attach(base, bytes)) {
+        streamProcessor_.SetOutputSharedQueue(&rxSharedQueue_);
+        ASFW_LOG(Isoch, "[Isoch] IR: Shared RX queue attached (%llu bytes)", bytes);
+    } else {
+        ASFW_LOG(Isoch, "[Isoch] IR: Failed to attach shared RX queue (base=%p bytes=%llu)", base, bytes);
+    }
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
@@ -337,9 +384,10 @@ void IsochReceiveContext::LogHardwareState() {
     bool deadSet = (ctl & ContextControl::kDead) != 0;
     uint32_t eventCode = (ctl & ContextControl::kEventCodeMask) >> ContextControl::kEventCodeShift;
     
-    ASFW_LOG(Isoch, "IR: run=%d active=%d dead=%d evt=0x%02x lastIdx=%u cap=%u",
-             runSet, activeSet, deadSet, eventCode,
-             lastProcessedIndex_, static_cast<uint32_t>(bufferRing_.Capacity()));
+    // IR state log removed - too noisy
+    // ASFW_LOG(Isoch, "IR: run=%d active=%d dead=%d evt=0x%02x lastIdx=%u cap=%u",
+    //          runSet, activeSet, deadSet, eventCode,
+    //          lastProcessedIndex_, static_cast<uint32_t>(bufferRing_.Capacity()));
     
     ASFW_LOG_V3(Isoch, "=== IR HW State ===");
     ASFW_LOG_V3(Isoch, "Registers: CmdPtr=0x%08x Ctl=0x%08x Match=0x%08x", cmdPtr, ctl, match);

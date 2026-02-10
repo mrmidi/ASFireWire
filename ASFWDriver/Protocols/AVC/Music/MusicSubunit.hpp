@@ -101,12 +101,23 @@ public:
     /// Get individual music channel names (from MusicPlugInfo blocks)
     const std::vector<MusicPlugChannel>& GetMusicChannels() const { return musicChannels_; }
 
+    /// Returns true if status descriptor parsing produced the minimum
+    /// routing/plug data needed for reliable audio device creation.
+    bool HasCompleteDescriptorParse() const noexcept;
+
 private:
     MusicSubunitCapabilities capabilities_;
     std::vector<PlugInfo> plugs_;
     std::vector<::ASFW::Protocols::AVC::Descriptors::AVCInfoBlock> dynamicStatus_;  // Phase 3
     std::optional<std::vector<uint8_t>> statusDescriptorData_;
     std::vector<MusicPlugChannel> musicChannels_;
+
+    bool statusDescriptorReadOk_{false};
+    bool statusDescriptorParsedOk_{false};
+    bool statusDescriptorHasRouting_{false};
+    bool statusDescriptorHasClusterInfo_{false};
+    bool statusDescriptorHasPlugs_{false};
+    uint16_t statusDescriptorExpectedPlugCount_{0};
 
 private:
 

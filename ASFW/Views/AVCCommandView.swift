@@ -2,37 +2,44 @@
 //  AVCCommandView.swift
 //  ASFW
 //
-//  AV/C Command Sender - send raw FCP commands for debugging
+//  AV/C command sender with preset builder and raw FCP hex mode.
 //
 
 import SwiftUI
 
 struct AVCCommandView: View {
     @ObservedObject var viewModel: DebugViewModel
-    
-    // AV/C unit selection
+
     @State private var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
     @State private var selectedUnitGUID: UInt64?
-    
-    // FCP command parameters
+
+    @State private var commandTab: CommandTab = .presetBuilder
+
     @State private var commandType: FCPCommandType = .status
-    @State private var subunitType: String = "1F"  // Unit (0x1F)
-    @State private var subunitID: String = "7"     // ID 7 (broadcast)
-    @State private var opcode: String = "31"       // SUBUNIT_INFO
-    @State private var operands: String = "07FFFFFF"  // Page 0 + padding
-    
-    // Transaction state
+    @State private var subunitType: String = "1F"
+    @State private var subunitID: String = "7"
+    @State private var opcode: String = "31"
+    @State private var operands: String = "07FFFFFF"
+
+    @State private var rawCommandHex: String = "01 FF 31 07 FF FF FF FF"
+
     @State private var isSending = false
-    @State private var lastResponse: String?
+    @State private var lastResponseData: Data?
+    @State private var lastResponseSummary: String?
     @State private var lastError: String?
     @State private var lastSentTime: Date?
-    
+
+    enum CommandTab: String, CaseIterable {
+        case presetBuilder = "Preset Builder"
+        case rawHex = "Raw Hex"
+    }
+
     enum FCPCommandType: String, CaseIterable {
         case control = "CONTROL (0x00)"
         case status = "STATUS (0x01)"
         case inquiry = "INQUIRY (0x02)"
         case notify = "NOTIFY (0x03)"
-        
+
         var ctype: UInt8 {
             switch self {
             case .control: return 0x00
@@ -42,11 +49,10 @@ struct AVCCommandView: View {
             }
         }
     }
-   
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Connection status
                 GroupBox {
                     HStack {
                         if viewModel.isConnected {
@@ -56,9 +62,9 @@ struct AVCCommandView: View {
                             Label("Driver not connected", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
                         }
-                        
+
                         Spacer()
-                        
+
                         Button {
                             refreshUnits()
                         } label: {
@@ -70,13 +76,12 @@ struct AVCCommandView: View {
                     Label("Status", systemImage: "info.circle")
                         .font(.headline)
                 }
-                
-                // Unit selection
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Select AV/C Unit")
                             .font(.subheadline.bold())
-                        
+
                         if avcUnits.isEmpty {
                             HStack {
                                 Image(systemName: "exclamationmark.triangle")
@@ -99,115 +104,28 @@ struct AVCCommandView: View {
                     Label("Target Unit", systemImage: "target")
                         .font(.headline)
                 }
-                
-                // Command builder
+
                 GroupBox {
                     VStack(alignment: .leading, spacing: 16) {
-                        // Command type
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Command Type (ctype)")
-                                .font(.subheadline.bold())
-                            Picker("", selection: $commandType) {
-                                ForEach(FCPCommandType.allCases, id: \.rawValue) { type in
-                                    Text(type.rawValue).tag(type)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-                        
-                        Divider()
-                        
-                        // Subunit address
-                        HStack(spacing: 16) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Subunit Type")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                HStack {
-                                    Text("0x")
-                                        .foregroundColor(.secondary)
-                                    TextField("1F", text: $subunitType)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.system(.body, design: .monospaced))
-                                        .frame(width: 60)
-                                }
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Subunit ID")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                TextField("7", text: $subunitID)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(.body, design: .monospaced))
-                                    .frame(width: 60)
+                        Picker("Mode", selection: $commandTab) {
+                            ForEach(CommandTab.allCases, id: \.rawValue) { mode in
+                                Text(mode.rawValue).tag(mode)
                             }
                         }
-                        
-                        Text("Common: 0x1F (unit) + ID 7 (broadcast)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        
-                        Divider()
-                        
-                        // Opcode
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Opcode")
-                                .font(.subheadline.bold())
-                            HStack {
-                                Text("0x")
-                                    .foregroundColor(.secondary)
-                                TextField("31", text: $opcode)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(.body, design: .monospaced))
-                                    .frame(width: 80)
-                            }
-                            Text("Example: 0x31 (SUBUNIT_INFO), 0x30 (UNIT_INFO)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Divider()
-                        
-                        // Operands
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Operands (hex bytes)")
-                                .font(.subheadline.bold())
-                            TextEditor(text: $operands)
-                                .font(.system(.body, design: .monospaced))
-                                .frame(height: 80)
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
-                            Text("Enter hex bytes (no spaces or 0x): 07FFFFFF")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        // Quick presets
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Quick Commands")
-                                .font(.caption.bold())
-                            HStack(spacing: 8) {
-                                Button("SUBUNIT_INFO") {
-                                    setSubunitInfo()
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                
-                                Button("UNIT_INFO") {
-                                    setUnitInfo()
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            }
+                        .pickerStyle(.segmented)
+
+                        if commandTab == .presetBuilder {
+                            presetBuilderSection
+                        } else {
+                            rawHexSection
                         }
                     }
                 } label: {
                     Label("AV/C Command", systemImage: "list.bullet.rectangle")
                         .font(.headline)
                 }
-                
-                // Response display
-                if lastResponse != nil || lastError != nil {
+
+                if lastResponseData != nil || lastError != nil {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             if let time = lastSentTime {
@@ -215,18 +133,24 @@ struct AVCCommandView: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            
-                            if let response = lastResponse {
+
+                            if let summary = lastResponseSummary {
+                                Text(summary)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            if let responseData = lastResponseData {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Response:")
+                                    Text("FCP Response (\(responseData.count) bytes):")
                                         .font(.caption.bold())
-                                    Text(response)
+                                    Text(hexString(responseData))
                                         .font(.system(.caption, design: .monospaced))
                                         .foregroundColor(.green)
                                         .textSelection(.enabled)
                                 }
                             }
-                            
+
                             if let error = lastError {
                                 HStack {
                                     Image(systemName: "xmark.octagon.fill")
@@ -242,8 +166,7 @@ struct AVCCommandView: View {
                             .font(.headline)
                     }
                 }
-                
-                // Send button
+
                 Button {
                     sendCommand()
                 } label: {
@@ -259,7 +182,7 @@ struct AVCCommandView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(isSending || !viewModel.isConnected || selectedUnitGUID == nil)
                 .controlSize(.large)
-                
+
                 Spacer()
             }
             .padding()
@@ -271,12 +194,153 @@ struct AVCCommandView: View {
             }
         }
     }
-    
-    // MARK: - Actions
-    
+
+    private var presetBuilderSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Command Type (ctype)")
+                    .font(.subheadline.bold())
+                Picker("", selection: $commandType) {
+                    ForEach(FCPCommandType.allCases, id: \.rawValue) { type in
+                        Text(type.rawValue).tag(type)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Divider()
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Subunit Type")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    HStack {
+                        Text("0x")
+                            .foregroundColor(.secondary)
+                        TextField("1F", text: $subunitType)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(width: 60)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Subunit ID")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("7", text: $subunitID)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 80)
+                }
+            }
+
+            Text("Common: 0x1F (unit) + ID 7 (broadcast)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Opcode")
+                    .font(.subheadline.bold())
+                HStack {
+                    Text("0x")
+                        .foregroundColor(.secondary)
+                    TextField("31", text: $opcode)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 80)
+                }
+                Text("Example: 0x31 (SUBUNIT_INFO), 0x30 (UNIT_INFO)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Operands (hex bytes)")
+                    .font(.subheadline.bold())
+                TextEditor(text: $operands)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(height: 80)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
+                Text("Enter hex bytes (optional spaces/newlines): 07 FF FF FF")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Quick Commands")
+                    .font(.caption.bold())
+                HStack(spacing: 8) {
+                    Button("SUBUNIT_INFO") {
+                        setSubunitInfo()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("UNIT_INFO") {
+                        setUnitInfo()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if let preview = buildFCPCommand() {
+                Text("Frame Preview: \(hexString(preview))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+            } else {
+                Text("Frame Preview: invalid fields")
+                    .font(.caption2)
+                    .foregroundColor(.red)
+            }
+        }
+    }
+
+    private var rawHexSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Raw FCP frame bytes")
+                .font(.subheadline.bold())
+            TextEditor(text: $rawCommandHex)
+                .font(.system(.body, design: .monospaced))
+                .frame(height: 120)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
+            Text("Enter full FCP command frame (3-512 bytes). Example: 01 FF 31 07 FF FF FF FF")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            HStack {
+                Button("Load Preset Frame") {
+                    if let preview = buildFCPCommand() {
+                        rawCommandHex = hexString(preview)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+
+                if let byteCount = parseHexBytes(rawCommandHex)?.count {
+                    Text("\(byteCount) bytes")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("Invalid hex")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            }
+        }
+    }
+
     private func refreshUnits() {
         guard viewModel.isConnected else { return }
-        
+
         DispatchQueue.global(qos: .userInitiated).async {
             let units = viewModel.connector.getAVCUnits() ?? []
             DispatchQueue.main.async {
@@ -287,85 +351,130 @@ struct AVCCommandView: View {
             }
         }
     }
-    
+
     private func sendCommand() {
         guard let guid = selectedUnitGUID else { return }
-        guard let unit = avcUnits.first(where: { $0.guid == guid }) else { return }
-        
-        // Build FCP command frame
-        guard let commandData = buildFCPCommand() else {
+
+        let commandData: Data?
+        switch commandTab {
+        case .presetBuilder:
+            commandData = buildFCPCommand()
+        case .rawHex:
+            commandData = parseHexBytes(rawCommandHex)
+        }
+
+        guard let commandData else {
             lastError = "Invalid command format"
+            lastResponseData = nil
+            lastResponseSummary = nil
             return
         }
-        
-        // FCP Command register: 0xFFFFF0000B00
-        let fcpCommandAddr: UInt64 = 0xFFFFF0000B00
-        let nodeID = unit.nodeID
-        
+
         isSending = true
         lastError = nil
-        lastResponse = nil
+        lastResponseData = nil
+        lastResponseSummary = nil
         lastSentTime = Date()
-        
+
         DispatchQueue.global(qos: .userInitiated).async {
-            let handle = viewModel.connector.asyncWrite(
-                destinationID: nodeID,
-                addressHigh: UInt16((fcpCommandAddr >> 32) & 0xFFFF),
-                addressLow: UInt32(fcpCommandAddr & 0xFFFFFFFF),
-                payload: commandData
-            )
-            
+            let response = viewModel.connector.sendRawFCPCommand(guid: guid, frame: commandData)
+
             DispatchQueue.main.async {
                 self.isSending = false
-                if let handle = handle {
-                    self.lastResponse = String(format: "Command sent (handle: 0x%04X) - Check logs for FCP response", handle)
+                if let response {
+                    self.lastResponseData = response
+                    self.lastResponseSummary = self.responseSummary(response)
                     self.lastError = nil
                 } else {
-                    self.lastError = viewModel.connector.lastError ?? "Failed to send command"
-                    self.lastResponse = nil
+                    self.lastError = viewModel.connector.lastError ?? "Failed to send FCP command"
+                    self.lastResponseData = nil
+                    self.lastResponseSummary = nil
                 }
             }
         }
     }
-    
+
     private func buildFCPCommand() -> Data? {
-        // Parse hex inputs
-        guard let subunitTypeVal = UInt8(subunitType, radix: 16) else { return nil }
-        guard let subunitIDVal = UInt8(subunitID) else { return nil }
-        guard let opcodeVal = UInt8(opcode, radix: 16) else { return nil }
-        
-        // Parse operands hex string
-        let operandsClean = operands.replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: "\\n", with: "")
-        guard operandsClean.count % 2 == 0 else { return nil }
-        
-        var operandBytes = Data()
-        var index = operandsClean.startIndex
-        while index < operandsClean.endIndex {
-            let nextIndex = operandsClean.index(index, offsetBy: 2)
-            let byteStr = String(operandsClean[index..<nextIndex])
-            guard let byte = UInt8(byteStr, radix: 16) else { return nil }
-            operandBytes.append(byte)
-            index = nextIndex
-        }
-        
-        // Build FCP frame: [ctype/response | subunit_type+ID | opcode | operand[0] | operand[1] | ...]
+        guard let subunitTypeVal = UInt8(subunitType.cleanedHexString, radix: 16) else { return nil }
+        guard let subunitIDVal = parseUInt8(subunitID), subunitIDVal <= 0x07 else { return nil }
+        guard let opcodeVal = UInt8(opcode.cleanedHexString, radix: 16) else { return nil }
+        guard let operandBytes = parseHexBytes(operands, minBytes: 0, maxBytes: 509) else { return nil }
+
         var frame = Data()
         frame.append(commandType.ctype)
         frame.append((subunitTypeVal << 3) | (subunitIDVal & 0x7))
         frame.append(opcodeVal)
         frame.append(operandBytes)
-        
-        // Pad to 8 bytes minimum (FCP requirement)
+
         while frame.count < 8 {
             frame.append(0xFF)
         }
-        
+
         return frame
     }
-    
-    // MARK: - Presets
-    
+
+    private func parseUInt8(_ value: String) -> UInt8? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X") {
+            return UInt8(trimmed.dropFirst(2), radix: 16)
+        }
+        if let decimal = UInt8(trimmed, radix: 10) {
+            return decimal
+        }
+        return UInt8(trimmed, radix: 16)
+    }
+
+    private func parseHexBytes(_ value: String, minBytes: Int = 3, maxBytes: Int = 512) -> Data? {
+        let cleaned = value.cleanedHexString
+        guard cleaned.count % 2 == 0 else { return nil }
+
+        var data = Data(capacity: cleaned.count / 2)
+        var index = cleaned.startIndex
+        while index < cleaned.endIndex {
+            let nextIndex = cleaned.index(index, offsetBy: 2)
+            let byteString = String(cleaned[index..<nextIndex])
+            guard let byte = UInt8(byteString, radix: 16) else { return nil }
+            data.append(byte)
+            index = nextIndex
+        }
+
+        guard data.count >= minBytes && data.count <= maxBytes else { return nil }
+        return data
+    }
+
+    private func responseSummary(_ response: Data) -> String {
+        guard response.count >= 3 else {
+            return "Response received (\(response.count) bytes)"
+        }
+
+        let ctype = response[0]
+        let subunit = response[1]
+        let opcodeValue = response[2]
+        let operandCount = response.count - 3
+
+        return String(
+            format: "ctype=0x%02X (%@), subunit=0x%02X, opcode=0x%02X, operands=%u",
+            ctype,
+            responseTypeName(ctype),
+            subunit,
+            opcodeValue,
+            UInt32(operandCount)
+        )
+    }
+
+    private func responseTypeName(_ ctype: UInt8) -> String {
+        switch ctype {
+        case 0x08: return "NOT_IMPLEMENTED"
+        case 0x09: return "ACCEPTED"
+        case 0x0A: return "REJECTED"
+        case 0x0B: return "IN_TRANSITION"
+        case 0x0C: return "IMPLEMENTED/STABLE"
+        case 0x0D: return "CHANGED"
+        case 0x0F: return "INTERIM"
+        default: return "UNKNOWN"
+        }
+    }
+
     private func setSubunitInfo() {
         commandType = .status
         subunitType = "1F"
@@ -373,13 +482,28 @@ struct AVCCommandView: View {
         opcode = "31"
         operands = "07FFFFFF"
     }
-    
+
     private func setUnitInfo() {
         commandType = .status
         subunitType = "1F"
         subunitID = "7"
         opcode = "30"
         operands = "07FFFFFF"
+    }
+
+    private func hexString(_ data: Data) -> String {
+        data.map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+}
+
+private extension String {
+    var cleanedHexString: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "0x", with: "")
+            .replacingOccurrences(of: "0X", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\t", with: "")
     }
 }
 

@@ -78,7 +78,30 @@ public:
      *        - structureOutput: Raw descriptor data
      * @return kIOReturnSuccess on success
      */
-     kern_return_t GetSubunitDescriptor(IOUserClientMethodArguments* args);
+    kern_return_t GetSubunitDescriptor(IOUserClientMethodArguments* args);
+
+    /**
+     * @brief Submit a raw FCP command asynchronously
+     *
+     * @param args IOUserClientMethodArguments
+     *        - scalarInput[0]: Unit GUID (high 32 bits)
+     *        - scalarInput[1]: Unit GUID (low 32 bits)
+     *        - structureInput: Raw FCP command bytes (3-512 bytes)
+     *        - scalarOutput[0]: Request ID for GetRawFCPCommandResult
+     * @return kIOReturnSuccess on successful submission
+     */
+    kern_return_t SendRawFCPCommand(IOUserClientMethodArguments* args);
+
+    /**
+     * @brief Fetch completion/result of a submitted raw FCP command
+     *
+     * @param args IOUserClientMethodArguments
+     *        - scalarInput[0]: Request ID returned by SendRawFCPCommand
+     *        - structureOutput: Raw FCP response bytes (if complete/success)
+     * @return kIOReturnSuccess when response is available,
+     *         kIOReturnNotReady while still pending
+     */
+    kern_return_t GetRawFCPCommandResult(IOUserClientMethodArguments* args);
 
     /**
      * @brief Re-scan all AV/C units

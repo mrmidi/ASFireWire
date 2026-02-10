@@ -1,9 +1,13 @@
 # Build artifacts
 build/
+build-ninja/
 **/build/
 **/build_*/
 tests_build/
 *.log
+
+# Local tooling caches
+.cache/
 
 # .DS_Store
 .DS_Store

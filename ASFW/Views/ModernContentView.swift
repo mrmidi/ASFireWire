@@ -43,6 +43,8 @@ struct ModernContentView: View {
         case busReset = "Bus Reset History"
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
+        case audio = "Core Audio"
+        case saffire = "Saffire"
 
         var id: String { rawValue }
 
@@ -61,6 +63,8 @@ struct ModernContentView: View {
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
+            case .audio: return "hifispeaker.fill"
+            case .saffire: return "slider.vertical.3"
             }
         }
 
@@ -107,6 +111,10 @@ struct ModernContentView: View {
                     SystemLogsView(viewModel: driverVM)
                 case .loggingSettings:
                     LoggingSettingsView(connector: debugVM.connector)
+                case .audio:
+                    AudioDebugView()
+                case .saffire:
+                    SaffireMixerView(connector: debugVM.connector)
                 case .none:
                     Text("Select a section")
                         .foregroundStyle(.secondary)
@@ -147,7 +155,7 @@ struct ModernContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 160)
-                    .onChange(of: loggingPreset) { newValue in
+                    .onChange(of: loggingPreset) { _, newValue in
                         applyLoggingPreset(newValue)
                     }
                 }
@@ -164,7 +172,7 @@ struct ModernContentView: View {
             debugVM.disconnect()
             topologyVM.stopAutoRefresh()
         }
-        .onChange(of: topologyVM.topology?.generation) {
+        .onChange(of: topologyVM.topology?.generation) { _, _ in
             // Update available nodes when topology generation changes
             romExplorerVM.refreshAvailableNodes()
         }

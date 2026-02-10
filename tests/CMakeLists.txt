@@ -343,6 +343,7 @@ add_executable(MusicSubunitIdentifierParserTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCDiscovery.cpp" # Likely needed by AVCUnit
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DeviceStreamModeQuirks.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
@@ -792,6 +793,25 @@ target_include_directories(BlockingCadenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(BlockingCadenceTests)
 
+# Non-Blocking Cadence Tests (48 kHz)
+add_executable(NonBlockingCadenceTests
+    "${ASFW_TESTS_DIR}/NonBlockingCadenceTests.cpp"
+)
+
+target_link_libraries(NonBlockingCadenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(NonBlockingCadenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(NonBlockingCadenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(NonBlockingCadenceTests)
+
 # Blocking DBC Generator Tests
 add_executable(BlockingDbcTests
     "${ASFW_TESTS_DIR}/BlockingDbcTests.cpp"
@@ -886,5 +906,3 @@ target_compile_definitions(SimITEngineTests
 target_include_directories(SimITEngineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SimITEngineTests)
-
-

@@ -11,8 +11,8 @@
 
 using namespace ASFW::Encoding;
 
-// Use smaller buffer for faster tests
-using TestRingBuffer = AudioRingBuffer<64, 2>;
+// Use smaller buffer for faster tests (channel count is runtime, default=2)
+using TestRingBuffer = AudioRingBuffer<64>;
 
 //==============================================================================
 // Initial State Tests
