@@ -7,6 +7,7 @@
 #include "../../Phy/PhyPackets.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../ResponseCode.hpp"
+#include "../../Common/FWCommon.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <cstring>
@@ -419,7 +420,35 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
         payloadLen = 4;
     }
 
-    rxResponse.payload = std::span<const uint8_t>(payloadPtr, payloadLen);
+    // CRITICAL: DMA buffers are mapped as device memory (kIOMemoryMapCacheModeInhibit).
+    // On ARM64, device memory requires strict natural alignment for all accesses.
+    // std::memcpy downstream may use ldr x (8-byte load) which requires 8-byte alignment,
+    // but packet payload offsets within AR buffers are only guaranteed 4-byte aligned
+    // (packets are quadlet-aligned). This causes EXC_ARM_DA_ALIGN / SIGBUS for len >= 8.
+    // Fix: copy payload into stack buffer using quadlet-aligned reads before passing downstream.
+    static constexpr size_t kMaxARPayloadBytes = ASFW::FW::MaxPayload::kS800;  // 4096
+    if (payloadLen > kMaxARPayloadBytes) {
+        ASFW_LOG(Async, "⚠️ AR/RSP: payload %zu exceeds max %zu — dropping packet",
+                 payloadLen, kMaxARPayloadBytes);
+        return;
+    }
+    uint8_t payloadCopy[kMaxARPayloadBytes];
+    {
+        size_t i = 0;
+        // Quadlet-aligned copy (OHCI packets are always quadlet-aligned)
+        for (; i + 4 <= payloadLen; i += 4) {
+            uint32_t tmp;
+            __builtin_memcpy(&tmp, payloadPtr + i, 4);
+            __builtin_memcpy(payloadCopy + i, &tmp, 4);
+        }
+        // Remaining tail bytes
+        for (; i < payloadLen; ++i) {
+            payloadCopy[i] = payloadPtr[i];
+        }
+    }
+
+    // NOTE: span points to stack-local payloadCopy — valid only for this synchronous call chain.
+    rxResponse.payload = std::span<const uint8_t>(payloadCopy, payloadLen);
 
     // V2: Compact AR response one-liner for packet flow visibility
     ASFW_LOG_V2(Async, "📥 AR/RSP: tCode=0x%X rCode=0x%X tLabel=%u src=0x%04X→dst=0x%04X payload=%zu bytes",
