@@ -432,7 +432,7 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
                  payloadLen, kMaxARPayloadBytes);
         return;
     }
-    uint8_t payloadCopy[kMaxARPayloadBytes];
+    alignas(4) uint8_t payloadCopy[kMaxARPayloadBytes];
     {
         size_t i = 0;
         // Quadlet-aligned copy (OHCI packets are always quadlet-aligned)
