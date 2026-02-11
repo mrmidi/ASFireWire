@@ -65,7 +65,12 @@ kern_return_t WatchdogCoordinator::Prepare(::ASFWDriver& service,
 void WatchdogCoordinator::Stop() {
     if (timer_) {
         timer_->SetEnableWithCompletion(false, nullptr);
-        timer_->Cancel(nullptr);
+        // NOTE: Do NOT call Cancel(nullptr) here.
+        // Cancel() dispatches an async block on the work queue. If the timer
+        // is released (via Reset() → timer_.reset()) before that block executes,
+        // the block dereferences a freed object → SIGSEGV at 0x10 in Cancel_Impl.
+        // Disabling the timer is sufficient; the dispatch source is cleaned up
+        // when the shared pointer is released.
     }
 }
 
