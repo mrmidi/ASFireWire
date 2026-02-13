@@ -20,10 +20,10 @@ namespace ASFW::Async {
 ///
 /// Per IEEE 1394-1995 §6.2.1, destination_offset is at bytes 8-13 (48-bit).
 ///
-/// @param header Packet header bytes (big-endian, minimum 16 bytes)
+/// @param header Packet header bytes (big-endian, minimum 12 bytes)
 /// @return Destination offset (48-bit address), or 0 if header too short
 inline uint64_t ExtractDestOffset(std::span<const uint8_t> header) {
-    if (header.size() < 16) {
+    if (header.size() < 12) {
         return 0;
     }
 

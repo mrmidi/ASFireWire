@@ -906,3 +906,22 @@ target_compile_definitions(SimITEngineTests
 target_include_directories(SimITEngineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SimITEngineTests)
+
+# SBP-2 Address Space Manager Tests
+add_executable(AddressSpaceManagerTests
+    "${ASFW_TESTS_DIR}/AddressSpaceManagerTests.cpp"
+)
+
+target_link_libraries(AddressSpaceManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AddressSpaceManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AddressSpaceManagerTests)
