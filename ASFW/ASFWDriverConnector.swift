@@ -49,6 +49,10 @@ final class ASFWDriverConnector: ObservableObject {
         // AV/C raw FCP command (request/response)
         case sendRawFCPCommand = 38
         case getRawFCPCommandResult = 39
+        case allocateAddressRange = 40
+        case deallocateAddressRange = 41
+        case readIncomingData = 42
+        case writeLocalData = 43
     }
 
     // MARK: - Re-exported Models

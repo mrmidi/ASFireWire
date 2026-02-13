@@ -397,6 +397,10 @@ Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
     return deps_.avcDiscovery.get();
 }
 
+Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager() const {
+    return deps_.sbp2AddressSpaceManager.get();
+}
+
 IRM::IRMClient* ControllerCore::GetIRMClient() const {
     return deps_.irmClient.get();
 }

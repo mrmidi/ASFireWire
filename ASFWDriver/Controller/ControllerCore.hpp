@@ -53,6 +53,10 @@ class IAVCDiscovery;
 class FCPResponseRouter;
 }
 
+namespace ASFW::Protocols::SBP2 {
+class AddressSpaceManager;
+}
+
 namespace ASFW::IRM { class IRMClient; }
 namespace ASFW::CMP { class CMPClient; }
 
@@ -84,6 +88,7 @@ public:
 
         std::shared_ptr<ASFW::Protocols::AVC::AVCDiscovery> avcDiscovery;
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
+        std::shared_ptr<ASFW::Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager;
 
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
         
@@ -116,6 +121,7 @@ public:
     Discovery::DeviceRegistry* GetDeviceRegistry() const;
 
     Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
+    Protocols::SBP2::AddressSpaceManager* GetSbp2AddressSpaceManager() const;
 
     IRM::IRMClient* GetIRMClient() const;
     void SetIRMClient(std::shared_ptr<IRM::IRMClient> client);

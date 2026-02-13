@@ -48,6 +48,10 @@ public:
         // Note: 23, 24, 25 defined in .cpp only (GetSubunitCapabilities, GetSubunitDescriptor, ReScanAVCUnits)
         kMethodSendRawFCPCommand       = 38,
         kMethodGetRawFCPCommandResult  = 39,
+        kMethodAllocateAddressRange    = 40,
+        kMethodDeallocateAddressRange  = 41,
+        kMethodReadIncomingData        = 42,
+        kMethodWriteLocalData          = 43,
         // TODO: IRM test method - temporary for Phase 0.5 testing
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,
@@ -149,4 +153,5 @@ struct ASFWDriverUserClient_IVars {
     void* deviceDiscoveryHandler;  // DeviceDiscoveryHandler* (opaque)
     void* avcHandler;          // AVCHandler* (opaque)
     void* isochHandler;        // IsochHandler* (opaque)
+    void* sbp2Handler;         // SBP2Handler* (opaque)
 };

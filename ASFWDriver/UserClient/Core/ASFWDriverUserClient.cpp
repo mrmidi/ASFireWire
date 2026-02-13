@@ -17,6 +17,7 @@
 #include "../Handlers/DeviceDiscoveryHandler.hpp"
 #include "../Handlers/AVCHandler.hpp"
 #include "../Handlers/IsochHandler.hpp"
+#include "../Handlers/SBP2Handler.hpp"
 #include "../Storage/TransactionStorage.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
@@ -59,6 +60,10 @@ enum {
     kMethodReScanAVCUnits          = 25,
     kMethodSendRawFCPCommand       = 38,
     kMethodGetRawFCPCommandResult  = 39,
+    kMethodAllocateAddressRange    = 40,
+    kMethodDeallocateAddressRange  = 41,
+    kMethodReadIncomingData        = 42,
+    kMethodWriteLocalData          = 43,
     // TODO: IRM test method - temporary location for Phase 0.5 testing
     kMethodTestIRMAllocation       = 26,
     kMethodTestIRMRelease          = 27,
@@ -125,6 +130,7 @@ bool ASFWDriverUserClient::init()
     ivars->deviceDiscoveryHandler = nullptr;
     ivars->avcHandler = nullptr;
     ivars->isochHandler = nullptr;
+    ivars->sbp2Handler = nullptr;
     
     return true;
 }
@@ -160,6 +166,10 @@ void ASFWDriverUserClient::free()
         delete static_cast<ASFW::UserClient::DeviceDiscoveryHandler*>(ivars->deviceDiscoveryHandler);
         delete static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler);
         delete static_cast<ASFW::UserClient::IsochHandler*>(ivars->isochHandler);
+        if (ivars->sbp2Handler) {
+            static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler)->ReleaseOwner(this);
+        }
+        delete static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler);
         
         if (ivars->transactionStorage) {
             delete static_cast<ASFW::UserClient::TransactionStorage*>(ivars->transactionStorage);
@@ -209,13 +219,15 @@ kern_return_t IMPL(ASFWDriverUserClient, Start)
     // Get AVCDiscovery for AVCHandler
     auto* controllerCore = static_cast<ASFW::Driver::ControllerCore*>(ivars->driver->GetControllerCore());
     auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
+    auto* sbp2AddressSpaceManager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
     ivars->avcHandler = static_cast<void*>(new AVCHandler(avcDiscovery));
     ivars->isochHandler = static_cast<void*>(new IsochHandler(ivars->driver));
+    ivars->sbp2Handler = static_cast<void*>(new SBP2Handler(sbp2AddressSpaceManager));
 
     if (!ivars->busResetHandler || !ivars->topologyHandler ||
         !ivars->statusHandler || !ivars->transactionHandler ||
         !ivars->configROMHandler || !ivars->deviceDiscoveryHandler ||
-        !ivars->avcHandler || !ivars->isochHandler) {
+        !ivars->avcHandler || !ivars->isochHandler || !ivars->sbp2Handler) {
         ASFW_LOG(UserClient, "Start() failed to create handlers");
         return kIOReturnNoMemory;
     }
@@ -244,6 +256,9 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop)
 
     if (ivars && ivars->driver) {
         ivars->driver->UnregisterStatusListener(this);
+        if (ivars->sbp2Handler) {
+            static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler)->ReleaseOwner(this);
+        }
         ivars->driver = nullptr;
     }
 
@@ -273,7 +288,7 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
     if (!ivars->busResetHandler || !ivars->topologyHandler ||
         !ivars->statusHandler || !ivars->transactionHandler ||
         !ivars->configROMHandler || !ivars->deviceDiscoveryHandler ||
-        !ivars->avcHandler) {
+        !ivars->avcHandler || !ivars->sbp2Handler) {
         return kIOReturnNotReady;
     }
 
@@ -354,6 +369,18 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
 
         case kMethodGetRawFCPCommandResult:
             return static_cast<ASFW::UserClient::AVCHandler*>(ivars->avcHandler)->GetRawFCPCommandResult(arguments);
+
+        case kMethodAllocateAddressRange:
+            return static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler)->AllocateAddressRange(arguments, this);
+
+        case kMethodDeallocateAddressRange:
+            return static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler)->DeallocateAddressRange(arguments, this);
+
+        case kMethodReadIncomingData:
+            return static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler)->ReadIncomingData(arguments, this);
+
+        case kMethodWriteLocalData:
+            return static_cast<ASFW::UserClient::SBP2Handler*>(ivars->sbp2Handler)->WriteLocalData(arguments, this);
 
         // TransactionHandler methods - CompareSwap (17)
         case kMethodAsyncCompareSwap:
