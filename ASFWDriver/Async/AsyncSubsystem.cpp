@@ -649,7 +649,7 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
     
     // Step 4: Query current generation from GenerationTracker
     const auto busState = generationTracker_->GetCurrentState();
-    const uint8_t currentGeneration = busState.generation8;
+    const uint16_t currentGeneration = busState.generation16;
     
     // Step 5: Resolve speed code (TODO: query TopologyManager, default S100 for compatibility)
     const uint8_t speedCode = kDefaultAsyncSpeed;  // S100 (98.304 Mbps)
@@ -870,7 +870,7 @@ void AsyncSubsystem::OnBusResetBegin(uint8_t nextGen) {
     
     // Step 2: Cancel transactions from OLD generation only
     // Read current generation from tracker (set by previous bus reset)
-    const uint8_t oldGen = generationTracker_ ? generationTracker_->GetCurrentState().generation8 : 0;
+    const uint16_t oldGen = generationTracker_ ? generationTracker_->GetCurrentState().generation16 : 0;
 
     if (tracking_) {
         // Cancel any lingering transactions (all generations) to guarantee label bitmap is clean.
