@@ -1,10 +1,14 @@
 # Build artifacts
 build/
 build-ninja/
+build-tests/
+build-tests-codex/
 **/build/
 **/build_*/
 tests_build/
 *.log
+tests.log
+build-tests*/
 
 # Local tooling caches
 .cache/
@@ -39,3 +43,8 @@ docs/
 
 # Exclude Plugins/VersionGeneratorPlugin from public repository
 Plugins/VersionGeneratorPlugin
+
+# LLM Tools
+
+.claude/
+opencode.json

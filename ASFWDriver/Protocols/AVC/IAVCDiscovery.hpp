@@ -14,6 +14,7 @@
 namespace ASFW::Protocols::AVC {
 
 class AVCUnit;
+class FCPTransport;
 
 class IAVCDiscovery {
 public:
@@ -30,6 +31,9 @@ public:
      * Triggers re-initialization for all discovered units.
      */
     virtual void ReScanAllUnits() = 0;
+
+    /// Resolve live FCP transport for a node ID.
+    virtual FCPTransport* GetFCPTransportForNodeID(uint16_t nodeID) = 0;
 };
 
 } // namespace ASFW::Protocols::AVC

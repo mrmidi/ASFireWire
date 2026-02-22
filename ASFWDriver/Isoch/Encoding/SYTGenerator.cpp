@@ -62,4 +62,19 @@ uint16_t SYTGenerator::computeDataSYT(uint32_t transmitCycle) noexcept {
     return syt;
 }
 
+void SYTGenerator::nudgeOffsetTicks(int32_t deltaTicks) noexcept {
+    if (!initialized_ || deltaTicks == 0 || sytOffsetWrap_ == 0) {
+        return;
+    }
+
+    int64_t adjusted = static_cast<int64_t>(sytOffsetTicks_) + static_cast<int64_t>(deltaTicks);
+    const int64_t wrap = static_cast<int64_t>(sytOffsetWrap_);
+    adjusted %= wrap;
+    if (adjusted < 0) {
+        adjusted += wrap;
+    }
+
+    sytOffsetTicks_ = static_cast<uint32_t>(adjusted);
+}
+
 } // namespace ASFW::Encoding

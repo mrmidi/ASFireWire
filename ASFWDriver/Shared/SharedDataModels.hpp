@@ -28,17 +28,19 @@ struct AVCSubunitInfoWire {
 struct AVCUnitInfoWire {
     uint64_t guid;
     uint16_t nodeID;
-    uint16_t vendorID;
-    uint16_t modelID;
+    uint32_t vendorID;
+    uint32_t modelID;
     uint8_t  subunitCount;
     uint8_t  isoInputPlugs;
     uint8_t  isoOutputPlugs;
     uint8_t  extInputPlugs;
     uint8_t  extOutputPlugs;
-    uint8_t  _reserved;    // Padding to 20 bytes
+    uint8_t  _reserved;    // Padding to 24 bytes
     // Followed by variable length AVCSubunitInfoWire array
     // AVCSubunitInfoWire subunits[0];
 } __attribute__((packed));
+
+static_assert(sizeof(AVCUnitInfoWire) == 24, "AVCUnitInfoWire must be 24 bytes");
 
 // -----------------------------------------------------------------------------
 // Music Subunit Capabilities
@@ -165,4 +167,3 @@ static_assert(sizeof(IsochRxSnapshot) == 88, "IsochRxSnapshot must be 88 bytes")
 
 } // namespace Metrics
 } // namespace ASFW
-

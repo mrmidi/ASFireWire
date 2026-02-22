@@ -1,0 +1,51 @@
+//
+// ASFWProtocolBooleanControl.iig
+// ASFWDriver
+//
+// IOUserAudioBooleanControl subclass that applies control changes through
+// ASFWAudioDriver -> ASFWAudioNub RPC -> device protocol overrides.
+//
+
+#ifndef ASFWProtocolBooleanControl_h
+#define ASFWProtocolBooleanControl_h
+
+#include <AudioDriverKit/IOUserAudioBooleanControl.iig>
+#include <cstdint>
+
+class ASFWAudioDriver;
+
+class ASFWProtocolBooleanControl : public IOUserAudioBooleanControl
+{
+public:
+    static OSSharedPtr<ASFWProtocolBooleanControl> Create(
+        ASFWAudioDriver* ownerDriver,
+        bool isSettable,
+        bool controlValue,
+        IOUserAudioObjectPropertyElement controlElement,
+        IOUserAudioObjectPropertyScope controlScope,
+        IOUserAudioClassID controlClassID,
+        uint32_t classIdFourCC,
+        uint32_t routedElement) LOCALONLY;
+
+    bool init(
+        ASFWAudioDriver* ownerDriver,
+        bool isSettable,
+        bool controlValue,
+        IOUserAudioObjectPropertyElement controlElement,
+        IOUserAudioObjectPropertyScope controlScope,
+        IOUserAudioClassID controlClassID,
+        uint32_t classIdFourCC,
+        uint32_t routedElement) LOCALONLY;
+
+    void free() override;
+
+    kern_return_t HandleChangeControlValue(bool in_control_value) override;
+};
+
+struct ASFWProtocolBooleanControl_IVars {
+    ASFWAudioDriver* ownerDriver;
+    uint32_t classIdFourCC;
+    uint32_t routedElement;
+};
+
+#endif /* ASFWProtocolBooleanControl_h */

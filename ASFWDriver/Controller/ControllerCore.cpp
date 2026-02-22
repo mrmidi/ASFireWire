@@ -3,6 +3,7 @@
 #include <DriverKit/IOLib.h>
 #include <cstdio>
 #include <string>
+#include <unordered_set>
 
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/FireWireBusImpl.hpp"
@@ -29,6 +30,7 @@
 #include "../ConfigROM/ROMScanner.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
+#include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "../Hardware/IEEE1394.hpp"
 #include "../IRM/IRMClient.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
@@ -1069,6 +1071,8 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
 
     auto roms = deps_.romScanner->DrainReady(gen);
     ASFW_LOG(Discovery, "Discovered %zu ROMs", roms.size());
+    std::unordered_set<uint64_t> discoveredGuids;
+    discoveredGuids.reserve(roms.size());
 
     for (const auto& rom : roms) {
         deps_.romStore->Insert(rom);
@@ -1078,11 +1082,24 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
         // Pass AsyncSubsystem to enable protocol handler creation for known devices
         auto* asyncSubsystem = deps_.asyncSubsystem.get();
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy, asyncSubsystem);
+        discoveredGuids.insert(deviceRecord.guid);
 
-        // Vendor-specific (e.g. DICE/Focusrite) bring-up path:
-        // create ASFWAudioNub directly from hardcoded profile without waiting for AV/C discovery.
+        // Vendor-specific hardcoded-nub bring-up path (legacy DICE).
+        // AVC-driven devices (e.g. Apogee Duet) must wait for AV/C discovery.
         if (deps_.avcDiscovery && deviceRecord.kind == Discovery::DeviceKind::VendorSpecificAudio) {
-            deps_.avcDiscovery->EnsureHardcodedAudioNubForDevice(deviceRecord);
+            const auto integrationMode = Audio::DeviceProtocolFactory::LookupIntegrationMode(
+                deviceRecord.vendorId,
+                deviceRecord.modelId);
+            if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
+                deps_.avcDiscovery->EnsureHardcodedAudioNubForDevice(deviceRecord);
+            } else {
+                ASFW_LOG(Discovery,
+                         "Skipping hardcoded nub path for GUID=0x%016llx vendor=0x%06x model=0x%06x (integration=%u)",
+                         deviceRecord.guid,
+                         deviceRecord.vendorId,
+                         deviceRecord.modelId,
+                         static_cast<unsigned>(integrationMode));
+            }
         }
 
         if (deps_.deviceManager) {
@@ -1102,6 +1119,26 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
         ASFW_LOG(Discovery, "  Node: %u (gen=%u)", rom.nodeId, rom.gen);
         ASFW_LOG(Discovery, "  Kind: %{public}s", DeviceKindString(deviceRecord.kind));
         ASFW_LOG(Discovery, "  Audio Candidate: %{public}s", deviceRecord.isAudioCandidate ? "YES" : "NO");
+    }
+
+    if (deps_.deviceManager) {
+        auto devices = deps_.deviceManager->GetAllDevices();
+        for (const auto& device : devices) {
+            if (!device) {
+                continue;
+            }
+
+            const uint64_t guid = device->GetGUID();
+            if (discoveredGuids.find(guid) != discoveredGuids.end()) {
+                continue;
+            }
+
+            ASFW_LOG(Discovery,
+                     "Device missing from generation %u scan - marking lost (GUID=0x%016llx)",
+                     gen,
+                     guid);
+            deps_.deviceManager->MarkDeviceLost(guid);
+        }
     }
 
     ASFW_LOG(Discovery, "═══════════════════════════════════════");

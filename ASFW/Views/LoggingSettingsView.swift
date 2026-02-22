@@ -3,7 +3,9 @@ import SwiftUI
 struct LoggingSettingsView: View {
     @ObservedObject var connector: ASFWDriverConnector
     @State private var asyncVerbosity: Double = 1.0
+    @State private var isochTelemetryEnabled: Bool = false
     @State private var hexDumpsEnabled: Bool = false
+    @State private var txVerifierEnabled: Bool = false
     @State private var isLoading: Bool = false
     
     let verbosityLevels: [(Int, String, String)] = [
@@ -50,6 +52,21 @@ struct LoggingSettingsView: View {
             .padding()
             .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
+
+            // Isoch Telemetry Toggle
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Enable Isoch Telemetry Logs", isOn: $isochTelemetryEnabled)
+                    .font(.headline)
+                    .disabled(!connector.isConnected || isLoading)
+
+                Text("Temporarily show/hide high-frequency Isoch logs (CycleCorr, RxStats, IT Poll, Audio IO/CLK).")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 4)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
             
             // Hex Dumps Toggle
             VStack(alignment: .leading, spacing: 8) {
@@ -58,6 +75,21 @@ struct LoggingSettingsView: View {
                     .disabled(!connector.isConnected || isLoading)
                 
                 Text("Force enable/disable packet hex dumps independent of verbosity level")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.leading, 4)
+            }
+            .padding()
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(8)
+
+            // Dev TX Verifier / Recovery Toggle
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Enable Isoch TX Verifier + Recovery (Dev)", isOn: $txVerifierEnabled)
+                    .font(.headline)
+                    .disabled(!connector.isConnected || isLoading)
+
+                Text("Enables watchdog-driven TX verifier checks and recovery triggers. Intended for debugging, not production.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.leading, 4)
@@ -97,6 +129,8 @@ struct LoggingSettingsView: View {
                 DispatchQueue.main.async {
                     self.asyncVerbosity = Double(config.asyncVerbosity)
                     self.hexDumpsEnabled = config.hexDumpsEnabled
+                    self.isochTelemetryEnabled = config.isochVerbosity >= 3
+                    self.txVerifierEnabled = config.isochTxVerifierEnabled
                     self.isLoading = false
                 }
             } else {
@@ -113,7 +147,9 @@ struct LoggingSettingsView: View {
         
         DispatchQueue.global(qos: .userInitiated).async {
             _ = connector.setAsyncVerbosity(UInt32(asyncVerbosity))
+            _ = connector.setIsochTelemetryLogging(enabled: isochTelemetryEnabled)
             _ = connector.setHexDumps(enabled: hexDumpsEnabled)
+            _ = connector.setIsochTxVerifier(enabled: txVerifierEnabled)
             
             DispatchQueue.main.async {
                 self.isLoading = false

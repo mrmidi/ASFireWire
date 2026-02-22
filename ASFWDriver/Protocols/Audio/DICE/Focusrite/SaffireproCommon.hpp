@@ -62,7 +62,6 @@ enum class SwNotice : uint32_t {
     EqLowCh1        = 0x0D,
     EqLowMidCh0     = 0x0F,
     EqLowMidCh1     = 0x10,
-    MicTransformer1 = 0x10,
     EqHighMidCh0    = 0x12,
     EqHighMidCh1    = 0x13,
     EqHighCh0       = 0x15,
@@ -70,11 +69,10 @@ enum class SwNotice : uint32_t {
     Reverb          = 0x1A,
     DspEnable       = 0x1C,
     // Aliases for cleaner naming
-    DspChanged       = 0x1C,
-    CoefChanged      = 0x06,  // Same as CompCh0 (covers coefficient changes)
-    EffectChanged    = 0x05,  // Same as ChStripFlags
-    InputChanged     = 0x04,  // Same as InputParams
-    OutputGroupChanged = 0x02, // Same as DimMute
+    DspChanged         = 0x1C,  // Same as DspEnable
+    EffectChanged      = 0x05,  // Same as ChStripFlags
+    InputChanged       = 0x04,  // Same as InputParams
+    OutputGroupChanged = 0x02,  // Same as DimMute
 };
 
 // ============================================================================

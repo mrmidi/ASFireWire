@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <atomic>
 #include "../Core/CIPHeader.hpp"
+#include "../Core/ExternalSyncBridge.hpp"
 #include "../Audio/AM824Decoder.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
@@ -27,6 +28,13 @@ public:
 
     static constexpr size_t kIsochHeaderSize = 8;  // Timestamp + isoch header
 
+    struct RxCipSummary {
+        bool hasValidCip{false};
+        uint16_t syt{Core::ExternalSyncBridge::kNoInfoSyt};
+        uint8_t fdf{0};
+        uint8_t dbs{0};
+    };
+
     /// Process a single packet payload.
     /// @param payload Raw payload bytes (INCLUDING isoch header prefix when isochHeader=1).
     /// @param length Length in bytes.
@@ -35,12 +43,13 @@ public:
     ///   [0-3]  Timestamp quadlet (upper 16 bits INVALID in PPB mode)
     ///   [4-7]  Isochronous header (dataLength | tag | chan | tcode | sy)
     ///   [8+]   CIP Header + AM824 payload
-    void ProcessPacket(const uint8_t* payload, size_t length) {
+    [[nodiscard]] RxCipSummary ProcessPacket(const uint8_t* payload, size_t length) noexcept {
+        RxCipSummary summary{};
         // Need at least isoch header (8) + CIP header (8)
         if (length < kIsochHeaderSize + 8) {
             // ASFW_LOG(Isoch, "Short packet: %zu bytes", length);
             errorCount_++;
-            return;
+            return summary;
         }
 
         // Skip isoch header prefix to get to CIP header
@@ -54,10 +63,15 @@ public:
         if (!header) {
             // ASFW_LOG(Isoch, "Invalid CIP header");
             errorCount_++;
-            return;
+            return summary;
         }
 
         packetCount_++;
+
+        summary.hasValidCip = true;
+        summary.syt = header->syt;
+        summary.fdf = header->fdf;
+        summary.dbs = header->dataBlockSize;
         
         // Continuity Check
         uint8_t expectedDBC = (lastDBC_ + lastDataBlockCount_) & 0xFF;
@@ -85,7 +99,7 @@ public:
         if (dbsBytes == 0) {
             // Should not happen for AM824
              errorCount_++;
-             return;
+             return summary;
         }
         
         size_t eventCount = payloadBytes / dbsBytes;
@@ -135,6 +149,8 @@ public:
         } else {
              emptyPacketCount_++;
         }
+
+        return summary;
     }
 
     /// Record a packet without parsing CIP/AM824 (stabilization/debug mode).

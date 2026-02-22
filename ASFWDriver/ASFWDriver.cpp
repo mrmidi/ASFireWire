@@ -52,6 +52,7 @@
 #include "Service/DriverContext.hpp"
 #include "Protocols/AVC/AVCDiscovery.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
+#include "Isoch/Transmit/IsochTransmitContext.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
 using namespace ASFW::Driver;
@@ -69,7 +70,7 @@ bool ASFWDriver::init() {
         if (!ivars) return false;
     }
     if (!ivars->context) {
-        ivars->context = new (std::nothrow) ServiceContext;
+        ivars->context = IONew(ServiceContext, 1);
         if (!ivars->context) return false;
     }
     return true;
@@ -79,8 +80,7 @@ void ASFWDriver::free() {
     if (ivars) {
         if (ivars->context) {
             ivars->context->Reset();
-            delete ivars->context;
-            ivars->context = nullptr;
+            IOSafeDeleteNULL(ivars->context, ServiceContext, 1);
         }
         IODelete(ivars, ASFWDriver_IVars, 1);
         ivars = nullptr;
@@ -96,8 +96,8 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ctx.stopping.store(false, std::memory_order_release);
     DriverWiring::EnsureDeps(this, ctx);
     bool traceProperty = false;
-    OSDictionary* serviceProperties = nullptr;
-    if (CopyProperties(&serviceProperties) == kIOReturnSuccess && serviceProperties != nullptr) {
+    if (OSDictionary* serviceProperties = nullptr;
+        CopyProperties(&serviceProperties) == kIOReturnSuccess && serviceProperties != nullptr) {
         if (auto property = serviceProperties->getObject("ASFWTraceDMACoherency")) {
             if (auto booleanProp = OSDynamicCast(OSBoolean, property)) {
                 traceProperty = (booleanProp == kOSBooleanTrue);
@@ -114,8 +114,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ASFW_LOG(Controller,
              "ASFWDriver::Start(): ASFWTraceDMACoherency property=%{public}s",
              traceProperty ? "true" : "false");
-    auto statusKr = ctx.statusPublisher.Prepare();
-    if (statusKr != kIOReturnSuccess) {
+    if (auto statusKr = ctx.statusPublisher.Prepare(); statusKr != kIOReturnSuccess) {
         DriverWiring::CleanupStartFailure(ctx);
         return statusKr;
     }
@@ -181,15 +180,13 @@ kern_return_t IMPL(ASFWDriver, Start) {
     if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
 
     if (!ctx.deps.irmClient) {
-        ctx.deps.irmClient = std::shared_ptr<ASFW::IRM::IRMClient>(
-            new ASFW::IRM::IRMClient(ctx.controller->Bus()));
+        ctx.deps.irmClient = std::make_shared<ASFW::IRM::IRMClient>(ctx.controller->Bus());
         ctx.controller->SetIRMClient(ctx.deps.irmClient);
         ASFW_LOG(Controller, "✅ IRMClient initialized");
     }
     
     if (!ctx.deps.cmpClient) {
-        ctx.deps.cmpClient = std::shared_ptr<ASFW::CMP::CMPClient>(
-            new ASFW::CMP::CMPClient(ctx.controller->Bus()));
+        ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus());
         ctx.controller->SetCMPClient(ctx.deps.cmpClient);
         ASFW_LOG(Controller, "✅ CMPClient initialized");
     }
@@ -422,8 +419,8 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 }
 
-void ASFWDriver::RegisterStatusListener(OSObject* client) {
-    auto* clientObj = OSDynamicCast(ASFWDriverUserClient, client);
+void ASFWDriver::RegisterStatusListener(const OSObject* client) {
+    auto* clientObj = OSDynamicCast(ASFWDriverUserClient, const_cast<OSObject*>(client));
     if (!clientObj || !ivars || !ivars->context) {
         return;
     }
@@ -435,8 +432,8 @@ void ASFWDriver::RegisterStatusListener(OSObject* client) {
                                 SharedStatusReason::Manual);
 }
 
-void ASFWDriver::UnregisterStatusListener(OSObject* client) {
-    auto* clientObj = OSDynamicCast(ASFWDriverUserClient, client);
+void ASFWDriver::UnregisterStatusListener(const OSObject* client) {
+    auto* clientObj = OSDynamicCast(ASFWDriverUserClient, const_cast<OSObject*>(client));
     if (!clientObj || !ivars || !ivars->context) {
         return;
     }
@@ -445,7 +442,7 @@ void ASFWDriver::UnregisterStatusListener(OSObject* client) {
 }
 
 kern_return_t ASFWDriver::CopySharedStatusMemory(uint64_t* options,
-                                                 IOMemoryDescriptor** memory) {
+                                                 IOMemoryDescriptor** memory) const {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
     }
@@ -454,27 +451,42 @@ kern_return_t ASFWDriver::CopySharedStatusMemory(uint64_t* options,
 }
 
 // Runtime logging configuration methods
-kern_return_t ASFWDriver::SetAsyncVerbosity(uint32_t level) {
+kern_return_t ASFWDriver::SetAsyncVerbosity(uint32_t level) const {
     ASFW_LOG_INFO(Controller, "UserClient: Setting async verbosity to %u", level);
     ASFW::LogConfig::Shared().SetAsyncVerbosity(static_cast<uint8_t>(level));
     return kIOReturnSuccess;
 }
 
-kern_return_t ASFWDriver::SetHexDumps(uint32_t enabled) {
+kern_return_t ASFWDriver::SetIsochVerbosity(uint32_t level) const {
+    ASFW_LOG_INFO(Controller, "UserClient: Setting isoch verbosity to %u", level);
+    ASFW::LogConfig::Shared().SetIsochVerbosity(static_cast<uint8_t>(level));
+    return kIOReturnSuccess;
+}
+
+kern_return_t ASFWDriver::SetHexDumps(uint32_t enabled) const {
     ASFW_LOG_INFO(Controller, "UserClient: Setting hex dumps to %{public}s", enabled ? "enabled" : "disabled");
     ASFW::LogConfig::Shared().SetHexDumps(enabled != 0);
     return kIOReturnSuccess;
 }
 
+kern_return_t ASFWDriver::SetIsochTxVerifier(uint32_t enabled) const {
+    ASFW_LOG_INFO(Controller, "UserClient: Setting isoch TX verifier to %{public}s",
+                  enabled ? "enabled" : "disabled");
+    ASFW::LogConfig::Shared().SetIsochTxVerifierEnabled(enabled != 0);
+    return kIOReturnSuccess;
+}
+
 kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity,
-                                      uint32_t* hexDumpsEnabled) {
-    if (!asyncVerbosity || !hexDumpsEnabled) {
+                                      uint32_t* hexDumpsEnabled,
+                                      uint32_t* isochVerbosity) const {
+    if (!asyncVerbosity || !hexDumpsEnabled || !isochVerbosity) {
         return kIOReturnBadArgument;
     }
     *asyncVerbosity = ASFW::LogConfig::Shared().GetAsyncVerbosity();
     *hexDumpsEnabled = ASFW::LogConfig::Shared().IsHexDumpsEnabled() ? 1 : 0;
-    ASFW_LOG_INFO(Controller, "UserClient: Reading log configuration (Async=%u, HexDumps=%d)",
-                  *asyncVerbosity, *hexDumpsEnabled);
+    *isochVerbosity = ASFW::LogConfig::Shared().GetIsochVerbosity();
+    ASFW_LOG_INFO(Controller, "UserClient: Reading log configuration (Async=%u, Isoch=%u, HexDumps=%d)",
+                  *asyncVerbosity, *isochVerbosity, *hexDumpsEnabled);
     return kIOReturnSuccess;
 }
 

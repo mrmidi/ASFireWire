@@ -37,6 +37,9 @@ public:
     /// @return 16-bit SYT value
     [[nodiscard]] uint16_t computeDataSYT(uint32_t transmitCycle) noexcept;
 
+    /// Apply a small signed offset correction in 16-cycle tick domain.
+    void nudgeOffsetTicks(int32_t deltaTicks) noexcept;
+
     /// SYT value meaning "no timestamp information"
     static constexpr uint16_t kNoInfo = 0xFFFF;
 

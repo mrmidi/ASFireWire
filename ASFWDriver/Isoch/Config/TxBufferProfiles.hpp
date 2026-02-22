@@ -19,6 +19,8 @@ struct TxBufferProfile {
     uint32_t legacyRbTargetFrames;
     uint32_t legacyRbMaxFrames;
     uint32_t legacyMaxChunksPerRefill;
+    uint32_t safetyOffsetFrames;         // 2A: HAL safety offset (frames)
+    uint32_t minPrimeDataPackets;        // 2B: Minimum DATA packets after PrimeRing
 };
 
 inline constexpr uint32_t kSharedTxQueueCapacityFrames = 4096;
@@ -30,7 +32,9 @@ inline constexpr TxBufferProfile kTxProfileA{
     512,   // startupPrimeLimitFrames
     512,   // legacyRbTargetFrames
     768,   // legacyRbMaxFrames
-    6      // legacyMaxChunksPerRefill
+    6,     // legacyMaxChunksPerRefill
+    64,    // safetyOffsetFrames (2A)
+    48     // minPrimeDataPackets (2B)
 };
 
 inline constexpr TxBufferProfile kTxProfileB{
@@ -39,7 +43,9 @@ inline constexpr TxBufferProfile kTxProfileB{
     0,     // startupPrimeLimitFrames (unbounded)
     1024,  // legacyRbTargetFrames
     1536,  // legacyRbMaxFrames
-    8      // legacyMaxChunksPerRefill
+    8,     // legacyMaxChunksPerRefill
+    96,    // safetyOffsetFrames (2A)
+    48     // minPrimeDataPackets (2B)
 };
 
 inline constexpr TxBufferProfile kTxProfileC{
@@ -48,14 +54,17 @@ inline constexpr TxBufferProfile kTxProfileC{
     256,   // startupPrimeLimitFrames
     256,   // legacyRbTargetFrames
     384,   // legacyRbMaxFrames
-    4      // legacyMaxChunksPerRefill
+    4,     // legacyMaxChunksPerRefill
+    32,    // safetyOffsetFrames (2A)
+    48     // minPrimeDataPackets (2B)
 };
 
 constexpr bool IsValidProfile(const TxBufferProfile& profile) noexcept {
     return profile.startWaitTargetFrames > 0 &&
            profile.legacyRbTargetFrames > 0 &&
            profile.legacyRbTargetFrames <= profile.legacyRbMaxFrames &&
-           profile.legacyMaxChunksPerRefill > 0;
+           profile.legacyMaxChunksPerRefill > 0 &&
+           profile.safetyOffsetFrames > 0;
 }
 
 static_assert(IsValidProfile(kTxProfileA), "Profile A is invalid");

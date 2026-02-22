@@ -59,6 +59,8 @@ enum {
     kMethodReScanAVCUnits          = 25,
     kMethodSendRawFCPCommand       = 38,
     kMethodGetRawFCPCommandResult  = 39,
+    kMethodSetIsochVerbosity       = 40,
+    kMethodSetIsochTxVerifier      = 41,
     // TODO: IRM test method - temporary location for Phase 0.5 testing
     kMethodTestIRMAllocation       = 26,
     kMethodTestIRMRelease          = 27,
@@ -393,13 +395,21 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
             return kIOReturnSuccess;
         }
 
-        // Logging configuration (19, 20, 21)
+        // Logging configuration (19, 20, 21, 40)
         case kMethodSetAsyncVerbosity: {
             if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
                 return kIOReturnBadArgument;
             }
             uint32_t level = static_cast<uint32_t>(arguments->scalarInput[0]);
             return ivars->driver->SetAsyncVerbosity(level);
+        }
+
+        case kMethodSetIsochVerbosity: {
+            if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t level = static_cast<uint32_t>(arguments->scalarInput[0]);
+            return ivars->driver->SetIsochVerbosity(level);
         }
 
         case kMethodSetHexDumps: {
@@ -410,17 +420,35 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
             return ivars->driver->SetHexDumps(enabled);
         }
 
+        case kMethodSetIsochTxVerifier: {
+            if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
+            return ivars->driver->SetIsochTxVerifier(enabled);
+        }
+
         case kMethodGetLogConfig: {
-            if (!arguments->scalarOutput) {
+            if (!arguments->scalarOutput || arguments->scalarOutputCount < 2) {
                 return kIOReturnBadArgument;
             }
             uint32_t asyncVerbosity = 0;
             uint32_t hexDumpsEnabled = 0;
-            kern_return_t kr = ivars->driver->GetLogConfig(&asyncVerbosity, &hexDumpsEnabled);
+            uint32_t isochVerbosity = 0;
+            kern_return_t kr = ivars->driver->GetLogConfig(&asyncVerbosity, &hexDumpsEnabled, &isochVerbosity);
             if (kr == kIOReturnSuccess) {
                 arguments->scalarOutput[0] = asyncVerbosity;
                 arguments->scalarOutput[1] = hexDumpsEnabled;
-                arguments->scalarOutputCount = 2;
+                if (arguments->scalarOutputCount >= 4) {
+                    arguments->scalarOutput[2] = isochVerbosity;
+                    arguments->scalarOutput[3] = ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled() ? 1 : 0;
+                    arguments->scalarOutputCount = 4;
+                } else if (arguments->scalarOutputCount >= 3) {
+                    arguments->scalarOutput[2] = isochVerbosity;
+                    arguments->scalarOutputCount = 3;
+                } else {
+                    arguments->scalarOutputCount = 2;
+                }
             }
             return kr;
         }

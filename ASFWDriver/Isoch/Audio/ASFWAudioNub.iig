@@ -19,6 +19,9 @@
 #include <DriverKit/OSString.iig>
 #include <DriverKit/OSArray.iig>
 #include <atomic>
+#include <cstdint>
+
+class ASFWDriver;
 
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
 // Properties set by ASFWDriver:
@@ -50,15 +53,15 @@ public:
         uint64_t* outBytes);
 
     // LOCALONLY methods for ASFWDriver-side access (same process)
-    void* GetParentDriver() const LOCALONLY;
+    ASFWDriver* GetParentDriver() const LOCALONLY;
 
     // Get the local mapping of the TX queue for IT context to consume
-    void* GetTxQueueLocalMapping() const LOCALONLY;
+    uint8_t* GetTxQueueLocalMapping() const LOCALONLY;
     uint64_t GetTxQueueBytes() const LOCALONLY;
 
     // ZERO-COPY: Get the local mapping of output audio buffer for IT DMA
     // This is the same memory that IOUserAudioStream writes to
-    void* GetOutputAudioLocalMapping() const LOCALONLY;
+    uint8_t* GetOutputAudioLocalMapping() const LOCALONLY;
     uint64_t GetOutputAudioBytes() const LOCALONLY;
     uint32_t GetOutputAudioFrameCapacity() const LOCALONLY;
     
@@ -84,9 +87,24 @@ public:
         uint64_t* outBytes);
 
     // LOCALONLY methods for controller-side RX queue access (same process)
-    void* GetRxQueueLocalMapping() const LOCALONLY;
+    uint8_t* GetRxQueueLocalMapping() const LOCALONLY;
     uint64_t GetRxQueueBytes() const LOCALONLY;
     void EnsureRxQueueCreated() LOCALONLY;
+
+    // Device identity for protocol bridge routing
+    void SetGuid(uint64_t guid) LOCALONLY;
+    uint64_t GetGuid() const LOCALONLY;
+
+    // RPC protocol-backed boolean control bridge (AudioDriver -> ASFWDriver process)
+    virtual kern_return_t GetProtocolBooleanControl(
+        uint32_t classIdFourCC,
+        uint32_t element,
+        bool* outValue);
+
+    virtual kern_return_t SetProtocolBooleanControl(
+        uint32_t classIdFourCC,
+        uint32_t element,
+        bool value);
 };
 
 struct ASFWAudioNub_IVars {
@@ -96,6 +114,7 @@ struct ASFWAudioNub_IVars {
     uint64_t txQueueBytes;                // Size of shared memory
 
     // Audio channel count (read from ASFWDriver properties)
+    uint64_t guid{0};
     uint32_t channelCount{2};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
 

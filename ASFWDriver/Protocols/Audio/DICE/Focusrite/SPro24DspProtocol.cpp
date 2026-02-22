@@ -38,27 +38,32 @@ void FloatToWire(float value, uint8_t* data) {
 
 CompressorState CompressorState::FromWire(const uint8_t* data) {
     CompressorState s;
-    
+
+    // Per Linux reference (spro24dsp.rs), quad 0 (offset 0x00) is reserved
+    // (always 0x3f800000 = 1.0f). Actual coefficients start at offset 0x04.
     for (size_t ch = 0; ch < 2; ++ch) {
         const uint8_t* block = data + ch * kCoefBlockSize;
-        s.output[ch]    = FloatFromWire(block + 0x00);
-        s.threshold[ch] = FloatFromWire(block + 0x04);
-        s.ratio[ch]     = FloatFromWire(block + 0x08);
-        s.attack[ch]    = FloatFromWire(block + 0x0C);
-        s.release[ch]   = FloatFromWire(block + 0x10);
+        s.output[ch]    = FloatFromWire(block + 0x04);
+        s.threshold[ch] = FloatFromWire(block + 0x08);
+        s.ratio[ch]     = FloatFromWire(block + 0x0C);
+        s.attack[ch]    = FloatFromWire(block + 0x10);
+        s.release[ch]   = FloatFromWire(block + 0x14);
     }
-    
+
     return s;
 }
 
 void CompressorState::ToWire(uint8_t* data) const {
+    // Per Linux reference (spro24dsp.rs), quad 0 (offset 0x00) is reserved.
+    // Write 1.0f to the reserved field, then actual coefficients at 0x04+.
     for (size_t ch = 0; ch < 2; ++ch) {
         uint8_t* block = data + ch * kCoefBlockSize;
-        FloatToWire(output[ch],    block + 0x00);
-        FloatToWire(threshold[ch], block + 0x04);
-        FloatToWire(ratio[ch],     block + 0x08);
-        FloatToWire(attack[ch],    block + 0x0C);
-        FloatToWire(release[ch],   block + 0x10);
+        FloatToWire(1.0f,          block + 0x00);  // reserved (always 1.0)
+        FloatToWire(output[ch],    block + 0x04);
+        FloatToWire(threshold[ch], block + 0x08);
+        FloatToWire(ratio[ch],     block + 0x0C);
+        FloatToWire(attack[ch],    block + 0x10);
+        FloatToWire(release[ch],   block + 0x14);
     }
 }
 
@@ -97,25 +102,34 @@ void ReverbState::ToWire(uint8_t* data) const {
 EffectGeneralParams EffectGeneralParams::FromWire(const uint8_t* data) {
     EffectGeneralParams p;
     uint32_t flags = DICETransaction::QuadletFromWire(data);
-    
-    p.eqAfterComp[0] = (flags & 0x01) != 0;
-    p.eqAfterComp[1] = (flags & 0x02) != 0;
-    p.compEnable[0]  = (flags & 0x04) != 0;
-    p.compEnable[1]  = (flags & 0x08) != 0;
-    p.eqEnable[0]    = (flags & 0x10) != 0;
-    p.eqEnable[1]    = (flags & 0x20) != 0;
-    
+
+    // Two-half-word layout per Linux reference (spro24dsp.rs):
+    //   Ch0 in bits  0-2:  bit0 = EQ enable, bit1 = Comp enable, bit2 = EQ after comp
+    //   Ch1 in bits 16-18: bit16= EQ enable, bit17= Comp enable, bit18= EQ after comp
+    for (size_t ch = 0; ch < 2; ++ch) {
+        uint16_t chFlags = static_cast<uint16_t>(flags >> (ch * 16));
+        p.eqEnable[ch]    = (chFlags & 0x0001) != 0;
+        p.compEnable[ch]  = (chFlags & 0x0002) != 0;
+        p.eqAfterComp[ch] = (chFlags & 0x0004) != 0;
+    }
+
     return p;
 }
 
 void EffectGeneralParams::ToWire(uint8_t* data) const {
     uint32_t flags = 0;
-    if (eqAfterComp[0]) flags |= 0x01;
-    if (eqAfterComp[1]) flags |= 0x02;
-    if (compEnable[0])  flags |= 0x04;
-    if (compEnable[1])  flags |= 0x08;
-    if (eqEnable[0])    flags |= 0x10;
-    if (eqEnable[1])    flags |= 0x20;
+
+    // Two-half-word layout per Linux reference (spro24dsp.rs):
+    //   Ch0 in bits  0-2:  bit0 = EQ enable, bit1 = Comp enable, bit2 = EQ after comp
+    //   Ch1 in bits 16-18: bit16= EQ enable, bit17= Comp enable, bit18= EQ after comp
+    for (size_t ch = 0; ch < 2; ++ch) {
+        uint16_t chFlags = 0;
+        if (eqEnable[ch])    chFlags |= 0x0001;
+        if (compEnable[ch])  chFlags |= 0x0002;
+        if (eqAfterComp[ch]) chFlags |= 0x0004;
+        flags |= static_cast<uint32_t>(chFlags) << (ch * 16);
+    }
+
     DICETransaction::QuadletToWire(flags, data);
 }
 
@@ -279,7 +293,15 @@ void SPro24DspProtocol::SetCompressorState(const CompressorState& state, VoidCal
             callback(status);
             return;
         }
-        SendSwNotice(SwNotice::CoefChanged, callback);
+        // Per Linux reference (spro24dsp.rs lines 770-771): send BOTH
+        // CompCh0 and CompCh1 SW notices after compressor state write.
+        SendSwNotice(SwNotice::CompCh0, [this, callback](IOReturn s1) {
+            if (s1 != kIOReturnSuccess) {
+                callback(s1);
+                return;
+            }
+            SendSwNotice(SwNotice::CompCh1, callback);
+        });
     });
 }
 
@@ -304,7 +326,8 @@ void SPro24DspProtocol::SetReverbState(const ReverbState& state, VoidCallback ca
             callback(status);
             return;
         }
-        SendSwNotice(SwNotice::CoefChanged, callback);
+        // Per Linux reference: REVERB_SW_NOTICE = 0x1A
+        SendSwNotice(SwNotice::Reverb, callback);
     });
 }
 

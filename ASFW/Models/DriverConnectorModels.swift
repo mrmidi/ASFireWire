@@ -187,8 +187,8 @@ struct DriverConnectorAVCUnitInfo: Identifiable {
     let id = UUID()
     let guid: UInt64
     let nodeID: UInt16
-    let vendorID: UInt16
-    let modelID: UInt16
+    let vendorID: UInt32
+    let modelID: UInt32
     let subunits: [DriverConnectorAVCSubunitInfo]
     
     // Unit-level plug counts (from AVCUnitPlugInfoCommand)

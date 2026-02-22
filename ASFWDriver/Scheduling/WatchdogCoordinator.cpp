@@ -9,6 +9,7 @@
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Isoch/IsochReceiveContext.hpp"
 #include "../Isoch/Transmit/IsochTransmitContext.hpp"
+#include "../Logging/LogConfig.hpp"
 
 namespace ASFW::Driver {
 namespace {
@@ -107,8 +108,10 @@ void WatchdogCoordinator::HandleTick(ControllerCore* controller,
         if (++isochLogDivider_ >= 500) {
             isochLogDivider_ = 0;
             if (isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
-                isochReceiveContext->GetStreamProcessor().LogStatistics();
-                isochReceiveContext->LogHardwareState();
+                if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
+                    isochReceiveContext->GetStreamProcessor().LogStatistics();
+                    isochReceiveContext->LogHardwareState();
+                }
             }
         }
     }
@@ -116,6 +119,8 @@ void WatchdogCoordinator::HandleTick(ControllerCore* controller,
     if (isochTransmitContext) {
         if (isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running) {
             isochTransmitContext->Poll();
+            isochTransmitContext->ServiceTxRecovery();
+            isochTransmitContext->KickTxVerifier();
         }
         if (++itLogDivider_ >= 1000) {
             itLogDivider_ = 0;

@@ -50,16 +50,19 @@ public:
                                          uint64_t time)
         TYPE(IOTimerDispatchSource::TimerOccurred);
 
-    void RegisterStatusListener(OSObject* client) LOCALONLY;
-    void UnregisterStatusListener(OSObject* client) LOCALONLY;
+    void RegisterStatusListener(const OSObject* client) LOCALONLY;
+    void UnregisterStatusListener(const OSObject* client) LOCALONLY;
     kern_return_t CopySharedStatusMemory(uint64_t* options,
-                                         IOMemoryDescriptor** memory) LOCALONLY;
+                                         IOMemoryDescriptor** memory) const LOCALONLY;
 
     // Runtime logging configuration
-    kern_return_t SetAsyncVerbosity(uint32_t level) LOCALONLY;
-    kern_return_t SetHexDumps(uint32_t enabled) LOCALONLY;
+    kern_return_t SetAsyncVerbosity(uint32_t level) const LOCALONLY;
+    kern_return_t SetIsochVerbosity(uint32_t level) const LOCALONLY;
+    kern_return_t SetHexDumps(uint32_t enabled) const LOCALONLY;
+    kern_return_t SetIsochTxVerifier(uint32_t enabled) const LOCALONLY;
     kern_return_t GetLogConfig(uint32_t* asyncVerbosity,
-                              uint32_t* hexDumpsEnabled) LOCALONLY;
+                              uint32_t* hexDumpsEnabled,
+                              uint32_t* isochVerbosity) const LOCALONLY;
 
     // Isochronous Receive Control
     kern_return_t StartIsochReceive(uint8_t channel) LOCALONLY;

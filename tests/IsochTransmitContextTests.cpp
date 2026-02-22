@@ -9,8 +9,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <vector>
 
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
+#include "../ASFWDriver/Shared/TxSharedQueue.hpp"
 
 using namespace ASFW::Isoch;
 using namespace ASFW::Encoding;
@@ -18,6 +20,65 @@ using namespace ASFW::Encoding;
 TEST(IsochTransmitContext, InitialStateIsUnconfigured) {
     IsochTransmitContext ctx;
     EXPECT_EQ(ctx.GetState(), ITState::Unconfigured);
+}
+
+TEST(IsochTransmitContext, ConfigureSucceedsWithQueueChannelMetadata) {
+    constexpr uint32_t kQueueChannels = 6;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochTransmitContext ctx;
+    ctx.SetSharedTxQueue(storage.data(), bytes);
+
+    EXPECT_EQ(ctx.Configure(/*channel=*/0, /*sid=*/0x3F, /*streamModeRaw=*/0, /*requestedChannels=*/kQueueChannels),
+              kIOReturnSuccess);
+    EXPECT_EQ(ctx.GetState(), ITState::Configured);
+}
+
+TEST(IsochTransmitContext, ConfigureFailsOnRequestedChannelMismatch) {
+    constexpr uint32_t kQueueChannels = 4;
+    constexpr uint32_t kRequestedChannels = 6;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochTransmitContext ctx;
+    ctx.SetSharedTxQueue(storage.data(), bytes);
+
+    EXPECT_EQ(ctx.Configure(/*channel=*/0, /*sid=*/0x3F, /*streamModeRaw=*/0, /*requestedChannels=*/kRequestedChannels),
+              kIOReturnBadArgument);
+}
+
+TEST(IsochTransmitContext, ConfigureFailsOnInvalidQueueChannelValue) {
+    constexpr uint32_t kQueueChannels = 2;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochTransmitContext ctx;
+    ctx.SetSharedTxQueue(storage.data(), bytes);
+
+    auto* hdr = reinterpret_cast<ASFW::Shared::TxQueueHeader*>(storage.data());
+    hdr->channels = 0;
+
+    EXPECT_EQ(ctx.Configure(/*channel=*/0, /*sid=*/0x3F, /*streamModeRaw=*/0, /*requestedChannels=*/kQueueChannels),
+              kIOReturnBadArgument);
 }
 
 TEST(IsochTransmitContext, BlockingCadenceCountsMatchOneSecond) {

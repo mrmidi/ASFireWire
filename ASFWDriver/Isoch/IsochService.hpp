@@ -10,6 +10,7 @@
 #endif
 
 #include "IsochReceiveContext.hpp"
+#include "Core/ExternalSyncBridge.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 
 namespace ASFW {
@@ -57,6 +58,7 @@ public:
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
 private:
+    ASFW::Isoch::Core::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
 };
