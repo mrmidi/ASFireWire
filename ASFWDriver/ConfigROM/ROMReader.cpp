@@ -346,10 +346,16 @@ void ROMReader::ReadRootDirQuadlets(uint8_t nodeId,
             if (ctx->headerFirstMode && ctx->quadletIndex == 1) {
                 const uint32_t hdr_be = ctx->buffer[0];
                 const uint32_t hdr    = BE32_TO_HOST(hdr_be);
-                const uint16_t entryCount = static_cast<uint16_t>(hdr & 0xFFFF);
+                uint16_t entryCount = static_cast<uint16_t>((hdr >> 16) & 0xFFFFu);
                 ASFW_LOG_V3(ConfigROM, "RootDir header parsed: entries=%u (hdr=0x%08x)", entryCount, hdr);
 
                 if (entryCount > 0) {
+                    // Safety cap: never auto-read more than 64 entries.
+                    if (entryCount > 64) {
+                        ASFW_LOG_V2(ConfigROM, "RootDir headerFirst cap: entries=%u → 64", entryCount);
+                        entryCount = 64;
+                    }
+
                     const uint32_t total = 1u + static_cast<uint32_t>(entryCount);
                     ctx->buffer.resize(total, 0);
                     ctx->quadletCount = total;

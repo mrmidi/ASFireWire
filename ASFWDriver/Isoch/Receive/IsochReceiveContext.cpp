@@ -72,7 +72,7 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextInd
 
     audio_.ConfigureFor48k();
 
-    return ring_.SetupRings(*dmaMemory_, kNumDescriptors, kMaxPacketSize);
+    return rxRing_.SetupRings(*dmaMemory_, kNumDescriptors, kMaxPacketSize);
 }
 
 // ============================================================================
@@ -92,7 +92,7 @@ kern_return_t IsochReceiveContext::Start() {
     const uint32_t contextMatch = 0xF0000000 | (channel_ & 0x3F);
     hardware_->Write(registers_.ContextMatch, contextMatch);
 
-    const uint32_t cmdPtr = ring_.InitialCommandPtrWord();
+    const uint32_t cmdPtr = rxRing_.InitialCommandPtrWord();
     if (cmdPtr == 0) {
         ASFW_LOG(Isoch, "❌ Start: Invalid descriptor cmdPtr");
         return kIOReturnInternalError;
@@ -125,7 +125,7 @@ kern_return_t IsochReceiveContext::Start() {
 
     Transition(IRPolicy::State::Running, 0, "Start");
 
-    ring_.ResetForStart();
+    rxRing_.ResetForStart();
     audio_.OnStart();
 
     rxLock_.clear(std::memory_order_release);
@@ -166,7 +166,7 @@ uint32_t IsochReceiveContext::Poll() {
 
     const uint64_t start = mach_absolute_time();
 
-    const uint32_t processed = ring_.DrainCompleted(*dmaMemory_, [&](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
+    const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [&](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         if (pkt.payload) {
             audio_.OnPacket(pkt.payload, pkt.actualLength);
         }
@@ -197,7 +197,7 @@ void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
 
 void IsochReceiveContext::LogHardwareState() {
 #if 0
-    // Keep disabled unless troubleshooting; should be reimplemented using ring_ accessors.
+    // Keep disabled unless troubleshooting; should be reimplemented using rxRing_ accessors.
 #endif
 }
 

@@ -18,7 +18,7 @@ std::vector<uint32_t> LoadSequenceArray(std::string_view arrayName) {
     std::vector<uint32_t> words;
     std::string error;
     bool ok = ASFW::Tests::LoadHexArrayFromRepoFile(
-        "firewire/self-id-sequence-helper-test.c", arrayName, words, &error);
+        "FirWireDriver/firewire/self-id-sequence-helper-test.c", arrayName, words, &error);
     if (!ok) {
         ADD_FAILURE() << "Failed to load array '" << arrayName << "': " << error;
     }

@@ -49,10 +49,24 @@ struct LinkPolicy {
 // Located at address 0xFFFFF0000400 (20 bytes)
 // IEEE 1394-1995 §8.3.2: BIB[0]=header, BIB[1]="1394", BIB[2]=capabilities, BIB[3:4]=GUID
 struct BusInfoBlock {
-    uint8_t crcLength{0};        // Low 8 bits of BIB[0]
-    uint8_t infoVersion{0};      // Bits 23:16 of BIB[0]
-    uint8_t linkSpeedCode{0};    // Bits 31:28 of BIB[0]
-    uint32_t vendorId{0};        // NOT from BIB! Populated from root directory (key 0x03)
+    // BIB header quadlet (quadlet 0) - IEEE 1212
+    uint8_t busInfoLength{0};    // [31:24] quadlets following header in BIB
+    uint8_t crcLength{0};        // [23:16] quadlets covered by CRC (starting at quadlet 1)
+    uint16_t crc{0};             // [15:0] CRC-16 value
+
+    // BIB bus options quadlet (quadlet 2) - TA 1999027
+    bool irmc{false};
+    bool cmc{false};
+    bool isc{false};
+    bool bmc{false};
+    bool pmc{false};
+
+    uint8_t cycClkAcc{0};        // [23:16]
+    uint8_t maxRec{0};           // [15:12]
+    uint8_t maxRom{0};           // [9:8]
+    uint8_t generation{0};       // [7:4]
+    uint8_t linkSpd{0};          // [2:0]
+
     uint64_t guid{0};            // BIB[3:4] - Global unique identifier (64-bit)
 };
 
@@ -73,7 +87,20 @@ struct RomEntry {
     CfgKey key;
     uint32_t value;
     uint8_t entryType{0};  // 0=immediate, 1=CSR offset, 2=leaf, 3=directory
-    uint32_t leafOffsetQuadlets{0};  // Absolute ROM offset in quadlets (for leaf/dir entries)
+    uint32_t leafOffsetQuadlets{0};  // Target offset (quadlets) relative to directory header (for leaf/dir entries)
+};
+
+struct UnitDirectory {
+    // Offset in quadlets relative to the start of the root directory (header quadlet).
+    uint32_t offsetQuadlets{0};
+
+    // IEEE 1212 immediate fields are 24-bit values carried in a 32-bit container (0x00XXXXXX).
+    uint32_t unitSpecId{0};
+    uint32_t unitSwVersion{0};
+
+    std::optional<uint32_t> logicalUnitNumber;
+    std::optional<uint32_t> modelId;
+    std::optional<std::string> modelName;
 };
 
 // ROM lifecycle state (matching Apple IOFireWireROMCache patterns)
@@ -85,7 +112,7 @@ enum class ROMState : uint8_t {
 };
 
 // Parsed Config ROM (immutable snapshot per generation)
-// All quadlets are stored in HOST byte order after swapping from wire (big-endian)
+// NOTE: rawQuadlets is stored in BIG-ENDIAN wire order (byte-exact for GUI export).
 struct ConfigROM {
     Generation gen{0};
     uint16_t nodeId{0xFFFF};
@@ -97,6 +124,9 @@ struct ConfigROM {
     // Text descriptors from ROM leafs (vendor/model names)
     std::string vendorName;
     std::string modelName;
+
+    // Parsed Unit_Directory blocks (IEEE 1212 / TA 1999027)
+    std::vector<UnitDirectory> unitDirectories;
 
     // Raw ROM quadlets for debugging/GUI export (bounded)
     std::vector<uint32_t> rawQuadlets;
@@ -151,8 +181,8 @@ struct DeviceRecord {
     bool supportsAMDTP{false};       // Inferred from spec/version combos
 
     // ---- Optional metadata ----
-    std::optional<uint8_t> unitSpecId;
-    std::optional<uint8_t> unitSwVersion;
+    std::optional<uint32_t> unitSpecId;
+    std::optional<uint32_t> unitSwVersion;
     
     // ---- Device-specific protocol handler (for DICE, etc.) ----
     std::shared_ptr<Audio::IDeviceProtocol> protocol;
@@ -181,4 +211,3 @@ struct ROMScannerParams {
 };
 
 } // namespace ASFW::Discovery
-

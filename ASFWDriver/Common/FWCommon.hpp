@@ -411,17 +411,185 @@ namespace ConfigKey {
 }
 
 // ============================================================================
-// Bus Info Block (BIB) Bit Field Masks
+// Config ROM Header + Bus Info Block (IEEE 1212 + TA 1999027)
 // ============================================================================
 
-namespace BIBFields {
-    inline constexpr uint32_t kLinkSpeedMask  = 0xE0000000u; // bits 29:31
-    inline constexpr uint8_t  kLinkSpeedShift = 29;
-    inline constexpr uint32_t kMaxRecMask     = 0x000F0000u; // bits 16:19
-    inline constexpr uint8_t  kMaxRecShift    = 16;
-    inline constexpr uint32_t kGenerationMask = 0x0F000000u; // bits 24:27
-    inline constexpr uint8_t  kGenerationShift = 24;
+/**
+ * Config ROM quadlet 0 (header) field masks.
+ *
+ * Layout (host numeric after BE->host swap):
+ *   [31:24] bus_info_length  (quadlets following header in BIB)
+ *   [23:16] crc_length       (quadlets covered by CRC, starting at quadlet 1)
+ *   [15:0]  crc              (CRC-16 of quadlets 1..crc_length)
+ */
+namespace ConfigROMHeaderFields {
+    inline constexpr uint32_t kBusInfoLengthShift = 24;
+    inline constexpr uint32_t kBusInfoLengthMask  = 0xFF000000u;
+
+    inline constexpr uint32_t kCRCLengthShift     = 16;
+    inline constexpr uint32_t kCRCLengthMask      = 0x00FF0000u;
+
+    inline constexpr uint32_t kCRCMask            = 0x0000FFFFu;
 }
+
+/**
+ * Bus options quadlet (BIB quadlet 2) field masks.
+ *
+ * This matches TA 1999027 Annex C sample bus options bytes: E0 64 61 02 (0xE0646102).
+ *
+ * Layout (host numeric after BE->host swap):
+ *   [31]    irmc
+ *   [30]    cmc
+ *   [29]    isc
+ *   [28]    bmc
+ *   [27]    pmc
+ *   [23:16] cyc_clk_acc
+ *   [15:12] max_rec
+ *   [11:10] reserved
+ *   [9:8]   max_ROM
+ *   [7:4]   generation
+ *   [3]     reserved
+ *   [2:0]   link_spd
+ */
+namespace BusOptionsFields {
+    // Capability bits (MSB side)
+    inline constexpr uint32_t kIRMCMask = 0x80000000u;
+    inline constexpr uint32_t kCMCMask  = 0x40000000u;
+    inline constexpr uint32_t kISCMask  = 0x20000000u;
+    inline constexpr uint32_t kBMCMask  = 0x10000000u;
+    inline constexpr uint32_t kPMCMask  = 0x08000000u;
+
+    // CycClkAcc (8-bit)
+    inline constexpr uint32_t kCycClkAccShift = 16;
+    inline constexpr uint32_t kCycClkAccMask  = 0x00FF0000u;
+
+    // MaxRec (4-bit)
+    inline constexpr uint32_t kMaxRecShift    = 12;
+    inline constexpr uint32_t kMaxRecMask     = 0x0000F000u;
+
+    // Reserved [11:10]
+    inline constexpr uint32_t kReserved11_10Mask = 0x00000C00u;
+
+    // MaxROM (2-bit)
+    inline constexpr uint32_t kMaxROMShift    = 8;
+    inline constexpr uint32_t kMaxROMMask     = 0x00000300u;
+
+    // Generation (4-bit)
+    inline constexpr uint32_t kGenerationShift = 4;
+    inline constexpr uint32_t kGenerationMask  = 0x000000F0u;
+
+    // Reserved [3]
+    inline constexpr uint32_t kReserved3Mask   = 0x00000008u;
+
+    // Link speed code (3-bit)
+    inline constexpr uint32_t kLinkSpdShift    = 0;
+    inline constexpr uint32_t kLinkSpdMask     = 0x00000007u;
+}
+
+struct BusOptionsDecoded {
+    bool irmc{false};
+    bool cmc{false};
+    bool isc{false};
+    bool bmc{false};
+    bool pmc{false};
+
+    uint8_t cycClkAcc{0};
+    uint8_t maxRec{0};
+    uint8_t maxRom{0};
+    uint8_t generation{0};
+    uint8_t linkSpd{0};
+};
+
+[[nodiscard]] constexpr BusOptionsDecoded DecodeBusOptions(uint32_t busOptionsHost) noexcept {
+    BusOptionsDecoded out{};
+    out.irmc = (busOptionsHost & BusOptionsFields::kIRMCMask) != 0;
+    out.cmc  = (busOptionsHost & BusOptionsFields::kCMCMask) != 0;
+    out.isc  = (busOptionsHost & BusOptionsFields::kISCMask) != 0;
+    out.bmc  = (busOptionsHost & BusOptionsFields::kBMCMask) != 0;
+    out.pmc  = (busOptionsHost & BusOptionsFields::kPMCMask) != 0;
+
+    out.cycClkAcc  = static_cast<uint8_t>((busOptionsHost & BusOptionsFields::kCycClkAccMask) >> BusOptionsFields::kCycClkAccShift);
+    out.maxRec     = static_cast<uint8_t>((busOptionsHost & BusOptionsFields::kMaxRecMask) >> BusOptionsFields::kMaxRecShift);
+    out.maxRom     = static_cast<uint8_t>((busOptionsHost & BusOptionsFields::kMaxROMMask) >> BusOptionsFields::kMaxROMShift);
+    out.generation = static_cast<uint8_t>((busOptionsHost & BusOptionsFields::kGenerationMask) >> BusOptionsFields::kGenerationShift);
+    out.linkSpd    = static_cast<uint8_t>((busOptionsHost & BusOptionsFields::kLinkSpdMask) >> BusOptionsFields::kLinkSpdShift);
+    return out;
+}
+
+[[nodiscard]] constexpr uint32_t EncodeBusOptions(const BusOptionsDecoded& in) noexcept {
+    uint32_t out = 0;
+    if (in.irmc) out |= BusOptionsFields::kIRMCMask;
+    if (in.cmc)  out |= BusOptionsFields::kCMCMask;
+    if (in.isc)  out |= BusOptionsFields::kISCMask;
+    if (in.bmc)  out |= BusOptionsFields::kBMCMask;
+    if (in.pmc)  out |= BusOptionsFields::kPMCMask;
+
+    out |= (static_cast<uint32_t>(in.cycClkAcc) << BusOptionsFields::kCycClkAccShift) & BusOptionsFields::kCycClkAccMask;
+    out |= (static_cast<uint32_t>(in.maxRec) << BusOptionsFields::kMaxRecShift) & BusOptionsFields::kMaxRecMask;
+    out |= (static_cast<uint32_t>(in.maxRom) << BusOptionsFields::kMaxROMShift) & BusOptionsFields::kMaxROMMask;
+    out |= (static_cast<uint32_t>(in.generation) << BusOptionsFields::kGenerationShift) & BusOptionsFields::kGenerationMask;
+    out |= (static_cast<uint32_t>(in.linkSpd) << BusOptionsFields::kLinkSpdShift) & BusOptionsFields::kLinkSpdMask;
+    return out;
+}
+
+// Convenience: update only the generation bits and preserve all other bits (including reserved bits).
+[[nodiscard]] constexpr uint32_t SetGeneration(uint32_t busOptionsHost, uint8_t gen4) noexcept {
+    const uint32_t cleared = (busOptionsHost & ~BusOptionsFields::kGenerationMask);
+    const uint32_t genBits = (static_cast<uint32_t>(gen4 & 0x0Fu) << BusOptionsFields::kGenerationShift);
+    return cleared | genBits;
+}
+
+namespace Detail {
+    // Local constexpr popcount (avoid <bit> include in this shared header).
+    [[nodiscard]] constexpr unsigned Popcount32(uint32_t v) noexcept {
+        unsigned c = 0;
+        while (v != 0) {
+            c += (v & 1u);
+            v >>= 1u;
+        }
+        return c;
+    }
+} // namespace Detail
+
+static_assert((BusOptionsFields::kReserved11_10Mask & (BusOptionsFields::kCycClkAccMask |
+                                                      BusOptionsFields::kMaxRecMask |
+                                                      BusOptionsFields::kMaxROMMask |
+                                                      BusOptionsFields::kGenerationMask |
+                                                      BusOptionsFields::kLinkSpdMask |
+                                                      BusOptionsFields::kIRMCMask |
+                                                      BusOptionsFields::kCMCMask |
+                                                      BusOptionsFields::kISCMask |
+                                                      BusOptionsFields::kBMCMask |
+                                                      BusOptionsFields::kPMCMask)) == 0,
+              "BusOptionsFields reserved bits [11:10] must be disjoint from active fields");
+
+static_assert((BusOptionsFields::kReserved3Mask & (BusOptionsFields::kCycClkAccMask |
+                                                  BusOptionsFields::kMaxRecMask |
+                                                  BusOptionsFields::kMaxROMMask |
+                                                  BusOptionsFields::kGenerationMask |
+                                                  BusOptionsFields::kLinkSpdMask |
+                                                  BusOptionsFields::kIRMCMask |
+                                                  BusOptionsFields::kCMCMask |
+                                                  BusOptionsFields::kISCMask |
+                                                  BusOptionsFields::kBMCMask |
+                                                  BusOptionsFields::kPMCMask)) == 0,
+              "BusOptionsFields reserved bit [3] must be disjoint from active fields");
+
+static_assert(Detail::Popcount32(BusOptionsFields::kIRMCMask | BusOptionsFields::kCMCMask | BusOptionsFields::kISCMask |
+                                BusOptionsFields::kBMCMask | BusOptionsFields::kPMCMask | BusOptionsFields::kCycClkAccMask |
+                                BusOptionsFields::kMaxRecMask | BusOptionsFields::kMaxROMMask | BusOptionsFields::kGenerationMask |
+                                BusOptionsFields::kLinkSpdMask)
+                  == Detail::Popcount32(BusOptionsFields::kIRMCMask) +
+                         Detail::Popcount32(BusOptionsFields::kCMCMask) +
+                         Detail::Popcount32(BusOptionsFields::kISCMask) +
+                         Detail::Popcount32(BusOptionsFields::kBMCMask) +
+                         Detail::Popcount32(BusOptionsFields::kPMCMask) +
+                         Detail::Popcount32(BusOptionsFields::kCycClkAccMask) +
+                         Detail::Popcount32(BusOptionsFields::kMaxRecMask) +
+                         Detail::Popcount32(BusOptionsFields::kMaxROMMask) +
+                         Detail::Popcount32(BusOptionsFields::kGenerationMask) +
+                         Detail::Popcount32(BusOptionsFields::kLinkSpdMask),
+              "BusOptionsFields masks must not overlap");
 
 // ============================================================================
 // Max Payload by Speed (Conservative Values)
@@ -480,4 +648,3 @@ namespace ASFW::FW {
                (value24 & 0x00FFFFFFu);
     }
 } // namespace ASFW::FW
-

@@ -16,18 +16,11 @@
 
 using ASFW::Driver::ConfigROMBuilder;
 using ASFW::FW::MakeDirectoryEntry;
-using ASFW::FW::EntryType;
-using ASFW::FW::ConfigKey;
 using ASFW::FW::kBusNameQuadlet;
+using ASFW::FW::DecodeBusOptions;
+using ASFW::FW::SetGeneration;
 
 namespace {
-
-constexpr uint32_t kGenerationShift = 4;
-constexpr uint32_t kGenerationMask = 0xFu << kGenerationShift;
-constexpr uint32_t kMaxRomShift = 8;
-constexpr uint32_t kMaxRomMask = 0xFu << kMaxRomShift;
-constexpr uint32_t kMaxRecShift = 12;
-constexpr uint32_t kMaxRecMask = 0xFu << kMaxRecShift;
 
 constexpr uint16_t kPolynomial = ASFW::FW::kConfigROMCRCPolynomial;
 
@@ -121,7 +114,8 @@ void ValidateDirectory(std::span<const uint32_t> words,
 
 TEST(ConfigROMBuilderTests, BuildProducesExpectedLayout) {
     ConfigROMBuilder builder;
-    constexpr uint32_t busOptions = 0x00008000u; // MaxRec=8 (0x8 << 12), MaxROM=0 -> should mirror MaxRec
+    // TA 1999027 Annex C sample bus options: E0 64 61 02
+    constexpr uint32_t busOptions = 0xE0646102u;
     constexpr uint64_t guid = 0x1122334455667788ULL;
     constexpr uint32_t nodeCapabilities = 0x00ABCDEFu;
     constexpr std::string_view vendorName = "Acme";
@@ -143,10 +137,14 @@ TEST(ConfigROMBuilderTests, BuildProducesExpectedLayout) {
     EXPECT_EQ(native[4], static_cast<uint32_t>(guid & 0xFFFFFFFFu));
 
     const uint32_t busInfo = builder.BusInfoQuad();
-    EXPECT_EQ((busInfo & kGenerationMask) >> kGenerationShift, 0u);
-    const uint32_t maxRec = (busInfo & kMaxRecMask) >> kMaxRecShift;
-    const uint32_t maxRom = (busInfo & kMaxRomMask) >> kMaxRomShift;
-    EXPECT_EQ(maxRec, maxRom);
+    EXPECT_EQ((busInfo & ASFW::FW::BusOptionsFields::kGenerationMask) >> ASFW::FW::BusOptionsFields::kGenerationShift, 0u);
+    EXPECT_EQ((busInfo & ~ASFW::FW::BusOptionsFields::kGenerationMask), (busOptions & ~ASFW::FW::BusOptionsFields::kGenerationMask));
+
+    const auto decoded = DecodeBusOptions(busInfo);
+    EXPECT_EQ(decoded.cycClkAcc, 0x64u);
+    EXPECT_EQ(decoded.maxRec, 0x6u);
+    EXPECT_EQ(decoded.maxRom, 0x1u);
+    EXPECT_EQ(decoded.linkSpd, 0x2u);
 
     const uint32_t expectedVendorIdEntry = MakeDirectoryEntry(
         ASFW::FW::ConfigKey::kModuleVendorId, ASFW::FW::EntryType::kImmediate,
@@ -180,7 +178,7 @@ TEST(ConfigROMBuilderTests, BuildProducesExpectedLayout) {
 
 TEST(ConfigROMBuilderTests, UpdateGenerationRefreshesBusInfoAndHeaderCrc) {
     ConfigROMBuilder builder;
-    constexpr uint32_t busOptions = 0x00008000u;
+    constexpr uint32_t busOptions = 0xE0646102u;
     constexpr uint64_t guid = 0x0000000000000000ULL;
 
     builder.Begin(busOptions, guid, 0);
@@ -192,10 +190,9 @@ TEST(ConfigROMBuilderTests, UpdateGenerationRefreshesBusInfoAndHeaderCrc) {
     ASSERT_EQ(native.size(), builder.QuadletCount());
 
     const uint32_t busInfo = builder.BusInfoQuad();
-    EXPECT_EQ((busInfo & kGenerationMask) >> kGenerationShift, 9u);
-    const uint32_t maxRec = (busInfo & kMaxRecMask) >> kMaxRecShift;
-    const uint32_t maxRom = (busInfo & kMaxRomMask) >> kMaxRomShift;
-    EXPECT_EQ(maxRom, maxRec);
+    EXPECT_EQ((busInfo & ASFW::FW::BusOptionsFields::kGenerationMask) >> ASFW::FW::BusOptionsFields::kGenerationShift, 9u);
+    EXPECT_EQ((busInfo & ~ASFW::FW::BusOptionsFields::kGenerationMask), (busOptions & ~ASFW::FW::BusOptionsFields::kGenerationMask));
+    EXPECT_EQ(busInfo, SetGeneration(busOptions, 9));
 
     const uint32_t header = builder.HeaderQuad();
     EXPECT_EQ(header >> 24, 4u);
@@ -261,7 +258,7 @@ TEST_P(ConfigROMReferenceCrcTests, ReferenceDataHasValidCrcs) {
 
     std::vector<uint32_t> words;
     std::string errorMessage;
-    ASSERT_TRUE(ASFW::Tests::LoadHexArrayFromRepoFile("firewire/device-attribute-test.c",
+    ASSERT_TRUE(ASFW::Tests::LoadHexArrayFromRepoFile("FirWireDriver/firewire/device-attribute-test.c",
                                                       testCase.arrayName,
                                                       words,
                                                       &errorMessage))

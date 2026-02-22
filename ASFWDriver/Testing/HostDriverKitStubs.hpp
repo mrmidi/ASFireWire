@@ -5,6 +5,7 @@
 #include <mach/kern_return.h>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <DriverKit/IOReturn.h>
 
 struct IOAddressSegment {
@@ -197,16 +198,15 @@ public:
     OSSharedPtr(T* ptr, OSRetainTag) : ptr_(ptr) {}
     OSSharedPtr(std::nullptr_t) : ptr_(nullptr) {}
 
-
-    T* get() const { return ptr_; }
-    T* operator->() const { return ptr_; }
+    T* get() const { return ptr_.get(); }
+    T* operator->() const { return ptr_.get(); }
     T& operator*() const { return *ptr_; }
     explicit operator bool() const { return ptr_ != nullptr; }
 
-    void reset() { ptr_ = nullptr; }
+    void reset() { ptr_.reset(); }
 
 private:
-    T* ptr_{nullptr};
+    std::shared_ptr<T> ptr_;
 };
 
 #endif // ASFW_HOST_TEST

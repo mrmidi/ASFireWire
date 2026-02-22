@@ -11,34 +11,13 @@
 namespace ASFW::Driver {
 namespace {
 
-constexpr uint8_t kDirTypeImmediate = 0;
-constexpr uint8_t kDirTypeLeaf = 2;
-
-constexpr uint32_t kGenerationShift = 4; // Bus Info block generation field
-constexpr uint32_t kGenerationMask = 0xFu << kGenerationShift;
-constexpr uint32_t kMaxRomShift = 8;
-constexpr uint32_t kMaxRomMask = 0xFu << kMaxRomShift;
-constexpr uint32_t kMaxRecShift = 12;
-constexpr uint32_t kMaxRecMask = 0xFu << kMaxRecShift;
-constexpr uint32_t kCycClkAccShift = 16;
-constexpr uint32_t kCycClkAccMask = 0xFFu << kCycClkAccShift;
-
 constexpr uint16_t kCrcPolynomial = 0x1021; // ITU-T CRC-16
 
 
 uint32_t DeriveBusInfoQuad(uint32_t busOptions, uint8_t generation) {
-    uint32_t quad = busOptions;
-    quad &= ~kGenerationMask;
-    quad |= (static_cast<uint32_t>(generation & 0x0Fu) << kGenerationShift);
-
-    // Common practice mirrors MaxROM to MaxRec if MaxROM field is zero.
-    uint32_t maxRec = (quad & kMaxRecMask) >> kMaxRecShift;
-    uint32_t maxRom = (quad & kMaxRomMask) >> kMaxRomShift;
-    if (maxRom == 0) {
-        quad &= ~kMaxRomMask;
-        quad |= (maxRec << kMaxRomShift);
-    }
-    return quad;
+    // Spec-correct: only update generation bits [7:4]. Preserve all other bits
+    // exactly as provided by the OHCI BusOptions register (including reserved bits).
+    return ASFW::FW::SetGeneration(busOptions, generation);
 }
 
 } // namespace
