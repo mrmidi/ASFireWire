@@ -1,5 +1,6 @@
 #include "DeviceRegistry.hpp"
 #include <algorithm>
+#include <limits>
 #include "../Logging/Logging.hpp"
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 
@@ -23,10 +24,21 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             device.vendorId = entry.value;
         } else if (entry.key == CfgKey::ModelId) {
             device.modelId = entry.value;
-        } else if (entry.key == CfgKey::Unit_Spec_Id) {
-            device.unitSpecId = static_cast<uint8_t>(entry.value & 0xFF);
-        } else if (entry.key == CfgKey::Unit_Sw_Version) {
-            device.unitSwVersion = static_cast<uint8_t>(entry.value & 0xFF);
+        }
+    }
+
+    // Prefer Unit_Directory-derived spec/version (24-bit) over any legacy root dir keys.
+    device.unitSpecId.reset();
+    device.unitSwVersion.reset();
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId != 0) {
+            device.unitSpecId = unit.unitSpecId;
+        }
+        if (unit.unitSwVersion != 0) {
+            device.unitSwVersion = unit.unitSwVersion;
+        }
+        if (device.unitSpecId.has_value() && device.unitSwVersion.has_value()) {
+            break;
         }
     }
 
@@ -40,6 +52,7 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         device.kind = DeviceKind::VendorSpecificAudio;
         device.isAudioCandidate = true;
         
+#if !defined(ASFW_HOST_TEST)
         // Create protocol instance if we don't have one yet AND AsyncSubsystem is available
         if (!device.protocol && asyncSubsystem) {
             ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
@@ -60,6 +73,7 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
                      "AsyncSubsystem not provided", guid, rom.nodeId);
         }
+#endif
     } else {
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);
@@ -68,6 +82,15 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     device.gen = rom.gen;
     device.nodeId = rom.nodeId;
     device.link = link;
+
+    // Clamp max async payload by remote MaxRec code (BIB bus options).
+    const uint32_t maxFromRec32 = ASFW::FW::MaxAsyncPayloadBytesFromMaxRec(rom.bib.maxRec);
+    const uint16_t maxFromRec = (maxFromRec32 > std::numeric_limits<uint16_t>::max())
+                                    ? std::numeric_limits<uint16_t>::max()
+                                    : static_cast<uint16_t>(maxFromRec32);
+    if (device.link.maxPayloadBytes > maxFromRec) {
+        device.link.maxPayloadBytes = maxFromRec;
+    }
     device.state = LifeState::Identified;
     
     GenNodeKey key = MakeKey(rom.gen, rom.nodeId);
@@ -192,13 +215,9 @@ void DeviceRegistry::Clear() {
 }
 
 DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
-    for (const auto& entry : rom.rootDirMinimal) {
-        if (entry.key == CfgKey::Unit_Spec_Id) {
-            const uint32_t specId = entry.value;
-            
-            if (specId == kUnitSpecId_TA) {
-                return DeviceKind::TA_61883;
-            }
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId == kUnitSpecId_TA) {
+            return DeviceKind::TA_61883;
         }
     }
     
@@ -212,11 +231,9 @@ bool DeviceRegistry::IsAudioCandidate(const ConfigROM& rom) const {
     
     bool hasAudioSpec = false;
     
-    for (const auto& entry : rom.rootDirMinimal) {
-        if (entry.key == CfgKey::Unit_Spec_Id) {
-            if (entry.value == kUnitSpecId_TA || entry.value == kUnitSpecId_AVC) {
-                hasAudioSpec = true;
-            }
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId == kUnitSpecId_TA || unit.unitSpecId == kUnitSpecId_AVC) {
+            hasAudioSpec = true;
         }
     }
     
@@ -228,4 +245,3 @@ DeviceRegistry::GenNodeKey DeviceRegistry::MakeKey(Generation gen, uint8_t nodeI
 }
 
 } // namespace ASFW::Discovery
-

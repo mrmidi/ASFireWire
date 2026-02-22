@@ -1,5 +1,5 @@
 #include "ConfigROMStore.hpp"
-#include "../Discovery/DiscoveryValues.hpp"  // For BIBFields constants
+#include "../Common/FWCommon.hpp"
 #include <algorithm>
 #include <DriverKit/DriverKit.h>
 #include "../Logging/Logging.hpp"
@@ -231,6 +231,30 @@ uint32_t SwapBE32(uint32_t be) {
     return OSSwapBigToHostInt32(be);
 }
 
+namespace {
+uint16_t CRCStep(uint16_t crc, uint16_t data) {
+    crc = static_cast<uint16_t>(crc ^ data);
+    for (int bit = 0; bit < 16; ++bit) {
+        if (crc & 0x8000u) {
+            crc = static_cast<uint16_t>((crc << 1) ^ ASFW::FW::kConfigROMCRCPolynomial);
+        } else {
+            crc = static_cast<uint16_t>(crc << 1);
+        }
+    }
+    return crc;
+}
+
+uint16_t ComputeCRC16_1212(const uint32_t* quadletsHost, uint32_t quadletCount) {
+    uint16_t crc = 0;
+    for (uint32_t i = 0; i < quadletCount; ++i) {
+        const uint32_t q = quadletsHost[i];
+        crc = CRCStep(crc, static_cast<uint16_t>((q >> 16) & 0xFFFFu));
+        crc = CRCStep(crc, static_cast<uint16_t>(q & 0xFFFFu));
+    }
+    return crc;
+}
+} // namespace
+
 std::optional<BusInfoBlock> ParseBIB(const uint32_t* bibQuadlets) {
     if (bibQuadlets == nullptr) {
         return std::nullopt;
@@ -238,29 +262,67 @@ std::optional<BusInfoBlock> ParseBIB(const uint32_t* bibQuadlets) {
     
     // Convert all quadlets from big-endian to host-endian
     const uint32_t q0 = SwapBE32(bibQuadlets[0]);
-    // Q1 = bus name "1394" (not used, skipped per Apple pattern in ROMReader)
-    // Q2 = capabilities (not currently parsed)
+    const uint32_t q1 = SwapBE32(bibQuadlets[1]);
+    const uint32_t q2 = SwapBE32(bibQuadlets[2]);
     const uint32_t q3 = SwapBE32(bibQuadlets[3]);
     const uint32_t q4 = SwapBE32(bibQuadlets[4]);
 
     BusInfoBlock bib{};
 
-    // Quadlet 0: [info_length:16][crc_value:16] with link speed in upper bits
-    // IEEE 1394-1995 §8.3.2.1: link speed is bits 31:28 (kFWBIBLinkSpeed)
-    // Use constants from DiscoveryValues.hpp
-    bib.linkSpeedCode = static_cast<uint8_t>((q0 & BIBFields::kLinkSpeedMask) >> BIBFields::kLinkSpeedShift);
-    bib.crcLength = static_cast<uint8_t>((q0 >> 16) & 0xFF);
-    bib.infoVersion = 1;  // Assume version 1 for now
+    // Quadlet 0: IEEE 1212 header: [bus_info_length:8][crc_length:8][crc:16]
+    bib.busInfoLength = static_cast<uint8_t>((q0 & ASFW::FW::ConfigROMHeaderFields::kBusInfoLengthMask) >>
+                                             ASFW::FW::ConfigROMHeaderFields::kBusInfoLengthShift);
+    bib.crcLength = static_cast<uint8_t>((q0 & ASFW::FW::ConfigROMHeaderFields::kCRCLengthMask) >>
+                                         ASFW::FW::ConfigROMHeaderFields::kCRCLengthShift);
+    bib.crc = static_cast<uint16_t>(q0 & ASFW::FW::ConfigROMHeaderFields::kCRCMask);
 
-    // Quadlet 1: Bus name (typically "1394", 0x31333934) - not parsed
-    // NOTE: Vendor ID is NOT in BIB - it's in the root directory (key 0x03)
-    bib.vendorId = 0;  // Will be populated from root directory parsing
+    // Quadlet 1: bus name (usually "1394")
+    if (q1 != ASFW::FW::kBusNameQuadlet) {
+        ASFW_LOG(ConfigROM, "⚠️  BIB bus name mismatch: q1=0x%08x expected=0x%08x",
+                 q1, ASFW::FW::kBusNameQuadlet);
+    }
+
+    // Quadlet 2: bus options (TA 1999027)
+    const auto decoded = ASFW::FW::DecodeBusOptions(q2);
+    bib.irmc = decoded.irmc;
+    bib.cmc = decoded.cmc;
+    bib.isc = decoded.isc;
+    bib.bmc = decoded.bmc;
+    bib.pmc = decoded.pmc;
+    bib.cycClkAcc = decoded.cycClkAcc;
+    bib.maxRec = decoded.maxRec;
+    bib.maxRom = decoded.maxRom;
+    bib.generation = decoded.generation;
+    bib.linkSpd = decoded.linkSpd;
 
     // Quadlets 3-4: GUID (64-bit) - IEEE 1394-1995 §8.3.2.2
     bib.guid = (static_cast<uint64_t>(q3) << 32) | static_cast<uint64_t>(q4);
+
+    // CRC verification (log-only). We can only validate when crc_length covers <= 4 quadlets,
+    // since the initial BIB read only captures quadlets 1..4.
+    if (bib.crcLength == 0) {
+        ASFW_LOG_V2(ConfigROM, "BIB CRC not verified: crc_length=0 (GUID=0x%016llx)", bib.guid);
+    } else if (bib.crcLength <= 4) {
+        const uint32_t bibAfterHeader[4] = {q1, q2, q3, q4};
+        const uint16_t computed = ComputeCRC16_1212(bibAfterHeader, bib.crcLength);
+        if (computed != bib.crc) {
+            ASFW_LOG(ConfigROM,
+                     "⚠️  BIB CRC mismatch: computed=0x%04x expected=0x%04x (crc_length=%u GUID=0x%016llx)",
+                     computed, bib.crc, bib.crcLength, bib.guid);
+        } else {
+            ASFW_LOG_V2(ConfigROM, "BIB CRC OK: 0x%04x (crc_length=%u GUID=0x%016llx)",
+                        bib.crc, bib.crcLength, bib.guid);
+        }
+    } else {
+        ASFW_LOG_V2(ConfigROM,
+                    "BIB CRC not verified: crc_length=%u requires more quadlets (GUID=0x%016llx)",
+                    bib.crcLength, bib.guid);
+    }
     
-    ASFW_LOG_V1(ConfigROM, "Parsed BIB: GUID=0x%016llx linkSpeed=%u (vendor from root dir)",
-             bib.guid, bib.linkSpeedCode);
+    ASFW_LOG_V1(ConfigROM,
+                "Parsed BIB: GUID=0x%016llx bus_info_len=%u crc_len=%u gen=%u link_spd=%u max_rec=%u max_rom=%u cyc_clk_acc=0x%02x",
+                bib.guid, bib.busInfoLength, bib.crcLength, bib.generation, bib.linkSpd,
+                bib.maxRec, bib.maxRom, bib.cycClkAcc);
     
     return bib;
 }
@@ -286,8 +348,8 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
     if (maxQuadlets > 1 && (maxQuadlets - 1) < scanLimit) {
         scanLimit = maxQuadlets - 1;  // -1 because first quadlet is header
     }
-    if (16 < scanLimit) {
-        scanLimit = 16;  // Safety: never scan more than 16 entries
+    if (64 < scanLimit) {
+        scanLimit = 64;  // Safety: never scan more than 64 entries
     }
     
     ASFW_LOG_V3(ConfigROM, "ParseRootDirectory: scanning %u entries (dirLength=%u maxQuadlets=%u)",
@@ -309,22 +371,33 @@ std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
         ASFW_LOG_V3(ConfigROM, "       keyType=%u keyId=0x%02x value=0x%06x",
                  keyType, keyId, value);
         
-        // Calculate absolute ROM offset for leaf/directory entries
+        // Calculate target offset for leaf/directory entries.
+        // NOTE: This is relative to the start of THIS directory (header quadlet at index 0).
         uint32_t targetOffsetQuadlets = 0;
         if (keyType == EntryType::kLeaf || keyType == EntryType::kDirectory) {
             // value is signed 24-bit offset in quadlets from current entry
             const int32_t signedValue = (value & 0x800000) ? (value | 0xFF000000) : value;
-            targetOffsetQuadlets = i + signedValue;  // Absolute offset in root dir quadlets
-            ASFW_LOG_V3(ConfigROM, "       → Leaf/Dir offset: %d quadlets from entry %u = absolute %u",
-                     signedValue, i, targetOffsetQuadlets);
+            const int32_t rel = static_cast<int32_t>(i) + signedValue;
+            if (rel >= 0) {
+                targetOffsetQuadlets = static_cast<uint32_t>(rel);
+                ASFW_LOG_V3(ConfigROM, "       → Leaf/Dir offset: %d quadlets from entry %u = dirRel %u",
+                         signedValue, i, targetOffsetQuadlets);
+            } else {
+                ASFW_LOG(ConfigROM, "       ⚠️  Leaf/Dir offset underflow: entry=%u signed=%d", i, signedValue);
+            }
         }
 
         // Recognize important keys for device classification
         switch (keyId) {
-            case 0x01:  // Textual descriptor (leaf)
-                if (keyType == EntryType::kLeaf) {
-                    entries.push_back(RomEntry{CfgKey::TextDescriptor, value, keyType, targetOffsetQuadlets});
-                    ASFW_LOG_V3(ConfigROM, "       → TextDescriptor (leaf at offset %u)", targetOffsetQuadlets);
+            case 0x01:  // Textual descriptor (leaf or descriptor directory)
+                if (keyType == EntryType::kLeaf || keyType == EntryType::kDirectory) {
+                    if (targetOffsetQuadlets != 0) {
+                        entries.push_back(RomEntry{CfgKey::TextDescriptor, value, keyType, targetOffsetQuadlets});
+                        ASFW_LOG_V3(ConfigROM, "       → TextDescriptor (type=%u at dirRel offset %u)",
+                                    keyType, targetOffsetQuadlets);
+                    } else {
+                        ASFW_LOG_V3(ConfigROM, "       → TextDescriptor present but has zero/invalid offset");
+                    }
                 }
                 break;
             case 0x03:  // Vendor ID
@@ -407,13 +480,19 @@ std::string ParseTextDescriptorLeaf(const uint32_t* allQuadlets, uint32_t totalQ
 
     ASFW_LOG_V3(ConfigROM, "    Leaf header: 0x%08x → length=%u quadlets", header, leafLength);
 
-    if (leafLength < 2 || leafOffsetQuadlets + 1 + leafLength >= totalQuadlets) {
+    const uint32_t leafEndExclusive = leafOffsetQuadlets + 1u + static_cast<uint32_t>(leafLength);
+    if (leafLength < 2 || leafEndExclusive > totalQuadlets) {
         ASFW_LOG_V2(ConfigROM, "    ❌ Length check failed: leafLength=%u offset+1+len=%u total=%u",
-                 leafLength, leafOffsetQuadlets + 1 + leafLength, totalQuadlets);
+                    leafLength, leafEndExclusive, totalQuadlets);
         return "";
     }
 
-    const uint32_t typeSpec = readBE32(leafOffsetQuadlets + 2);
+    // IEEE 1212-2001 Figure 28: textual descriptor leaf:
+    //   +0: [leaf_length:16][CRC:16]
+    //   +1: [descriptor_type:8][specifier_ID:24]
+    //   +2: [width:8][character_set:8][language:16]
+    //   +3..: textual data (1-byte chars for minimal ASCII form)
+    const uint32_t typeSpec = readBE32(leafOffsetQuadlets + 1);
     const uint8_t descriptorType = (typeSpec >> 24) & 0xFF;
     const uint32_t specifierId = typeSpec & 0xFFFFFF;
 
@@ -423,6 +502,13 @@ std::string ParseTextDescriptorLeaf(const uint32_t* allQuadlets, uint32_t totalQ
     if (descriptorType != 0 || specifierId != 0) {
         ASFW_LOG_V2(ConfigROM, "    ❌ Not a text descriptor: type=%u spec=0x%06x",
                  descriptorType, specifierId);
+        return "";
+    }
+
+    // Minimal ASCII form only for now (width/character_set/language quadlet must be 0).
+    const uint32_t widthCharsetLang = readBE32(leafOffsetQuadlets + 2);
+    if (widthCharsetLang != 0) {
+        ASFW_LOG_V2(ConfigROM, "    ❌ Unsupported width/charset/lang quadlet: 0x%08x", widthCharsetLang);
         return "";
     }
 
@@ -441,9 +527,10 @@ std::string ParseTextDescriptorLeaf(const uint32_t* allQuadlets, uint32_t totalQ
 
         for (int j = 3; j >= 0; --j) {
             const uint8_t byte = (quadlet >> (j * 8)) & 0xFF;
-            if (byte != 0) {
-                text += static_cast<char>(byte);
+            if (byte == 0) {
+                return text;  // NUL-terminated string (strip trailing NULs)
             }
+            text += static_cast<char>(byte);
         }
     }
 

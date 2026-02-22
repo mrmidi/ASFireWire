@@ -1103,3 +1103,41 @@ target_compile_definitions(ApogeeBooleanControlMappingTests
 target_include_directories(ApogeeBooleanControlMappingTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ApogeeBooleanControlMappingTests)
+
+# =============================================================================
+# Config ROM Tests (IEEE 1212 / TA 1999027)
+# =============================================================================
+
+add_library(asfw_configrom_host STATIC
+    "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMReader.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMStore.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_include_directories(asfw_configrom_host PUBLIC ${ASFW_COMMON_INCLUDES})
+target_compile_features(asfw_configrom_host PUBLIC cxx_std_23)
+target_compile_definitions(asfw_configrom_host PUBLIC ASFW_HOST_TEST)
+
+add_executable(ASFWConfigROMTests
+    "${ASFW_TESTS_DIR}/ConfigROMBuilderTests.cpp"
+    "${ASFW_TESTS_DIR}/ConfigROMBIBParseTests.cpp"
+    "${ASFW_TESTS_DIR}/TextDescriptorLeafParseTests.cpp"
+    "${ASFW_TESTS_DIR}/ROMReaderHeaderFirstTests.cpp"
+    "${ASFW_TESTS_DIR}/BusOptionsFieldsTests.cpp"
+)
+
+target_link_libraries(ASFWConfigROMTests
+    PRIVATE
+        asfw_configrom_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ASFWConfigROMTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ASFWConfigROMTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ASFWConfigROMTests)

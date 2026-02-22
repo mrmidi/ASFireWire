@@ -72,6 +72,7 @@ private:
         VerifyingIRM_Read,
         VerifyingIRM_Lock,
         ReadingRootDir,
+        ReadingDetails,
         Complete,
         Failed
     };
@@ -114,6 +115,7 @@ private:
     SpeedPolicy& speedPolicy_;
     ROMScannerParams params_;
     std::unique_ptr<ROMReader> reader_;
+    OSSharedPtr<IODispatchQueue> dispatchQueue_;
 
     Generation currentGen_{0};
     Driver::TopologySnapshot currentTopology_;
@@ -122,8 +124,22 @@ private:
     uint16_t inflightCount_{0};
 
     ScanCompletionCallback onScanComplete_;
+    bool completionNotified_{false};
 
     Driver::TopologyManager* topologyManager_{nullptr};
+
+    void ScheduleAdvanceFSM();
+    void DispatchAsync(void (^work)());
+
+    [[nodiscard]] static constexpr uint32_t RootDirStartQuadlet(const BusInfoBlock& bib) noexcept {
+        return 1u + static_cast<uint32_t>(bib.busInfoLength);
+    }
+
+    [[nodiscard]] static constexpr uint32_t RootDirStartBytes(const BusInfoBlock& bib) noexcept {
+        return RootDirStartQuadlet(bib) * 4u;
+    }
+
+    void EnsurePrefix(uint8_t nodeId, uint32_t requiredTotalQuadlets, std::function<void(bool)> completion);
 };
 
 } // namespace ASFW::Discovery

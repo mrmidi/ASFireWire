@@ -99,7 +99,7 @@ private:
 
     ::ASFW::Shared::DescriptorRing descriptorRing_{};
 
-    Rx::IsochRxDmaRing ring_{};
+    Rx::IsochRxDmaRing rxRing_{};
     Rx::IsochAudioRxPipeline audio_{};
 
     IsochReceiveCallback callback_{nullptr};
