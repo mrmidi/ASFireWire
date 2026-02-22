@@ -49,6 +49,8 @@ final class ASFWDriverConnector: ObservableObject {
         // AV/C raw FCP command (request/response)
         case sendRawFCPCommand = 38
         case getRawFCPCommandResult = 39
+        case setIsochVerbosity = 40
+        case setIsochTxVerifier = 41
     }
 
     // MARK: - Re-exported Models
@@ -148,8 +150,6 @@ final class ASFWDriverConnector: ObservableObject {
         transport.callStructWithScalar(selector: selector.rawValue, input: input, initialCap: initialCap, scalarOutput: &scalarOutput)
     }
 
-
-
     // MARK: - Logging helpers
 
     func log(_ message: String, level: LogMessage.Level = .info) {
@@ -160,6 +160,7 @@ final class ASFWDriverConnector: ObservableObject {
         }
     }
 
+    
     func interpretIOReturn(_ kr: kern_return_t) -> String {
         let KERN_SUCCESS: kern_return_t = 0
         let KERN_PROTECTION_FAILURE: kern_return_t = -308
@@ -206,3 +207,4 @@ final class ASFWDriverConnector: ObservableObject {
     }
 
 }
+    

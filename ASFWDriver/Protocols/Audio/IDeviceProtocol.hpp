@@ -6,6 +6,11 @@
 #pragma once
 
 #include <DriverKit/IOReturn.h>
+#include <cstdint>
+
+namespace ASFW::Protocols::AVC {
+    class FCPTransport;
+}
 
 namespace ASFW::Audio {
 
@@ -39,6 +44,41 @@ public:
     /// Drivers can call this before starting host IR/IT contexts.
     /// Implementations should be idempotent and return quickly.
     virtual IOReturn StartDuplex48k() { return kIOReturnUnsupported; }
+
+    /// Update volatile runtime context that can change across bus resets.
+    virtual void UpdateRuntimeContext(uint16_t nodeId,
+                                      Protocols::AVC::FCPTransport* transport) {
+        (void)nodeId;
+        (void)transport;
+    }
+
+    /// Check if protocol can expose/control a boolean control.
+    virtual bool SupportsBooleanControl(uint32_t classIdFourCC,
+                                        uint32_t element) const {
+        (void)classIdFourCC;
+        (void)element;
+        return false;
+    }
+
+    /// Read protocol-backed boolean control value.
+    virtual IOReturn GetBooleanControlValue(uint32_t classIdFourCC,
+                                            uint32_t element,
+                                            bool& outValue) {
+        (void)classIdFourCC;
+        (void)element;
+        (void)outValue;
+        return kIOReturnUnsupported;
+    }
+
+    /// Write protocol-backed boolean control value.
+    virtual IOReturn SetBooleanControlValue(uint32_t classIdFourCC,
+                                            uint32_t element,
+                                            bool value) {
+        (void)classIdFourCC;
+        (void)element;
+        (void)value;
+        return kIOReturnUnsupported;
+    }
 };
 
 } // namespace ASFW::Audio

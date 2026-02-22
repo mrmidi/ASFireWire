@@ -27,6 +27,7 @@ class MockAVCDiscovery : public IAVCDiscovery {
 public:
     MOCK_METHOD(std::vector<AVCUnit*>, GetAllAVCUnits, (), (override));
     MOCK_METHOD(void, ReScanAllUnits, (), (override));
+    MOCK_METHOD(FCPTransport*, GetFCPTransportForNodeID, (uint16_t nodeID), (override));
 };
 
 // Test Fixture

@@ -254,8 +254,8 @@ struct AVCUnitCard: View {
                     
                     HStack(spacing: 12) {
                         Label("Node: \(unit.nodeIDHex)", systemImage: "network")
-                        Label("Vendor: \(String(format: "0x%04X", unit.vendorID))", systemImage: "building.2")
-                        Label("Model: \(String(format: "0x%04X", unit.modelID))", systemImage: "tag")
+                        Label("Vendor: \(String(format: "0x%08X", unit.vendorID))", systemImage: "building.2")
+                        Label("Model: \(String(format: "0x%08X", unit.modelID))", systemImage: "tag")
                     }
                     .font(.caption)
                     .foregroundColor(.secondary)

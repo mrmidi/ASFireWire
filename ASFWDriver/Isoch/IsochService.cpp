@@ -1,11 +1,13 @@
 #include "IsochService.hpp"
 
 #include <DriverKit/IOLib.h>
+#include <atomic>
 
 #include "IsochReceiveContext.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/TxBufferProfiles.hpp"
+#include "Encoding/TimingUtils.hpp"
 #include "../Discovery/DeviceManager.hpp"
 #include "../Discovery/FWDevice.hpp"
 #include "../Hardware/HardwareInterface.hpp"
@@ -47,6 +49,8 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
         }
         ASFW_LOG(Controller, "[Isoch] ✅ provisioned Isoch Context with Dedicated Memory");
     }
+
+    isochReceiveContext_->SetExternalSyncBridge(&externalSyncBridge_);
 
     auto result = isochReceiveContext_->Configure(channel, 0);
     if (result != kIOReturnSuccess) {
@@ -125,6 +129,12 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           ASFW::Protocols::AVC::AVCDiscovery* avcDiscovery) {
     constexpr bool kEnableIsochZeroCopyPath = false;  // temporary A/B gate
 
+    if (isochTransmitContext_ &&
+        isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
+        ASFW_LOG(Controller, "[Isoch] IT already running; StartTransmit is idempotent");
+        return kIOReturnSuccess;
+    }
+
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochTransmitContext::kRingBlocks;
@@ -154,13 +164,16 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
     uint32_t startTargetFill = ASFW::Isoch::Config::kTxBufferProfile.startWaitTargetFrames;
     uint32_t requestedStreamModeRaw = 0;
+    uint32_t requestedChannels = 0;
     uint8_t localNodeId = 0;
 
     if (avcDiscovery) {
         if (auto* audioNub = avcDiscovery->GetFirstAudioNub()) {
             requestedStreamModeRaw = audioNub->GetStreamMode();
+            requestedChannels = audioNub->GetChannelCount();
             ASFW_LOG(Controller, "[Isoch] Requested stream mode from nub: %{public}s",
                      requestedStreamModeRaw == 1u ? "blocking" : "non-blocking");
+            ASFW_LOG(Controller, "[Isoch] Requested channels from nub: %u", requestedChannels);
 
             void* txQueueBase = audioNub->GetTxQueueLocalMapping();
             uint64_t txQueueBytes = audioNub->GetTxQueueBytes();
@@ -194,7 +207,60 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         }
     }
 
-    auto result = isochTransmitContext_->Configure(channel, localNodeId, requestedStreamModeRaw);
+    if (isochTransmitContext_->SharedTxCapacityFrames() == 0) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartTransmit blocked: shared TX queue metadata missing");
+        return kIOReturnNotReady;
+    }
+
+    if (!isochReceiveContext_ ||
+        isochReceiveContext_->GetState() != ASFW::Isoch::IRPolicy::State::Running) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartTransmit blocked: IR context is not running");
+        return kIOReturnNotReady;
+    }
+
+    constexpr uint32_t kSytGateTimeoutMs = 500;
+    constexpr uint32_t kSytGatePollMs = 5;
+    bool sytClockEstablished = false;
+    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
+        if (externalSyncBridge_.clockEstablished.load(std::memory_order_acquire)) {
+            sytClockEstablished = true;
+            break;
+        }
+        IOSleep(kSytGatePollMs);
+    }
+    if (!sytClockEstablished) {
+        const uint32_t seq = externalSyncBridge_.updateSeq.load(std::memory_order_acquire);
+        const uint32_t packed = externalSyncBridge_.lastPackedRx.load(std::memory_order_acquire);
+        const uint16_t lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
+        const uint8_t lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
+        const uint8_t lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
+        const uint64_t lastTicks = externalSyncBridge_.lastUpdateHostTicks.load(std::memory_order_acquire);
+        uint64_t ageMs = 0;
+        if (lastTicks != 0) {
+            const uint64_t nowTicks = mach_absolute_time();
+            if (nowTicks >= lastTicks) {
+                ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
+            }
+        }
+        ASFW_LOG(Controller,
+                 "[Isoch] ❌ StartTransmit timeout: missing established IR SYT clock (waited %ums seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d)",
+                 kSytGateTimeoutMs,
+                 seq,
+                 lastSyt,
+                 lastFdf,
+                 lastDbs,
+                 ageMs,
+                 externalSyncBridge_.active.load(std::memory_order_acquire),
+                 externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
+        return kIOReturnTimeout;
+    }
+
+    isochTransmitContext_->SetExternalSyncBridge(&externalSyncBridge_);
+
+    auto result = isochTransmitContext_->Configure(channel,
+                                                   localNodeId,
+                                                   requestedStreamModeRaw,
+                                                   requestedChannels);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
         return result;
@@ -290,6 +356,7 @@ void IsochService::StopAll() {
         isochTransmitContext_->Stop();
         isochTransmitContext_.reset();
     }
+    externalSyncBridge_.Reset();
 }
 
 } // namespace ASFW::Driver

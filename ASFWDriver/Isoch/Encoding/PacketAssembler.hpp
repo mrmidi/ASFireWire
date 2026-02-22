@@ -49,6 +49,18 @@ constexpr uint32_t kMaxAudioDataSize = kSamplesPerDataPacket * kMaxSupportedChan
 /// Compile-time max assembled packet size (CIP header + max audio data)
 constexpr uint32_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
 
+/// Underrun diagnostic snapshot (1A: detection).
+/// All fields atomically updated in assembleDataPacket() hot path.
+/// Read/reset from Poll() non-RT path for logging.
+struct UnderrunDiag {
+    std::atomic<uint64_t> underrunCount{0};
+    std::atomic<uint32_t> lastFillLevel{0};
+    std::atomic<uint32_t> lastRequestedFrames{0};
+    std::atomic<uint32_t> lastAvailableFrames{0};
+    std::atomic<uint64_t> lastCycleNumber{0};
+    std::atomic<uint8_t>  lastDbc{0};
+};
+
 /// Assembled packet structure
 struct AssembledPacket {
     uint8_t data[kMaxAssembledPacketSize]; ///< Packet bytes (big-endian wire order)
@@ -109,6 +121,7 @@ public:
         zeroCopyCapacity_ = 0;
         dbgDataPackets_.store(0, std::memory_order_relaxed);
         dbgUnderrunPackets_.store(0, std::memory_order_relaxed);
+        underrunDiag_.underrunCount.store(0, std::memory_order_relaxed);
     }
 
     /// Set the source node ID.
@@ -161,24 +174,30 @@ public:
     /// Assemble the next packet based on current cadence position.
     ///
     /// @param syt Presentation timestamp (SYT) for DATA packets
+    /// @param silent When true, DATA packets get zero-filled audio (no ring buffer read,
+    ///               no underrun counters). Cadence/DBC/CIP all advance normally.
     /// @return Assembled packet ready for transmission
     ///
-    AssembledPacket assembleNext(uint16_t syt = 0) noexcept {
+    AssembledPacket assembleNext(uint16_t syt = 0, bool silent = false) noexcept {
         AssembledPacket packet{};
         packet.cycleNumber = currentCycleNumber();
         packet.isData = nextIsData();
         const uint8_t samplesInPacket = static_cast<uint8_t>(samplesPerDataPacket());
         packet.dbc = dbcGen_.getDbc(packet.isData, samplesInPacket);
-        
+
         if (packet.isData) {
-            assembleDataPacket(packet, syt);
+            if (silent) {
+                assembleDataPacketSilent(packet, syt);
+            } else {
+                assembleDataPacket(packet, syt);
+            }
         } else {
             assembleNoDataPacket(packet);
         }
-        
+
         // Advance cadence for next cycle
         advanceCadence();
-        
+
         return packet;
     }
     
@@ -265,6 +284,14 @@ private:
         if (framesRead < framesPerPacket) {
             dbgUnderrunPackets_.fetch_add(1, std::memory_order_relaxed);
 
+            // 1A: Underrun snapshot (RT-safe atomic stores, no logging)
+            underrunDiag_.underrunCount.fetch_add(1, std::memory_order_relaxed);
+            underrunDiag_.lastFillLevel.store(ringBuffer_.fillLevel(), std::memory_order_relaxed);
+            underrunDiag_.lastRequestedFrames.store(framesPerPacket, std::memory_order_relaxed);
+            underrunDiag_.lastAvailableFrames.store(framesRead, std::memory_order_relaxed);
+            underrunDiag_.lastCycleNumber.store(packet.cycleNumber, std::memory_order_relaxed);
+            underrunDiag_.lastDbc.store(packet.dbc, std::memory_order_relaxed);
+
             // SAFETY: Zero remaining samples to prevent encoding stale stack data
             size_t samplesRead = framesRead * channelCount_;
             size_t totalSamples = framesPerPacket * channelCount_;
@@ -279,6 +306,26 @@ private:
         }
     }
     
+    /// Assemble a silent DATA packet (CIP header + zero-filled audio).
+    /// Cadence/DBC advance normally, but no ring buffer read and no underrun counters.
+    void assembleDataPacketSilent(AssembledPacket& packet, uint16_t syt) noexcept {
+        const uint32_t framesPerPacket = samplesPerDataPacket();
+        packet.size = dataPacketSize();
+
+        CIPHeader cip = cipBuilder_.build(packet.dbc, syt, false);
+        std::memcpy(packet.data, &cip.q0, 4);
+        std::memcpy(packet.data + 4, &cip.q1, 4);
+
+        // IMPORTANT: Silent audio must still be valid AM824/MBLA (label 0x40),
+        // otherwise some devices interpret it as garbage (audible noise).
+        uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
+        const uint32_t silence = AM824Encoder::encodeSilence();
+        const uint32_t quadlets = framesPerPacket * channelCount_;
+        for (uint32_t i = 0; i < quadlets; ++i) {
+            audioQuadlets[i] = silence;
+        }
+    }
+
     /// Assemble a NO-DATA packet (8 bytes: CIP only).
     void assembleNoDataPacket(AssembledPacket& packet) noexcept {
         packet.size = kCIPHeaderSize;
@@ -326,6 +373,9 @@ private:
     bool zeroCopyEnabled_{false};
     StreamMode streamMode_{StreamMode::kBlocking};
     
+    // 1A: Underrun diagnostics (RT-safe atomics, read from Poll)
+    UnderrunDiag underrunDiag_;
+
     // Debug counters (for 1Hz logging instead of hot-path logging)
     std::atomic<uint64_t> dbgDataPackets_{0};
     std::atomic<uint64_t> dbgUnderrunPackets_{0};
@@ -336,6 +386,22 @@ public:
         dataPkts = dbgDataPackets_.exchange(0, std::memory_order_relaxed);
         underruns = dbgUnderrunPackets_.exchange(0, std::memory_order_relaxed);
     }
+
+    /// 1A: Record an underrun from external caller (zero-copy path).
+    /// Called by IsochTransmitContext when zeroCopyFillBefore < framesPerPacket.
+    void recordUnderrun(uint32_t fillLevel, uint32_t requestedFrames,
+                        uint32_t availableFrames, uint64_t cycleNumber,
+                        uint8_t dbc) noexcept {
+        underrunDiag_.underrunCount.fetch_add(1, std::memory_order_relaxed);
+        underrunDiag_.lastFillLevel.store(fillLevel, std::memory_order_relaxed);
+        underrunDiag_.lastRequestedFrames.store(requestedFrames, std::memory_order_relaxed);
+        underrunDiag_.lastAvailableFrames.store(availableFrames, std::memory_order_relaxed);
+        underrunDiag_.lastCycleNumber.store(cycleNumber, std::memory_order_relaxed);
+        underrunDiag_.lastDbc.store(dbc, std::memory_order_relaxed);
+    }
+
+    /// 1A: Read underrun diagnostic snapshot (returns current count, not delta).
+    const UnderrunDiag& underrunDiag() const noexcept { return underrunDiag_; }
 };
 
 } // namespace Encoding

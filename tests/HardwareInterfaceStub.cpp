@@ -8,8 +8,24 @@ namespace ASFW::Driver {
 HardwareInterface::HardwareInterface() = default;
 HardwareInterface::~HardwareInterface() = default;
 
+kern_return_t HardwareInterface::Attach(IOService*, IOService*) {
+    return kIOReturnSuccess;
+}
+
+void HardwareInterface::Detach() {}
+
+void HardwareInterface::SetAsyncSubsystem(ASFW::Async::AsyncSubsystem*) noexcept {}
+
+uint32_t HardwareInterface::Read(Register32) const noexcept {
+    return 0;
+}
+
 void HardwareInterface::Write(Register32, uint32_t) noexcept {
     // Stub - no-op for tests
+}
+
+std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const noexcept {
+    return {0, mach_absolute_time()};
 }
 
 std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {

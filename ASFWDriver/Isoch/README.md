@@ -131,11 +131,11 @@ graph TD
 The Isoch stack is organized into functional layers:
 
 ### Root Directory
-*   [IsochReceiveContext.cpp](IsochReceiveContext.cpp) / [IsochReceiveContext.hpp](IsochReceiveContext.hpp)
+*   [IsochReceiveContext.cpp](Receive/IsochReceiveContext.cpp) / [IsochReceiveContext.hpp](Receive/IsochReceiveContext.hpp)
     *   **Role**: OHCI Isochronous Receive (IR) DMA Context Manager.
     *   **Responsibilities**: Manages the IR DMA context lifecycle (setup, start, stop), handles `kIsochRx` interrupts, and dispatches processing jobs.
     *   **Key Classes**: `IsochReceiveContext`.
-    *   **Todo**: Move to `Receive/` directory to match the `Transmit/` structure.
+    *   **Note**: Implementation lives under `Receive/` to match the `Transmit/` structure.
 *   [IsochTypes.hpp](IsochTypes.hpp)
     *   **Role**: Hardware Register Definitions.
     *   **Responsibilities**: Defines low-level OHCI 1.1/1.2 register layouts, including ContextControl (`CommandPtr`, `ContextMatch`), event codes, and interrupt masks.

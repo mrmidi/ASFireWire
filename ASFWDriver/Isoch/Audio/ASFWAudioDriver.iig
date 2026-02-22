@@ -33,6 +33,14 @@ public:
     
     virtual kern_return_t StopDevice(IOUserAudioObjectID in_object_id,
                                      IOUserAudioStartStopFlags in_flags) override;
+
+    // Protocol-backed boolean control bridge (used by custom control subclass).
+    kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
+                                              uint32_t element,
+                                              bool value) LOCALONLY;
+    kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
+                                             uint32_t element,
+                                             bool* outValue) LOCALONLY;
     
     // Timer action for timestamp generation (DriverKit generates CreateActionZtsTimerOccurred)
     virtual void ZtsTimerOccurred(OSAction* action, uint64_t time)

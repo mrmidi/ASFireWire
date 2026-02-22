@@ -21,6 +21,12 @@ extension ASFWDriverConnector {
             return nil
         }
 
+        return Self.parseAVCUnitsWire(data)
+    }
+
+    static func parseAVCUnitsWire(_ data: Data) -> [AVCUnitInfo] {
+        guard data.count >= 4 else { return [] }
+
         // Helper to read UInt64 from unaligned offset
         func readUInt64(_ data: Data, at offset: Int) -> UInt64 {
             var value: UInt64 = 0
@@ -49,23 +55,23 @@ extension ASFWDriverConnector {
         var units: [AVCUnitInfo] = []
 
         for _ in 0..<unitCount {
-            // Check if we have enough data for AVCUnitInfoWire (20 bytes)
-            if offset + 20 > data.count { break }
+            // Check if we have enough data for AVCUnitInfoWire (24 bytes)
+            if offset + 24 > data.count { break }
 
             let guid = readUInt64(data, at: offset)
             let nodeID = readUInt16(data, at: offset + 8)
-            let vendorID = readUInt16(data, at: offset + 10)
-            let modelID = readUInt16(data, at: offset + 12)
-            let subunitCount = data[offset + 14]
+            let vendorID = readUInt32(data, at: offset + 10)
+            let modelID = readUInt32(data, at: offset + 14)
+            let subunitCount = data[offset + 18]
             
             // Unit-level plug counts (from AVCUnitPlugInfoCommand)
-            let isoInputPlugs = data[offset + 15]
-            let isoOutputPlugs = data[offset + 16]
-            let extInputPlugs = data[offset + 17]
-            let extOutputPlugs = data[offset + 18]
-            // _reserved at offset + 19
+            let isoInputPlugs = data[offset + 19]
+            let isoOutputPlugs = data[offset + 20]
+            let extInputPlugs = data[offset + 21]
+            let extOutputPlugs = data[offset + 22]
+            // _reserved at offset + 23
 
-            offset += 20
+            offset += 24
 
             var subunits: [AVCSubunitInfo] = []
             for _ in 0..<subunitCount {

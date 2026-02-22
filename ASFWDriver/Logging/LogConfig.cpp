@@ -45,6 +45,7 @@ LogConfig::LogConfig()
     avcVerbosity_.store(1);             // Default: Compact
     isochVerbosity_.store(1);           // Default: Compact
     enableHexDumps_.store(false);       // Default: No hex dumps
+    isochTxVerifierEnabled_.store(false); // Default: disabled (dev-only, expensive)
     logStatistics_.store(true);         // Default: Show statistics
     initialized_.store(false);
 }
@@ -83,18 +84,19 @@ void LogConfig::Initialize(IOService* service) {
     avcVerbosity_.store(ReadUInt8Property(service, "ASFWAVCVerbosity", 1));
     isochVerbosity_.store(ReadUInt8Property(service, "ASFWIsochVerbosity", 1));
     enableHexDumps_.store(ReadBoolProperty(service, "ASFWEnableHexDumps", false));
+    isochTxVerifierEnabled_.store(ReadBoolProperty(service, "ASFWEnableIsochTxVerifier", false));
     logStatistics_.store(ReadBoolProperty(service, "ASFWLogStatistics", true));
 
     initialized_.store(true);
 
     // Log configuration (always visible at INFO level)
     ASFW_LOG_INFO(Controller,
-                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u Isoch=%u HexDumps=%d Stats=%d",
+                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u Isoch=%u HexDumps=%d TxVerify=%d Stats=%d",
                   asyncVerbosity_.load(), controllerVerbosity_.load(), hardwareVerbosity_.load(),
                   discoveryVerbosity_.load(), configROMVerbosity_.load(), userClientVerbosity_.load(),
                   musicSubunitVerbosity_.load(), fcpVerbosity_.load(), cmpVerbosity_.load(), irmVerbosity_.load(), avcVerbosity_.load(),
                   isochVerbosity_.load(),
-                  enableHexDumps_.load(), logStatistics_.load());
+                  enableHexDumps_.load(), isochTxVerifierEnabled_.load(), logStatistics_.load());
 }
 
 // ============================================================================
@@ -155,6 +157,10 @@ bool LogConfig::IsHexDumpsEnabled() const {
 
 bool LogConfig::IsStatisticsEnabled() const {
     return logStatistics_.load(std::memory_order_relaxed);
+}
+
+bool LogConfig::IsIsochTxVerifierEnabled() const {
+    return isochTxVerifierEnabled_.load(std::memory_order_relaxed);
 }
 
 // ============================================================================
@@ -236,6 +242,11 @@ void LogConfig::SetIsochVerbosity(uint8_t level) {
 void LogConfig::SetHexDumps(bool enable) {
     enableHexDumps_.store(enable, std::memory_order_relaxed);
     ASFW_LOG_INFO(Controller, "Hex dumps %{public}s", enable ? "enabled" : "disabled");
+}
+
+void LogConfig::SetIsochTxVerifierEnabled(bool enable) {
+    isochTxVerifierEnabled_.store(enable, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "Isoch TX verifier %{public}s", enable ? "enabled" : "disabled");
 }
 
 void LogConfig::SetStatistics(bool enable) {

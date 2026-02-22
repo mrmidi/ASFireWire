@@ -26,6 +26,7 @@ namespace ASFW {
  * - ASFWHardwareVerbosity (integer 0-4): Controls Hardware logging (future)
  * - ASFWEnableHexDumps (boolean): Force enable/disable packet dumps
  * - ASFWLogStatistics (boolean): Enable aggregate statistics logging
+ * - ASFWEnableIsochTxVerifier (boolean): Enable dev-only IT TX verifier (expensive)
  *
  * Thread-safe singleton with runtime update support via user client.
  */
@@ -111,6 +112,11 @@ public:
      */
     bool IsStatisticsEnabled() const;
 
+    /**
+     * @brief Check if dev-only IT TX verifier is enabled
+     */
+    bool IsIsochTxVerifierEnabled() const;
+
     // ========================================================================
     // Runtime Setters (thread-safe, for user client control)
     // ========================================================================
@@ -170,6 +176,11 @@ public:
     void SetHexDumps(bool enable);
 
     /**
+     * @brief Enable or disable dev-only IT TX verifier at runtime
+     */
+    void SetIsochTxVerifierEnabled(bool enable);
+
+    /**
      * @brief Enable or disable statistics logging at runtime
      */
     void SetStatistics(bool enable);
@@ -211,6 +222,7 @@ private:
     std::atomic<uint8_t> avcVerbosity_;
     std::atomic<uint8_t> isochVerbosity_;
     std::atomic<bool> enableHexDumps_;
+    std::atomic<bool> isochTxVerifierEnabled_;
     std::atomic<bool> logStatistics_;
     std::atomic<bool> initialized_;
 };

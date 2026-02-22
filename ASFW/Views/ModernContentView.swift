@@ -45,6 +45,7 @@ struct ModernContentView: View {
         case loggingSettings = "Logging Settings"
         case audio = "Core Audio"
         case saffire = "Saffire"
+        case duet = "Duet"
 
         var id: String { rawValue }
 
@@ -65,6 +66,7 @@ struct ModernContentView: View {
             case .loggingSettings: return "slider.horizontal.3"
             case .audio: return "hifispeaker.fill"
             case .saffire: return "slider.vertical.3"
+            case .duet: return "slider.horizontal.below.square.filled.and.square"
             }
         }
 
@@ -115,6 +117,8 @@ struct ModernContentView: View {
                     AudioDebugView()
                 case .saffire:
                     SaffireMixerView(connector: debugVM.connector)
+                case .duet:
+                    DuetControlView(connector: debugVM.connector)
                 case .none:
                     Text("Select a section")
                         .foregroundStyle(.secondary)
@@ -192,9 +196,11 @@ struct ModernContentView: View {
             switch preset {
             case .standard:
                 _ = connector.setAsyncVerbosity(1)
+                _ = connector.setIsochTelemetryLogging(enabled: false)
                 _ = connector.setHexDumps(enabled: false)
             case .debug:
                 _ = connector.setAsyncVerbosity(4)
+                _ = connector.setIsochTelemetryLogging(enabled: true)
                 _ = connector.setHexDumps(enabled: true)
             }
         }
@@ -211,7 +217,7 @@ struct ModernContentView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             if let config = connector.getLogConfig() {
                 DispatchQueue.main.async {
-                    if config.asyncVerbosity >= 4 && config.hexDumpsEnabled {
+                    if config.asyncVerbosity >= 4 && config.hexDumpsEnabled && config.isochVerbosity >= 3 {
                         self.loggingPreset = .debug
                     } else {
                         self.loggingPreset = .standard

@@ -24,7 +24,7 @@ TEST(AM824EncoderTests, EncodesSilence) {
 
 // Zero sample in 24-in-32 format
 TEST(AM824EncoderTests, EncodesZeroSample) {
-    int32_t sample = 0x00000000;  // 24-bit zero in upper bits
+    int32_t sample = 0x00000000;  // 24-bit zero in lower bits
     uint32_t result = AM824Encoder::encode(sample);
     
     // Same as silence
@@ -33,10 +33,10 @@ TEST(AM824EncoderTests, EncodesZeroSample) {
 
 // Positive sample
 TEST(AM824EncoderTests, EncodesPositiveSample) {
-    // 24-bit sample 0x123456 in upper bits of 32-bit container
-    int32_t sample = 0x12345600;
+    // 24-bit sample 0x123456 in lower bits of 32-bit container (0x00XXXXXX format)
+    int32_t sample = 0x00123456;
     uint32_t result = AM824Encoder::encode(sample);
-    
+
     // Before swap: 0x40123456
     // After swap:  0x56341240
     EXPECT_EQ(result, 0x56341240);
@@ -44,10 +44,10 @@ TEST(AM824EncoderTests, EncodesPositiveSample) {
 
 // Negative sample (two's complement)
 TEST(AM824EncoderTests, EncodesNegativeSample) {
-    // 24-bit sample 0xFEDCBA (negative) in upper bits
-    int32_t sample = static_cast<int32_t>(0xFEDCBA00);
+    // 24-bit sample 0xFEDCBA (negative in 24-bit two's complement) in lower bits
+    int32_t sample = static_cast<int32_t>(0x00FEDCBA);
     uint32_t result = AM824Encoder::encode(sample);
-    
+
     // Before swap: 0x40FEDCBA
     // After swap:  0xBADCFE40
     EXPECT_EQ(result, 0xBADCFE40);
@@ -55,10 +55,10 @@ TEST(AM824EncoderTests, EncodesNegativeSample) {
 
 // Maximum positive 24-bit value
 TEST(AM824EncoderTests, EncodesMaxPositive) {
-    // 0x7FFFFF in upper bits = 0x7FFFFF00
-    int32_t sample = 0x7FFFFF00;
+    // 0x7FFFFF in lower bits = 0x007FFFFF
+    int32_t sample = 0x007FFFFF;
     uint32_t result = AM824Encoder::encode(sample);
-    
+
     // Before swap: 0x407FFFFF
     // After swap:  0xFFFF7F40
     EXPECT_EQ(result, 0xFFFF7F40);
@@ -66,10 +66,10 @@ TEST(AM824EncoderTests, EncodesMaxPositive) {
 
 // Maximum negative 24-bit value
 TEST(AM824EncoderTests, EncodesMaxNegative) {
-    // 0x800000 in upper bits = 0x80000000
-    int32_t sample = static_cast<int32_t>(0x80000000);
+    // 0x800000 in lower bits = 0x00800000
+    int32_t sample = static_cast<int32_t>(0x00800000);
     uint32_t result = AM824Encoder::encode(sample);
-    
+
     // Before swap: 0x40800000
     // After swap:  0x00008040
     EXPECT_EQ(result, 0x00008040);
@@ -83,8 +83,8 @@ TEST(AM824EncoderTests, EncodesMaxNegative) {
 // Channel 0 sample from capture: 0x40000056
 TEST(AM824EncoderTests, MatchesFireBugCapture_QuantizationNoise) {
     // Sample value 0x56 (86 decimal) - quantization noise
-    // In 24-in-32: 0x00005600
-    int32_t sample = 0x00005600;
+    // In 24-in-32 lower-bits format: 0x00000056
+    int32_t sample = 0x00000056;
     uint32_t result = AM824Encoder::encode(sample);
     
     // The capture shows 0x40000056 in big-endian wire format
@@ -97,8 +97,8 @@ TEST(AM824EncoderTests, MatchesFireBugCapture_QuantizationNoise) {
 // Channel 1 sample from capture: 0x40E55654
 TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio) {
     // Sample value 0xE55654 - real audio
-    // In 24-in-32: 0xE5565400
-    int32_t sample = static_cast<int32_t>(0xE5565400);
+    // In 24-in-32 lower-bits format: 0x00E55654
+    int32_t sample = static_cast<int32_t>(0x00E55654);
     uint32_t result = AM824Encoder::encode(sample);
     
     // Wire order bytes: 40 E5 56 54
@@ -109,8 +109,8 @@ TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio) {
 // Another channel 1 sample: 0x40DBD499
 TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio2) {
     // Sample value 0xDBD499
-    // In 24-in-32: 0xDBD49900
-    int32_t sample = static_cast<int32_t>(0xDBD49900);
+    // In 24-in-32 lower-bits format: 0x00DBD499
+    int32_t sample = static_cast<int32_t>(0x00DBD499);
     uint32_t result = AM824Encoder::encode(sample);
     
     // Wire order bytes: 40 DB D4 99
@@ -123,8 +123,8 @@ TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio2) {
 //==============================================================================
 
 TEST(AM824EncoderTests, EncodesStereoFrame) {
-    int32_t left = 0x12340000;
-    int32_t right = 0x56780000;
+    int32_t left = 0x00001234;
+    int32_t right = 0x00005678;
     uint32_t out[2];
     
     AM824Encoder::encodeStereoFrame(left, right, out);
@@ -170,7 +170,7 @@ TEST(AM824EncoderTests, LabelInCorrectPosition) {
 TEST(AM824EncoderTests, IsConstexpr) {
     // These should compile if encode() is truly constexpr
     constexpr uint32_t silence = AM824Encoder::encodeSilence();
-    constexpr uint32_t sample = AM824Encoder::encode(0x12345600);
+    constexpr uint32_t sample = AM824Encoder::encode(0x00123456);
     
     EXPECT_EQ(silence, 0x00000040);
     EXPECT_EQ(sample, 0x56341240);

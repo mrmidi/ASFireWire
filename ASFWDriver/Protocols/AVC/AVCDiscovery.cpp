@@ -8,6 +8,8 @@
 #include "AVCDiscovery.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Audio/Model/ASFWAudioDevice.hpp"
+#include "../Audio/DeviceProtocolFactory.hpp"
+#include "../Audio/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../Audio/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
@@ -21,6 +23,8 @@
 #include <DriverKit/OSDictionary.h>
 #include <set>
 #include <algorithm>
+#include <atomic>
+#include <functional>
 
 using namespace ASFW::Protocols::AVC;
 
@@ -116,6 +120,53 @@ struct PlugChannelSummary {
 
 /// 1394 Trade Association spec ID (24-bit)
 constexpr uint32_t kAVCSpecID = 0x00A02D;
+constexpr uint32_t kDuetPrefetchTimeoutMs = 1200;
+constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
+constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
+constexpr uint32_t kScopeInput = static_cast<uint32_t>('inpt');
+constexpr uint32_t kDuetPhantomMask = 0x3u;
+
+void ConfigureDuetPhantomOverrides(
+    ASFW::Audio::Model::ASFWAudioDevice& config,
+    const std::optional<ASFW::Audio::Oxford::Apogee::InputParams>& inputParams) {
+    config.hasPhantomOverride = true;
+    config.phantomSupportedMask = kDuetPhantomMask;
+
+    uint32_t initialMask = 0;
+    if (inputParams.has_value()) {
+        const auto& params = *inputParams;
+        for (uint32_t index = 0; index < 2; ++index) {
+            if (params.phantomPowerings[index]) {
+                initialMask |= (1u << index);
+            }
+        }
+    }
+    config.phantomInitialMask = initialMask;
+
+    config.boolControlOverrides.clear();
+    config.boolControlOverrides.reserve(4);
+    for (uint32_t element = 1; element <= 2; ++element) {
+        const uint32_t bit = 1u << (element - 1u);
+        bool polarityInitial = false;
+        if (inputParams.has_value()) {
+            polarityInitial = inputParams->polarities[element - 1u];
+        }
+        config.boolControlOverrides.push_back({
+            .classIdFourCC = kClassIdPhantomPower,
+            .scopeFourCC = kScopeInput,
+            .element = element,
+            .isSettable = true,
+            .initialValue = (initialMask & bit) != 0u,
+        });
+        config.boolControlOverrides.push_back({
+            .classIdFourCC = kClassIdPhaseInvert,
+            .scopeFourCC = kScopeInput,
+            .element = element,
+            .isSettable = true,
+            .initialValue = polarityInitial,
+        });
+    }
+}
 
 //==============================================================================
 // Constructor / Destructor
@@ -140,14 +191,16 @@ AVCDiscovery::AVCDiscovery(IOService* driver,
         os_log_error(log_, "AVCDiscovery: Failed to create rescan queue (0x%x)", kr);
     }
 
-    // Register as unit observer
+    // Register as discovery observers
     deviceManager_.RegisterUnitObserver(this);
+    deviceManager_.RegisterDeviceObserver(this);
 
     os_log_info(log_, "AVCDiscovery: Initialized");
 }
 
 AVCDiscovery::~AVCDiscovery() {
-    // Unregister observer
+    // Unregister discovery observers
+    deviceManager_.UnregisterDeviceObserver(this);
     deviceManager_.UnregisterUnitObserver(this);
 
     // Clean up lock
@@ -472,13 +525,29 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
 
     ASFW::Audio::Model::ASFWAudioDevice audioDeviceConfig;
     audioDeviceConfig.guid = guid;
+    audioDeviceConfig.vendorId = vendorId;
+    audioDeviceConfig.modelId = modelId;
     audioDeviceConfig.deviceName = deviceName;
     audioDeviceConfig.channelCount = channelCount;
+    audioDeviceConfig.inputChannelCount =
+        (plugSummary.outputAudioMaxChannels > 0) ? plugSummary.outputAudioMaxChannels : channelCount;
+    audioDeviceConfig.outputChannelCount =
+        (plugSummary.inputAudioMaxChannels > 0) ? plugSummary.inputAudioMaxChannels : channelCount;
     audioDeviceConfig.sampleRates = sampleRates;
     audioDeviceConfig.currentSampleRate = currentRate;
     audioDeviceConfig.inputPlugName = mutableCaps.inputPlugName;
     audioDeviceConfig.outputPlugName = mutableCaps.outputPlugName;
     audioDeviceConfig.streamMode = streamMode;
+
+    if (IsApogeeDuet(*devicePtr)) {
+        ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
+        ASFW_LOG(Audio,
+                 "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config before nub creation",
+                 guid);
+        PrefetchDuetStateAndCreateNub(guid, avcUnit, audioDeviceConfig);
+        return;
+    }
+
     if (!CreateAudioNubFromModel(guid, audioDeviceConfig, "AVC")) {
         ASFW_LOG(Audio, "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx", guid);
     }
@@ -557,6 +626,7 @@ bool AVCDiscovery::CreateAudioNubFromModel(uint64_t guid,
     }
     audioNub->SetChannelCount(config.channelCount);
     audioNub->SetStreamMode(static_cast<uint32_t>(config.streamMode));
+    audioNub->SetGuid(config.guid);
 
     IOLockLock(lock_);
     audioNubs_[guid] = audioNub;
@@ -570,6 +640,186 @@ bool AVCDiscovery::CreateAudioNubFromModel(uint64_t guid,
              sourceTag ? sourceTag : "unknown",
              guid);
     return true;
+}
+
+void AVCDiscovery::PrefetchDuetStateAndCreateNub(
+    uint64_t guid,
+    const std::shared_ptr<AVCUnit>& avcUnit,
+    const Audio::Model::ASFWAudioDevice& config) {
+    if (!avcUnit) {
+        if (!CreateAudioNubFromModel(guid, config, "AVC+DuetFallback")) {
+            ASFW_LOG(Audio,
+                     "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx (no AVCUnit)",
+                     guid);
+        }
+        return;
+    }
+
+    auto device = avcUnit->GetDevice();
+    if (!device) {
+        if (!CreateAudioNubFromModel(guid, config, "AVC+DuetFallback")) {
+            ASFW_LOG(Audio,
+                     "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx (no FWDevice)",
+                     guid);
+        }
+        return;
+    }
+
+    auto protocol = std::make_shared<Audio::Oxford::Apogee::ApogeeDuetProtocol>(
+        asyncSubsystem_,
+        device->GetNodeID(),
+        &avcUnit->GetFCPTransport());
+    auto state = std::make_shared<DuetPrefetchState>();
+    auto completed = std::make_shared<std::atomic<bool>>(false);
+    auto finish = std::make_shared<std::function<void(const char*)>>();
+
+    *finish = [this, guid, config, state, completed](const char* reason) {
+        if (completed->exchange(true)) {
+            return;
+        }
+
+        if (lock_) {
+            IOLockLock(lock_);
+            duetPrefetchByGuid_[guid] = *state;
+            IOLockUnlock(lock_);
+        }
+
+        ASFW_LOG(Audio,
+                 "AVCDiscovery: Duet prefetch complete GUID=%llx reason=%{public}s input=%d mixer=%d output=%d display=%d fw=%d hw=%d timedOut=%d",
+                 guid,
+                 reason ? reason : "unknown",
+                 state->inputParams.has_value(),
+                 state->mixerParams.has_value(),
+                 state->outputParams.has_value(),
+                 state->displayParams.has_value(),
+                 state->firmwareId.has_value(),
+                 state->hardwareId.has_value(),
+                 state->timedOut);
+
+        auto finalConfig = config;
+        ConfigureDuetPhantomOverrides(finalConfig, state->inputParams);
+
+        if (!CreateAudioNubFromModel(guid, finalConfig, "AVC+Duet")) {
+            ASFW_LOG(Audio, "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx", guid);
+        }
+    };
+
+    if (rescanQueue_) {
+        auto timeoutState = state;
+        auto timeoutDone = completed;
+        auto timeoutFinish = finish;
+        rescanQueue_->DispatchAsync(^{
+            IOSleep(kDuetPrefetchTimeoutMs);
+            if (timeoutDone->load()) {
+                return;
+            }
+            timeoutState->timedOut = true;
+            ASFW_LOG_WARNING(Audio,
+                             "AVCDiscovery: Duet prefetch timeout GUID=%llx after %u ms (continuing)",
+                             guid, kDuetPrefetchTimeoutMs);
+            (*timeoutFinish)("timeout");
+        });
+    } else {
+        ASFW_LOG_WARNING(Audio,
+                         "AVCDiscovery: no rescan queue for Duet timeout guard (GUID=%llx) - using fallback defaults",
+                         guid);
+        state->timedOut = true;
+        (*finish)("missing-timeout-queue");
+        return;
+    }
+
+    protocol->GetInputParams([guid, protocol, state, completed, finish](
+                                 IOReturn status,
+                                 Audio::Oxford::Apogee::InputParams params) {
+        if (completed->load()) {
+            return;
+        }
+        if (status == kIOReturnSuccess) {
+            state->inputParams = params;
+        } else {
+            ASFW_LOG_WARNING(Audio,
+                             "AVCDiscovery: Duet input prefetch failed GUID=%llx status=0x%x",
+                             guid, status);
+        }
+
+        protocol->GetMixerParams([guid, protocol, state, completed, finish](
+                                     IOReturn mixerStatus,
+                                     Audio::Oxford::Apogee::MixerParams mixerParams) {
+            if (completed->load()) {
+                return;
+            }
+            if (mixerStatus == kIOReturnSuccess) {
+                state->mixerParams = mixerParams;
+            } else {
+                ASFW_LOG_WARNING(Audio,
+                                 "AVCDiscovery: Duet mixer prefetch failed GUID=%llx status=0x%x",
+                                 guid, mixerStatus);
+            }
+
+            protocol->GetOutputParams([guid, protocol, state, completed, finish](
+                                          IOReturn outputStatus,
+                                          Audio::Oxford::Apogee::OutputParams outputParams) {
+                if (completed->load()) {
+                    return;
+                }
+                if (outputStatus == kIOReturnSuccess) {
+                    state->outputParams = outputParams;
+                } else {
+                    ASFW_LOG_WARNING(Audio,
+                                     "AVCDiscovery: Duet output prefetch failed GUID=%llx status=0x%x",
+                                     guid, outputStatus);
+                }
+
+                protocol->GetDisplayParams(
+                    [guid, protocol, state, completed, finish](
+                        IOReturn displayStatus,
+                        Audio::Oxford::Apogee::DisplayParams displayParams) {
+                        if (completed->load()) {
+                            return;
+                        }
+                        if (displayStatus == kIOReturnSuccess) {
+                            state->displayParams = displayParams;
+                        } else {
+                            ASFW_LOG_WARNING(Audio,
+                                             "AVCDiscovery: Duet display prefetch failed GUID=%llx status=0x%x",
+                                             guid, displayStatus);
+                        }
+
+                        protocol->GetFirmwareId([guid, protocol, state, completed, finish](
+                                                    IOReturn fwStatus,
+                                                    uint32_t firmwareId) {
+                            if (completed->load()) {
+                                return;
+                            }
+                            if (fwStatus == kIOReturnSuccess) {
+                                state->firmwareId = firmwareId;
+                            } else {
+                                ASFW_LOG_WARNING(Audio,
+                                                 "AVCDiscovery: Duet firmware-id prefetch failed GUID=%llx status=0x%x",
+                                                 guid, fwStatus);
+                            }
+
+                            protocol->GetHardwareId(
+                                [guid, state, completed, finish](
+                                    IOReturn hwStatus,
+                                    uint32_t hardwareId) {
+                                    if (completed->load()) {
+                                        return;
+                                    }
+                                    if (hwStatus == kIOReturnSuccess) {
+                                        state->hardwareId = hardwareId;
+                                    } else {
+                                        ASFW_LOG_WARNING(Audio,
+                                                         "AVCDiscovery: Duet hardware-id prefetch failed GUID=%llx status=0x%x",
+                                                         guid, hwStatus);
+                                    }
+                                    (*finish)("complete");
+                                });
+                        });
+                    });
+            });
+        });
+    });
 }
 
 void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>& avcUnit) {
@@ -631,6 +881,7 @@ void AVCDiscovery::OnUnitSuspended(std::shared_ptr<Discovery::FWUnit> unit) {
                     guid);
         // Unit remains in map but operations will fail until resumed
     }
+    duetPrefetchByGuid_.erase(guid);
     IOLockUnlock(lock_);
 
     // Rebuild node ID map (suspended units removed from routing)
@@ -691,9 +942,47 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
         units_.erase(it);
     }
     rescanAttempts_.erase(guid);
+    duetPrefetchByGuid_.erase(guid);
     IOLockUnlock(lock_);
 
     // Rebuild node ID map (terminated unit removed)
+    RebuildNodeIDMap();
+}
+
+void AVCDiscovery::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
+    (void)device;
+}
+
+void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
+    (void)device;
+}
+
+void AVCDiscovery::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
+    (void)device;
+}
+
+void AVCDiscovery::OnDeviceRemoved(Discovery::Guid64 guid) {
+    IOLockLock(lock_);
+
+    auto nubIt = audioNubs_.find(guid);
+    if (nubIt != audioNubs_.end()) {
+        ASFWAudioNub* nub = nubIt->second;
+        if (nub) {
+            ASFW_LOG(Audio, "AVCDiscovery: Device removed -> terminating ASFWAudioNub for GUID=%llx", guid);
+            audioNubs_.erase(nubIt);
+            IOLockUnlock(lock_);
+            nub->Terminate(0);
+            IOLockLock(lock_);
+        } else {
+            audioNubs_.erase(nubIt);
+        }
+    }
+
+    units_.erase(guid);
+    rescanAttempts_.erase(guid);
+    duetPrefetchByGuid_.erase(guid);
+    IOLockUnlock(lock_);
+
     RebuildNodeIDMap();
 }
 
@@ -743,6 +1032,8 @@ void AVCDiscovery::EnsureHardcodedAudioNubForDevice(const Discovery::DeviceRecor
 
     ASFW::Audio::Model::ASFWAudioDevice hardcoded;
     hardcoded.guid = deviceRecord.guid;
+    hardcoded.vendorId = deviceRecord.vendorId;
+    hardcoded.modelId = deviceRecord.modelId;
     if (!deviceRecord.vendorName.empty() || !deviceRecord.modelName.empty()) {
         hardcoded.deviceName = deviceRecord.vendorName + " " + deviceRecord.modelName;
     } else {
@@ -753,6 +1044,8 @@ void AVCDiscovery::EnsureHardcodedAudioNubForDevice(const Discovery::DeviceRecor
     // - advertise single 48kHz / 24-bit stream format
     // - use 16 channels end-to-end until asymmetric in/out is modeled in ADK path
     hardcoded.channelCount = 16;
+    hardcoded.inputChannelCount = 16;
+    hardcoded.outputChannelCount = 16;
     hardcoded.sampleRates = {48000};
     hardcoded.currentSampleRate = 48000;
     hardcoded.inputPlugName = "Saffire Input";
@@ -840,6 +1133,11 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
     uint32_t specID = unit->GetUnitSpecID() & 0xFFFFFF;
 
     return specID == kAVCSpecID;
+}
+
+bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {
+    return device.GetVendorID() == Audio::DeviceProtocolFactory::kApogeeVendorId &&
+           device.GetModelID() == Audio::DeviceProtocolFactory::kApogeeDuetModelId;
 }
 
 uint64_t AVCDiscovery::GetUnitGUID(std::shared_ptr<Discovery::FWUnit> unit) const {

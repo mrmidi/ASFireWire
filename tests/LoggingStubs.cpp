@@ -83,6 +83,34 @@ os_log_t BusManager() {
     return stub_log;
 }
 
+os_log_t MusicSubunit() {
+    return stub_log;
+}
+
+os_log_t FCP() {
+    return stub_log;
+}
+
+os_log_t CMP() {
+    return stub_log;
+}
+
+os_log_t AVC() {
+    return stub_log;
+}
+
+os_log_t Isoch() {
+    return stub_log;
+}
+
+os_log_t Audio() {
+    return stub_log;
+}
+
+os_log_t DICE() {
+    return stub_log;
+}
+
 } // namespace ASFW::Driver::Logging
 
 namespace ASFW {
@@ -103,20 +131,32 @@ uint8_t LogConfig::GetAsyncVerbosity() const { return 0; }
 uint8_t LogConfig::GetControllerVerbosity() const { return 0; }
 uint8_t LogConfig::GetHardwareVerbosity() const { return 0; }
 uint8_t LogConfig::GetDiscoveryVerbosity() const { return 0; }
+uint8_t LogConfig::GetConfigROMVerbosity() const { return 0; }
+uint8_t LogConfig::GetUserClientVerbosity() const { return 0; }
 uint8_t LogConfig::GetAVCVerbosity() const { return 0; }
 uint8_t LogConfig::GetFCPVerbosity() const { return 0; }
+uint8_t LogConfig::GetCMPVerbosity() const { return 0; }
+uint8_t LogConfig::GetIRMVerbosity() const { return 0; }
 uint8_t LogConfig::GetMusicSubunitVerbosity() const { return 0; }
+uint8_t LogConfig::GetIsochVerbosity() const { return 0; }
 bool LogConfig::IsHexDumpsEnabled() const { return false; }
+bool LogConfig::IsIsochTxVerifierEnabled() const { return false; }
 bool LogConfig::IsStatisticsEnabled() const { return false; }
 
 void LogConfig::SetAsyncVerbosity(uint8_t) {}
 void LogConfig::SetControllerVerbosity(uint8_t) {}
 void LogConfig::SetHardwareVerbosity(uint8_t) {}
 void LogConfig::SetDiscoveryVerbosity(uint8_t) {}
+void LogConfig::SetConfigROMVerbosity(uint8_t) {}
+void LogConfig::SetUserClientVerbosity(uint8_t) {}
 void LogConfig::SetAVCVerbosity(uint8_t) {}
 void LogConfig::SetFCPVerbosity(uint8_t) {}
+void LogConfig::SetCMPVerbosity(uint8_t) {}
+void LogConfig::SetIRMVerbosity(uint8_t) {}
 void LogConfig::SetMusicSubunitVerbosity(uint8_t) {}
+void LogConfig::SetIsochVerbosity(uint8_t) {}
 void LogConfig::SetHexDumps(bool) {}
+void LogConfig::SetIsochTxVerifierEnabled(bool) {}
 void LogConfig::SetStatistics(bool) {}
 
 uint8_t LogConfig::ReadUInt8Property(IOService*, const char*, uint8_t defaultValue) { return defaultValue; }

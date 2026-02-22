@@ -16,12 +16,43 @@ namespace ASFW::Async {
 
 namespace ASFW::Audio {
 
+/// Integration mode for a recognized device profile.
+enum class DeviceIntegrationMode : uint8_t {
+    kNone = 0,
+    kHardcodedNub,  // Legacy path using hardcoded ASFWAudioDevice profile.
+    kAVCDriven,     // AV/C discovery path with vendor extension controls.
+};
+
 /// Factory for creating device-specific protocol handlers
 ///
 /// Call Create() during device discovery to instantiate the appropriate
 /// protocol handler for known devices. Returns nullptr for unknown devices.
 class DeviceProtocolFactory {
 public:
+    static constexpr uint32_t kFocusriteVendorId = 0x00130e;
+    static constexpr uint32_t kSPro24DspModelId = 0x000008;
+    static constexpr uint32_t kApogeeVendorId = 0x0003db;
+    static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
+
+    /// Resolve integration mode for a known vendor/model pair.
+    static constexpr DeviceIntegrationMode LookupIntegrationMode(
+        uint32_t vendorId,
+        uint32_t modelId
+    ) noexcept {
+        if (vendorId == kFocusriteVendorId && modelId == kSPro24DspModelId) {
+            return DeviceIntegrationMode::kHardcodedNub;
+        }
+        if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
+            return DeviceIntegrationMode::kAVCDriven;
+        }
+        return DeviceIntegrationMode::kNone;
+    }
+
+    /// Check if a device is recognized by the factory.
+    static constexpr bool IsKnownDevice(uint32_t vendorId, uint32_t modelId) noexcept {
+        return LookupIntegrationMode(vendorId, modelId) != DeviceIntegrationMode::kNone;
+    }
+
     /// Create a protocol handler for the given vendor/model
     /// @param vendorId   IEEE OUI vendor ID from Config ROM
     /// @param modelId    Model ID from Config ROM
@@ -34,12 +65,6 @@ public:
         Async::AsyncSubsystem& subsystem,
         uint16_t nodeId
     );
-    
-    /// Check if a device is recognized by the factory
-    /// @param vendorId  IEEE OUI vendor ID
-    /// @param modelId   Model ID
-    /// @return true if a protocol handler exists for this device
-    static bool IsKnownDevice(uint32_t vendorId, uint32_t modelId);
 };
 
 } // namespace ASFW::Audio
