@@ -48,3 +48,9 @@ Plugins/VersionGeneratorPlugin
 
 .claude/
 opencode.json
+
+# Xcode per-user state
+**/xcuserdata/
+
+# Local Codex scratch builds
+build-codex/
