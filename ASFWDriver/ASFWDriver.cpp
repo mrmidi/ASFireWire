@@ -49,6 +49,7 @@
 #include "Controller/ControllerStateMachine.hpp"
 #include "Diagnostics/MetricsSink.hpp"
 #include "Discovery/FWDevice.hpp"
+#include "Audio/AudioCoordinator.hpp"
 #include "Service/DriverContext.hpp"
 #include "Protocols/AVC/AVCDiscovery.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
@@ -189,6 +190,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
         ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus());
         ctx.controller->SetCMPClient(ctx.deps.cmpClient);
         ASFW_LOG(Controller, "✅ CMPClient initialized");
+    }
+
+    if (ctx.audioCoordinator) {
+        ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
     }
 
     ASFW::LogConfig::Shared().Initialize(this);
@@ -476,6 +481,13 @@ kern_return_t ASFWDriver::SetIsochTxVerifier(uint32_t enabled) const {
     return kIOReturnSuccess;
 }
 
+kern_return_t ASFWDriver::SetAudioAutoStart(uint32_t enabled) const {
+    ASFW_LOG_INFO(Controller, "UserClient: Setting audio auto-start to %{public}s",
+                  enabled ? "enabled" : "disabled");
+    ASFW::LogConfig::Shared().SetAudioAutoStartEnabled(enabled != 0);
+    return kIOReturnSuccess;
+}
+
 kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity,
                                       uint32_t* hexDumpsEnabled,
                                       uint32_t* isochVerbosity) const {
@@ -490,6 +502,15 @@ kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity,
     return kIOReturnSuccess;
 }
 
+kern_return_t ASFWDriver::GetAudioAutoStart(uint32_t* enabled) const {
+    if (!enabled) {
+        return kIOReturnBadArgument;
+    }
+    *enabled = ASFW::LogConfig::Shared().IsAudioAutoStartEnabled() ? 1u : 0u;
+    ASFW_LOG_INFO(Controller, "UserClient: Reading audio auto-start (enabled=%u)", *enabled);
+    return kIOReturnSuccess;
+}
+
 kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
@@ -500,18 +521,38 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
+    if (!ctx.audioCoordinator) {
+        return kIOReturnNotReady;
+    }
+
+    if (auto* ir = ctx.isoch.ReceiveContext();
+        ir && ir->GetState() != ASFW::Isoch::IRPolicy::State::Stopped) {
+        ASFW_LOG(Controller, "[Isoch] IR already running; StartIsochReceive is idempotent");
+        return kIOReturnSuccess;
+    }
+
+    const auto guid = ctx.audioCoordinator->GetSinglePublishedGuid();
+    if (!guid.has_value()) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: no single audio nub published");
+        return kIOReturnNotReady;
+    }
+    auto* nub = ctx.audioCoordinator->GetNub(*guid);
+    if (!nub) {
+        return kIOReturnNotReady;
+    }
+
+    nub->EnsureRxQueueCreated();
     return ctx.isoch.StartReceive(channel,
                                   *ctx.deps.hardware,
-                                  ctx.deps.deviceManager.get(),
-                                  ctx.deps.cmpClient.get(),
-                                  ctx.deps.avcDiscovery.get());
+                                  nub->GetRxQueueLocalMapping(),
+                                  nub->GetRxQueueBytes());
 }
 
 kern_return_t ASFWDriver::StopIsochReceive() {
     if (!ivars || !ivars->context || !ivars->context->isoch.ReceiveContext()) {
         return kIOReturnNotReady;
     }
-    return ivars->context->isoch.StopReceive(ivars->context->deps.cmpClient.get());
+    return ivars->context->isoch.StopReceive();
 }
 
 void* ASFWDriver::GetIsochReceiveContext() const {
@@ -535,18 +576,58 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
+    if (!ctx.audioCoordinator || !ctx.deps.deviceRegistry) {
+        return kIOReturnNotReady;
+    }
+
+    const auto guid = ctx.audioCoordinator->GetSinglePublishedGuid();
+    if (!guid.has_value()) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: no single audio nub published");
+        return kIOReturnNotReady;
+    }
+    auto* nub = ctx.audioCoordinator->GetNub(*guid);
+    if (!nub) {
+        return kIOReturnNotReady;
+    }
+
+    IOBufferMemoryDescriptor* retryMem = nullptr;
+    uint64_t retryBytes = 0;
+    (void)nub->CopyTransmitQueueMemory(&retryMem, &retryBytes);
+    if (retryMem) {
+        retryMem->release();
+    }
+
+    const uint32_t pcmChannels = nub->GetOutputChannelCount();
+    uint32_t am824Slots = pcmChannels;
+    if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
+        record && record->protocol) {
+        ASFW::Audio::AudioStreamRuntimeCaps caps{};
+        if (record->protocol->GetRuntimeAudioStreamCaps(caps) && caps.hostToDeviceAm824Slots > 0) {
+            am824Slots = caps.hostToDeviceAm824Slots;
+        }
+    }
+
+    const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
+    const uint32_t streamModeRaw = nub->GetStreamMode();
+
     return ctx.isoch.StartTransmit(channel,
                                    *ctx.deps.hardware,
-                                   ctx.deps.deviceManager.get(),
-                                   ctx.deps.cmpClient.get(),
-                                   ctx.deps.avcDiscovery.get());
+                                   sid,
+                                   streamModeRaw,
+                                   pcmChannels,
+                                   am824Slots,
+                                   nub->GetTxQueueLocalMapping(),
+                                   nub->GetTxQueueBytes(),
+                                   nullptr,
+                                   0,
+                                   0);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {
     if (!ivars || !ivars->context || !ivars->context->isoch.TransmitContext()) {
         return kIOReturnNotReady;
     }
-    return ivars->context->isoch.StopTransmit(ivars->context->deps.cmpClient.get());
+    return ivars->context->isoch.StopTransmit();
 }
 
 void* ASFWDriver::GetIsochTransmitContext() const {

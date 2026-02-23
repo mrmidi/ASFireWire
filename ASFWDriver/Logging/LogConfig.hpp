@@ -27,6 +27,7 @@ namespace ASFW {
  * - ASFWEnableHexDumps (boolean): Force enable/disable packet dumps
  * - ASFWLogStatistics (boolean): Enable aggregate statistics logging
  * - ASFWEnableIsochTxVerifier (boolean): Enable dev-only IT TX verifier (expensive)
+ * - ASFWAutoStartAudioStreams (boolean): Enable/disable CoreAudio-driven stream auto-start
  *
  * Thread-safe singleton with runtime update support via user client.
  */
@@ -117,6 +118,11 @@ public:
      */
     bool IsIsochTxVerifierEnabled() const;
 
+    /**
+     * @brief Check if CoreAudio-driven auto-start is enabled
+     */
+    bool IsAudioAutoStartEnabled() const;
+
     // ========================================================================
     // Runtime Setters (thread-safe, for user client control)
     // ========================================================================
@@ -181,6 +187,11 @@ public:
     void SetIsochTxVerifierEnabled(bool enable);
 
     /**
+     * @brief Enable or disable CoreAudio-driven auto-start at runtime
+     */
+    void SetAudioAutoStartEnabled(bool enable);
+
+    /**
      * @brief Enable or disable statistics logging at runtime
      */
     void SetStatistics(bool enable);
@@ -223,6 +234,7 @@ private:
     std::atomic<uint8_t> isochVerbosity_;
     std::atomic<bool> enableHexDumps_;
     std::atomic<bool> isochTxVerifierEnabled_;
+    std::atomic<bool> audioAutoStartEnabled_;
     std::atomic<bool> logStatistics_;
     std::atomic<bool> initialized_;
 };

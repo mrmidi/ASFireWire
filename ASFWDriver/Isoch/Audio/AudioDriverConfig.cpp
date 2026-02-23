@@ -30,13 +30,16 @@ void AppendBoolControl(ParsedAudioDriverConfig& inOutConfig,
 }
 
 void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& inOutConfig) {
-    const uint32_t maxChannels = std::min(inOutConfig.channelCount, kMaxNamedChannels);
-    for (uint32_t index = 0; index < maxChannels; ++index) {
+    const uint32_t maxInputChannels = std::min(inOutConfig.inputChannelCount, kMaxNamedChannels);
+    const uint32_t maxOutputChannels = std::min(inOutConfig.outputChannelCount, kMaxNamedChannels);
+    for (uint32_t index = 0; index < maxInputChannels; ++index) {
         snprintf(inOutConfig.inputChannelNames[index],
                  sizeof(inOutConfig.inputChannelNames[index]),
                  "%s %u",
                  inOutConfig.inputPlugName,
                  index + 1);
+    }
+    for (uint32_t index = 0; index < maxOutputChannels; ++index) {
         snprintf(inOutConfig.outputChannelNames[index],
                  sizeof(inOutConfig.outputChannelNames[index]),
                  "%s %u",

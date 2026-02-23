@@ -114,9 +114,39 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
             if (irmNodeID == 0xFF) {
                 badIRM = true;
             }
-            
+
             if (badIRM) {
                 ASFW_LOG(BusManager, "⚠️  Bad IRM detected (node %u)", irmNodeID);
+            }
+        }
+
+        // Apple's AssignCycleMaster fallback (IOFireWireController.cpp):
+        // If bad IRM or no IRM at all, we must ensure *somebody* becomes IRM.
+        // DICE-class devices don't support IRM, so our node must take over
+        // for isochronous resource management to work.
+        if (badIRM || irmNodeID == 0xFF) {
+            if (!config_.delegateCycleMaster) {
+                // We want to be cycle master — force ourselves as IRM
+                PhyConfigCommand cmd{};
+                cmd.setContender = true;
+                cmd.forceRootNodeID = localNodeID;
+                ASFW_LOG(BusManager, "Forcing local node as IRM (bad IRM or no contenders)");
+                return cmd;
+            } else if (otherContender) {
+                // Delegate mode but other node can do it
+                PhyConfigCommand cmd{};
+                cmd.setContender = false;
+                cmd.forceRootNodeID = otherContenderID;
+                ASFW_LOG(BusManager, "Delegating IRM to node %u (bad IRM=%u)", otherContenderID, irmNodeID);
+                return cmd;
+            } else {
+                // Nobody else can do it.  Apple pattern:
+                // "Oh well, nobody else can do it. Make Mac root."
+                PhyConfigCommand cmd{};
+                cmd.setContender = true;
+                cmd.forceRootNodeID = localNodeID;
+                ASFW_LOG(BusManager, "No IRM candidates — forcing local node as contender (Apple fallback)");
+                return cmd;
             }
         }
     }

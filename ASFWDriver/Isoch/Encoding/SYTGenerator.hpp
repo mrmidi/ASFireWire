@@ -17,7 +17,7 @@ namespace ASFW::Encoding {
 /// Linux-style architecture (amdtp-stream.c):
 /// 1. IsochTransmitContext reads hardware timestamp from consumed descriptors
 /// 2. Tracks the expected transmit cycle for each new packet
-/// 3. Passes transmit cycle to computeDataSYT()
+/// 3. Passes transmit cycle and the packet's data-block count to computeDataSYT()
 /// 4. SYT = (presentation_cycle & 0xF) << 12 | tick_offset
 ///
 /// No HardwareInterface* dependency — cycle tracking is in IsochTransmitContext.
@@ -34,8 +34,9 @@ public:
 
     /// Compute SYT for a DATA packet at the given OHCI transmit cycle
     /// @param transmitCycle 13-bit OHCI cycle count (0-7999)
+    /// @param samplesInPacket Data blocks (events) carried in this DATA packet
     /// @return 16-bit SYT value
-    [[nodiscard]] uint16_t computeDataSYT(uint32_t transmitCycle) noexcept;
+    [[nodiscard]] uint16_t computeDataSYT(uint32_t transmitCycle, uint32_t samplesInPacket) noexcept;
 
     /// Apply a small signed offset correction in 16-cycle tick domain.
     void nudgeOffsetTicks(int32_t deltaTicks) noexcept;
@@ -48,9 +49,6 @@ public:
 
     /// Get DATA packet counter for diagnostics
     [[nodiscard]] uint64_t dataPacketCount() const noexcept { return dataPacketCount_; }
-
-    /// Get SYT interval in samples (for packet timing)
-    [[nodiscard]] uint32_t sytInterval() const noexcept { return kSytInterval; }
 
 private:
     // =========================================================================
@@ -66,15 +64,12 @@ private:
     /// Ticks per audio sample at 48 kHz: 24576000 / 48000 = 512
     static constexpr uint32_t kTicksPerSample48k = 512;
 
-    /// Samples per DATA packet at 48 kHz (IEC 61883-6 blocking)
-    static constexpr uint32_t kSytInterval = 8;
-
     // =========================================================================
     // Per-rate computed values (set in initialize())
     // =========================================================================
 
-    /// Ticks per SYT interval: kSytInterval * ticksPerSample = 8 * 512 = 4096
-    uint32_t sytIntervalTicks_{4096};
+    /// Ticks per sample at the active sample rate. For 48 kHz: 512.
+    uint32_t ticksPerSample_{kTicksPerSample48k};
 
     /// Wrap point for sytOffsetTicks_: 16 * kTicksPerCycle = 49152
     /// Matches the 4-bit cycle field in SYT format
@@ -84,7 +79,7 @@ private:
     // Running state
     // =========================================================================
 
-    /// Sample-position offset accumulator (advances by sytIntervalTicks_ per DATA packet)
+    /// Sample-position offset accumulator (advances by samplesInPacket * ticksPerSample_ per DATA packet)
     uint32_t sytOffsetTicks_{0};
 
     /// Diagnostic counter

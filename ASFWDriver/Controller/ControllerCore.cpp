@@ -1009,11 +1009,19 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         return;
     }
     
+    // Count how many nodes will actually be scanned (exclude local + link-inactive)
+    uint32_t scannableCount = 0;
+    for (const auto& node : snap.nodes) {
+        if (node.nodeId != localNodeId && node.linkActive) {
+            scannableCount++;
+        }
+    }
+
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
-    ASFW_LOG(Discovery, "Topology ready gen=%u, starting ROM scan for %u nodes",
-             snap.generation, snap.nodeCount);
+    ASFW_LOG(Discovery, "Topology ready gen=%u: %u total nodes, %u scannable (local=%u)",
+             snap.generation, snap.nodeCount, scannableCount, localNodeId);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
-    
+
     deps_.romScanner->Begin(snap.generation, snap, localNodeId);
 
     if (deps_.irmClient) {
@@ -1024,12 +1032,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     }
     
     if (deps_.cmpClient) {
-        const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
-        if (irmNodeId != 0xFF) {
-            deps_.cmpClient->SetDeviceNode(irmNodeId, snap.generation);
-            ASFW_LOG(Discovery, "CMPClient updated: device node=%u, generation=%u",
-                     irmNodeId, snap.generation);
-        }
+        // CMP (PCR) operations target a *specific device's* plug registers, not the IRM node.
+        // Device-scoped CMP wiring is done at stream start time (IsochService).
     }
 }
 
@@ -1070,7 +1074,32 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
     ASFW_LOG(Discovery, "ROM scan complete for gen=%u, processing results...", gen);
 
     auto roms = deps_.romScanner->DrainReady(gen);
-    ASFW_LOG(Discovery, "Discovered %zu ROMs", roms.size());
+    ASFW_LOG(Discovery, "Discovered %zu ROMs (hadBusy=%d)", roms.size(),
+             deps_.romScanner->HadBusyNodes());
+
+    // Propagate busy-node flag to BusResetCoordinator so it can delay
+    // the next discovery if DICE-class devices are still booting.
+    //
+    // CRITICAL: Only clear the delay when a scan actually produced results.
+    // If the scan found 0 remote nodes (e.g. Saffire link inactive during boot),
+    // we learned nothing about whether the device recovered — keep the delay
+    // so the next bus reset doesn't immediately start a doomed scan.
+    if (deps_.busReset) {
+        const bool hadBusy = deps_.romScanner->HadBusyNodes();
+        if (hadBusy) {
+            deps_.busReset->SetPreviousScanHadBusyNodes(true);
+            ASFW_LOG(Discovery, "ROM scan had busy nodes — next discovery will be delayed");
+        } else if (!roms.empty()) {
+            // Successful scan with actual results — device is responding, clear delay
+            deps_.busReset->SetPreviousScanHadBusyNodes(false);
+            ASFW_LOG(Discovery, "ROM scan succeeded with %zu ROMs — clearing discovery delay", roms.size());
+        } else {
+            ASFW_LOG(Discovery, "ROM scan produced 0 ROMs — keeping previous delay state");
+            // Intentionally do NOT clear previousScanHadBusyNodes.
+            // Escalate the delay: we learned nothing, device may still be booting.
+            deps_.busReset->EscalateDiscoveryDelay();
+        }
+    }
     std::unordered_set<uint64_t> discoveredGuids;
     discoveredGuids.reserve(roms.size());
 
@@ -1083,24 +1112,6 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen) {
         auto* asyncSubsystem = deps_.asyncSubsystem.get();
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy, asyncSubsystem);
         discoveredGuids.insert(deviceRecord.guid);
-
-        // Vendor-specific hardcoded-nub bring-up path (legacy DICE).
-        // AVC-driven devices (e.g. Apogee Duet) must wait for AV/C discovery.
-        if (deps_.avcDiscovery && deviceRecord.kind == Discovery::DeviceKind::VendorSpecificAudio) {
-            const auto integrationMode = Audio::DeviceProtocolFactory::LookupIntegrationMode(
-                deviceRecord.vendorId,
-                deviceRecord.modelId);
-            if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
-                deps_.avcDiscovery->EnsureHardcodedAudioNubForDevice(deviceRecord);
-            } else {
-                ASFW_LOG(Discovery,
-                         "Skipping hardcoded nub path for GUID=0x%016llx vendor=0x%06x model=0x%06x (integration=%u)",
-                         deviceRecord.guid,
-                         deviceRecord.vendorId,
-                         deviceRecord.modelId,
-                         static_cast<unsigned>(integrationMode));
-            }
-        }
 
         if (deps_.deviceManager) {
             auto fwDevice = deps_.deviceManager->UpsertDevice(deviceRecord, rom);

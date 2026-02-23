@@ -20,6 +20,7 @@
 #include "../Discovery/SpeedPolicy.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Hardware/InterruptManager.hpp"
+#include "../Audio/AudioCoordinator.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
@@ -28,6 +29,7 @@
 void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
     controller.reset();
+    audioCoordinator.reset();
     deps.hardware.reset();
     deps.busReset.reset();
     deps.busManager.reset();
@@ -105,11 +107,23 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         d.deviceManager = std::make_shared<ASFW::Discovery::DeviceManager>();
     }
 
+    if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware) {
+        ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
+            driver,
+            *d.deviceManager,
+            *d.deviceRegistry,
+            ctx.isoch,
+            *d.hardware
+        );
+        ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
+    }
+
     if (!d.avcDiscovery && d.deviceManager && d.asyncSubsystem) {
         d.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
             driver,
             *d.deviceManager,
-            *d.asyncSubsystem
+            *d.asyncSubsystem,
+            ctx.audioCoordinator.get()
         );
         ASFW_LOG(Controller, "[Controller] ✅ AVCDiscovery initialized");
     }

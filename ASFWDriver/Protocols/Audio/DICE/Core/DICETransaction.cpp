@@ -6,6 +6,7 @@
 #include "DICETransaction.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../../../Async/AsyncSubsystem.hpp"
+#include <cstring>
 
 namespace ASFW::Audio::DICE {
 
@@ -238,37 +239,168 @@ void DICETransaction::ReadGlobalState(Async::AsyncSubsystem& subsystem, const Ge
 }
 
 namespace {
-// Parse stream config from wire format
-StreamConfig ParseStreamConfig(const uint8_t* data, size_t size) {
-    StreamConfig config;
-    
-    if (size < 12) return config;
-    
-    config.numStreams = DICETransaction::QuadletFromWire(data);
-    config.streamSizes[0] = DICETransaction::QuadletFromWire(data + 4);
-    config.streamSizes[1] = DICETransaction::QuadletFromWire(data + 8);
-    
-    // Limit to sensible values
-    if (config.numStreams > 4) config.numStreams = 4;
-    
-    // Parse each stream (offset starts at 12)
-    size_t offset = 12;
-    for (uint32_t i = 0; i < config.numStreams && offset + 8 <= size; ++i) {
-        config.streams[i].numChannels = DICETransaction::QuadletFromWire(data + offset);
-        config.streams[i].formatInfo = DICETransaction::QuadletFromWire(data + offset + 4);
-        
-        // Stream names follow immediately (256 bytes each per TCAT spec)
-        // For now, just log the channel count
-        offset += 268;  // 8 bytes header + 256 bytes name + padding
+constexpr size_t kStreamSectionHeaderBytes = 8;
+constexpr size_t kStreamLabelsOffset = 16;
+constexpr size_t kStreamLabelsBytes = 256;
+constexpr size_t kStreamEntryMinCoreBytes = 16;
+constexpr size_t kStreamEntryMinWithLabelsBytes = kStreamLabelsOffset + kStreamLabelsBytes;
+
+int32_t ReadSignedQuadlet(const uint8_t* data) noexcept {
+    return static_cast<int32_t>(DICETransaction::QuadletFromWire(data));
+}
+
+void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) noexcept {
+    std::memset(dst, 0, sizeof(dst));
+    if (!src || bytesAvailable == 0) {
+        return;
     }
-    
+
+    const size_t copyBytes = (bytesAvailable < (sizeof(dst) - 1)) ? bytesAvailable : (sizeof(dst) - 1);
+    size_t out = 0;
+
+    // DICE stores text fields as big-endian quadlets. Decode quadlet-wise into
+    // host-order bytes instead of using memcpy; this avoids alignment-sensitive
+    // vectorized memmove paths on DriverKit RX payload buffers.
+    while (out + 4 <= copyBytes) {
+        const uint32_t q = DICETransaction::QuadletFromWire(src + out);
+        dst[out + 0] = static_cast<char>((q >> 24) & 0xFF);
+        dst[out + 1] = static_cast<char>((q >> 16) & 0xFF);
+        dst[out + 2] = static_cast<char>((q >>  8) & 0xFF);
+        dst[out + 3] = static_cast<char>( q        & 0xFF);
+        out += 4;
+    }
+
+    // Remainder (defensive; labels are normally quadlet-aligned).
+    while (out < copyBytes) {
+        dst[out] = static_cast<char>(src[out]);
+        ++out;
+    }
+
+    dst[copyBytes] = '\0';
+}
+
+uint32_t ClampStreamCount(uint32_t count) noexcept {
+    return (count > 4u) ? 4u : count;
+}
+
+StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout) {
+    StreamConfig config;
+    config.isRxLayout = isRxLayout;
+
+    if (!data || size < kStreamSectionHeaderBytes) {
+        return config;
+    }
+
+    const uint32_t reportedStreams = DICETransaction::QuadletFromWire(data);
+    const uint32_t entryQuadlets = DICETransaction::QuadletFromWire(data + 4);
+    config.numStreams = ClampStreamCount(reportedStreams);
+    config.entrySizeBytes = entryQuadlets * 4u;
+    config.parsedEntrySizeBytes = config.entrySizeBytes;
+
+    if (config.entrySizeBytes < kStreamEntryMinCoreBytes) {
+        ASFW_LOG(DICE, "DICE %{public}s stream format: invalid entry size %u bytes (reported streams=%u)",
+                 isRxLayout ? "RX" : "TX", config.entrySizeBytes, reportedStreams);
+        config.numStreams = 0;
+        return config;
+    }
+
+    uint32_t parsedCount = 0;
+    for (uint32_t i = 0; i < config.numStreams; ++i) {
+        const size_t entryBase = kStreamSectionHeaderBytes + (size_t(i) * config.parsedEntrySizeBytes);
+        if (entryBase + kStreamEntryMinCoreBytes > size) {
+            break;
+        }
+
+        auto& entry = config.streams[i];
+        entry.isoChannel = ReadSignedQuadlet(data + entryBase + 0x00);
+        if (isRxLayout) {
+            entry.hasSeqStart = true;
+            entry.hasSpeed = false;
+            entry.seqStart = DICETransaction::QuadletFromWire(data + entryBase + 0x04);
+            entry.pcmChannels = DICETransaction::QuadletFromWire(data + entryBase + 0x08);
+            entry.midiPorts = DICETransaction::QuadletFromWire(data + entryBase + 0x0C);
+            entry.speed = 0;
+        } else {
+            entry.hasSeqStart = false;
+            entry.hasSpeed = true;
+            entry.seqStart = 0;
+            entry.pcmChannels = DICETransaction::QuadletFromWire(data + entryBase + 0x04);
+            entry.midiPorts = DICETransaction::QuadletFromWire(data + entryBase + 0x08);
+            entry.speed = DICETransaction::QuadletFromWire(data + entryBase + 0x0C);
+        }
+
+        if (config.entrySizeBytes >= kStreamEntryMinWithLabelsBytes &&
+            entryBase + kStreamEntryMinWithLabelsBytes <= size) {
+            CopyLabelBlob(entry.labels, data + entryBase + kStreamLabelsOffset, kStreamLabelsBytes);
+        }
+
+        ++parsedCount;
+    }
+
+    if (parsedCount < config.numStreams) {
+        ASFW_LOG(DICE,
+                 "DICE %{public}s stream format truncated: reported=%u clamped=%u parsed=%u readSize=%zu entrySize=%u",
+                 isRxLayout ? "RX" : "TX",
+                 reportedStreams,
+                 ClampStreamCount(reportedStreams),
+                 parsedCount,
+                 size,
+                 config.entrySizeBytes);
+        config.numStreams = parsedCount;
+    }
+
     return config;
+}
+
+uint32_t ComputeAm824Slots(uint32_t pcmChannels, uint32_t midiPorts) noexcept {
+    return pcmChannels + ((midiPorts + 7u) / 8u);
+}
+
+void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
+    ASFW_LOG(DICE, "%{public}s Streams: count=%u entrySize=%uB pcm=%u midi=%u am824Slots=%u",
+             prefix,
+             config.numStreams,
+             config.entrySizeBytes,
+             config.TotalPcmChannels(),
+             config.TotalMidiPorts(),
+             config.TotalAm824Slots());
+
+    for (uint32_t i = 0; i < config.numStreams && i < 4; ++i) {
+        const auto& e = config.streams[i];
+        if (config.isRxLayout) {
+            ASFW_LOG(DICE,
+                     "  %{public}s[%u]: iso=%d start=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
+                     prefix,
+                     i,
+                     e.isoChannel,
+                     e.seqStart,
+                     e.pcmChannels,
+                     e.midiPorts,
+                     ComputeAm824Slots(e.pcmChannels, e.midiPorts),
+                     e.labels);
+        } else {
+            ASFW_LOG(DICE,
+                     "  %{public}s[%u]: iso=%d speed=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
+                     prefix,
+                     i,
+                     e.isoChannel,
+                     e.speed,
+                     e.pcmChannels,
+                     e.midiPorts,
+                     ComputeAm824Slots(e.pcmChannels, e.midiPorts),
+                     e.labels);
+        }
+    }
 }
 } // anonymous namespace
 
 void DICETransaction::ReadTxStreamConfig(Async::AsyncSubsystem& subsystem, const GeneralSections& sections,
                                           std::function<void(IOReturn, StreamConfig)> callback) {
     const size_t readSize = (sections.txStreamFormat.size > 512) ? 512 : sections.txStreamFormat.size;
+    if (sections.txStreamFormat.size > 512) {
+        ASFW_LOG(DICE, "TX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
+                 sections.txStreamFormat.size, readSize);
+    }
     
     ReadBlock(subsystem, sections.txStreamFormat.offset, readSize,
               [callback](IOReturn status, const uint8_t* data, size_t size) {
@@ -277,14 +409,8 @@ void DICETransaction::ReadTxStreamConfig(Async::AsyncSubsystem& subsystem, const
             return;
         }
         
-        StreamConfig config = ParseStreamConfig(data, size);
-        
-        ASFW_LOG(DICE, "TX Streams: count=%u totalCh=%u",
-                 config.numStreams, config.TotalChannels());
-        for (uint32_t i = 0; i < config.numStreams && i < 4; ++i) {
-            ASFW_LOG(DICE, "  TX[%u]: %u channels, format=0x%08x",
-                     i, config.streams[i].numChannels, config.streams[i].formatInfo);
-        }
+        StreamConfig config = ParseStreamConfig(data, size, false);
+        LogStreamConfigDetails("TX", config);
         
         callback(kIOReturnSuccess, config);
     });
@@ -293,6 +419,10 @@ void DICETransaction::ReadTxStreamConfig(Async::AsyncSubsystem& subsystem, const
 void DICETransaction::ReadRxStreamConfig(Async::AsyncSubsystem& subsystem, const GeneralSections& sections,
                                           std::function<void(IOReturn, StreamConfig)> callback) {
     const size_t readSize = (sections.rxStreamFormat.size > 512) ? 512 : sections.rxStreamFormat.size;
+    if (sections.rxStreamFormat.size > 512) {
+        ASFW_LOG(DICE, "RX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
+                 sections.rxStreamFormat.size, readSize);
+    }
     
     ReadBlock(subsystem, sections.rxStreamFormat.offset, readSize,
               [callback](IOReturn status, const uint8_t* data, size_t size) {
@@ -301,14 +431,8 @@ void DICETransaction::ReadRxStreamConfig(Async::AsyncSubsystem& subsystem, const
             return;
         }
         
-        StreamConfig config = ParseStreamConfig(data, size);
-        
-        ASFW_LOG(DICE, "RX Streams: count=%u totalCh=%u",
-                 config.numStreams, config.TotalChannels());
-        for (uint32_t i = 0; i < config.numStreams && i < 4; ++i) {
-            ASFW_LOG(DICE, "  RX[%u]: %u channels, format=0x%08x",
-                     i, config.streams[i].numChannels, config.streams[i].formatInfo);
-        }
+        StreamConfig config = ParseStreamConfig(data, size, true);
+        LogStreamConfigDetails("RX", config);
         
         callback(kIOReturnSuccess, config);
     });
@@ -365,8 +489,14 @@ void DICETransaction::ReadCapabilities(Async::AsyncSubsystem& subsystem,
                     ASFW_LOG(DICE, "DICE Capabilities Discovered:");
                     ASFW_LOG(DICE, "  Sample Rate: %u Hz", caps->global.sampleRate);
                     ASFW_LOG(DICE, "  Clock Caps:  0x%08x", caps->global.clockCaps);
-                    ASFW_LOG(DICE, "  TX Channels: %u", caps->txStreams.TotalChannels());
-                    ASFW_LOG(DICE, "  RX Channels: %u", caps->rxStreams.TotalChannels());
+                    ASFW_LOG(DICE, "  TX PCM/MIDI/Slots: %u/%u/%u",
+                             caps->txStreams.TotalPcmChannels(),
+                             caps->txStreams.TotalMidiPorts(),
+                             caps->txStreams.TotalAm824Slots());
+                    ASFW_LOG(DICE, "  RX PCM/MIDI/Slots: %u/%u/%u",
+                             caps->rxStreams.TotalPcmChannels(),
+                             caps->rxStreams.TotalMidiPorts(),
+                             caps->rxStreams.TotalAm824Slots());
                     ASFW_LOG(DICE, "  Nickname:    '%{public}s'", caps->global.nickname);
                     ASFW_LOG(DICE, "═══════════════════════════════════════════════════════");
                     

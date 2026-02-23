@@ -30,7 +30,8 @@ class IsochTxVerifier final : public Tx::IsochTxCaptureHook {
 public:
     struct Inputs {
         uint32_t framesPerPacket{0};
-        uint32_t channels{0};
+        uint32_t pcmChannels{0};
+        uint32_t am824Slots{0};
         bool zeroCopyEnabled{false};
         bool sharedTxQueueValid{false};
         uint32_t sharedTxQueueFillFrames{0};
@@ -71,7 +72,7 @@ private:
         uint32_t cipQ1Host{0};
         uint16_t reqCount{0};
         uint16_t audioQuadletCount{0};
-        std::array<uint32_t, Tx::Layout::kAudioWriteAhead * Encoding::kMaxSupportedChannels> audioHost{};
+        std::array<uint32_t, Tx::Layout::kAudioWriteAhead * Encoding::kMaxSupportedAm824Slots> audioHost{};
     };
 
     static constexpr uint32_t kTraceCapacity = 1024;
@@ -117,4 +118,3 @@ private:
 };
 
 } // namespace ASFW::Isoch
-

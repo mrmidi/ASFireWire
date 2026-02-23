@@ -122,6 +122,28 @@ enum class AsyncStatus : uint8_t {
     kStaleGeneration,
 };
 
+[[nodiscard]] constexpr const char* ToString(AsyncStatus status) noexcept {
+    switch (status) {
+        case AsyncStatus::kSuccess:
+            return "success";
+        case AsyncStatus::kTimeout:
+            return "timeout";
+        case AsyncStatus::kShortRead:
+            return "short_read";
+        case AsyncStatus::kBusyRetryExhausted:
+            return "busy_retry_exhausted";
+        case AsyncStatus::kAborted:
+            return "aborted";
+        case AsyncStatus::kHardwareError:
+            return "hardware_error";
+        case AsyncStatus::kLockCompareFail:
+            return "lock_compare_fail";
+        case AsyncStatus::kStaleGeneration:
+            return "stale_generation";
+    }
+    return "unknown";
+}
+
 /**
  * FWAddress - Standard FireWire 48-bit address structure
  * Ported from IOFireWireFamily/IOFireWireFamilyCommon.h for API compatibility.

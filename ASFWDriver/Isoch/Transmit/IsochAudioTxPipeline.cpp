@@ -6,6 +6,35 @@
 
 namespace ASFW::Isoch {
 
+namespace {
+
+inline uint32_t EncodeMidiPlaceholderSlot(uint32_t midiSlotIndex) noexcept {
+    const uint8_t label = static_cast<uint8_t>(
+        Encoding::kAM824LabelMIDIConformantBase + (midiSlotIndex & 0x03u));
+    return Encoding::AM824Encoder::encodeLabelOnly(label);
+}
+
+inline void EncodePcmFramesWithAm824Placeholders(const int32_t* pcmInterleaved,
+                                                 uint32_t frames,
+                                                 uint32_t pcmChannels,
+                                                 uint32_t am824Slots,
+                                                 uint32_t* outWireQuadlets) noexcept {
+    const uint32_t midiSlots = (am824Slots > pcmChannels) ? (am824Slots - pcmChannels) : 0;
+    for (uint32_t f = 0; f < frames; ++f) {
+        const int32_t* frameIn = pcmInterleaved + (f * pcmChannels);
+        uint32_t* frameOut = outWireQuadlets + (f * am824Slots);
+
+        for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
+            frameOut[ch] = Encoding::AM824Encoder::encode(frameIn[ch]);
+        }
+        for (uint32_t s = 0; s < midiSlots; ++s) {
+            frameOut[pcmChannels + s] = EncodeMidiPlaceholderSlot(s);
+        }
+    }
+}
+
+} // namespace
+
 void IsochAudioTxPipeline::SetSharedTxQueue(void* base, uint64_t bytes) noexcept {
     if (!base || bytes == 0) {
         ASFW_LOG(Isoch, "IT: SetSharedTxQueue - invalid parameters");
@@ -60,12 +89,15 @@ void IsochAudioTxPipeline::SetZeroCopyOutputBuffer(void* base, uint64_t bytes, u
 
     assembler_.setZeroCopySource(reinterpret_cast<const int32_t*>(base), frameCapacity);
 
-    ASFW_LOG(Isoch, "IT: ✅ ZERO-COPY enabled! AudioBuffer base=%p bytes=%llu frames=%u assembler=%s",
+    ASFW_LOG(Isoch, "IT: ✅ ZERO-COPY enabled! AudioBuffer base=%p bytes=%llu frames=%u assembler=%{public}s",
              base, bytes, frameCapacity,
              assembler_.isZeroCopyEnabled() ? "ENABLED" : "fallback");
 }
 
-kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid, uint32_t streamModeRaw, uint32_t requestedChannels) noexcept {
+kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
+                                              uint32_t streamModeRaw,
+                                              uint32_t requestedChannels,
+                                              uint32_t requestedAm824Slots) noexcept {
     if (!sharedTxQueue_.IsValid()) {
         ASFW_LOG(Isoch, "IT: Configure failed - shared TX queue missing");
         return kIOReturnNotReady;
@@ -82,7 +114,27 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid, uint32_t streamModeRa
         return kIOReturnBadArgument;
     }
 
-    assembler_.reconfigure(queueChannels, sid);
+    uint32_t am824Slots = queueChannels;
+    if (requestedAm824Slots != 0) {
+        if (requestedAm824Slots < queueChannels) {
+            ASFW_LOG(Isoch,
+                     "IT: Configure failed - requestedAm824Slots=%u < queuePcm=%u",
+                     requestedAm824Slots,
+                     queueChannels);
+            return kIOReturnBadArgument;
+        }
+        if (requestedAm824Slots > Encoding::kMaxSupportedAm824Slots) {
+            ASFW_LOG(Isoch,
+                     "IT: Configure failed - requestedAm824Slots=%u exceed max supported=%u (pcm=%u)",
+                     requestedAm824Slots,
+                     Encoding::kMaxSupportedAm824Slots,
+                     queueChannels);
+            return kIOReturnUnsupported;
+        }
+        am824Slots = requestedAm824Slots;
+    }
+
+    assembler_.reconfigureAM824(queueChannels, am824Slots, sid);
 
     requestedStreamMode_ = (streamModeRaw == 1u)
         ? Encoding::StreamMode::kBlocking
@@ -95,11 +147,20 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid, uint32_t streamModeRa
              effectiveStreamMode_ == Encoding::StreamMode::kBlocking ? "blocking" : "non-blocking");
 
     const uint32_t framesPerDataPacket = assembler_.samplesPerDataPacket();
-    const uint32_t payloadBytes = framesPerDataPacket * queueChannels * sizeof(uint32_t);
+    const uint32_t payloadBytes = framesPerDataPacket * am824Slots * sizeof(uint32_t);
     const uint32_t packetBytes = Encoding::kCIPHeaderSize + payloadBytes;
     ASFW_LOG(Isoch,
-             "IT: Channel geometry resolved channels=%u dbs=%u framesPerData=%u payloadBytes=%u packetBytes=%u",
-             queueChannels, queueChannels, framesPerDataPacket, payloadBytes, packetBytes);
+             "IT: Channel geometry resolved pcm=%u dbs=%u midiSlots=%u framesPerData=%u payloadBytes=%u packetBytes=%u",
+             queueChannels, am824Slots, (am824Slots > queueChannels) ? (am824Slots - queueChannels) : 0,
+             framesPerDataPacket, payloadBytes, packetBytes);
+    ASFW_LOG(Isoch,
+             "IT: Cadence resolved mode=%{public}s dbs=%u framesPerData=%u dataBytes=%u noDataBytes=%u cadence=%{public}s",
+             effectiveStreamMode_ == Encoding::StreamMode::kBlocking ? "blocking" : "non-blocking",
+             am824Slots,
+             framesPerDataPacket,
+             packetBytes,
+             Encoding::kCIPHeaderSize,
+             effectiveStreamMode_ == Encoding::StreamMode::kBlocking ? "NDDD" : "DATA-every-cycle");
 
     return kIOReturnSuccess;
 }
@@ -196,7 +257,7 @@ void IsochAudioTxPipeline::PrePrimeFromSharedQueue() noexcept {
         if (written < read) break;
     }
 
-    ASFW_LOG(Isoch, "IT: Pre-prime transferred %u frames to assembler (fill=%u limit=%u hit=%s)",
+    ASFW_LOG(Isoch, "IT: Pre-prime transferred %u frames to assembler (fill=%u limit=%u hit=%{public}s)",
              totalTransferred,
              assembler_.bufferFillLevel(),
              startupPrimeLimitFrames,
@@ -337,7 +398,7 @@ uint16_t IsochAudioTxPipeline::ComputeDataSyt(uint32_t transmitCycle) noexcept {
         return Encoding::SYTGenerator::kNoInfo;
     }
 
-    const uint16_t txSyt = sytGenerator_.computeDataSYT(transmitCycle);
+    const uint16_t txSyt = sytGenerator_.computeDataSYT(transmitCycle, assembler_.samplesPerDataPacket());
     MaybeApplyExternalSyncDiscipline(txSyt);
     return txSyt;
 }
@@ -435,7 +496,8 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
     }
 
     const uint32_t framesPerPacket = assembler_.samplesPerDataPacket();
-    const uint32_t channels = assembler_.channelCount();
+    const uint32_t pcmChannels = assembler_.channelCount();
+    const uint32_t am824Slots = assembler_.am824SlotCount();
 
     for (uint32_t i = 0; i < toInject; ++i) {
         const uint32_t idx = (audioWriteIndex_ + i) % numPackets;
@@ -469,9 +531,9 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
                 const uint32_t zcPos = assembler_.zeroCopyReadPosition();
                 for (uint32_t f = 0; f < framesPerPacket; ++f) {
                     const uint32_t frameIdx = (zcPos + f) % zeroCopyFrameCapacity_;
-                    const uint32_t sampleIdx = frameIdx * channels;
-                    for (uint32_t ch = 0; ch < channels; ++ch) {
-                        samples[f * channels + ch] = zcBase[sampleIdx + ch];
+                    const uint32_t sampleIdx = frameIdx * pcmChannels;
+                    for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
+                        samples[f * pcmChannels + ch] = zcBase[sampleIdx + ch];
                     }
                 }
                 assembler_.setZeroCopyReadPosition((zcPos + framesPerPacket) % zeroCopyFrameCapacity_);
@@ -493,8 +555,8 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         }
 
         if (framesRead < framesPerPacket) {
-            const size_t samplesRead = framesRead * channels;
-            const size_t totalSamples = framesPerPacket * channels;
+            const size_t samplesRead = framesRead * pcmChannels;
+            const size_t totalSamples = framesPerPacket * pcmChannels;
             std::memset(&samples[samplesRead], 0,
                         (totalSamples - samplesRead) * sizeof(int32_t));
         }
@@ -505,9 +567,7 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         }
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(payloadVirt + Encoding::kCIPHeaderSize);
 
-        for (uint32_t s = 0; s < framesPerPacket * channels; ++s) {
-            audioQuadlets[s] = Encoding::AM824Encoder::encode(samples[s]);
-        }
+        EncodePcmFramesWithAm824Placeholders(samples, framesPerPacket, pcmChannels, am824Slots, audioQuadlets);
     }
 
     audioWriteIndex_ = audioTarget;

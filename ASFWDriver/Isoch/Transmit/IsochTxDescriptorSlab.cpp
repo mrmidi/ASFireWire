@@ -5,13 +5,19 @@
 namespace ASFW::Isoch::Tx {
 
 kern_return_t IsochTxDescriptorSlab::AllocateAndInitialize(Memory::IIsochDMAMemory& dmaMemory) noexcept {
-    // Allocate descriptor ring - request 4K alignment for page gap calculation
-    auto descR = dmaMemory.AllocateDescriptor(Layout::kDescriptorRingSize);
-    if (!descR) return kIOReturnNoMemory;
-    descRegion_ = *descR;
+    if (IsValid()) {
+        return kIOReturnSuccess;
+    }
 
-    auto bufR = dmaMemory.AllocatePayloadBuffer(Layout::kPayloadBufferSize);
+    // Allocate descriptor ring - request 4K alignment for page gap calculation
+    const auto descR = dmaMemory.AllocateDescriptor(Layout::kDescriptorRingSize);
+    if (!descR) return kIOReturnNoMemory;
+
+    const auto bufR = dmaMemory.AllocatePayloadBuffer(Layout::kPayloadBufferSize);
     if (!bufR) return kIOReturnNoMemory;
+    
+    // Only commit to members once we have both regions.
+    descRegion_ = *descR;
     bufRegion_ = *bufR;
 
     if (descRegion_.deviceBase > 0xFFFFFFFFULL || bufRegion_.deviceBase > 0xFFFFFFFFULL) {

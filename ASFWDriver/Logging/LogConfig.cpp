@@ -46,6 +46,7 @@ LogConfig::LogConfig()
     isochVerbosity_.store(1);           // Default: Compact
     enableHexDumps_.store(false);       // Default: No hex dumps
     isochTxVerifierEnabled_.store(false); // Default: disabled (dev-only, expensive)
+    audioAutoStartEnabled_.store(true); // Default: enabled
     logStatistics_.store(true);         // Default: Show statistics
     initialized_.store(false);
 }
@@ -85,18 +86,21 @@ void LogConfig::Initialize(IOService* service) {
     isochVerbosity_.store(ReadUInt8Property(service, "ASFWIsochVerbosity", 1));
     enableHexDumps_.store(ReadBoolProperty(service, "ASFWEnableHexDumps", false));
     isochTxVerifierEnabled_.store(ReadBoolProperty(service, "ASFWEnableIsochTxVerifier", false));
+    audioAutoStartEnabled_.store(ReadBoolProperty(service, "ASFWAutoStartAudioStreams", true));
     logStatistics_.store(ReadBoolProperty(service, "ASFWLogStatistics", true));
 
     initialized_.store(true);
 
     // Log configuration (always visible at INFO level)
     ASFW_LOG_INFO(Controller,
-                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u Isoch=%u HexDumps=%d TxVerify=%d Stats=%d",
+                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u Isoch=%u HexDumps=%d TxVerify=%d AutoStart=%d Stats=%d",
                   asyncVerbosity_.load(), controllerVerbosity_.load(), hardwareVerbosity_.load(),
                   discoveryVerbosity_.load(), configROMVerbosity_.load(), userClientVerbosity_.load(),
                   musicSubunitVerbosity_.load(), fcpVerbosity_.load(), cmpVerbosity_.load(), irmVerbosity_.load(), avcVerbosity_.load(),
                   isochVerbosity_.load(),
-                  enableHexDumps_.load(), isochTxVerifierEnabled_.load(), logStatistics_.load());
+                  enableHexDumps_.load(), isochTxVerifierEnabled_.load(),
+                  audioAutoStartEnabled_.load(),
+                  logStatistics_.load());
 }
 
 // ============================================================================
@@ -161,6 +165,10 @@ bool LogConfig::IsStatisticsEnabled() const {
 
 bool LogConfig::IsIsochTxVerifierEnabled() const {
     return isochTxVerifierEnabled_.load(std::memory_order_relaxed);
+}
+
+bool LogConfig::IsAudioAutoStartEnabled() const {
+    return audioAutoStartEnabled_.load(std::memory_order_relaxed);
 }
 
 // ============================================================================
@@ -247,6 +255,11 @@ void LogConfig::SetHexDumps(bool enable) {
 void LogConfig::SetIsochTxVerifierEnabled(bool enable) {
     isochTxVerifierEnabled_.store(enable, std::memory_order_relaxed);
     ASFW_LOG_INFO(Controller, "Isoch TX verifier %{public}s", enable ? "enabled" : "disabled");
+}
+
+void LogConfig::SetAudioAutoStartEnabled(bool enable) {
+    audioAutoStartEnabled_.store(enable, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "Audio auto-start %{public}s", enable ? "enabled" : "disabled");
 }
 
 void LogConfig::SetStatistics(bool enable) {

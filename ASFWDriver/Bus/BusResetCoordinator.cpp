@@ -164,14 +164,23 @@ const char* BusResetCoordinator::StateString(State s) {
 
 void BusResetCoordinator::ProcessEvent(Event event) {
     if (event == Event::IrqBusReset) {
+        const uint64_t now = MonotonicNow();
+        const uint64_t sinceLastMs = (lastResetNs_ > 0 && now > lastResetNs_)
+            ? (now - lastResetNs_) / 1'000'000 : 0;
+        ASFW_LOG(BusReset,
+                 "══ BUS RESET ══ gen=%u state=%{public}s sinceLastReset=%llums "
+                 "prevScanBusy=%d filtersEnabled=%d atArmed=%d",
+                 lastGeneration_, StateString(), sinceLastMs,
+                 previousScanHadBusyNodes_, filtersEnabled_, atArmed_);
+
         if (romScanner_ && lastGeneration_ > 0) {
-            ASFW_LOG(BusReset, "Aborting ROM scan for gen=%u", lastGeneration_);
+            ASFW_LOG(BusReset, "  Aborting ROM scan for gen=%u", lastGeneration_);
             romScanner_->Abort(lastGeneration_);
         }
-        
+
         filtersEnabled_ = false;
         atArmed_ = false;
-        
+
         TransitionTo(State::Detecting, "busReset edge detected");
         A_MaskBusReset();
         A_ClearSelfID2Stale();
@@ -410,16 +419,43 @@ void BusResetCoordinator::RunStateMachine() {
                 if (topologyCallback_ && lastTopology_.has_value() && workQueue_) {
                     auto topo = *lastTopology_;
                     const auto gen = topo.generation;
-                    ASFW_LOG(BusReset, "Post-reset hooks scheduled for gen=%u", gen);
-                    workQueue_->DispatchAsync(^{
-                        if (ReadyForDiscovery(gen)) {
-                            uint8_t localNode = topo.localNodeId.value_or(0xFF);
-                            ASFW_LOG(BusReset, "Discovery start gen=%u local=%u", gen, localNode);
-                            topologyCallback_(topo);
-                        } else {
-                            ASFW_LOG(BusReset, "Discovery deferred gen=%u", gen);
-                        }
-                    });
+
+                    if (previousScanHadBusyNodes_ && currentDiscoveryDelayMs_ > 0) {
+                        // DICE/Saffire-class devices: delay discovery to let firmware
+                        // finish booting before we start a new scan.  The generation
+                        // staleness check inside the callback prevents acting on a
+                        // stale topology if another bus reset occurs during the delay.
+                        // Delay escalates with consecutive failures (2s→4s→6s→8s→10s).
+                        const uint32_t delayMs = currentDiscoveryDelayMs_;
+                        ASFW_LOG(BusReset, "Discovery delayed %ums for gen=%u (ack_busy in prev scan)",
+                                 delayMs, gen);
+                        workQueue_->DispatchAsync(^{
+#ifdef ASFW_HOST_TEST
+                            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+#else
+                            IOSleep(delayMs);
+#endif
+                            if (ReadyForDiscovery(gen)) {
+                                uint8_t localNode = topo.localNodeId.value_or(0xFF);
+                                ASFW_LOG(BusReset, "Discovery start gen=%u local=%u (after %ums delay)",
+                                         gen, localNode, delayMs);
+                                topologyCallback_(topo);
+                            } else {
+                                ASFW_LOG(BusReset, "Discovery cancelled gen=%u (stale after delay)", gen);
+                            }
+                        });
+                    } else {
+                        ASFW_LOG(BusReset, "Post-reset hooks scheduled for gen=%u", gen);
+                        workQueue_->DispatchAsync(^{
+                            if (ReadyForDiscovery(gen)) {
+                                uint8_t localNode = topo.localNodeId.value_or(0xFF);
+                                ASFW_LOG(BusReset, "Discovery start gen=%u local=%u", gen, localNode);
+                                topologyCallback_(topo);
+                            } else {
+                                ASFW_LOG(BusReset, "Discovery deferred gen=%u", gen);
+                            }
+                        });
+                    }
                 }
                 
                 continue;
@@ -952,11 +988,19 @@ bool BusResetCoordinator::G_NodeIDValid() const {
 }
 
 bool BusResetCoordinator::ReadyForDiscovery(Discovery::Generation gen) const {
-    if (!G_NodeIDValid()) return false;
-    if (!filtersEnabled_ || !atArmed_) return false;
-    if (!lastTopology_.has_value()) return false;
-    if (gen != lastGeneration_) return false;  // stale kickoff guard
-    return true;
+    const bool nodeValid = G_NodeIDValid();
+    const bool genMatch = (gen == lastGeneration_);
+    const bool hasTopo = lastTopology_.has_value();
+    const bool ready = nodeValid && filtersEnabled_ && atArmed_ && hasTopo && genMatch;
+
+    if (!ready) {
+        ASFW_LOG(BusReset,
+                 "ReadyForDiscovery(gen=%u): NOT READY — nodeValid=%d filters=%d at=%d "
+                 "topo=%d genMatch=%d(last=%u)",
+                 gen, nodeValid, filtersEnabled_, atArmed_,
+                 hasTopo, genMatch, lastGeneration_);
+    }
+    return ready;
 }
 
 // Handle stray Self-ID interrupts that arrive outside normal reset flow
@@ -1036,6 +1080,44 @@ void BusResetCoordinator::ResetDelegationRetryCounter() {
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;
     // Note: Keep delegateTarget_ to detect target changes
+}
+
+void BusResetCoordinator::SetPreviousScanHadBusyNodes(bool busy) {
+    if (busy) {
+        // Escalate: increase delay each consecutive busy scan
+        if (currentDiscoveryDelayMs_ < kMaxDiscoveryDelayMs) {
+            currentDiscoveryDelayMs_ = std::min(
+                currentDiscoveryDelayMs_ + kDiscoveryDelayStepMs,
+                kMaxDiscoveryDelayMs);
+        }
+        if (!previousScanHadBusyNodes_) {
+            ASFW_LOG(BusReset, "previousScanHadBusyNodes: false → true, delay=%ums",
+                     currentDiscoveryDelayMs_);
+        } else {
+            ASFW_LOG(BusReset, "previousScanHadBusyNodes: still true, delay escalated to %ums",
+                     currentDiscoveryDelayMs_);
+        }
+    } else {
+        // Device recovered — reset delay
+        if (previousScanHadBusyNodes_ || currentDiscoveryDelayMs_ > 0) {
+            ASFW_LOG(BusReset, "previousScanHadBusyNodes: %d → false, delay reset (was %ums)",
+                     previousScanHadBusyNodes_, currentDiscoveryDelayMs_);
+        }
+        currentDiscoveryDelayMs_ = 0;
+    }
+    previousScanHadBusyNodes_ = busy;
+}
+
+void BusResetCoordinator::EscalateDiscoveryDelay() {
+    // Called when scan produced 0 ROMs — we learned nothing, increase delay
+    if (previousScanHadBusyNodes_ && currentDiscoveryDelayMs_ < kMaxDiscoveryDelayMs) {
+        const uint32_t prev = currentDiscoveryDelayMs_;
+        currentDiscoveryDelayMs_ = std::min(
+            currentDiscoveryDelayMs_ + kDiscoveryDelayStepMs,
+            kMaxDiscoveryDelayMs);
+        ASFW_LOG(BusReset, "Discovery delay escalated %ums → %ums (0 ROMs, device still booting)",
+                 prev, currentDiscoveryDelayMs_);
+    }
 }
 
 } // namespace ASFW::Driver

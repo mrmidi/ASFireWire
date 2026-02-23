@@ -8,21 +8,15 @@
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/TxBufferProfiles.hpp"
 #include "Encoding/TimingUtils.hpp"
-#include "../Discovery/DeviceManager.hpp"
-#include "../Discovery/FWDevice.hpp"
 #include "../Hardware/HardwareInterface.hpp"
-#include "../Protocols/AVC/AVCDiscovery.hpp"
-#include "../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../Logging/Logging.hpp"
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
 namespace ASFW::Driver {
 
 kern_return_t IsochService::StartReceive(uint8_t channel,
                                          HardwareInterface& hardware,
-                                         ASFW::Discovery::DeviceManager* deviceManager,
-                                         ASFW::CMP::CMPClient* cmpClient,
-                                         ASFW::Protocols::AVC::AVCDiscovery* avcDiscovery) {
+                                         void* rxQueueBase,
+                                         uint64_t rxQueueBytes) {
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -58,16 +52,8 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
         return result;
     }
 
-    // Wire shared RX queue to IR context (mirrors TX queue wiring in StartTransmit)
-    if (avcDiscovery) {
-        if (auto* audioNub = avcDiscovery->GetFirstAudioNub()) {
-            audioNub->EnsureRxQueueCreated();
-            void* rxBase = audioNub->GetRxQueueLocalMapping();
-            uint64_t rxBytes = audioNub->GetRxQueueBytes();
-            if (rxBase && rxBytes > 0) {
-                isochReceiveContext_->SetSharedRxQueue(rxBase, rxBytes);
-            }
-        }
+    if (rxQueueBase && rxQueueBytes > 0) {
+        isochReceiveContext_->SetSharedRxQueue(rxQueueBase, rxQueueBytes);
     }
 
     result = isochReceiveContext_->Start();
@@ -78,56 +64,30 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
 
     ASFW_LOG(Controller, "[Isoch] ✅ Started IR Context 0 for Channel %u!", channel);
 
-    if (deviceManager && cmpClient) {
-        auto devices = deviceManager->GetReadyDevices();
-        if (!devices.empty()) {
-            auto target = devices.front();
-            uint16_t nodeId = target->GetNodeID();
-            ASFW::IRM::Generation gen = target->GetGeneration();
-
-            cmpClient->SetDeviceNode(static_cast<uint8_t>(nodeId & 0x3F), gen);
-            cmpClient->ConnectOPCR(0, [](ASFW::CMP::CMPStatus status) {
-                if (status == ASFW::CMP::CMPStatus::Success) {
-                    ASFW_LOG(Controller, "[Isoch] ✅ CMP ConnectOPCR Success!");
-                } else {
-                    ASFW_LOG(Controller, "[Isoch] ❌ CMP ConnectOPCR Failed: %d", static_cast<int>(status));
-                }
-            });
-        } else {
-            ASFW_LOG(Controller, "[Isoch] ⚠️ No devices ready for CMP oPCR connection");
-        }
-    }
-
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::StopReceive(ASFW::CMP::CMPClient* cmpClient) {
+kern_return_t IsochService::StopReceive() {
     if (!isochReceiveContext_) {
         return kIOReturnNotReady;
     }
 
     isochReceiveContext_->Stop();
     ASFW_LOG(Controller, "[Isoch] Stopped IR Context 0");
-
-    if (cmpClient) {
-        cmpClient->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus status) {
-            if (status == ASFW::CMP::CMPStatus::Success) {
-                ASFW_LOG(Controller, "[Isoch] ✅ CMP DisconnectOPCR Success!");
-            } else {
-                ASFW_LOG(Controller, "[Isoch] ❌ CMP DisconnectOPCR Failed: %d", static_cast<int>(status));
-            }
-        });
-    }
-
     return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           HardwareInterface& hardware,
-                                          ASFW::Discovery::DeviceManager* deviceManager,
-                                          ASFW::CMP::CMPClient* cmpClient,
-                                          ASFW::Protocols::AVC::AVCDiscovery* avcDiscovery) {
-    constexpr bool kEnableIsochZeroCopyPath = false;  // temporary A/B gate
+                                          uint8_t sid,
+                                          uint32_t streamModeRaw,
+                                          uint32_t pcmChannels,
+                                          uint32_t am824Slots,
+                                          void* txQueueBase,
+                                          uint64_t txQueueBytes,
+                                          void* zeroCopyBase,
+                                          uint64_t zeroCopyBytes,
+                                          uint32_t zeroCopyFrames) {
 
     if (isochTransmitContext_ &&
         isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
@@ -163,48 +123,25 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     }
 
     uint32_t startTargetFill = ASFW::Isoch::Config::kTxBufferProfile.startWaitTargetFrames;
-    uint32_t requestedStreamModeRaw = 0;
-    uint32_t requestedChannels = 0;
-    uint8_t localNodeId = 0;
+    if (txQueueBase && txQueueBytes > 0) {
+        isochTransmitContext_->SetSharedTxQueue(txQueueBase, txQueueBytes);
+        ASFW_LOG(Controller, "[Isoch] Wired shared TX queue to IT context (bytes=%llu)",
+                 txQueueBytes);
+    }
 
-    if (avcDiscovery) {
-        if (auto* audioNub = avcDiscovery->GetFirstAudioNub()) {
-            requestedStreamModeRaw = audioNub->GetStreamMode();
-            requestedChannels = audioNub->GetChannelCount();
-            ASFW_LOG(Controller, "[Isoch] Requested stream mode from nub: %{public}s",
-                     requestedStreamModeRaw == 1u ? "blocking" : "non-blocking");
-            ASFW_LOG(Controller, "[Isoch] Requested channels from nub: %u", requestedChannels);
-
-            void* txQueueBase = audioNub->GetTxQueueLocalMapping();
-            uint64_t txQueueBytes = audioNub->GetTxQueueBytes();
-
-            if (txQueueBase && txQueueBytes > 0) {
-                isochTransmitContext_->SetSharedTxQueue(txQueueBase, txQueueBytes);
-                ASFW_LOG(Controller, "[Isoch] Wired shared TX queue to IT context (bytes=%llu)",
-                         txQueueBytes);
-            }
-
-            isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
-
-            if (kEnableIsochZeroCopyPath) {
-                void* zeroCopyBase = audioNub->GetOutputAudioLocalMapping();
-                uint64_t zeroCopyBytes = audioNub->GetOutputAudioBytes();
-                uint32_t zeroCopyFrames = audioNub->GetOutputAudioFrameCapacity();
-
-                if (zeroCopyBase && zeroCopyBytes > 0 && zeroCopyFrames > 0) {
-                    isochTransmitContext_->SetZeroCopyOutputBuffer(zeroCopyBase, zeroCopyBytes, zeroCopyFrames);
-                    uint32_t target = (zeroCopyFrames * 5) / 8;
-                    if (target < 8) target = 8;
-                    startTargetFill = target;
-                    ASFW_LOG(Controller, "[Isoch] ✅ ZERO-COPY wired! AudioBuffer base=%p bytes=%llu frames=%u",
-                             zeroCopyBase, zeroCopyBytes, zeroCopyFrames);
-                } else {
-                    ASFW_LOG(Controller, "[Isoch] ZERO-COPY not available, using SharedTxQueue fallback");
-                }
-            } else {
-                ASFW_LOG(Controller, "[Isoch] ZERO-COPY disabled by build flag; using SharedTxQueue");
-            }
-        }
+    if (zeroCopyBase && zeroCopyBytes > 0 && zeroCopyFrames > 0) {
+        isochTransmitContext_->SetZeroCopyOutputBuffer(zeroCopyBase, zeroCopyBytes, zeroCopyFrames);
+        uint32_t target = (zeroCopyFrames * 5) / 8;
+        if (target < 8) target = 8;
+        startTargetFill = target;
+        ASFW_LOG(Controller,
+                 "[Isoch] ✅ ZERO-COPY wired! AudioBuffer base=%p bytes=%llu frames=%u targetFill=%u",
+                 zeroCopyBase,
+                 zeroCopyBytes,
+                 zeroCopyFrames,
+                 startTargetFill);
+    } else {
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
     }
 
     if (isochTransmitContext_->SharedTxCapacityFrames() == 0) {
@@ -258,9 +195,10 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     isochTransmitContext_->SetExternalSyncBridge(&externalSyncBridge_);
 
     auto result = isochTransmitContext_->Configure(channel,
-                                                   localNodeId,
-                                                   requestedStreamModeRaw,
-                                                   requestedChannels);
+                                                   sid,
+                                                   streamModeRaw,
+                                                   pcmChannels,
+                                                   am824Slots);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
         return result;
@@ -305,45 +243,73 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
     ASFW_LOG(Controller, "[Isoch] ✅ Started IT Context for Channel %u!", channel);
 
-    if (deviceManager && cmpClient) {
-        auto devices = deviceManager->GetReadyDevices();
-        if (!devices.empty()) {
-            auto target = devices.front();
-            uint16_t nodeId = target->GetNodeID();
-            ASFW::IRM::Generation gen = target->GetGeneration();
-
-            cmpClient->SetDeviceNode(static_cast<uint8_t>(nodeId & 0x3F), gen);
-            cmpClient->ConnectIPCR(0, channel, [](ASFW::CMP::CMPStatus status) {
-                if (status == ASFW::CMP::CMPStatus::Success) {
-                    ASFW_LOG(Controller, "[Isoch] ✅ CMP ConnectIPCR Success!");
-                } else {
-                    ASFW_LOG(Controller, "[Isoch] ❌ CMP ConnectIPCR Failed: %d", static_cast<int>(status));
-                }
-            });
-        }
-    }
-
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::StopTransmit(ASFW::CMP::CMPClient* cmpClient) {
+kern_return_t IsochService::StopTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;
     }
 
     isochTransmitContext_->Stop();
     ASFW_LOG(Controller, "[Isoch] Stopped IT Context");
+    return kIOReturnSuccess;
+}
 
-    if (cmpClient) {
-        cmpClient->DisconnectIPCR(0, [](ASFW::CMP::CMPStatus status){
-            if (status == ASFW::CMP::CMPStatus::Success) {
-                ASFW_LOG(Controller, "[Isoch] ✅ CMP DisconnectIPCR Success!");
-            } else {
-                ASFW_LOG(Controller, "[Isoch] ❌ CMP DisconnectIPCR Failed: %d", static_cast<int>(status));
-            }
-        });
+kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
+                                       HardwareInterface& hardware) {
+    if (params.guid == 0) {
+        return kIOReturnBadArgument;
     }
 
+    if (activeGuid_ != 0 && activeGuid_ != params.guid) {
+        // Transport layer is currently global. Control-plane enforces single-device too.
+        return kIOReturnBusy;
+    }
+
+    const kern_return_t krRx = StartReceive(params.irChannel,
+                                           hardware,
+                                           params.rxQueueBase,
+                                           params.rxQueueBytes);
+    if (krRx != kIOReturnSuccess) {
+        return krRx;
+    }
+
+    const uint32_t streamModeRaw = static_cast<uint32_t>(params.streamMode);
+    const kern_return_t krTx = StartTransmit(params.itChannel,
+                                            hardware,
+                                            params.sid,
+                                            streamModeRaw,
+                                            params.hostOutputPcmChannels,
+                                            params.hostToDeviceAm824Slots,
+                                            params.txQueueBase,
+                                            params.txQueueBytes,
+                                            params.zeroCopyBase,
+                                            params.zeroCopyBytes,
+                                            params.zeroCopyFrames);
+    if (krTx != kIOReturnSuccess) {
+        StopReceive();
+        return krTx;
+    }
+
+    activeGuid_ = params.guid;
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochService::StopDuplex(uint64_t guid) {
+    if (guid == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    if (activeGuid_ != 0 && activeGuid_ != guid) {
+        return kIOReturnBusy;
+    }
+
+    (void)StopTransmit();
+    (void)StopReceive();
+    externalSyncBridge_.Reset();
+
+    activeGuid_ = 0;
     return kIOReturnSuccess;
 }
 
@@ -357,6 +323,7 @@ void IsochService::StopAll() {
         isochTransmitContext_.reset();
     }
     externalSyncBridge_.Reset();
+    activeGuid_ = 0;
 }
 
 } // namespace ASFW::Driver

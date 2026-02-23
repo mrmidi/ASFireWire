@@ -61,14 +61,18 @@ public:
     [[nodiscard]] uint32_t BufferFillLevel() const noexcept { return assembler_.bufferFillLevel(); }
 
     [[nodiscard]] uint32_t FramesPerDataPacket() const noexcept { return assembler_.samplesPerDataPacket(); }
-    [[nodiscard]] uint32_t ChannelCount() const noexcept { return assembler_.channelCount(); }
+    [[nodiscard]] uint32_t ChannelCount() const noexcept { return assembler_.channelCount(); } // PCM channels
+    [[nodiscard]] uint32_t Am824SlotCount() const noexcept { return assembler_.am824SlotCount(); }
     [[nodiscard]] uint64_t DbcDiscontinuityCount() const noexcept { return dbcTracker_.discontinuityCount.load(std::memory_order_relaxed); }
 
     void ResetForStart() noexcept;
     void SetCycleTrackingValid(bool v) noexcept { cycleTrackingValid_ = v; }
 
     // Configure audio packetization from shared queue metadata.
-    [[nodiscard]] kern_return_t Configure(uint8_t sid, uint32_t streamModeRaw, uint32_t requestedChannels) noexcept;
+    [[nodiscard]] kern_return_t Configure(uint8_t sid,
+                                          uint32_t streamModeRaw,
+                                          uint32_t requestedChannels,
+                                          uint32_t requestedAm824Slots) noexcept;
 
     // Start-time pre-prime: move some frames from shared queue into assembler ring.
     void PrePrimeFromSharedQueue() noexcept;

@@ -12,7 +12,6 @@
 #include "../Audio/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../Audio/DeviceStreamModeQuirks.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include "Music/MusicSubunit.hpp"
 #include "StreamFormats/AVCSignalFormatCommand.hpp"
 #include <DriverKit/IOService.h>
@@ -174,8 +173,12 @@ void ConfigureDuetPhantomOverrides(
 
 AVCDiscovery::AVCDiscovery(IOService* driver,
                            Discovery::IDeviceManager& deviceManager,
-                           Async::AsyncSubsystem& asyncSubsystem)
-    : driver_(driver), deviceManager_(deviceManager), asyncSubsystem_(asyncSubsystem) {
+                           Async::AsyncSubsystem& asyncSubsystem,
+                           ASFW::Audio::IAVCAudioConfigListener* audioConfigListener)
+    : driver_(driver)
+    , deviceManager_(deviceManager)
+    , asyncSubsystem_(asyncSubsystem)
+    , audioConfigListener_(audioConfigListener) {
 
     // Allocate lock
     lock_ = IOLockAlloc();
@@ -317,17 +320,11 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         return;
     }
 
-    IOLockLock(lock_);
-    rescanAttempts_.erase(guid);
-    const bool hasNub = (audioNubs_.find(guid) != audioNubs_.end());
-    IOLockUnlock(lock_);
-
-    if (hasNub) {
-        ASFW_LOG(Audio, "AVCDiscovery: Audio nub already exists for GUID=%llx", guid);
-        return;
+    if (lock_) {
+        IOLockLock(lock_);
+        rescanAttempts_.erase(guid);
+        IOLockUnlock(lock_);
     }
-
-    ASFW_LOG(Audio, "AVCDiscovery: Creating ASFWAudioNub for GUID=%llx", guid);
 
     //======================================================================
     // Populate MusicSubunitCapabilities with discovery data
@@ -520,7 +517,7 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
              ASFW::Audio::Quirks::StreamModeToString(streamMode),
              streamModeReason);
     ASFW_LOG(Audio,
-             "AVCDiscovery: Creating ASFWAudioNub for GUID=%llx: %{public}s, %u channels, %zu sample rates",
+             "AVCDiscovery: Publishing audio configuration for GUID=%llx: %{public}s, %u channels, %zu sample rates",
              guid, deviceName.c_str(), channelCount, sampleRates.size());
 
     ASFW::Audio::Model::ASFWAudioDevice audioDeviceConfig;
@@ -542,104 +539,20 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
     if (IsApogeeDuet(*devicePtr)) {
         ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
         ASFW_LOG(Audio,
-                 "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config before nub creation",
+                 "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config before publishing config",
                  guid);
         PrefetchDuetStateAndCreateNub(guid, avcUnit, audioDeviceConfig);
         return;
     }
 
-    if (!CreateAudioNubFromModel(guid, audioDeviceConfig, "AVC")) {
-        ASFW_LOG(Audio, "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx", guid);
-    }
-}
-
-bool AVCDiscovery::CreateAudioNubFromModel(uint64_t guid,
-                                           const Audio::Model::ASFWAudioDevice& config,
-                                           const char* sourceTag) {
-    if (!driver_ || !lock_) {
-        return false;
+    if (!audioConfigListener_) {
+        ASFW_LOG_ERROR(Audio,
+                       "AVCDiscovery: no audio config listener; dropping config for GUID=%llx",
+                       guid);
+        return;
     }
 
-    // Reserve the GUID slot under lock so AV/C and hardcoded paths cannot race-create duplicates.
-    IOLockLock(lock_);
-    const bool inserted = audioNubs_.emplace(guid, nullptr).second;
-    IOLockUnlock(lock_);
-    if (!inserted) {
-        ASFW_LOG(Audio,
-                 "AVCDiscovery[%{public}s]: Audio nub already exists for GUID=%llx",
-                 sourceTag ? sourceTag : "unknown",
-                 guid);
-        return true;
-    }
-
-    IOService* nub = nullptr;
-    kern_return_t error = driver_->Create(
-        driver_,                      // provider
-        "ASFWAudioNubProperties",     // propertiesKey from Info.plist
-        &nub                          // result
-    );
-
-    if (error != kIOReturnSuccess || !nub) {
-        os_log_error(log_,
-                     "AVCDiscovery[%{public}s]: Failed to create ASFWAudioNub (GUID=%llx error=%d)",
-                     sourceTag ? sourceTag : "unknown",
-                     guid,
-                     error);
-        IOLockLock(lock_);
-        audioNubs_.erase(guid);
-        IOLockUnlock(lock_);
-        return false;
-    }
-
-    // Set properties on the nub BEFORE it starts.
-    OSDictionary* propertiesRaw = nullptr;
-    error = nub->CopyProperties(&propertiesRaw);
-    OSSharedPtr<OSDictionary> properties = OSSharedPtr(propertiesRaw, OSNoRetain);
-    if (error == kIOReturnSuccess && properties) {
-        if (!config.PopulateNubProperties(properties.get())) {
-            ASFW_LOG(Audio,
-                     "AVCDiscovery[%{public}s]: Failed to populate ASFWAudioDevice properties for GUID=%llx",
-                     sourceTag ? sourceTag : "unknown",
-                     guid);
-        } else {
-            nub->SetProperties(properties.get());
-            ASFW_LOG(Audio,
-                     "AVCDiscovery[%{public}s]: ASFWAudioDevice properties set (GUID=%llx rate=%u Hz ch=%u)",
-                     sourceTag ? sourceTag : "unknown",
-                     guid,
-                     config.currentSampleRate,
-                     config.channelCount);
-        }
-    }
-
-    ASFWAudioNub* audioNub = OSDynamicCast(ASFWAudioNub, nub);
-    if (!audioNub) {
-        ASFW_LOG(Audio,
-                 "AVCDiscovery[%{public}s]: Created service is not ASFWAudioNub for GUID=%llx",
-                 sourceTag ? sourceTag : "unknown",
-                 guid);
-        IOLockLock(lock_);
-        audioNubs_.erase(guid);
-        IOLockUnlock(lock_);
-        nub->release();
-        return false;
-    }
-    audioNub->SetChannelCount(config.channelCount);
-    audioNub->SetStreamMode(static_cast<uint32_t>(config.streamMode));
-    audioNub->SetGuid(config.guid);
-
-    IOLockLock(lock_);
-    audioNubs_[guid] = audioNub;
-    IOLockUnlock(lock_);
-
-    // Release our creation reference - IOKit retains it.
-    nub->release();
-
-    ASFW_LOG(Audio,
-             "✅ AVCDiscovery[%{public}s]: ASFWAudioNub ready for GUID=%llx",
-             sourceTag ? sourceTag : "unknown",
-             guid);
-    return true;
+    audioConfigListener_->OnAVCAudioConfigurationReady(guid, audioDeviceConfig);
 }
 
 void AVCDiscovery::PrefetchDuetStateAndCreateNub(
@@ -647,21 +560,25 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
     const std::shared_ptr<AVCUnit>& avcUnit,
     const Audio::Model::ASFWAudioDevice& config) {
     if (!avcUnit) {
-        if (!CreateAudioNubFromModel(guid, config, "AVC+DuetFallback")) {
-            ASFW_LOG(Audio,
-                     "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx (no AVCUnit)",
-                     guid);
+        if (!audioConfigListener_) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCDiscovery: no audio config listener; dropping Duet fallback config for GUID=%llx",
+                           guid);
+            return;
         }
+        audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
         return;
     }
 
     auto device = avcUnit->GetDevice();
     if (!device) {
-        if (!CreateAudioNubFromModel(guid, config, "AVC+DuetFallback")) {
-            ASFW_LOG(Audio,
-                     "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx (no FWDevice)",
-                     guid);
+        if (!audioConfigListener_) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCDiscovery: no audio config listener; dropping Duet fallback config for GUID=%llx",
+                           guid);
+            return;
         }
+        audioConfigListener_->OnAVCAudioConfigurationReady(guid, config);
         return;
     }
 
@@ -699,9 +616,13 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
         auto finalConfig = config;
         ConfigureDuetPhantomOverrides(finalConfig, state->inputParams);
 
-        if (!CreateAudioNubFromModel(guid, finalConfig, "AVC+Duet")) {
-            ASFW_LOG(Audio, "AVCDiscovery: CreateAudioNubFromModel failed for GUID=%llx", guid);
+        if (!audioConfigListener_) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCDiscovery: no audio config listener; dropping Duet config for GUID=%llx",
+                           guid);
+            return;
         }
+        audioConfigListener_->OnAVCAudioConfigurationReady(guid, finalConfig);
     };
 
     if (rescanQueue_) {
@@ -910,30 +831,6 @@ void AVCDiscovery::OnUnitTerminated(std::shared_ptr<Discovery::FWUnit> unit) {
 
     IOLockLock(lock_);
 
-    // Clean up audio nub if exists
-    auto nubIt = audioNubs_.find(guid);
-    if (nubIt != audioNubs_.end()) {
-        ASFWAudioNub* nub = nubIt->second;
-        if (nub) {
-            ASFW_LOG(Audio, "AVCDiscovery: Terminating ASFWAudioNub for GUID=%llx", guid);
-
-            // Remove from map first
-            audioNubs_.erase(nubIt);
-
-            // Unlock before calling IOKit methods to avoid deadlock
-            IOLockUnlock(lock_);
-
-            // Terminate the nub service
-            // In DriverKit, Terminate() with 0 means standard termination
-            nub->Terminate(0);
-
-            // Re-lock for units_ cleanup
-            IOLockLock(lock_);
-        } else {
-            audioNubs_.erase(nubIt);
-        }
-    }
-
     auto it = units_.find(guid);
     if (it != units_.end()) {
         os_log_info(log_,
@@ -963,20 +860,6 @@ void AVCDiscovery::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device
 
 void AVCDiscovery::OnDeviceRemoved(Discovery::Guid64 guid) {
     IOLockLock(lock_);
-
-    auto nubIt = audioNubs_.find(guid);
-    if (nubIt != audioNubs_.end()) {
-        ASFWAudioNub* nub = nubIt->second;
-        if (nub) {
-            ASFW_LOG(Audio, "AVCDiscovery: Device removed -> terminating ASFWAudioNub for GUID=%llx", guid);
-            audioNubs_.erase(nubIt);
-            IOLockUnlock(lock_);
-            nub->Terminate(0);
-            IOLockLock(lock_);
-        } else {
-            audioNubs_.erase(nubIt);
-        }
-    }
 
     units_.erase(guid);
     rescanAttempts_.erase(guid);
@@ -1023,45 +906,6 @@ std::vector<AVCUnit*> AVCDiscovery::GetAllAVCUnits() {
     IOLockUnlock(lock_);
 
     return result;
-}
-
-void AVCDiscovery::EnsureHardcodedAudioNubForDevice(const Discovery::DeviceRecord& deviceRecord) {
-    if (!driver_ || deviceRecord.guid == 0) {
-        return;
-    }
-
-    ASFW::Audio::Model::ASFWAudioDevice hardcoded;
-    hardcoded.guid = deviceRecord.guid;
-    hardcoded.vendorId = deviceRecord.vendorId;
-    hardcoded.modelId = deviceRecord.modelId;
-    if (!deviceRecord.vendorName.empty() || !deviceRecord.modelName.empty()) {
-        hardcoded.deviceName = deviceRecord.vendorName + " " + deviceRecord.modelName;
-    } else {
-        hardcoded.deviceName = "Focusrite Saffire Pro 24 DSP";
-    }
-
-    // Hardcoded bring-up profile (v1):
-    // - advertise single 48kHz / 24-bit stream format
-    // - use 16 channels end-to-end until asymmetric in/out is modeled in ADK path
-    hardcoded.channelCount = 16;
-    hardcoded.inputChannelCount = 16;
-    hardcoded.outputChannelCount = 16;
-    hardcoded.sampleRates = {48000};
-    hardcoded.currentSampleRate = 48000;
-    hardcoded.inputPlugName = "Saffire Input";
-    hardcoded.outputPlugName = "Saffire Output";
-    hardcoded.streamMode = Audio::Model::StreamMode::kNonBlocking;
-
-    ASFW_LOG(Audio,
-             "AVCDiscovery[Hardcoded]: ensuring audio nub for GUID=%llx (%{public}s)",
-             deviceRecord.guid,
-             hardcoded.deviceName.c_str());
-
-    if (!CreateAudioNubFromModel(deviceRecord.guid, hardcoded, "Hardcoded")) {
-        ASFW_LOG(Audio,
-                 "AVCDiscovery[Hardcoded]: failed to create audio nub for GUID=%llx",
-                 deviceRecord.guid);
-    }
 }
 
 void AVCDiscovery::ReScanAllUnits() {
@@ -1194,22 +1038,4 @@ void AVCDiscovery::SetTransmitRingBufferOnNubs(void* ringBuffer) {
                 "AVCDiscovery: SetTransmitRingBufferOnNubs called (deprecated - using shared queue now)");
 
     IOLockUnlock(lock_);
-}
-
-ASFWAudioNub* AVCDiscovery::GetFirstAudioNub() {
-    IOLockLock(lock_);
-
-    ASFWAudioNub* result = nullptr;
-    for (auto& [guid, nub] : audioNubs_) {
-        if (nub) {
-            result = nub;
-            os_log_debug(log_,
-                        "AVCDiscovery: GetFirstAudioNub returning nub for GUID=%llx",
-                        guid);
-            break;
-        }
-    }
-
-    IOLockUnlock(lock_);
-    return result;
 }

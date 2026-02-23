@@ -66,8 +66,11 @@ void CMPClient::ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback) {
                 
                 callback(true, hostValue);
             } else {
-                ASFW_LOG(CMP, "CMPClient: Read PCR 0x%08X failed: status=%d",
-                         addressLo, static_cast<int>(status));
+                ASFW_LOG(CMP,
+                         "CMPClient: Read PCR 0x%08X failed: status=%{public}s(%u)",
+                         addressLo,
+                         ASFW::Async::ToString(status),
+                         static_cast<unsigned>(status));
                 callback(false, 0);
             }
         });
@@ -110,8 +113,11 @@ void CMPClient::CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t d
                     callback(CMPStatus::Failed);
                 }
             } else {
-                ASFW_LOG(CMP, "CMPClient: Lock PCR 0x%08X failed: status=%d",
-                         addressLo, static_cast<int>(status));
+                ASFW_LOG(CMP,
+                         "CMPClient: Lock PCR 0x%08X failed: status=%{public}s(%u)",
+                         addressLo,
+                         ASFW::Async::ToString(status),
+                         static_cast<unsigned>(status));
                 callback(CMPStatus::Failed);
             }
         });

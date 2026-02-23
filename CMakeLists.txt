@@ -201,12 +201,18 @@ endif()
 # Tests Subdirectory (Always Available)
 # ==============================================================================
 
-# Tests can run on any platform
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
-    message(STATUS "Including tests subdirectory")
-    add_subdirectory(tests)
+option(ASFW_BUILD_TESTS "Build host-side unit tests (requires GoogleTest)" ON)
+
+if(ASFW_BUILD_TESTS)
+    # Tests can run on any platform
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+        message(STATUS "Including tests subdirectory")
+        add_subdirectory(tests)
+    else()
+        message(WARNING "tests/CMakeLists.txt not found")
+    endif()
 else()
-    message(WARNING "tests/CMakeLists.txt not found")
+    message(STATUS "Skipping tests subdirectory (ASFW_BUILD_TESTS=OFF)")
 endif()
 
 # ==============================================================================

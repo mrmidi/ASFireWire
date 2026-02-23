@@ -38,6 +38,8 @@
 				<false/>
 				<key>ASFWEnableIsochTxVerifier</key>
 				<false/>
+				<key>ASFWAutoStartAudioStreams</key>
+				<true/>
 				<key>ASFWLogStatistics</key>
 				<true/>
 			<key>CFBundleIdentifier</key>

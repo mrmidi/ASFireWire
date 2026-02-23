@@ -71,18 +71,26 @@ void ApplyBringupSingleFormatPolicy(ParsedAudioDriverConfig& inOutConfig) {
 
 void ClampAudioDriverChannels(ParsedAudioDriverConfig& inOutConfig,
                               uint32_t maxSupportedChannels) {
-    if (inOutConfig.channelCount == 0) {
-        inOutConfig.channelCount = kDefaultChannelCount;
-    } else if (inOutConfig.channelCount > maxSupportedChannels) {
-        inOutConfig.channelCount = maxSupportedChannels;
-    }
-
     if (inOutConfig.inputChannelCount == 0) {
         inOutConfig.inputChannelCount = inOutConfig.channelCount;
+    } else if (inOutConfig.inputChannelCount > maxSupportedChannels) {
+        inOutConfig.inputChannelCount = maxSupportedChannels;
     }
     if (inOutConfig.outputChannelCount == 0) {
         inOutConfig.outputChannelCount = inOutConfig.channelCount;
+    } else if (inOutConfig.outputChannelCount > maxSupportedChannels) {
+        inOutConfig.outputChannelCount = maxSupportedChannels;
     }
+
+    if (inOutConfig.inputChannelCount == 0) {
+        inOutConfig.inputChannelCount = kDefaultChannelCount;
+    }
+    if (inOutConfig.outputChannelCount == 0) {
+        inOutConfig.outputChannelCount = kDefaultChannelCount;
+    }
+
+    inOutConfig.channelCount = std::max(inOutConfig.inputChannelCount,
+                                        inOutConfig.outputChannelCount);
 }
 
 const char* ScopeLabel(uint32_t scopeFourCC) {

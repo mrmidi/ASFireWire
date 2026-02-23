@@ -45,12 +45,26 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
     
-    // Check if we have a known device-specific protocol (e.g., DICE/Focusrite)
-    if (Audio::DeviceProtocolFactory::IsKnownDevice(device.vendorId, device.modelId)) {
-        ASFW_LOG(Discovery, "Known device-specific protocol available for vendor=0x%06x model=0x%06x",
-                 device.vendorId, device.modelId);
-        device.kind = DeviceKind::VendorSpecificAudio;
-        device.isAudioCandidate = true;
+    // Known device profiles can choose their integration mode:
+    // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
+    // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
+    const auto integrationMode = Audio::DeviceProtocolFactory::LookupIntegrationMode(device.vendorId, device.modelId);
+
+    if (integrationMode != Audio::DeviceIntegrationMode::kNone) {
+        ASFW_LOG(Discovery,
+                 "Known device profile available for vendor=0x%06x model=0x%06x integration=%u",
+                 device.vendorId,
+                 device.modelId,
+                 static_cast<unsigned>(integrationMode));
+
+        if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
+            device.kind = DeviceKind::VendorSpecificAudio;
+            device.isAudioCandidate = true;
+        } else {
+            // kAVCDriven: keep AV/C classification so CMP/plug discovery remains applicable.
+            device.kind = ClassifyDevice(rom);
+            device.isAudioCandidate = IsAudioCandidate(rom);
+        }
         
 #if !defined(ASFW_HOST_TEST)
         // Create protocol instance if we don't have one yet AND AsyncSubsystem is available
@@ -78,6 +92,9 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);
     }
+
+    // TODO: Generic AV/C devices should work purely via MusicSubunit discovery; vendor protocols are only for extra controls.
+    // TODO: Generic DICE/TCAT discovery (non-hardcoded vendor/model) is not implemented yet.
     
     device.gen = rom.gen;
     device.nodeId = rom.nodeId;

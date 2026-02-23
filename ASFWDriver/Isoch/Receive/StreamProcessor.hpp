@@ -10,6 +10,7 @@
 #include <span>
 #include <cstdint>
 #include <atomic>
+#include <algorithm>
 #include "../Core/CIPHeader.hpp"
 #include "../Core/ExternalSyncBridge.hpp"
 #include "../Audio/AM824Decoder.hpp"
@@ -27,6 +28,10 @@ public:
     StreamProcessor() = default;
 
     static constexpr size_t kIsochHeaderSize = 8;  // Timestamp + isoch header
+    // RX shared queue / PCM staging capacity (host-facing PCM channels).
+    static constexpr size_t kMaxSupportedPcmChannels = ASFW_MAX_SUPPORTED_CHANNELS;
+    // Wire AM824 slot capacity (CIP DBS). May exceed PCM channels due to MIDI/control slots.
+    static constexpr size_t kMaxSupportedAm824Slots = 32;
 
     struct RxCipSummary {
         bool hasValidCip{false};
@@ -110,6 +115,57 @@ public:
              errorCount_++;
         }
 
+        // AM824 payload starts after the 2 CIP header quadlets.
+        const uint32_t* dataPtr = &quadlets[2];
+
+        // Diagnostic correlation: compare observed CIP DBS (wire slots) to the
+        // shared queue channel count (host-facing PCM). For devices that carry
+        // extra AM824 slots (e.g. MIDI), CIP.DBS can exceed queueChannels.
+        const uint32_t cipDbs = header->dataBlockSize;
+        const uint32_t queueChannels = sharedRxQueue_ ? sharedRxQueue_->Channels() : 0;
+        const bool interestingDbs =
+            (cipDbs > kMaxSupportedAm824Slots) ||
+            (queueChannels > 0 && cipDbs > queueChannels);
+        if (interestingDbs) {
+            const bool stateChanged =
+                (lastDbsDiagCipDbs_ != cipDbs) ||
+                (lastDbsDiagQueueChannels_ != queueChannels);
+            ++dbsDiagHitCount_;
+            if (stateChanged) {
+                lastDbsDiagCipDbs_ = cipDbs;
+                lastDbsDiagQueueChannels_ = queueChannels;
+                ASFW_LOG(Isoch,
+                         "IR RX: len=%zu payload=%zu cipDbs=%u events=%zu queueCh=%u%{public}s",
+                         length,
+                         payloadBytes,
+                         cipDbs,
+                         eventCount,
+                         queueChannels,
+                         (queueChannels > 0 && cipDbs > queueChannels)
+                             ? " likely extra AM824 slot(s), possibly MIDI"
+                             : "");
+
+                // Optional clue: inspect the first likely non-PCM AM824 slot label.
+                uint32_t extraSlotIndex = UINT32_MAX;
+                if (eventCount > 0) {
+                    if (queueChannels > 0 && cipDbs > queueChannels) {
+                        extraSlotIndex = queueChannels;
+                    } else if (cipDbs > kMaxSupportedPcmChannels) {
+                        extraSlotIndex = static_cast<uint32_t>(kMaxSupportedPcmChannels);
+                    }
+                }
+                if (extraSlotIndex != UINT32_MAX && extraSlotIndex < header->dataBlockSize) {
+                        const uint32_t q = SwapBigToHost(dataPtr[extraSlotIndex]);
+                        const uint8_t label = static_cast<uint8_t>((q >> 24) & 0xFF);
+                        ASFW_LOG(Isoch,
+                                 "IR RX DICE diag: first extra slot[%u] label=0x%02x (%{public}s)",
+                                 extraSlotIndex,
+                                 label,
+                                 (label >= 0x80 && label <= 0x83) ? "MIDI-likely" : "non-MIDI/unknown");
+                }
+            }
+        }
+
         if (eventCount > 0) {
              samplePacketCount_++;
              
@@ -118,13 +174,37 @@ public:
              if (eventCount > maxEvents_) maxEvents_ = eventCount;
              
              // Extract Samples (Just verify decodability for now)
-             const uint32_t* dataPtr = &quadlets[2];
+             constexpr size_t kEventSampleCapacity = kMaxSupportedPcmChannels;
+             const size_t wireSlotsPerEvent = header->dataBlockSize;
+             if (wireSlotsPerEvent > kMaxSupportedAm824Slots) {
+                 // We can parse CIP/DBC continuity, but not safely/meaningfully decode this payload.
+                 errorCount_++;
+                 if (lastUnsupportedWireDbs_ != header->dataBlockSize) {
+                     lastUnsupportedWireDbs_ = header->dataBlockSize;
+                     ASFW_LOG(Isoch,
+                              "IR RX: Unsupported wire DBS=%u (max AM824 slots=%zu, queueCh=%u) - skipping decode",
+                              header->dataBlockSize,
+                              kMaxSupportedAm824Slots,
+                              queueChannels);
+                 }
+                 return summary;
+             }
+             size_t decodeSlotsPerEvent = std::min<size_t>(wireSlotsPerEvent, kEventSampleCapacity);
+             if (queueChannels > 0) {
+                 decodeSlotsPerEvent = std::min<size_t>(decodeSlotsPerEvent, queueChannels);
+             }
+             const bool queueWriteSafe = (!sharedRxQueue_) || (queueChannels <= kEventSampleCapacity);
              
              // Iterate events
              for (size_t i = 0; i < eventCount; ++i) {
-                 // Iterate DBS (channels/quadlets per event)
-                 for (size_t ch = 0; ch < header->dataBlockSize; ++ch) {
-                     uint32_t sampleQuad = dataPtr[(i * header->dataBlockSize) + ch];
+                 // Clear temp frame so omitted/unsupported slots don't leak stale values.
+                 for (size_t ch = 0; ch < kEventSampleCapacity; ++ch) {
+                     eventSamples_[ch] = 0;
+                 }
+
+                 // Decode only the supported subset. We still use the wire DBS for stride.
+                 for (size_t ch = 0; ch < decodeSlotsPerEvent; ++ch) {
+                     uint32_t sampleQuad = dataPtr[(i * wireSlotsPerEvent) + ch];
                      
                      // Decode AM824 sample
                      auto sample = AM824Decoder::DecodeSample(sampleQuad);
@@ -141,8 +221,11 @@ public:
                  }
                  
                  // Write this event (1 frame of all channels) to shared RX queue
-                 if (sharedRxQueue_) {
+                 if (sharedRxQueue_ && queueWriteSafe) {
                      sharedRxQueue_->Write(eventSamples_, 1);
+                 } else if (sharedRxQueue_ && !queueWriteSafe) {
+                     // Queue requests more channels than this processor can safely stage.
+                     errorCount_++;
                  }
              }
              
@@ -234,6 +317,7 @@ public:
         latencyBucket3_ = 0;
         lastPollLatencyUs_ = 0;
         lastPollPackets_ = 0;
+        lastUnsupportedWireDbs_ = 0;
     }
 
 private:
@@ -264,12 +348,19 @@ private:
     
     uint64_t minEvents_{UINT64_MAX};
     uint64_t maxEvents_{0};
+
+    // Temporary rate-limited diagnostics for correlating CIP DBS with DICE stream formats.
+    uint32_t dbsDiagHitCount_{0};
+    uint32_t lastDbsDiagQueueChannels_{0};
+    uint8_t lastDbsDiagCipDbs_{0xFF};
     
     // Output shared queue for decoded RX samples (set by IsochReceiveContext)
     ASFW::Shared::TxSharedQueueSPSC* sharedRxQueue_{nullptr};
     
-    // Temp buffer for one event's worth of samples (all channels)
-    int32_t eventSamples_[ASFW_MAX_SUPPORTED_CHANNELS]{};
+    uint8_t lastUnsupportedWireDbs_{0};
+
+    // Temp buffer for one PCM event's worth of samples (host-facing channels only).
+    int32_t eventSamples_[kMaxSupportedPcmChannels]{};
     
 public:
     /// Set the output shared queue for decoded samples.

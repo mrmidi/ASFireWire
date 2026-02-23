@@ -101,6 +101,27 @@ public:
      */
     void ResetDelegationRetryCounter();
 
+    /**
+     * Inform coordinator that the most recently completed ROM scan had
+     * nodes returning ack_busy_X (device still booting).  When true,
+     * the next post-reset discovery dispatch will be delayed to give
+     * slow-booting firmware (e.g. DICE) time to finish initialization
+     * before we scan again.
+     *
+     * The delay escalates with consecutive busy/empty scans:
+     *   2s → 4s → 6s → 8s → 10s (capped at kMaxDiscoveryDelayMs).
+     * Resets to 0 when a scan succeeds with actual ROMs.
+     */
+    void SetPreviousScanHadBusyNodes(bool busy);
+
+    /**
+     * Escalate the discovery delay without changing the busy-node flag.
+     * Call when a scan completes with 0 ROMs (no scannable nodes) — we
+     * learned nothing about whether the device recovered, so increase
+     * the delay for the next attempt.
+     */
+    void EscalateDiscoveryDelay();
+
 private:
     void TransitionTo(State newState, const char* reason);
     void ProcessEvent(Event event);
@@ -187,6 +208,13 @@ private:
     static constexpr uint32_t kMaxDelegateRetries = 5;
     bool delegateSuppressed_{false};
     uint32_t lastResumeGeneration_{0xFFFFFFFFu};
+
+    // Discovery delay for slow-booting devices (DICE/Saffire).
+    // Escalates with consecutive failed scans: 2s → 4s → 6s → 8s → 10s.
+    static constexpr uint32_t kDiscoveryDelayStepMs = 2000;   // escalation step
+    static constexpr uint32_t kMaxDiscoveryDelayMs  = 10000;  // 10s cap
+    uint32_t currentDiscoveryDelayMs_{0};
+    bool previousScanHadBusyNodes_{false};
 };
 
 } // namespace ASFW::Driver

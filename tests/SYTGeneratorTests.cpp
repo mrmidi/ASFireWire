@@ -28,16 +28,16 @@ TEST(SYTGenerator, NudgePositiveAndNegativeTicks) {
     gen.initialize(48000.0);
 
     gen.reset();
-    const int32_t base = TickIndex(gen.computeDataSYT(0));
+    const int32_t base = TickIndex(gen.computeDataSYT(0, 8));
 
     gen.reset();
     gen.nudgeOffsetTicks(+1);
-    const int32_t plusOne = TickIndex(gen.computeDataSYT(0));
+    const int32_t plusOne = TickIndex(gen.computeDataSYT(0, 8));
     EXPECT_EQ(WrapSigned(plusOne - base), +1);
 
     gen.reset();
     gen.nudgeOffsetTicks(-1);
-    const int32_t minusOne = TickIndex(gen.computeDataSYT(0));
+    const int32_t minusOne = TickIndex(gen.computeDataSYT(0, 8));
     EXPECT_EQ(WrapSigned(minusOne - base), -1);
 }
 
@@ -46,15 +46,15 @@ TEST(SYTGenerator, NudgeWrapBehaviorAcrossDomain) {
     gen.initialize(48000.0);
 
     gen.reset();
-    const int32_t base = TickIndex(gen.computeDataSYT(0));
+    const int32_t base = TickIndex(gen.computeDataSYT(0, 8));
 
     gen.reset();
     gen.nudgeOffsetTicks(kTickDomain + 3);
-    const int32_t plusWrapped = TickIndex(gen.computeDataSYT(0));
+    const int32_t plusWrapped = TickIndex(gen.computeDataSYT(0, 8));
     EXPECT_EQ(WrapSigned(plusWrapped - base), +3);
 
     gen.reset();
     gen.nudgeOffsetTicks(-(kTickDomain + 5));
-    const int32_t minusWrapped = TickIndex(gen.computeDataSYT(0));
+    const int32_t minusWrapped = TickIndex(gen.computeDataSYT(0, 8));
     EXPECT_EQ(WrapSigned(minusWrapped - base), -5);
 }

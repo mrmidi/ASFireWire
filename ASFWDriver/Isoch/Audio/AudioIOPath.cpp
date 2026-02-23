@@ -46,9 +46,14 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
         secondFrames = ioBufferFrameSize - firstFrames;
     }
 
-    const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * state.channelCount;
-    const size_t firstBytes = size_t(firstFrames) * sizeof(int32_t) * state.channelCount;
-    const size_t secondBytes = size_t(secondFrames) * sizeof(int32_t) * state.channelCount;
+    const uint32_t ch = state.inputChannelCount;
+    if (ch == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
+    const size_t firstBytes = size_t(firstFrames) * sizeof(int32_t) * ch;
+    const size_t secondBytes = size_t(secondFrames) * sizeof(int32_t) * ch;
 
     MaybeDrainRxStartup(state);
 
@@ -56,9 +61,9 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
         auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);
         const uint32_t read1 = state.rxQueueReader->Read(pcmFirst, firstFrames);
         if (read1 < firstFrames) {
-            memset(pcmFirst + read1 * state.channelCount,
+            memset(pcmFirst + read1 * ch,
                    0,
-                   size_t(firstFrames - read1) * sizeof(int32_t) * state.channelCount);
+                   size_t(firstFrames - read1) * sizeof(int32_t) * ch);
         }
 
         if (secondFrames > 0) {
@@ -66,9 +71,9 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
             if (read1 == firstFrames) {
                 const uint32_t read2 = state.rxQueueReader->Read(pcmSecond, secondFrames);
                 if (read2 < secondFrames) {
-                    memset(pcmSecond + read2 * state.channelCount,
+                    memset(pcmSecond + read2 * ch,
                            0,
-                           size_t(secondFrames - read2) * sizeof(int32_t) * state.channelCount);
+                           size_t(secondFrames - read2) * sizeof(int32_t) * ch);
                 }
             } else {
                 memset(pcmSecond, 0, secondBytes);
@@ -177,7 +182,12 @@ kern_return_t HandleWriteEnd(AudioIOPathState& state,
 
     const uint32_t bufferFrames = state.ioBufferPeriodFrames;
     const uint32_t offsetFrames = static_cast<uint32_t>(sampleTime % bufferFrames);
-    const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * state.channelCount;
+    const uint32_t ch = state.outputChannelCount;
+    if (ch == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
     uint32_t firstFrames = ioBufferFrameSize;
     uint32_t secondFrames = 0;
     if ((offsetFrames + ioBufferFrameSize) > bufferFrames) {

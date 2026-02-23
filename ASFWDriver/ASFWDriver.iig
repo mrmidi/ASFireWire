@@ -60,9 +60,11 @@ public:
     kern_return_t SetIsochVerbosity(uint32_t level) const LOCALONLY;
     kern_return_t SetHexDumps(uint32_t enabled) const LOCALONLY;
     kern_return_t SetIsochTxVerifier(uint32_t enabled) const LOCALONLY;
+    kern_return_t SetAudioAutoStart(uint32_t enabled) const LOCALONLY;
     kern_return_t GetLogConfig(uint32_t* asyncVerbosity,
                               uint32_t* hexDumpsEnabled,
                               uint32_t* isochVerbosity) const LOCALONLY;
+    kern_return_t GetAudioAutoStart(uint32_t* enabled) const LOCALONLY;
 
     // Isochronous Receive Control
     kern_return_t StartIsochReceive(uint8_t channel) LOCALONLY;
