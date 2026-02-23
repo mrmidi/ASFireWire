@@ -65,6 +65,11 @@ public:
 
     void SetTopologyManager(Driver::TopologyManager* topologyManager);
 
+    /// Returns true if the most recent scan encountered ack_busy_X or
+    /// BIB-not-ready (quadlet[0]==0) from any node.  Used by
+    /// BusResetCoordinator to decide whether to delay the next discovery.
+    [[nodiscard]] bool HadBusyNodes() const { return hadBusyNodes_; }
+
 private:
     enum class NodeState : uint8_t {
         Idle,
@@ -125,6 +130,7 @@ private:
 
     ScanCompletionCallback onScanComplete_;
     bool completionNotified_{false};
+    bool hadBusyNodes_{false};  // Set when any node returns ack_busy_X or BIB quadlet[0]=0
 
     Driver::TopologyManager* topologyManager_{nullptr};
 

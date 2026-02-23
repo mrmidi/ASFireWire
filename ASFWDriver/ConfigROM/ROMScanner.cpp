@@ -19,6 +19,9 @@ ROMScanner::ROMScanner(Async::IFireWireBus& bus,
                        OSSharedPtr<IODispatchQueue> dispatchQueue)
     : bus_(bus)
     , speedPolicy_(speedPolicy)
+    // perStepRetries=2: Keep per-generation scan fast (~2.5s) to reduce the window
+    // where a bus reset can interrupt the scan.  DICE/Saffire-class devices that need
+    // more boot time are handled by BusResetCoordinator's discovery delay instead.
     , params_{.startSpeed = FwSpeed::S100, .maxInflight = 2, .perStepRetries = 2}
     , reader_(std::make_unique<ROMReader>(bus, dispatchQueue))
     , dispatchQueue_(dispatchQueue)
@@ -49,6 +52,7 @@ void ROMScanner::Begin(Generation gen,
     
     currentGen_ = gen;
     completionNotified_ = false;
+    hadBusyNodes_ = false;
     currentTopology_ = topology;  // Store snapshot for bus info access
     nodeScans_.clear();
     completedROMs_.clear();
@@ -187,15 +191,27 @@ void ROMScanner::OnBIBComplete(uint8_t nodeId, const ROMReader::ReadResult& resu
     auto& node = *it;
 
     if (!result.success) {
-        // BIB read failed - mark as failed (don't retry from callback to avoid deadlock)
-        ASFW_LOG(ConfigROM, "FSM: Node %u BIB read FAILED - marking as failed", nodeId);
-        // CRITICAL FIX: Don't retry from callback - causes re-entry deadlock when
-        // callback is invoked from WithTransaction (which holds lock), then retry
-        // calls RegisterTx → Allocate → lock attempt → DEADLOCK
-        // RetryWithFallback(node);
-        // AdvanceFSM();
-        node.state = NodeState::Failed;
-        // Check if scan complete (Apple pattern: fNumROMReads--)
+        // ack_busy_X or other transaction failure — device not yet ready.
+        // RetryWithFallback is safe here: it only mutates node state (no locks, no async calls).
+        // The actual re-read is dispatched via ScheduleAdvanceFSM() below.
+        ASFW_LOG(ConfigROM, "FSM: Node %u BIB read FAILED (ack_busy or error) - retrying", nodeId);
+        hadBusyNodes_ = true;
+        node.bibInProgress = false;
+        RetryWithFallback(node);
+        CheckAndNotifyCompletion();
+        ScheduleAdvanceFSM();
+        return;
+    }
+
+    // IEEE 1212 §7.2: a device may return 0x00000000 for BIB quadlet[0] during firmware
+    // initialization (e.g. DICE-based devices, external HDD firewire bridges).  This is
+    // distinct from ack_busy_X — the transaction succeeds but the payload signals "not ready".
+    // Linux firewire-core treats this as RCODE_BUSY and retries; we do the same.
+    if (result.dataLength >= 4 && result.data[0] == 0) {
+        ASFW_LOG(ConfigROM, "FSM: Node %u BIB quadlet[0]=0 (booting, IEEE 1212 §7.2) - retry", nodeId);
+        hadBusyNodes_ = true;
+        node.bibInProgress = false;
+        RetryWithFallback(node);
         CheckAndNotifyCompletion();
         ScheduleAdvanceFSM();
         return;
@@ -206,9 +222,6 @@ void ROMScanner::OnBIBComplete(uint8_t nodeId, const ROMReader::ReadResult& resu
     if (!bibOpt.has_value()) {
         ASFW_LOG(ConfigROM, "FSM: Node %u BIB parse FAILED", nodeId);
         node.state = NodeState::Failed;
-        // CRITICAL FIX: Don't call AdvanceFSM() from callback - causes re-entry deadlock
-        // AdvanceFSM();
-        // Check if scan complete (Apple pattern: fNumROMReads--)
         CheckAndNotifyCompletion();
         ScheduleAdvanceFSM();
         return;

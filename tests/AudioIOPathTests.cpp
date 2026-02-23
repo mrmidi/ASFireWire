@@ -64,7 +64,7 @@ TEST(AudioIOPathTests, BeginReadWithoutRxQueueWritesSilenceToWindow) {
     bool startupDrained = false;
     AudioIOPathState state{
         .inputBuffer = inputBuffer,
-        .channelCount = kChannels,
+        .inputChannelCount = kChannels,
         .ioBufferPeriodFrames = kPeriodFrames,
         .rxStartupDrained = &startupDrained,
         .rxQueueValid = false,
@@ -102,7 +102,7 @@ TEST(AudioIOPathTests, BeginReadWrapsAndZeroPadsOnPartialQueueRead) {
     bool startupDrained = false;
     AudioIOPathState state{
         .inputBuffer = inputBuffer,
-        .channelCount = kChannels,
+        .inputChannelCount = kChannels,
         .ioBufferPeriodFrames = kPeriodFrames,
         .rxStartupDrained = &startupDrained,
         .rxQueueValid = true,
@@ -141,7 +141,7 @@ TEST(AudioIOPathTests, WriteEndUsesPacketAssemblerWhenTxQueueUnavailable) {
     uint64_t overruns = 0;
     AudioIOPathState state{
         .outputBuffer = outputBuffer,
-        .channelCount = kChannels,
+        .outputChannelCount = kChannels,
         .ioBufferPeriodFrames = kPeriodFrames,
         .txQueueValid = false,
         .packetAssembler = &assembler,
@@ -177,7 +177,7 @@ TEST(AudioIOPathTests, WriteEndWithTxQueueWrapWritesFirstThenSecondSpan) {
     uint64_t overruns = 0;
     AudioIOPathState state{
         .outputBuffer = outputBuffer,
-        .channelCount = kChannels,
+        .outputChannelCount = kChannels,
         .ioBufferPeriodFrames = kPeriodFrames,
         .txQueueValid = true,
         .txQueueWriter = &txQueue.queue,
@@ -211,7 +211,7 @@ TEST(AudioIOPathTests, ZeroCopyPublishTracksDiscontinuityAndPhaseRebase) {
     uint64_t overruns = 0;
     AudioIOPathState state{
         .outputBuffer = outputBuffer,
-        .channelCount = kChannels,
+        .outputChannelCount = kChannels,
         .ioBufferPeriodFrames = kPeriodFrames,
         .txQueueValid = true,
         .txQueueWriter = &txQueue.queue,

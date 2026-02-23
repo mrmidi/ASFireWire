@@ -163,6 +163,24 @@ enum class AllocationStatus : uint8_t {
     Failed
 };
 
+[[nodiscard]] constexpr const char* ToString(AllocationStatus status) noexcept {
+    switch (status) {
+        case AllocationStatus::Success:
+            return "success";
+        case AllocationStatus::NoResources:
+            return "no_resources";
+        case AllocationStatus::GenerationMismatch:
+            return "generation_mismatch";
+        case AllocationStatus::Timeout:
+            return "timeout";
+        case AllocationStatus::NotFound:
+            return "not_found";
+        case AllocationStatus::Failed:
+            return "failed";
+    }
+    return "unknown";
+}
+
 /**
  * Result of channel allocation operation.
  *

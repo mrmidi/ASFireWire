@@ -24,7 +24,9 @@ public:
 
     [[nodiscard]] kern_return_t AllocateAndInitialize(Memory::IIsochDMAMemory& dmaMemory) noexcept;
 
-    [[nodiscard]] bool IsValid() const noexcept { return descRegion_.virtualBase != nullptr; }
+    [[nodiscard]] bool IsValid() const noexcept {
+        return descRegion_.virtualBase != nullptr && bufRegion_.virtualBase != nullptr;
+    }
 
     void DebugFillDescriptorSlab(uint8_t pattern) noexcept {
         if (!descRegion_.virtualBase || descRegion_.size == 0) return;
@@ -80,4 +82,3 @@ private:
 };
 
 } // namespace ASFW::Isoch::Tx
-

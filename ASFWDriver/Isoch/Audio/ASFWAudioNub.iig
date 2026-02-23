@@ -52,6 +52,11 @@ public:
         IOBufferMemoryDescriptor** outMemory,
         uint64_t* outBytes);
 
+    // RPC method: AudioDriver calls this to start/stop audio streaming for this GUID.
+    // This replaces the previous side-effect-based autostart from CopyTransmitQueueMemory().
+    virtual kern_return_t StartAudioStreaming();
+    virtual kern_return_t StopAudioStreaming();
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 
@@ -69,6 +74,8 @@ public:
     // Must be called before CopyTransmitQueueMemory / CopyOutputAudioMemory
     void SetChannelCount(uint32_t channels) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;
+    uint32_t GetInputChannelCount() const LOCALONLY;
+    uint32_t GetOutputChannelCount() const LOCALONLY;
 
     // Stream mode selected during discovery:
     //   0 = non-blocking, 1 = blocking
@@ -113,9 +120,11 @@ struct ASFWAudioNub_IVars {
     IOMemoryMap* txQueueMap;              // Local mapping of txQueueMem
     uint64_t txQueueBytes;                // Size of shared memory
 
-    // Audio channel count (read from ASFWDriver properties)
+    // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)
     uint64_t guid{0};
     uint32_t channelCount{2};
+    uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
+    uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
 
     // ZERO-COPY: Shared output audio buffer for IOUserAudioStream AND IT DMA

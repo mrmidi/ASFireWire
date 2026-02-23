@@ -306,6 +306,57 @@ TEST(PacketAssemblerTests, EightChannelPacketSize) {
     EXPECT_EQ(pkt.size, 264u);
 }
 
+TEST(PacketAssemblerTests, BlockingModeSupportsExtraAm824SlotsForMidi) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.reconfigureAM824(/*pcmChannels=*/8, /*am824Slots=*/9, /*sid=*/0x05);
+    assembler.setStreamMode(StreamMode::kBlocking);
+
+    EXPECT_EQ(assembler.channelCount(), 8u);
+    EXPECT_EQ(assembler.am824SlotCount(), 9u);
+
+    // Blocking @48k DATA packet: 8 (CIP) + 8 frames * 9 slots * 4 bytes = 296
+    EXPECT_EQ(assembler.samplesPerDataPacket(), 8u);
+    EXPECT_EQ(assembler.dataPacketSize(), 296u);
+
+    // First blocking packet is NO-DATA, second is DATA.
+    AssembledPacket noData = assembler.assembleNext(0);
+    EXPECT_FALSE(noData.isData);
+    EXPECT_EQ(noData.size, 8u);
+
+    AssembledPacket data = assembler.assembleNext(0);
+    EXPECT_TRUE(data.isData);
+    EXPECT_EQ(data.size, 296u);
+
+    // First frame: slot 0 is MBLA silence (label 0x40), slot 8 is MIDI placeholder (label 0x80).
+    EXPECT_EQ(data.data[8 + (0 * 4)], 0x40);
+    EXPECT_EQ(data.data[8 + (8 * 4)], 0x80);
+}
+
+TEST(PacketAssemblerTests, NonBlockingModeSupportsExtraAm824SlotsForMidi) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.reconfigureAM824(/*pcmChannels=*/8, /*am824Slots=*/9, /*sid=*/0x05);
+    assembler.setStreamMode(StreamMode::kNonBlocking);
+
+    EXPECT_EQ(assembler.channelCount(), 8u);
+    EXPECT_EQ(assembler.am824SlotCount(), 9u);
+
+    // Non-blocking @48k DATA packet: 8 (CIP) + 6 frames * 9 slots * 4 bytes = 224
+    EXPECT_EQ(assembler.samplesPerDataPacket(), 6u);
+    EXPECT_EQ(assembler.dataPacketSize(), 224u);
+
+    AssembledPacket data = assembler.assembleNext(0);
+    EXPECT_TRUE(data.isData);
+    EXPECT_EQ(data.size, 224u);
+
+    // CIP Q0 bytes: [0]=SID, [1]=DBS. In big-endian wire order.
+    EXPECT_EQ(data.data[0], 0x05);
+    EXPECT_EQ(data.data[1], 0x09);
+
+    // First frame: slot 0 is MBLA silence (label 0x40), slot 8 is MIDI placeholder (label 0x80).
+    EXPECT_EQ(data.data[8 + (0 * 4)], 0x40);
+    EXPECT_EQ(data.data[8 + (8 * 4)], 0x80);
+}
+
 TEST(PacketAssemblerTests, FourChannelDataWithAudio) {
     PacketAssembler assembler(4, 0x02);  // 4 channels
 

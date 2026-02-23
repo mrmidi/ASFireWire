@@ -15,6 +15,36 @@ namespace ASFW::Audio::DICE::Focusrite {
 
 namespace {
 
+uint32_t Am824SlotsFor(const StreamFormatEntry& entry) noexcept {
+    return entry.Am824Slots();
+}
+
+void LogDiceStreamEntryDetail(const char* dir, uint32_t index, const StreamFormatEntry& entry) {
+    if (entry.hasSeqStart) {
+        ASFW_LOG(DICE,
+                 "  %{public}s[%u]: iso=%d start=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
+                 dir,
+                 index,
+                 entry.isoChannel,
+                 entry.seqStart,
+                 entry.pcmChannels,
+                 entry.midiPorts,
+                 Am824SlotsFor(entry),
+                 entry.labels);
+    } else {
+        ASFW_LOG(DICE,
+                 "  %{public}s[%u]: iso=%d speed=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
+                 dir,
+                 index,
+                 entry.isoChannel,
+                 entry.speed,
+                 entry.pcmChannels,
+                 entry.midiPorts,
+                 Am824SlotsFor(entry),
+                 entry.labels);
+    }
+}
+
 float FloatFromWire(const uint8_t* data) {
     uint32_t bits = DICETransaction::QuadletFromWire(data);
     float f;
@@ -144,6 +174,19 @@ SPro24DspProtocol::SPro24DspProtocol(Async::AsyncSubsystem& subsystem, uint16_t 
     ASFW_LOG(DICE, "SPro24DspProtocol created for node 0x%04x", nodeId);
 }
 
+bool SPro24DspProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const {
+    if (!runtimeCapsValid_.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    outCaps.sampleRateHz = runtimeSampleRateHz_.load(std::memory_order_relaxed);
+    outCaps.hostInputPcmChannels = hostInputPcmChannels_.load(std::memory_order_relaxed);
+    outCaps.hostOutputPcmChannels = hostOutputPcmChannels_.load(std::memory_order_relaxed);
+    outCaps.deviceToHostAm824Slots = deviceToHostAm824Slots_.load(std::memory_order_relaxed);
+    outCaps.hostToDeviceAm824Slots = hostToDeviceAm824Slots_.load(std::memory_order_relaxed);
+    return true;
+}
+
 IOReturn SPro24DspProtocol::Initialize() {
     // Start async initialization - this will trigger capability discovery
     InitializeAsync([](IOReturn status) {
@@ -178,18 +221,67 @@ void SPro24DspProtocol::InitializeAsync(InitCallback callback) {
             // Application section is at TX section offset (per TCAT DICE spec)
             appSectionBase_ = sections_.txStreamFormat.offset * 4;
             initialized_ = true;
+
+            if (caps.txStreams.numStreams > 0) {
+                const auto& tx0 = caps.txStreams.streams[0];
+                hostInputPcmChannels_.store(tx0.pcmChannels, std::memory_order_relaxed);
+                deviceToHostAm824Slots_.store(tx0.Am824Slots(), std::memory_order_relaxed);
+            } else {
+                hostInputPcmChannels_.store(0, std::memory_order_relaxed);
+                deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);
+            }
+            if (caps.rxStreams.numStreams > 0) {
+                const auto& rx0 = caps.rxStreams.streams[0];
+                hostOutputPcmChannels_.store(rx0.pcmChannels, std::memory_order_relaxed);
+                hostToDeviceAm824Slots_.store(rx0.Am824Slots(), std::memory_order_relaxed);
+            } else {
+                hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
+                hostToDeviceAm824Slots_.store(0, std::memory_order_relaxed);
+            }
+            runtimeSampleRateHz_.store(caps.global.sampleRate, std::memory_order_relaxed);
+            runtimeCapsValid_.store(true, std::memory_order_release);
             
             ASFW_LOG(DICE, "═══════════════════════════════════════════════════════");
             ASFW_LOG(DICE, "SPro24DspProtocol Initialized Successfully");
             ASFW_LOG(DICE, "  Current Rate: %u Hz", caps.global.sampleRate);
-            ASFW_LOG(DICE, "  TX Channels:  %u (streams=%u)", caps.txStreams.TotalChannels(), caps.txStreams.numStreams);
-            ASFW_LOG(DICE, "  RX Channels:  %u (streams=%u)", caps.rxStreams.TotalChannels(), caps.rxStreams.numStreams);
+            ASFW_LOG(DICE, "  TX Streams:   %u (pcm=%u midi=%u slots=%u)",
+                     caps.txStreams.numStreams,
+                     caps.txStreams.TotalPcmChannels(),
+                     caps.txStreams.TotalMidiPorts(),
+                     caps.txStreams.TotalAm824Slots());
+            ASFW_LOG(DICE, "  RX Streams:   %u (pcm=%u midi=%u slots=%u)",
+                     caps.rxStreams.numStreams,
+                     caps.rxStreams.TotalPcmChannels(),
+                     caps.rxStreams.TotalMidiPorts(),
+                     caps.rxStreams.TotalAm824Slots());
+            for (uint32_t i = 0; i < caps.txStreams.numStreams && i < 4; ++i) {
+                LogDiceStreamEntryDetail("TX", i, caps.txStreams.streams[i]);
+            }
+            for (uint32_t i = 0; i < caps.rxStreams.numStreams && i < 4; ++i) {
+                LogDiceStreamEntryDetail("RX", i, caps.rxStreams.streams[i]);
+            }
+            if (caps.rxStreams.numStreams > 0) {
+                const auto& rx0 = caps.rxStreams.streams[0];
+                ASFW_LOG(DICE,
+                         "  Host->HW (DICE RX stream 0): pcm=%u midi=%u am824Slots=%u",
+                         rx0.pcmChannels,
+                         rx0.midiPorts,
+                         Am824SlotsFor(rx0));
+            }
+            if (caps.txStreams.numStreams > 0) {
+                const auto& tx0 = caps.txStreams.streams[0];
+                ASFW_LOG(DICE,
+                         "  HW->Host (DICE TX stream 0): pcm=%u midi=%u am824Slots=%u",
+                         tx0.pcmChannels,
+                         tx0.midiPorts,
+                         Am824SlotsFor(tx0));
+            }
             ASFW_LOG(DICE, "  Nickname:     '%{public}s'", caps.global.nickname);
             ASFW_LOG(DICE, "  App Section:  0x%08x", appSectionBase_);
             ASFW_LOG(DICE, "═══════════════════════════════════════════════════════");
 
             // Keep protocol initialization side-effect free.
-            // Stream start is orchestrated by ASFWAudioNub/ASFWAudioDriver bring-up.
+            // Stream start is orchestrated by AudioCoordinator backends.
             ASFW_LOG(DICE, "SPro24DspProtocol: Skipping StartStreamTest (managed by audio path)");
             
             callback(kIOReturnSuccess);
@@ -199,6 +291,12 @@ void SPro24DspProtocol::InitializeAsync(InitCallback callback) {
 
 IOReturn SPro24DspProtocol::Shutdown() {
     ASFW_LOG(DICE, "SPro24DspProtocol::Shutdown");
+    runtimeCapsValid_.store(false, std::memory_order_release);
+    runtimeSampleRateHz_.store(0, std::memory_order_relaxed);
+    hostInputPcmChannels_.store(0, std::memory_order_relaxed);
+    hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
+    deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);
+    hostToDeviceAm824Slots_.store(0, std::memory_order_relaxed);
     initialized_ = false;
     return kIOReturnSuccess;
 }

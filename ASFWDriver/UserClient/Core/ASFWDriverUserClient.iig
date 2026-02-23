@@ -50,6 +50,8 @@ public:
         kMethodGetRawFCPCommandResult  = 39,
         kMethodSetIsochVerbosity       = 40,
         kMethodSetIsochTxVerifier      = 41,
+        kMethodSetAudioAutoStart       = 42,
+        kMethodGetAudioAutoStart       = 43,
         // TODO: IRM test method - temporary for Phase 0.5 testing
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

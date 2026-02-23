@@ -22,7 +22,8 @@ struct AudioIOPathState {
     IOBufferMemoryDescriptor* inputBuffer{nullptr};
     IOBufferMemoryDescriptor* outputBuffer{nullptr};
 
-    uint32_t channelCount{0};
+    uint32_t inputChannelCount{0};
+    uint32_t outputChannelCount{0};
     uint32_t ioBufferPeriodFrames{0};
 
     bool* rxStartupDrained{nullptr};

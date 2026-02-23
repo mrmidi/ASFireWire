@@ -189,30 +189,59 @@ struct GlobalState {
 // TX/RX Stream Format
 // ============================================================================
 
-/// Stream format entry (per-stream configuration)
+/// Stream format entry (per-stream configuration).
+/// A single superset layout is used for both TX and RX sections:
+/// - TX uses `speed`
+/// - RX uses `seqStart`
 struct StreamFormatEntry {
-    uint32_t numChannels{0};       ///< Number of audio channels
-    uint32_t formatInfo{0};        ///< Format/MIDI info
-    char name[256]{};              ///< Stream name (null-terminated)
-    
-    /// Parse from wire format (at offset in buffer)
-    static StreamFormatEntry FromWire(const uint8_t* data, size_t nameOffset);
+    int32_t isoChannel{-1};        ///< Isochronous channel (-1 = disabled)
+    uint32_t seqStart{0};          ///< RX-only: first quadlet index to interpret
+    uint32_t pcmChannels{0};       ///< Number of PCM/audio channels
+    uint32_t midiPorts{0};         ///< Number of MIDI ports
+    uint32_t speed{0};             ///< TX-only IEEE1394 speed code
+    bool hasSeqStart{false};       ///< True when parsed from RX stream section
+    bool hasSpeed{false};          ///< True when parsed from TX stream section
+    char labels[256]{};            ///< Channel labels blob (NUL-terminated if possible)
+
+    [[nodiscard]] uint32_t Am824Slots() const noexcept {
+        return pcmChannels + ((midiPorts + 7u) / 8u);
+    }
 };
 
 /// TX/RX stream section configuration
 struct StreamConfig {
-    uint32_t numStreams{0};                          ///< Number of streams
-    uint32_t streamSizes[2]{0, 0};                   ///< Size of each stream config
-    StreamFormatEntry streams[4];                    ///< Up to 4 streams
-    
-    /// Total channel count across all streams
-    uint32_t TotalChannels() const {
+    uint32_t numStreams{0};            ///< Number of streams in this section
+    uint32_t entrySizeBytes{0};        ///< Entry size (from TCAT section header)
+    uint32_t parsedEntrySizeBytes{0};  ///< Actual stride used by parser (currently same as entrySizeBytes)
+    bool isRxLayout{false};            ///< Whether entries follow RX layout
+    StreamFormatEntry streams[4];      ///< Up to 4 streams
+
+    [[nodiscard]] uint32_t TotalPcmChannels() const noexcept {
         uint32_t total = 0;
         for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
-            total += streams[i].numChannels;
+            total += streams[i].pcmChannels;
         }
         return total;
     }
+
+    [[nodiscard]] uint32_t TotalMidiPorts() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            total += streams[i].midiPorts;
+        }
+        return total;
+    }
+
+    [[nodiscard]] uint32_t TotalAm824Slots() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            total += streams[i].Am824Slots();
+        }
+        return total;
+    }
+
+    // Legacy alias kept while call sites migrate to explicit semantics.
+    [[nodiscard]] uint32_t TotalChannels() const noexcept { return TotalPcmChannels(); }
 };
 
 // ============================================================================

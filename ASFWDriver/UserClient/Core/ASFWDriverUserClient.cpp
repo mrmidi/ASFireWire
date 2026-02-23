@@ -61,6 +61,8 @@ enum {
     kMethodGetRawFCPCommandResult  = 39,
     kMethodSetIsochVerbosity       = 40,
     kMethodSetIsochTxVerifier      = 41,
+    kMethodSetAudioAutoStart       = 42,
+    kMethodGetAudioAutoStart       = 43,
     // TODO: IRM test method - temporary location for Phase 0.5 testing
     kMethodTestIRMAllocation       = 26,
     kMethodTestIRMRelease          = 27,
@@ -426,6 +428,27 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
             }
             uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
             return ivars->driver->SetIsochTxVerifier(enabled);
+        }
+
+        case kMethodSetAudioAutoStart: {
+            if (!arguments->scalarInput || arguments->scalarInputCount < 1) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t enabled = static_cast<uint32_t>(arguments->scalarInput[0]);
+            return ivars->driver->SetAudioAutoStart(enabled);
+        }
+
+        case kMethodGetAudioAutoStart: {
+            if (!arguments->scalarOutput || arguments->scalarOutputCount < 1) {
+                return kIOReturnBadArgument;
+            }
+            uint32_t enabled = 0;
+            const kern_return_t kr = ivars->driver->GetAudioAutoStart(&enabled);
+            if (kr == kIOReturnSuccess) {
+                arguments->scalarOutput[0] = enabled;
+                arguments->scalarOutputCount = 1;
+            }
+            return kr;
         }
 
         case kMethodGetLogConfig: {

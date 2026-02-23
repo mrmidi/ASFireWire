@@ -19,6 +19,10 @@
 
 class ASFWDriver;
 
+namespace ASFW::Audio {
+class AudioCoordinator;
+}
+
 struct ServiceContext {
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // placeholder config
@@ -30,6 +34,7 @@ struct ServiceContext {
     ASFW::Driver::WatchdogCoordinator watchdog;
     ASFW::Driver::IsochService isoch;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
+    std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
 
     void Reset();
 };

@@ -11,6 +11,7 @@
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 
@@ -126,6 +127,8 @@ public:
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }
+
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     
     /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
     IOReturn StartDuplex48k() override;
@@ -192,6 +195,14 @@ private:
     GeneralSections sections_{};
     uint32_t appSectionBase_{0};
     bool initialized_{false};
+
+    // Runtime-discovered DICE stream caps (authoritative after async capability discovery).
+    std::atomic<uint32_t> runtimeSampleRateHz_{0};
+    std::atomic<uint32_t> hostInputPcmChannels_{0};    // DICE TX stream 0 PCM
+    std::atomic<uint32_t> hostOutputPcmChannels_{0};   // DICE RX stream 0 PCM
+    std::atomic<uint32_t> deviceToHostAm824Slots_{0};  // DICE TX stream 0 slots
+    std::atomic<uint32_t> hostToDeviceAm824Slots_{0};  // DICE RX stream 0 slots
+    std::atomic<bool> runtimeCapsValid_{false};
     
     /// Send software notice to commit changes
     void SendSwNotice(SwNotice notice, VoidCallback callback);
