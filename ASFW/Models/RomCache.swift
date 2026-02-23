@@ -20,6 +20,7 @@ struct RomCache {
     }
 
     var byteCount: Int { data.count }
+    var normalizedData: Data { data }
 
     var quadletCount: Int { data.count / 4 }
 
