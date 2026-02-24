@@ -8,6 +8,7 @@
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/OSAction.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <DriverKit/IOServiceNotificationDispatchSource.h>
 #endif
 
 #include "../Controller/ControllerConfig.hpp"
@@ -29,6 +30,10 @@ struct ServiceContext {
     std::shared_ptr<ASFW::Driver::ControllerCore> controller;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<OSAction> interruptAction;
+#ifndef ASFW_HOST_TEST
+    OSSharedPtr<IOServiceNotificationDispatchSource> providerNotifications;
+    OSSharedPtr<OSAction> providerNotificationAction;
+#endif
     std::atomic<bool> stopping{false};
     ASFW::Driver::StatusPublisher statusPublisher;
     ASFW::Driver::WatchdogCoordinator watchdog;

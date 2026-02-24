@@ -14,6 +14,7 @@
 #include <DriverKit/OSObject.iig>
 #include <DriverKit/IOTimerDispatchSource.iig>
 #include <DriverKit/IOUserClient.iig>
+#include <DriverKit/IOServiceNotificationDispatchSource.iig>
 
 struct ServiceContext;
 
@@ -49,6 +50,9 @@ public:
     virtual void AsyncWatchdogTimerFired(OSAction* action,
                                          uint64_t time)
         TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    virtual void ProviderNotificationReady(OSAction* action)
+        TYPE(IOServiceNotificationDispatchSource::ServiceNotificationReady);
 
     void RegisterStatusListener(const OSObject* client) LOCALONLY;
     void UnregisterStatusListener(const OSObject* client) LOCALONLY;

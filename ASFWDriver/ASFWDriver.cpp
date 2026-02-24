@@ -18,6 +18,8 @@
 #include <DriverKit/OSNumber.h>
 #include <DriverKit/OSString.h>
 #include <DriverKit/OSDictionary.h>
+#include <DriverKit/IOKitKeys.h>
+#include <DriverKit/IOServiceNotificationDispatchSource.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
@@ -121,6 +123,41 @@ kern_return_t IMPL(ASFWDriver, Start) {
     }
     kr = DriverWiring::PrepareQueue(*this, ctx);
     if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
+
+#ifndef ASFW_HOST_TEST
+    // Provider termination notifications (hot-unplug): quiesce ASAP to avoid fatal MMIO reads.
+    {
+        uint64_t providerEntryId = 0;
+        if (provider && provider->GetRegistryEntryID(&providerEntryId) == kIOReturnSuccess && providerEntryId != 0) {
+            auto matching = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
+            auto idNum = OSSharedPtr(OSNumber::withNumber(providerEntryId, 64), OSNoRetain);
+            if (matching && idNum) {
+                matching->setObject(kIORegistryEntryIDKey, idNum.get());
+
+                IOServiceNotificationDispatchSource* rawSource = nullptr;
+                const kern_return_t notifyKr = IOServiceNotificationDispatchSource::Create(
+                    matching.get(), 0, ctx.workQueue.get(), &rawSource);
+                if (notifyKr == kIOReturnSuccess && rawSource) {
+                    auto source = OSSharedPtr(rawSource, OSNoRetain);
+
+                    OSAction* rawAction = nullptr;
+                    const kern_return_t actionKr = CreateActionProviderNotificationReady(0, &rawAction);
+                    if (actionKr == kIOReturnSuccess && rawAction) {
+                        ctx.providerNotificationAction = OSSharedPtr(rawAction, OSNoRetain);
+                        ctx.providerNotifications = std::move(source);
+
+                        (void)ctx.providerNotifications->SetHandler(ctx.providerNotificationAction.get());
+                        (void)ctx.providerNotifications->SetEnableWithCompletion(true, nullptr);
+                        ASFW_LOG(Controller,
+                                 "✅ Provider termination notifications armed (entryID=%llu)",
+                                 providerEntryId);
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     kr = ctx.deps.hardware->Attach(this, provider);
     if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
     kr = DriverWiring::PrepareInterrupts(*this, provider, ctx);
@@ -215,6 +252,27 @@ kern_return_t IMPL(ASFWDriver, Stop) {
     if (ivars && ivars->context) {
         auto& ctx = *ivars->context;
         ctx.stopping.store(true, std::memory_order_release);
+
+#ifndef ASFW_HOST_TEST
+        if (ctx.providerNotifications) {
+            ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
+            ctx.providerNotifications->Cancel(nullptr);
+        }
+        ctx.providerNotifications.reset();
+        ctx.providerNotificationAction.reset();
+#endif
+
+        // Hot-unplug safety: Detach early so any late Stop() work can't issue MMIO.
+        if (ctx.deps.hardware) {
+            ctx.deps.hardware->Detach();
+        }
+
+        // Stop periodic callbacks early to minimize post-unplug activity.
+        ctx.watchdog.Stop();
+        if (ctx.deps.interrupts) {
+            ctx.deps.interrupts->Disable();
+        }
+
         ctx.statusPublisher.BindListener(nullptr);
         ctx.statusPublisher.Publish(ctx.controller.get(),
                                     ctx.deps.asyncSubsystem.get(),
@@ -225,16 +283,9 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         if (ctx.controller) {
             ctx.controller->Stop();
         }
-        if (ctx.deps.interrupts) {
-            // Disable master interrupt before teardown
-            ctx.deps.hardware->IntMaskClear(IntMaskBits::kMasterIntEnable | 0xFFFFFFFF);
-            ctx.deps.interrupts->Disable();
-        }
         if (ctx.deps.selfId && ctx.deps.hardware) ctx.deps.selfId->Disarm(*ctx.deps.hardware);
         if (ctx.deps.selfId) ctx.deps.selfId->ReleaseBuffers();
         if (ctx.deps.configRomStager && ctx.deps.hardware) ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
-        if (ctx.deps.hardware) ctx.deps.hardware->Detach();
-        ctx.watchdog.Stop();
     }
     return Stop(provider, SUPERDISPATCH);
 }
@@ -424,6 +475,50 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 }
 
+void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationReady_Args) {
+    (void)action;
+
+    if (!ivars || !ivars->context) {
+        return;
+    }
+    auto& ctx = *ivars->context;
+
+#ifndef ASFW_HOST_TEST
+    if (!ctx.providerNotifications) {
+        return;
+    }
+
+    __block bool providerTerminated = false;
+    (void)ctx.providerNotifications->DeliverNotifications(
+        ^(uint64_t type, IOService* service, uint64_t options) {
+            (void)service;
+            (void)options;
+            if (type == kIOServiceNotificationTypeTerminated) {
+                providerTerminated = true;
+            }
+        });
+
+    if (!providerTerminated) {
+        return;
+    }
+
+    // Quiesce immediately: any MMIO after TB/PCIe removal is a fatal Apple-silicon SError.
+    (void)ctx.stopping.exchange(true, std::memory_order_acq_rel);
+    ctx.watchdog.Stop();
+    if (ctx.deps.interrupts) {
+        ctx.deps.interrupts->Disable();
+    }
+    if (ctx.deps.hardware) {
+        ctx.deps.hardware->Detach();
+    }
+
+    ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
+    ctx.providerNotifications->Cancel(nullptr);
+    ctx.providerNotifications.reset();
+    ctx.providerNotificationAction.reset();
+#endif
+}
+
 void ASFWDriver::RegisterStatusListener(const OSObject* client) {
     auto* clientObj = OSDynamicCast(ASFWDriverUserClient, const_cast<OSObject*>(client));
     if (!clientObj || !ivars || !ivars->context) {
@@ -542,10 +637,21 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
     }
 
     nub->EnsureRxQueueCreated();
+
+    IOBufferMemoryDescriptor* rxMem = nullptr;
+    uint64_t rxBytes = 0;
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMem, &rxBytes);
+    if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
+        if (rxMem) {
+            rxMem->release();
+        }
+        return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
+    }
+
     return ctx.isoch.StartReceive(channel,
                                   *ctx.deps.hardware,
-                                  nub->GetRxQueueLocalMapping(),
-                                  nub->GetRxQueueBytes());
+                                  rxMem,
+                                  rxBytes);
 }
 
 kern_return_t ASFWDriver::StopIsochReceive() {
@@ -590,11 +696,14 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    IOBufferMemoryDescriptor* retryMem = nullptr;
-    uint64_t retryBytes = 0;
-    (void)nub->CopyTransmitQueueMemory(&retryMem, &retryBytes);
-    if (retryMem) {
-        retryMem->release();
+    IOBufferMemoryDescriptor* txMem = nullptr;
+    uint64_t txBytes = 0;
+    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMem, &txBytes);
+    if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
+        if (txMem) {
+            txMem->release();
+        }
+        return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
     }
 
     const uint32_t pcmChannels = nub->GetOutputChannelCount();
@@ -616,8 +725,8 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
                                    streamModeRaw,
                                    pcmChannels,
                                    am824Slots,
-                                   nub->GetTxQueueLocalMapping(),
-                                   nub->GetTxQueueBytes(),
+                                   txMem,
+                                   txBytes,
                                    nullptr,
                                    0,
                                    0);

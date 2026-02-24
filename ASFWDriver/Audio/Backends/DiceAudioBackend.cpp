@@ -203,16 +203,32 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
     // Ensure queues exist before wiring to isoch contexts.
     nub->EnsureRxQueueCreated();
+    IOBufferMemoryDescriptor* rxMem = nullptr;
+    uint64_t rxBytes = 0;
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMem, &rxBytes);
+    if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
+        if (rxMem) {
+            rxMem->release();
+        }
+        return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
+    }
+
     IOBufferMemoryDescriptor* txMem = nullptr;
     uint64_t txBytes = 0;
-    (void)nub->CopyTransmitQueueMemory(&txMem, &txBytes);
-    if (txMem) {
-        txMem->release();
+    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMem, &txBytes);
+    if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
+        if (txMem) {
+            txMem->release();
+        }
+        rxMem->release();
+        return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
     }
 
     const IOReturn cfg = record->protocol->StartDuplex48k();
     if (cfg != kIOReturnSuccess && cfg != kIOReturnUnsupported) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: StartDuplex48k failed GUID=%llx status=0x%x", guid, cfg);
+        txMem->release();
+        rxMem->release();
         return cfg;
     }
 
@@ -228,10 +244,10 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
     params.hostToDeviceAm824Slots = caps.hostToDeviceAm824Slots;
     params.streamMode = Model::StreamMode::kBlocking;
 
-    params.rxQueueBase = nub->GetRxQueueLocalMapping();
-    params.rxQueueBytes = nub->GetRxQueueBytes();
-    params.txQueueBase = nub->GetTxQueueLocalMapping();
-    params.txQueueBytes = nub->GetTxQueueBytes();
+    params.rxQueueMemory = rxMem;
+    params.rxQueueBytes = rxBytes;
+    params.txQueueMemory = txMem;
+    params.txQueueBytes = txBytes;
 
     // DICE playback: no zero-copy for now (explicitly disabled by policy).
     params.zeroCopyBase = nullptr;

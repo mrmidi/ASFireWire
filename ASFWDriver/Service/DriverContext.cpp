@@ -47,6 +47,14 @@ void ServiceContext::Reset() {
     deps.asyncSubsystem.reset();     // Stop and cleanup asyncSubsystem
     statusPublisher.Reset();
     watchdog.Reset();
+#ifndef ASFW_HOST_TEST
+    if (providerNotifications) {
+        providerNotifications->SetEnableWithCompletion(false, nullptr);
+        providerNotifications->Cancel(nullptr);
+    }
+    providerNotifications.reset();
+    providerNotificationAction.reset();
+#endif
     workQueue.reset();
     interruptAction.reset();
     isoch.StopAll();
@@ -220,6 +228,14 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     if (ctx.deps.hardware) ctx.deps.hardware->Detach();
     ctx.interruptAction.reset();
     ctx.watchdog.Reset();
+#ifndef ASFW_HOST_TEST
+    if (ctx.providerNotifications) {
+        ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
+        ctx.providerNotifications->Cancel(nullptr);
+    }
+    ctx.providerNotifications.reset();
+    ctx.providerNotificationAction.reset();
+#endif
     ctx.workQueue.reset();
     ctx.statusPublisher.Reset();
 }

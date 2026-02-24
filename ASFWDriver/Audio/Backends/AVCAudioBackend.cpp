@@ -124,19 +124,22 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
     // Ensure queues exist before wiring to isoch contexts.
     nub->EnsureRxQueueCreated();
-    IOBufferMemoryDescriptor* txMem = nullptr;
-    uint64_t txBytes = 0;
-    (void)nub->CopyTransmitQueueMemory(&txMem, &txBytes);
-    if (txMem) {
-        txMem->release();
+    IOBufferMemoryDescriptor* rxMem = nullptr;
+    uint64_t rxBytes = 0;
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMem, &rxBytes);
+    if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
+        if (rxMem) {
+            rxMem->release();
+        }
+        return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
 
     // Start IR first so capture packets don't get dropped.
     {
         const kern_return_t krRx = isoch_.StartReceive(kDefaultIrChannel,
                                                        hardware_,
-                                                       nub->GetRxQueueLocalMapping(),
-                                                       nub->GetRxQueueBytes());
+                                                       rxMem,
+                                                       rxBytes);
         if (krRx != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartReceive failed GUID=0x%016llx kr=0x%x", guid, krRx);
             return krRx;
@@ -172,14 +175,27 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         // AV/C playback streams normally have PCM-only wire slots.
         const uint32_t am824Slots = config.outputChannelCount;
 
+        IOBufferMemoryDescriptor* txMem = nullptr;
+        uint64_t txBytes = 0;
+        const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMem, &txBytes);
+        if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
+            if (txMem) {
+                txMem->release();
+            }
+            (void)isoch_.StopReceive();
+            // Best-effort: disconnect oPCR.
+            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) {});
+            return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
+        }
+
         const kern_return_t krTx = isoch_.StartTransmit(kDefaultItChannel,
                                                         hardware_,
                                                         sid,
                                                         streamModeRaw,
                                                         config.outputChannelCount,
                                                         am824Slots,
-                                                        nub->GetTxQueueLocalMapping(),
-                                                        nub->GetTxQueueBytes(),
+                                                        txMem,
+                                                        txBytes,
                                                         nullptr,
                                                         0,
                                                         0);

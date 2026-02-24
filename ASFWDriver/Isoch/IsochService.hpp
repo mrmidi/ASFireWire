@@ -6,6 +6,8 @@
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
 #else
+#include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/OSSharedPtr.h>
 #endif
 
@@ -35,9 +37,9 @@ struct IsochDuplexStartParams {
 
     ASFW::Audio::Model::StreamMode streamMode{ASFW::Audio::Model::StreamMode::kNonBlocking};
 
-    void* rxQueueBase{nullptr};
+    IOBufferMemoryDescriptor* rxQueueMemory{nullptr};
     uint64_t rxQueueBytes{0};
-    void* txQueueBase{nullptr};
+    IOBufferMemoryDescriptor* txQueueMemory{nullptr};
     uint64_t txQueueBytes{0};
 
     void* zeroCopyBase{nullptr};
@@ -52,7 +54,7 @@ public:
 
     kern_return_t StartReceive(uint8_t channel,
                                HardwareInterface& hardware,
-                               void* rxQueueBase,
+                               IOBufferMemoryDescriptor* rxQueueMemory,
                                uint64_t rxQueueBytes);
 
     kern_return_t StopReceive();
@@ -63,7 +65,7 @@ public:
                                 uint32_t streamModeRaw,
                                 uint32_t pcmChannels,
                                 uint32_t am824Slots,
-                                void* txQueueBase,
+                                IOBufferMemoryDescriptor* txQueueMemory,
                                 uint64_t txQueueBytes,
                                 void* zeroCopyBase,
                                 uint64_t zeroCopyBytes,
@@ -82,9 +84,28 @@ public:
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
 private:
+    struct SharedQueueMapping {
+        OSSharedPtr<IOBufferMemoryDescriptor> memory{};
+        OSSharedPtr<IOMemoryMap> map{};
+        uint64_t bytes{0};
+
+        void Reset() noexcept {
+            map.reset();
+            memory.reset();
+            bytes = 0;
+        }
+
+        [[nodiscard]] void* BaseAddress() const noexcept {
+            return map ? reinterpret_cast<void*>(static_cast<uintptr_t>(map->GetAddress())) : nullptr;
+        }
+    };
+
     ASFW::Isoch::Core::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
+
+    SharedQueueMapping rxQueue_{};
+    SharedQueueMapping txQueue_{};
 
     uint64_t activeGuid_{0};
 };
