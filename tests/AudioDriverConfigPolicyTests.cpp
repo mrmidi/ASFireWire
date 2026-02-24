@@ -42,7 +42,7 @@ TEST(AudioDriverConfigPolicyTests, ClampChannelsFallsBackToDefaults) {
     EXPECT_EQ(config.outputChannelCount, ASFW::Isoch::Audio::kDefaultChannelCount);
 }
 
-TEST(AudioDriverConfigPolicyTests, ClampChannelsRespectsMaxSupported) {
+TEST(AudioDriverConfigPolicyTests, ClampChannelsInheritsAggregateWhenDirectionalCountsMissing) {
     ParsedAudioDriverConfig config{};
     ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
     config.channelCount = 48;
@@ -51,9 +51,23 @@ TEST(AudioDriverConfigPolicyTests, ClampChannelsRespectsMaxSupported) {
 
     ASFW::Isoch::Audio::ClampAudioDriverChannels(config, 16);
 
-    EXPECT_EQ(config.channelCount, 16u);
+    EXPECT_EQ(config.channelCount, 48u);
+    EXPECT_EQ(config.inputChannelCount, 48u);
+    EXPECT_EQ(config.outputChannelCount, 48u);
+}
+
+TEST(AudioDriverConfigPolicyTests, ClampChannelsRespectsMaxSupportedForExplicitDirectionalCounts) {
+    ParsedAudioDriverConfig config{};
+    ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(config);
+    config.channelCount = 48;
+    config.inputChannelCount = 32;
+    config.outputChannelCount = 24;
+
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(config, 16);
+
     EXPECT_EQ(config.inputChannelCount, 16u);
     EXPECT_EQ(config.outputChannelCount, 16u);
+    EXPECT_EQ(config.channelCount, 16u);
 }
 
 TEST(AudioDriverConfigPolicyTests, BuildFallbackBoolControlsMapsPhantomMask) {
