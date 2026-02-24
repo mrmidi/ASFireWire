@@ -37,7 +37,10 @@ inline void EncodePcmFramesWithAm824Placeholders(const int32_t* pcmInterleaved,
 
 void IsochAudioTxPipeline::SetSharedTxQueue(void* base, uint64_t bytes) noexcept {
     if (!base || bytes == 0) {
-        ASFW_LOG(Isoch, "IT: SetSharedTxQueue - invalid parameters");
+        // Treat null/0 as an explicit detach so callers can safely tear down the
+        // underlying mapping without leaving stale pointers behind.
+        (void)sharedTxQueue_.Attach(nullptr, 0);
+        ASFW_LOG(Isoch, "IT: Shared TX queue detached");
         return;
     }
 
@@ -48,6 +51,7 @@ void IsochAudioTxPipeline::SetSharedTxQueue(void* base, uint64_t bytes) noexcept
                  sharedTxQueue_.CapacityFrames());
     } else {
         ASFW_LOG(Isoch, "IT: Failed to attach shared TX queue - invalid header?");
+        (void)sharedTxQueue_.Attach(nullptr, 0);
     }
 }
 

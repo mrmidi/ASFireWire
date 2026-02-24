@@ -15,8 +15,41 @@ namespace ASFW::Driver {
 
 kern_return_t IsochService::StartReceive(uint8_t channel,
                                          HardwareInterface& hardware,
-                                         void* rxQueueBase,
+                                         IOBufferMemoryDescriptor* rxQueueMemory,
                                          uint64_t rxQueueBytes) {
+    if (isochReceiveContext_ &&
+        isochReceiveContext_->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
+        ASFW_LOG(Controller, "[Isoch] IR already running; StartReceive is idempotent");
+        if (rxQueueMemory) {
+            rxQueueMemory->release();
+        }
+        return kIOReturnSuccess;
+    }
+
+    rxQueue_.Reset();
+
+    void* rxQueueBase = nullptr;
+    if (rxQueueMemory && rxQueueBytes > 0) {
+        rxQueue_.memory.reset(rxQueueMemory, OSNoRetain);
+        rxQueue_.bytes = rxQueueBytes;
+
+        IOMemoryMap* mapRaw = nullptr;
+        const kern_return_t mappingStatus = rxQueueMemory->CreateMapping(
+            kIOMemoryMapCacheModeDefault,
+            0,
+            0,
+            0,
+            0,
+            &mapRaw);
+        if (mappingStatus != kIOReturnSuccess || !mapRaw) {
+            rxQueue_.Reset();
+            return (mappingStatus == kIOReturnSuccess) ? kIOReturnNoMemory : mappingStatus;
+        }
+
+        rxQueue_.map.reset(mapRaw, OSNoRetain);
+        rxQueueBase = rxQueue_.BaseAddress();
+    }
+
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -49,16 +82,17 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
     auto result = isochReceiveContext_->Configure(channel, 0);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IR Context: 0x%x", result);
+        rxQueue_.Reset();
         return result;
     }
 
-    if (rxQueueBase && rxQueueBytes > 0) {
-        isochReceiveContext_->SetSharedRxQueue(rxQueueBase, rxQueueBytes);
-    }
+    isochReceiveContext_->SetSharedRxQueue(rxQueueBase, rxQueueBase ? rxQueueBytes : 0);
 
     result = isochReceiveContext_->Start();
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Start IR Context: 0x%x", result);
+        isochReceiveContext_->SetSharedRxQueue(nullptr, 0);
+        rxQueue_.Reset();
         return result;
     }
 
@@ -73,6 +107,8 @@ kern_return_t IsochService::StopReceive() {
     }
 
     isochReceiveContext_->Stop();
+    isochReceiveContext_->SetSharedRxQueue(nullptr, 0);
+    rxQueue_.Reset();
     ASFW_LOG(Controller, "[Isoch] Stopped IR Context 0");
     return kIOReturnSuccess;
 }
@@ -83,7 +119,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           uint32_t streamModeRaw,
                                           uint32_t pcmChannels,
                                           uint32_t am824Slots,
-                                          void* txQueueBase,
+                                          IOBufferMemoryDescriptor* txQueueMemory,
                                           uint64_t txQueueBytes,
                                           void* zeroCopyBase,
                                           uint64_t zeroCopyBytes,
@@ -92,7 +128,34 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     if (isochTransmitContext_ &&
         isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
         ASFW_LOG(Controller, "[Isoch] IT already running; StartTransmit is idempotent");
+        if (txQueueMemory) {
+            txQueueMemory->release();
+        }
         return kIOReturnSuccess;
+    }
+
+    txQueue_.Reset();
+
+    void* txQueueBase = nullptr;
+    if (txQueueMemory && txQueueBytes > 0) {
+        txQueue_.memory.reset(txQueueMemory, OSNoRetain);
+        txQueue_.bytes = txQueueBytes;
+
+        IOMemoryMap* mapRaw = nullptr;
+        const kern_return_t mappingStatus = txQueueMemory->CreateMapping(
+            kIOMemoryMapCacheModeDefault,
+            0,
+            0,
+            0,
+            0,
+            &mapRaw);
+        if (mappingStatus != kIOReturnSuccess || !mapRaw) {
+            txQueue_.Reset();
+            return (mappingStatus == kIOReturnSuccess) ? kIOReturnNoMemory : mappingStatus;
+        }
+
+        txQueue_.map.reset(mapRaw, OSNoRetain);
+        txQueueBase = txQueue_.BaseAddress();
     }
 
     if (!isochTransmitContext_) {
@@ -105,11 +168,13 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem) {
             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Failed to create Memory Manager");
+            txQueue_.Reset();
             return kIOReturnNoMemory;
         }
 
         if (!isochMem->Initialize(hardware)) {
             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Failed to initialize DMA slabs");
+            txQueue_.Reset();
             return kIOReturnNoMemory;
         }
 
@@ -117,14 +182,15 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
         if (!isochTransmitContext_) {
             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: Context creation failed");
+            txQueue_.Reset();
             return kIOReturnNoMemory;
         }
         ASFW_LOG(Controller, "[Isoch] ✅ provisioned IT Context with Dedicated Memory");
     }
 
     uint32_t startTargetFill = ASFW::Isoch::Config::kTxBufferProfile.startWaitTargetFrames;
+    isochTransmitContext_->SetSharedTxQueue(txQueueBase, txQueueBase ? txQueueBytes : 0);
     if (txQueueBase && txQueueBytes > 0) {
-        isochTransmitContext_->SetSharedTxQueue(txQueueBase, txQueueBytes);
         ASFW_LOG(Controller, "[Isoch] Wired shared TX queue to IT context (bytes=%llu)",
                  txQueueBytes);
     }
@@ -146,12 +212,18 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
     if (isochTransmitContext_->SharedTxCapacityFrames() == 0) {
         ASFW_LOG(Controller, "[Isoch] ❌ StartTransmit blocked: shared TX queue metadata missing");
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
         return kIOReturnNotReady;
     }
 
     if (!isochReceiveContext_ ||
         isochReceiveContext_->GetState() != ASFW::Isoch::IRPolicy::State::Running) {
         ASFW_LOG(Controller, "[Isoch] ❌ StartTransmit blocked: IR context is not running");
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
         return kIOReturnNotReady;
     }
 
@@ -189,6 +261,9 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                  ageMs,
                  externalSyncBridge_.active.load(std::memory_order_acquire),
                  externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
         return kIOReturnTimeout;
     }
 
@@ -201,6 +276,9 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                                    am824Slots);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
         return result;
     }
 
@@ -238,6 +316,9 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     result = isochTransmitContext_->Start();
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] Failed to Start IT Context: 0x%x", result);
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
         return result;
     }
 
@@ -252,26 +333,40 @@ kern_return_t IsochService::StopTransmit() {
     }
 
     isochTransmitContext_->Stop();
+    isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+    isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+    txQueue_.Reset();
     ASFW_LOG(Controller, "[Isoch] Stopped IT Context");
     return kIOReturnSuccess;
 }
 
 kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                        HardwareInterface& hardware) {
+    // Ownership: callers pass retained IOBufferMemoryDescriptor* values (from
+    // ASFWAudioNub::Copy*QueueMemory). IsochService consumes them regardless of
+    // outcome, releasing on all early-return paths.
+    IOBufferMemoryDescriptor* rxQueueMemory = params.rxQueueMemory;
+    IOBufferMemoryDescriptor* txQueueMemory = params.txQueueMemory;
+
     if (params.guid == 0) {
+        if (rxQueueMemory) rxQueueMemory->release();
+        if (txQueueMemory) txQueueMemory->release();
         return kIOReturnBadArgument;
     }
 
     if (activeGuid_ != 0 && activeGuid_ != params.guid) {
         // Transport layer is currently global. Control-plane enforces single-device too.
+        if (rxQueueMemory) rxQueueMemory->release();
+        if (txQueueMemory) txQueueMemory->release();
         return kIOReturnBusy;
     }
 
     const kern_return_t krRx = StartReceive(params.irChannel,
                                            hardware,
-                                           params.rxQueueBase,
+                                           rxQueueMemory,
                                            params.rxQueueBytes);
     if (krRx != kIOReturnSuccess) {
+        if (txQueueMemory) txQueueMemory->release();
         return krRx;
     }
 
@@ -282,7 +377,7 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                             streamModeRaw,
                                             params.hostOutputPcmChannels,
                                             params.hostToDeviceAm824Slots,
-                                            params.txQueueBase,
+                                            txQueueMemory,
                                             params.txQueueBytes,
                                             params.zeroCopyBase,
                                             params.zeroCopyBytes,
@@ -316,12 +411,17 @@ kern_return_t IsochService::StopDuplex(uint64_t guid) {
 void IsochService::StopAll() {
     if (isochReceiveContext_) {
         isochReceiveContext_->Stop();
+        isochReceiveContext_->SetSharedRxQueue(nullptr, 0);
         isochReceiveContext_.reset();
     }
+    rxQueue_.Reset();
     if (isochTransmitContext_) {
         isochTransmitContext_->Stop();
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         isochTransmitContext_.reset();
     }
+    txQueue_.Reset();
     externalSyncBridge_.Reset();
     activeGuid_ = 0;
 }

@@ -204,6 +204,8 @@ public:
     explicit operator bool() const { return ptr_ != nullptr; }
 
     void reset() { ptr_.reset(); }
+    void reset(T* ptr, OSNoRetainTag) { ptr_.reset(ptr); }
+    void reset(T* ptr, OSRetainTag) { ptr_.reset(ptr); }
 
 private:
     std::shared_ptr<T> ptr_;
