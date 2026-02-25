@@ -19,6 +19,7 @@ final class ASFWDriverConnector: ObservableObject {
         case asyncRead = 8
         case asyncWrite = 9
         case registerStatusListener = 10
+        case getTransactionResult = 12
         case exportConfigROM = 14
         case triggerROMRead = 15
         case getDiscoveredDevices = 16
@@ -51,6 +52,8 @@ final class ASFWDriverConnector: ObservableObject {
         case getRawFCPCommandResult = 39
         case setIsochVerbosity = 40
         case setIsochTxVerifier = 41
+        case asyncBlockRead = 44
+        case asyncBlockWrite = 45
     }
 
     // MARK: - Re-exported Models

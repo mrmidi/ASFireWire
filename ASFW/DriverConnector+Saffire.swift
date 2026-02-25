@@ -13,9 +13,13 @@ extension ASFWDriverConnector {
     
     // Saffire Pro TCAT application section offsets
     private enum SaffireOffset {
-        static let outputGroup: UInt32 = 0x000c
-        static let inputParams: UInt32 = 0x0058
-        static let swNotice: UInt32 = 0x05ec
+        // Linux DICE reference for Saffire Pro 24 DSP documents the
+        // application section offset at 0x6DD4.
+        // Source: snd-firewire-ctl-services/protocols/dice/src/focusrite/spro24dsp.rs
+        static let appSectionBase: UInt32 = 0x6DD4
+        static let outputGroup: UInt32 = appSectionBase + 0x000C
+        static let inputParams: UInt32 = appSectionBase + 0x0058
+        static let swNotice: UInt32 = appSectionBase + 0x05EC
     }
     
     // Software notice values
@@ -183,25 +187,51 @@ extension ASFWDriverConnector {
     
     /// Synchronous async read helper
     private func performSyncAsyncRead(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, length: UInt32) -> Data? {
-        // Create input structure
-        var input = Data(capacity: 12)
-        input.append(contentsOf: withUnsafeBytes(of: destinationID.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: addressHigh.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: addressLow.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: length.bigEndian) { Data($0) })
-        
-        return callStruct(.asyncRead, input: input, initialCap: Int(length) + 128)
+        guard let handle = asyncRead(
+            destinationID: destinationID,
+            addressHigh: addressHigh,
+            addressLow: addressLow,
+            length: length
+        ) else {
+            return nil
+        }
+
+        let timeout = Date().addingTimeInterval(2.0)
+        while Date() < timeout {
+            if let result = getTransactionResult(handle: handle, initialPayloadCapacity: Int(length) + 128) {
+                guard result.status == 0 && result.responseCode == 0 else {
+                    log(String(format: "Saffire read failed status=0x%08X rCode=0x%02X", result.status, result.responseCode), level: .warning)
+                    return nil
+                }
+                return result.payload
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        log(String(format: "Saffire read timed out waiting for result (handle=0x%04X)", handle), level: .warning)
+        return nil
     }
     
     /// Synchronous async write helper
     private func performSyncAsyncWrite(destinationID: UInt16, addressHigh: UInt16, addressLow: UInt32, payload: Data) -> Bool {
-        var input = Data(capacity: 12 + payload.count)
-        input.append(contentsOf: withUnsafeBytes(of: destinationID.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: addressHigh.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: addressLow.bigEndian) { Data($0) })
-        input.append(contentsOf: withUnsafeBytes(of: UInt32(payload.count).bigEndian) { Data($0) })
-        input.append(payload)
-        
-        return callStruct(.asyncWrite, input: input) != nil
+        guard let handle = asyncBlockWrite(
+            destinationID: destinationID,
+            addressHigh: addressHigh,
+            addressLow: addressLow,
+            payload: payload
+        ) else {
+            return false
+        }
+
+        let timeout = Date().addingTimeInterval(2.0)
+        while Date() < timeout {
+            if let result = getTransactionResult(handle: handle) {
+                return result.status == 0 && result.responseCode == 0
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        log(String(format: "Saffire block write timed out waiting for result (handle=0x%04X)", handle), level: .warning)
+        return false
     }
 }
