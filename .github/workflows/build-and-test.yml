@@ -111,11 +111,11 @@ jobs:
             > coverage.txt
 
       - name: Install Sonar Build Wrapper (optional for C/C++ analysis)
-        uses: SonarSource/sonarqube-scan-action/install-build-wrapper@v6
+        uses: SonarSource/sonarqube-scan-action/install-build-wrapper@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7
         if: runner.os == 'macOS'
 
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
