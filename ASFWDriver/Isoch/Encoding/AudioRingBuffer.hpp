@@ -15,12 +15,6 @@
 #include <atomic>
 #include <cstring>
 
-// Forward-declare kMaxSupportedChannels if not already available
-// (PacketAssembler.hpp defines the canonical constant)
-#ifndef ASFW_MAX_SUPPORTED_CHANNELS
-#define ASFW_MAX_SUPPORTED_CHANNELS 16 // NOSONAR(cpp:S5028): guard allows external override via -D flag
-#endif
-
 namespace ASFW {
 namespace Encoding {
 
@@ -47,8 +41,10 @@ public:
     static_assert((FrameCount & (FrameCount - 1)) == 0,
                   "FrameCount must be power of 2 for efficient modulo");
 
+    static constexpr uint32_t kMaxSupportedChannels = 16;
+
     /// Max buffer size in samples (compile-time, uses max channel count)
-    static constexpr uint32_t kMaxTotalSamples = FrameCount * ASFW_MAX_SUPPORTED_CHANNELS;
+    static constexpr uint32_t kMaxTotalSamples = FrameCount * kMaxSupportedChannels;
 
     /// Mask for efficient modulo (works because FrameCount is power of 2)
     static constexpr uint32_t kFrameMask = FrameCount - 1;

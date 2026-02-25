@@ -276,18 +276,11 @@ def parse_tx_profiles(header_path: Path) -> ParsedProfiles:
         )
 
     # Determine default selected profile.
+    # ASFW_TX_TUNING_PROFILE is now a plain integer: 0=A, 1=B, 2=C
     selected_profile = "B"
-    tuning_expr = macros.get("ASFW_TX_TUNING_PROFILE")
-    if tuning_expr:
-        if tuning_expr.endswith("_A"):
-            selected_profile = "A"
-        elif tuning_expr.endswith("_B"):
-            selected_profile = "B"
-        elif tuning_expr.endswith("_C"):
-            selected_profile = "C"
-        elif tuning_expr.isdigit():
-            inv = {macros.get("ASFW_TX_PROFILE_A"): "A", macros.get("ASFW_TX_PROFILE_B"): "B", macros.get("ASFW_TX_PROFILE_C"): "C"}
-            selected_profile = inv.get(tuning_expr, selected_profile)
+    tuning_expr = macros.get("ASFW_TX_TUNING_PROFILE", "0").strip()
+    profile_map = {"0": "A", "1": "B", "2": "C"}
+    selected_profile = profile_map.get(tuning_expr, selected_profile)
 
     used_fallback = False
     if not parsed_profiles:
