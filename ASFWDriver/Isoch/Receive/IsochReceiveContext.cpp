@@ -162,7 +162,7 @@ uint32_t IsochReceiveContext::Poll() {
 
     const uint64_t start = mach_absolute_time();
 
-    const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [&](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
+    const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [this](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         if (pkt.payload) {
             audio_.OnPacket(pkt.payload, pkt.actualLength);
         }

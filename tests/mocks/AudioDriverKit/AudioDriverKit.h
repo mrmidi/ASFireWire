@@ -35,7 +35,7 @@ public:
         }
     }
 
-    virtual void UpdateCurrentZeroTimestamp(uint64_t, uint64_t) {}
+    virtual void UpdateCurrentZeroTimestamp(uint64_t, uint64_t) { /* no-op stub */ }
 };
 
 class IOUserAudioStream {

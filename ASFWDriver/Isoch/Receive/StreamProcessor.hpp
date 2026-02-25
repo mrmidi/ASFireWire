@@ -18,7 +18,7 @@
 #include "../../Shared/TxSharedQueue.hpp"
 
 #ifndef ASFW_MAX_SUPPORTED_CHANNELS
-#define ASFW_MAX_SUPPORTED_CHANNELS 16
+#define ASFW_MAX_SUPPORTED_CHANNELS 16 // NOSONAR(cpp:S5028): guard allows external override via -D flag
 #endif
 
 namespace ASFW::Isoch {

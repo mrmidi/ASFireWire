@@ -432,7 +432,7 @@ IOReturn ApogeeDuetProtocol::GetBooleanControlValue(uint32_t classIdFourCC,
     SendVendorCommand(
         VendorCommand::IndexedBool(commandCode, channelIndex, false),
         true,
-        [&](IOReturn commandStatus, const VendorCommand& response) {
+        [&status, &value, &completed](IOReturn commandStatus, const VendorCommand& response) {
             status.store(commandStatus, std::memory_order_release);
             if (commandStatus == kIOReturnSuccess) {
                 value.store(response.boolValue, std::memory_order_release);
@@ -477,7 +477,7 @@ IOReturn ApogeeDuetProtocol::SetBooleanControlValue(uint32_t classIdFourCC,
     SendVendorCommand(
         VendorCommand::IndexedBool(commandCode, channelIndex, value),
         false,
-        [&](IOReturn commandStatus, const VendorCommand&) {
+        [&status, &completed](IOReturn commandStatus, const VendorCommand&) {
             status.store(commandStatus, std::memory_order_release);
             completed.store(true, std::memory_order_release);
         });

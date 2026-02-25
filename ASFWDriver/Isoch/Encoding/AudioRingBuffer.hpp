@@ -18,7 +18,7 @@
 // Forward-declare kMaxSupportedChannels if not already available
 // (PacketAssembler.hpp defines the canonical constant)
 #ifndef ASFW_MAX_SUPPORTED_CHANNELS
-#define ASFW_MAX_SUPPORTED_CHANNELS 16
+#define ASFW_MAX_SUPPORTED_CHANNELS 16 // NOSONAR(cpp:S5028): guard allows external override via -D flag
 #endif
 
 namespace ASFW {

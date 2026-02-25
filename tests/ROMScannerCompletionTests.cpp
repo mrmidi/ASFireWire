@@ -136,7 +136,7 @@ public:
 
     void WaitForPendingReads(size_t count) const {
         std::unique_lock lock(readsMtx_);
-        readsCv_.wait_for(lock, std::chrono::seconds(1), [&] { return pendingReads_.size() >= count; });
+        readsCv_.wait_for(lock, std::chrono::seconds(1), [this, &count] { return pendingReads_.size() >= count; });
     }
 
     // Helper to simulate all quadlet reads for a standard 5-quadlet BIB
@@ -239,7 +239,7 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     // Wait for async completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackInvoked; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
     }
 
     // CRITICAL: Callback should be invoked immediately (Apple pattern)
@@ -303,7 +303,7 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
     // Wait for async completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackCount > 0; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackCount] { return callbackCount > 0; });
     }
 
     // Now callback should fire
@@ -383,7 +383,7 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     // Wait for async completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackInvoked; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
     }
 
     // Callback should still be invoked (node marked as Failed)
@@ -449,7 +449,7 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     // Wait for async completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackInvoked; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
     }
 
     // Callback should fire after last ROM completes
@@ -491,7 +491,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     // Wait for first completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&] { return completedGens.size() == 1; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&completedGens] { return completedGens.size() == 1; });
     }
 
     // Second manual read (gen=2, scanner restarts)
@@ -503,7 +503,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     // Wait for second completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&] { return completedGens.size() == 2; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&completedGens] { return completedGens.size() == 2; });
     }
 
     // Both should have completed

@@ -4,9 +4,9 @@
 
 namespace ASFW::Isoch::Config {
 
-#define ASFW_TX_PROFILE_A 1 // 
-#define ASFW_TX_PROFILE_B 2 // Balanced profile with moderate start wait and larger ring buffer targets, suitable for general use.
-#define ASFW_TX_PROFILE_C 3 // Low-latency profile with minimal start wait and smaller ring buffer targets
+#define ASFW_TX_PROFILE_A 1 // NOSONAR(cpp:S5028): used in #define ASFW_TX_TUNING_PROFILE and #if comparisons — cannot be constexpr
+#define ASFW_TX_PROFILE_B 2 // NOSONAR(cpp:S5028): Balanced profile with moderate start wait and larger ring buffer targets, suitable for general use.
+#define ASFW_TX_PROFILE_C 3 // NOSONAR(cpp:S5028): Low-latency profile with minimal start wait and smaller ring buffer targets
 
 #ifndef ASFW_TX_TUNING_PROFILE
 #define ASFW_TX_TUNING_PROFILE ASFW_TX_PROFILE_A
