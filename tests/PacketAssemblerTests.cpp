@@ -306,6 +306,19 @@ TEST(PacketAssemblerTests, EightChannelPacketSize) {
     EXPECT_EQ(pkt.size, 264u);
 }
 
+TEST(PacketAssemblerTests, ThirtyTwoChannelPacketSize) {
+    PacketAssembler assembler(32, 0x02);  // 32 channels
+
+    EXPECT_EQ(assembler.channelCount(), 32u);
+    // Data packet size: 8 (CIP) + 8 * 32 * 4 = 8 + 1024 = 1032
+    EXPECT_EQ(assembler.dataPacketSize(), 1032u);
+
+    assembler.assembleNext(0);  // NO-DATA
+    AssembledPacket pkt = assembler.assembleNext(0);
+    EXPECT_TRUE(pkt.isData);
+    EXPECT_EQ(pkt.size, 1032u);
+}
+
 TEST(PacketAssemblerTests, BlockingModeSupportsExtraAm824SlotsForMidi) {
     PacketAssembler assembler(2, 0x02);
     assembler.reconfigureAM824(/*pcmChannels=*/8, /*am824Slots=*/9, /*sid=*/0x05);

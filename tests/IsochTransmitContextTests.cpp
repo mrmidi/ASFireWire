@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
+#include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
 #include "../ASFWDriver/Shared/TxSharedQueue.hpp"
 
 using namespace ASFW::Isoch;
@@ -39,6 +40,18 @@ TEST(IsochTransmitContext, ConfigureSucceedsWithQueueChannelMetadata) {
     EXPECT_EQ(ctx.Configure(/*channel=*/0, /*sid=*/0x3F, /*streamModeRaw=*/0, /*requestedChannels=*/kQueueChannels),
               kIOReturnSuccess);
     EXPECT_EQ(ctx.GetState(), ITState::Configured);
+}
+
+TEST(TxSharedQueueSPSC, SupportsMaxPcmChannels) {
+    constexpr uint32_t kQueueChannels = ASFW::Isoch::Config::kMaxPcmChannels;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    EXPECT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
 }
 
 TEST(IsochTransmitContext, ConfigureFailsOnRequestedChannelMismatch) {

@@ -10,7 +10,7 @@
 #include "../Encoding/SYTGenerator.hpp"
 #include "../Core/ExternalSyncBridge.hpp"
 #include "../Core/ExternalSyncDiscipline48k.hpp"
-#include "../Config/TxBufferProfiles.hpp"
+#include "../Config/AudioTxProfiles.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
 #include "../../Logging/Logging.hpp"
 

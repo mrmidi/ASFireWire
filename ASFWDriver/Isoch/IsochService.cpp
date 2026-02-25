@@ -6,7 +6,7 @@
 #include "IsochReceiveContext.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
-#include "Config/TxBufferProfiles.hpp"
+#include "Config/AudioTxProfiles.hpp"
 #include "Encoding/TimingUtils.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Logging/Logging.hpp"

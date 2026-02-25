@@ -20,6 +20,7 @@
 #include "NonBlockingCadence48k.hpp"
 #include "BlockingDbcGenerator.hpp"
 #include "AudioRingBuffer.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <atomic>
@@ -34,12 +35,6 @@ enum class StreamMode : uint8_t {
     kBlocking = 1,
 };
 
-/// Maximum supported PCM channel count (queue/ring/audio callback staging)
-constexpr uint32_t kMaxSupportedChannels = 16;
-/// Maximum supported AM824 wire slots per data block (CIP DBS).
-/// This may exceed PCM channels when the stream carries MIDI/control slots.
-constexpr uint32_t kMaxSupportedAm824Slots = 32;
-
 /// Compile-time maximum frames per DATA packet (48k blocking path).
 constexpr uint32_t kSamplesPerDataPacket = 8;
 
@@ -47,7 +42,7 @@ constexpr uint32_t kSamplesPerDataPacket = 8;
 constexpr uint32_t kCIPHeaderSize = 8;
 
 /// Compile-time max audio payload size (8 frames × max AM824 slots × 4 bytes)
-constexpr uint32_t kMaxAudioDataSize = kSamplesPerDataPacket * kMaxSupportedAm824Slots * sizeof(uint32_t);
+constexpr uint32_t kMaxAudioDataSize = kSamplesPerDataPacket * Isoch::Config::kMaxAmdtpDbs * sizeof(uint32_t);
 
 /// Compile-time max assembled packet size (CIP header + max audio data)
 constexpr uint32_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
@@ -84,7 +79,7 @@ struct AssembledPacket {
 class PacketAssembler {
 public:
     /// Construct a packet assembler.
-    /// @param channels Number of PCM audio channels (1..kMaxSupportedChannels)
+    /// @param channels Number of PCM audio channels (1..Isoch::Config::kMaxPcmChannels)
     /// @param sid Source node ID (6 bits)
     explicit PacketAssembler(uint32_t channels = 2, uint8_t sid = 0) noexcept
         : channelCount_(channels)
@@ -281,7 +276,7 @@ private:
         std::memcpy(packet.data + 4, &cip.q1, 4);
 
         // Read audio samples - ZERO-COPY path or ring buffer fallback
-        int32_t samples[kSamplesPerDataPacket * kMaxSupportedChannels];
+        int32_t samples[kSamplesPerDataPacket * Isoch::Config::kMaxPcmChannels];
         uint32_t framesRead = 0;
 
         if (zeroCopyEnabled_ && zeroCopyBase_) {
