@@ -1,7 +1,6 @@
 #include "IsochReceiveContext.hpp"
 
-#include <new>
-
+#include "../../Common/DriverKitUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Diagnostics/Signposts.hpp"
@@ -14,18 +13,15 @@ namespace ASFW::Isoch {
 
 OSSharedPtr<IsochReceiveContext> IsochReceiveContext::Create(::ASFW::Driver::HardwareInterface* hw,
                                                             std::shared_ptr<::ASFW::Isoch::Memory::IIsochDMAMemory> dmaMemory) {
-    IsochReceiveContext* rawCtx = new (std::nothrow) IsochReceiveContext();
-    if (!rawCtx) return nullptr;
+    auto ctx = ASFW::Common::MakeOSObject<IsochReceiveContext>();
+    if (!ctx) return nullptr;
 
-    rawCtx->hardware_ = hw;
-    rawCtx->dmaMemory_ = std::move(dmaMemory);
+    ctx->hardware_ = hw;
+    ctx->dmaMemory_ = std::move(dmaMemory);
 
-    if (!rawCtx->init()) {
-        rawCtx->release();
-        return nullptr;
-    }
+    if (!ctx->init()) return nullptr;  // OSSharedPtr destructor calls release()
 
-    return OSSharedPtr<IsochReceiveContext>(rawCtx, OSNoRetain);
+    return ctx;
 }
 
 // ============================================================================
