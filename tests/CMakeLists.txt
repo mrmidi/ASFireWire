@@ -21,6 +21,7 @@ set(ASFW_COMMON_INCLUDES
     "${ASFW_DRIVERKIT_DIR}"
     "${ASFW_DRIVER_DIR}/Hardware"
     "${ASFW_DRIVER_DIR}/Testing"
+    "${ASFW_DRIVER_DIR}/Discovery"
     "${ASFW_ROOT_DIR}/AppleHeaders"
 )
 
@@ -1140,4 +1141,38 @@ target_compile_definitions(ASFWConfigROMTests
 
 target_include_directories(ASFWConfigROMTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
-gtest_discover_tests(ASFWConfigROMTests)
+# =============================================================================
+# Discovery Subsystem Tests
+# =============================================================================
+
+add_library(asfw_discovery_host STATIC
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScanner.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMReader.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMStore.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_include_directories(asfw_discovery_host PUBLIC ${ASFW_COMMON_INCLUDES})
+target_compile_features(asfw_discovery_host PUBLIC cxx_std_23)
+target_compile_definitions(asfw_discovery_host PUBLIC ASFW_HOST_TEST)
+
+add_executable(ROMScannerCompletionTests
+    "${ASFW_TESTS_DIR}/ROMScannerCompletionTests.cpp"
+)
+
+target_link_libraries(ROMScannerCompletionTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerCompletionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerCompletionTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerCompletionTests)

@@ -37,6 +37,7 @@ class ROMScanner {
 public:
     explicit ROMScanner(Async::IFireWireBus& bus,
                         SpeedPolicy& speedPolicy,
+                        const ROMScannerParams& params,
                         ScanCompletionCallback onScanComplete = nullptr,
                         OSSharedPtr<IODispatchQueue> dispatchQueue = nullptr);
     ~ROMScanner();
@@ -109,6 +110,41 @@ private:
     void HandleIRMLockResult(NodeScanState& node, const ROMReader::ReadResult& result);
 
     void OnRootDirComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
+
+    struct DirEntry {
+        uint32_t index{0};
+        uint8_t keyType{0};
+        uint8_t keyId{0};
+        uint32_t value{0};
+        bool hasTarget{false};
+        uint32_t targetRel{0};
+    };
+
+    struct DescriptorRef {
+        uint8_t keyType{0};
+        uint32_t targetRel{0};
+    };
+
+    void DiscoverDetails(uint8_t nodeId, uint32_t rootDirStart, std::vector<uint32_t> rootDirBE);
+    void DiscoverVendorName(uint8_t nodeId, uint32_t rootDirStart, 
+                            const std::vector<DirEntry>& rootEntries,
+                            std::optional<DescriptorRef> vendorRef,
+                            std::optional<DescriptorRef> modelRef,
+                            std::vector<uint32_t> unitDirRelOffsets);
+    void DiscoverModelName(uint8_t nodeId, uint32_t rootDirStart,
+                           std::optional<DescriptorRef> modelRef,
+                           std::vector<uint32_t> unitDirRelOffsets);
+    void DiscoverUnitDirectories(uint8_t nodeId, uint32_t rootDirStart,
+                                 std::vector<uint32_t> unitDirRelOffsets, size_t index);
+    void FinalizeNodeDiscovery(uint8_t nodeId);
+
+    void FetchTextDescriptor(uint8_t nodeId, uint32_t absOffset, uint8_t keyType,
+                             std::function<void(std::string)> completion);
+    void FetchTextLeaf(uint8_t nodeId, uint32_t absLeafOffset, std::function<void(std::string)> completion);
+    void FetchDescriptorDirText(uint8_t nodeId, uint32_t absDirOffset, std::function<void(std::string)> completion);
+
+    std::vector<DirEntry> ParseDirectory(const std::vector<uint32_t>& dirBE, uint32_t entryCap);
+    std::optional<DescriptorRef> FindDescriptorRef(const std::vector<DirEntry>& entries, uint8_t ownerKeyId);
 
     void RetryWithFallback(NodeScanState& node);
 

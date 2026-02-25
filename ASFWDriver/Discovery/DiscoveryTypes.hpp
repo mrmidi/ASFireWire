@@ -208,6 +208,7 @@ struct ROMScannerParams {
     FwSpeed startSpeed{FwSpeed::S100};
     uint8_t maxInflight{2};
     uint8_t perStepRetries{2};
+    bool doIRMCheck{false};
 };
 
 } // namespace ASFW::Discovery
