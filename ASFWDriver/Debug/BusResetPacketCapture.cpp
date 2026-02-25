@@ -71,8 +71,7 @@ void BusResetPacketCapture::CapturePacket(const uint32_t* dmaQuadlets,
 
     // Copy context string
     if (context) {
-        std::strncpy(snapshot.contextInfo, context, sizeof(snapshot.contextInfo) - 1);
-        snapshot.contextInfo[sizeof(snapshot.contextInfo) - 1] = '\0';
+        strlcpy(snapshot.contextInfo, context, sizeof(snapshot.contextInfo));
     } else {
         std::snprintf(snapshot.contextInfo, sizeof(snapshot.contextInfo),
                      "Gen %u @ slot %u", generation, slot);
