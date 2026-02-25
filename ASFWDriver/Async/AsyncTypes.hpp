@@ -279,6 +279,7 @@ struct ReadParams {
     uint32_t addressHigh{0};
     uint32_t addressLow{0};
     uint32_t length{0};
+    bool forceBlock{false};
     uint8_t speedCode{0xFF};
 };
 
@@ -288,6 +289,7 @@ struct WriteParams {
     uint32_t addressLow{0};
     const void* payload{nullptr};
     uint32_t length{0};
+    bool forceBlock{false};
     uint8_t speedCode{0xFF};
 };
 
@@ -323,6 +325,7 @@ struct PhyParams {
 
 using CompletionCallback = std::function<void(AsyncHandle handle,
                                               AsyncStatus status,
+                                              uint8_t responseCode,
                                               std::span<const uint8_t> responsePayload)>;
 
 using CompareSwapCallback = std::function<void(AsyncStatus status,

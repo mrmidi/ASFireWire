@@ -169,6 +169,7 @@ private:
 
     void OnAsyncWriteComplete(Async::AsyncHandle handle,
                               Async::AsyncStatus status,
+                              uint8_t responseCode,
                               std::span<const uint8_t> response);
 
     Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame);

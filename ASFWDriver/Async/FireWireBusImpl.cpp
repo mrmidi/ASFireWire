@@ -26,7 +26,7 @@ AsyncHandle FireWireBusImpl::ReadBlock(
     // Wrap the interface callback to adapt from internal callback (with AsyncHandle)
     // to interface callback (without AsyncHandle)
     CompletionCallback internalCallback = [callback = std::move(callback)](
-        AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> payload) {
+        AsyncHandle handle, AsyncStatus status, uint8_t, std::span<const uint8_t> payload) {
         // Simply forward status and payload, dropping the handle
         callback(status, payload);
     };
@@ -51,7 +51,7 @@ AsyncHandle FireWireBusImpl::WriteBlock(
 
     // Wrap the interface callback
     CompletionCallback internalCallback = [callback = std::move(callback)](
-        AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> payload) {
+        AsyncHandle handle, AsyncStatus status, uint8_t, std::span<const uint8_t> payload) {
         callback(status, payload);
     };
 
@@ -80,7 +80,7 @@ AsyncHandle FireWireBusImpl::Lock(
     const uint16_t extendedTCode = static_cast<uint16_t>(op);
 
     CompletionCallback internalCallback = [callback = std::move(callback)](
-        AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> payload) {
+        AsyncHandle handle, AsyncStatus status, uint8_t, std::span<const uint8_t> payload) {
         callback(status, payload);
     };
 

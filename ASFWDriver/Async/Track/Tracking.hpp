@@ -159,7 +159,7 @@ public:
 
         // Set response handler (wraps meta.callback)
         txn->SetResponseHandler([callback = meta.callback, label]
-                                (kern_return_t kr, std::span<const uint8_t> data) {
+                                (kern_return_t kr, uint8_t responseCode, std::span<const uint8_t> data) {
             ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] ENTRY: tLabel=%u callback=%p valid=%d kr=0x%x",
                         label, &callback, callback ? 1 : 0, kr);
             if (callback) {
@@ -169,9 +169,9 @@ public:
                                     AsyncStatus::kHardwareError;
                 // Phase 2.3: CompletionCallback now takes (handle, status, span)
                 // Encode handle as (label + 1) to ensure handle is never 0
-                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u",
-                            static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status));
-                callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, data);
+                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u rCode=0x%02X",
+                            static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status), responseCode);
+                callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, responseCode, data);
                 ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] Callback returned");
             } else {
                 ASFW_LOG(Async, "⚠️ [Wrapper Lambda] callback is NULL!");
@@ -352,7 +352,7 @@ public:
 
             if (!IsTerminalState(txnPtr->state())) {
                 txnPtr->TransitionTo(TransactionState::Cancelled, "CancelByGeneration");
-                txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+                txnPtr->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
             }
 
             // Free the label so subsequent transactions can rotate through all 0-63 slots.
@@ -384,7 +384,7 @@ public:
 
             if (!IsTerminalState(txnPtr->state())) {
                 txnPtr->TransitionTo(TransactionState::Cancelled, "CancelAll");
-                txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+                txnPtr->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
             }
 
             if (labelAllocator_) {

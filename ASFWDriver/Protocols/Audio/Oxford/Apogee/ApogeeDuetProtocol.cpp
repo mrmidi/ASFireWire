@@ -1081,6 +1081,7 @@ void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback)
         params,
         [callback](Async::AsyncHandle,
                    Async::AsyncStatus status,
+                   uint8_t,
                    std::span<const uint8_t> payload) {
             if (status != Async::AsyncStatus::kSuccess || payload.size() < 8U) {
                 callback(kIOReturnError, {});
@@ -1106,6 +1107,7 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
         params,
         [callback](Async::AsyncHandle,
                    Async::AsyncStatus status,
+                   uint8_t,
                    std::span<const uint8_t> payload) {
             if (status != Async::AsyncStatus::kSuccess || payload.size() < 16U) {
                 callback(kIOReturnError, {});
@@ -1134,6 +1136,7 @@ void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
         params,
         [callback](Async::AsyncHandle,
                    Async::AsyncStatus status,
+                   uint8_t,
                    std::span<const uint8_t> payload) {
             if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
                 callback(kIOReturnError, 0);
@@ -1156,6 +1159,7 @@ void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
         params,
         [callback](Async::AsyncHandle,
                    Async::AsyncStatus status,
+                   uint8_t,
                    std::span<const uint8_t> payload) {
             if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
                 callback(kIOReturnError, 0);

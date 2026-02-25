@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <type_traits>
 
 #include <DriverKit/IOReturn.h>
 #include "../../Shared/Memory/PayloadPolicy.hpp"  // Phase 1.3: UniquePayload ownership
@@ -242,17 +243,32 @@ public:
     void SetResponseHandler(F&& handler) noexcept {
         ASFW_LOG_V3(Async, "🔍 [SetResponseHandler] tLabel=%u this=%p BEFORE: responseHandler_=%d",
                     label_.value, this, responseHandler_ ? 1 : 0);
-        responseHandler_ = std::forward<F>(handler);
+        if constexpr (std::is_invocable_v<F, kern_return_t, uint8_t, std::span<const uint8_t>>) {
+            responseHandler_ = std::forward<F>(handler);
+        } else if constexpr (std::is_invocable_v<F, kern_return_t, std::span<const uint8_t>>) {
+            auto legacyHandler = std::forward<F>(handler);
+            responseHandler_ = [legacyHandler = std::move(legacyHandler)](kern_return_t kr,
+                                                                           uint8_t,
+                                                                           std::span<const uint8_t> data) mutable {
+                legacyHandler(kr, data);
+            };
+        } else {
+            static_assert(std::is_invocable_v<F, kern_return_t, uint8_t, std::span<const uint8_t>> ||
+                          std::is_invocable_v<F, kern_return_t, std::span<const uint8_t>>,
+                          "Response handler must accept (kern_return_t, uint8_t, span) or legacy (kern_return_t, span)");
+        }
         ASFW_LOG_V3(Async, "🔍 [SetResponseHandler] tLabel=%u this=%p AFTER: responseHandler_=%d",
                     label_.value, this, responseHandler_ ? 1 : 0);
     }
 
-    void InvokeResponseHandler(kern_return_t kr, std::span<const uint8_t> data) noexcept {
-        ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] tLabel=%u this=%p responseHandler_valid=%d kr=0x%x dataLen=%zu",
-                    label_.value, this, responseHandler_ ? 1 : 0, kr, data.size());
+    void InvokeResponseHandler(kern_return_t kr,
+                               uint8_t responseCode,
+                               std::span<const uint8_t> data) noexcept {
+        ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] tLabel=%u this=%p responseHandler_valid=%d kr=0x%x rCode=0x%02X dataLen=%zu",
+                    label_.value, this, responseHandler_ ? 1 : 0, kr, responseCode, data.size());
         if (responseHandler_) {
             ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] Invoking responseHandler_ for tLabel=%u", label_.value);
-            responseHandler_(kr, data);
+            responseHandler_(kr, responseCode, data);
             ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] responseHandler_ returned for tLabel=%u", label_.value);
         } else {
             ASFW_LOG_V0(Async, "⚠️ [InvokeResponseHandler] responseHandler_ is NULL for tLabel=%u!", label_.value);
@@ -304,7 +320,7 @@ private:
 
     // Resources (Phase 1.3: UniquePayload for automatic cleanup)
     UniquePayload<PayloadHandle> payload_;  // Automatically released on destruction
-    std::function<void(kern_return_t, std::span<const uint8_t>)> responseHandler_;
+    std::function<void(kern_return_t, uint8_t, std::span<const uint8_t>)> responseHandler_;
 
     // Timing
     uint64_t submittedAtUs_{0};
