@@ -8,7 +8,7 @@
 namespace ASFW::Async {
 
 TxMetadata WriteCommand::BuildMetadata(const TransactionContext& txCtx) {
-    const bool isQuadlet = (params_.length == 4);
+    const bool isQuadlet = !params_.forceBlock && (params_.length == 4);
     
     TxMetadata meta{};
     meta.generation = txCtx.generation;
@@ -26,7 +26,7 @@ size_t WriteCommand::BuildHeader(uint8_t label,
                                  PacketBuilder& builder,
                                  uint8_t* buffer) {
     // Delegate to shared PacketBuilder for IEEE 1394 header construction
-    const bool isQuadlet = (params_.length == 4);
+    const bool isQuadlet = !params_.forceBlock && (params_.length == 4);
     if (isQuadlet) {
         return builder.BuildWriteQuadlet(params_, label, pktCtx, buffer, 20);
     } else {
@@ -38,7 +38,7 @@ std::unique_ptr<PayloadContext> WriteCommand::PreparePayload(
     ASFW::Driver::HardwareInterface& hw) {
     
     // Quadlet writes use immediate data (embedded in header), no DMA needed
-    const bool isQuadlet = (params_.length == 4);
+    const bool isQuadlet = !params_.forceBlock && (params_.length == 4);
     if (isQuadlet || params_.length == 0) {
         return nullptr;
     }

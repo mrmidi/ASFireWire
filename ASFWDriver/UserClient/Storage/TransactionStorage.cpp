@@ -25,7 +25,7 @@ TransactionStorage::~TransactionStorage() {
     }
 }
 
-bool TransactionStorage::StoreResult(uint16_t handle, uint32_t status,
+bool TransactionStorage::StoreResult(uint16_t handle, uint32_t status, uint8_t responseCode,
                                      const void* responsePayload,
                                      uint32_t responseLength) {
     if (!completedLock_) {
@@ -49,6 +49,7 @@ bool TransactionStorage::StoreResult(uint16_t handle, uint32_t status,
     TransactionResult& result = completedTransactions_[completedHead_];
     result.handle = handle;
     result.status = status;
+    result.responseCode = responseCode;
     result.dataLength = (responseLength > 512) ? 512 : responseLength;
 
     if (responsePayload && responseLength > 0 && result.dataLength > 0) {

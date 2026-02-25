@@ -265,6 +265,7 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
 
     auto completion = [packetQuad = quadlets[0]](ASFW::Async::AsyncHandle handle,
                                                  ASFW::Async::AsyncStatus status,
+                                                 uint8_t,
                                                  std::span<const uint8_t> /*response*/) {
         if (status == ASFW::Async::AsyncStatus::kSuccess) {
             ASFW_LOG(Hardware,
@@ -317,6 +318,7 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
 
     auto completion = [packetQuad = quadlets[0]](ASFW::Async::AsyncHandle handle,
                                                  ASFW::Async::AsyncStatus status,
+                                                 uint8_t,
                                                  std::span<const uint8_t>) {
         if (status == ASFW::Async::AsyncStatus::kSuccess) {
             ASFW_LOG(Hardware, "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x", handle.value, packetQuad);

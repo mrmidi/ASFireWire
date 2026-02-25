@@ -48,6 +48,7 @@ void DICETransaction::ReadQuadlet(Async::AsyncSubsystem& subsystem, uint32_t off
     
     subsystem.Read(params, [callback](Async::AsyncHandle /*handle*/,
                                        Async::AsyncStatus status,
+                                       uint8_t,
                                        std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess || payload.size() < 4) {
             IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnUnderrun : kIOReturnError;
@@ -69,6 +70,7 @@ void DICETransaction::WriteQuadlet(Async::AsyncSubsystem& subsystem, uint32_t of
     
     subsystem.Write(params, [callback](Async::AsyncHandle /*handle*/,
                                         Async::AsyncStatus status,
+                                        uint8_t,
                                         std::span<const uint8_t> /*payload*/) {
         IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnSuccess : kIOReturnError;
         callback(ret);
@@ -95,6 +97,7 @@ void DICETransaction::ReadBlock(Async::AsyncSubsystem& subsystem, uint32_t offse
     
     subsystem.Read(params, [callback, byteCount](Async::AsyncHandle /*handle*/,
                                                   Async::AsyncStatus status,
+                                                  uint8_t,
                                                   std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess) {
             callback(kIOReturnError, nullptr, 0);
@@ -130,6 +133,7 @@ void DICETransaction::WriteBlock(Async::AsyncSubsystem& subsystem, uint32_t offs
     
     subsystem.Write(params, [callback](Async::AsyncHandle /*handle*/,
                                         Async::AsyncStatus status,
+                                        uint8_t,
                                         std::span<const uint8_t> /*payload*/) {
         IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnSuccess : kIOReturnError;
         callback(ret);

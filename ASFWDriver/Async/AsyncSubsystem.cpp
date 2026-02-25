@@ -124,8 +124,12 @@ struct RetryState {
 // Static callback function that implements retry logic
 // This matches Apple's IOFWAsyncCommand::complete() pattern where retries
 // are decremented and execute() is called again on transient failures
-// Signature matches CompletionCallback: (AsyncHandle, AsyncStatus, std::span<const uint8_t>)
-void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> responsePayload, RetryState* state) {
+// Signature matches CompletionCallback: (AsyncHandle, AsyncStatus, responseCode, std::span<const uint8_t>)
+void ReadWithRetryCallback(AsyncHandle handle,
+                           AsyncStatus status,
+                           uint8_t responseCode,
+                           std::span<const uint8_t> responsePayload,
+                           RetryState* state) {
     
     // Check if retry is needed (Apple's pattern: retry on timeout/busy)
     bool shouldRetry = false;
@@ -169,8 +173,8 @@ void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, std::span<con
         // affect retries. This matches Apple's behavior where commands are atomic.
         state->currentHandle = state->subsystem->Read(
             state->params,
-            [state](AsyncHandle h, AsyncStatus s, std::span<const uint8_t> payload) {
-                ReadWithRetryCallback(h, s, payload, state);
+            [state](AsyncHandle h, AsyncStatus s, uint8_t rc, std::span<const uint8_t> payload) {
+                ReadWithRetryCallback(h, s, rc, payload, state);
             }
         );
         
@@ -179,7 +183,7 @@ void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, std::span<con
             ASFW_LOG_ERROR(Async, "ReadWithRetry: Re-submission failed after %{public}s", 
                           retryReason);
             if (state->userCallback) {
-                state->userCallback(handle, AsyncStatus::kHardwareError, std::span<const uint8_t>{});
+                state->userCallback(handle, AsyncStatus::kHardwareError, 0xFF, std::span<const uint8_t>{});
             }
             delete state;
         }
@@ -193,7 +197,7 @@ void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, std::span<con
         }
         
         if (state->userCallback) {
-            state->userCallback(handle, status, responsePayload);
+            state->userCallback(handle, status, responseCode, responsePayload);
         }
         delete state;  // Free retry state
     }
@@ -709,6 +713,7 @@ AsyncHandle AsyncSubsystem::CompareSwap(const CompareSwapParams& params,
 
     CompletionCallback internalCallback = [callback, storage](AsyncHandle,
                                                              AsyncStatus status,
+                                                             uint8_t,
                                                              std::span<const uint8_t> payload) {
         if (status != AsyncStatus::kSuccess) {
             callback(status, 0u, false);
@@ -1243,7 +1248,7 @@ void AsyncSubsystem::ExecuteNextCommand() {
     
     // Static wrapper for internal callback (handles retry + queue advancement)
     struct InternalCallbackContext {
-        static void HandleCompletion(AsyncHandle handle, AsyncStatus status, std::span<const uint8_t> responsePayload, PendingCommand* cmdPtr) {
+        static void HandleCompletion(AsyncHandle handle, AsyncStatus status, uint8_t responseCode, std::span<const uint8_t> responsePayload, PendingCommand* cmdPtr) {
             AsyncSubsystem* subsystem = cmdPtr->subsystem;
             
             if (status == AsyncStatus::kSuccess) {
@@ -1251,7 +1256,7 @@ void AsyncSubsystem::ExecuteNextCommand() {
                 
                 // Invoke user callback with success
                 if (cmdPtr->userCallback) {
-                    cmdPtr->userCallback(handle, status, responsePayload);
+                    cmdPtr->userCallback(handle, status, responseCode, responsePayload);
                 }
                 
                 delete cmdPtr;
@@ -1275,8 +1280,8 @@ void AsyncSubsystem::ExecuteNextCommand() {
                     // Re-submit immediately (already dequeued, so no queue push)
                     AsyncHandle retryHandle = subsystem->Read(
                         cmdPtr->params,
-                        [cmdPtr](AsyncHandle h, AsyncStatus s, std::span<const uint8_t> payload) {
-                            HandleCompletion(h, s, payload, cmdPtr);
+                        [cmdPtr](AsyncHandle h, AsyncStatus s, uint8_t rc, std::span<const uint8_t> payload) {
+                            HandleCompletion(h, s, rc, payload, cmdPtr);
                         }
                     );
                     
@@ -1290,7 +1295,7 @@ void AsyncSubsystem::ExecuteNextCommand() {
                      handle.value, static_cast<unsigned>(status));
             
             if (cmdPtr->userCallback) {
-                cmdPtr->userCallback(handle, status, responsePayload);
+                cmdPtr->userCallback(handle, status, responseCode, responsePayload);
             }
             
             delete cmdPtr;
@@ -1299,8 +1304,8 @@ void AsyncSubsystem::ExecuteNextCommand() {
     };
     
     // Submit command to hardware layer
-    AsyncHandle handle = Read(cmd.params, [cmdCopy](AsyncHandle h, AsyncStatus s, std::span<const uint8_t> payload) {
-        InternalCallbackContext::HandleCompletion(h, s, payload, cmdCopy);
+    AsyncHandle handle = Read(cmd.params, [cmdCopy](AsyncHandle h, AsyncStatus s, uint8_t rc, std::span<const uint8_t> payload) {
+        InternalCallbackContext::HandleCompletion(h, s, rc, payload, cmdCopy);
     });
     cmdCopy->handle = handle;
     

@@ -46,6 +46,7 @@ void PCRSpace::ReadPCR(PlugType type,
     asyncSubsystem_.Read(readParams,
         [completion, pcrAddress](Async::FWHandle handle,
                                  Async::AsyncStatus status,
+                                 uint8_t,
                                  std::span<const uint8_t> response) {
             (void)handle;  // Unused
             if (status != Async::AsyncStatus::kSuccess) {
@@ -148,6 +149,7 @@ void PCRSpace::UpdatePCR(PlugType type,
     asyncSubsystem_.Lock(lockParams, kExtendedTCodeCompareSwap,
         [completion, pcrAddress, oldRaw, newRaw](Async::FWHandle handle,
                                                   Async::AsyncStatus status,
+                                                  uint8_t,
                                                   std::span<const uint8_t> response) {
             (void)handle;  // Unused
             if (status != Async::AsyncStatus::kSuccess) {

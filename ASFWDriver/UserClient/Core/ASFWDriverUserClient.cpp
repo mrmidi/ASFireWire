@@ -63,6 +63,8 @@ enum {
     kMethodSetIsochTxVerifier      = 41,
     kMethodSetAudioAutoStart       = 42,
     kMethodGetAudioAutoStart       = 43,
+    kMethodAsyncBlockRead          = 44,
+    kMethodAsyncBlockWrite         = 45,
     // TODO: IRM test method - temporary location for Phase 0.5 testing
     kMethodTestIRMAllocation       = 26,
     kMethodTestIRMRelease          = 27,
@@ -322,6 +324,12 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(
 
         case kMethodAsyncWrite:
             return static_cast<ASFW::UserClient::TransactionHandler*>(ivars->transactionHandler)->AsyncWrite(arguments, this);
+
+        case kMethodAsyncBlockRead:
+            return static_cast<ASFW::UserClient::TransactionHandler*>(ivars->transactionHandler)->AsyncBlockRead(arguments, this);
+
+        case kMethodAsyncBlockWrite:
+            return static_cast<ASFW::UserClient::TransactionHandler*>(ivars->transactionHandler)->AsyncBlockWrite(arguments, this);
 
         case kMethodGetTransactionResult:
             return static_cast<ASFW::UserClient::TransactionHandler*>(ivars->transactionHandler)->GetTransactionResult(arguments);

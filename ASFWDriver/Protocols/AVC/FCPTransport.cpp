@@ -189,8 +189,9 @@ ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame)
     return async_->Write(params,
         [this](ASFW::Async::AsyncHandle handle,
                ASFW::Async::AsyncStatus status,
+               uint8_t responseCode,
                std::span<const uint8_t> response) {
-            OnAsyncWriteComplete(handle, status, response);
+            OnAsyncWriteComplete(handle, status, responseCode, response);
         });
 }
 
@@ -316,8 +317,10 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
 
 void FCPTransport::OnAsyncWriteComplete(Async::AsyncHandle handle,
                                         Async::AsyncStatus status,
+                                        uint8_t responseCode,
                                         std::span<const uint8_t> response) {
     (void)handle;
+    (void)responseCode;
     (void)response;
     IOLockLock(lock_);
 

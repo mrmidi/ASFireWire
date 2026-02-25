@@ -262,17 +262,17 @@ public:
                     case PostAction::kCompletePhySuccess:
                         txnPtr->TransitionTo(TransactionState::ATCompleted, transitionTag1 ? transitionTag1 : "OnATCompletion");
                         txnPtr->TransitionTo(TransactionState::Completed, transitionTag2 ? transitionTag2 : "OnATCompletion");
-                        txnPtr->InvokeResponseHandler(postKr, {});
+                        txnPtr->InvokeResponseHandler(postKr, 0xFF, {});
                         break;
                     case PostAction::kCompleteError:
                     case PostAction::kCompleteTimeout:
                         txnPtr->TransitionTo(TransactionState::ATCompleted, transitionTag1 ? transitionTag1 : "OnATCompletion");
                         txnPtr->TransitionTo(TransactionState::Failed, transitionTag2 ? transitionTag2 : "OnATCompletion");
-                        txnPtr->InvokeResponseHandler(postKr, {});
+                        txnPtr->InvokeResponseHandler(postKr, 0xFF, {});
                         break;
                     case PostAction::kCompleteCancelled:
                         txnPtr->TransitionTo(TransactionState::Cancelled, transitionTag1 ? transitionTag1 : "OnATCompletion");
-                        txnPtr->InvokeResponseHandler(postKr, {});
+                        txnPtr->InvokeResponseHandler(postKr, 0xFF, {});
                         break;
                     case PostAction::kNone:
                         break;
@@ -370,7 +370,7 @@ public:
         }
 
         // Invoke callback
-        txnPtr->InvokeResponseHandler(kr, data);
+        txnPtr->InvokeResponseHandler(kr, rcode, data);
 
         // Free label (allocator is thread-safe)
         if (labelAllocator_) {
@@ -500,7 +500,7 @@ public:
             txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
             
             // Invoke callback
-            txnPtr->InvokeResponseHandler(kIOReturnTimeout, {});
+            txnPtr->InvokeResponseHandler(kIOReturnTimeout, 0xFF, {});
             
             // Free label
             if (labelAllocator_) {

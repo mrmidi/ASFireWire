@@ -18,7 +18,7 @@ AsyncSubsystem::~AsyncSubsystem() {}
 AsyncHandle AsyncSubsystem::Write(const WriteParams& params, CompletionCallback callback) {
     // Stub: immediately succeed
     if (callback) {
-        callback(AsyncHandle{1}, AsyncStatus::kSuccess, {});
+        callback(AsyncHandle{1}, AsyncStatus::kSuccess, 0x00, {});
     }
     return AsyncHandle{1};
 }

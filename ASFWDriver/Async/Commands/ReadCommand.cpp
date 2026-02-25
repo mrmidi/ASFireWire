@@ -5,7 +5,8 @@
 namespace ASFW::Async {
 
 TxMetadata ReadCommand::BuildMetadata(const TransactionContext& txCtx) {
-    const bool isQuadlet = (params_.length == 0 || params_.length == 4);
+    const bool isQuadlet = !params_.forceBlock &&
+                           (params_.length == 0 || params_.length == 4);
 
     TxMetadata meta{};
     meta.generation = txCtx.generation;
@@ -28,7 +29,8 @@ size_t ReadCommand::BuildHeader(uint8_t label,
                                 PacketBuilder& builder,
                                 uint8_t* buffer) {
     // Delegate to shared PacketBuilder for IEEE 1394 header construction
-    const bool isQuadlet = (params_.length == 0 || params_.length == 4);
+    const bool isQuadlet = !params_.forceBlock &&
+                           (params_.length == 0 || params_.length == 4);
     if (isQuadlet) {
         return builder.BuildReadQuadlet(params_, label, pktCtx, buffer, 16);
     } else {
