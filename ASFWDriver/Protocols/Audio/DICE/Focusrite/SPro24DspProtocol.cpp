@@ -20,7 +20,7 @@ uint32_t Am824SlotsFor(const StreamFormatEntry& entry) noexcept {
 }
 
 void LogDiceStreamEntryDetail(const char* dir, uint32_t index, const StreamFormatEntry& entry) {
-    if (entry.hasSeqStart) {
+    if (entry.hasSeqStart) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG(DICE,
                  "  %{public}s[%u]: iso=%d start=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
                  dir,
@@ -308,7 +308,7 @@ IOReturn SPro24DspProtocol::StartDuplex48k() {
     }
 
     StartStreamTest([](IOReturn status) {
-        if (status != kIOReturnSuccess) {
+        if (status != kIOReturnSuccess) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             ASFW_LOG(DICE, "SPro24DspProtocol::StartDuplex48k failed: 0x%x", status);
         } else {
             ASFW_LOG(DICE, "SPro24DspProtocol::StartDuplex48k configured");

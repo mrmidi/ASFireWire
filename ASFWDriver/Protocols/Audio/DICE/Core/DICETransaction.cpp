@@ -371,7 +371,7 @@ void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
 
     for (uint32_t i = 0; i < config.numStreams && i < 4; ++i) {
         const auto& e = config.streams[i];
-        if (config.isRxLayout) {
+        if (config.isRxLayout) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             ASFW_LOG(DICE,
                      "  %{public}s[%u]: iso=%d start=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
                      prefix,

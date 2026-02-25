@@ -487,15 +487,14 @@ static void ExtractPlugsFromRoutingStatus(
         // Determine direction from position:
         // - Blocks 0 to (numDestPlugs-1) are Destination (Input)
         // - Blocks numDestPlugs to (numDestPlugs+numSourcePlugs-1) are Source (Output)
-        if (blockIndex < numDestPlugs) {
-            plug.direction = PlugDirection::kInput;
-        } else if (blockIndex < static_cast<size_t>(numDestPlugs + numSourcePlugs)) {
-            plug.direction = PlugDirection::kOutput;
-        } else {
-            // Beyond expected plug count - default to Input
-            plug.direction = PlugDirection::kInput;
-            ASFW_LOG_V1(MusicSubunit, "SubunitPlugInfo: Block %zu beyond expected count (dest=%u, src=%u)", 
-                        blockIndex, numDestPlugs, numSourcePlugs);
+        plug.direction = PlugDirection::kInput;  // default: dest plugs and out-of-range
+        if (blockIndex >= numDestPlugs) {
+            if (blockIndex < static_cast<size_t>(numDestPlugs + numSourcePlugs)) {
+                plug.direction = PlugDirection::kOutput;
+            } else {
+                ASFW_LOG_V1(MusicSubunit, "SubunitPlugInfo: Block %zu beyond expected count (dest=%u, src=%u)",
+                            blockIndex, numDestPlugs, numSourcePlugs);
+            }
         }
         
         // Extract name from nested blocks

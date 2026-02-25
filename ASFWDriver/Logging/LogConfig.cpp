@@ -292,7 +292,7 @@ uint8_t LogConfig::ReadUInt8Property(IOService* service, const char* key, uint8_
         }
     }
 
-    if (found) {
+    if (found) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG_INFO(Controller, "Property '%{public}s' = %u (from Info.plist)", key, value);
     } else {
         ASFW_LOG_INFO(Controller, "Property '%{public}s' = %u (default, not in Info.plist)", key, value);
@@ -326,7 +326,7 @@ bool LogConfig::ReadBoolProperty(IOService* service, const char* key, bool defau
         }
     }
 
-    if (found) {
+    if (found) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG_INFO(Controller, "Property '%{public}s' = %{public}s (from Info.plist)",
                       key, value ? "true" : "false");
     } else {

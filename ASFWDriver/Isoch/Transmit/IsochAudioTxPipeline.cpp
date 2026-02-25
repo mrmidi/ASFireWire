@@ -78,7 +78,7 @@ void IsochAudioTxPipeline::SetZeroCopyOutputBuffer(void* base, uint64_t bytes, u
         zeroCopyEnabled_ = false;
         assembler_.setZeroCopySource(nullptr, 0);
 
-        if (base || bytes || frameCapacity) {
+        if (base || bytes || frameCapacity) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             ASFW_LOG(Isoch, "IT: SetZeroCopyOutputBuffer - invalid parameters");
         } else {
             ASFW_LOG(Isoch, "IT: ZERO-COPY disabled; using shared TX queue");
