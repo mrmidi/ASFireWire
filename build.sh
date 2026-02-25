@@ -119,8 +119,8 @@ generate_compile_commands() {
     -project "${PROJECT_NAME}.xcodeproj"
     -scheme "${SCHEME_NAME}"
     -configuration "${CONFIGURATION}"
-    -arch "${ARCH_NAME}"
     -derivedDataPath "${DERIVED}"
+    -destination "platform=macOS,arch=${ARCH_NAME}"
     clean
     build
   )
@@ -188,7 +188,7 @@ run_swift_tests() {
     -scheme "${SCHEME_NAME}"
     -configuration "${CONFIGURATION}"
     -derivedDataPath "${DERIVED}"
-    -destination 'platform=macOS,arch=arm64'
+    -destination "platform=macOS,arch=${ARCH_NAME}"
     -only-testing:ASFWTests
   )
   
@@ -287,16 +287,16 @@ run_build() {
 
   # Run xcodebuild. We capture everything to RAW_LOG.
   set +e
-  xcodebuild \
-    -project "${PROJECT_NAME}.xcodeproj" \
-    -scheme "${SCHEME_NAME}" \
-    -configuration "${CONFIGURATION}" \
-    -arch "${ARCH_NAME}" \
-    -derivedDataPath "${DERIVED}" \
-    -resultBundlePath "${RESULT_BUNDLE}" \
-    CODE_SIGNING_ALLOWED=NO \
-    CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGN_IDENTITY="" \
+	  xcodebuild \
+	    -project "${PROJECT_NAME}.xcodeproj" \
+	    -scheme "${SCHEME_NAME}" \
+	    -configuration "${CONFIGURATION}" \
+	    -derivedDataPath "${DERIVED}" \
+	    -destination "platform=macOS,arch=${ARCH_NAME}" \
+	    -resultBundlePath "${RESULT_BUNDLE}" \
+	    CODE_SIGNING_ALLOWED=NO \
+	    CODE_SIGNING_REQUIRED=NO \
+	    CODE_SIGN_IDENTITY="" \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"
