@@ -131,7 +131,7 @@ TEST(ROMReaderHeaderFirstTests, HeaderFirstUsesHigh16EntryCount) {
                                /*speed=*/ASFW::FW::FwSpeed::S100,
                                /*offsetBytes=*/kRootDirOffsetBytes,
                                /*count=*/0,
-                               [&](const ASFW::Discovery::ROMReader::ReadResult& res) {
+                               [&called](const ASFW::Discovery::ROMReader::ReadResult& res) {
                                    called = true;
                                    EXPECT_TRUE(res.success);
                                    EXPECT_EQ(res.dataLength, 16u);  // (1 + 3) quadlets
@@ -166,7 +166,7 @@ TEST(ROMReaderHeaderFirstTests, HeaderFirstCapsAt64Entries) {
                                /*speed=*/ASFW::FW::FwSpeed::S100,
                                /*offsetBytes=*/kRootDirOffsetBytes,
                                /*count=*/0,
-                               [&](const ASFW::Discovery::ROMReader::ReadResult& res) {
+                               [&called](const ASFW::Discovery::ROMReader::ReadResult& res) {
                                    called = true;
                                    EXPECT_TRUE(res.success);
                                    EXPECT_EQ(res.dataLength, totalQuadlets * 4u);

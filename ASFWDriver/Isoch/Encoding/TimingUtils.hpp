@@ -18,7 +18,7 @@ namespace ASFW::Timing {
 //-----------------------------------------------------------------------------
 
 /// Cached mach timebase info for host ↔ nanoseconds conversion
-inline mach_timebase_info_data_t gHostTimebaseInfo = {0, 0};
+inline mach_timebase_info_data_t gHostTimebaseInfo = {0, 0}; // NOSONAR(cpp:S5421): intentionally mutable — populated once by initializeHostTimebase()
 
 /// Initialize host timebase (call once at driver start)
 [[nodiscard]] inline bool initializeHostTimebase() noexcept {

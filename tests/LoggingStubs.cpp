@@ -143,21 +143,21 @@ bool LogConfig::IsHexDumpsEnabled() const { return false; }
 bool LogConfig::IsIsochTxVerifierEnabled() const { return false; }
 bool LogConfig::IsStatisticsEnabled() const { return false; }
 
-void LogConfig::SetAsyncVerbosity(uint8_t) {}
-void LogConfig::SetControllerVerbosity(uint8_t) {}
-void LogConfig::SetHardwareVerbosity(uint8_t) {}
-void LogConfig::SetDiscoveryVerbosity(uint8_t) {}
-void LogConfig::SetConfigROMVerbosity(uint8_t) {}
-void LogConfig::SetUserClientVerbosity(uint8_t) {}
-void LogConfig::SetAVCVerbosity(uint8_t) {}
-void LogConfig::SetFCPVerbosity(uint8_t) {}
-void LogConfig::SetCMPVerbosity(uint8_t) {}
-void LogConfig::SetIRMVerbosity(uint8_t) {}
-void LogConfig::SetMusicSubunitVerbosity(uint8_t) {}
-void LogConfig::SetIsochVerbosity(uint8_t) {}
-void LogConfig::SetHexDumps(bool) {}
-void LogConfig::SetIsochTxVerifierEnabled(bool) {}
-void LogConfig::SetStatistics(bool) {}
+void LogConfig::SetAsyncVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetControllerVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetHardwareVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetDiscoveryVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetConfigROMVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetUserClientVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetAVCVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetFCPVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetCMPVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetIRMVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetMusicSubunitVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetIsochVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetHexDumps(bool) { /* no-op stub */ }
+void LogConfig::SetIsochTxVerifierEnabled(bool) { /* no-op stub */ }
+void LogConfig::SetStatistics(bool) { /* no-op stub */ }
 
 uint8_t LogConfig::ReadUInt8Property(IOService*, const char*, uint8_t defaultValue) { return defaultValue; }
 bool LogConfig::ReadBoolProperty(IOService*, const char*, bool defaultValue) { return defaultValue; }

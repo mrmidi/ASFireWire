@@ -180,7 +180,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
             (void)isoch_.StopReceive();
             // Best-effort: disconnect oPCR.
-            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) {});
+            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
             return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
         }
 
@@ -199,7 +199,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
             ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartTransmit failed GUID=0x%016llx kr=0x%x", guid, krTx);
             (void)isoch_.StopReceive();
             // Best-effort: disconnect oPCR.
-            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) {});
+            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
             return krTx;
         }
 
@@ -219,7 +219,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                            static_cast<int>(s));
             (void)isoch_.StopTransmit();
             (void)isoch_.StopReceive();
-            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) {});
+            cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
             return kIOReturnError;
         }
     }

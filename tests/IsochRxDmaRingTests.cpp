@@ -67,7 +67,7 @@ TEST(IsochRxDmaRingTests, DrainCompleted_ProcessesOneDescriptorAndRearms) {
     d0->statusWord = (0x0000u << 16) | static_cast<uint16_t>(reqCount - actualLength);
 
     uint32_t calls = 0;
-    const uint32_t processed = ring.DrainCompleted(*mem, [&](const IsochRxDmaRing::CompletedPacket& pkt) {
+    const uint32_t processed = ring.DrainCompleted(*mem, [&calls, actualLength](const IsochRxDmaRing::CompletedPacket& pkt) {
         calls++;
         EXPECT_EQ(pkt.descriptorIndex, 0u);
         EXPECT_EQ(pkt.actualLength, actualLength);

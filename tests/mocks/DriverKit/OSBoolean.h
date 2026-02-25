@@ -6,7 +6,7 @@ public:
     bool getValue() const { return false; }
 };
 
-inline OSBoolean kOSBooleanTrue_storage;
-inline OSBoolean kOSBooleanFalse_storage;
-inline OSBoolean* const kOSBooleanTrue  = &kOSBooleanTrue_storage;
-inline OSBoolean* const kOSBooleanFalse = &kOSBooleanFalse_storage;
+inline OSBoolean kOSBooleanTrue_storage;  // NOSONAR(cpp:S5421): test mock object — must be non-const to match OSObject lifecycle
+inline OSBoolean kOSBooleanFalse_storage; // NOSONAR(cpp:S5421): test mock object — must be non-const to match OSObject lifecycle
+inline OSBoolean* const kOSBooleanTrue  = &kOSBooleanTrue_storage;  // NOSONAR(cpp:S5421): pointee is intentionally non-const
+inline OSBoolean* const kOSBooleanFalse = &kOSBooleanFalse_storage; // NOSONAR(cpp:S5421): pointee is intentionally non-const

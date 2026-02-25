@@ -12,9 +12,9 @@ kern_return_t HardwareInterface::Attach(IOService*, IOService*) {
     return kIOReturnSuccess;
 }
 
-void HardwareInterface::Detach() {}
+void HardwareInterface::Detach() { /* no-op stub */ }
 
-void HardwareInterface::SetAsyncSubsystem(ASFW::Async::AsyncSubsystem*) noexcept {}
+void HardwareInterface::SetAsyncSubsystem(ASFW::Async::AsyncSubsystem*) noexcept { /* no-op stub */ }
 
 uint32_t HardwareInterface::Read(Register32) const noexcept {
     return 0;
