@@ -198,9 +198,11 @@ kern_return_t IMPL(ASFWDriver, Start) {
             if (ctx.deps.scheduler) {
                 discoveryQueue = ctx.deps.scheduler->Queue();
             }
+            ASFW::Discovery::ROMScannerParams scannerParams{};
             ctx.deps.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
                 ctx.controller->Bus(),
                 *ctx.deps.speedPolicy,
+                scannerParams,
                 nullptr,
                 discoveryQueue
             );

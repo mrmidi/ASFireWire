@@ -25,6 +25,12 @@ public:
         uint32_t length{0};
         ASFW::Async::InterfaceCompletionCallback callback;
         uint32_t handleValue{0};
+
+        PendingRead() = default;
+        PendingRead(const PendingRead&) = default;
+        PendingRead& operator=(const PendingRead&) = default;
+        PendingRead(PendingRead&&) noexcept = default;
+        PendingRead& operator=(PendingRead&&) noexcept = default;
     };
 
     std::vector<PendingRead> pendingReads_;
