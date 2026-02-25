@@ -112,8 +112,9 @@ public:
                 mgr->RegisterDeviceObserver(observer);
             }
         } else if constexpr (std::is_same_v<ObserverType, IUnitObserver>) {
-            unregister_ = [&registry, observer]() {
-                registry.UnregisterUnitObserver(observer);
+            auto* reg = static_cast<IUnitRegistry*>(&registry);
+            unregister_ = [reg, observer]() {
+                reg->UnregisterUnitObserver(observer);
             };
             registry.RegisterUnitObserver(observer);
         }
@@ -121,7 +122,13 @@ public:
 
     ~ObserverGuard() noexcept {
         if (unregister_) {
-            unregister_();
+            try {
+                unregister_();
+            } catch (...) {
+                // Unregister must not throw from a destructor.
+                // Virtual Unregister* implementations should be noexcept;
+                // swallow defensively to prevent std::terminate.
+            }
         }
     }
 
