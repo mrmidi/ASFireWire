@@ -12,6 +12,7 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/OSSharedPtr.h>
 #include <DriverKit/OSAction.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/OSDictionary.h>
@@ -640,19 +641,16 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
 
     nub->EnsureRxQueueCreated();
 
-    IOBufferMemoryDescriptor* rxMem = nullptr;
+    OSSharedPtr<IOBufferMemoryDescriptor> rxMem{};
     uint64_t rxBytes = 0;
-    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMem, &rxBytes);
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(rxMem.attach(), &rxBytes);
     if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
-        if (rxMem) {
-            rxMem->release();
-        }
         return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
 
     return ctx.isoch.StartReceive(channel,
                                   *ctx.deps.hardware,
-                                  rxMem,
+                                  rxMem.detach(),
                                   rxBytes);
 }
 
@@ -698,13 +696,10 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    IOBufferMemoryDescriptor* txMem = nullptr;
+    OSSharedPtr<IOBufferMemoryDescriptor> txMem{};
     uint64_t txBytes = 0;
-    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMem, &txBytes);
+    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(txMem.attach(), &txBytes);
     if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
-        if (txMem) {
-            txMem->release();
-        }
         return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
     }
 
@@ -727,7 +722,7 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
                                    streamModeRaw,
                                    pcmChannels,
                                    am824Slots,
-                                   txMem,
+                                   txMem.detach(),
                                    txBytes,
                                    nullptr,
                                    0,
