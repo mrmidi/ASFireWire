@@ -470,7 +470,7 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         const uint16_t dataLength = static_cast<uint16_t>(q3_initial >> 16);
         const uint16_t extTcode = static_cast<uint16_t>(q3_initial & 0xFFFFu);
 
-        if (tCode == 0x9) {
+        if (tCode == 0x9) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             // LOCK: expect dataLength=8, extTcode=0x0002
             ASFW_LOG_V3(Async,
                      "   Q3 decode: dataLength=%u extTcode=0x%04x (expected: dataLength=8 extTcode=0x0002 for CAS)",

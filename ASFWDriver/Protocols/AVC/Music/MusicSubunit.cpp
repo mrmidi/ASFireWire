@@ -500,8 +500,8 @@ static void ExtractPlugsFromRoutingStatus(
         // Extract name from nested blocks
         plug.name = ExtractPlugName(plugInfoBlock);
         
-        if (!plug.name.empty()) {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Found Plug ID %u (%{public}s): '%{public}s'", 
+        if (!plug.name.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
+            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Found Plug ID %u (%{public}s): '%{public}s'",
                         plug.plugID, 
                         plug.direction == PlugDirection::kInput ? "Input" : "Output",
                         plug.name.c_str());
