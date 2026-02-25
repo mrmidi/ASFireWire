@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AudioConstants.hpp"
+
 #include <cstdint>
 
 namespace ASFW::Isoch::Config {
@@ -7,11 +9,13 @@ namespace ASFW::Isoch::Config {
 /// Profile identifiers. Override build-time default with -DASFW_TX_TUNING_PROFILE=1 (B) or =2 (C).
 enum class TxProfileId : uint8_t { A = 0, B = 1, C = 2 };
 
-#ifndef ASFW_TX_TUNING_PROFILE
-#define ASFW_TX_TUNING_PROFILE 0  // 0=A, 1=B, 2=C
+#if defined(ASFW_TX_TUNING_PROFILE)
+inline constexpr uint8_t kTxTuningProfileRaw = ASFW_TX_TUNING_PROFILE;
+#else
+inline constexpr uint8_t kTxTuningProfileRaw = 0;  // 0=A, 1=B, 2=C
 #endif
-static_assert(ASFW_TX_TUNING_PROFILE <= 2, "Invalid ASFW_TX_TUNING_PROFILE — use 0 (A), 1 (B), or 2 (C)");
-inline constexpr TxProfileId kActiveTxProfileId = static_cast<TxProfileId>(ASFW_TX_TUNING_PROFILE);
+static_assert(kTxTuningProfileRaw <= 2, "Invalid ASFW_TX_TUNING_PROFILE — use 0 (A), 1 (B), or 2 (C)");
+inline constexpr TxProfileId kActiveTxProfileId = static_cast<TxProfileId>(kTxTuningProfileRaw);
 
 struct TxBufferProfile {
     const char* name;
@@ -24,7 +28,6 @@ struct TxBufferProfile {
     uint32_t minPrimeDataPackets;        // 2B: Minimum DATA packets after PrimeRing
 };
 
-inline constexpr uint32_t kSharedTxQueueCapacityFrames = 4096;
 inline constexpr uint32_t kTransferChunkFrames = 256;
 
 inline constexpr TxBufferProfile kTxProfileA{
@@ -72,11 +75,11 @@ static_assert(IsValidProfile(kTxProfileA), "Profile A is invalid");
 static_assert(IsValidProfile(kTxProfileB), "Profile B is invalid");
 static_assert(IsValidProfile(kTxProfileC), "Profile C is invalid");
 
-static_assert(kTxProfileA.startWaitTargetFrames <= kSharedTxQueueCapacityFrames,
+static_assert(kTxProfileA.startWaitTargetFrames <= kTxQueueCapacityFrames,
               "Profile A startWait exceeds shared queue capacity");
-static_assert(kTxProfileB.startWaitTargetFrames <= kSharedTxQueueCapacityFrames,
+static_assert(kTxProfileB.startWaitTargetFrames <= kTxQueueCapacityFrames,
               "Profile B startWait exceeds shared queue capacity");
-static_assert(kTxProfileC.startWaitTargetFrames <= kSharedTxQueueCapacityFrames,
+static_assert(kTxProfileC.startWaitTargetFrames <= kTxQueueCapacityFrames,
               "Profile C startWait exceeds shared queue capacity");
 
 constexpr TxBufferProfile SelectTxProfile(TxProfileId id) noexcept {

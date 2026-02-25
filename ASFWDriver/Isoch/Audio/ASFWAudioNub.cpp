@@ -17,6 +17,7 @@
 #include "../../Protocols/Audio/IDeviceProtocol.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
 #include "../../Service/DriverContext.hpp"
+#include "../Config/AudioConstants.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
@@ -28,17 +29,9 @@
 
 #include <algorithm>
 
-// TX queue capacity: 4096 frames = ~85ms @ 48kHz
-// This provides good buffering without excessive latency
-static constexpr uint32_t kTxQueueCapacityFrames = 4096;
-
-// ZERO-COPY: Output audio buffer size
-// Match kZeroTimestampPeriod from ASFWAudioDriver (512 frames)
-static constexpr uint32_t kOutputAudioBufferFrames = 512;
-// RX queue capacity: 4096 frames = ~85ms @ 48kHz (matches AudioRingBuffer)
-static constexpr uint32_t kRxQueueCapacityFrames = 4096;
-
-static constexpr uint32_t kMaxAudioChannelsSupported = 16;
+// TX queue capacity: Config::kTxQueueCapacityFrames frames = ~85ms @ 48kHz.
+// ZERO-COPY: Output audio buffer size matches Config::kAudioIoPeriodFrames.
+// RX queue capacity: Config::kRxQueueCapacityFrames frames = ~85ms @ 48kHz (matches AudioRingBuffer).
 
 static ASFWDriver* GetParentASFWDriver(const ASFWAudioNub_IVars* iv)
 {
@@ -73,7 +66,9 @@ static uint32_t ClampAudioChannels(uint32_t channels) {
     if (channels == 0) {
         return 0;
     }
-    return (channels > kMaxAudioChannelsSupported) ? kMaxAudioChannelsSupported : channels;
+    return (channels > ASFW::Isoch::Config::kMaxPcmChannels)
+        ? ASFW::Isoch::Config::kMaxPcmChannels
+        : channels;
 }
 
 static uint32_t FallbackInputChannels(const ASFWAudioNub_IVars* iv) {
@@ -106,6 +101,15 @@ static bool TryResolveRuntimeAudioChannels(ASFWAudioNub_IVars* iv,
     ASFW::Audio::AudioStreamRuntimeCaps caps{};
     if (!binding.protocol->GetRuntimeAudioStreamCaps(caps)) {
         return false;
+    }
+
+    if (caps.hostInputPcmChannels > ASFW::Isoch::Config::kMaxPcmChannels ||
+        caps.hostOutputPcmChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioNub: Clamping protocol PCM channels in=%u out=%u to max=%u",
+                         caps.hostInputPcmChannels,
+                         caps.hostOutputPcmChannels,
+                         ASFW::Isoch::Config::kMaxPcmChannels);
     }
 
     const uint32_t inputCh = ClampAudioChannels(caps.hostInputPcmChannels);
@@ -180,13 +184,15 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     uint32_t txChannels = FallbackOutputChannels(iv);
     (void)TryResolveRuntimeAudioChannels(iv, inputChUnused, txChannels);
 
-    if (txChannels == 0 || txChannels > kMaxAudioChannelsSupported) {
+    if (txChannels == 0 || txChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
         ASFW_LOG(Audio, "ASFWAudioNub: CreateTxQueue: invalid outputChannelCount=%u",
                  txChannels);
         return kIOReturnNotReady;
     }
 
-    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kTxQueueCapacityFrames, txChannels);
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(
+        ASFW::Isoch::Config::kTxQueueCapacityFrames,
+        txChannels);
 
     // Allocate IOBufferMemoryDescriptor
     IOBufferMemoryDescriptor* mem = nullptr;
@@ -227,7 +233,7 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     // Initialize SPSC queue in shared memory
     auto* base = reinterpret_cast<void*>(map->GetAddress());
     if (const bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(
-            base, bytes, kTxQueueCapacityFrames, txChannels);
+            base, bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels);
         !initOk) {
         ASFW_LOG(Audio, "ASFWAudioNub: TxSharedQueue initialization failed");
         map->release();
@@ -240,7 +246,7 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     iv->txQueueBytes = bytes;
 
     ASFW_LOG(Audio, "ASFWAudioNub: TX queue created: %llu bytes, %u frames capacity, ch=%u base=%p",
-             bytes, kTxQueueCapacityFrames, txChannels, base);
+             bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels, base);
 
     return kIOReturnSuccess;
 }
@@ -259,13 +265,15 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     uint32_t outputChUnused = 0;
     (void)TryResolveRuntimeAudioChannels(iv, rxChannels, outputChUnused);
 
-    if (rxChannels == 0 || rxChannels > kMaxAudioChannelsSupported) {
+    if (rxChannels == 0 || rxChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
         ASFW_LOG(Audio, "ASFWAudioNub: CreateRxQueue: invalid inputChannelCount=%u",
                  rxChannels);
         return kIOReturnNotReady;
     }
 
-    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kRxQueueCapacityFrames, rxChannels);
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(
+        ASFW::Isoch::Config::kRxQueueCapacityFrames,
+        rxChannels);
 
     // Allocate IOBufferMemoryDescriptor
     IOBufferMemoryDescriptor* mem = nullptr;
@@ -306,7 +314,7 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     // Initialize SPSC queue in shared memory
     auto* base = reinterpret_cast<void*>(map->GetAddress());
     if (const bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(
-            base, bytes, kRxQueueCapacityFrames, rxChannels);
+            base, bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels);
         !initOk) {
         ASFW_LOG(Audio, "ASFWAudioNub: RX shared queue initialization failed");
         map->release();
@@ -319,7 +327,7 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     iv->rxQueueBytes = bytes;
 
     ASFW_LOG(Audio, "ASFWAudioNub: RX queue created: %llu bytes, %u frames capacity, ch=%u base=%p",
-             bytes, kRxQueueCapacityFrames, rxChannels, base);
+             bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels, base);
 
     return kIOReturnSuccess;
 }
@@ -524,14 +532,14 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
     uint32_t outputChannels = FallbackOutputChannels(iv);
     (void)TryResolveRuntimeAudioChannels(iv, inputChUnused, outputChannels);
 
-    if (outputChannels == 0 || outputChannels > kMaxAudioChannelsSupported) {
+    if (outputChannels == 0 || outputChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
         ASFW_LOG(Audio, "ASFWAudioNub: CreateOutputAudioBuffer: invalid outputChannelCount=%u",
                  outputChannels);
         return kIOReturnNotReady;
     }
 
     const uint32_t bytesPerFrame = outputChannels * sizeof(int32_t);
-    const uint64_t bufferBytes = uint64_t(kOutputAudioBufferFrames) * bytesPerFrame;
+    const uint64_t bufferBytes = uint64_t(ASFW::Isoch::Config::kAudioIoPeriodFrames) * bytesPerFrame;
 
     // Create IOBufferMemoryDescriptor for shared audio buffer
     IOBufferMemoryDescriptor* mem = nullptr;
@@ -576,10 +584,10 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
     iv->outputAudioMem = mem;    // retained
     iv->outputAudioMap = map;    // retained
     iv->outputAudioBytes = bufferBytes;
-    iv->outputAudioFrameCapacity = kOutputAudioBufferFrames;
+    iv->outputAudioFrameCapacity = ASFW::Isoch::Config::kAudioIoPeriodFrames;
 
     ASFW_LOG(Audio, "ASFWAudioNub: ZERO-COPY output audio buffer created: %llu bytes, %u frames (%u ch), base=%p",
-             bufferBytes, kOutputAudioBufferFrames, outputChannels, base);
+             bufferBytes, ASFW::Isoch::Config::kAudioIoPeriodFrames, outputChannels, base);
 
     return kIOReturnSuccess;
 }

@@ -17,6 +17,8 @@
 #include <cstring>
 #include <algorithm>
 
+#include "../Isoch/Config/AudioConstants.hpp"
+
 namespace ASFW::Shared {
 
 // Magic number: 'ASFW'
@@ -43,7 +45,7 @@ static_assert(sizeof(CachelineAtomicU32) == 64, "CachelineAtomicU32 must be 64 b
 struct TxQueueHeader {
     uint32_t magic;             // 'ASFW' for validation
     uint16_t version;           // Protocol version
-    uint16_t channels;          // Number of audio channels (1..16)
+    uint16_t channels;          // Number of audio channels (1..ASFW::Isoch::Config::kMaxPcmChannels)
     uint32_t capacityFrames;    // Power of two
     uint32_t frameStrideBytes;  // channels * sizeof(int32_t)
     uint32_t dataOffsetBytes;   // Offset to sample data from base
@@ -86,7 +88,7 @@ public:
                                   uint32_t numChannels = 2) {
         if (!base) return false;
         if (!IsPowerOfTwo(capacityFrames)) return false;
-        if (numChannels == 0 || numChannels > 16) return false;
+        if (numChannels == 0 || numChannels > ASFW::Isoch::Config::kMaxPcmChannels) return false;
 
         const uint64_t need = RequiredBytes(capacityFrames, numChannels);
         if (bytes < need) return false;
@@ -129,7 +131,7 @@ public:
         std::atomic_thread_fence(std::memory_order_acquire);
 
         if (hdr->magic != kTxQueueMagic || hdr->version != kTxQueueVersion) return false;
-        if (hdr->channels == 0 || hdr->channels > 16) return false;
+        if (hdr->channels == 0 || hdr->channels > ASFW::Isoch::Config::kMaxPcmChannels) return false;
         if (!IsPowerOfTwo(hdr->capacityFrames)) return false;
 
         const uint64_t need = RequiredBytes(hdr->capacityFrames, hdr->channels);

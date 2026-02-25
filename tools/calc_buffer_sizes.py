@@ -3,7 +3,7 @@
 TX Buffer / Latency calculator for ASFW (48k-centric).
 
 Features:
-- Parse compile-time TX profiles (A/B/C) from TxBufferProfiles.hpp
+- Parse compile-time TX profiles (A/B/C) from AudioTxProfiles.hpp
 - Deterministic timing/depth calculations
 - Monte Carlo simulation for underrun/overrun risk
 - Optional target sweep to find minimum safe ring target
@@ -44,7 +44,7 @@ K_ADK_OUTPUT_SAFETY_FRAMES_DEFAULT = 32
 # Trial safety cap
 K_MAX_TRIALS_DEFAULT = 5000
 
-# Known-safe fallback profile values (keep in sync with TxBufferProfiles.hpp)
+# Known-safe fallback profile values (keep in sync with AudioTxProfiles.hpp)
 FALLBACK_PROFILES: Dict[str, "TxBufferProfile"] = {
     "A": None,  # filled below to avoid forward-reference in dataclass literal
     "B": None,
@@ -1141,7 +1141,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--include-adk-latency", action="store_true")
     parser.add_argument("--json-out", type=Path, default=None)
     parser.add_argument("--csv-out", type=Path, default=None)
-    parser.add_argument("--profile-header", type=Path, default=None, help="optional explicit TxBufferProfiles.hpp path")
+    parser.add_argument("--profile-header", type=Path, default=None, help="optional explicit AudioTxProfiles.hpp path")
     parser.add_argument("--ring-capacity", type=int, default=K_RING_CAPACITY_DEFAULT)
     parser.add_argument("--adk-output-latency-frames", type=int, default=K_ADK_OUTPUT_LATENCY_FRAMES_DEFAULT)
     parser.add_argument("--adk-output-safety-frames", type=int, default=K_ADK_OUTPUT_SAFETY_FRAMES_DEFAULT)
@@ -1166,7 +1166,7 @@ def main() -> int:
 
     script_path = Path(__file__).resolve()
     repo_root = script_path.parent.parent
-    default_header = repo_root / "ASFWDriver" / "Isoch" / "Config" / "TxBufferProfiles.hpp"
+    default_header = repo_root / "ASFWDriver" / "Isoch" / "Config" / "AudioTxProfiles.hpp"
     header_path = args.profile_header if args.profile_header else default_header
 
     parsed = parse_tx_profiles(header_path)

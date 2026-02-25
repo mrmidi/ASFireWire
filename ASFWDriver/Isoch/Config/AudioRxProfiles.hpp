@@ -4,13 +4,16 @@
 
 namespace ASFW::Isoch::Config {
 
-#define ASFW_RX_PROFILE_A 1  // Conservative: matches legacy 2048-frame fill target
-#define ASFW_RX_PROFILE_B 2  // Low-latency: ~5-8 ms input latency at 48 kHz
-#define ASFW_RX_PROFILE_C 3  // Aggressive low-latency: ~3-5 ms, may click on slow machines
+/// Profile identifiers. Override build-time default with -DASFW_RX_TUNING_PROFILE=0 (A), =1 (B), or =2 (C).
+enum class RxProfileId : uint8_t { A = 0, B = 1, C = 2 };
 
-#ifndef ASFW_RX_TUNING_PROFILE
-#define ASFW_RX_TUNING_PROFILE ASFW_RX_PROFILE_B
+#if defined(ASFW_RX_TUNING_PROFILE)
+inline constexpr uint8_t kRxTuningProfileRaw = ASFW_RX_TUNING_PROFILE;
+#else
+inline constexpr uint8_t kRxTuningProfileRaw = 1;  // default=B
 #endif
+static_assert(kRxTuningProfileRaw <= 2, "Invalid ASFW_RX_TUNING_PROFILE — use 0 (A), 1 (B), or 2 (C)");
+inline constexpr RxProfileId kActiveRxProfileId = static_cast<RxProfileId>(kRxTuningProfileRaw);
 
 struct RxBufferProfile {
     const char* name;
@@ -58,16 +61,32 @@ static_assert(IsValidRxProfile(kRxProfileA), "RX Profile A is invalid");
 static_assert(IsValidRxProfile(kRxProfileB), "RX Profile B is invalid");
 static_assert(IsValidRxProfile(kRxProfileC), "RX Profile C is invalid");
 
-#if ASFW_RX_TUNING_PROFILE == ASFW_RX_PROFILE_A
-inline constexpr RxBufferProfile kRxBufferProfile = kRxProfileA;
-#elif ASFW_RX_TUNING_PROFILE == ASFW_RX_PROFILE_B
-inline constexpr RxBufferProfile kRxBufferProfile = kRxProfileB;
-#elif ASFW_RX_TUNING_PROFILE == ASFW_RX_PROFILE_C
-inline constexpr RxBufferProfile kRxBufferProfile = kRxProfileC;
-#else
-#error "Invalid ASFW_RX_TUNING_PROFILE value. Use ASFW_RX_PROFILE_A/B/C."
-#endif
+constexpr RxBufferProfile SelectRxProfile(RxProfileId id) noexcept {
+    switch (id) {
+        case RxProfileId::A: return kRxProfileA;
+        case RxProfileId::C: return kRxProfileC;
+        default:             return kRxProfileB;
+    }
+}
+inline constexpr RxBufferProfile kRxBufferProfile = SelectRxProfile(kActiveRxProfileId);
 
 static_assert(IsValidRxProfile(kRxBufferProfile), "Selected RX buffer profile is invalid");
+
+/// Runtime-selectable profile pointer (defaults to the compile-time kRxBufferProfile).
+/// Callers wishing to support hot-switching should use GetActiveRxProfile() instead of
+/// kRxBufferProfile directly.
+inline const RxBufferProfile* gActiveRxProfile = &kRxBufferProfile;
+
+[[nodiscard]] inline const RxBufferProfile& GetActiveRxProfile() noexcept {
+    return *gActiveRxProfile;
+}
+
+inline void SetActiveRxProfile(RxProfileId id) noexcept {
+    switch (id) {
+        case RxProfileId::A: gActiveRxProfile = &kRxProfileA; break;
+        case RxProfileId::B: gActiveRxProfile = &kRxProfileB; break;
+        case RxProfileId::C: gActiveRxProfile = &kRxProfileC; break;
+    }
+}
 
 }  // namespace ASFW::Isoch::Config

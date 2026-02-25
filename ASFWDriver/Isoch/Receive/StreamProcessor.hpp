@@ -13,6 +13,7 @@
 #include <algorithm>
 #include "../Core/CIPHeader.hpp"
 #include "../Core/ExternalSyncBridge.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../Audio/AM824Decoder.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
@@ -24,10 +25,6 @@ public:
     StreamProcessor() = default;
 
     static constexpr size_t kIsochHeaderSize = 8;  // Timestamp + isoch header
-    // RX shared queue / PCM staging capacity (host-facing PCM channels).
-    static constexpr size_t kMaxSupportedPcmChannels = 16;
-    // Wire AM824 slot capacity (CIP DBS). May exceed PCM channels due to MIDI/control slots.
-    static constexpr size_t kMaxSupportedAm824Slots = 32;
 
     struct RxCipSummary {
         bool hasValidCip{false};
@@ -120,7 +117,7 @@ public:
         const uint32_t cipDbs = header->dataBlockSize;
         const uint32_t queueChannels = sharedRxQueue_ ? sharedRxQueue_->Channels() : 0;
         const bool interestingDbs =
-            (cipDbs > kMaxSupportedAm824Slots) ||
+            (cipDbs > Config::kMaxAmdtpDbs) ||
             (queueChannels > 0 && cipDbs > queueChannels);
         if (interestingDbs) {
             const bool stateChanged =
@@ -146,8 +143,8 @@ public:
                 if (eventCount > 0) {
                     if (queueChannels > 0 && cipDbs > queueChannels) {
                         extraSlotIndex = queueChannels;
-                    } else if (cipDbs > kMaxSupportedPcmChannels) {
-                        extraSlotIndex = static_cast<uint32_t>(kMaxSupportedPcmChannels);
+                    } else if (cipDbs > Config::kMaxPcmChannels) {
+                        extraSlotIndex = Config::kMaxPcmChannels;
                     }
                 }
                 if (extraSlotIndex != UINT32_MAX && extraSlotIndex < header->dataBlockSize) {
@@ -162,7 +159,7 @@ public:
             }
         }
 
-        if (eventCount > 0) {
+             if (eventCount > 0) {
              samplePacketCount_++;
              
              // Update Min/Max Stats
@@ -170,9 +167,9 @@ public:
              if (eventCount > maxEvents_) maxEvents_ = eventCount;
              
              // Extract Samples (Just verify decodability for now)
-             constexpr size_t kEventSampleCapacity = kMaxSupportedPcmChannels;
+             constexpr size_t kEventSampleCapacity = Config::kMaxPcmChannels;
              const size_t wireSlotsPerEvent = header->dataBlockSize;
-             if (wireSlotsPerEvent > kMaxSupportedAm824Slots) {
+             if (wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
                  // We can parse CIP/DBC continuity, but not safely/meaningfully decode this payload.
                  errorCount_++;
                  if (lastUnsupportedWireDbs_ != header->dataBlockSize) {
@@ -180,7 +177,7 @@ public:
                      ASFW_LOG(Isoch,
                               "IR RX: Unsupported wire DBS=%u (max AM824 slots=%zu, queueCh=%u) - skipping decode",
                               header->dataBlockSize,
-                              kMaxSupportedAm824Slots,
+                              static_cast<size_t>(Config::kMaxAmdtpDbs),
                               queueChannels);
                  }
                  return summary;
@@ -356,7 +353,7 @@ private:
     uint8_t lastUnsupportedWireDbs_{0};
 
     // Temp buffer for one PCM event's worth of samples (host-facing channels only).
-    int32_t eventSamples_[kMaxSupportedPcmChannels]{};
+    int32_t eventSamples_[Config::kMaxPcmChannels]{};
     
 public:
     /// Set the output shared queue for decoded samples.

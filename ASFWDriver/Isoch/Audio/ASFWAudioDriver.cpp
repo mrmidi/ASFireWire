@@ -18,7 +18,7 @@
 #include "../../Logging/LogConfig.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
 #include "../Encoding/PacketAssembler.hpp"
-#include "../Config/TxBufferProfiles.hpp"
+#include "../Config/AudioTxProfiles.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -31,7 +31,6 @@
 #include <cstring>
 #include <utility>
 
-static constexpr uint32_t kZeroTimestampPeriod = 512;  // frames per buffer
 static constexpr bool kEnableZeroCopyOutputPath = false;  // temporary A/B gate
 
 // Report only hardware/presentation pipeline latency to HAL.
@@ -250,7 +249,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
 
     ASFW::Isoch::Audio::BuildFallbackBoolControls(parsedConfig);
     ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
-    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxSupportedChannels);
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Isoch::Config::kMaxPcmChannels);
 
     ivars->device.guid = parsedConfig.guid;
     ivars->device.vendorId = parsedConfig.vendorId;
@@ -392,7 +391,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                                                     deviceUID.get(),
                                                     modelUID.get(),
                                                     manufacturerUID.get(),
-                                                    kZeroTimestampPeriod);
+                                                    ASFW::Isoch::Config::kAudioIoPeriodFrames);
     if (!ivars->audioDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
         return kIOReturnNoMemory;
@@ -413,8 +412,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             return kIOReturnNotReady;
         }
 
-        // Driver IO buffers are provisioned for kZeroTimestampPeriod frames.
-        if (ioBufferFrameSize > kZeroTimestampPeriod) {
+        // Driver IO buffers are provisioned for Config::kAudioIoPeriodFrames frames.
+        if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
             return kIOReturnBadArgument;
         }
         
@@ -424,7 +423,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             .outputBuffer = driverIvars->outputBuffer.get(),
             .inputChannelCount = driverIvars->device.inputChannelCount,
             .outputChannelCount = driverIvars->device.outputChannelCount,
-            .ioBufferPeriodFrames = kZeroTimestampPeriod,
+            .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
             .rxStartupDrained = &driverIvars->runtime.rxStartupDrained,
             .rxQueueValid = driverIvars->shared.rxQueueValid,
             .rxQueueReader = &driverIvars->shared.rxQueueReader,
@@ -502,9 +501,9 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     
     // Buffer sizes (still use 32-bit containers for 24-bit audio)
     const uint32_t inputBufferBytes =
-        kZeroTimestampPeriod * sizeof(int32_t) * ivars->device.inputChannelCount;
+        ASFW::Isoch::Config::kAudioIoPeriodFrames * sizeof(int32_t) * ivars->device.inputChannelCount;
     const uint32_t outputBufferBytes =
-        kZeroTimestampPeriod * sizeof(int32_t) * ivars->device.outputChannelCount;
+        ASFW::Isoch::Config::kAudioIoPeriodFrames * sizeof(int32_t) * ivars->device.outputChannelCount;
     
     // Create input buffer and stream
     error = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, inputBufferBytes, 0,
@@ -739,7 +738,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         .zeroCopyEnabled = ivars->shared.zeroCopyEnabled,
         .zeroCopyFrameCapacity = ivars->shared.zeroCopyFrameCapacity,
         .zeroCopyTimeline = &ivars->runtime.zeroCopyTimeline,
-        .ioBufferPeriodFrames = kZeroTimestampPeriod,
+        .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
         .currentSampleRate = ivars->device.currentSampleRate,
         .hostTicksPerBuffer = &ivars->runtime.hostTicksPerBuffer,
         .clockSync = &ivars->runtime.clockSync,
@@ -822,7 +821,7 @@ void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, u
         .zeroCopyEnabled = ivars->shared.zeroCopyEnabled,
         .zeroCopyFrameCapacity = ivars->shared.zeroCopyFrameCapacity,
         .zeroCopyTimeline = &ivars->runtime.zeroCopyTimeline,
-        .ioBufferPeriodFrames = kZeroTimestampPeriod,
+        .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
         .currentSampleRate = ivars->device.currentSampleRate,
         .hostTicksPerBuffer = &ivars->runtime.hostTicksPerBuffer,
         .clockSync = &ivars->runtime.clockSync,

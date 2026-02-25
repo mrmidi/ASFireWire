@@ -8,8 +8,8 @@ using namespace ASFW::Async::HW;
 
 namespace {
 constexpr uint32_t kMaxAudioQuadlets =
-    Encoding::kSamplesPerDataPacket * Encoding::kMaxSupportedAm824Slots;
-static_assert(kMaxAudioQuadlets <= (Tx::Layout::kAudioWriteAhead * Encoding::kMaxSupportedAm824Slots),
+    Encoding::kSamplesPerDataPacket * Config::kMaxAmdtpDbs;
+static_assert(kMaxAudioQuadlets <= (Tx::Layout::kAudioWriteAhead * Config::kMaxAmdtpDbs),
               "TraceEntry audioHost buffer must be large enough");
 } // namespace
 

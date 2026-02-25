@@ -108,7 +108,7 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
     }
 
     const uint32_t queueChannels = sharedTxQueue_.Channels();
-    if (queueChannels == 0 || queueChannels > Encoding::kMaxSupportedChannels) {
+    if (queueChannels == 0 || queueChannels > Config::kMaxPcmChannels) {
         ASFW_LOG(Isoch, "IT: Configure failed - invalid queueChannels=%u", queueChannels);
         return kIOReturnBadArgument;
     }
@@ -127,11 +127,11 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
                      queueChannels);
             return kIOReturnBadArgument;
         }
-        if (requestedAm824Slots > Encoding::kMaxSupportedAm824Slots) {
+        if (requestedAm824Slots > Config::kMaxAmdtpDbs) {
             ASFW_LOG(Isoch,
                      "IT: Configure failed - requestedAm824Slots=%u exceed max supported=%u (pcm=%u)",
                      requestedAm824Slots,
-                     Encoding::kMaxSupportedAm824Slots,
+                     Config::kMaxAmdtpDbs,
                      queueChannels);
             return kIOReturnUnsupported;
         }
@@ -222,7 +222,7 @@ void IsochAudioTxPipeline::PrePrimeFromSharedQueue() noexcept {
              fillBefore, startupPrimeLimitFrames);
 
     constexpr uint32_t kTransferChunk = Config::kTransferChunkFrames;
-    int32_t transferBuf[kTransferChunk * Encoding::kMaxSupportedChannels];
+    int32_t transferBuf[kTransferChunk * Config::kMaxPcmChannels];
     uint32_t totalTransferred = 0;
     uint32_t chunkCount = 0;
     bool primeLimitHit = false;
@@ -287,7 +287,7 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
         if (rbFill < targetRbFillFrames) {
             skipped = false;
             uint32_t want = targetRbFillFrames - rbFill;
-            int32_t transferBuf[kTransferChunkFrames * Encoding::kMaxSupportedChannels];
+            int32_t transferBuf[kTransferChunkFrames * Config::kMaxPcmChannels];
             uint32_t chunks = 0;
 
             while (want > 0 && chunks < kMaxChunksPerRefill) {
@@ -512,7 +512,7 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         const bool isData = (reqCount > Encoding::kCIPHeaderSize);
         if (!isData) continue;
 
-        int32_t samples[Encoding::kSamplesPerDataPacket * Encoding::kMaxSupportedChannels];
+        int32_t samples[Encoding::kSamplesPerDataPacket * Config::kMaxPcmChannels];
         uint32_t framesRead = 0;
 
         if (zeroCopySync) {
