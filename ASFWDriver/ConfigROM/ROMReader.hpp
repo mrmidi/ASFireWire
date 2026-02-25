@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <thread>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -76,7 +77,16 @@ private:
 template <typename Context>
 inline void ASFW::Discovery::ROMReader::ScheduleNextQuadlet(Context* ctx) {
     if (!dispatchQueue_) {
+#ifdef ASFW_HOST_TEST
+        // In host tests without a dispatch queue, we must NOT call issueNextQuadlet 
+        // synchronously because it leads to deep recursion and use-after-free
+        // of the context during stack unwinding.
+        std::thread([ctx]() {
+            ctx->issueNextQuadlet();
+        }).detach();
+#else
         ctx->issueNextQuadlet();
+#endif
         return;
     }
 

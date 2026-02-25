@@ -2,10 +2,13 @@
 #include <vector>
 #include <functional>
 #include <span>
+#include <mutex>
+#include <condition_variable>
 #include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
 #include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
 #include "../ASFWDriver/Discovery/DiscoveryTypes.hpp"
 #include "../ASFWDriver/Controller/ControllerTypes.hpp"
+#include "../ASFWDriver/Async/Interfaces/IFireWireBus.hpp"
 
 using namespace ASFW::Discovery;
 using namespace ASFW::Driver;
@@ -13,38 +16,80 @@ using namespace ASFW::Driver;
 namespace {
 
 // Mock AsyncSubsystem for testing ROM reads without hardware
-class MockAsyncSubsystem {
+class MockAsyncSubsystem : public ASFW::Async::IFireWireBus {
 public:
-    using ReadCallback = std::function<void(ASFW::Async::AsyncHandle,
-                                           ASFW::Async::AsyncStatus,
-                                           std::span<const uint8_t>)>;
-
     struct PendingRead {
-        ASFW::Async::ReadParams params;
-        ReadCallback callback;
-        uint32_t handleValue;
+        ASFW::FW::Generation gen{0};
+        ASFW::FW::NodeId nodeId{0};
+        ASFW::Async::FWAddress address;
+        uint32_t length{0};
+        ASFW::Async::InterfaceCompletionCallback callback;
+        uint32_t handleValue{0};
     };
 
     std::vector<PendingRead> pendingReads_;
     uint32_t nextHandle_ = 1;
+    mutable std::mutex readsMtx_;
+    mutable std::condition_variable readsCv_;
 
-    // Mock ReadWithRetry - stores callback for later simulation
-    ASFW::Async::AsyncHandle ReadWithRetry(const ASFW::Async::ReadParams& params,
-                                           const ASFW::Async::RetryPolicy& policy,
-                                           ReadCallback callback) {
+    ASFW::Async::AsyncHandle ReadBlock(
+        ASFW::FW::Generation generation,
+        ASFW::FW::NodeId nodeId,
+        ASFW::Async::FWAddress address,
+        uint32_t length,
+        ASFW::FW::FwSpeed speed,
+        ASFW::Async::InterfaceCompletionCallback callback) override
+    {
+        std::lock_guard lock(readsMtx_);
         PendingRead read;
-        read.params = params;
-        read.callback = callback;
+        read.gen = generation;
+        read.nodeId = nodeId;
+        read.address = address;
+        read.length = length;
+        read.callback = std::move(callback);
         read.handleValue = nextHandle_++;
-        pendingReads_.push_back(read);
+        pendingReads_.push_back(std::move(read));
+        readsCv_.notify_all();
         return ASFW::Async::AsyncHandle{read.handleValue};
     }
 
+    ASFW::Async::AsyncHandle WriteBlock(
+        ASFW::FW::Generation generation,
+        ASFW::FW::NodeId nodeId,
+        ASFW::Async::FWAddress address,
+        std::span<const uint8_t> data,
+        ASFW::FW::FwSpeed speed,
+        ASFW::Async::InterfaceCompletionCallback callback) override { return ASFW::Async::AsyncHandle{0}; }
+
+    ASFW::Async::AsyncHandle Lock(
+        ASFW::FW::Generation generation,
+        ASFW::FW::NodeId nodeId,
+        ASFW::Async::FWAddress address,
+        ASFW::FW::LockOp lockOp,
+        std::span<const uint8_t> operand,
+        uint32_t responseLength,
+        ASFW::FW::FwSpeed speed,
+        ASFW::Async::InterfaceCompletionCallback callback) override { return ASFW::Async::AsyncHandle{0}; }
+
+    bool Cancel(ASFW::Async::AsyncHandle handle) override { return false; }
+
+    ASFW::FW::FwSpeed GetSpeed(ASFW::FW::NodeId nodeId) const override { return ASFW::FW::FwSpeed::S100; }
+    uint32_t HopCount(ASFW::FW::NodeId nodeA, ASFW::FW::NodeId nodeB) const override { return 0; }
+    ASFW::FW::Generation GetGeneration() const override { return ASFW::FW::Generation{0}; }
+    ASFW::FW::NodeId GetLocalNodeID() const override { return ASFW::FW::NodeId{0}; }
+
     // Simulate successful read completion with provided data
     void SimulateReadSuccess(size_t readIndex, const std::vector<uint32_t>& quadlets) {
-        if (readIndex >= pendingReads_.size()) {
-            return;
+        ASFW::Async::InterfaceCompletionCallback callback;
+        {
+            std::lock_guard lock(readsMtx_);
+            if (readIndex >= pendingReads_.size()) {
+                return;
+            }
+            callback = std::move(pendingReads_[readIndex].callback);
         }
+
+        if (!callback) return;
 
         // Convert quadlets to bytes (big-endian)
         std::vector<uint8_t> bytes;
@@ -56,27 +101,70 @@ public:
             bytes.push_back(q & 0xFF);
         }
 
-        auto& read = pendingReads_[readIndex];
-        read.callback(ASFW::Async::AsyncHandle{read.handleValue},
-                     ASFW::Async::AsyncStatus::kSuccess,
-                     std::span(bytes.data(), bytes.size()));
+        callback(ASFW::Async::AsyncStatus::kSuccess,
+                 std::span(bytes.data(), bytes.size()));
     }
 
     // Simulate timeout
     void SimulateReadTimeout(size_t readIndex) {
-        if (readIndex >= pendingReads_.size()) {
-            return;
+        ASFW::Async::InterfaceCompletionCallback callback;
+        {
+            std::lock_guard lock(readsMtx_);
+            if (readIndex >= pendingReads_.size()) {
+                return;
+            }
+            callback = std::move(pendingReads_[readIndex].callback);
         }
 
-        auto& read = pendingReads_[readIndex];
+        if (!callback) return;
+
         std::vector<uint8_t> empty;
-        read.callback(ASFW::Async::AsyncHandle{read.handleValue},
-                     ASFW::Async::AsyncStatus::kTimeout,
-                     std::span(empty.data(), 0));
+        callback(ASFW::Async::AsyncStatus::kTimeout,
+                 std::span(empty.data(), 0));
     }
 
     size_t GetPendingReadCount() const {
+        std::lock_guard lock(readsMtx_);
         return pendingReads_.size();
+    }
+
+    void WaitForPendingReads(size_t count) const {
+        std::unique_lock lock(readsMtx_);
+        readsCv_.wait_for(lock, std::chrono::seconds(1), [&] { return pendingReads_.size() >= count; });
+    }
+
+    // Helper to simulate all quadlet reads for a standard 5-quadlet BIB
+    void SimulateFullBIBSuccess(const std::vector<uint32_t>& bib) {
+        // ROMReader issues 4 reads: Q0, then Q2, Q3, Q4 (Q1 is prefilled)
+        // We must simulate them one by one because ROMReader is sequential.
+        size_t startIdx = 0;
+        {
+            std::lock_guard lock(readsMtx_);
+            if (pendingReads_.empty()) {
+                return;
+            }
+            startIdx = pendingReads_.size() - 1;
+        }
+        
+        // Q0
+        WaitForPendingReads(startIdx + 1);
+        SimulateReadSuccess(startIdx, {bib[0]});
+        // Q2
+        WaitForPendingReads(startIdx + 2);
+        SimulateReadSuccess(startIdx + 1, {bib[2]});
+        // Q3
+        WaitForPendingReads(startIdx + 3);
+        SimulateReadSuccess(startIdx + 2, {bib[3]});
+        // Q4
+        WaitForPendingReads(startIdx + 4);
+        SimulateReadSuccess(startIdx + 3, {bib[4]});
+    }
+
+    void SimulateSequentialReads(size_t startIdx, const std::vector<uint32_t>& quadlets) {
+        for (size_t i = 0; i < quadlets.size(); ++i) {
+            WaitForPendingReads(startIdx + i + 1);
+            SimulateReadSuccess(startIdx + i, {quadlets[i]});
+        }
     }
 };
 
@@ -84,15 +172,15 @@ public:
 // Q0: info_length=1 (minimal ROM), crc_length=1, crc=valid
 // Format: [31:24]=info_length, [23:16]=crc_length, [15:0]=crc
 std::vector<uint32_t> CreateMinimalBIB() {
-    // Minimal BIB: just header quadlet
-    // info_length=1, crc_length=1, crc=0x0000 (we don't validate CRC in tests)
-    return {0x04040000};  // 0x04=4 bytes info + 4 bytes crc = 1 quadlet each
+    // Minimal BIB: header quadlet + 4 quadlets of zeros
+    // info_length=4 (standard BIB), crc_length=4 (minimal total ROM), crc=0x0000
+    return {0x04040000, 0, 0, 0, 0};
 }
 
 // Helper to create full BIB with GUID
 std::vector<uint32_t> CreateFullBIB(uint64_t guid = 0x0123456789ABCDEF) {
     return {
-        0x0404B95A,  // Q0: header with valid CRC
+        0x0408B95A,  // Q0: header with valid CRC, info_length=4, crc_length=8
         0x31333934,  // Q1: "1394" bus name
         0x8000A002,  // Q2: capabilities (link_speed=S400, etc.)
         static_cast<uint32_t>(guid >> 32),   // Q3: GUID high
@@ -113,19 +201,18 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
 
     bool callbackInvoked = false;
     Generation completedGen = 0;
+    std::mutex mtx;
+    std::condition_variable cv;
 
     ScanCompletionCallback onComplete = [&](Generation gen) {
+        std::lock_guard lock(mtx);
         callbackInvoked = true;
         completedGen = gen;
+        cv.notify_one();
     };
 
-    ROMScannerParams params{
-        .startSpeed = FwSpeed::S100,
-        .maxInflight = 1,
-        .perStepRetries = 0,
-        .maxRootDirQuadlets = 16
-    };
-
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
 
     // Create topology with one remote node
@@ -137,10 +224,17 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     // Trigger manual ROM read
     bool initiated = scanner.TriggerManualRead(1, 42, topology);
     ASSERT_TRUE(initiated);
-    EXPECT_EQ(mockAsync.GetPendingReadCount(), 1);  // BIB read started
+    mockAsync.WaitForPendingReads(1);
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 1);  // BIB read started (Q0)
 
     // Simulate BIB read completion with minimal ROM
-    mockAsync.SimulateReadSuccess(0, CreateMinimalBIB());
+    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+
+    // Wait for async completion
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackInvoked; });
+    }
 
     // CRITICAL: Callback should be invoked immediately (Apple pattern)
     EXPECT_TRUE(callbackInvoked) << "Completion callback should be invoked immediately after ROM read completes";
@@ -161,19 +255,18 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
 
     int callbackCount = 0;
     Generation lastCompletedGen = 0;
+    std::mutex mtx;
+    std::condition_variable cv;
 
     ScanCompletionCallback onComplete = [&](Generation gen) {
+        std::lock_guard lock(mtx);
         callbackCount++;
         lastCompletedGen = gen;
+        cv.notify_one();
     };
 
-    ROMScannerParams params{
-        .startSpeed = FwSpeed::S100,
-        .maxInflight = 1,
-        .perStepRetries = 0,
-        .maxRootDirQuadlets = 4
-    };
-
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
 
     TopologySnapshot topology;
@@ -183,20 +276,29 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
 
     bool initiated = scanner.TriggerManualRead(2, 10, topology);
     ASSERT_TRUE(initiated);
+    mockAsync.WaitForPendingReads(1);
 
     // Simulate BIB read (full ROM)
-    mockAsync.SimulateReadSuccess(0, CreateFullBIB());
+    mockAsync.SimulateFullBIBSuccess(CreateFullBIB());
     EXPECT_EQ(callbackCount, 0) << "Callback should not fire after BIB, waiting for root dir";
-    EXPECT_EQ(mockAsync.GetPendingReadCount(), 2);  // Now reading root dir
+    
+    // Give a moment for async transitions
+    mockAsync.WaitForPendingReads(5);
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 5);  // 4 BIB reads + 1 RootDir header read
 
-    // Simulate root directory read (4 quadlets)
+    // Simulate root directory read (header + 3 entries)
     std::vector<uint32_t> rootDir = {
-        0x00040000,  // Length=4, CRC=0
+        0x00020000,  // Length=2, CRC=0
         0x03000001,  // Vendor ID entry
-        0x17000002,  // Model ID entry
-        0x81000003   // Text descriptor entry
+        0x17000002   // Model ID entry
     };
-    mockAsync.SimulateReadSuccess(1, rootDir);
+    mockAsync.SimulateSequentialReads(4, rootDir);
+
+    // Wait for async completion
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackCount > 0; });
+    }
 
     // Now callback should fire
     EXPECT_EQ(callbackCount, 1) << "Callback should fire after both BIB and root dir complete";
@@ -211,13 +313,8 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
-    ROMScannerParams params{
-        .startSpeed = FwSpeed::S100,
-        .maxInflight = 1,
-        .perStepRetries = 0,
-        .maxRootDirQuadlets = 16
-    };
-
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
     // Create scanner WITHOUT callback
     ROMScanner scanner(mockAsync, speedPolicy, params);
 
@@ -228,9 +325,13 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
 
     bool initiated = scanner.TriggerManualRead(3, 5, topology);
     ASSERT_TRUE(initiated);
+    mockAsync.WaitForPendingReads(1);
 
     // Simulate completion - should not crash
-    mockAsync.SimulateReadSuccess(0, CreateMinimalBIB());
+    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+
+    // Give moment for async transitions
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Verify scan completed without callback
     EXPECT_TRUE(scanner.IsIdleFor(5));
@@ -244,18 +345,17 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     SpeedPolicy speedPolicy;
 
     bool callbackInvoked = false;
+    std::mutex mtx;
+    std::condition_variable cv;
 
     ScanCompletionCallback onComplete = [&](Generation gen) {
+        std::lock_guard lock(mtx);
         callbackInvoked = true;
+        cv.notify_one();
     };
 
-    ROMScannerParams params{
-        .startSpeed = FwSpeed::S100,
-        .maxInflight = 1,
-        .perStepRetries = 0,  // No retries
-        .maxRootDirQuadlets = 16
-    };
-
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
 
     TopologySnapshot topology;
@@ -265,9 +365,20 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
 
     bool initiated = scanner.TriggerManualRead(4, 7, topology);
     ASSERT_TRUE(initiated);
+    mockAsync.WaitForPendingReads(1);
 
-    // Simulate timeout
+    // Simulate timeout on Q0 read
     mockAsync.SimulateReadTimeout(0);
+    mockAsync.WaitForPendingReads(2);
+    mockAsync.SimulateReadTimeout(1);
+    mockAsync.WaitForPendingReads(3);
+    mockAsync.SimulateReadTimeout(2);
+
+    // Wait for async completion
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackInvoked; });
+    }
 
     // Callback should still be invoked (node marked as Failed)
     EXPECT_TRUE(callbackInvoked) << "Callback should be invoked even on failure";
@@ -284,18 +395,17 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     SpeedPolicy speedPolicy;
 
     bool callbackInvoked = false;
+    std::mutex mtx;
+    std::condition_variable cv;
 
     ScanCompletionCallback onComplete = [&](Generation gen) {
+        std::lock_guard lock(mtx);
         callbackInvoked = true;
+        cv.notify_one();
     };
 
-    ROMScannerParams params{
-        .startSpeed = FwSpeed::S100,
-        .maxInflight = 2,
-        .perStepRetries = 0,
-        .maxRootDirQuadlets = 16
-    };
-
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
 
     TopologySnapshot topology;
@@ -307,11 +417,34 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     // Start automatic scan (localNodeId=0, scans nodeId 1 and 2)
     scanner.Begin(1, topology, 0);
 
-    EXPECT_EQ(mockAsync.GetPendingReadCount(), 2);  // Both BIB reads started
+    mockAsync.WaitForPendingReads(2);
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 2);  // Both BIB reads started (Q0 for both nodes)
 
-    // Complete both reads
-    mockAsync.SimulateReadSuccess(0, CreateMinimalBIB());
-    mockAsync.SimulateReadSuccess(1, CreateMinimalBIB());
+    // Complete BIB reads for both nodes
+    // Node 1: index 0 (Q0), index 2 (Q2), index 4 (Q3), index 6 (Q4)
+    // Node 2: index 1 (Q0), index 3 (Q2), index 5 (Q3), index 7 (Q4)
+    // This interleaved pattern happens because ROMReader is sequential per-node but concurrent across nodes.
+    
+    mockAsync.SimulateReadSuccess(0, {CreateMinimalBIB()[0]}); // Node 1 Q0
+    mockAsync.SimulateReadSuccess(1, {CreateMinimalBIB()[0]}); // Node 2 Q0
+    
+    mockAsync.WaitForPendingReads(4);
+    mockAsync.SimulateReadSuccess(2, {0}); // Node 1 Q2
+    mockAsync.SimulateReadSuccess(3, {0}); // Node 2 Q2
+    
+    mockAsync.WaitForPendingReads(6);
+    mockAsync.SimulateReadSuccess(4, {0}); // Node 1 Q3
+    mockAsync.SimulateReadSuccess(5, {0}); // Node 2 Q3
+    
+    mockAsync.WaitForPendingReads(8);
+    mockAsync.SimulateReadSuccess(6, {0}); // Node 1 Q4
+    mockAsync.SimulateReadSuccess(7, {0}); // Node 2 Q4
+
+    // Wait for async completion
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackInvoked; });
+    }
 
     // Callback should fire after last ROM completes
     EXPECT_TRUE(callbackInvoked);
@@ -326,18 +459,17 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     SpeedPolicy speedPolicy;
 
     std::vector<Generation> completedGens;
+    std::mutex mtx;
+    std::condition_variable cv;
 
     ScanCompletionCallback onComplete = [&](Generation gen) {
+        std::lock_guard lock(mtx);
         completedGens.push_back(gen);
+        cv.notify_all();
     };
 
-    ROMScannerParams params{
-        .startSpeed = FwSpeed::S100,
-        .maxInflight = 1,
-        .perStepRetries = 0,
-        .maxRootDirQuadlets = 16
-    };
-
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
 
     TopologySnapshot topology;
@@ -347,12 +479,26 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     // First manual read (gen=1)
     topology.generation = 1;
     scanner.TriggerManualRead(1, 1, topology);
-    mockAsync.SimulateReadSuccess(0, CreateMinimalBIB());
+    mockAsync.WaitForPendingReads(1);
+    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+
+    // Wait for first completion
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return completedGens.size() == 1; });
+    }
 
     // Second manual read (gen=2, scanner restarts)
     topology.generation = 2;
     scanner.TriggerManualRead(1, 2, topology);
-    mockAsync.SimulateReadSuccess(1, CreateMinimalBIB());
+    mockAsync.WaitForPendingReads(5); // 4 from first + 1 for second
+    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+
+    // Wait for second completion
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&] { return completedGens.size() == 2; });
+    }
 
     // Both should have completed
     EXPECT_EQ(completedGens.size(), 2);
