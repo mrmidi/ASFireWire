@@ -17,10 +17,6 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
 
-#ifndef ASFW_MAX_SUPPORTED_CHANNELS
-#define ASFW_MAX_SUPPORTED_CHANNELS 16 // NOSONAR(cpp:S5028): guard allows external override via -D flag
-#endif
-
 namespace ASFW::Isoch {
 
 class StreamProcessor {
@@ -29,7 +25,7 @@ public:
 
     static constexpr size_t kIsochHeaderSize = 8;  // Timestamp + isoch header
     // RX shared queue / PCM staging capacity (host-facing PCM channels).
-    static constexpr size_t kMaxSupportedPcmChannels = ASFW_MAX_SUPPORTED_CHANNELS;
+    static constexpr size_t kMaxSupportedPcmChannels = 16;
     // Wire AM824 slot capacity (CIP DBS). May exceed PCM channels due to MIDI/control slots.
     static constexpr size_t kMaxSupportedAm824Slots = 32;
 
