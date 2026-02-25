@@ -38,8 +38,7 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     Wire::ControllerStatusWire status{};
     status.version = Wire::kControllerStatusWireVersion;
     status.flags = 0;
-    std::strncpy(status.stateName, "NotReady", sizeof(status.stateName));
-    status.stateName[sizeof(status.stateName) - 1] = '\0';
+    strlcpy(status.stateName, "NotReady", sizeof(status.stateName));
     status.generation = 0;
     status.nodeCount = 0;
     status.localNodeID = 0xFFFFFFFFu;
@@ -52,8 +51,7 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
     if (controller) {
         auto stateStr = std::string(ToString(controller->StateMachine().CurrentState()));
-        std::strncpy(status.stateName, stateStr.c_str(), sizeof(status.stateName) - 1);
-        status.stateName[sizeof(status.stateName) - 1] = '\0';
+        strlcpy(status.stateName, stateStr.c_str(), sizeof(status.stateName));
 
         const auto& busResetMetrics = controller->Metrics().BusReset();
         status.busResetCount = busResetMetrics.resetCount;

@@ -137,8 +137,7 @@ kern_return_t BusResetHandler::GetBusResetHistory(IOUserClientMethodArguments* a
         }
 
         // Copy context info
-        std::strncpy(wire.contextInfo, snapshot->contextInfo, sizeof(wire.contextInfo) - 1);
-        wire.contextInfo[sizeof(wire.contextInfo) - 1] = '\0';
+        strlcpy(wire.contextInfo, snapshot->contextInfo, sizeof(wire.contextInfo));
 
         // Append to OSData
         if (!data->appendBytes(&wire, sizeof(wire))) {

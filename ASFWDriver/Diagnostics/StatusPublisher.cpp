@@ -83,9 +83,7 @@ void StatusPublisher::Publish(ControllerCore* controller,
         const auto state = controller->StateMachine().CurrentState();
         snapshot.controllerState = static_cast<uint32_t>(state);
         auto stateName = std::string(ToString(state));
-        std::strncpy(snapshot.controllerStateName,
-                     stateName.c_str(),
-                     sizeof(snapshot.controllerStateName) - 1);
+        strlcpy(snapshot.controllerStateName, stateName.c_str(), sizeof(snapshot.controllerStateName));
 
         const auto& busMetrics = controller->Metrics().BusReset();
         snapshot.busResetCount = busMetrics.resetCount;

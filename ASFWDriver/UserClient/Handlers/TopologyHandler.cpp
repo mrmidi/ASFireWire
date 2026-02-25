@@ -82,8 +82,7 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
     wire.crcError = selfID.crcError ? 1 : 0;
 
     if (selfID.errorReason.has_value()) {
-        std::strncpy(wire.errorReason, selfID.errorReason->c_str(), sizeof(wire.errorReason) - 1);
-        wire.errorReason[sizeof(wire.errorReason) - 1] = '\0';
+        strlcpy(wire.errorReason, selfID.errorReason->c_str(), sizeof(wire.errorReason));
     } else {
         wire.errorReason[0] = '\0';
     }
