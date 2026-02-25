@@ -24,10 +24,23 @@ struct ReadWriteView: View {
     @State private var lastHandle: UInt16?
     @State private var lastError: String?
     @State private var lastTransactionDate: Date?
+    @State private var lastStatus: UInt32?
+    @State private var lastResponseCode: UInt8?
+    @State private var lastPayloadHex: String?
 
     enum OperationType: String, CaseIterable {
         case read = "Read"
         case write = "Write"
+        case blockRead = "Block Read"
+        case blockWrite = "Block Write"
+
+        var isRead: Bool {
+            self == .read || self == .blockRead
+        }
+
+        var isWrite: Bool {
+            self == .write || self == .blockWrite
+        }
     }
 
     var body: some View {
@@ -42,7 +55,7 @@ struct ReadWriteView: View {
                 .pickerStyle(.segmented)
                 .padding(.bottom, 8)
 
-                Text("Select transaction type: Read retrieves data, Write sends data")
+                Text("Select transaction type: Read/Write use default mode. Block Read/Write forces block tCode.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } label: {
@@ -122,7 +135,7 @@ struct ReadWriteView: View {
                     }
 
                     // Payload (Write only)
-                    if operationType == .write {
+                    if operationType.isWrite {
                         Divider()
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -169,6 +182,39 @@ struct ReadWriteView: View {
                             Text("Sent: \(date.formatted(date: .omitted, time: .standard))")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if let status = lastStatus {
+                        HStack {
+                            Label("Status", systemImage: status == 0 ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .font(.headline)
+                                .foregroundColor(status == 0 ? .green : .red)
+                            Spacer()
+                            Text(String(format: "0x%08X", status))
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+
+                    if let rCode = lastResponseCode {
+                        HStack {
+                            Label("rCode", systemImage: rCode == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                                .font(.headline)
+                                .foregroundColor(rCode == 0 ? .green : .orange)
+                            Spacer()
+                            Text(String(format: "0x%X", rCode) + " (" + viewModel.decodeResponseCode(rCode) + ")")
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+
+                    if let payloadHex = lastPayloadHex {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Payload")
+                                .font(.headline)
+                            Text(payloadHex)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
                         }
                     }
 
@@ -241,56 +287,92 @@ struct ReadWriteView: View {
 
         isSending = true
         lastError = nil
+        lastStatus = nil
+        lastResponseCode = nil
+        lastPayloadHex = nil
 
-        switch operationType {
-        case .read:
-            // Use DebugViewModel method for consistency with logging
-            viewModel.performAsyncRead(
-                destinationID: destID,
-                addressHigh: addrHi,
-                addressLow: addrLo,
-                length: len
-            )
-
-            // Update UI after async operation completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.isSending = false
-                if viewModel.asyncErrorMessage == nil {
-                    // Success - extract handle from status message if available
-                    self.lastTransactionDate = Date()
-                    self.lastError = nil
-                } else {
-                    self.lastError = viewModel.asyncErrorMessage
-                }
-            }
-
-        case .write:
-            guard let payloadData = parsePayloadHex(payloadHex) else {
+        let payloadData: Data?
+        if operationType.isWrite {
+            guard let parsed = parsePayloadHex(payloadHex) else {
                 DispatchQueue.main.async {
                     self.isSending = false
                     self.lastError = "Invalid payload hex format"
                 }
                 return
             }
+            payloadData = parsed
+        } else {
+            payloadData = nil
+        }
 
-            // Use DebugViewModel method for consistency with logging
-            viewModel.performAsyncWrite(
+        let handle: UInt16?
+
+        switch operationType {
+        case .read:
+            handle = viewModel.connector.asyncRead(
                 destinationID: destID,
                 addressHigh: addrHi,
                 addressLow: addrLo,
-                payload: payloadData
+                length: len
             )
 
-            // Update UI after async operation completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        case .blockRead:
+            handle = viewModel.connector.asyncBlockRead(
+                destinationID: destID,
+                addressHigh: addrHi,
+                addressLow: addrLo,
+                length: len
+            )
+
+        case .write:
+            handle = viewModel.connector.asyncWrite(
+                destinationID: destID,
+                addressHigh: addrHi,
+                addressLow: addrLo,
+                payload: payloadData ?? Data()
+            )
+
+        case .blockWrite:
+            handle = viewModel.connector.asyncBlockWrite(
+                destinationID: destID,
+                addressHigh: addrHi,
+                addressLow: addrLo,
+                payload: payloadData ?? Data()
+            )
+        }
+
+        guard let handle else {
+            isSending = false
+            lastError = viewModel.connector.lastError ?? "Failed to issue transaction"
+            return
+        }
+
+        lastHandle = handle
+        lastTransactionDate = Date()
+        pollForResult(handle: handle, isReadOperation: operationType.isRead, deadline: Date().addingTimeInterval(2.0))
+    }
+
+    private func pollForResult(handle: UInt16,
+                               isReadOperation: Bool,
+                               deadline: Date) {
+        viewModel.fetchTransactionResult(handle: handle) { result in
+            if let result {
                 self.isSending = false
-                if viewModel.asyncErrorMessage == nil {
-                    // Success
-                    self.lastTransactionDate = Date()
-                    self.lastError = nil
-                } else {
-                    self.lastError = viewModel.asyncErrorMessage
-                }
+                self.lastError = nil
+                self.lastStatus = result.status
+                self.lastResponseCode = result.responseCode
+                self.lastPayloadHex = isReadOperation ? formatPayloadHex(result.payload) : nil
+                return
+            }
+
+            if Date() >= deadline {
+                self.isSending = false
+                self.lastError = "Timed out waiting for transaction result"
+                return
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.pollForResult(handle: handle, isReadOperation: isReadOperation, deadline: deadline)
             }
         }
     }
@@ -339,6 +421,13 @@ struct ReadWriteView: View {
         }
 
         return data
+    }
+
+    private func formatPayloadHex(_ data: Data) -> String {
+        if data.isEmpty {
+            return "(empty)"
+        }
+        return data.map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 }
 
