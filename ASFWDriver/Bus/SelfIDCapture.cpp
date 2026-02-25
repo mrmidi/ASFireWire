@@ -255,7 +255,7 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
         seqSummary = "none";
     }
     ASFW_LOG(Hardware, "🧵 Sequences: %{public}s", seqSummary.c_str());
-    if (!result.valid) {
+    if (!result.valid) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG(Hardware, "❌ Self-ID decode flagged invalid data - inspect sequences above");
     } else {
         ASFW_LOG(Hardware, "✅ Self-ID decode valid");

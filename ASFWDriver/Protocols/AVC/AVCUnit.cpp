@@ -107,7 +107,7 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
                 ProbePlugs([this, completion](bool plugsOk) {
                     initialized_ = plugsOk;
 
-                    if (plugsOk) {
+                    if (plugsOk) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                         ASFW_LOG_V1(AVC,
                                    "AVCUnit: Initialized - "
                                    "%zu subunits, %u/%u ISO plugs, "
@@ -294,7 +294,7 @@ void AVCUnit::ProbeSignalFormat(std::function<void(bool)> completion) {
                 auto rate = StreamFormats::MusicSubunitCodeToSampleRate(fmt.formatSync);
                 uint32_t freqHz = StreamFormats::SampleRateToHz(rate);
                 
-                if (freqHz > 0) {
+                if (freqHz > 0) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                     ASFW_LOG_INFO(Discovery, "Device is locked to %u Hz (Code 0x%02x).", freqHz, fmt.formatSync);
                 } else {
                     ASFW_LOG_INFO(Discovery, "Device is locked to Unknown Rate (Code 0x%02x).", fmt.formatSync);

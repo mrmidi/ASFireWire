@@ -956,7 +956,7 @@ void AsyncSubsystem::RearmATContexts() {
                 generationTracker_->OnSelfIDComplete(nodeID);
             }
 
-            if (rawBus == kUnassignedBus) {
+            if (rawBus == kUnassignedBus) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                 ASFW_LOG(Async,
                          "NodeID valid: using broadcast bus (0x3ff) for source field (raw=0x%08x node=%u)",
                          nodeIdReg,
@@ -972,7 +972,7 @@ void AsyncSubsystem::RearmATContexts() {
     }
 
     // Re-arm AT contexts: ContextManager is the authoritative owner.
-    if (!contextManager_) {
+    if (!contextManager_) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG(Async, "RearmATContexts: ContextManager unavailable - cannot rearm");
         return;
     }

@@ -101,7 +101,7 @@ kern_return_t IsochHandler::TestIRMAllocation(IOUserClientMethodArguments* args)
 
         irmClient->AllocateResources(kTestChannel, kAllocationUnits,
             [](ASFW::IRM::AllocationStatus status) {
-                if (status == ASFW::IRM::AllocationStatus::Success) {
+                if (status == ASFW::IRM::AllocationStatus::Success) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                     ASFW_LOG(UserClient, "✅ IRM allocation succeeded!");
                 } else {
                     ASFW_LOG(UserClient, "❌ IRM allocation failed: %d", static_cast<int>(status));
@@ -128,7 +128,7 @@ kern_return_t IsochHandler::TestIRMRelease(IOUserClientMethodArguments* args) {
 
     irmClient->ReleaseResources(kTestChannel, kTestBandwidth,
         [](ASFW::IRM::AllocationStatus status) {
-            if (status == ASFW::IRM::AllocationStatus::Success) {
+            if (status == ASFW::IRM::AllocationStatus::Success) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                 ASFW_LOG(UserClient, "✅ IRM release succeeded!");
             } else {
                 ASFW_LOG(UserClient, "❌ IRM release failed: %d", static_cast<int>(status));
@@ -227,7 +227,7 @@ kern_return_t IsochHandler::TestCMPConnectIPCR(IOUserClientMethodArguments* args
 
     cmpClient->ConnectIPCR(kTestPlug, kTestChannel,
         [](ASFW::CMP::CMPStatus status) {
-            if (status == ASFW::CMP::CMPStatus::Success) {
+            if (status == ASFW::CMP::CMPStatus::Success) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                 ASFW_LOG(UserClient, "✅ CMP iPCR connect succeeded!");
             } else {
                 ASFW_LOG(UserClient, "❌ CMP iPCR connect failed: %d", static_cast<int>(status));
@@ -251,7 +251,7 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
 
     cmpClient->DisconnectIPCR(kTestPlug,
         [](ASFW::CMP::CMPStatus status) {
-            if (status == ASFW::CMP::CMPStatus::Success) {
+            if (status == ASFW::CMP::CMPStatus::Success) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                 ASFW_LOG(UserClient, "✅ CMP iPCR disconnect succeeded!");
             } else {
                 ASFW_LOG(UserClient, "❌ CMP iPCR disconnect failed: %d", static_cast<int>(status));

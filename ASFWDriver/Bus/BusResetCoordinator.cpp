@@ -1090,7 +1090,7 @@ void BusResetCoordinator::SetPreviousScanHadBusyNodes(bool busy) {
                 currentDiscoveryDelayMs_ + kDiscoveryDelayStepMs,
                 kMaxDiscoveryDelayMs);
         }
-        if (!previousScanHadBusyNodes_) {
+        if (!previousScanHadBusyNodes_) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             ASFW_LOG(BusReset, "previousScanHadBusyNodes: false → true, delay=%ums",
                      currentDiscoveryDelayMs_);
         } else {

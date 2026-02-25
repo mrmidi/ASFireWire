@@ -123,7 +123,7 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         default: break;
     }
 
-    if (!device.vendorName.empty() && !device.modelName.empty()) {
+    if (!device.vendorName.empty() && !device.modelName.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
                  "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.vendorName.c_str(),

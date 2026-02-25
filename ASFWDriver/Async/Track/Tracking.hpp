@@ -81,7 +81,7 @@ public:
             ASFW_LOG(Async, "ERROR: Track_Tracking: IOLockAlloc failed!");
         }
 
-        if (!txnMgr_) {
+        if (!txnMgr_) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             ASFW_LOG(Async, "ERROR: Track_Tracking: TransactionManager required!");
         } else {
             ASFW_LOG(Async, "✅ Track_Tracking: Transaction-only mode (Phase 2.0)");
