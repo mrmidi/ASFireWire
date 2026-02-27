@@ -16,6 +16,9 @@ build-tests*/
 # .DS_Store
 .DS_Store
 
+# .env
+.env
+
 # Coverage report
 coverage_html/
 coverage.profdata

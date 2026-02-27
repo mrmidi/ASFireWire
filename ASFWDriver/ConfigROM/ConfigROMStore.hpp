@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -59,42 +60,48 @@ public:
     void PruneInvalid();
 
 private:
-    // Key: (generation << 8) | nodeId
+    // Packed key layout: generation in upper bits, node ID in low 8 bits.
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
+    static std::optional<uint8_t> ValidateNodeIdForKey(uint16_t nodeId);
 
     std::map<GenNodeKey, ConfigROM> romsByGenNode_;
     std::map<Guid64, ConfigROM> romsByGuid_;
 };
 
-// ============================================================================
-// ROM Parser Utilities (minimal bounded parser for BIB + root directory)
-// ============================================================================
+// Explicit parser boundary for wire-format Config ROM decoding.
+class ConfigROMParser {
+public:
+    // Parse Bus Info Block from 4 quadlets (16 bytes) in BIG-ENDIAN wire format.
+    static std::optional<BusInfoBlock> ParseBIB(const uint32_t* bibQuadlets);
 
-namespace ROMParser {
+    // Parse root directory entries from BIG-ENDIAN wire format quadlets.
+    static std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
+                                                    uint32_t maxQuadlets);
 
-// Parse Bus Info Block from 4 quadlets (16 bytes) in BIG-ENDIAN wire format
-// Converts to host-endian and extracts link speed, vendorId, GUID
-std::optional<BusInfoBlock> ParseBIB(const uint32_t* bibQuadlets);
+    // Parse text descriptor from a leaf at the given ROM offset.
+    static std::string ParseTextDescriptorLeaf(std::span<const uint32_t> allQuadlets,
+                                               uint32_t leafOffsetQuadlets,
+                                               const std::string& endianness);
 
-// Parse root directory entries from N quadlets in BIG-ENDIAN wire format
-// Stops after maxEntries or end of directory (whichever comes first)
-// Returns vector of recognized key-value entries
-std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
-                                         uint32_t maxQuadlets);
+    // Calculate total Config ROM size from BIB crc_length field.
+    static uint32_t CalculateROMSize(const BusInfoBlock& bib);
 
-// Parse text descriptor from a leaf at the given ROM offset
-// Returns decoded ASCII text, or empty string if not a valid text descriptor
-std::string ParseTextDescriptorLeaf(const uint32_t* allQuadlets, uint32_t totalQuadlets,
-                                    uint32_t leafOffsetQuadlets, const std::string& endianness);
+private:
+    static uint16_t CRCStep(uint16_t crc, uint16_t data);
+    static uint16_t ComputeCRC16_1212(std::span<const uint32_t> quadletsHost);
+    static bool IsLeafOrDirectory(uint8_t keyType);
+    static uint32_t ComputeScanLimit(uint16_t dirLength, uint32_t maxQuadlets);
+    static std::optional<uint32_t> ComputeTargetOffsetQuadlets(uint8_t keyType,
+                                                               uint32_t value,
+                                                               uint32_t index);
+    static void AppendRecognizedEntry(std::vector<RomEntry>& entries,
+                                      uint8_t keyType,
+                                      uint8_t keyId,
+                                      uint32_t value,
+                                      uint32_t targetOffsetQuadlets);
 
-// Calculate total Config ROM size from Bus Info Block crc_length field
-// Returns total ROM size in bytes (clamped to IEEE 1394 maximum of 1024 bytes)
-uint32_t CalculateROMSize(const BusInfoBlock& bib);
-
-// Utility: Convert big-endian quadlet to host-endian
-uint32_t SwapBE32(uint32_t be);
-
-} // namespace ROMParser
+    static constexpr uint32_t kMaxDirectoryEntriesToScan = 64;
+};
 
 } // namespace ASFW::Discovery

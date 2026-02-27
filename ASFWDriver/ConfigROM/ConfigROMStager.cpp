@@ -1,8 +1,11 @@
 #include "ConfigROMStager.hpp"
+#include "ConfigROMConstants.hpp"
 
 #include <DriverKit/IOLib.h>
 
+#include <bit>
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 
 #include "../Hardware/HardwareInterface.hpp"
@@ -11,7 +14,16 @@
 
 namespace {
 
-constexpr uint64_t kRomAlignment = 1024; // OHCI §5.5.6 requires 1 KiB alignment
+[[nodiscard]] inline void* MapAddressAsVoidPtr(IOMemoryMap* map) noexcept {
+    const auto raw = static_cast<uintptr_t>(map->GetAddress());
+    return std::bit_cast<void*>(raw);
+}
+
+template <typename T>
+[[nodiscard]] inline T* MapAddressAs(IOMemoryMap* map) noexcept {
+    const auto raw = static_cast<uintptr_t>(map->GetAddress());
+    return std::bit_cast<T*>(raw);
+}
 
 } // namespace
 
@@ -26,7 +38,10 @@ kern_return_t ConfigROMStager::Prepare(HardwareInterface& hw, size_t romBytes) {
     }
 
     IOBufferMemoryDescriptor* rawBuffer = nullptr;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, romBytes, kRomAlignment, &rawBuffer);
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut,
+                                                        romBytes,
+                                                        ASFW::ConfigROM::kRomAlignmentBytes,
+                                                        &rawBuffer);
     if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
     }
@@ -68,7 +83,7 @@ kern_return_t ConfigROMStager::Prepare(HardwareInterface& hw, size_t romBytes) {
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoResources;
     }
 
-    if ((segment.address & (kRomAlignment - 1)) != 0) {
+    if ((segment.address & (ASFW::ConfigROM::kRomAlignmentBytes - 1)) != 0) {
         ASFW_LOG(Hardware, "Config ROM DMA address 0x%llx not 1KiB aligned", segment.address);
         dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         dma_.reset();
@@ -107,10 +122,9 @@ kern_return_t ConfigROMStager::StageImage(const ConfigROMBuilder& image, Hardwar
 
     auto romSpan = image.ImageNative();
     const size_t romBytes = romSpan.size() * sizeof(uint32_t);
-    void* base = reinterpret_cast<void*>(map_->GetAddress());
-    const size_t capacity = static_cast<size_t>(map_->GetLength());
+    auto* base = MapAddressAsVoidPtr(map_.get());
 
-    if (romBytes > capacity) {
+    if (const auto capacity = static_cast<size_t>(map_->GetLength()); romBytes > capacity) {
         ASFW_LOG(Hardware,
                      "Config ROM image (%zu bytes) exceeds staging buffer (%zu bytes)",
                      romBytes, capacity);
@@ -121,14 +135,14 @@ kern_return_t ConfigROMStager::StageImage(const ConfigROMBuilder& image, Hardwar
     if (romBytes > 0) {
         std::memcpy(base, romSpan.data(), romBytes);
 
-        uint32_t* buffer = static_cast<uint32_t*>(base);
+        auto* buffer = MapAddressAs<uint32_t>(map_.get());
         savedHeader_ = buffer[0];
         savedBusOptions_ = image.BusInfoQuad();
         buffer[0] = 0;
 
         std::atomic_thread_fence(std::memory_order_seq_cst);
 
-        volatile const uint32_t* sync = static_cast<volatile const uint32_t*>(base);
+        auto* sync = MapAddressAs<volatile const uint32_t>(map_.get());
         for (size_t i = 0; i < romBytes / sizeof(uint32_t); i++) {
             (void)sync[i];
         }
@@ -161,18 +175,17 @@ kern_return_t ConfigROMStager::StageImage(const ConfigROMBuilder& image, Hardwar
         return kIOReturnUnsupported;
     }
 
-    static bool guidWritten = false;
-    if (!guidWritten) {
+    if (!guidWritten_) {
         hw.WriteAndFlush(Register32::kGUIDHi, image.GuidHiQuad());
         hw.WriteAndFlush(Register32::kGUIDLo, image.GuidLoQuad());
-        guidWritten = true;
+        guidWritten_ = true;
     }
 
     hw.WriteAndFlush(Register32::kBusOptions, image.BusInfoQuad());
     
     hw.WriteAndFlush(Register32::kConfigROMHeader, image.HeaderQuad());
 
-    const uint32_t mapAddr = static_cast<uint32_t>(segment_.address);
+    const auto mapAddr = static_cast<uint32_t>(segment_.address);
     hw.WriteAndFlush(Register32::kConfigROMMap, mapAddr);
     
     return kIOReturnSuccess;
@@ -180,19 +193,23 @@ kern_return_t ConfigROMStager::StageImage(const ConfigROMBuilder& image, Hardwar
 
 void ConfigROMStager::Teardown(HardwareInterface& hw) {
     if (prepared_) {
+        ASFW_LOG(Hardware, "ConfigROMStager: Tearing down - clearing ConfigROMMap and BIBimageValid");
         hw.ClearHCControlBits(HCControlBits::kBibImageValid);
         hw.WriteAndFlush(Register32::kConfigROMMap, 0);
     }
 
     if (dma_) {
+        ASFW_LOG(Hardware, "ConfigROMStager: Completing DMA and releasing resources");
         dma_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         dma_.reset();
     }
     map_.reset();
     buffer_.reset();
     prepared_ = false;
+    guidWritten_ = false;
     segment_ = {};
     dmaFlags_ = 0;
+    ASFW_LOG(Hardware, "ConfigROMStager: Teardown complete");
 }
 
 kern_return_t ConfigROMStager::EnsurePrepared(HardwareInterface& hw) {
@@ -203,7 +220,7 @@ void ConfigROMStager::ZeroBuffer() {
     if (!map_) {
         return;
     }
-    std::memset(reinterpret_cast<void*>(map_->GetAddress()), 0, static_cast<size_t>(map_->GetLength()));
+    std::memset(MapAddressAsVoidPtr(map_.get()), 0, static_cast<size_t>(map_->GetLength()));
 }
 
 void ConfigROMStager::RestoreHeaderAfterBusReset() {
@@ -211,15 +228,14 @@ void ConfigROMStager::RestoreHeaderAfterBusReset() {
         return;
     }
 
-    void* base = reinterpret_cast<void*>(map_->GetAddress());
-    uint32_t* buffer = static_cast<uint32_t*>(base);
+    auto* buffer = MapAddressAs<uint32_t>(map_.get());
 
     const uint32_t currentHeader = buffer[0];
     buffer[0] = savedHeader_;
 
     std::atomic_thread_fence(std::memory_order_seq_cst);
-    volatile uint32_t sync = buffer[0];
-    (void)sync;
+    auto* sync = MapAddressAs<volatile const uint32_t>(map_.get());
+    (void)sync[0];
     std::atomic_thread_fence(std::memory_order_seq_cst);
 
     ASFW_LOG(Hardware, "Config ROM header restored in DMA buffer: 0x%08x → 0x%08x",

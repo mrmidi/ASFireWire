@@ -263,7 +263,7 @@ public:
 
     void InvokeResponseHandler(kern_return_t kr,
                                uint8_t responseCode,
-                               std::span<const uint8_t> data) noexcept {
+                               std::span<const uint8_t> data) const noexcept {
         ASFW_LOG_V3(Async, "🔍 [InvokeResponseHandler] tLabel=%u this=%p responseHandler_valid=%d kr=0x%x rCode=0x%02X dataLen=%zu",
                     label_.value, this, responseHandler_ ? 1 : 0, kr, responseCode, data.size());
         if (responseHandler_) {

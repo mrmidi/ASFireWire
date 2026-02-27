@@ -6,6 +6,10 @@
 
 set -Eeuo pipefail
 
+# Always run from the repository root so relative build paths are stable.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 # -------- Config --------
 PROJECT_NAME="ASFW"
 SCHEME_NAME="ASFW"

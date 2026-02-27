@@ -8,6 +8,22 @@
 #include <memory>
 #include <DriverKit/IOReturn.h>
 
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#ifndef OSSwapBigToHostInt32
+#define OSSwapBigToHostInt32(x) __builtin_bswap32(static_cast<uint32_t>(x))
+#endif
+#ifndef OSSwapHostToBigInt32
+#define OSSwapHostToBigInt32(x) __builtin_bswap32(static_cast<uint32_t>(x))
+#endif
+#else
+#ifndef OSSwapBigToHostInt32
+#define OSSwapBigToHostInt32(x) static_cast<uint32_t>(x)
+#endif
+#ifndef OSSwapHostToBigInt32
+#define OSSwapHostToBigInt32(x) static_cast<uint32_t>(x)
+#endif
+#endif
+
 struct IOAddressSegment {
     uint64_t address{0};
     uint64_t length{0};

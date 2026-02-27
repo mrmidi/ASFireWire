@@ -2,7 +2,13 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <span>
 #include <thread>
+#include <utility>
+#include <vector>
+
+#include "ConfigROMConstants.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -65,34 +71,72 @@ public:
                              CompletionCallback callback);
 
 private:
+    struct BIBReadContext {
+        CompletionCallback userCallback;
+        uint8_t nodeId{0};
+        Generation generation{0};
+        std::vector<uint32_t> buffer;
+        uint8_t quadletIndex{0};
+        uint8_t successCount{0};
+    };
+
+    struct RootDirReadContext {
+        CompletionCallback userCallback;
+        uint8_t nodeId{0};
+        Generation generation{0};
+        uint32_t baseAddress{0};
+        uint32_t quadletCount{0};
+        std::vector<uint32_t> buffer;
+        uint32_t quadletIndex{0};
+        uint32_t successCount{0};
+        bool headerFirstMode{false};
+    };
+
+    static constexpr uint32_t kBIBLength = ASFW::ConfigROM::kBIBLengthBytes;
+    static constexpr uint32_t kBIBQuadlets = ASFW::ConfigROM::kBIBQuadletCount;
+
     Async::IFireWireBus& bus_;
     OSSharedPtr<IODispatchQueue> dispatchQueue_;
 
-    template <typename Context>
-    void ScheduleNextQuadlet(Context* ctx);
+    void ScheduleBIBStep(const std::shared_ptr<BIBReadContext>& ctx);
+    void HandleBIBReadComplete(const std::shared_ptr<BIBReadContext>& ctx,
+                               Async::AsyncStatus status,
+                               std::span<const uint8_t> responsePayload);
+    void EmitBIBResult(const std::shared_ptr<BIBReadContext>& ctx,
+                       bool success) const;
+
+    void ScheduleRootDirStep(const std::shared_ptr<RootDirReadContext>& ctx);
+    void HandleRootDirReadComplete(const std::shared_ptr<RootDirReadContext>& ctx,
+                                   Async::AsyncStatus status,
+                                   std::span<const uint8_t> responsePayload);
+    void EmitRootDirFailure(const std::shared_ptr<RootDirReadContext>& ctx) const;
+    void EmitRootDirResult(const std::shared_ptr<RootDirReadContext>& ctx,
+                           bool success,
+                           uint32_t quadletCountForResult) const;
+
+    void ScheduleNextQuadlet(std::function<void()> task);
 };
 
 } // namespace ASFW::Discovery
 
-template <typename Context>
-inline void ASFW::Discovery::ROMReader::ScheduleNextQuadlet(Context* ctx) {
+inline void ASFW::Discovery::ROMReader::ScheduleNextQuadlet(std::function<void()> task) {
     if (!dispatchQueue_) {
 #ifdef ASFW_HOST_TEST
-        // In host tests without a dispatch queue, we must NOT call issueNextQuadlet 
+        // In host tests without a dispatch queue, we must NOT call issueNextQuadlet
         // synchronously because it leads to deep recursion and use-after-free
         // of the context during stack unwinding.
-        std::thread([ctx]() {
-            ctx->issueNextQuadlet();
+        std::thread([task = std::move(task)]() mutable {
+            task();
         }).detach();
 #else
-        ctx->issueNextQuadlet();
+        task();
 #endif
         return;
     }
 
     auto queue = dispatchQueue_;
-    Context* capturedCtx = ctx;
+    auto capturedTask = std::move(task);
     queue->DispatchAsync(^{
-        capturedCtx->issueNextQuadlet();
+        capturedTask();
     });
 }

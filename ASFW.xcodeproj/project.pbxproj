@@ -591,6 +591,9 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
 				PRODUCT_NAME = "$(inherited)";
@@ -624,6 +627,9 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ASFWDriver/Info.plist;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
 				PRODUCT_NAME = "$(inherited)";

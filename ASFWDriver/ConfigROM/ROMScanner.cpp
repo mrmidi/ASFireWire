@@ -1,22 +1,18 @@
 #include "ROMScanner.hpp"
+#include "ROMScannerFSMFlow.hpp"
+#include "ConfigROMPolicies.hpp"
 #include "../Async/Interfaces/IFireWireBus.hpp"
-#include "../Bus/TopologyManager.hpp"
-#include "../IRM/IRMTypes.hpp"
-#include "ConfigROMStore.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Logging/LogConfig.hpp"
 
-#include <array>
-#include <cstring>
-
-// #include <libkern/OSByteOrder.h>  // For OSSwapHostToBigInt32
+#include <algorithm>
 
 namespace ASFW::Discovery {
 
 ROMScanner::ROMScanner(Async::IFireWireBus& bus,
                        SpeedPolicy& speedPolicy,
                        const ROMScannerParams& params,
-                       ScanCompletionCallback onScanComplete,
+                       const ScanCompletionCallback& onScanComplete,
                        OSSharedPtr<IODispatchQueue> dispatchQueue)
     : bus_(bus)
     , speedPolicy_(speedPolicy)
@@ -28,7 +24,73 @@ ROMScanner::ROMScanner(Async::IFireWireBus& bus,
 
 ROMScanner::~ROMScanner() = default;
 
-void ROMScanner::SetCompletionCallback(ScanCompletionCallback callback) {
+void ROMScanner::PublishReadEvent(ROMScannerEventType type,
+                                  uint8_t nodeId,
+                                  const ROMReader::ReadResult& result) {
+    ROMScannerEvent event{};
+    event.type = type;
+    event.payload = ROMScannerReadEventData::FromReadResult(nodeId, result);
+    eventBus_.Publish(std::move(event));
+    ScheduleEventDrain();
+}
+
+void ROMScanner::PublishEnsurePrefixEvent(uint8_t nodeId,
+                                          uint32_t requiredTotalQuadlets,
+                                          const std::function<void(bool)>& completion,
+                                          const ROMReader::ReadResult& result) {
+    ROMScannerEvent event{};
+    event.type = ROMScannerEventType::EnsurePrefixComplete;
+    event.payload = ROMScannerReadEventData::FromReadResult(nodeId, result);
+    event.requiredTotalQuadlets = requiredTotalQuadlets;
+    if (completion) {
+        event.ensurePrefixCompletion = std::make_shared<std::function<void(bool)>>(completion);
+    }
+    eventBus_.Publish(std::move(event));
+    ScheduleEventDrain();
+}
+
+bool ROMScanner::IsCurrentGenerationEvent(const ROMScannerReadEventData& payload) const {
+    return GenerationContextPolicy::IsCurrentEvent(payload.generation, currentGen_);
+}
+
+void ROMScanner::ScheduleEventDrain() {
+    DispatchAsync(^{
+        this->ProcessPendingEvents();
+    });
+}
+
+void ROMScanner::ProcessPendingEvents() {
+    eventBus_.Drain([this](const ROMScannerEvent& event) {
+        if (!IsCurrentGenerationEvent(event.payload)) {
+            return;
+        }
+
+        auto result = event.payload.ToReadResult();
+        switch (event.type) {
+            case ROMScannerEventType::BIBComplete:
+                OnBIBComplete(event.payload.nodeId, result);
+                break;
+            case ROMScannerEventType::IRMReadComplete:
+                OnIRMReadComplete(event.payload.nodeId, result);
+                break;
+            case ROMScannerEventType::IRMLockComplete:
+                OnIRMLockComplete(event.payload.nodeId, result);
+                break;
+            case ROMScannerEventType::RootDirComplete:
+                OnRootDirComplete(event.payload.nodeId, result);
+                break;
+            case ROMScannerEventType::EnsurePrefixComplete:
+                ROMScannerFSMFlow::OnEnsurePrefixReadComplete(*this,
+                                                              event.payload.nodeId,
+                                                              event.requiredTotalQuadlets,
+                                                              event.ensurePrefixCompletion,
+                                                              result);
+                break;
+        }
+    });
+}
+
+void ROMScanner::SetCompletionCallback(const ScanCompletionCallback& callback) {
     onScanComplete_ = callback;
 }
 
@@ -49,12 +111,13 @@ void ROMScanner::Begin(Generation gen,
              gen, localNodeId, topology.nodes.size(), topology.busNumber.value_or(0));
     
     currentGen_ = gen;
-    completionNotified_ = false;
+    ResetCompletionNotification();
     hadBusyNodes_ = false;
+    eventBus_.Clear();
     currentTopology_ = topology;  // Store snapshot for bus info access
     nodeScans_.clear();
     completedROMs_.clear();
-    inflightCount_ = 0;
+    ResetInflight();
     
     // Build worklist from topology (exclude local node)
     for (const auto& node : topology.nodes) {
@@ -65,15 +128,7 @@ void ROMScanner::Begin(Generation gen,
             continue;  // Skip inactive nodes
         }
         
-        NodeScanState scan{};
-        scan.nodeId = node.nodeId;
-        scan.state = NodeState::Idle;
-        scan.currentSpeed = params_.startSpeed;
-        scan.retriesLeft = params_.perStepRetries;
-        scan.partialROM.gen = gen;
-        scan.partialROM.nodeId = node.nodeId;
-        
-        nodeScans_.push_back(scan);
+        nodeScans_.emplace_back(node.nodeId, gen, params_.startSpeed, params_.perStepRetries);
         ASFW_LOG_V2(ConfigROM, "  Queue node %u for scanning", node.nodeId);
     }
     
@@ -83,7 +138,7 @@ void ROMScanner::Begin(Generation gen,
     // Handle zero remote nodes case (single-node bus)
     if (nodeScans_.empty()) {
         ASFW_LOG_V2(ConfigROM, "ROM Scanner: No remote nodes — discovery complete for gen=%u", gen);
-        completionNotified_ = true;
+        MarkCompletionNotified();
         // Call completion callback immediately for single-node bus (Apple pattern)
         if (onScanComplete_) {
             ASFW_LOG_V2(ConfigROM, "✅ ROMScanner: Single-node bus, notifying completion for gen=%u", gen);
@@ -97,7 +152,7 @@ void ROMScanner::Begin(Generation gen,
 }
 
 bool ROMScanner::IsIdleFor(Generation gen) const {
-    if (gen != currentGen_) {
+    if (!GenerationContextPolicy::MatchesActiveScan(gen, currentGen_)) {
         return true;  // Not our generation
     }
     
@@ -106,22 +161,17 @@ bool ROMScanner::IsIdleFor(Generation gen) const {
         return true; // No nodes to scan = idle
     }
     
-    if (inflightCount_ > 0) {
+    if (InflightCount() > 0) {
         return false;  // Still have in-flight operations
     }
     
-    // Check if all nodes are in terminal state
-    for (const auto& node : nodeScans_) {
-        if (node.state != NodeState::Complete && node.state != NodeState::Failed) {
-            return false;
-        }
-    }
-    
-    return true;
+    return std::ranges::all_of(nodeScans_, [](const ROMScanNodeStateMachine& node) {
+        return node.IsTerminal();
+    });
 }
 
 std::vector<ConfigROM> ROMScanner::DrainReady(Generation gen) {
-    if (gen != currentGen_) {
+    if (!GenerationContextPolicy::MatchesActiveScan(gen, currentGen_)) {
         return {};
     }
     
@@ -131,934 +181,35 @@ std::vector<ConfigROM> ROMScanner::DrainReady(Generation gen) {
 }
 
 void ROMScanner::Abort(Generation gen) {
-    if (gen == currentGen_) {
+    if (GenerationContextPolicy::MatchesActiveScan(gen, currentGen_)) {
         ASFW_LOG_V2(ConfigROM, "ROM Scanner: ABORT gen=%u (inflight=%u queued=%zu)",
-                 gen, inflightCount_, nodeScans_.size());
+                 gen, InflightCount(), nodeScans_.size());
         nodeScans_.clear();
         completedROMs_.clear();
-        inflightCount_ = 0;
+        ResetInflight();
         currentGen_ = 0;
-        completionNotified_ = false;
-    }
-}
-
-void ROMScanner::AdvanceFSM() {
-    // Kick off new reads if we have capacity
-    for (auto& node : nodeScans_) {
-        if (!HasCapacity()) {
-            break;  // Hit concurrency limit
-        }
-
-        if (node.state == NodeState::Idle && !node.bibInProgress) {
-            // Start BIB read
-            node.state = NodeState::ReadingBIB;
-            node.bibInProgress = true;
-            inflightCount_++;
-
-            ASFW_LOG_V2(ConfigROM, "FSM: Node %u → ReadingBIB (speed=S%u00 retries=%u)",
-                     node.nodeId, static_cast<uint32_t>(node.currentSpeed) + 1,
-                     node.retriesLeft);
-            
-            auto callback = [this, nodeId = node.nodeId](const ROMReader::ReadResult& result) {
-                this->OnBIBComplete(nodeId, result);
-            };
-
-            reader_->ReadBIB(node.nodeId, currentGen_, node.currentSpeed, callback);
-        }
-    }
-}
-
-void ROMScanner::OnBIBComplete(uint8_t nodeId, const ROMReader::ReadResult& result) {
-    inflightCount_--;
-    
-    // Find node state
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                          [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-
-    if (it == nodeScans_.end()) {
-        // Node not found (aborted?)
-        // CRITICAL FIX: Don't call AdvanceFSM() from callback - causes re-entry deadlock
-        // AdvanceFSM();
-        // Check if scan complete (node was aborted but scan might be done)
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    auto& node = *it;
-    node.bibInProgress = false;
-
-    if (!result.success) {
-        // ack_busy_X or other transaction failure — device not yet ready.
-        // RetryWithFallback is safe here: it only mutates node state (no locks, no async calls).
-        // The actual re-read is dispatched via ScheduleAdvanceFSM() below.
-        ASFW_LOG(ConfigROM, "FSM: Node %u BIB read FAILED (ack_busy or error) - retrying", nodeId);
-        hadBusyNodes_ = true;
-        node.bibInProgress = false;
-        RetryWithFallback(node);
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    // IEEE 1212 §7.2: a device may return 0x00000000 for BIB quadlet[0] during firmware
-    // initialization (e.g. DICE-based devices, external HDD firewire bridges).  This is
-    // distinct from ack_busy_X — the transaction succeeds but the payload signals "not ready".
-    // Linux firewire-core treats this as RCODE_BUSY and retries; we do the same.
-    if (result.dataLength >= 4 && result.data[0] == 0) {
-        ASFW_LOG(ConfigROM, "FSM: Node %u BIB quadlet[0]=0 (booting, IEEE 1212 §7.2) - retry", nodeId);
-        hadBusyNodes_ = true;
-        node.bibInProgress = false;
-        RetryWithFallback(node);
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    // Parse BIB
-    auto bibOpt = ROMParser::ParseBIB(result.data);
-    if (!bibOpt.has_value()) {
-        ASFW_LOG(ConfigROM, "FSM: Node %u BIB parse FAILED", nodeId);
-        node.state = NodeState::Failed;
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-    
-    node.partialROM.bib = bibOpt.value();
-
-    // Seed raw quadlets vector with the Bus Info Block so ExportConfigROM always has data
-    const uint32_t bibQuadlets = result.dataLength / 4;
-
-    node.partialROM.rawQuadlets.clear();
-    node.partialROM.rawQuadlets.reserve(256); // Bounded prefix: max 1 KiB / 256 quadlets
-    if (result.data && bibQuadlets > 0) {
-        for (uint32_t i = 0; i < bibQuadlets; ++i) {
-            node.partialROM.rawQuadlets.push_back(result.data[i]);
-        }
-    }
-
-    ASFW_LOG_V2(ConfigROM, "Seeded ROM prefix with BIB: %u quadlets (rootDirStart=%u)",
-                bibQuadlets, RootDirStartQuadlet(node.partialROM.bib));
-
-    speedPolicy_.RecordSuccess(nodeId, node.currentSpeed);
-
-    // If it's a minimal ROM (only BIB, no root directory), we're done.
-    // Minimal ROM has total size == BIB size.
-    // BIB size is 1 + busInfoLength quadlets.
-    // Total size is 1 + crcLength quadlets.
-    if (node.partialROM.bib.crcLength <= node.partialROM.bib.busInfoLength) {
-        ASFW_LOG_V2(ConfigROM, "FSM: Node %u → Complete ✓ (minimal ROM)", nodeId);
-        node.state = NodeState::Complete;
-        completedROMs_.push_back(std::move(node.partialROM));
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    node.needsIRMCheck = params_.doIRMCheck;
-    
-    if (node.needsIRMCheck) {
-        ASFW_LOG_V2(ConfigROM, "FSM: Node %u → VerifyingIRM_Read", nodeId);
-        node.state = NodeState::VerifyingIRM_Read;
-        inflightCount_++;
-
-        auto callback = [this, nodeId](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-            ROMReader::ReadResult mockResult{};
-            mockResult.success = (status == Async::AsyncStatus::kSuccess);
-            if (mockResult.success && payload.size() >= 4) {
-                mockResult.dataLength = 4;
-                mockResult.data = reinterpret_cast<const uint32_t*>(payload.data());
-            }
-            this->OnIRMReadComplete(nodeId, mockResult);
-        };
-
-        Async::FWAddress addr(IRM::IRMRegisters::kAddressHi,
-                             IRM::IRMRegisters::kChannelsAvailable63_32,
-                             (currentTopology_.busNumber.value_or(0) << 10) | nodeId);
-        bus_.ReadQuad(FW::Generation(currentGen_), FW::NodeId(nodeId), addr,
-                     FW::FwSpeed::S100, callback);
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    ASFW_LOG_V2(ConfigROM, "FSM: Node %u → ReadingRootDir", nodeId);
-    node.state = NodeState::ReadingRootDir;
-    node.retriesLeft = params_.perStepRetries;
-    inflightCount_++;
-
-    const uint32_t offsetBytes = RootDirStartBytes(node.partialROM.bib);
-
-    auto callback = [this, nodeId](const ROMReader::ReadResult& res) {
-        this->OnRootDirComplete(nodeId, res);
-    };
-
-    reader_->ReadRootDirQuadlets(nodeId, currentGen_, node.currentSpeed,
-                                 offsetBytes, 0, callback); // header-first autosize
-    ScheduleAdvanceFSM();
-}
-
-void ROMScanner::OnIRMReadComplete(uint8_t nodeId, const ROMReader::ReadResult& result) {
-    inflightCount_--;
-
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                          [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-
-    if (it == nodeScans_.end()) {
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    auto& node = *it;
-    node.bibInProgress = false;
-
-    if (!result.success || !result.data) {
-        ASFW_LOG_V2(ConfigROM, "⚠️  Node %u IRM read test FAILED - marking as bad IRM", nodeId);
-        node.irmIsBad = true;
-
-        if (topologyManager_ && currentTopology_.irmNodeId.has_value() &&
-            *currentTopology_.irmNodeId == nodeId) {
-            topologyManager_->MarkNodeAsBadIRM(nodeId);
-            ASFW_LOG(ConfigROM, "  Current IRM failed verification - will trigger root reassignment");
-        }
-
-        node.state = NodeState::ReadingRootDir;
-        node.retriesLeft = params_.perStepRetries;
-        inflightCount_++;
-
-        const uint32_t offsetBytes = RootDirStartBytes(node.partialROM.bib);
-
-        auto callback = [this, nodeId](const ROMReader::ReadResult& res) {
-            this->OnRootDirComplete(nodeId, res);
-        };
-
-        reader_->ReadRootDirQuadlets(nodeId, currentGen_, node.currentSpeed,
-                                     offsetBytes, 0, callback); // header-first autosize
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    node.irmBitBucket = OSSwapBigToHostInt32(*result.data);
-    node.irmCheckReadDone = true;
-
-    ASFW_LOG_V2(ConfigROM, "FSM: Node %u IRM read test OK → VerifyingIRM_Lock", nodeId);
-    node.state = NodeState::VerifyingIRM_Lock;
-    inflightCount_++;
-
-    auto callback = [this, nodeId](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-        ROMReader::ReadResult mockResult{};
-        mockResult.success = (status == Async::AsyncStatus::kSuccess);
-        if (mockResult.success && payload.size() >= 4) {
-            mockResult.dataLength = 4;
-            mockResult.data = reinterpret_cast<const uint32_t*>(payload.data());
-        }
-        this->OnIRMLockComplete(nodeId, mockResult);
-    };
-
-    Async::FWAddress addr(IRM::IRMRegisters::kAddressHi,
-                         IRM::IRMRegisters::kChannelsAvailable63_32,
-                         (currentTopology_.busNumber.value_or(0) << 10) | nodeId);
-
-    std::array<uint8_t, 8> casOperand{};
-    const uint32_t beCompare = OSSwapHostToBigInt32(0xFFFFFFFFu);
-    const uint32_t beSwap = OSSwapHostToBigInt32(0xFFFFFFFFu);
-    std::memcpy(casOperand.data(), &beCompare, sizeof(beCompare));
-    std::memcpy(casOperand.data() + 4, &beSwap, sizeof(beSwap));
-
-    auto handle = bus_.Lock(FW::Generation(currentGen_),
-                            FW::NodeId(nodeId),
-                            addr,
-                            FW::LockOp::kCompareSwap,
-                            std::span<const uint8_t>(casOperand),
-                            4,
-                            FW::FwSpeed::S100,
-                            callback);
-
-    if (!handle) {
-        ASFW_LOG(ConfigROM, "⚠️  Node %u IRM lock submission failed", nodeId);
-        inflightCount_--;
-
-        ROMReader::ReadResult failure{};
-        failure.success = false;
-
-        HandleIRMLockResult(node, failure);
-        return;
-    }
-
-    ScheduleAdvanceFSM();
-}
-
-void ROMScanner::OnIRMLockComplete(uint8_t nodeId, const ROMReader::ReadResult& result) {
-    inflightCount_--;
-
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                          [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-
-    if (it == nodeScans_.end()) {
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    HandleIRMLockResult(*it, result);
-}
-
-void ROMScanner::HandleIRMLockResult(NodeScanState& node, const ROMReader::ReadResult& result) {
-    const uint8_t nodeId = node.nodeId;
-
-    if (!result.success || !result.data) {
-        ASFW_LOG(ConfigROM, "⚠️  Node %u IRM lock test FAILED - marking as bad IRM", nodeId);
-        node.irmIsBad = true;
-
-        if (topologyManager_ && currentTopology_.irmNodeId.has_value() &&
-            *currentTopology_.irmNodeId == nodeId) {
-            topologyManager_->MarkNodeAsBadIRM(nodeId);
-            ASFW_LOG(ConfigROM, "  Current IRM failed verification - will trigger root reassignment");
-        }
-    } else {
-        const uint32_t returnedValue = OSSwapBigToHostInt32(*result.data);
-        node.irmCheckLockDone = true;
-
-        ASFW_LOG_V2(ConfigROM, "✅ Node %u IRM verification PASSED (read=0x%08x lock=0x%08x)",
-                 nodeId, node.irmBitBucket, returnedValue);
-    }
-
-    ASFW_LOG_V2(ConfigROM, "FSM: Node %u → ReadingRootDir", nodeId);
-    node.state = NodeState::ReadingRootDir;
-    node.retriesLeft = params_.perStepRetries;
-    inflightCount_++;
-
-    const uint32_t offsetBytes = RootDirStartBytes(node.partialROM.bib);
-
-    auto callback = [this, nodeId](const ROMReader::ReadResult& res) {
-        this->OnRootDirComplete(nodeId, res);
-    };
-
-    reader_->ReadRootDirQuadlets(nodeId, currentGen_, node.currentSpeed,
-                                 offsetBytes, 0, callback); // header-first autosize
-    ScheduleAdvanceFSM();
-}
-
-std::vector<ROMScanner::DirEntry> ROMScanner::ParseDirectory(const std::vector<uint32_t>& dirBE, uint32_t entryCap) {
-    std::vector<DirEntry> out;
-    if (dirBE.empty()) return out;
-    
-    const uint32_t hdr = ROMParser::SwapBE32(dirBE[0]);
-    const uint32_t len = (hdr >> 16) & 0xFFFFu;
-    const uint32_t available = static_cast<uint32_t>(dirBE.size() - 1);
-    uint32_t count = std::min({len, available, entryCap});
-
-    out.reserve(count);
-    for (uint32_t i = 1; i <= count; ++i) {
-        const uint32_t entry = ROMParser::SwapBE32(dirBE[i]);
-        DirEntry e{};
-        e.index = i;
-        e.keyType = static_cast<uint8_t>((entry >> 30) & 0x3u);
-        e.keyId = static_cast<uint8_t>((entry >> 24) & 0x3Fu);
-        e.value = entry & 0x00FFFFFFu;
-
-        if (e.keyType == ASFW::FW::EntryType::kLeaf || e.keyType == ASFW::FW::EntryType::kDirectory) {
-            const int32_t off = (e.value & 0x00800000u) ? static_cast<int32_t>(e.value | 0xFF000000u) : static_cast<int32_t>(e.value);
-            const int32_t rel = static_cast<int32_t>(i) + off;
-            if (rel >= 0) {
-                e.hasTarget = true;
-                e.targetRel = static_cast<uint32_t>(rel);
-            }
-        }
-        out.push_back(e);
-    }
-    return out;
-}
-
-std::optional<ROMScanner::DescriptorRef> ROMScanner::FindDescriptorRef(const std::vector<DirEntry>& entries, uint8_t ownerKeyId) {
-    for (size_t i = 0; i < entries.size(); ++i) {
-        const auto& e = entries[i];
-        if (e.keyType != ASFW::FW::EntryType::kImmediate || e.keyId != ownerKeyId) {
-            continue;
-        }
-        if (i + 1 >= entries.size()) {
-            return std::nullopt;
-        }
-
-        const auto& d = entries[i + 1];
-        if (d.keyId != ASFW::FW::ConfigKey::kTextualDescriptor) {
-            return std::nullopt;
-        }
-        if (d.keyType != ASFW::FW::EntryType::kLeaf && d.keyType != ASFW::FW::EntryType::kDirectory) {
-            return std::nullopt;
-        }
-        if (!d.hasTarget || d.targetRel == 0) {
-            return std::nullopt;
-        }
-        return DescriptorRef{.keyType = d.keyType, .targetRel = d.targetRel};
-    }
-    return std::nullopt;
-}
-
-void ROMScanner::FetchTextDescriptor(uint8_t nodeId, uint32_t absOffset, uint8_t keyType,
-                                      std::function<void(std::string)> completion) {
-    if (keyType == ASFW::FW::EntryType::kLeaf) {
-        FetchTextLeaf(nodeId, absOffset, std::move(completion));
-    } else if (keyType == ASFW::FW::EntryType::kDirectory) {
-        FetchDescriptorDirText(nodeId, absOffset, std::move(completion));
-    } else if (completion) {
-        completion("");
-    }
-}
-
-void ROMScanner::FetchTextLeaf(uint8_t nodeId, uint32_t absLeafOffset, std::function<void(std::string)> completion) {
-    EnsurePrefix(nodeId, absLeafOffset + 1, [this, nodeId, absLeafOffset, completion = std::move(completion)](bool ok) mutable {
-        if (!ok) {
-            if (completion) completion("");
-            return;
-        }
-
-        auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                               [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it == nodeScans_.end() || absLeafOffset >= it->partialROM.rawQuadlets.size()) {
-            if (completion) completion("");
-            return;
-        }
-
-        const uint32_t hdr = ROMParser::SwapBE32(it->partialROM.rawQuadlets[absLeafOffset]);
-        const uint16_t leafLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFu);
-        const uint32_t leafEndExclusive = absLeafOffset + 1u + static_cast<uint32_t>(leafLen);
-
-        this->EnsurePrefix(nodeId, leafEndExclusive, [this, nodeId, absLeafOffset, completion = std::move(completion)](bool ok2) mutable {
-            if (!ok2) {
-                if (completion) completion("");
-                return;
-            }
-
-            auto it2 = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                    [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-            if (it2 == nodeScans_.end()) {
-                if (completion) completion("");
-                return;
-            }
-
-            std::string text = ROMParser::ParseTextDescriptorLeaf(
-                it2->partialROM.rawQuadlets.data(),
-                static_cast<uint32_t>(it2->partialROM.rawQuadlets.size()),
-                absLeafOffset,
-                "big");
-            if (completion) completion(std::move(text));
-        });
-    });
-}
-
-void ROMScanner::FetchDescriptorDirText(uint8_t nodeId, uint32_t absDirOffset, std::function<void(std::string)> completion) {
-    EnsurePrefix(nodeId, absDirOffset + 1, [this, nodeId, absDirOffset, completion = std::move(completion)](bool ok) mutable {
-        if (!ok) {
-            if (completion) completion("");
-            return;
-        }
-
-        auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                               [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it == nodeScans_.end() || absDirOffset >= it->partialROM.rawQuadlets.size()) {
-            if (completion) completion("");
-            return;
-        }
-
-        const uint32_t hdr = ROMParser::SwapBE32(it->partialROM.rawQuadlets[absDirOffset]);
-        uint16_t dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFu);
-        if (dirLen == 0) {
-            if (completion) completion("");
-            return;
-        }
-        if (dirLen > 32) dirLen = 32;
-
-        const uint32_t dirEndExclusive = absDirOffset + 1u + static_cast<uint32_t>(dirLen);
-        this->EnsurePrefix(nodeId, dirEndExclusive, [this, nodeId, absDirOffset, dirLen, completion = std::move(completion)](bool ok2) mutable {
-            if (!ok2) {
-                if (completion) completion("");
-                return;
-            }
-
-            auto it2 = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                    [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-            if (it2 == nodeScans_.end() || absDirOffset + dirLen >= it2->partialROM.rawQuadlets.size()) {
-                if (completion) completion("");
-                return;
-            }
-
-            std::vector<uint32_t> leafCandidates;
-            for (uint32_t i = 1; i <= static_cast<uint32_t>(dirLen); ++i) {
-                const uint32_t entry = ROMParser::SwapBE32(it2->partialROM.rawQuadlets[absDirOffset + i]);
-                const uint8_t keyType = static_cast<uint8_t>((entry >> 30) & 0x3u);
-                const uint8_t keyId = static_cast<uint8_t>((entry >> 24) & 0x3Fu);
-                const uint32_t value = entry & 0x00FFFFFFu;
-
-                if (keyId == ASFW::FW::ConfigKey::kTextualDescriptor && keyType == ASFW::FW::EntryType::kLeaf) {
-                    const int32_t off = (value & 0x00800000u) ? static_cast<int32_t>(value | 0xFF000000u) : static_cast<int32_t>(value);
-                    const int32_t rel = static_cast<int32_t>(i) + off;
-                    if (rel >= 0) {
-                        leafCandidates.push_back(absDirOffset + static_cast<uint32_t>(rel));
-                    }
-                }
-            }
-
-            if (leafCandidates.empty()) {
-                if (completion) completion("");
-                return;
-            }
-
-            // Try each candidate until we find one that works
-            auto idx = std::make_shared<size_t>(0);
-            auto comp = std::make_shared<std::function<void(std::string)>>(std::move(completion));
-            auto tryNext = std::make_shared<std::function<void()>>();
-            *tryNext = [this, nodeId, leafCandidates, idx, tryNext, comp]() mutable {
-                if (*idx >= leafCandidates.size()) {
-                    if (*comp) (*comp)("");
-                    return;
-                }
-                uint32_t leafAbs = leafCandidates[(*idx)++];
-                this->FetchTextLeaf(nodeId, leafAbs, [tryNext, comp](std::string text) mutable {
-                    if (!text.empty()) {
-                        if (*comp) (*comp)(std::move(text));
-                    } else {
-                        (*tryNext)();
-                    }
-                });
-            };
-            (*tryNext)();
-        });
-    });
-}
-
-void ROMScanner::DiscoverDetails(uint8_t nodeId, uint32_t rootDirStart, std::vector<uint32_t> rootDirBE) {
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                          [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-    if (it == nodeScans_.end()) {
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    auto& node = *it;
-    node.state = NodeState::ReadingDetails;
-
-    EnsurePrefix(nodeId, rootDirStart, [this, nodeId, rootDirStart, rootDirBE = std::move(rootDirBE)](bool prefixOk) mutable {
-        auto it2 = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it2 == nodeScans_.end()) {
-            CheckAndNotifyCompletion();
-            ScheduleAdvanceFSM();
-            return;
-        }
-
-        auto& node2 = *it2;
-        if (!prefixOk) {
-            ASFW_LOG(ConfigROM, "⚠️  Node %u: ROM prefix could not be extended to rootDirStart=%u", nodeId, rootDirStart);
-        }
-
-        // Append root directory to raw quadlets
-        node2.partialROM.rawQuadlets.reserve(node2.partialROM.rawQuadlets.size() + rootDirBE.size());
-        for (uint32_t q : rootDirBE) {
-            node2.partialROM.rawQuadlets.push_back(q);
-        }
-
-        auto rootEntries = ParseDirectory(rootDirBE, 64);
-        auto vendorRef = FindDescriptorRef(rootEntries, ASFW::FW::ConfigKey::kModuleVendorId);
-        auto modelRef = FindDescriptorRef(rootEntries, ASFW::FW::ConfigKey::kModelId);
-
-        std::vector<uint32_t> unitDirRelOffsets;
-        for (const auto& e : rootEntries) {
-            if (e.keyType == ASFW::FW::EntryType::kDirectory &&
-                e.keyId == ASFW::FW::ConfigKey::kUnitDirectory &&
-                e.hasTarget && e.targetRel != 0) {
-                unitDirRelOffsets.push_back(e.targetRel);
-            }
-        }
-
-        DiscoverVendorName(nodeId, rootDirStart, rootEntries, vendorRef, modelRef, std::move(unitDirRelOffsets));
-    });
-}
-
-void ROMScanner::DiscoverVendorName(uint8_t nodeId, uint32_t rootDirStart, 
-                                     const std::vector<DirEntry>& rootEntries,
-                                     std::optional<DescriptorRef> vendorRef,
-                                     std::optional<DescriptorRef> modelRef,
-                                     std::vector<uint32_t> unitDirRelOffsets) {
-    if (!vendorRef) {
-        DiscoverModelName(nodeId, rootDirStart, modelRef, std::move(unitDirRelOffsets));
-        return;
-    }
-
-    FetchTextDescriptor(nodeId, rootDirStart + vendorRef->targetRel, vendorRef->keyType,
-                        [this, nodeId, rootDirStart, modelRef, unitDirRelOffsets = std::move(unitDirRelOffsets)](std::string vendor) mutable {
-        auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it != nodeScans_.end() && !vendor.empty()) {
-            it->partialROM.vendorName = vendor;
-        }
-        DiscoverModelName(nodeId, rootDirStart, modelRef, std::move(unitDirRelOffsets));
-    });
-}
-
-void ROMScanner::DiscoverModelName(uint8_t nodeId, uint32_t rootDirStart,
-                                    std::optional<DescriptorRef> modelRef,
-                                    std::vector<uint32_t> unitDirRelOffsets) {
-    if (!modelRef) {
-        DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), 0);
-        return;
-    }
-
-    FetchTextDescriptor(nodeId, rootDirStart + modelRef->targetRel, modelRef->keyType,
-                        [this, nodeId, rootDirStart, unitDirRelOffsets = std::move(unitDirRelOffsets)](std::string model) mutable {
-        auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it != nodeScans_.end() && !model.empty()) {
-            it->partialROM.modelName = model;
-        }
-        DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), 0);
-    });
-}
-
-void ROMScanner::DiscoverUnitDirectories(uint8_t nodeId, uint32_t rootDirStart,
-                                          std::vector<uint32_t> unitDirRelOffsets, size_t index) {
-    if (index >= unitDirRelOffsets.size()) {
-        FinalizeNodeDiscovery(nodeId);
-        return;
-    }
-
-    const uint32_t unitRel = unitDirRelOffsets[index];
-    const uint32_t absUnitDir = rootDirStart + unitRel;
-
-    EnsurePrefix(nodeId, absUnitDir + 1, [this, nodeId, rootDirStart, absUnitDir, unitRel, unitDirRelOffsets = std::move(unitDirRelOffsets), index](bool ok) mutable {
-        if (!ok) {
-            DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), index + 1);
-            return;
-        }
-
-        auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it == nodeScans_.end() || absUnitDir >= it->partialROM.rawQuadlets.size()) {
-            FinalizeNodeDiscovery(nodeId);
-            return;
-        }
-
-        const uint32_t hdr = ROMParser::SwapBE32(it->partialROM.rawQuadlets[absUnitDir]);
-        uint16_t dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFu);
-        if (dirLen == 0) {
-            DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), index + 1);
-            return;
-        }
-        if (dirLen > 32) dirLen = 32;
-
-        const uint32_t dirEndExclusive = absUnitDir + 1u + static_cast<uint32_t>(dirLen);
-        this->EnsurePrefix(nodeId, dirEndExclusive, [this, nodeId, rootDirStart, absUnitDir, unitRel, dirLen, unitDirRelOffsets = std::move(unitDirRelOffsets), index](bool ok2) mutable {
-            if (!ok2) {
-                DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), index + 1);
-                return;
-            }
-
-            auto it2 = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                     [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-            if (it2 == nodeScans_.end() || absUnitDir + dirLen >= it2->partialROM.rawQuadlets.size()) {
-                FinalizeNodeDiscovery(nodeId);
-                return;
-            }
-
-            std::vector<uint32_t> unitDirBE;
-            for (uint32_t i = 0; i <= static_cast<uint32_t>(dirLen); ++i) {
-                unitDirBE.push_back(it2->partialROM.rawQuadlets[absUnitDir + i]);
-            }
-
-            auto unitEntries = ParseDirectory(unitDirBE, 32);
-            UnitDirectory parsed{};
-            parsed.offsetQuadlets = unitRel;
-
-            for (const auto& e : unitEntries) {
-                if (e.keyType == ASFW::FW::EntryType::kImmediate) {
-                    switch (e.keyId) {
-                        case ASFW::FW::ConfigKey::kUnitSpecId: parsed.unitSpecId = e.value; break;
-                        case ASFW::FW::ConfigKey::kUnitSwVersion: parsed.unitSwVersion = e.value; break;
-                        case ASFW::FW::ConfigKey::kUnitDependentInfo: parsed.logicalUnitNumber = e.value; break;
-                        case ASFW::FW::ConfigKey::kModelId: parsed.modelId = e.value; break;
-                    }
-                }
-            }
-
-            auto unitModelRef = FindDescriptorRef(unitEntries, ASFW::FW::ConfigKey::kModelId);
-            if (!unitModelRef) {
-                it2->partialROM.unitDirectories.push_back(std::move(parsed));
-                DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), index + 1);
-                return;
-            }
-
-            FetchTextDescriptor(nodeId, absUnitDir + unitModelRef->targetRel, unitModelRef->keyType,
-                                [this, nodeId, rootDirStart, parsed = std::move(parsed), unitDirRelOffsets = std::move(unitDirRelOffsets), index](std::string name) mutable {
-                auto it3 = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                         [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-                if (it3 != nodeScans_.end()) {
-                    UnitDirectory unit = std::move(parsed);
-                    if (!name.empty()) unit.modelName = name;
-                    it3->partialROM.unitDirectories.push_back(std::move(unit));
-                }
-                DiscoverUnitDirectories(nodeId, rootDirStart, std::move(unitDirRelOffsets), index + 1);
-            });
-        });
-    });
-}
-
-void ROMScanner::FinalizeNodeDiscovery(uint8_t nodeId) {
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                            [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-    if (it == nodeScans_.end()) {
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    auto& node = *it;
-    speedPolicy_.RecordSuccess(nodeId, node.currentSpeed);
-    node.state = NodeState::Complete;
-    completedROMs_.push_back(std::move(node.partialROM));
-    ASFW_LOG_V2(ConfigROM, "FSM: Node %u → Complete ✓ (total complete=%zu)", nodeId, completedROMs_.size());
-    CheckAndNotifyCompletion();
-    ScheduleAdvanceFSM();
-}
-
-void ROMScanner::OnRootDirComplete(uint8_t nodeId, const ROMReader::ReadResult& result) {
-    inflightCount_--;
-
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                          [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-
-    if (it == nodeScans_.end()) {
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-
-    auto& node = *it;
-
-    if (!result.success || !result.data || result.dataLength < 4) {
-        ASFW_LOG(ConfigROM, "FSM: Node %u RootDir read FAILED - marking as failed", nodeId);
-        node.state = NodeState::Failed;
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-        return;
-    }
-    
-    const uint32_t quadletCount = result.dataLength / 4;
-
-    // Parse root directory (bounded).
-    node.partialROM.rootDirMinimal = ROMParser::ParseRootDirectory(result.data, quadletCount);
-
-    // Copy root directory quadlets (wire order) out of the ROMReader buffer, since it will be freed.
-    std::vector<uint32_t> rootDirBE;
-    rootDirBE.reserve(quadletCount);
-    for (uint32_t i = 0; i < quadletCount; ++i) {
-        rootDirBE.push_back(result.data[i]);
-    }
-
-    // Ensure rawQuadlets is a contiguous prefix from quadlet 0 and includes the root directory.
-    const uint32_t rootDirStart = RootDirStartQuadlet(node.partialROM.bib);
-
-    DiscoverDetails(nodeId, rootDirStart, std::move(rootDirBE));
-}
-
-void ROMScanner::RetryWithFallback(NodeScanState& node) {
-    if (node.retriesLeft > 0) {
-        node.retriesLeft--;
-        node.state = NodeState::Idle;
-        ASFW_LOG_V2(ConfigROM, "FSM: Node %u retry at S%u00 (retries left=%u)",
-                 node.nodeId, static_cast<uint32_t>(node.currentSpeed) + 1,
-                 node.retriesLeft);
-        return;
-    }
-
-    speedPolicy_.RecordTimeout(node.nodeId, node.currentSpeed);
-    
-    FwSpeed newSpeed = speedPolicy_.ForNode(node.nodeId).localToNode;
-    if (newSpeed == node.currentSpeed) {
-        node.state = NodeState::Failed;
-        ASFW_LOG(ConfigROM, "FSM: Node %u → Failed ✗ (exhausted retries)",
-                 node.nodeId);
-        return;
-    }
-
-    const FwSpeed oldSpeed = node.currentSpeed;
-    node.currentSpeed = newSpeed;
-    node.retriesLeft = params_.perStepRetries;
-    node.state = NodeState::Idle;
-    ASFW_LOG_V2(ConfigROM, "FSM: Node %u speed fallback S%u00 → S%u00, retries reset",
-             node.nodeId,
-             static_cast<uint32_t>(oldSpeed) + 1,
-             static_cast<uint32_t>(newSpeed) + 1);
-}
-
-bool ROMScanner::HasCapacity() const {
-    return inflightCount_ < params_.maxInflight;
-}
-
-void ROMScanner::DispatchAsync(void (^work)()) {
-    if (!dispatchQueue_) {
-        if (work) {
-            work();
-        }
-        return;
-    }
-
-    auto queue = dispatchQueue_;
-    queue->DispatchAsync(work);
-}
-
-void ROMScanner::ScheduleAdvanceFSM() {
-    // Never call AdvanceFSM() directly from within completion callbacks of async operations.
-    // Schedule it onto the discovery dispatch queue to avoid re-entrancy issues.
-    DispatchAsync(^{
-        this->AdvanceFSM();
-    });
-}
-
-void ROMScanner::EnsurePrefix(uint8_t nodeId,
-                              uint32_t requiredTotalQuadlets,
-                              std::function<void(bool)> completion) {
-    constexpr uint32_t kMaxROMQuadlets = 256;
-
-    auto it = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                           [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-    if (it == nodeScans_.end()) {
-        if (completion) completion(false);
-        return;
-    }
-
-    auto& node = *it;
-
-    if (requiredTotalQuadlets > kMaxROMQuadlets) {
-        ASFW_LOG(ConfigROM,
-                 "⚠️  EnsurePrefix: node=%u required=%u exceeds max ROM prefix (%u quadlets), skipping",
-                 nodeId, requiredTotalQuadlets, kMaxROMQuadlets);
-        if (completion) completion(false);
-        return;
-    }
-
-    const uint32_t have = static_cast<uint32_t>(node.partialROM.rawQuadlets.size());
-    if (have >= requiredTotalQuadlets) {
-        if (completion) completion(true);
-        return;
-    }
-
-    const uint32_t toRead = requiredTotalQuadlets - have;
-    const uint32_t offsetBytes = have * 4u;
-
-    ASFW_LOG_V3(ConfigROM, "EnsurePrefix: node=%u have=%u need=%u (read %u quadlets at offsetBytes=%u)",
-                nodeId, have, requiredTotalQuadlets, toRead, offsetBytes);
-
-    inflightCount_++;
-
-    auto callback = [this, nodeId, requiredTotalQuadlets, completion = std::move(completion)](const ROMReader::ReadResult& res) mutable {
-        inflightCount_--;
-
-        auto it2 = std::find_if(nodeScans_.begin(), nodeScans_.end(),
-                                [nodeId](const NodeScanState& n) { return n.nodeId == nodeId; });
-        if (it2 == nodeScans_.end()) {
-            if (completion) completion(false);
-            CheckAndNotifyCompletion();
-            ScheduleAdvanceFSM();
-            return;
-        }
-
-        auto& node2 = *it2;
-
-        if (!res.success || !res.data || res.dataLength == 0) {
-            ASFW_LOG(ConfigROM, "⚠️  EnsurePrefix read failed: node=%u", nodeId);
-            if (completion) completion(false);
-            CheckAndNotifyCompletion();
-            ScheduleAdvanceFSM();
-            return;
-        }
-
-        const uint32_t gotQuadlets = res.dataLength / 4;
-        node2.partialROM.rawQuadlets.reserve(node2.partialROM.rawQuadlets.size() + gotQuadlets);
-        for (uint32_t i = 0; i < gotQuadlets; ++i) {
-            node2.partialROM.rawQuadlets.push_back(res.data[i]);
-        }
-
-        const bool ok = node2.partialROM.rawQuadlets.size() >= requiredTotalQuadlets;
-        if (!ok) {
-            ASFW_LOG_V2(ConfigROM,
-                        "⚠️  EnsurePrefix short read: node=%u have=%zu required=%u",
-                        nodeId, node2.partialROM.rawQuadlets.size(), requiredTotalQuadlets);
-        }
-
-        if (completion) completion(ok);
-        CheckAndNotifyCompletion();
-        ScheduleAdvanceFSM();
-    };
-
-    reader_->ReadRootDirQuadlets(nodeId,
-                                 currentGen_,
-                                 node.currentSpeed,
-                                 offsetBytes,
-                                 toRead,
-                                 callback);
-}
-
-void ROMScanner::CheckAndNotifyCompletion() {
-    ASFW_LOG_V3(ConfigROM, "🔍 CheckAndNotifyCompletion: currentGen=%u nodeCount=%zu inflight=%u",
-             currentGen_, nodeScans_.size(), inflightCount_);
-
-    if (currentGen_ == 0) {
-        ASFW_LOG_V3(ConfigROM, "  ⏭️  Not scanning (currentGen=0)");
-        return;
-    }
-
-    if (nodeScans_.empty()) {
-        ASFW_LOG_V3(ConfigROM, "  ⏭️  No nodes to scan (empty scan list)");
-        return;
-    }
-
-    if (inflightCount_ > 0) {
-        ASFW_LOG_V3(ConfigROM, "  ⏭️  Still have %u in-flight operations", inflightCount_);
-        return;
-    }
-
-    for (const auto& node : nodeScans_) {
-        if (node.state != NodeState::Complete && node.state != NodeState::Failed) {
-            ASFW_LOG_V3(ConfigROM, "  ⏭️  Node %u still pending (state=%u)",
-                     node.nodeId, static_cast<uint8_t>(node.state));
-            return;
-        }
-    }
-
-    if (completionNotified_) {
-        return;
-    }
-    completionNotified_ = true;
-
-    const Generation genToReport = currentGen_;
-
-    if (onScanComplete_) {
-        ASFW_LOG_V1(ConfigROM, "✅ ROMScanner: Scan complete for gen=%u, notifying immediately", genToReport);
-        onScanComplete_(genToReport);
-    } else {
-        ASFW_LOG(ConfigROM, "⚠️  ROMScanner: Scan complete for gen=%u but NO callback set!", genToReport);
+        ResetCompletionNotification();
+        eventBus_.Clear();
     }
 }
 
 bool ROMScanner::TriggerManualRead(uint8_t nodeId, Generation gen, const Driver::TopologySnapshot& topology) {
-    const bool scannerIdle = (currentGen_ == 0) ? true : IsIdleFor(currentGen_);
-
     // If scanner is idle for a previous generation (or never started), we can restart
     // it for this manual read generation.
-    if (scannerIdle && gen != 0 && gen != currentGen_) {
+    if (const bool scannerIdle = (currentGen_ == 0) ? true : IsIdleFor(currentGen_);
+        GenerationContextPolicy::CanRestartIdleScan(currentGen_, scannerIdle, gen)) {
         ASFW_LOG_V2(ConfigROM, "TriggerManualRead: restarting idle scan (oldGen=%u → gen=%u) for node=%u",
                     currentGen_, gen, nodeId);
 
         currentGen_ = gen;
-        completionNotified_ = false;
+        ResetCompletionNotification();
         hadBusyNodes_ = false;
+        eventBus_.Clear();
         currentTopology_ = topology;  // Update topology to get correct busBase16
         nodeScans_.clear();
         completedROMs_.clear();
-        inflightCount_ = 0;
-    } else if (gen != currentGen_) {
+        ResetInflight();
+    } else if (!GenerationContextPolicy::MatchesActiveScan(gen, currentGen_)) {
         // Active scan: generation must match.
         ASFW_LOG_V2(ConfigROM, "TriggerManualRead: gen mismatch (requested=%u current=%u)",
                     gen, currentGen_);
@@ -1066,13 +217,7 @@ bool ROMScanner::TriggerManualRead(uint8_t nodeId, Generation gen, const Driver:
     }
 
     // Find the node in our scan list
-    NodeScanState* nodeState = nullptr;
-    for (auto& node : nodeScans_) {
-        if (node.nodeId == nodeId) {
-            nodeState = &node;
-            break;
-        }
-    }
+    ROMScanNodeStateMachine* nodeState = FindNodeScan(nodeId);
 
     // If node not in our list, add it
     if (!nodeState) {
@@ -1080,40 +225,26 @@ bool ROMScanner::TriggerManualRead(uint8_t nodeId, Generation gen, const Driver:
         // when scanner was just restarted (currentTopology_ may be stale)
 
         // Add new node to scan list
-        NodeScanState newNode{};
-        newNode.nodeId = nodeId;
-        newNode.state = NodeState::Idle;
-        newNode.currentSpeed = params_.startSpeed;
-        newNode.retriesLeft = params_.perStepRetries;
-        newNode.partialROM.gen = gen;
-        newNode.partialROM.nodeId = nodeId;
-
-        nodeScans_.push_back(newNode);
+        nodeScans_.emplace_back(nodeId, gen, params_.startSpeed, params_.perStepRetries);
         nodeState = &nodeScans_.back();
 
         ASFW_LOG_V2(ConfigROM, "TriggerManualRead: added node %u to scan list", nodeId);
     }
 
     // Check if already in progress
-    if (nodeState->state == NodeState::ReadingBIB ||
-        nodeState->state == NodeState::ReadingRootDir) {
+    if (nodeState->CurrentState() == NodeState::ReadingBIB ||
+        nodeState->CurrentState() == NodeState::ReadingRootDir) {
         ASFW_LOG_V2(ConfigROM, "TriggerManualRead: node %u already in progress", nodeId);
         return false;
     }
 
     // Check if already completed successfully
-    if (nodeState->state == NodeState::Complete) {
+    if (nodeState->CurrentState() == NodeState::Complete) {
         ASFW_LOG_V2(ConfigROM, "TriggerManualRead: node %u already completed, restarting", nodeId);
     }
 
     // Reset node state to trigger a fresh read
-    nodeState->state = NodeState::Idle;
-    nodeState->bibInProgress = false;
-    nodeState->currentSpeed = params_.startSpeed;
-    nodeState->retriesLeft = params_.perStepRetries;
-    nodeState->partialROM = ConfigROM{};
-    nodeState->partialROM.gen = gen;
-    nodeState->partialROM.nodeId = nodeId;
+    nodeState->ResetForGeneration(gen, nodeId, params_.startSpeed, params_.perStepRetries);
 
     ASFW_LOG_V2(ConfigROM, "TriggerManualRead: initiating ROM read for node %u gen=%u",
              nodeId, gen);
@@ -1122,6 +253,34 @@ bool ROMScanner::TriggerManualRead(uint8_t nodeId, Generation gen, const Driver:
     AdvanceFSM();
 
     return true;
+}
+
+void ROMScanner::IncrementInflight() {
+    inflight_.Increment();
+}
+
+void ROMScanner::DecrementInflight() {
+    inflight_.Decrement();
+}
+
+void ROMScanner::ResetInflight() {
+    inflight_.Reset();
+}
+
+uint16_t ROMScanner::InflightCount() const {
+    return inflight_.Count();
+}
+
+void ROMScanner::ResetCompletionNotification() {
+    completionMgr_.Reset();
+}
+
+void ROMScanner::MarkCompletionNotified() {
+    completionMgr_.MarkNotified();
+}
+
+bool ROMScanner::TryMarkCompletionNotified() {
+    return completionMgr_.TryMarkNotified();
 }
 
 } // namespace ASFW::Discovery
