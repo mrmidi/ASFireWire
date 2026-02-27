@@ -41,6 +41,7 @@ private:
     IOAddressSegment segment_{};
     uint64_t dmaFlags_{0};
     bool prepared_{false};
+    bool guidWritten_{false};
     uint32_t savedHeader_{0};      // Saved header quadlet (zeroed in DMA buffer during staging)
     uint32_t savedBusOptions_{0};  // Saved BusOptions quadlet for restoration after bus reset
 };

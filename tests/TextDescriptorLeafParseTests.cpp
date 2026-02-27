@@ -1,23 +1,14 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/ConfigROM/ConfigROMStore.hpp"
-
-namespace {
-
-constexpr uint32_t WireU32FromBENumeric(uint32_t be) noexcept {
-    if constexpr (std::endian::native == std::endian::little) {
-        return __builtin_bswap32(be);
-    }
-    return be;
-}
-
-} // namespace
+#include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
 
 TEST(TextDescriptorLeafParseTests, TAExampleLeaf_ParsesVendorName) {
     // IEEE 1212-2001 Figure 28 textual descriptor leaf layout:
@@ -30,17 +21,16 @@ TEST(TextDescriptorLeafParseTests, TAExampleLeaf_ParsesVendorName) {
     //
     // leaf_length=5 => quadlets after header: typeSpec + width + 3 text quadlets
     const std::array<uint32_t, 6> leafWire = {
-        WireU32FromBENumeric(0x00050000u),  // header: leaf_length=5, crc ignored by parser
-        WireU32FromBENumeric(0x00000000u),  // type/specifier
-        WireU32FromBENumeric(0x00000000u),  // width/charset/lang (minimal ASCII)
-        WireU32FromBENumeric(0x56656E64u),  // "Vend"
-        WireU32FromBENumeric(0x6F72204Eu),  // "or N"
-        WireU32FromBENumeric(0x616D6500u),  // "ame\\0"
+        OSSwapHostToBigInt32(0x00050000u),  // header: leaf_length=5, crc ignored by parser
+        OSSwapHostToBigInt32(0x00000000u),  // type/specifier
+        OSSwapHostToBigInt32(0x00000000u),  // width/charset/lang (minimal ASCII)
+        OSSwapHostToBigInt32(0x56656E64u),  // "Vend"
+        OSSwapHostToBigInt32(0x6F72204Eu),  // "or N"
+        OSSwapHostToBigInt32(0x616D6500u),  // "ame\\0"
     };
 
-    const std::string parsed = ASFW::Discovery::ROMParser::ParseTextDescriptorLeaf(
-        leafWire.data(),
-        static_cast<uint32_t>(leafWire.size()),
+    const std::string parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
+        std::span<const uint32_t>(leafWire),
         /*leafOffsetQuadlets=*/0,
         "big");
 
@@ -51,17 +41,16 @@ TEST(TextDescriptorLeafParseTests, TypeSpecMustBeAtPlus1_NotPlus2) {
     // If the parser incorrectly reads type/specifier from +2, it would treat this as valid
     // (since +2 is 0), and return the text. Correct behavior is to reject due to non-zero +1.
     const std::array<uint32_t, 6> leafWire = {
-        WireU32FromBENumeric(0x00050000u),  // header: leaf_length=5
-        WireU32FromBENumeric(0x01000000u),  // type/specifier: descriptor_type=1 (invalid for text)
-        WireU32FromBENumeric(0x00000000u),  // width/charset/lang (minimal ASCII)
-        WireU32FromBENumeric(0x56656E64u),  // "Vend"
-        WireU32FromBENumeric(0x6F72204Eu),  // "or N"
-        WireU32FromBENumeric(0x616D6500u),  // "ame\\0"
+        OSSwapHostToBigInt32(0x00050000u),  // header: leaf_length=5
+        OSSwapHostToBigInt32(0x01000000u),  // type/specifier: descriptor_type=1 (invalid for text)
+        OSSwapHostToBigInt32(0x00000000u),  // width/charset/lang (minimal ASCII)
+        OSSwapHostToBigInt32(0x56656E64u),  // "Vend"
+        OSSwapHostToBigInt32(0x6F72204Eu),  // "or N"
+        OSSwapHostToBigInt32(0x616D6500u),  // "ame\\0"
     };
 
-    const std::string parsed = ASFW::Discovery::ROMParser::ParseTextDescriptorLeaf(
-        leafWire.data(),
-        static_cast<uint32_t>(leafWire.size()),
+    const std::string parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
+        std::span<const uint32_t>(leafWire),
         /*leafOffsetQuadlets=*/0,
         "big");
 

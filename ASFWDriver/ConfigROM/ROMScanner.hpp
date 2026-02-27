@@ -4,6 +4,8 @@
 #include <memory>
 #include <vector>
 #include <functional>
+#include <optional>
+#include <string>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -14,6 +16,13 @@
 
 #include "../Controller/ControllerTypes.hpp"
 #include "../Discovery/DiscoveryTypes.hpp"
+#include "ROMScanNodeStateMachine.hpp"
+#include "ROMScannerEventBus.hpp"
+#include "ROMScannerCompletionManager.hpp"
+#include "ROMScannerInflightCoordinator.hpp"
+#include "ROMScannerFSMController.hpp"
+#include "ROMScannerEnsurePrefixController.hpp"
+#include "ConfigROMConstants.hpp"
 #include "ROMReader.hpp"
 #include "SpeedPolicy.hpp"
 
@@ -27,6 +36,11 @@ class TopologyManager;
 
 namespace ASFW::Discovery {
 
+class ROMScannerDiscoveryFlow;
+class ROMScannerFSMFlow;
+class ROMScannerBIBPhase;
+class ROMScannerIRMPhase;
+
 // Completion callback: called when scan becomes idle (all nodes processed)
 using ScanCompletionCallback = std::function<void(Generation)>;
 
@@ -38,7 +52,7 @@ public:
     explicit ROMScanner(Async::IFireWireBus& bus,
                         SpeedPolicy& speedPolicy,
                         const ROMScannerParams& params,
-                        ScanCompletionCallback onScanComplete = nullptr,
+                        const ScanCompletionCallback& onScanComplete = nullptr,
                         OSSharedPtr<IODispatchQueue> dispatchQueue = nullptr);
     ~ROMScanner();
 
@@ -62,7 +76,7 @@ public:
     // topology: Current topology snapshot (needed for busBase16 if scanner is idle)
     bool TriggerManualRead(uint8_t nodeId, Generation gen, const Driver::TopologySnapshot& topology);
 
-    void SetCompletionCallback(ScanCompletionCallback callback);
+    void SetCompletionCallback(const ScanCompletionCallback& callback);
 
     void SetTopologyManager(Driver::TopologyManager* topologyManager);
 
@@ -72,32 +86,12 @@ public:
     [[nodiscard]] bool HadBusyNodes() const { return hadBusyNodes_; }
 
 private:
-    enum class NodeState : uint8_t {
-        Idle,
-        ReadingBIB,
-        VerifyingIRM_Read,
-        VerifyingIRM_Lock,
-        ReadingRootDir,
-        ReadingDetails,
-        Complete,
-        Failed
-    };
+    friend class ROMScannerDiscoveryFlow;
+    friend class ROMScannerFSMFlow;
+    friend class ROMScannerBIBPhase;
+    friend class ROMScannerIRMPhase;
 
-    struct NodeScanState {
-        uint8_t nodeId{0xFF};
-        NodeState state{NodeState::Idle};
-        FwSpeed currentSpeed{FwSpeed::S100};
-        uint8_t retriesLeft{0};
-        ConfigROM partialROM{};
-
-        bool needsIRMCheck{false};
-        bool irmCheckReadDone{false};
-        bool irmCheckLockDone{false};
-        bool irmIsBad{false};
-        uint32_t irmBitBucket{0xFFFFFFFF};
-
-        bool bibInProgress{false};
-    };
+    using NodeState = ROMScanNodeStateMachine::State;
 
     void AdvanceFSM();
 
@@ -107,7 +101,7 @@ private:
 
     void OnIRMLockComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
 
-    void HandleIRMLockResult(NodeScanState& node, const ROMReader::ReadResult& result);
+    void HandleIRMLockResult(ROMScanNodeStateMachine& node, const ROMReader::ReadResult& result);
 
     void OnRootDirComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
 
@@ -125,32 +119,47 @@ private:
         uint32_t targetRel{0};
     };
 
-    void DiscoverDetails(uint8_t nodeId, uint32_t rootDirStart, std::vector<uint32_t> rootDirBE);
-    void DiscoverVendorName(uint8_t nodeId, uint32_t rootDirStart, 
-                            const std::vector<DirEntry>& rootEntries,
-                            std::optional<DescriptorRef> vendorRef,
-                            std::optional<DescriptorRef> modelRef,
-                            std::vector<uint32_t> unitDirRelOffsets);
-    void DiscoverModelName(uint8_t nodeId, uint32_t rootDirStart,
-                           std::optional<DescriptorRef> modelRef,
-                           std::vector<uint32_t> unitDirRelOffsets);
-    void DiscoverUnitDirectories(uint8_t nodeId, uint32_t rootDirStart,
-                                 std::vector<uint32_t> unitDirRelOffsets, size_t index);
-    void FinalizeNodeDiscovery(uint8_t nodeId);
+    struct UnitDirStepContext {
+        uint8_t nodeId{0xFF};
+        uint32_t rootDirStart{0};
+        std::vector<uint32_t> unitDirRelOffsets;
+        size_t index{0};
+        uint32_t absUnitDir{0};
+        uint32_t unitRel{0};
+        uint16_t dirLen{0};
+    };
 
-    void FetchTextDescriptor(uint8_t nodeId, uint32_t absOffset, uint8_t keyType,
-                             std::function<void(std::string)> completion);
-    void FetchTextLeaf(uint8_t nodeId, uint32_t absLeafOffset, std::function<void(std::string)> completion);
-    void FetchDescriptorDirText(uint8_t nodeId, uint32_t absDirOffset, std::function<void(std::string)> completion);
+    void RetryWithFallback(ROMScanNodeStateMachine& node);
 
-    std::vector<DirEntry> ParseDirectory(const std::vector<uint32_t>& dirBE, uint32_t entryCap);
-    std::optional<DescriptorRef> FindDescriptorRef(const std::vector<DirEntry>& entries, uint8_t ownerKeyId);
-
-    void RetryWithFallback(NodeScanState& node);
+    ROMScanNodeStateMachine* FindNodeScan(uint8_t nodeId);
 
     bool HasCapacity() const;
 
+    bool TransitionNodeState(ROMScanNodeStateMachine& node,
+                             NodeState next,
+                             const char* reason) const;
+
     void CheckAndNotifyCompletion();
+
+    void IncrementInflight();
+    void DecrementInflight();
+    void ResetInflight();
+    [[nodiscard]] uint16_t InflightCount() const;
+
+    void ResetCompletionNotification();
+    void MarkCompletionNotified();
+    [[nodiscard]] bool TryMarkCompletionNotified();
+
+    void PublishReadEvent(ROMScannerEventType type,
+                          uint8_t nodeId,
+                          const ROMReader::ReadResult& result);
+    void PublishEnsurePrefixEvent(uint8_t nodeId,
+                                  uint32_t requiredTotalQuadlets,
+                                  const std::function<void(bool)>& completion,
+                                  const ROMReader::ReadResult& result);
+    [[nodiscard]] bool IsCurrentGenerationEvent(const ROMScannerReadEventData& payload) const;
+    void ScheduleEventDrain();
+    void ProcessPendingEvents();
 
     Async::IFireWireBus& bus_;
     SpeedPolicy& speedPolicy_;
@@ -160,26 +169,21 @@ private:
 
     Generation currentGen_{0};
     Driver::TopologySnapshot currentTopology_;
-    std::vector<NodeScanState> nodeScans_;
+    std::vector<ROMScanNodeStateMachine> nodeScans_;
     std::vector<ConfigROM> completedROMs_;
-    uint16_t inflightCount_{0};
+    ROMScannerInflightCoordinator inflight_{};
 
     ScanCompletionCallback onScanComplete_;
-    bool completionNotified_{false};
+    ROMScannerCompletionManager completionMgr_{};
     bool hadBusyNodes_{false};  // Set when any node returns ack_busy_X or BIB quadlet[0]=0
 
     Driver::TopologyManager* topologyManager_{nullptr};
+    ROMScannerEventBus eventBus_{};
+    [[no_unique_address]] ROMScannerFSMController fsmController_{};
+    [[no_unique_address]] ROMScannerEnsurePrefixController ensurePrefixController_{};
 
     void ScheduleAdvanceFSM();
     void DispatchAsync(void (^work)());
-
-    [[nodiscard]] static constexpr uint32_t RootDirStartQuadlet(const BusInfoBlock& bib) noexcept {
-        return 1u + static_cast<uint32_t>(bib.busInfoLength);
-    }
-
-    [[nodiscard]] static constexpr uint32_t RootDirStartBytes(const BusInfoBlock& bib) noexcept {
-        return RootDirStartQuadlet(bib) * 4u;
-    }
 
     void EnsurePrefix(uint8_t nodeId, uint32_t requiredTotalQuadlets, std::function<void(bool)> completion);
 };

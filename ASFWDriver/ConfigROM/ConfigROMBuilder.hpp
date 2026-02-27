@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -53,30 +52,6 @@ private:
     uint16_t ComputeCRC(size_t start, size_t count) const;
     static uint16_t CRCStep(uint16_t crc, uint16_t data);
     static uint32_t MakeDirectoryEntry(uint8_t key, uint8_t type, uint32_t value);
-    static constexpr uint32_t Swap32(uint32_t value) noexcept {
-#if defined(__clang__) || defined(__GNUC__)
-        return __builtin_bswap32(value);
-#else
-        return (value >> 24) |
-               ((value >> 8) & 0x0000FF00u) |
-               ((value << 8) & 0x00FF0000u) |
-               (value << 24);
-#endif
-    }
-
-    static constexpr uint32_t ToBig(uint32_t value) noexcept {
-        if constexpr (std::endian::native == std::endian::little) {
-            return Swap32(value);
-        }
-        return value;
-    }
-
-    static constexpr uint32_t FromBig(uint32_t value) noexcept {
-        if constexpr (std::endian::native == std::endian::little) {
-            return Swap32(value);
-        }
-        return value;
-    }
 
     void FinaliseBIB();
     void FinaliseRootDirectory();

@@ -31,7 +31,7 @@ TEST(ConfigROMBIBParseTests, TA1999027_AnnexC_DecodesHeaderAndBusOptions) {
         WireU32FromBENumeric(0xFFFFFFFFu),
     };
 
-    auto bibOpt = ASFW::Discovery::ROMParser::ParseBIB(bibWire.data());
+    auto bibOpt = ASFW::Discovery::ConfigROMParser::ParseBIB(bibWire.data());
     ASSERT_TRUE(bibOpt.has_value());
 
     const auto& bib = *bibOpt;

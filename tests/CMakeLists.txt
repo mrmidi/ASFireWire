@@ -1147,6 +1147,14 @@ target_include_directories(ASFWConfigROMTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 add_library(asfw_discovery_host STATIC
     "${ASFW_DRIVER_DIR}/ConfigROM/ROMScanner.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerFSM.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerFSMController.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerEnsurePrefixController.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerFSMFlow.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerBIBPhase.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerIRMPhase.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerDiscovery.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerDiscoveryFlow.cpp"
     "${ASFW_DRIVER_DIR}/ConfigROM/ROMReader.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
     "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMStore.cpp"
@@ -1176,3 +1184,58 @@ target_compile_definitions(ROMScannerCompletionTests
 target_include_directories(ROMScannerCompletionTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScannerCompletionTests)
+
+add_executable(ROMScannerMultiNodeFSMTests
+    "${ASFW_TESTS_DIR}/ROMScannerMultiNodeFSMTests.cpp"
+)
+
+target_link_libraries(ROMScannerMultiNodeFSMTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerMultiNodeFSMTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerMultiNodeFSMTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerMultiNodeFSMTests)
+
+add_executable(ROMScanNodeStateMachineTests
+    "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"
+)
+
+target_link_libraries(ROMScanNodeStateMachineTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScanNodeStateMachineTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScanNodeStateMachineTests)
+
+add_executable(ROMScannerEventBusTests
+    "${ASFW_TESTS_DIR}/ROMScannerEventBusTests.cpp"
+)
+
+target_link_libraries(ROMScannerEventBusTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerEventBusTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerEventBusTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerEventBusTests)
