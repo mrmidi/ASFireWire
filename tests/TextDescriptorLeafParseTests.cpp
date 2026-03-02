@@ -29,11 +29,12 @@ TEST(TextDescriptorLeafParseTests, TAExampleLeaf_ParsesVendorName) {
         OSSwapHostToBigInt32(0x616D6500u),  // "ame\\0"
     };
 
-    const std::string parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
+    auto parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
         std::span<const uint32_t>(leafWire),
         /*leafOffsetQuadlets=*/0);
 
-    EXPECT_EQ(parsed, "Vendor Name");
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed.value(), "Vendor Name");
 }
 
 TEST(TextDescriptorLeafParseTests, TypeSpecMustBeAtPlus1_NotPlus2) {
@@ -48,9 +49,11 @@ TEST(TextDescriptorLeafParseTests, TypeSpecMustBeAtPlus1_NotPlus2) {
         OSSwapHostToBigInt32(0x616D6500u),  // "ame\\0"
     };
 
-    const std::string parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
+    auto parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
         std::span<const uint32_t>(leafWire),
         /*leafOffsetQuadlets=*/0);
 
-    EXPECT_TRUE(parsed.empty());
+    EXPECT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().code,
+              ASFW::Discovery::ConfigROMParser::ErrorCode::UnsupportedTextDescriptor);
 }

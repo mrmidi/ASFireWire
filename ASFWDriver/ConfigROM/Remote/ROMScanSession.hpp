@@ -9,6 +9,7 @@
 
 #include <DriverKit/IOLib.h>
 
+#include "../Common/ConfigROMUnits.hpp"
 #include "../ROMReader.hpp"
 #include "../ROMScanner.hpp"
 #include "ROMScanNodeStateMachine.hpp"
@@ -63,11 +64,15 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_t valueHostOrder);
     void StartIRMLock(ROMScanNodeStateMachine& node);
     void HandleIRMLockComplete(uint8_t nodeId, bool success);
+    void ContinueAfterIRMCheck(ROMScanNodeStateMachine& node);
 
     void StartRootDirRead(ROMScanNodeStateMachine& node);
     void HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult result);
 
-    void EnsurePrefix(uint8_t nodeId, uint32_t requiredTotalQuadlets,
+    void StartDetailsDiscovery(uint8_t nodeId, ASFW::ConfigROM::QuadletOffset rootDirStart,
+                               std::vector<uint32_t> rootDirBE);
+
+    void EnsurePrefix(uint8_t nodeId, ASFW::ConfigROM::QuadletCount requiredTotalQuadlets,
                       std::function<void(bool)> completion);
 
     void RetryWithFallback(ROMScanNodeStateMachine& node);

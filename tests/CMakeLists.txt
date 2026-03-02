@@ -1152,6 +1152,8 @@ gtest_discover_tests(ASFWConfigROMTests)
 add_library(asfw_discovery_host STATIC
     "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanner.cpp"
     "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSession.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSessionDetails.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSessionIRM.cpp"
     "${ASFW_DRIVER_DIR}/ConfigROM/Parse/ConfigROMParser.cpp"
     "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMReader.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
@@ -1201,6 +1203,44 @@ target_compile_definitions(ROMScannerMultiNodeFSMTests
 target_include_directories(ROMScannerMultiNodeFSMTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScannerMultiNodeFSMTests)
+
+add_executable(ROMScannerIRMVerifyTests
+    "${ASFW_TESTS_DIR}/ROMScannerIRMVerifyTests.cpp"
+)
+
+target_link_libraries(ROMScannerIRMVerifyTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerIRMVerifyTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerIRMVerifyTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerIRMVerifyTests)
+
+add_executable(ROMScannerAbortTests
+    "${ASFW_TESTS_DIR}/ROMScannerAbortTests.cpp"
+)
+
+target_link_libraries(ROMScannerAbortTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerAbortTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerAbortTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerAbortTests)
 
 add_executable(ROMScanNodeStateMachineTests
     "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"

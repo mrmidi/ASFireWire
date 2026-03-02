@@ -1,6 +1,7 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <span>
 
 #include <gtest/gtest.h>
 
@@ -31,10 +32,10 @@ TEST(ConfigROMBIBParseTests, TA1999027_AnnexC_DecodesHeaderAndBusOptions) {
         WireU32FromBENumeric(0xFFFFFFFFu),
     };
 
-    auto bibOpt = ASFW::Discovery::ConfigROMParser::ParseBIB(bibWire.data());
-    ASSERT_TRUE(bibOpt.has_value());
+    auto bibRes = ASFW::Discovery::ConfigROMParser::ParseBIB(std::span{bibWire});
+    ASSERT_TRUE(bibRes.has_value());
 
-    const auto& bib = *bibOpt;
+    const auto& bib = bibRes->bib;
 
     EXPECT_EQ(bib.busInfoLength, 0x04u);
     EXPECT_EQ(bib.crcLength, 0x04u);
@@ -53,4 +54,21 @@ TEST(ConfigROMBIBParseTests, TA1999027_AnnexC_DecodesHeaderAndBusOptions) {
     EXPECT_EQ(bib.linkSpd, 0x2u);
 
     EXPECT_EQ(bib.guid, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+TEST(ConfigROMBIBParseTests, CRC_Mismatch_IsWarning_NotFailure) {
+    const std::array<uint32_t, 5> bibWire = {
+        WireU32FromBENumeric(0x0404EABEu), // wrong CRC on purpose (expected 0xEABF)
+        WireU32FromBENumeric(0x31333934u),
+        WireU32FromBENumeric(0xE0646102u),
+        WireU32FromBENumeric(0xFFFFFFFFu),
+        WireU32FromBENumeric(0xFFFFFFFFu),
+    };
+
+    auto bibRes = ASFW::Discovery::ConfigROMParser::ParseBIB(std::span{bibWire});
+    ASSERT_TRUE(bibRes.has_value());
+    EXPECT_EQ(bibRes->crcStatus, ASFW::Discovery::ConfigROMParser::CRCStatus::Mismatch);
+    ASSERT_TRUE(bibRes->computed.has_value());
+    EXPECT_EQ(bibRes->computed.value(), 0xEABFu);
+    EXPECT_EQ(bibRes->bib.crc, 0xEABEu);
 }

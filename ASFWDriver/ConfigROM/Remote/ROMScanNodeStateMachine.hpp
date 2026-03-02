@@ -74,9 +74,10 @@ class ROMScanNodeStateMachine {
             return next == VerifyingIRM_Read || next == ReadingRootDir || next == Complete ||
                    next == Idle || next == Failed;
         case VerifyingIRM_Read:
-            return next == VerifyingIRM_Lock || next == ReadingRootDir || next == Failed;
+            return next == VerifyingIRM_Lock || next == ReadingRootDir || next == Complete ||
+                   next == Failed;
         case VerifyingIRM_Lock:
-            return next == ReadingRootDir || next == Failed;
+            return next == ReadingRootDir || next == Complete || next == Failed;
         case ReadingRootDir:
             return next == ReadingDetails || next == Complete || next == Failed || next == Idle;
         case ReadingDetails:
