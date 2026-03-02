@@ -1,17 +1,17 @@
 #pragma once
 
 #include <atomic>
+#include <cstring>
 #include <functional>
 #include <optional>
-#include <utility>
 #include <string>
-#include <cstring>
+#include <utility>
 
 #include "../Controller/ControllerTypes.hpp"
+#include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "../Hardware/RegisterMap.hpp"
-#include "SelfIDCapture.hpp"
 #include "BusManager.hpp"
-#include "../Discovery/DiscoveryTypes.hpp"  // For Discovery::Generation
+#include "SelfIDCapture.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -29,7 +29,7 @@ class ConfigROMStager;
 class InterruptManager;
 class TopologyManager;
 class BusManager;
-}
+} // namespace ASFW::Driver
 
 namespace ASFW::Async {
 class AsyncSubsystem;
@@ -45,7 +45,7 @@ namespace ASFW::Driver {
 // Implements a deterministic FSM that enforces spec-ordered steps
 // (OHCI 1.1 §§6.1.1, 7.2.3.2, 11).
 class BusResetCoordinator {
-public:
+  public:
     using TopologyReadyCallback = std::function<void(const TopologySnapshot&)>;
 
     enum class State : uint8_t {
@@ -73,14 +73,10 @@ public:
     BusResetCoordinator();
     ~BusResetCoordinator();
 
-    void Initialize(HardwareInterface* hw,
-                    OSSharedPtr<IODispatchQueue> workQueue,
-                    Async::AsyncSubsystem* asyncSys,
-                    SelfIDCapture* selfIdCapture,
-                    ConfigROMStager* configRom,
-                    InterruptManager* interrupts,
-                    TopologyManager* topology,
-                    BusManager* busManager = nullptr,
+    void Initialize(HardwareInterface* hw, OSSharedPtr<IODispatchQueue> workQueue,
+                    Async::AsyncSubsystem* asyncSys, SelfIDCapture* selfIdCapture,
+                    ConfigROMStager* configRom, InterruptManager* interrupts,
+                    TopologyManager* topology, BusManager* busManager = nullptr,
                     Discovery::ROMScanner* romScanner = nullptr);
 
     void OnIrq(uint32_t intEvent, uint64_t timestamp);
@@ -90,7 +86,7 @@ public:
     const BusResetMetrics& Metrics() const { return metrics_; }
     State GetState() const { return state_; }
     const char* StateString() const;
-    static const char* StateString(State s);
+    static const char* StateString(State state);
 
     /**
      * Reset delegation retry counter (Linux pattern for emergency bypass).
@@ -122,7 +118,7 @@ public:
      */
     void EscalateDiscoveryDelay();
 
-private:
+  private:
     void TransitionTo(State newState, const char* reason);
     void ProcessEvent(Event event);
     void RunStateMachine();
@@ -143,17 +139,16 @@ private:
     void A_RearmAT();
     void A_MetricsLog();
     void A_SendGlobalResumeIfNeeded();
-    void StageDelayedPhyPacket(const BusManager::PhyConfigCommand& command,
-                               const char* reason);
+    void StageDelayedPhyPacket(const BusManager::PhyConfigCommand& command, const char* reason);
     bool DispatchPendingPhyPacket();
     void EvaluateRootDelegation(const TopologySnapshot& topo);
     void ScheduleDeferredRun(uint32_t delayMs, const char* reason);
 
     bool G_ATInactive();
-    bool G_HaveSelfIDPair();
+    bool G_HaveSelfIDPair() const;
     bool G_ROMImageReady();
     bool G_NodeIDValid() const;
-    
+
     bool ReadyForDiscovery(Discovery::Generation gen) const;
 
     static uint64_t MonotonicNow();
@@ -165,12 +160,12 @@ private:
     uint32_t pendingSelfIDCountReg_{0};
 
     std::atomic<bool> workInProgress_{false};
-    
+
     bool firstBusResetSeen_{false};
     uint64_t lastResetTimestamp_{0};
 
     BusResetMetrics metrics_{};
-    
+
     uint64_t firstIrqTime_{0};
     uint64_t selfIDComplete1Time_{0};
     uint64_t selfIDComplete2Time_{0};
@@ -195,7 +190,7 @@ private:
     uint64_t lastSelfIdNs_{0};
     bool busResetMasked_{false};
     Discovery::Generation lastGeneration_{0};
-    
+
     bool filtersEnabled_{false};
     bool atArmed_{false};
 
@@ -207,12 +202,12 @@ private:
     uint32_t delegateRetryCount_{0};
     static constexpr uint32_t kMaxDelegateRetries = 5;
     bool delegateSuppressed_{false};
-    uint32_t lastResumeGeneration_{0xFFFFFFFFu};
+    uint32_t lastResumeGeneration_{0xFFFFFFFFU};
 
     // Discovery delay for slow-booting devices (DICE/Saffire).
     // Escalates with consecutive failed scans: 2s → 4s → 6s → 8s → 10s.
-    static constexpr uint32_t kDiscoveryDelayStepMs = 2000;   // escalation step
-    static constexpr uint32_t kMaxDiscoveryDelayMs  = 10000;  // 10s cap
+    static constexpr uint32_t kDiscoveryDelayStepMs = 2000; // escalation step
+    static constexpr uint32_t kMaxDiscoveryDelayMs = 10000; // 10s cap
     uint32_t currentDiscoveryDelayMs_{0};
     bool previousScanHadBusyNodes_{false};
 };

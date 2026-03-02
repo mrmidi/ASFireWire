@@ -6,25 +6,34 @@
 //
 
 #include "ConfigROMHandler.hpp"
-#include "ASFWDriver.h"
-#include "../../Controller/ControllerCore.hpp"
 #include "../../ConfigROM/ConfigROMStore.hpp"
 #include "../../ConfigROM/ROMScanner.hpp"
+#include "../../Controller/ControllerCore.hpp"
 #include "../../Logging/Logging.hpp"
+
+#if __has_include("ASFWDriver.h")
+#include "ASFWDriver.h"
+#else
+// `ASFWDriver.h` is generated from `ASFWDriver/ASFWDriver.iig` by Xcode/IIG.
+// Provide a minimal declaration so `clang-tidy` (and non-Xcode builds) can parse this file.
+class ASFWDriver {
+  public:
+    [[nodiscard]] void* GetControllerCore() const;
+};
+#endif
 
 #include <DriverKit/OSData.h>
 
 namespace ASFW::UserClient {
 
-ConfigROMHandler::ConfigROMHandler(ASFWDriver* driver)
-    : driver_(driver) {
-}
+ConfigROMHandler::ConfigROMHandler(ASFWDriver* driver) : driver_(driver) {}
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity) - UserClient argument plumbing.
 kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* args) {
     // Export Config ROM for a given nodeId and generation
     // Input: nodeId[8], generation[16]
-    // Output: OSData with ROM quadlets (host byte order)
-    if (!args || args->scalarInputCount < 2) {
+    // Output: OSData with ROM quadlets (wire-order big-endian bytes)
+    if (args == nullptr || args->scalarInputCount < 2) {
         return kIOReturnBadArgument;
     }
 
@@ -35,14 +44,14 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
 
     using namespace ASFW::Driver;
     auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
-    if (!controller) {
+    if (controller == nullptr) {
         ASFW_LOG(UserClient, "ExportConfigROM: controller is NULL");
         return kIOReturnNotReady;
     }
 
     // Access ConfigROMStore from ControllerCore
     auto* romStore = controller->GetConfigROMStore();
-    if (!romStore) {
+    if (romStore == nullptr) {
         ASFW_LOG(UserClient, "ExportConfigROM: romStore is NULL");
         return kIOReturnNotReady;
     }
@@ -51,10 +60,10 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
 
     // Lookup ROM by nodeId and generation
     const auto* rom = romStore->FindByNode(generation, nodeId);
-    if (!rom) {
+    if (rom == nullptr) {
         // Fallback: return latest cached ROM for this node (post-reset)
         rom = romStore->FindLatestForNode(nodeId);
-        if (rom) {
+        if (rom != nullptr) {
             resolvedGeneration = rom->gen;
             ASFW_LOG(UserClient,
                      "ExportConfigROM: Requested gen=%u stale, returning latest gen=%u for node=%u",
@@ -62,23 +71,27 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         }
     }
 
-    if (!rom) {
+    if (rom == nullptr) {
         ASFW_LOG(UserClient,
-                 "ExportConfigROM: ROM not found for node=%u gen=%u (no cached fallback)",
-                 nodeId, generation);
+                 "ExportConfigROM: ROM not found for node=%u gen=%u (no cached fallback)", nodeId,
+                 generation);
         // Return empty data to indicate "not cached"
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (data == nullptr) {
+            return kIOReturnNoMemory;
+        }
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;
     }
 
-    // Export raw quadlets (already in host byte order in ConfigROM)
+    // Export raw quadlets (stored as byte-exact wire-order big-endian)
     if (rom->rawQuadlets.empty()) {
         ASFW_LOG(UserClient, "ExportConfigROM: ROM found but rawQuadlets empty");
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (data == nullptr) {
+            return kIOReturnNoMemory;
+        }
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;
@@ -86,15 +99,14 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
 
     size_t dataSize = rom->rawQuadlets.size() * sizeof(uint32_t);
     OSData* data = OSData::withBytes(rom->rawQuadlets.data(), static_cast<uint32_t>(dataSize));
-    if (!data) {
+    if (data == nullptr) {
         return kIOReturnNoMemory;
     }
 
-    ASFW_LOG(UserClient,
-             "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u",
+    ASFW_LOG(UserClient, "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u",
              rom->rawQuadlets.size(), dataSize, nodeId, resolvedGeneration);
 
-    if (args->scalarOutput && args->scalarOutputCount >= 1) {
+    if (args->scalarOutput != nullptr && args->scalarOutputCount >= 1) {
         args->scalarOutput[0] = resolvedGeneration;
         args->scalarOutputCount = 1;
     }
@@ -104,11 +116,12 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
     return kIOReturnSuccess;
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity) - UserClient argument plumbing.
 kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args) {
     // Manually trigger ROM read for a specific nodeId
     // Input: nodeId[8]
     // Output: status[32] (0=initiated, 1=already_in_progress, 2=failed)
-    if (!args || args->scalarInputCount < 1 || args->scalarOutputCount < 1) {
+    if (args == nullptr || args->scalarInputCount < 1 || args->scalarOutputCount < 1) {
         return kIOReturnBadArgument;
     }
 
@@ -118,7 +131,7 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
 
     using namespace ASFW::Driver;
     auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
-    if (!controller) {
+    if (controller == nullptr) {
         ASFW_LOG(UserClient, "TriggerROMRead: controller is NULL");
         args->scalarOutput[0] = 2; // failed
         args->scalarOutputCount = 1;
@@ -150,23 +163,20 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
         return kIOReturnBadArgument;
     }
 
-    // Trigger ROM read via ROMScanner
-    auto* romScanner = controller->GetROMScanner();
-    if (!romScanner) {
-        ASFW_LOG(UserClient, "TriggerROMRead: romScanner is NULL");
-        args->scalarOutput[0] = 2; // failed
-        args->scalarOutputCount = 1;
-        return kIOReturnError;
-    }
+    // Trigger ROM scan for this node (callback-driven, single-threaded execution model).
+    ASFW::Discovery::ROMScanRequest request{};
+    request.gen = topo->generation;
+    request.topology = *topo;
+    request.localNodeId = topo->localNodeId.value_or(0xFF);
+    request.targetNodes = {nodeId};
 
-    // Request manual ROM read for this node
-    bool initiated = romScanner->TriggerManualRead(nodeId, topo->generation, *topo);
+    const bool initiated = controller->StartDiscoveryScan(request);
 
     args->scalarOutput[0] = initiated ? 0 : 1; // 0=initiated, 1=already_in_progress
     args->scalarOutputCount = 1;
 
-    ASFW_LOG(UserClient, "TriggerROMRead: nodeId=%u %{public}s",
-             nodeId, initiated ? "initiated" : "already in progress");
+    ASFW_LOG(UserClient, "TriggerROMRead: nodeId=%u %{public}s", nodeId,
+             initiated ? "initiated" : "already in progress");
 
     return kIOReturnSuccess;
 }

@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-#include "ASFWDriver/ConfigROM/ConfigROMStore.hpp"
+#include "ASFWDriver/ConfigROM/ConfigROMParser.hpp"
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
 
 TEST(TextDescriptorLeafParseTests, TAExampleLeaf_ParsesVendorName) {
@@ -31,8 +31,7 @@ TEST(TextDescriptorLeafParseTests, TAExampleLeaf_ParsesVendorName) {
 
     const std::string parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
         std::span<const uint32_t>(leafWire),
-        /*leafOffsetQuadlets=*/0,
-        "big");
+        /*leafOffsetQuadlets=*/0);
 
     EXPECT_EQ(parsed, "Vendor Name");
 }
@@ -51,9 +50,7 @@ TEST(TextDescriptorLeafParseTests, TypeSpecMustBeAtPlus1_NotPlus2) {
 
     const std::string parsed = ASFW::Discovery::ConfigROMParser::ParseTextDescriptorLeaf(
         std::span<const uint32_t>(leafWire),
-        /*leafOffsetQuadlets=*/0,
-        "big");
+        /*leafOffsetQuadlets=*/0);
 
     EXPECT_TRUE(parsed.empty());
 }
-

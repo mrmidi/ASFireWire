@@ -204,7 +204,6 @@ kern_return_t IMPL(ASFWDriver, Start) {
                 ctx.controller->Bus(),
                 *ctx.deps.speedPolicy,
                 scannerParams,
-                nullptr,
                 discoveryQueue
             );
             ASFW_LOG(Controller, "✅ ROMScanner created");

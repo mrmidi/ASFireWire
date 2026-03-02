@@ -1110,9 +1110,10 @@ gtest_discover_tests(ApogeeBooleanControlMappingTests)
 # =============================================================================
 
 add_library(asfw_configrom_host STATIC
-    "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMBuilder.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMReader.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMStore.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Local/ConfigROMBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Parse/ConfigROMParser.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMReader.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Store/ConfigROMStore.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -1123,6 +1124,7 @@ target_compile_definitions(asfw_configrom_host PUBLIC ASFW_HOST_TEST)
 add_executable(ASFWConfigROMTests
     "${ASFW_TESTS_DIR}/ConfigROMBuilderTests.cpp"
     "${ASFW_TESTS_DIR}/ConfigROMBIBParseTests.cpp"
+    "${ASFW_TESTS_DIR}/ConfigROMStoreConcurrencyTests.cpp"
     "${ASFW_TESTS_DIR}/TextDescriptorLeafParseTests.cpp"
     "${ASFW_TESTS_DIR}/ROMReaderHeaderFirstTests.cpp"
     "${ASFW_TESTS_DIR}/BusOptionsFieldsTests.cpp"
@@ -1141,23 +1143,19 @@ target_compile_definitions(ASFWConfigROMTests
 
 target_include_directories(ASFWConfigROMTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+gtest_discover_tests(ASFWConfigROMTests)
+
 # =============================================================================
 # Discovery Subsystem Tests
 # =============================================================================
 
 add_library(asfw_discovery_host STATIC
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScanner.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerFSM.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerFSMController.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerEnsurePrefixController.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerFSMFlow.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerBIBPhase.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerIRMPhase.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerDiscovery.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMScannerDiscoveryFlow.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ROMReader.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanner.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSession.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Parse/ConfigROMParser.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMReader.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
-    "${ASFW_DRIVER_DIR}/ConfigROM/ConfigROMStore.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Store/ConfigROMStore.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
@@ -1221,21 +1219,3 @@ target_compile_definitions(ROMScanNodeStateMachineTests
 target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScanNodeStateMachineTests)
-
-add_executable(ROMScannerEventBusTests
-    "${ASFW_TESTS_DIR}/ROMScannerEventBusTests.cpp"
-)
-
-target_link_libraries(ROMScannerEventBusTests
-    PRIVATE
-        GTest::gtest_main
-)
-
-target_compile_definitions(ROMScannerEventBusTests
-    PRIVATE
-        ASFW_HOST_TEST
-)
-
-target_include_directories(ROMScannerEventBusTests PRIVATE ${ASFW_COMMON_INCLUDES})
-
-gtest_discover_tests(ROMScannerEventBusTests)

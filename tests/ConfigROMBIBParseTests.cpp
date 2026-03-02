@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-#include "ASFWDriver/ConfigROM/ConfigROMStore.hpp"
+#include "ASFWDriver/ConfigROM/ConfigROMParser.hpp"
 
 namespace {
 
@@ -54,4 +54,3 @@ TEST(ConfigROMBIBParseTests, TA1999027_AnnexC_DecodesHeaderAndBusOptions) {
 
     EXPECT_EQ(bib.guid, 0xFFFFFFFFFFFFFFFFULL);
 }
-

@@ -3,23 +3,23 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "../../Async/AsyncTypes.hpp"
+#include "../../Discovery/SpeedPolicy.hpp"
+#include "../Remote/ROMScanNodeStateMachine.hpp"
 #include "ConfigROMConstants.hpp"
-#include "ROMScanNodeStateMachine.hpp"
-#include "SpeedPolicy.hpp"
-#include "../Async/AsyncTypes.hpp"
 
 namespace ASFW::Discovery {
 
 class GenerationContextPolicy {
-public:
+  public:
     [[nodiscard]] static constexpr bool IsCurrentEvent(Generation eventGeneration,
                                                        Generation activeGeneration) noexcept {
         return eventGeneration != 0 && eventGeneration == activeGeneration;
     }
 
-    [[nodiscard]] static constexpr bool CanRestartIdleScan(Generation activeGeneration,
-                                                           bool scannerIdle,
-                                                           Generation requestedGeneration) noexcept {
+    [[nodiscard]] static constexpr bool
+    CanRestartIdleScan(Generation activeGeneration, bool scannerIdle,
+                       Generation requestedGeneration) noexcept {
         return scannerIdle && requestedGeneration != 0 && requestedGeneration != activeGeneration;
     }
 
@@ -30,7 +30,7 @@ public:
 };
 
 class ShortReadResolutionPolicy {
-public:
+  public:
     [[nodiscard]] static constexpr bool IsValidQuadletPayload(size_t payloadSizeBytes) noexcept {
         return payloadSizeBytes == ASFW::ConfigROM::kQuadletBytes;
     }
@@ -49,7 +49,8 @@ public:
                (status != Async::AsyncStatus::kSuccess || !IsValidQuadletPayload(payloadSizeBytes));
     }
 
-    [[nodiscard]] static constexpr uint16_t ClampHeaderFirstEntryCount(uint16_t entryCount) noexcept {
+    [[nodiscard]] static constexpr uint16_t
+    ClampHeaderFirstEntryCount(uint16_t entryCount) noexcept {
         if (entryCount > ASFW::ConfigROM::kHeaderFirstMaxEntries) {
             return static_cast<uint16_t>(ASFW::ConfigROM::kHeaderFirstMaxEntries);
         }
@@ -58,7 +59,7 @@ public:
 };
 
 class RetryBackoffPolicy {
-public:
+  public:
     enum class Decision : uint8_t {
         RetrySameSpeed,
         RetryWithFallback,
@@ -66,14 +67,11 @@ public:
     };
 
     template <typename TransitionFn>
-    [[nodiscard]] Decision Apply(ROMScanNodeStateMachine& node,
-                                 SpeedPolicy& speedPolicy,
-                                 uint8_t perStepRetries,
-                                 TransitionFn&& transitionNodeState) const {
+    [[nodiscard]] Decision Apply(ROMScanNodeStateMachine& node, SpeedPolicy& speedPolicy,
+                                 uint8_t perStepRetries, TransitionFn&& transitionNodeState) const {
         if (node.RetriesLeft() > 0) {
             node.DecrementRetries();
-            transitionNodeState(node,
-                                ROMScanNodeStateMachine::State::Idle,
+            transitionNodeState(node, ROMScanNodeStateMachine::State::Idle,
                                 "RetryWithFallback retry same speed");
             return Decision::RetrySameSpeed;
         }
@@ -82,16 +80,14 @@ public:
 
         const FwSpeed newSpeed = speedPolicy.ForNode(node.NodeId()).localToNode;
         if (newSpeed == node.CurrentSpeed()) {
-            transitionNodeState(node,
-                                ROMScanNodeStateMachine::State::Failed,
+            transitionNodeState(node, ROMScanNodeStateMachine::State::Failed,
                                 "RetryWithFallback exhausted retries");
             return Decision::FailedExhausted;
         }
 
         node.SetCurrentSpeed(newSpeed);
         node.SetRetriesLeft(perStepRetries);
-        transitionNodeState(node,
-                            ROMScanNodeStateMachine::State::Idle,
+        transitionNodeState(node, ROMScanNodeStateMachine::State::Idle,
                             "RetryWithFallback speed fallback");
         return Decision::RetryWithFallback;
     }
