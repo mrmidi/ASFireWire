@@ -36,6 +36,23 @@ struct ROMScanSession::DiscoveryFlow {
         uint16_t dirLen{0};
     };
 
+    struct DescriptorDirTextState : std::enable_shared_from_this<DescriptorDirTextState> {
+        ROMScanSession* session{nullptr};
+        uint8_t nodeId{0xFF};
+        ASFW::ConfigROM::QuadletOffset absDirOffset{0};
+        std::function<void(std::string)> completion;
+
+        uint16_t dirLen{0};
+        std::vector<ASFW::ConfigROM::QuadletOffset> candidates;
+        size_t candidateIndex{0};
+
+        enum class Step : uint8_t { NeedHeader, NeedDirData } step{Step::NeedHeader};
+
+        void Finish(std::string text);
+        void FetchNextCandidate();
+        void Advance(bool ok);
+    };
+
     [[nodiscard]] static std::optional<DescriptorRef>
     FindDescriptorRef(std::span<const DirectoryEntry> entries, uint8_t ownerKeyId);
     [[nodiscard]] static std::vector<DirectoryEntry>
@@ -187,122 +204,104 @@ void ROMScanSession::DiscoveryFlow::FetchTextLeaf(ROMScanSession& session, uint8
                          [state](bool ok) { state->Advance(ok); });
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity) - callback-driven text fetch state
-// machine.
+void ROMScanSession::DiscoveryFlow::DescriptorDirTextState::Finish(std::string text) {
+    if (completion) {
+        completion(std::move(text));
+    }
+    completion = nullptr;
+}
+
+void ROMScanSession::DiscoveryFlow::DescriptorDirTextState::FetchNextCandidate() {
+    if (session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    if (candidateIndex >= candidates.size()) {
+        Finish("");
+        return;
+    }
+
+    const auto leafAbs = candidates[candidateIndex];
+    ROMScanSession::DiscoveryFlow::FetchTextLeaf(
+        *session, nodeId, leafAbs, [self = shared_from_this()](std::string text) mutable {
+            if (!text.empty()) {
+                self->Finish(std::move(text));
+                return;
+            }
+
+            ++self->candidateIndex;
+            self->FetchNextCandidate();
+        });
+}
+
+void ROMScanSession::DiscoveryFlow::DescriptorDirTextState::Advance(bool ok) {
+    if (!ok || session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    const auto* node = session->FindNode(nodeId);
+    if (node == nullptr || absDirOffset.value >= node->ROM().rawQuadlets.size()) {
+        Finish("");
+        return;
+    }
+
+    if (step == Step::NeedHeader) {
+        const uint32_t hdr = OSSwapBigToHostInt32(node->ROM().rawQuadlets[absDirOffset.value]);
+        dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
+        if (dirLen == 0) {
+            Finish("");
+            return;
+        }
+        dirLen = std::min(dirLen, static_cast<uint16_t>(32U));
+
+        const ASFW::ConfigROM::QuadletCount dirEndExclusive{absDirOffset.value + 1U +
+                                                            static_cast<uint32_t>(dirLen)};
+
+        step = Step::NeedDirData;
+        session->EnsurePrefix(nodeId, dirEndExclusive,
+                              [self = shared_from_this()](bool ok2) { self->Advance(ok2); });
+        return;
+    }
+
+    const auto* base = node->ROM().rawQuadlets.data();
+    const size_t available = node->ROM().rawQuadlets.size();
+    if (static_cast<size_t>(absDirOffset.value) + 1U + static_cast<size_t>(dirLen) > available) {
+        Finish("");
+        return;
+    }
+
+    const auto dirSpan =
+        std::span<const uint32_t>(base + absDirOffset.value, 1U + static_cast<size_t>(dirLen));
+    auto entriesRes = ConfigROMParser::ParseDirectory(dirSpan, 32);
+    if (!entriesRes) {
+        Finish("");
+        return;
+    }
+
+    auto entries = std::move(*entriesRes);
+    candidates.clear();
+    candidates.reserve(entries.size());
+    for (const auto& entry : entries) {
+        if (!entry.hasTarget || entry.targetRel == 0) {
+            continue;
+        }
+        if (entry.keyId != ASFW::FW::ConfigKey::kTextualDescriptor ||
+            entry.keyType != ASFW::FW::EntryType::kLeaf) {
+            continue;
+        }
+
+        candidates.push_back(absDirOffset + ASFW::ConfigROM::QuadletCount{entry.targetRel});
+    }
+
+    FetchNextCandidate();
+}
+
 void ROMScanSession::DiscoveryFlow::FetchDescriptorDirText(
     ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset absDirOffset,
     std::function<void(std::string)> completion) {
-    struct State : std::enable_shared_from_this<State> {
-        ROMScanSession* session{nullptr};
-        uint8_t nodeId{0xFF};
-        ASFW::ConfigROM::QuadletOffset absDirOffset{0};
-        std::function<void(std::string)> completion;
-
-        uint16_t dirLen{0};
-        std::vector<ASFW::ConfigROM::QuadletOffset> candidates;
-        size_t candidateIndex{0};
-
-        enum class Step : uint8_t { NeedHeader, NeedDirData } step{Step::NeedHeader};
-
-        void Finish(std::string text) {
-            if (completion) {
-                completion(std::move(text));
-            }
-            completion = nullptr;
-        }
-
-        void FetchNextCandidate() {
-            if (session == nullptr) {
-                Finish("");
-                return;
-            }
-
-            if (candidateIndex >= candidates.size()) {
-                Finish("");
-                return;
-            }
-
-            const auto leafAbs = candidates[candidateIndex];
-            ROMScanSession::DiscoveryFlow::FetchTextLeaf(
-                *session, nodeId, leafAbs, [self = shared_from_this()](std::string text) mutable {
-                    if (!text.empty()) {
-                        self->Finish(std::move(text));
-                        return;
-                    }
-
-                    ++self->candidateIndex;
-                    self->FetchNextCandidate();
-                });
-        }
-
-        void Advance(bool ok) {
-            if (!ok || session == nullptr) {
-                Finish("");
-                return;
-            }
-
-            const auto* node = session->FindNode(nodeId);
-            if (node == nullptr || absDirOffset.value >= node->ROM().rawQuadlets.size()) {
-                Finish("");
-                return;
-            }
-
-            if (step == Step::NeedHeader) {
-                const uint32_t hdr =
-                    OSSwapBigToHostInt32(node->ROM().rawQuadlets[absDirOffset.value]);
-                dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
-                if (dirLen == 0) {
-                    Finish("");
-                    return;
-                }
-                dirLen = std::min(dirLen, static_cast<uint16_t>(32U));
-
-                const ASFW::ConfigROM::QuadletCount dirEndExclusive{absDirOffset.value + 1U +
-                                                                    static_cast<uint32_t>(dirLen)};
-
-                step = Step::NeedDirData;
-                session->EnsurePrefix(
-                    nodeId, dirEndExclusive,
-                    [self = shared_from_this()](bool ok2) { self->Advance(ok2); });
-                return;
-            }
-
-            const auto* base = node->ROM().rawQuadlets.data();
-            const size_t available = node->ROM().rawQuadlets.size();
-            if (static_cast<size_t>(absDirOffset.value) + 1U + static_cast<size_t>(dirLen) >
-                available) {
-                Finish("");
-                return;
-            }
-
-            const auto dirSpan = std::span<const uint32_t>(base + absDirOffset.value,
-                                                           1U + static_cast<size_t>(dirLen));
-            auto entriesRes = ConfigROMParser::ParseDirectory(dirSpan, 32);
-            if (!entriesRes) {
-                Finish("");
-                return;
-            }
-
-            auto entries = std::move(*entriesRes);
-            candidates.clear();
-            candidates.reserve(entries.size());
-            for (const auto& entry : entries) {
-                if (!entry.hasTarget || entry.targetRel == 0) {
-                    continue;
-                }
-                if (entry.keyId != ASFW::FW::ConfigKey::kTextualDescriptor ||
-                    entry.keyType != ASFW::FW::EntryType::kLeaf) {
-                    continue;
-                }
-
-                candidates.push_back(absDirOffset + ASFW::ConfigROM::QuadletCount{entry.targetRel});
-            }
-
-            FetchNextCandidate();
-        }
-    };
-
-    auto state = std::make_shared<State>();
+    auto state = std::make_shared<DescriptorDirTextState>();
     state->session = &session;
     state->nodeId = nodeId;
     state->absDirOffset = absDirOffset;
