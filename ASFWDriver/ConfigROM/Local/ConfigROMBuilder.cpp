@@ -90,7 +90,7 @@ LeafHandle ConfigROMBuilder::WriteTextLeaf(std::string_view text) {
         for (size_t byte = 0; byte < 4; ++byte) {
             const size_t idx = (i * 4) + byte;
             uint8_t ch = idx < payloadBytes ? static_cast<uint8_t>(text[idx]) : 0;
-            word |= static_cast<uint32_t>(ch) << (24 - static_cast<uint32_t>(byte) * 8);
+            word |= static_cast<uint32_t>(ch) << (24 - (static_cast<uint32_t>(byte) * 8));
         }
         Append(word);
     }

@@ -103,7 +103,7 @@ uint64_t BusResetCoordinator::MonotonicNow() {
     using namespace std::chrono;
     return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
 #else
-    static mach_timebase_info_data_t info = {0, 0};
+    static mach_timebase_info_data_t info{};
     if (info.denom == 0) {
         mach_timebase_info(&info);
     }

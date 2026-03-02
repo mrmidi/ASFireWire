@@ -25,15 +25,20 @@ class IFireWireBus;
 
 namespace ASFW::Discovery {
 
-// High-level wrapper around IFireWireBus for Config ROM reads.
-// Provides convenient helpers for reading Bus Info Block (BIB) and
-// root directory quadlets with generation and speed tracking.
-//
-// Phase 2: Refactored to use IFireWireBus interface instead of AsyncSubsystem.
-// Only supports quadlet-mode reads (block reads for Config ROM are problematic).
+/**
+ * @class ROMReader
+ * @brief High-level wrapper around IFireWireBus for Config ROM reads.
+ *
+ * Provides convenient helpers for reading the Bus Info Block (BIB) and
+ * Root Directory quadlets using primitive quadlet read transactions
+ * (as recommended for compatibility). IEEE 1394-1995 §8.3.2 designates
+ * 0xFFFFF0000400 as the start of the Configuration ROM.
+ */
 class ROMReader {
   public:
-    // Result passed to completion callbacks.
+    /**
+     * @brief Result passed to completion callbacks after a read operation.
+     */
     struct ReadResult {
         bool success{false};
         uint8_t nodeId{0xFF};
@@ -68,20 +73,44 @@ class ROMReader {
                        OSSharedPtr<IODispatchQueue> dispatchQueue = nullptr);
     ~ROMReader() = default;
 
-    // Primitive: read N quadlets from Config ROM address space.
-    // Offset is relative to Config ROM base (0xFFFFF0000400).
+    /**
+     * @brief Primitive: read N quadlets from Config ROM address space.
+     *
+     * @param nodeId Target node ID.
+     * @param generation Expected bus generation.
+     * @param speed Transaction speed.
+     * @param offsetBytes Offset relative to Config ROM base (0xFFFFF0000400).
+     * @param quadletCount Number of quadlets to read.
+     * @param callback Completion callback.
+     * @param policy Specifies how to handle read errors during a sequence.
+     */
     void ReadQuadletsBE(uint8_t nodeId, Generation generation, FwSpeed speed, uint32_t offsetBytes,
                         uint32_t quadletCount, CompletionCallback callback,
                         QuadletReadPolicy policy = QuadletReadPolicy::AllOrNothing);
 
-    // Read Bus Info Block (20 bytes, 5 quadlets) at standard Config ROM address
-    // Address: 0xFFFFF0000400 (IEEE 1394-1995 §8.3.2)
-    // Callback invoked on completion with result (success or failure)
+    /**
+     * @brief Read Bus Info Block (20 bytes, 5 quadlets).
+     *
+     * Reads the BIB starting at the standard Config ROM address 0xFFFFF0000400
+     * (IEEE 1394-1995 §8.3.2).
+     *
+     * @param nodeId Target node ID.
+     * @param generation Expected bus generation.
+     * @param speed Transaction speed.
+     * @param callback Completion callback.
+     */
     void ReadBIB(uint8_t nodeId, Generation generation, FwSpeed speed, CompletionCallback callback);
 
-    // Read N quadlets from root directory starting at given offset
-    // Offset is relative to BIB start (0xFFFFF0000400)
-    // Typical usage: offset=20 (skip BIB), count=8-16 (bounded scan)
+    /**
+     * @brief Read N quadlets from the root directory.
+     *
+     * @param nodeId Target node ID.
+     * @param generation Expected bus generation.
+     * @param speed Transaction speed.
+     * @param offsetBytes Offset relative to BIB start (0xFFFFF0000400).
+     * @param count Number of quadlets to read.
+     * @param callback Completion callback.
+     */
     void ReadRootDirQuadlets(uint8_t nodeId, Generation generation, FwSpeed speed,
                              uint32_t offsetBytes, uint32_t count, CompletionCallback callback);
 
