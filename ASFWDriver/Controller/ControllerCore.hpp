@@ -4,9 +4,9 @@
 #include <memory>
 #include <string_view>
 
+#include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"
-#include "../Discovery/DiscoveryTypes.hpp"  // For Discovery::Generation
 
 class IOService;
 
@@ -35,33 +35,38 @@ class AsyncSubsystem;
 class IFireWireBus;
 class FireWireBusImpl;
 class DMAMemoryImpl;
-}
+} // namespace ASFW::Async
 
 namespace ASFW::Discovery {
 class SpeedPolicy;
 class ConfigROMStore;
 class DeviceRegistry;
 class ROMScanner;
+struct ROMScanRequest;
 class DeviceManager;
 class IDeviceManager;
 class IUnitRegistry;
-}
+} // namespace ASFW::Discovery
 
 namespace ASFW::Protocols::AVC {
 class AVCDiscovery;
 class IAVCDiscovery;
 class FCPResponseRouter;
-}
+} // namespace ASFW::Protocols::AVC
 
-namespace ASFW::IRM { class IRMClient; }
-namespace ASFW::CMP { class CMPClient; }
+namespace ASFW::IRM {
+class IRMClient;
+}
+namespace ASFW::CMP {
+class CMPClient;
+}
 
 namespace ASFW::Driver {
 
 // Central orchestrator that wires together hardware access, interrupt routing,
 // bus reset sequencing, and topology publication.
 class ControllerCore {
-public:
+  public:
     struct Dependencies {
         std::shared_ptr<HardwareInterface> hardware;
         std::shared_ptr<InterruptManager> interrupts;
@@ -86,11 +91,11 @@ public:
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
 
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
-        
+
         std::shared_ptr<ASFW::CMP::CMPClient> cmpClient;
     };
 
-    ControllerCore(const ControllerConfig& config, Dependencies deps);
+    ControllerCore(ControllerConfig config, Dependencies deps);
     ~ControllerCore();
 
     kern_return_t Start(IOService* provider);
@@ -99,17 +104,18 @@ public:
     void HandleInterrupt(const InterruptSnapshot& snapshot);
 
     const ControllerStateMachine& StateMachine() const;
-    MetricsSink& Metrics();
+    MetricsSink& Metrics() const;
     std::optional<TopologySnapshot> LatestTopology() const;
 
     Async::IFireWireBus& Bus();
     Shared::IDMAMemory& DMA();
 
-    Async::AsyncSubsystem& AsyncSubsystem();
+    Async::AsyncSubsystem& AsyncSubsystem() const;
 
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;
     void AttachROMScanner(std::shared_ptr<Discovery::ROMScanner> romScanner);
+    [[nodiscard]] bool StartDiscoveryScan(const Discovery::ROMScanRequest& request);
 
     Discovery::IDeviceManager* GetDeviceManager() const;
     Discovery::IUnitRegistry* GetUnitRegistry() const;
@@ -119,22 +125,22 @@ public:
 
     IRM::IRMClient* GetIRMClient() const;
     void SetIRMClient(std::shared_ptr<IRM::IRMClient> client);
-    
+
     CMP::CMPClient* GetCMPClient() const;
     void SetCMPClient(std::shared_ptr<CMP::CMPClient> client);
 
-private:
-    kern_return_t PerformSoftReset();
+  private:
+    kern_return_t PerformSoftReset() const;
     kern_return_t InitialiseHardware(IOService* provider);
     kern_return_t EnableInterruptsAndStartBus();
-    kern_return_t StageConfigROM(uint32_t busOptions, uint32_t guidHi, uint32_t guidLo);
-    void DiagnoseUnrecoverableError();
-    void HandleCycle64Seconds();  // Called on cycle64Seconds interrupt to extend 7-bit seconds
-    
+    kern_return_t StageConfigROM(uint32_t busOptions, uint32_t guidHi, uint32_t guidLo) const;
+    void DiagnoseUnrecoverableError() const;
+    void HandleCycle64Seconds(); // Called on cycle64Seconds interrupt to extend 7-bit seconds
+
     void OnTopologyReady(const TopologySnapshot& snapshot);
-    void ScheduleDiscoveryPoll(Discovery::Generation gen);
-    void PollDiscovery(Discovery::Generation gen);
-    void OnDiscoveryScanComplete(Discovery::Generation gen);
+    void OnDiscoveryScanComplete(Discovery::Generation gen,
+                                 const std::vector<Discovery::ConfigROM>& roms,
+                                 bool hadBusyNodes) const;
 
     ControllerConfig config_;
     Dependencies deps_;
@@ -151,8 +157,8 @@ private:
     // Per Apple's handleCycle64Int: extends 7-bit seconds to full 32-bit counter
     uint32_t busCycleTime_{0};
 
-    // OHCI generates TWO Self-ID complete interrupts: selfIDComplete (bit 16) and selfIDComplete2 (bit 15)
-    // Must wait for BOTH before re-arming buffer to avoid UnrecoverableError during DMA
+    // OHCI generates TWO Self-ID complete interrupts: selfIDComplete (bit 16) and selfIDComplete2
+    // (bit 15) Must wait for BOTH before re-arming buffer to avoid UnrecoverableError during DMA
     bool selfIDComplete1Seen_{false};
     bool selfIDComplete2Seen_{false};
 

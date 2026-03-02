@@ -4,6 +4,7 @@
 #include <span>
 #include <mutex>
 #include <condition_variable>
+#include <thread>
 #include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
 #include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
 #include "../ASFWDriver/Discovery/DiscoveryTypes.hpp"
@@ -207,19 +208,14 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
 
     bool callbackInvoked = false;
     Generation completedGen = 0;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
     std::condition_variable cv;
 
-    ScanCompletionCallback onComplete = [&](Generation gen) {
-        std::lock_guard lock(mtx);
-        callbackInvoked = true;
-        completedGen = gen;
-        cv.notify_one();
-    };
-
     ROMScannerParams params{};
     params.doIRMCheck = false;
-    ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     // Create topology with one remote node
     TopologySnapshot topology;
@@ -227,8 +223,23 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     topology.busBase16 = 0xFFC0;  // Standard bus address
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
 
+    ROMScanRequest request{};
+    request.gen = topology.generation;
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+
+    ScanCompletionCallback onComplete = [&](Generation gen, std::vector<ConfigROM> roms, bool busy) {
+        std::lock_guard lock(mtx);
+        callbackInvoked = true;
+        completedGen = gen;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
     // Trigger manual ROM read
-    bool initiated = scanner.TriggerManualRead(1, 42, topology);
+    const bool initiated = scanner.Start(request, onComplete);
     ASSERT_TRUE(initiated);
     mockAsync.WaitForPendingReads(1);
     EXPECT_EQ(mockAsync.GetPendingReadCount(), 1);  // BIB read started (Q0)
@@ -245,13 +256,11 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     // CRITICAL: Callback should be invoked immediately (Apple pattern)
     EXPECT_TRUE(callbackInvoked) << "Completion callback should be invoked immediately after ROM read completes";
     EXPECT_EQ(completedGen, 42);
+    EXPECT_FALSE(hadBusyNodes);
 
-    // Verify ROM is available
-    EXPECT_TRUE(scanner.IsIdleFor(42));
-    auto roms = scanner.DrainReady(42);
-    EXPECT_EQ(roms.size(), 1);
-    EXPECT_EQ(roms[0].nodeId, 1);
-    EXPECT_EQ(roms[0].gen, 42);
+    EXPECT_EQ(completedROMs.size(), 1u);
+    EXPECT_EQ(completedROMs[0].nodeId, 1);
+    EXPECT_EQ(completedROMs[0].gen, 42);
 }
 
 TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
@@ -261,26 +270,36 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
 
     int callbackCount = 0;
     Generation lastCompletedGen = 0;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
     std::condition_variable cv;
 
-    ScanCompletionCallback onComplete = [&](Generation gen) {
-        std::lock_guard lock(mtx);
-        callbackCount++;
-        lastCompletedGen = gen;
-        cv.notify_one();
-    };
-
     ROMScannerParams params{};
     params.doIRMCheck = false;
-    ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
     topology.generation = 10;
     topology.busBase16 = 0xFFC0;
     topology.nodes.push_back({.nodeId = 2, .linkActive = true});
 
-    bool initiated = scanner.TriggerManualRead(2, 10, topology);
+    ROMScanRequest request{};
+    request.gen = topology.generation;
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {2};
+
+    ScanCompletionCallback onComplete = [&](Generation gen, std::vector<ConfigROM> roms, bool busy) {
+        std::lock_guard lock(mtx);
+        callbackCount++;
+        lastCompletedGen = gen;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
+    const bool initiated = scanner.Start(request, onComplete);
     ASSERT_TRUE(initiated);
     mockAsync.WaitForPendingReads(1);
 
@@ -309,9 +328,8 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
     // Now callback should fire
     EXPECT_EQ(callbackCount, 1) << "Callback should fire after both BIB and root dir complete";
     EXPECT_EQ(lastCompletedGen, 10);
-
-    auto roms = scanner.DrainReady(10);
-    EXPECT_EQ(roms.size(), 1);
+    EXPECT_FALSE(hadBusyNodes);
+    EXPECT_EQ(completedROMs.size(), 1u);
 }
 
 TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
@@ -321,7 +339,6 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
 
     ROMScannerParams params{};
     params.doIRMCheck = false;
-    // Create scanner WITHOUT callback
     ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
@@ -329,7 +346,13 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
     topology.busBase16 = 0xFFC0;
     topology.nodes.push_back({.nodeId = 3, .linkActive = true});
 
-    bool initiated = scanner.TriggerManualRead(3, 5, topology);
+    ROMScanRequest request{};
+    request.gen = topology.generation;
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {3};
+
+    const bool initiated = scanner.Start(request, {});
     ASSERT_TRUE(initiated);
     mockAsync.WaitForPendingReads(1);
 
@@ -338,11 +361,6 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
 
     // Give moment for async transitions
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-    // Verify scan completed without callback
-    EXPECT_TRUE(scanner.IsIdleFor(5));
-    auto roms = scanner.DrainReady(5);
-    EXPECT_EQ(roms.size(), 1);
 }
 
 TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustion) {
@@ -351,25 +369,35 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     SpeedPolicy speedPolicy;
 
     bool callbackInvoked = false;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
     std::condition_variable cv;
 
-    ScanCompletionCallback onComplete = [&](Generation gen) {
-        std::lock_guard lock(mtx);
-        callbackInvoked = true;
-        cv.notify_one();
-    };
-
     ROMScannerParams params{};
     params.doIRMCheck = false;
-    ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
     topology.generation = 7;
     topology.busBase16 = 0xFFC0;
     topology.nodes.push_back({.nodeId = 4, .linkActive = true});
 
-    bool initiated = scanner.TriggerManualRead(4, 7, topology);
+    ROMScanRequest request{};
+    request.gen = topology.generation;
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {4};
+
+    ScanCompletionCallback onComplete = [&](Generation /*gen*/, std::vector<ConfigROM> roms, bool busy) {
+        std::lock_guard lock(mtx);
+        callbackInvoked = true;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
+    const bool initiated = scanner.Start(request, onComplete);
     ASSERT_TRUE(initiated);
     mockAsync.WaitForPendingReads(1);
 
@@ -388,11 +416,10 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
 
     // Callback should still be invoked (node marked as Failed)
     EXPECT_TRUE(callbackInvoked) << "Callback should be invoked even on failure";
-    EXPECT_TRUE(scanner.IsIdleFor(7));
+    EXPECT_TRUE(hadBusyNodes);
 
     // No ROMs should be available (read failed)
-    auto roms = scanner.DrainReady(7);
-    EXPECT_EQ(roms.size(), 0);
+    EXPECT_EQ(completedROMs.size(), 0u);
 }
 
 TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
@@ -401,18 +428,14 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     SpeedPolicy speedPolicy;
 
     bool callbackInvoked = false;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
     std::condition_variable cv;
 
-    ScanCompletionCallback onComplete = [&](Generation gen) {
-        std::lock_guard lock(mtx);
-        callbackInvoked = true;
-        cv.notify_one();
-    };
-
     ROMScannerParams params{};
     params.doIRMCheck = false;
-    ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
     topology.generation = 1;
@@ -420,8 +443,21 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
     topology.nodes.push_back({.nodeId = 2, .linkActive = true});
 
+    ROMScanRequest request{};
+    request.gen = topology.generation;
+    request.topology = topology;
+    request.localNodeId = 0;
+
+    ScanCompletionCallback onComplete = [&](Generation /*gen*/, std::vector<ConfigROM> roms, bool busy) {
+        std::lock_guard lock(mtx);
+        callbackInvoked = true;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
     // Start automatic scan (localNodeId=0, scans nodeId 1 and 2)
-    scanner.Begin(1, topology, 0);
+    ASSERT_TRUE(scanner.Start(request, onComplete));
 
     mockAsync.WaitForPendingReads(2);
     EXPECT_EQ(mockAsync.GetPendingReadCount(), 2);  // Both BIB reads started (Q0 for both nodes)
@@ -454,9 +490,8 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
 
     // Callback should fire after last ROM completes
     EXPECT_TRUE(callbackInvoked);
-
-    auto roms = scanner.DrainReady(1);
-    EXPECT_EQ(roms.size(), 2);
+    EXPECT_FALSE(hadBusyNodes);
+    EXPECT_EQ(completedROMs.size(), 2u);
 }
 
 TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
@@ -468,7 +503,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     std::mutex mtx;
     std::condition_variable cv;
 
-    ScanCompletionCallback onComplete = [&](Generation gen) {
+    ScanCompletionCallback onComplete = [&](Generation gen, std::vector<ConfigROM>, bool) {
         std::lock_guard lock(mtx);
         completedGens.push_back(gen);
         cv.notify_all();
@@ -476,7 +511,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
 
     ROMScannerParams params{};
     params.doIRMCheck = false;
-    ROMScanner scanner(mockAsync, speedPolicy, params, onComplete);
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
     topology.busBase16 = 0xFFC0;
@@ -484,7 +519,13 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
 
     // First manual read (gen=1)
     topology.generation = 1;
-    scanner.TriggerManualRead(1, 1, topology);
+    ROMScanRequest request1{};
+    request1.gen = topology.generation;
+    request1.topology = topology;
+    request1.localNodeId = 0;
+    request1.targetNodes = {1};
+
+    ASSERT_TRUE(scanner.Start(request1, onComplete));
     mockAsync.WaitForPendingReads(1);
     mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
 
@@ -496,7 +537,13 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
 
     // Second manual read (gen=2, scanner restarts)
     topology.generation = 2;
-    scanner.TriggerManualRead(1, 2, topology);
+    ROMScanRequest request2{};
+    request2.gen = topology.generation;
+    request2.topology = topology;
+    request2.localNodeId = 0;
+    request2.targetNodes = {1};
+
+    ASSERT_TRUE(scanner.Start(request2, onComplete));
     mockAsync.WaitForPendingReads(5); // 4 from first + 1 for second
     mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
 

@@ -43,23 +43,24 @@ The **ConfigROM** subsystem handles IEEE 1394 Configuration ROM operations for b
 Manages the complete scan lifecycle for all nodes in a topology generation:
 
 ```cpp
-ROMScanner scanner(bus, speedPolicy, onComplete, dispatchQueue);
+ROMScanner scanner(bus, speedPolicy, params, dispatchQueue);
 
-// Begin scan for generation 4
-scanner.Begin(gen, topology, localNodeId);
+ROMScanRequest request{};
+request.gen = gen;
+request.topology = topology;
+request.localNodeId = localNodeId;
 
-// Wait for completion (via callback)
-// onComplete(gen) → all nodes processed
-
-// Retrieve discovered ROMs
-std::vector<ConfigROM> roms = scanner.DrainReady(gen);
+scanner.Start(request, [](Generation gen, std::vector<ConfigROM> roms, bool hadBusyNodes) {
+    // Completion fires exactly once per Start().
+    // `roms` contains parsed ROMs for this generation.
+});
 ```
 
 **Key Features:**
-- **Bounded concurrency**: Configurable max in-flight operations (default: 4)
+- **Bounded concurrency**: Configurable max in-flight operations (default: 2)
 - **Speed fallback**: S400 → S200 → S100 on errors (Apple pattern)
 - **Retry logic**: Configurable attempts per speed tier
-- **IRM verification**: CAS test on `CHANNELS_AVAILABLE` register
+- **IRM verification**: Optional CAS test on `CHANNELS_AVAILABLE_63_32` (S100 only)
 - **Generation safety**: Aborts stale operations on bus reset
 
 **FSM States:**
@@ -70,8 +71,8 @@ Idle → ReadingBIB → VerifyingIRM_Read → VerifyingIRM_Lock →
 
 **IRM Verification (Phase 3):**
 Per IEEE 1394a-2000 §8.3.2.3.10, verifies IRM capability via:
-1. Read `CHANNELS_AVAILABLE_HI` (0xFFFFF0000404)
-2. CompareSwap test on same register
+1. Read `CHANNELS_AVAILABLE_63_32` (0xFFFFF0000228)
+2. CompareSwap (CAS) test on same register
 3. Mark node as bad IRM if either fails
 
 #### ROMReader
@@ -108,15 +109,15 @@ Provides CRUD operations and efficient lookup:
 ConfigROMStore store;
 
 // Store discovered ROM
-store.Store(nodeId, gen, romData);
+store.Insert(rom);
 
 // Lookup by node ID
-if (auto rom = store.Lookup(nodeId, gen)) {
+if (const auto* rom = store.FindByNode(gen, nodeId)) {
     // Parse capabilities
 }
 
-// Invalidate on bus reset
-store.InvalidateGeneration(oldGen);
+// State transitions on bus reset
+store.SuspendAll(newGen);
 ```
 
 **Capabilities:**
@@ -239,7 +240,7 @@ Per OHCI §5.5.6, `ConfigROMheader` resets to zero after bus reset. Driver must:
 ```
 1. TopologyManager detects bus reset → new generation
    ↓
-2. ROMScanner::Begin(gen, topology, localNodeId)
+2. ROMScanner::Start(request, completion)
    ↓
 3. For each remote node:
    ├─ ReadBIB (5 quadlets @ 0x400)
@@ -249,10 +250,9 @@ Per OHCI §5.5.6, `ConfigROMheader` resets to zero after bus reset. Driver must:
       └─ Parse: unit directories, text leaves
    ↓
 4. ROMScanner::CheckAndNotifyCompletion()
-   → onScanComplete(gen)
+   → completion(gen, roms, hadBusyNodes)
    ↓
-5. DeviceManager::DrainReady(gen)
-   → Enumerate devices from ROMs
+5. ControllerCore processes `roms` and enumerates devices
 ```
 
 ### Local ROM Staging Flow
@@ -400,19 +400,23 @@ stager.StageNewROM(builder);
 
 ### Scanning Remote Devices
 ```cpp
-ROMScanner scanner(bus, speedPolicy, [](Generation gen) {
-    ASFW_LOG(Discovery, "Scan complete for gen %u", gen);
-}, dispatchQueue);
+ROMScanner scanner(bus, speedPolicy, params, dispatchQueue);
 
-scanner.Begin(gen, topology, localNodeId);
-// ... wait for callback ...
+ROMScanRequest request{};
+request.gen = gen;
+request.topology = topology;
+request.localNodeId = localNodeId;
 
-auto roms = scanner.DrainReady(gen);
-for (const auto& rom : roms) {
-    if (rom.vendorId == 0x00A0B0) {
-        // Found device of interest
+scanner.Start(request, [](Generation gen, std::vector<ConfigROM> roms, bool hadBusyNodes) {
+    // Completion fires exactly once per Start().
+    (void)hadBusyNodes;
+
+    for (const auto& rom : roms) {
+        if (rom.vendorId == 0x00A0B0) {
+            // Found device of interest
+        }
     }
-}
+});
 ```
 
 ### Manual ROM Read (Debug)

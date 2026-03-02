@@ -1,4 +1,7 @@
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -125,19 +128,31 @@ TEST(ROMReaderHeaderFirstTests, HeaderFirstUsesHigh16EntryCount) {
 
     ASFW::Discovery::ROMReader reader(bus, nullptr);
 
+    std::mutex mutex;
+    std::condition_variable cv;
     bool called = false;
+    bool success = false;
+    uint32_t dataLength = 0;
     reader.ReadRootDirQuadlets(1,
                                /*generation=*/ASFW::Discovery::Generation{1},
                                /*speed=*/ASFW::FW::FwSpeed::S100,
-                               /*offsetBytes=*/kRootDirOffsetBytes,
-                               /*count=*/0,
-                               [&called](const ASFW::Discovery::ROMReader::ReadResult& res) {
-                                   called = true;
-                                   EXPECT_TRUE(res.success);
-                                   EXPECT_EQ(res.dataLength, 16u);  // (1 + 3) quadlets
-                               });
+	                               /*offsetBytes=*/kRootDirOffsetBytes,
+	                               /*count=*/0,
+	                               [&](const ASFW::Discovery::ROMReader::ReadResult& res) {
+	                                   std::lock_guard lock(mutex);
+	                                   called = true;
+	                                   success = res.success;
+	                                   dataLength = res.DataLengthBytes();
+	                                   cv.notify_one();
+	                               });
 
-    EXPECT_TRUE(called);
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(1), [&] { return called; }));
+    }
+
+    EXPECT_TRUE(success);
+    EXPECT_EQ(dataLength, 16u);  // (1 + 3) quadlets
 }
 
 TEST(ROMReaderHeaderFirstTests, HeaderFirstCapsAt64Entries) {
@@ -160,17 +175,29 @@ TEST(ROMReaderHeaderFirstTests, HeaderFirstCapsAt64Entries) {
 
     ASFW::Discovery::ROMReader reader(bus, nullptr);
 
+    std::mutex mutex;
+    std::condition_variable cv;
     bool called = false;
+    bool success = false;
+    uint32_t dataLength = 0;
     reader.ReadRootDirQuadlets(1,
                                /*generation=*/ASFW::Discovery::Generation{1},
                                /*speed=*/ASFW::FW::FwSpeed::S100,
-                               /*offsetBytes=*/kRootDirOffsetBytes,
-                               /*count=*/0,
-                               [&called](const ASFW::Discovery::ROMReader::ReadResult& res) {
-                                   called = true;
-                                   EXPECT_TRUE(res.success);
-                                   EXPECT_EQ(res.dataLength, totalQuadlets * 4u);
-                               });
+	                               /*offsetBytes=*/kRootDirOffsetBytes,
+	                               /*count=*/0,
+	                               [&](const ASFW::Discovery::ROMReader::ReadResult& res) {
+	                                   std::lock_guard lock(mutex);
+	                                   called = true;
+	                                   success = res.success;
+	                                   dataLength = res.DataLengthBytes();
+	                                   cv.notify_one();
+	                               });
 
-    EXPECT_TRUE(called);
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(1), [&] { return called; }));
+    }
+
+    EXPECT_TRUE(success);
+    EXPECT_EQ(dataLength, totalQuadlets * 4u);
 }

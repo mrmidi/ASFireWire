@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "../ASFWDriver/ConfigROM/ROMScanNodeStateMachine.hpp"
+#include "../ASFWDriver/ConfigROM/Remote/ROMScanNodeStateMachine.hpp"
 
 using ASFW::Discovery::ROMScanNodeStateMachine;
 using ASFW::Discovery::FwSpeed;

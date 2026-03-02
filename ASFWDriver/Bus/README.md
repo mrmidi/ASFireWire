@@ -497,7 +497,7 @@ Bits   Field           Description
     └─ Re-enable busReset IRQ
     └─ State: Complete → Idle
     ↓
-13. Discovery::ROMScanner::Begin(gen, topology)
+13. Discovery::ROMScanner::Start(request, completion)
     └─ [Asynchronous device enumeration]
 ```
 

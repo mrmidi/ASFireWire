@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -13,16 +14,14 @@ namespace ASFW::Driver {
 // Responsible for producing the 1 KB big-endian Config ROM image required by
 // OHCI §7.2. ControllerCore programs the resulting buffer via HardwareInterface.
 class ConfigROMBuilder {
-public:
+  public:
     static constexpr size_t kConfigROMSize = 1024;
     static constexpr size_t kMaxQuadlets = kConfigROMSize / sizeof(uint32_t);
 
     ConfigROMBuilder();
 
     // Legacy single-shot builder (kept for now).
-    void Build(uint32_t busOptions,
-               uint64_t guid,
-               uint32_t nodeCapabilities,
+    void Build(uint32_t busOptions, uint64_t guid, uint32_t nodeCapabilities,
                std::string_view vendorName);
 
     // New staged API: Begin -> Add* -> Finalize.
@@ -46,7 +45,7 @@ public:
     uint32_t GuidHiQuad() const;
     uint32_t GuidLoQuad() const;
 
-private:
+  private:
     void Reset();
     void Append(uint32_t value);
     uint16_t ComputeCRC(size_t start, size_t count) const;
@@ -58,10 +57,10 @@ private:
     LeafHandle WriteTextLeaf(std::string_view text);
     bool EnsureRootDirectory();
 
-    std::array<uint32_t, kMaxQuadlets> words_{};      // host-endian logical image
+    std::array<uint32_t, kMaxQuadlets> words_{};           // host-endian logical image
     mutable std::array<uint32_t, kMaxQuadlets> beImage_{}; // scratch for BE view
     size_t quadCount_{0};
-    size_t rootDirHeaderIndex_{static_cast<size_t>(-1)}; // sentinel until root dir started
+    std::optional<size_t> rootDirHeaderIndex_; // root dir header index once started
     uint32_t lastBusOptions_{0};
     bool begun_{false};
     bool finalized_{false};

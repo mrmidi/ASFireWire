@@ -1,12 +1,12 @@
 #pragma once
 
-#include "../Discovery/DiscoveryTypes.hpp"
+#include "../../Discovery/DiscoveryTypes.hpp"
 
 namespace ASFW::Discovery {
 
 // Holds per-node ROM scan state and validates legal FSM transitions.
 class ROMScanNodeStateMachine {
-public:
+  public:
     enum class State : uint8_t {
         Idle,
         ReadingBIB,
@@ -20,13 +20,8 @@ public:
 
     ROMScanNodeStateMachine() = default;
 
-    ROMScanNodeStateMachine(uint8_t nodeIdIn,
-                            Generation generation,
-                            FwSpeed speed,
-                            uint8_t retries)
-        : nodeId_(nodeIdIn)
-        , currentSpeed_(speed)
-        , retriesLeft_(retries) {
+    ROMScanNodeStateMachine(uint8_t nodeIdIn, Generation generation, FwSpeed speed, uint8_t retries)
+        : nodeId_(nodeIdIn), currentSpeed_(speed), retriesLeft_(retries) {
         partialROM_.gen = generation;
         partialROM_.nodeId = nodeIdIn;
     }
@@ -73,31 +68,23 @@ public:
         using enum State;
 
         switch (state_) {
-            case Idle:
-                return next == ReadingBIB || next == Failed;
-            case ReadingBIB:
-                return next == VerifyingIRM_Read ||
-                       next == ReadingRootDir ||
-                       next == Complete ||
-                       next == Idle ||
-                       next == Failed;
-            case VerifyingIRM_Read:
-                return next == VerifyingIRM_Lock ||
-                       next == ReadingRootDir ||
-                       next == Failed;
-            case VerifyingIRM_Lock:
-                return next == ReadingRootDir || next == Failed;
-            case ReadingRootDir:
-                return next == ReadingDetails ||
-                       next == Complete ||
-                       next == Failed ||
-                       next == Idle;
-            case ReadingDetails:
-                return next == Complete || next == Failed;
-            case Complete:
-                return next == Idle;  // manual reread
-            case Failed:
-                return next == Idle;  // manual retry
+        case Idle:
+            return next == ReadingBIB || next == Failed;
+        case ReadingBIB:
+            return next == VerifyingIRM_Read || next == ReadingRootDir || next == Complete ||
+                   next == Idle || next == Failed;
+        case VerifyingIRM_Read:
+            return next == VerifyingIRM_Lock || next == ReadingRootDir || next == Failed;
+        case VerifyingIRM_Lock:
+            return next == ReadingRootDir || next == Failed;
+        case ReadingRootDir:
+            return next == ReadingDetails || next == Complete || next == Failed || next == Idle;
+        case ReadingDetails:
+            return next == Complete || next == Failed;
+        case Complete:
+        case Failed:
+            // Manual retry / reread.
+            return next == Idle;
         }
         return false;
     }
@@ -110,13 +97,9 @@ public:
         return true;
     }
 
-    void ForceState(State next) {
-        state_ = next;
-    }
+    void ForceState(State next) { state_ = next; }
 
-    void ResetForGeneration(Generation generation,
-                            uint8_t nodeIdIn,
-                            FwSpeed speed,
+    void ResetForGeneration(Generation generation, uint8_t nodeIdIn, FwSpeed speed,
                             uint8_t retries) {
         nodeId_ = nodeIdIn;
         state_ = State::Idle;
@@ -133,7 +116,7 @@ public:
         bibInProgress_ = false;
     }
 
-private:
+  private:
     uint8_t nodeId_{0xFF};
     State state_{State::Idle};
     FwSpeed currentSpeed_{FwSpeed::S100};
