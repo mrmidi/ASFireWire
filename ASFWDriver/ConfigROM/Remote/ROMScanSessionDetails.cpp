@@ -9,16 +9,17 @@
 #include <DriverKit/IOLib.h>
 
 #include <algorithm>
-#include <cstring>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
-#include <string_view>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace ASFW::Discovery {
 
-struct ROMScanSession::DiscoveryFlow {
+struct ROMScanSession::DetailsDiscovery : std::enable_shared_from_this<DetailsDiscovery> {
     using DirectoryEntry = ConfigROMParser::DirectoryEntry;
 
     struct DescriptorRef {
@@ -26,74 +27,380 @@ struct ROMScanSession::DiscoveryFlow {
         ASFW::ConfigROM::QuadletCount targetRel{0};
     };
 
-    struct UnitDirStepContext {
-        uint8_t nodeId{0xFF};
-        ASFW::ConfigROM::QuadletOffset rootDirStart{0};
-        std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets;
-        size_t index{0};
-        ASFW::ConfigROM::QuadletOffset absUnitDir{0};
-        ASFW::ConfigROM::QuadletCount unitRel{0};
-        uint16_t dirLen{0};
-    };
-
-    struct DescriptorDirTextState : std::enable_shared_from_this<DescriptorDirTextState> {
+    struct TextDescriptorFetcher : std::enable_shared_from_this<TextDescriptorFetcher> {
         ROMScanSession* session{nullptr};
         uint8_t nodeId{0xFF};
-        ASFW::ConfigROM::QuadletOffset absDirOffset{0};
+        ASFW::ConfigROM::QuadletOffset absOffset{0};
+        uint8_t keyType{0};
         std::function<void(std::string)> completion;
 
+        uint16_t leafLen{0};
         uint16_t dirLen{0};
         std::vector<ASFW::ConfigROM::QuadletOffset> candidates;
         size_t candidateIndex{0};
 
-        enum class Step : uint8_t { NeedHeader, NeedDirData } step{Step::NeedHeader};
+        enum class Mode : uint8_t { Invalid, Leaf, DescriptorDirectory } mode{Mode::Invalid};
 
-        void Finish(std::string text);
+        static void Start(ROMScanSession& session, uint8_t nodeId,
+                          ASFW::ConfigROM::QuadletOffset absOffset, uint8_t keyType,
+                          std::function<void(std::string)> completion);
+
+      private:
+        void StartImpl();
+        void EnsureHeader();
+        void OnHeaderReady(bool ok);
+
+        void EnsureLeafPayload();
+        void OnLeafPayloadReady(bool ok);
+        void ParseLeafAndFinish();
+
+        void EnsureDirectoryData();
+        void OnDirectoryDataReady(bool ok);
+        void ParseDirectoryAndFetchCandidates();
         void FetchNextCandidate();
-        void Advance(bool ok);
+
+        [[nodiscard]] ROMScanNodeStateMachine* FindNode() const;
+        void Finish(std::string text);
     };
 
-    [[nodiscard]] static std::optional<DescriptorRef>
-    FindDescriptorRef(std::span<const DirectoryEntry> entries, uint8_t ownerKeyId);
+    static void Start(ROMScanSession& session, uint8_t nodeId,
+                      ASFW::ConfigROM::QuadletOffset rootDirStart, std::vector<uint32_t> rootDirBE);
+
+    void StartImpl();
+    void EnsureRootDirPrefix();
+    void OnRootDirPrefixReady(bool ok);
+    void AppendRootDirAndParse();
+
+    void StartVendorFetch();
+    void OnVendorFetched(std::string text);
+    void StartModelFetch();
+    void OnModelFetched(std::string text);
+
+    void StartNextUnitDir();
+    void EnsureUnitDirHeader();
+    void OnUnitDirHeaderReady(bool ok);
+    void EnsureUnitDirData();
+    void OnUnitDirDataReady(bool ok);
+    void MaybeFetchUnitModelName();
+    void OnUnitModelNameFetched(std::string text);
+
+    void FinalizeNodeDiscovery();
+
+  private:
+    enum class Step : uint8_t {
+        Start,
+        EnsureRootPrefix,
+        ParseRoot,
+        FetchVendor,
+        FetchModel,
+        UnitHeader,
+        UnitData,
+        UnitModelName,
+        Finalize,
+    };
+
+    [[nodiscard]] ROMScanNodeStateMachine* FindNode() const;
+
     [[nodiscard]] static std::vector<DirectoryEntry>
     ParseDirectoryBestEffort(std::span<const uint32_t> dirBE, uint32_t entryCap);
+    [[nodiscard]] static std::optional<DescriptorRef>
+    FindDescriptorRef(std::span<const DirectoryEntry> entries, uint8_t ownerKeyId);
 
-    static void FetchTextDescriptor(ROMScanSession& session, uint8_t nodeId,
-                                    ASFW::ConfigROM::QuadletOffset absOffset, uint8_t keyType,
-                                    std::function<void(std::string)> completion);
-    static void FetchTextLeaf(ROMScanSession& session, uint8_t nodeId,
-                              ASFW::ConfigROM::QuadletOffset absLeafOffset,
-                              std::function<void(std::string)> completion);
-    static void FetchDescriptorDirText(ROMScanSession& session, uint8_t nodeId,
-                                       ASFW::ConfigROM::QuadletOffset absDirOffset,
-                                       std::function<void(std::string)> completion);
+    ROMScanSession* session{nullptr};
+    uint8_t nodeId{0xFF};
+    ASFW::ConfigROM::QuadletOffset rootDirStart{0};
+    std::vector<uint32_t> rootDirBE;
+    Step step{Step::Start};
 
-    static void DiscoverDetails(ROMScanSession& session, uint8_t nodeId,
-                                ASFW::ConfigROM::QuadletOffset rootDirStart,
-                                std::vector<uint32_t> rootDirBE);
-    static void OnDiscoverDetailsPrefixReady(ROMScanSession& session, uint8_t nodeId,
-                                             ASFW::ConfigROM::QuadletOffset rootDirStart,
-                                             const std::vector<uint32_t>& rootDirBE, bool prefixOk);
-    static void DiscoverVendorName(ROMScanSession& session, uint8_t nodeId,
-                                   ASFW::ConfigROM::QuadletOffset rootDirStart,
-                                   std::optional<DescriptorRef> vendorRef,
-                                   std::optional<DescriptorRef> modelRef,
-                                   std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets);
-    static void DiscoverModelName(ROMScanSession& session, uint8_t nodeId,
-                                  ASFW::ConfigROM::QuadletOffset rootDirStart,
-                                  std::optional<DescriptorRef> modelRef,
-                                  std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets);
-    static void DiscoverUnitDirectories(
-        ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset rootDirStart,
-        std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets, size_t index);
-    static void OnUnitDirHeaderReady(ROMScanSession& session, UnitDirStepContext context, bool ok);
-    static void OnUnitDirDataReady(ROMScanSession& session, UnitDirStepContext context, bool ok);
-    static void FinalizeNodeDiscovery(ROMScanSession& session, uint8_t nodeId);
+    std::vector<DirectoryEntry> rootEntries;
+    std::optional<DescriptorRef> vendorRef;
+    std::optional<DescriptorRef> modelRef;
+    std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets;
+    size_t unitIndex{0};
+
+    ASFW::ConfigROM::QuadletOffset absUnitDir{0};
+    ASFW::ConfigROM::QuadletCount unitRel{0};
+    uint16_t unitDirLen{0};
+    UnitDirectory parsedUnit{};
+    std::optional<DescriptorRef> unitModelRef;
 };
 
-std::vector<ROMScanSession::DiscoveryFlow::DirectoryEntry>
-ROMScanSession::DiscoveryFlow::ParseDirectoryBestEffort(std::span<const uint32_t> dirBE,
-                                                        uint32_t entryCap) {
+// =============================================================================
+// TextDescriptorFetcher
+// =============================================================================
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::Start(
+    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset absOffset,
+    uint8_t keyType, std::function<void(std::string)> completion) {
+    auto state = std::make_shared<TextDescriptorFetcher>();
+    state->session = &session;
+    state->nodeId = nodeId;
+    state->absOffset = absOffset;
+    state->keyType = keyType;
+    state->completion = std::move(completion);
+    state->StartImpl();
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::StartImpl() {
+    if (session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: start node=%u keyType=%u abs=%u", nodeId,
+                keyType, absOffset.value);
+
+    if (keyType == ASFW::FW::EntryType::kLeaf) {
+        mode = Mode::Leaf;
+        EnsureHeader();
+        return;
+    }
+
+    if (keyType == ASFW::FW::EntryType::kDirectory) {
+        mode = Mode::DescriptorDirectory;
+        EnsureHeader();
+        return;
+    }
+
+    ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: unsupported keyType=%u (node=%u)", keyType,
+                nodeId);
+    Finish("");
+}
+
+ROMScanNodeStateMachine* ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::FindNode() const {
+    if (session == nullptr) {
+        return nullptr;
+    }
+    return session->FindNode(nodeId);
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::EnsureHeader() {
+    if (session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    session->EnsurePrefix(nodeId, ASFW::ConfigROM::QuadletCount{absOffset.value + 1U},
+                          [self = shared_from_this()](bool ok) { self->OnHeaderReady(ok); });
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::OnHeaderReady(bool ok) {
+    if (!ok || session == nullptr) {
+        ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: header EnsurePrefix failed (node=%u abs=%u)",
+                    nodeId, absOffset.value);
+        Finish("");
+        return;
+    }
+
+    auto* node = FindNode();
+    if (node == nullptr || absOffset.value >= node->ROM().rawQuadlets.size()) {
+        Finish("");
+        return;
+    }
+
+    const uint32_t hdr = OSSwapBigToHostInt32(node->ROM().rawQuadlets[absOffset.value]);
+
+    if (mode == Mode::Leaf) {
+        leafLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
+        ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: leaf header node=%u abs=%u len=%u", nodeId,
+                    absOffset.value, leafLen);
+        if (leafLen == 0) {
+            Finish("");
+            return;
+        }
+        EnsureLeafPayload();
+        return;
+    }
+
+    if (mode == Mode::DescriptorDirectory) {
+        dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
+        ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: dir header node=%u abs=%u len=%u", nodeId,
+                    absOffset.value, dirLen);
+        if (dirLen == 0) {
+            Finish("");
+            return;
+        }
+        dirLen = std::min(dirLen, static_cast<uint16_t>(32U));
+        EnsureDirectoryData();
+        return;
+    }
+
+    Finish("");
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::EnsureLeafPayload() {
+    if (session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    const ASFW::ConfigROM::QuadletCount leafEndExclusive{absOffset.value + 1U +
+                                                         static_cast<uint32_t>(leafLen)};
+    session->EnsurePrefix(nodeId, leafEndExclusive,
+                          [self = shared_from_this()](bool ok) { self->OnLeafPayloadReady(ok); });
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::OnLeafPayloadReady(bool ok) {
+    if (!ok || session == nullptr) {
+        ASFW_LOG_V3(ConfigROM,
+                    "TextDescriptorFetcher: payload EnsurePrefix failed (node=%u abs=%u)", nodeId,
+                    absOffset.value);
+        Finish("");
+        return;
+    }
+
+    ParseLeafAndFinish();
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::ParseLeafAndFinish() {
+    auto* node = FindNode();
+    if (node == nullptr) {
+        Finish("");
+        return;
+    }
+
+    const auto span =
+        std::span<const uint32_t>(node->ROM().rawQuadlets.data(), node->ROM().rawQuadlets.size());
+    auto textRes = ConfigROMParser::ParseTextDescriptorLeaf(span, absOffset.value);
+    if (!textRes) {
+        ASFW_LOG_V3(ConfigROM,
+                    "TextDescriptorFetcher: ParseTextDescriptorLeaf failed (node=%u abs=%u "
+                    "code=%u offset=%u)",
+                    nodeId, absOffset.value, static_cast<uint8_t>(textRes.error().code),
+                    textRes.error().offsetQuadlets);
+        Finish("");
+        return;
+    }
+
+    Finish(std::move(*textRes));
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::EnsureDirectoryData() {
+    if (session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    const ASFW::ConfigROM::QuadletCount dirEndExclusive{absOffset.value + 1U +
+                                                        static_cast<uint32_t>(dirLen)};
+    session->EnsurePrefix(nodeId, dirEndExclusive,
+                          [self = shared_from_this()](bool ok) { self->OnDirectoryDataReady(ok); });
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::OnDirectoryDataReady(bool ok) {
+    if (!ok || session == nullptr) {
+        ASFW_LOG_V3(ConfigROM,
+                    "TextDescriptorFetcher: dir EnsurePrefix failed (node=%u abs=%u len=%u)",
+                    nodeId, absOffset.value, dirLen);
+        Finish("");
+        return;
+    }
+
+    ParseDirectoryAndFetchCandidates();
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::ParseDirectoryAndFetchCandidates() {
+    auto* node = FindNode();
+    if (node == nullptr) {
+        Finish("");
+        return;
+    }
+
+    const auto* base = node->ROM().rawQuadlets.data();
+    const size_t available = node->ROM().rawQuadlets.size();
+    const size_t required = static_cast<size_t>(absOffset.value) + 1U + static_cast<size_t>(dirLen);
+    if (required > available) {
+        Finish("");
+        return;
+    }
+
+    const auto dirSpan =
+        std::span<const uint32_t>(base + absOffset.value, 1U + static_cast<size_t>(dirLen));
+    auto entriesRes = ConfigROMParser::ParseDirectory(dirSpan, 32);
+    if (!entriesRes) {
+        ASFW_LOG_V3(
+            ConfigROM,
+            "TextDescriptorFetcher: ParseDirectory failed (node=%u abs=%u code=%u offset=%u)",
+            nodeId, absOffset.value, static_cast<uint8_t>(entriesRes.error().code),
+            entriesRes.error().offsetQuadlets);
+        Finish("");
+        return;
+    }
+
+    candidates.clear();
+    candidates.reserve(entriesRes->size());
+    for (const auto& entry : *entriesRes) {
+        if (!entry.hasTarget || entry.targetRel == 0) {
+            continue;
+        }
+        if (entry.keyId != ASFW::FW::ConfigKey::kTextualDescriptor ||
+            entry.keyType != ASFW::FW::EntryType::kLeaf) {
+            continue;
+        }
+
+        candidates.push_back(absOffset + ASFW::ConfigROM::QuadletCount{entry.targetRel});
+    }
+
+    ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: dir candidates=%zu (node=%u abs=%u)",
+                candidates.size(), nodeId, absOffset.value);
+
+    candidateIndex = 0;
+    FetchNextCandidate();
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::FetchNextCandidate() {
+    if (session == nullptr) {
+        Finish("");
+        return;
+    }
+
+    if (candidateIndex >= candidates.size()) {
+        Finish("");
+        return;
+    }
+
+    const auto leafAbs = candidates[candidateIndex];
+    ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: candidate %zu/%zu leafAbs=%u (node=%u)",
+                candidateIndex + 1, candidates.size(), leafAbs.value, nodeId);
+
+    TextDescriptorFetcher::Start(
+        *session, nodeId, leafAbs, ASFW::FW::EntryType::kLeaf,
+        [self = shared_from_this()](std::string text) mutable {
+            if (!text.empty()) {
+                ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: candidate ok (node=%u len=%zu)",
+                            self->nodeId, text.size());
+                self->Finish(std::move(text));
+                return;
+            }
+
+            ASFW_LOG_V3(ConfigROM, "TextDescriptorFetcher: candidate empty (node=%u)",
+                        self->nodeId);
+            ++self->candidateIndex;
+            self->FetchNextCandidate();
+        });
+}
+
+void ROMScanSession::DetailsDiscovery::TextDescriptorFetcher::Finish(std::string text) {
+    if (completion) {
+        completion(std::move(text));
+    }
+    completion = nullptr;
+}
+
+// =============================================================================
+// DetailsDiscovery helpers
+// =============================================================================
+
+ROMScanNodeStateMachine* ROMScanSession::DetailsDiscovery::FindNode() const {
+    if (session == nullptr) {
+        return nullptr;
+    }
+    return session->FindNode(nodeId);
+}
+
+std::vector<ROMScanSession::DetailsDiscovery::DirectoryEntry>
+ROMScanSession::DetailsDiscovery::ParseDirectoryBestEffort(std::span<const uint32_t> dirBE,
+                                                           uint32_t entryCap) {
     auto entries = ConfigROMParser::ParseDirectory(dirBE, entryCap);
     if (!entries) {
         return {};
@@ -101,9 +408,9 @@ ROMScanSession::DiscoveryFlow::ParseDirectoryBestEffort(std::span<const uint32_t
     return std::move(*entries);
 }
 
-std::optional<ROMScanSession::DiscoveryFlow::DescriptorRef>
-ROMScanSession::DiscoveryFlow::FindDescriptorRef(std::span<const DirectoryEntry> entries,
-                                                 uint8_t ownerKeyId) {
+std::optional<ROMScanSession::DetailsDiscovery::DescriptorRef>
+ROMScanSession::DetailsDiscovery::FindDescriptorRef(std::span<const DirectoryEntry> entries,
+                                                    uint8_t ownerKeyId) {
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto& ownerEntry = entries[i];
         if (ownerEntry.keyType != ASFW::FW::EntryType::kImmediate ||
@@ -131,403 +438,108 @@ ROMScanSession::DiscoveryFlow::FindDescriptorRef(std::span<const DirectoryEntry>
     return std::nullopt;
 }
 
-void ROMScanSession::DiscoveryFlow::FetchTextDescriptor(
-    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset absOffset,
-    uint8_t keyType, std::function<void(std::string)> completion) {
-    if (keyType == ASFW::FW::EntryType::kLeaf) {
-        FetchTextLeaf(session, nodeId, absOffset, std::move(completion));
-    } else if (keyType == ASFW::FW::EntryType::kDirectory) {
-        FetchDescriptorDirText(session, nodeId, absOffset, std::move(completion));
-    } else if (completion) {
-        completion("");
-    }
-}
+// =============================================================================
+// DetailsDiscovery flow
+// =============================================================================
 
-void ROMScanSession::DiscoveryFlow::FetchTextLeaf(ROMScanSession& session, uint8_t nodeId,
-                                                  ASFW::ConfigROM::QuadletOffset absLeafOffset,
-                                                  std::function<void(std::string)> completion) {
-    struct State : std::enable_shared_from_this<State> {
-        ROMScanSession* session{nullptr};
-        uint8_t nodeId{0xFF};
-        ASFW::ConfigROM::QuadletOffset absLeafOffset{0};
-        std::function<void(std::string)> completion;
-
-        enum class Step : uint8_t { NeedHeader, NeedPayload } step{Step::NeedHeader};
-
-        void Finish(std::string text) {
-            if (completion) {
-                completion(std::move(text));
-            }
-            completion = nullptr;
-        }
-
-        void Advance(bool ok) {
-            if (!ok || session == nullptr) {
-                Finish("");
-                return;
-            }
-
-            const auto* node = session->FindNode(nodeId);
-            if (node == nullptr || absLeafOffset.value >= node->ROM().rawQuadlets.size()) {
-                Finish("");
-                return;
-            }
-
-            if (step == Step::NeedHeader) {
-                const uint32_t hdr =
-                    OSSwapBigToHostInt32(node->ROM().rawQuadlets[absLeafOffset.value]);
-                const auto leafLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
-                const ASFW::ConfigROM::QuadletCount leafEndExclusive{
-                    absLeafOffset.value + 1U + static_cast<uint32_t>(leafLen)};
-
-                step = Step::NeedPayload;
-                session->EnsurePrefix(
-                    nodeId, leafEndExclusive,
-                    [self = shared_from_this()](bool ok2) { self->Advance(ok2); });
-                return;
-            }
-
-            const auto span = std::span<const uint32_t>(node->ROM().rawQuadlets.data(),
-                                                        node->ROM().rawQuadlets.size());
-            auto textRes = ConfigROMParser::ParseTextDescriptorLeaf(span, absLeafOffset.value);
-            Finish(textRes ? std::move(*textRes) : std::string{});
-        }
-    };
-
-    auto state = std::make_shared<State>();
+void ROMScanSession::DetailsDiscovery::Start(ROMScanSession& session, uint8_t nodeId,
+                                             ASFW::ConfigROM::QuadletOffset rootDirStart,
+                                             std::vector<uint32_t> rootDirBE) {
+    auto state = std::make_shared<DetailsDiscovery>();
     state->session = &session;
     state->nodeId = nodeId;
-    state->absLeafOffset = absLeafOffset;
-    state->completion = std::move(completion);
-
-    session.EnsurePrefix(nodeId, ASFW::ConfigROM::QuadletCount{absLeafOffset.value + 1U},
-                         [state](bool ok) { state->Advance(ok); });
+    state->rootDirStart = rootDirStart;
+    state->rootDirBE = std::move(rootDirBE);
+    state->StartImpl();
 }
 
-void ROMScanSession::DiscoveryFlow::DescriptorDirTextState::Finish(std::string text) {
-    if (completion) {
-        completion(std::move(text));
-    }
-    completion = nullptr;
-}
-
-void ROMScanSession::DiscoveryFlow::DescriptorDirTextState::FetchNextCandidate() {
+void ROMScanSession::DetailsDiscovery::StartImpl() {
     if (session == nullptr) {
-        Finish("");
         return;
     }
 
-    if (candidateIndex >= candidates.size()) {
-        Finish("");
-        return;
-    }
+    step = Step::Start;
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: start node=%u rootDirStart=%u rootDirBE=%zu", nodeId,
+                rootDirStart.value, rootDirBE.size());
 
-    const auto leafAbs = candidates[candidateIndex];
-    ROMScanSession::DiscoveryFlow::FetchTextLeaf(
-        *session, nodeId, leafAbs, [self = shared_from_this()](std::string text) mutable {
-            if (!text.empty()) {
-                self->Finish(std::move(text));
-                return;
-            }
-
-            ++self->candidateIndex;
-            self->FetchNextCandidate();
-        });
-}
-
-void ROMScanSession::DiscoveryFlow::DescriptorDirTextState::Advance(bool ok) {
-    if (!ok || session == nullptr) {
-        Finish("");
-        return;
-    }
-
-    const auto* node = session->FindNode(nodeId);
-    if (node == nullptr || absDirOffset.value >= node->ROM().rawQuadlets.size()) {
-        Finish("");
-        return;
-    }
-
-    if (step == Step::NeedHeader) {
-        const uint32_t hdr = OSSwapBigToHostInt32(node->ROM().rawQuadlets[absDirOffset.value]);
-        dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
-        if (dirLen == 0) {
-            Finish("");
-            return;
-        }
-        dirLen = std::min(dirLen, static_cast<uint16_t>(32U));
-
-        const ASFW::ConfigROM::QuadletCount dirEndExclusive{absDirOffset.value + 1U +
-                                                            static_cast<uint32_t>(dirLen)};
-
-        step = Step::NeedDirData;
-        session->EnsurePrefix(nodeId, dirEndExclusive,
-                              [self = shared_from_this()](bool ok2) { self->Advance(ok2); });
-        return;
-    }
-
-    const auto* base = node->ROM().rawQuadlets.data();
-    const size_t available = node->ROM().rawQuadlets.size();
-    if (static_cast<size_t>(absDirOffset.value) + 1U + static_cast<size_t>(dirLen) > available) {
-        Finish("");
-        return;
-    }
-
-    const auto dirSpan =
-        std::span<const uint32_t>(base + absDirOffset.value, 1U + static_cast<size_t>(dirLen));
-    auto entriesRes = ConfigROMParser::ParseDirectory(dirSpan, 32);
-    if (!entriesRes) {
-        Finish("");
-        return;
-    }
-
-    auto entries = std::move(*entriesRes);
-    candidates.clear();
-    candidates.reserve(entries.size());
-    for (const auto& entry : entries) {
-        if (!entry.hasTarget || entry.targetRel == 0) {
-            continue;
-        }
-        if (entry.keyId != ASFW::FW::ConfigKey::kTextualDescriptor ||
-            entry.keyType != ASFW::FW::EntryType::kLeaf) {
-            continue;
-        }
-
-        candidates.push_back(absDirOffset + ASFW::ConfigROM::QuadletCount{entry.targetRel});
-    }
-
-    FetchNextCandidate();
-}
-
-void ROMScanSession::DiscoveryFlow::FetchDescriptorDirText(
-    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset absDirOffset,
-    std::function<void(std::string)> completion) {
-    auto state = std::make_shared<DescriptorDirTextState>();
-    state->session = &session;
-    state->nodeId = nodeId;
-    state->absDirOffset = absDirOffset;
-    state->completion = std::move(completion);
-
-    session.EnsurePrefix(nodeId, ASFW::ConfigROM::QuadletCount{absDirOffset.value + 1U},
-                         [state](bool ok) { state->Advance(ok); });
-}
-
-void ROMScanSession::DiscoveryFlow::DiscoverVendorName(
-    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset rootDirStart,
-    std::optional<DescriptorRef> vendorRef, std::optional<DescriptorRef> modelRef,
-    std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets) {
-    if (!vendorRef) {
-        DiscoverModelName(session, nodeId, rootDirStart, modelRef, std::move(unitDirRelOffsets));
-        return;
-    }
-
-    FetchTextDescriptor(
-        session, nodeId, rootDirStart + vendorRef->targetRel, vendorRef->keyType,
-        [&session, nodeId, rootDirStart, modelRef,
-         unitDirRelOffsets = std::move(unitDirRelOffsets)](std::string_view vendor) mutable {
-            if (auto* node = session.FindNode(nodeId); node != nullptr && !vendor.empty()) {
-                node->MutableROM().vendorName.assign(vendor);
-            }
-            DiscoverModelName(session, nodeId, rootDirStart, modelRef,
-                              std::move(unitDirRelOffsets));
-        });
-}
-
-void ROMScanSession::DiscoveryFlow::DiscoverModelName(
-    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset rootDirStart,
-    std::optional<DescriptorRef> modelRef,
-    std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets) {
-    if (!modelRef) {
-        DiscoverUnitDirectories(session, nodeId, rootDirStart, std::move(unitDirRelOffsets), 0);
-        return;
-    }
-
-    FetchTextDescriptor(
-        session, nodeId, rootDirStart + modelRef->targetRel, modelRef->keyType,
-        [&session, nodeId, rootDirStart,
-         unitDirRelOffsets = std::move(unitDirRelOffsets)](std::string_view model) mutable {
-            if (auto* node = session.FindNode(nodeId); node != nullptr && !model.empty()) {
-                node->MutableROM().modelName.assign(model);
-            }
-            DiscoverUnitDirectories(session, nodeId, rootDirStart, std::move(unitDirRelOffsets), 0);
-        });
-}
-
-void ROMScanSession::DiscoveryFlow::OnUnitDirHeaderReady(ROMScanSession& session,
-                                                         UnitDirStepContext context, bool ok) {
-    if (!ok) {
-        DiscoverUnitDirectories(session, context.nodeId, context.rootDirStart,
-                                std::move(context.unitDirRelOffsets), context.index + 1);
-        return;
-    }
-
-    const auto* node = session.FindNode(context.nodeId);
-    if (node == nullptr || context.absUnitDir.value >= node->ROM().rawQuadlets.size()) {
-        FinalizeNodeDiscovery(session, context.nodeId);
-        return;
-    }
-
-    const uint32_t hdr = OSSwapBigToHostInt32(node->ROM().rawQuadlets[context.absUnitDir.value]);
-    context.dirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
-    if (context.dirLen == 0) {
-        DiscoverUnitDirectories(session, context.nodeId, context.rootDirStart,
-                                std::move(context.unitDirRelOffsets), context.index + 1);
-        return;
-    }
-    context.dirLen = std::min(context.dirLen, static_cast<uint16_t>(32U));
-
-    const ASFW::ConfigROM::QuadletCount dirEndExclusive{context.absUnitDir.value + 1U +
-                                                        static_cast<uint32_t>(context.dirLen)};
-    const uint8_t ensureNodeId = context.nodeId;
-    session.EnsurePrefix(ensureNodeId, dirEndExclusive,
-                         [&session, context = std::move(context)](bool ok2) mutable {
-                             OnUnitDirDataReady(session, std::move(context), ok2);
-                         });
-}
-
-void ROMScanSession::DiscoveryFlow::OnUnitDirDataReady(ROMScanSession& session,
-                                                       UnitDirStepContext context, bool ok) {
-    if (!ok) {
-        DiscoverUnitDirectories(session, context.nodeId, context.rootDirStart,
-                                std::move(context.unitDirRelOffsets), context.index + 1);
-        return;
-    }
-
-    auto* node = session.FindNode(context.nodeId);
-    if (node == nullptr ||
-        context.absUnitDir.value + context.dirLen >= node->ROM().rawQuadlets.size()) {
-        FinalizeNodeDiscovery(session, context.nodeId);
-        return;
-    }
-
-    std::vector<uint32_t> unitDirBE;
-    unitDirBE.reserve(static_cast<size_t>(context.dirLen) + 1U);
-    for (uint32_t i = 0; i <= static_cast<uint32_t>(context.dirLen); ++i) {
-        unitDirBE.push_back(node->ROM().rawQuadlets[context.absUnitDir.value + i]);
-    }
-
-    auto unitEntries = ParseDirectoryBestEffort(unitDirBE, 32);
-    UnitDirectory parsed{};
-    parsed.offsetQuadlets = context.unitRel.value;
-
-    for (const auto& entry : unitEntries) {
-        if (entry.keyType != ASFW::FW::EntryType::kImmediate) {
-            continue;
-        }
-        switch (entry.keyId) {
-        case ASFW::FW::ConfigKey::kUnitSpecId:
-            parsed.unitSpecId = entry.value;
-            break;
-        case ASFW::FW::ConfigKey::kUnitSwVersion:
-            parsed.unitSwVersion = entry.value;
-            break;
-        case ASFW::FW::ConfigKey::kUnitDependentInfo:
-            parsed.logicalUnitNumber = entry.value;
-            break;
-        case ASFW::FW::ConfigKey::kModelId:
-            parsed.modelId = entry.value;
-            break;
-        default:
-            break;
-        }
-    }
-
-    auto unitModelRef = FindDescriptorRef(unitEntries, ASFW::FW::ConfigKey::kModelId);
-    if (!unitModelRef) {
-        node->MutableROM().unitDirectories.push_back(std::move(parsed));
-        DiscoverUnitDirectories(session, context.nodeId, context.rootDirStart,
-                                std::move(context.unitDirRelOffsets), context.index + 1);
-        return;
-    }
-
-    FetchTextDescriptor(session, context.nodeId, context.absUnitDir + unitModelRef->targetRel,
-                        unitModelRef->keyType,
-                        [&session, nodeId = context.nodeId, rootDirStart = context.rootDirStart,
-                         parsed = std::move(parsed),
-                         unitDirRelOffsets = std::move(context.unitDirRelOffsets),
-                         index = context.index](std::string_view name) mutable {
-                            if (auto* node2 = session.FindNode(nodeId); node2 != nullptr) {
-                                UnitDirectory unit = std::move(parsed);
-                                if (!name.empty()) {
-                                    unit.modelName = std::string(name);
-                                }
-                                node2->MutableROM().unitDirectories.push_back(std::move(unit));
-                            }
-                            DiscoverUnitDirectories(session, nodeId, rootDirStart,
-                                                    std::move(unitDirRelOffsets), index + 1);
-                        });
-}
-
-void ROMScanSession::DiscoveryFlow::DiscoverUnitDirectories(
-    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset rootDirStart,
-    std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets, size_t index) {
-    if (index >= unitDirRelOffsets.size()) {
-        FinalizeNodeDiscovery(session, nodeId);
-        return;
-    }
-
-    const ASFW::ConfigROM::QuadletCount unitRel = unitDirRelOffsets[index];
-    const ASFW::ConfigROM::QuadletOffset absUnitDir = rootDirStart + unitRel;
-
-    session.EnsurePrefix(nodeId, ASFW::ConfigROM::QuadletCount{absUnitDir.value + 1U},
-                         [&session, nodeId, rootDirStart,
-                          unitDirRelOffsets = std::move(unitDirRelOffsets), index, absUnitDir,
-                          unitRel](bool ok) mutable {
-                             UnitDirStepContext context{};
-                             context.nodeId = nodeId;
-                             context.rootDirStart = rootDirStart;
-                             context.unitDirRelOffsets = std::move(unitDirRelOffsets);
-                             context.index = index;
-                             context.absUnitDir = absUnitDir;
-                             context.unitRel = unitRel;
-                             OnUnitDirHeaderReady(session, std::move(context), ok);
-                         });
-}
-
-void ROMScanSession::DiscoveryFlow::FinalizeNodeDiscovery(ROMScanSession& session, uint8_t nodeId) {
-    auto* node = session.FindNode(nodeId);
+    auto* node = FindNode();
     if (node == nullptr) {
-        session.MaybeFinish();
-        session.Pump();
+        session->MaybeFinish();
+        session->Pump();
         return;
     }
 
-    session.speedPolicy_.RecordSuccess(nodeId, node->CurrentSpeed());
-    if (!ROMScanSession::TransitionNodeState(*node, ROMScanNodeStateMachine::State::Complete,
-                                             "FinalizeNodeDiscovery complete")) {
-        session.MaybeFinish();
-        session.Pump();
+    if (!ROMScanSession::TransitionNodeState(*node, ROMScanNodeStateMachine::State::ReadingDetails,
+                                             "RootDir parsed enter details discovery")) {
+        session->MaybeFinish();
+        session->Pump();
         return;
     }
 
-    session.completedROMs_.push_back(std::move(node->MutableROM()));
-    session.MaybeFinish();
-    session.Pump();
+    EnsureRootDirPrefix();
 }
 
-void ROMScanSession::DiscoveryFlow::OnDiscoverDetailsPrefixReady(
-    ROMScanSession& session, uint8_t nodeId, ASFW::ConfigROM::QuadletOffset rootDirStart,
-    const std::vector<uint32_t>& rootDirBE, bool prefixOk) {
-    auto* node = session.FindNode(nodeId);
-    if (node == nullptr) {
-        session.MaybeFinish();
-        session.Pump();
+void ROMScanSession::DetailsDiscovery::EnsureRootDirPrefix() {
+    if (session == nullptr) {
         return;
     }
 
-    if (!prefixOk) {
-        ASFW_LOG(ConfigROM, "Node %u: ROM prefix could not be extended to rootDirStart=%u", nodeId,
-                 rootDirStart.value);
+    step = Step::EnsureRootPrefix;
+    session->EnsurePrefix(nodeId, ASFW::ConfigROM::QuadletCount{rootDirStart.value},
+                          [self = shared_from_this()](bool ok) { self->OnRootDirPrefixReady(ok); });
+}
+
+void ROMScanSession::DetailsDiscovery::OnRootDirPrefixReady(bool ok) {
+    if (session == nullptr) {
+        return;
     }
 
-    auto& rawQuadlets = node->MutableROM().rawQuadlets;
-    rawQuadlets.reserve(rawQuadlets.size() + rootDirBE.size());
-    rawQuadlets.insert(rawQuadlets.end(), rootDirBE.begin(), rootDirBE.end());
+    auto* node = FindNode();
+    if (node == nullptr) {
+        session->MaybeFinish();
+        session->Pump();
+        return;
+    }
 
-    const auto rootEntries = ParseDirectoryBestEffort(rootDirBE, 64);
-    const auto vendorRef = FindDescriptorRef(rootEntries, ASFW::FW::ConfigKey::kModuleVendorId);
-    const auto modelRef = FindDescriptorRef(rootEntries, ASFW::FW::ConfigKey::kModelId);
+    if (!ok) {
+        ASFW_LOG_V3(ConfigROM,
+                    "DetailsDiscovery: EnsurePrefix failed (node=%u required=%u have=%zu)", nodeId,
+                    rootDirStart.value, node->ROM().rawQuadlets.size());
+    }
 
-    std::vector<ASFW::ConfigROM::QuadletCount> unitDirRelOffsets;
+    AppendRootDirAndParse();
+}
+
+void ROMScanSession::DetailsDiscovery::AppendRootDirAndParse() {
+    if (session == nullptr) {
+        return;
+    }
+
+    step = Step::ParseRoot;
+    auto* node = FindNode();
+    if (node == nullptr) {
+        session->MaybeFinish();
+        session->Pump();
+        return;
+    }
+
+    if (!rootDirBE.empty()) {
+        auto& rawQuadlets = node->MutableROM().rawQuadlets;
+        rawQuadlets.reserve(rawQuadlets.size() + rootDirBE.size());
+        rawQuadlets.insert(rawQuadlets.end(), rootDirBE.begin(), rootDirBE.end());
+    }
+
+    const auto entries = ParseDirectoryBestEffort(rootDirBE, 64);
+    if (entries.empty()) {
+        ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: root directory parse failed/empty (node=%u)",
+                    nodeId);
+    }
+
+    rootEntries = entries;
+    vendorRef = FindDescriptorRef(rootEntries, ASFW::FW::ConfigKey::kModuleVendorId);
+    modelRef = FindDescriptorRef(rootEntries, ASFW::FW::ConfigKey::kModelId);
+
+    unitDirRelOffsets.clear();
     for (const auto& entry : rootEntries) {
         if (entry.keyType == ASFW::FW::EntryType::kDirectory &&
             entry.keyId == ASFW::FW::ConfigKey::kUnitDirectory && entry.hasTarget &&
@@ -536,38 +548,314 @@ void ROMScanSession::DiscoveryFlow::OnDiscoverDetailsPrefixReady(
         }
     }
 
-    DiscoverVendorName(session, nodeId, rootDirStart, vendorRef, modelRef,
-                       std::move(unitDirRelOffsets));
+    ASFW_LOG_V3(
+        ConfigROM,
+        "DetailsDiscovery: root parsed node=%u entries=%zu vendorRef=%d modelRef=%d units=%zu",
+        nodeId, rootEntries.size(), vendorRef.has_value() ? 1 : 0, modelRef.has_value() ? 1 : 0,
+        unitDirRelOffsets.size());
+
+    rootDirBE.clear();
+    rootDirBE.shrink_to_fit();
+
+    StartVendorFetch();
 }
 
-void ROMScanSession::DiscoveryFlow::DiscoverDetails(ROMScanSession& session, uint8_t nodeId,
-                                                    ASFW::ConfigROM::QuadletOffset rootDirStart,
-                                                    std::vector<uint32_t> rootDirBE) {
-    auto* node = session.FindNode(nodeId);
+void ROMScanSession::DetailsDiscovery::StartVendorFetch() {
+    if (session == nullptr) {
+        return;
+    }
+
+    step = Step::FetchVendor;
+    if (!vendorRef.has_value()) {
+        OnVendorFetched("");
+        return;
+    }
+
+    const auto absOffset = rootDirStart + vendorRef->targetRel;
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: fetch vendor node=%u abs=%u keyType=%u", nodeId,
+                absOffset.value, vendorRef->keyType);
+    TextDescriptorFetcher::Start(
+        *session, nodeId, absOffset, vendorRef->keyType,
+        [self = shared_from_this()](std::string text) { self->OnVendorFetched(std::move(text)); });
+}
+
+void ROMScanSession::DetailsDiscovery::OnVendorFetched(std::string text) {
+    if (session == nullptr) {
+        return;
+    }
+
+    if (auto* node = FindNode(); node != nullptr) {
+        if (!text.empty()) {
+            node->MutableROM().vendorName = std::move(text);
+        }
+        ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: vendor done node=%u len=%zu", nodeId,
+                    node->ROM().vendorName.size());
+    }
+
+    StartModelFetch();
+}
+
+void ROMScanSession::DetailsDiscovery::StartModelFetch() {
+    if (session == nullptr) {
+        return;
+    }
+
+    step = Step::FetchModel;
+    if (!modelRef.has_value()) {
+        OnModelFetched("");
+        return;
+    }
+
+    const auto absOffset = rootDirStart + modelRef->targetRel;
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: fetch model node=%u abs=%u keyType=%u", nodeId,
+                absOffset.value, modelRef->keyType);
+    TextDescriptorFetcher::Start(
+        *session, nodeId, absOffset, modelRef->keyType,
+        [self = shared_from_this()](std::string text) { self->OnModelFetched(std::move(text)); });
+}
+
+void ROMScanSession::DetailsDiscovery::OnModelFetched(std::string text) {
+    if (session == nullptr) {
+        return;
+    }
+
+    if (auto* node = FindNode(); node != nullptr) {
+        if (!text.empty()) {
+            node->MutableROM().modelName = std::move(text);
+        }
+        ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: model done node=%u len=%zu", nodeId,
+                    node->ROM().modelName.size());
+    }
+
+    unitIndex = 0;
+    StartNextUnitDir();
+}
+
+void ROMScanSession::DetailsDiscovery::StartNextUnitDir() {
+    if (session == nullptr) {
+        return;
+    }
+
+    if (unitIndex >= unitDirRelOffsets.size()) {
+        FinalizeNodeDiscovery();
+        return;
+    }
+
+    unitRel = unitDirRelOffsets[unitIndex];
+    absUnitDir = rootDirStart + unitRel;
+    unitDirLen = 0;
+    parsedUnit = UnitDirectory{};
+    unitModelRef = std::nullopt;
+
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: unit[%zu/%zu] start node=%u abs=%u rel=%u",
+                unitIndex + 1, unitDirRelOffsets.size(), nodeId, absUnitDir.value, unitRel.value);
+    EnsureUnitDirHeader();
+}
+
+void ROMScanSession::DetailsDiscovery::EnsureUnitDirHeader() {
+    if (session == nullptr) {
+        return;
+    }
+
+    step = Step::UnitHeader;
+    session->EnsurePrefix(nodeId, ASFW::ConfigROM::QuadletCount{absUnitDir.value + 1U},
+                          [self = shared_from_this()](bool ok) { self->OnUnitDirHeaderReady(ok); });
+}
+
+void ROMScanSession::DetailsDiscovery::OnUnitDirHeaderReady(bool ok) {
+    if (session == nullptr) {
+        return;
+    }
+
+    if (!ok) {
+        ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: unit header EnsurePrefix failed (node=%u abs=%u)",
+                    nodeId, absUnitDir.value);
+        ++unitIndex;
+        StartNextUnitDir();
+        return;
+    }
+
+    const auto* node = FindNode();
+    if (node == nullptr || absUnitDir.value >= node->ROM().rawQuadlets.size()) {
+        FinalizeNodeDiscovery();
+        return;
+    }
+
+    const uint32_t hdr = OSSwapBigToHostInt32(node->ROM().rawQuadlets[absUnitDir.value]);
+    unitDirLen = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: unit header node=%u abs=%u len=%u", nodeId,
+                absUnitDir.value, unitDirLen);
+
+    if (unitDirLen == 0) {
+        ++unitIndex;
+        StartNextUnitDir();
+        return;
+    }
+
+    unitDirLen = std::min(unitDirLen, static_cast<uint16_t>(32U));
+    EnsureUnitDirData();
+}
+
+void ROMScanSession::DetailsDiscovery::EnsureUnitDirData() {
+    if (session == nullptr) {
+        return;
+    }
+
+    step = Step::UnitData;
+    const ASFW::ConfigROM::QuadletCount dirEndExclusive{absUnitDir.value + 1U +
+                                                        static_cast<uint32_t>(unitDirLen)};
+    session->EnsurePrefix(nodeId, dirEndExclusive,
+                          [self = shared_from_this()](bool ok) { self->OnUnitDirDataReady(ok); });
+}
+
+void ROMScanSession::DetailsDiscovery::OnUnitDirDataReady(bool ok) {
+    if (session == nullptr) {
+        return;
+    }
+
+    if (!ok) {
+        ASFW_LOG_V3(ConfigROM,
+                    "DetailsDiscovery: unit data EnsurePrefix failed (node=%u abs=%u len=%u)",
+                    nodeId, absUnitDir.value, unitDirLen);
+        ++unitIndex;
+        StartNextUnitDir();
+        return;
+    }
+
+    auto* node = FindNode();
+    if (node == nullptr ||
+        absUnitDir.value + static_cast<uint32_t>(unitDirLen) >= node->ROM().rawQuadlets.size()) {
+        FinalizeNodeDiscovery();
+        return;
+    }
+
+    std::vector<uint32_t> unitDirBE;
+    unitDirBE.reserve(static_cast<size_t>(unitDirLen) + 1U);
+    for (uint32_t i = 0; i <= static_cast<uint32_t>(unitDirLen); ++i) {
+        unitDirBE.push_back(node->ROM().rawQuadlets[absUnitDir.value + i]);
+    }
+
+    const auto unitEntries = ParseDirectoryBestEffort(unitDirBE, 32);
+    if (unitEntries.empty()) {
+        ASFW_LOG_V3(ConfigROM,
+                    "DetailsDiscovery: unit directory parse failed/empty (node=%u abs=%u)", nodeId,
+                    absUnitDir.value);
+    }
+
+    parsedUnit = UnitDirectory{};
+    parsedUnit.offsetQuadlets = unitRel.value;
+    for (const auto& entry : unitEntries) {
+        if (entry.keyType != ASFW::FW::EntryType::kImmediate) {
+            continue;
+        }
+        switch (entry.keyId) {
+        case ASFW::FW::ConfigKey::kUnitSpecId:
+            parsedUnit.unitSpecId = entry.value;
+            break;
+        case ASFW::FW::ConfigKey::kUnitSwVersion:
+            parsedUnit.unitSwVersion = entry.value;
+            break;
+        case ASFW::FW::ConfigKey::kUnitDependentInfo:
+            parsedUnit.logicalUnitNumber = entry.value;
+            break;
+        case ASFW::FW::ConfigKey::kModelId:
+            parsedUnit.modelId = entry.value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    unitModelRef = FindDescriptorRef(unitEntries, ASFW::FW::ConfigKey::kModelId);
+    if (!unitModelRef) {
+        node->MutableROM().unitDirectories.push_back(std::move(parsedUnit));
+        ++unitIndex;
+        StartNextUnitDir();
+        return;
+    }
+
+    MaybeFetchUnitModelName();
+}
+
+void ROMScanSession::DetailsDiscovery::MaybeFetchUnitModelName() {
+    if (session == nullptr) {
+        return;
+    }
+
+    step = Step::UnitModelName;
+    if (!unitModelRef.has_value()) {
+        ++unitIndex;
+        StartNextUnitDir();
+        return;
+    }
+
+    const auto absOffset = absUnitDir + unitModelRef->targetRel;
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: fetch unit model node=%u abs=%u keyType=%u", nodeId,
+                absOffset.value, unitModelRef->keyType);
+    TextDescriptorFetcher::Start(*session, nodeId, absOffset, unitModelRef->keyType,
+                                 [self = shared_from_this()](std::string text) {
+                                     self->OnUnitModelNameFetched(std::move(text));
+                                 });
+}
+
+void ROMScanSession::DetailsDiscovery::OnUnitModelNameFetched(std::string text) {
+    if (session == nullptr) {
+        return;
+    }
+
+    auto* node = FindNode();
     if (node == nullptr) {
-        session.MaybeFinish();
-        session.Pump();
+        FinalizeNodeDiscovery();
         return;
     }
 
-    if (!ROMScanSession::TransitionNodeState(*node, ROMScanNodeStateMachine::State::ReadingDetails,
-                                             "RootDir parsed enter details discovery")) {
-        session.MaybeFinish();
-        session.Pump();
+    if (!text.empty()) {
+        parsedUnit.modelName = std::move(text);
+    }
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: unit model done node=%u len=%zu", nodeId,
+                parsedUnit.modelName.has_value() ? parsedUnit.modelName->size() : 0U);
+
+    node->MutableROM().unitDirectories.push_back(std::move(parsedUnit));
+
+    ++unitIndex;
+    StartNextUnitDir();
+}
+
+void ROMScanSession::DetailsDiscovery::FinalizeNodeDiscovery() {
+    if (session == nullptr) {
         return;
     }
 
-    session.EnsurePrefix(
-        nodeId, ASFW::ConfigROM::QuadletCount{rootDirStart.value},
-        [&session, nodeId, rootDirStart, rootDirBE = std::move(rootDirBE)](bool ok) mutable {
-            OnDiscoverDetailsPrefixReady(session, nodeId, rootDirStart, rootDirBE, ok);
-        });
+    step = Step::Finalize;
+    auto* node = FindNode();
+    if (node == nullptr) {
+        ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: finalize node missing (node=%u)", nodeId);
+        session->MaybeFinish();
+        session->Pump();
+        return;
+    }
+
+    ASFW_LOG_V3(ConfigROM, "DetailsDiscovery: done node=%u vendorLen=%zu modelLen=%zu units=%zu",
+                nodeId, node->ROM().vendorName.size(), node->ROM().modelName.size(),
+                node->ROM().unitDirectories.size());
+
+    session->speedPolicy_.RecordSuccess(nodeId, node->CurrentSpeed());
+    if (!ROMScanSession::TransitionNodeState(*node, ROMScanNodeStateMachine::State::Complete,
+                                             "FinalizeNodeDiscovery complete")) {
+        session->MaybeFinish();
+        session->Pump();
+        return;
+    }
+
+    session->completedROMs_.push_back(std::move(node->MutableROM()));
+    session->MaybeFinish();
+    session->Pump();
 }
 
 void ROMScanSession::StartDetailsDiscovery(uint8_t nodeId,
                                            ASFW::ConfigROM::QuadletOffset rootDirStart,
                                            std::vector<uint32_t> rootDirBE) {
-    DiscoveryFlow::DiscoverDetails(*this, nodeId, rootDirStart, std::move(rootDirBE));
+    DetailsDiscovery::Start(*this, nodeId, rootDirStart, std::move(rootDirBE));
 }
 
 } // namespace ASFW::Discovery

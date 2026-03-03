@@ -43,7 +43,7 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     [[nodiscard]] Generation GetGeneration() const noexcept { return gen_; }
 
   private:
-    struct DiscoveryFlow;
+    struct DetailsDiscovery;
 
     void Post(std::function<void()> task);
     void DrainPending();

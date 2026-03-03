@@ -1242,6 +1242,25 @@ target_include_directories(ROMScannerAbortTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScannerAbortTests)
 
+add_executable(ROMScannerDetailsDiscoveryTests
+    "${ASFW_TESTS_DIR}/ROMScannerDetailsDiscoveryTests.cpp"
+)
+
+target_link_libraries(ROMScannerDetailsDiscoveryTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerDetailsDiscoveryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerDetailsDiscoveryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerDetailsDiscoveryTests)
+
 add_executable(ROMScanNodeStateMachineTests
     "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"
 )
