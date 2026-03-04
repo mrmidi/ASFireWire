@@ -292,6 +292,34 @@ target_compile_definitions(LabelAllocatorTests
 
 target_include_directories(LabelAllocatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+# Async Bus Contract Tests - Interface contract for IFireWireBus adapter + cancellation mapping
+add_executable(AsyncBusContractTests
+    "${ASFW_TESTS_DIR}/AsyncBusContractTests.cpp"
+    "${ASFW_TESTS_DIR}/AsyncSubsystemContractStub.cpp"
+    "${ASFW_DRIVER_DIR}/Async/FireWireBusImpl.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/PayloadRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/Transaction.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/TransactionManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AsyncBusContractTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AsyncBusContractTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AsyncBusContractTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AsyncBusContractTests)
+
 # FCP Packet Parsing Tests - Destination offset extraction and FCP response routing
 add_executable(FCPPacketParsingTests
     "${ASFW_TESTS_DIR}/FCPPacketParsingTests.cpp"

@@ -3,7 +3,9 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 #ifdef ASFW_HOST_TEST
@@ -101,11 +103,48 @@ public:
     AsyncHandle PhyRequest(const PhyParams& params, CompletionCallback callback);
     bool Cancel(AsyncHandle handle);
 
-    void PostToWorkloop(void (^block)()) {
-        if (workloopQueue_) {
-            workloopQueue_->DispatchAsync(block);
-        }
-    }
+	    void PostToWorkloop(void (^block)()) {
+#ifdef ASFW_HOST_TEST
+	        if (hostDeferPostedWork_.load(std::memory_order_acquire)) {
+	            std::function<void()> work = block;
+	            {
+	                std::lock_guard lock(hostPostedWorkLock_);
+	                hostPostedWork_.push_back(std::move(work));
+	            }
+	            return;
+	        }
+#endif
+	        if (workloopQueue_) {
+	            workloopQueue_->DispatchAsync(block);
+	            return;
+	        }
+
+        // Fallback: If the workloop queue isn't available (mis-wired early init or host test),
+        // do not silently drop work that may carry required completions (e.g. Cancel()).
+	        if (block) {
+	            block();
+	        }
+	    }
+
+#ifdef ASFW_HOST_TEST
+	    // Host-only hooks for deterministic testing of "no inline completion" guarantees.
+	    void HostTest_SetDeferPostedWork(bool enabled) {
+	        hostDeferPostedWork_.store(enabled, std::memory_order_release);
+	    }
+
+	    void HostTest_DrainPostedWork() {
+	        std::deque<std::function<void()>> work;
+	        {
+	            std::lock_guard lock(hostPostedWorkLock_);
+	            work.swap(hostPostedWork_);
+	        }
+	        for (auto& fn : work) {
+	            if (fn) {
+	                fn();
+	            }
+	        }
+	    }
+#endif
 
     void OnTxInterrupt();
     void OnRxInterrupt(ARContextType contextType);
@@ -201,7 +240,7 @@ private:
     
     std::unique_ptr<ASFW::Async::Engine::ContextManager> contextManager_;
 
-    std::unique_ptr<ASFW::Async::Tx::Submitter> submitter_;
+	    std::unique_ptr<ASFW::Async::Tx::Submitter> submitter_;
 
     void HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t newGeneration);
     void Teardown(bool disableHardware);
@@ -219,31 +258,51 @@ private:
     std::atomic<uint64_t> watchdogExpiredCount_{0};
     std::atomic<uint64_t> watchdogDrainedCompletions_{0};
     std::atomic<uint64_t> watchdogContextsRearmed_{0};
-    std::atomic<uint64_t> watchdogLastTickUsec_{0};
-    
-    struct PendingCommand {
-        ReadParams params;
-        RetryPolicy retryPolicy;
-        CompletionCallback userCallback;
-        uint8_t retriesRemaining;
-        AsyncHandle handle;
-        AsyncSubsystem* subsystem;
-        
-        PendingCommand(const ReadParams& p, const RetryPolicy& pol,
-                      CompletionCallback cb, AsyncHandle h, AsyncSubsystem* sub)
-            : params(p), retryPolicy(pol), userCallback(cb)
-            , retriesRemaining(pol.maxRetries), handle(h), subsystem(sub) {}
-    };
-    
-    std::unique_ptr<std::deque<PendingCommand>> commandQueue_{};
-    IOLock* commandQueueLock_{nullptr};
-    std::atomic<bool> commandInFlight_{false};
-    
-    void ExecuteNextCommand();
-    
-    void OnCommandCompleteInternal(AsyncHandle handle, AsyncStatus status,
-                                   const void* payload, uint32_t payloadSize,
-                                   PendingCommand* cmd);
-};
+	    std::atomic<uint64_t> watchdogLastTickUsec_{0};
+	    
+	    struct PendingCommandState {
+	        ReadParams params{};
+	        RetryPolicy retryPolicy{};
+	        CompletionCallback userCallback{nullptr};
+	        uint8_t retriesRemaining{0};
+	        AsyncHandle publicHandle{};      // Stable handle returned to caller (ReadWithRetry)
+	        AsyncHandle currentHandle{};     // Underlying transaction handle (Read)
+	        std::atomic<bool> cancelRequested{false};
+	        AsyncSubsystem* subsystem{nullptr};
+
+	        PendingCommandState(const ReadParams& p,
+	                            const RetryPolicy& pol,
+	                            CompletionCallback cb,
+	                            AsyncHandle publicHandleIn,
+	                            AsyncSubsystem* sub)
+	            : params(p),
+	              retryPolicy(pol),
+	              userCallback(std::move(cb)),
+	              retriesRemaining(pol.maxRetries),
+	              publicHandle(publicHandleIn),
+	              currentHandle{},
+	              subsystem(sub)
+	        {}
+	    };
+
+	    using PendingCommandPtr = std::shared_ptr<PendingCommandState>;
+
+	    std::unique_ptr<std::deque<PendingCommandPtr>> commandQueue_{};
+	    IOLock* commandQueueLock_{nullptr};
+	    std::atomic<bool> commandInFlight_{false};
+	    PendingCommandPtr inFlightCommand_{};
+
+#ifdef ASFW_HOST_TEST
+	    std::atomic<bool> hostDeferPostedWork_{false};
+	    mutable std::mutex hostPostedWorkLock_{};
+	    std::deque<std::function<void()>> hostPostedWork_{};
+#endif
+	    
+	    void ExecuteNextCommand();
+	    
+	    void OnCommandCompleteInternal(AsyncHandle handle, AsyncStatus status,
+	                                   const void* payload, uint32_t payloadSize,
+	                                   PendingCommandState* cmd);
+	};
 
 } // namespace ASFW::Async
