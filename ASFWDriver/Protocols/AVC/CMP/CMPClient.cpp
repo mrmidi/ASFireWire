@@ -32,7 +32,7 @@ void CMPClient::SetDeviceNode(uint8_t nodeId, IRM::Generation generation) {
     generation_ = generation;
     
     ASFW_LOG(CMP, "CMPClient: Set device node=%u generation=%u",
-             nodeId, generation);
+             nodeId, generation.value);
 }
 
 // ============================================================================
@@ -49,7 +49,7 @@ void CMPClient::ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback) {
     FW::Generation gen{generation_};
     
     ASFW_LOG(CMP, "CMPClient: Reading PCR at 0x%08X (node=%u gen=%u)",
-             addressLo, deviceNodeId_, generation_);
+             addressLo, deviceNodeId_, generation_.value);
     
     busOps_.ReadQuad(gen, node, addr, speed,
         [callback, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {

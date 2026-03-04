@@ -27,7 +27,7 @@ void ROMScanner::SetTopologyManager(Driver::TopologyManager* topologyManager) {
 }
 
 bool ROMScanner::IsBusyFor(Generation gen) const {
-    if (gen == 0 || !session_) {
+    if (gen == Generation{0} || !session_) {
         return false;
     }
     return session_->GetGeneration() == gen;
@@ -36,7 +36,7 @@ bool ROMScanner::IsBusyFor(Generation gen) const {
 bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback completion) {
     if (IsBusyFor(request.gen)) {
         ASFW_LOG_V2(ConfigROM, "ROMScanner::Start: scan already in progress for gen=%u",
-                    request.gen);
+                    request.gen.value);
         return false;
     }
 
@@ -46,7 +46,7 @@ bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback com
     }
 
     ASFW_LOG_V2(ConfigROM, "ROMScanner::Start gen=%u localNode=%u topologyNodes=%zu targets=%zu",
-                request.gen, request.localNodeId, request.topology.nodes.size(),
+                request.gen.value, request.localNodeId, request.topology.nodes.size(),
                 request.targetNodes.size());
 
     auto session = std::make_shared<ROMScanSession>(bus_, speedPolicy_, params_, reader_,
@@ -73,7 +73,7 @@ void ROMScanner::Abort(Generation gen) {
     if (!session_) {
         return;
     }
-    if (gen == 0 || session_->GetGeneration() != gen) {
+    if (gen == Generation{0} || session_->GetGeneration() != gen) {
         return;
     }
 

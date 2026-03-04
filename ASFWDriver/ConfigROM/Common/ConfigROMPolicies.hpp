@@ -14,13 +14,14 @@ class GenerationContextPolicy {
   public:
     [[nodiscard]] static constexpr bool IsCurrentEvent(Generation eventGeneration,
                                                        Generation activeGeneration) noexcept {
-        return eventGeneration != 0 && eventGeneration == activeGeneration;
+        return eventGeneration != Generation{0} && eventGeneration == activeGeneration;
     }
 
     [[nodiscard]] static constexpr bool
     CanRestartIdleScan(Generation activeGeneration, bool scannerIdle,
                        Generation requestedGeneration) noexcept {
-        return scannerIdle && requestedGeneration != 0 && requestedGeneration != activeGeneration;
+        return scannerIdle && requestedGeneration != Generation{0} &&
+               requestedGeneration != activeGeneration;
     }
 
     [[nodiscard]] static constexpr bool MatchesActiveScan(Generation requestedGeneration,

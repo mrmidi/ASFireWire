@@ -131,12 +131,12 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
                  "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.vendorName.c_str(),
                  device.modelId, device.modelName.c_str(), kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen);
+                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
     } else {
         ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
                  "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.modelId, kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen);
+                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
     }
     
     return device;
@@ -165,7 +165,7 @@ void DeviceRegistry::MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t node
     if (it != devicesByGuid_.end()) {
         it->second.state = LifeState::Quarantined;
         ASFW_LOG(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
-                 guid, nodeId, gen);
+                 guid, nodeId, gen.value);
     }
 }
 
@@ -180,7 +180,7 @@ void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
             devIt->second.state = LifeState::Lost;
             devIt->second.nodeId = 0xFF;  // Clear nodeId
             ASFW_LOG(Discovery, "Device lost: GUID=0x%016llx node=%u gen=%u",
-                     guid, nodeId, gen);
+                     guid, nodeId, gen.value);
         }
         // Remove from secondary index
         genNodeToGuid_.erase(it);
@@ -261,7 +261,7 @@ bool DeviceRegistry::IsAudioCandidate(const ConfigROM& rom) const {
 }
 
 DeviceRegistry::GenNodeKey DeviceRegistry::MakeKey(Generation gen, uint8_t nodeId) {
-    return (static_cast<uint32_t>(gen) << 8) | static_cast<uint32_t>(nodeId);
+    return (gen.value << 8) | static_cast<uint32_t>(nodeId);
 }
 
 } // namespace ASFW::Discovery

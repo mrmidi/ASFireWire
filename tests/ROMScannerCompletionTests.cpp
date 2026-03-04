@@ -207,7 +207,7 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     SpeedPolicy speedPolicy;
 
     bool callbackInvoked = false;
-    Generation completedGen = 0;
+    Generation completedGen{0};
     bool hadBusyNodes = false;
     std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
@@ -224,7 +224,7 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {1};
@@ -255,12 +255,12 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
 
     // CRITICAL: Callback should be invoked immediately (Apple pattern)
     EXPECT_TRUE(callbackInvoked) << "Completion callback should be invoked immediately after ROM read completes";
-    EXPECT_EQ(completedGen, 42);
+    EXPECT_EQ(completedGen.value, 42u);
     EXPECT_FALSE(hadBusyNodes);
 
     EXPECT_EQ(completedROMs.size(), 1u);
     EXPECT_EQ(completedROMs[0].nodeId, 1);
-    EXPECT_EQ(completedROMs[0].gen, 42);
+    EXPECT_EQ(completedROMs[0].gen.value, 42u);
 }
 
 TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
@@ -269,7 +269,7 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
     SpeedPolicy speedPolicy;
 
     int callbackCount = 0;
-    Generation lastCompletedGen = 0;
+    Generation lastCompletedGen{0};
     bool hadBusyNodes = false;
     std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
@@ -285,7 +285,7 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
     topology.nodes.push_back({.nodeId = 2, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {2};
@@ -327,7 +327,7 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
 
     // Now callback should fire
     EXPECT_EQ(callbackCount, 1) << "Callback should fire after both BIB and root dir complete";
-    EXPECT_EQ(lastCompletedGen, 10);
+    EXPECT_EQ(lastCompletedGen.value, 10u);
     EXPECT_FALSE(hadBusyNodes);
     EXPECT_EQ(completedROMs.size(), 1u);
 }
@@ -347,7 +347,7 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
     topology.nodes.push_back({.nodeId = 3, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {3};
@@ -384,7 +384,7 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     topology.nodes.push_back({.nodeId = 4, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {4};
@@ -444,7 +444,7 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     topology.nodes.push_back({.nodeId = 2, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
 
@@ -520,7 +520,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     // First manual read (gen=1)
     topology.generation = 1;
     ROMScanRequest request1{};
-    request1.gen = topology.generation;
+    request1.gen = Generation{topology.generation};
     request1.topology = topology;
     request1.localNodeId = 0;
     request1.targetNodes = {1};
@@ -538,7 +538,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     // Second manual read (gen=2, scanner restarts)
     topology.generation = 2;
     ROMScanRequest request2{};
-    request2.gen = topology.generation;
+    request2.gen = Generation{topology.generation};
     request2.topology = topology;
     request2.localNodeId = 0;
     request2.targetNodes = {1};
@@ -555,6 +555,6 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
 
     // Both should have completed
     EXPECT_EQ(completedGens.size(), 2);
-    EXPECT_EQ(completedGens[0], 1);
-    EXPECT_EQ(completedGens[1], 2);
+    EXPECT_EQ(completedGens[0].value, 1u);
+    EXPECT_EQ(completedGens[1].value, 2u);
 }

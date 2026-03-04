@@ -131,7 +131,7 @@ void ROMReader::ScheduleQuadletReadStep(const std::shared_ptr<QuadletReadContext
     }
 
     const auto handle =
-        ctx->bus->ReadQuad(FW::Generation{static_cast<uint32_t>(ctx->generation)},
+        ctx->bus->ReadQuad(ctx->generation,
                            FW::NodeId{ctx->nodeId}, addr, ctx->speed, std::move(completionHandler));
     if (!handle) {
         EmitQuadletReadResult(ctx, /*success=*/false, Async::AsyncStatus::kHardwareError, 0);
