@@ -164,9 +164,14 @@ public:
                         label, &callback, callback ? 1 : 0, kr);
             if (callback) {
                 // Convert kern_return_t to AsyncStatus for Phase 2.3 callback
-                AsyncStatus status = (kr == kIOReturnSuccess) ? AsyncStatus::kSuccess :
-                                    (kr == kIOReturnTimeout) ? AsyncStatus::kTimeout :
-                                    AsyncStatus::kHardwareError;
+                AsyncStatus status = AsyncStatus::kHardwareError;
+                if (kr == kIOReturnSuccess) {
+                    status = AsyncStatus::kSuccess;
+                } else if (kr == kIOReturnTimeout) {
+                    status = AsyncStatus::kTimeout;
+                } else if (kr == kIOReturnAborted) {
+                    status = AsyncStatus::kAborted;
+                }
                 // Phase 2.3: CompletionCallback now takes (handle, status, span)
                 // Encode handle as (label + 1) to ensure handle is never 0
                 ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u rCode=0x%02X",

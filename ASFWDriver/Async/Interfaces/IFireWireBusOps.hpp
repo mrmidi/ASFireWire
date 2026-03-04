@@ -79,13 +79,13 @@ public:
         FW::FwSpeed speed,
         InterfaceCompletionCallback callback) = 0;
 
-    /**
+     /**
      * @brief Write block of data to remote node.
      *
      * @param generation Bus generation for validation
      * @param nodeId Target node (0-63)
      * @param address 48-bit FireWire address
-     * @param data Source buffer (must remain valid until callback invoked)
+     * @param data Source buffer (only needs to remain valid until this function returns)
      * @param speed Link speed
      * @param callback Completion handler
      * @return AsyncHandle for cancellation
@@ -94,7 +94,7 @@ public:
      * - status: kSuccess, kTimeout, kBusReset, etc.
      * - payload: Empty span (writes have no response data)
      *
-     * Thread Safety: Driver copies [data] to DMA buffer before returning.
+     * Lifetime: Driver copies @p data to DMA-backed storage before returning.
      */
     virtual AsyncHandle WriteBlock(
         FW::Generation generation,
@@ -111,7 +111,8 @@ public:
      * @param nodeId Target node (0-63)
      * @param address 48-bit FireWire address
      * @param lockOp Lock operation type (CompareSwap, FetchAdd, etc.)
-     * @param operand Raw operand bytes transmitted with the request (big-endian)
+     * @param operand Raw operand bytes transmitted with the request (big-endian, only needs to
+     *        remain valid until this function returns)
      * @param responseLength Expected response length in bytes (0 = infer from operand / lockOp)
      * @param speed Link speed
      * @param callback Completion handler
@@ -121,6 +122,8 @@ public:
      * - LockOp::kCompareSwap: operand = [compare_value||new_value] (8 bytes for quadlet CAS)
      * - LockOp::kFetchAdd: operand = [delta]
      * - LockOp::kMaskSwap: operand = [mask||data]
+     *
+     * Lifetime: Driver copies @p operand to DMA-backed storage before returning.
      */
     virtual AsyncHandle Lock(
         FW::Generation generation,

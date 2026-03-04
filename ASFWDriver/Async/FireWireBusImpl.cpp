@@ -1,6 +1,7 @@
 #include "FireWireBusImpl.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <vector>
 #include <queue>
@@ -14,6 +15,33 @@ AsyncHandle FireWireBusImpl::ReadBlock(
     FW::Generation gen, FW::NodeId node, FWAddress addr,
     uint32_t length, FW::FwSpeed speed, InterfaceCompletionCallback callback)
 {
+    // Generation guard: reject stale operations at the interface boundary.
+    // IMPORTANT: Must not invoke callback inline on the submit path.
+    const FW::Generation current{async_.GetBusState().generation16};
+    if (gen != current) {
+        async_.PostToWorkloop(^{
+            if (callback) {
+                callback(AsyncStatus::kStaleGeneration, std::span<const uint8_t>{});
+            }
+        });
+        return AsyncHandle{0};
+    }
+
+    // FWAddress carries a nodeID field, but the interface provides nodeId explicitly.
+    // Treat nodeId as authoritative to avoid ambiguity. If the embedded node disagrees,
+    // log once and proceed with nodeId.
+    const uint16_t addrNodeIdRaw = addr.nodeID;
+    const uint8_t addrNodeNumber = static_cast<uint8_t>(addrNodeIdRaw & 0x3Fu);
+    if (addrNodeIdRaw != 0 && addrNodeNumber != node.value) {
+        static std::atomic<bool> sLoggedNodeMismatch{false};
+        if (!sLoggedNodeMismatch.exchange(true, std::memory_order_relaxed)) {
+            ASFW_LOG_V2(Async,
+                        "FireWireBusImpl::ReadBlock: FWAddress.nodeID mismatch (addr.nodeID=0x%04x nodeId=%u); using nodeId",
+                        addrNodeIdRaw,
+                        node.value);
+        }
+    }
+
     // Convert interface types to internal types
     ReadParams params{
         .destinationID = static_cast<uint16_t>(node.value),
@@ -39,6 +67,28 @@ AsyncHandle FireWireBusImpl::WriteBlock(
     std::span<const uint8_t> data, FW::FwSpeed speed,
     InterfaceCompletionCallback callback)
 {
+    const FW::Generation current{async_.GetBusState().generation16};
+    if (gen != current) {
+        async_.PostToWorkloop(^{
+            if (callback) {
+                callback(AsyncStatus::kStaleGeneration, std::span<const uint8_t>{});
+            }
+        });
+        return AsyncHandle{0};
+    }
+
+    const uint16_t addrNodeIdRaw = addr.nodeID;
+    const uint8_t addrNodeNumber = static_cast<uint8_t>(addrNodeIdRaw & 0x3Fu);
+    if (addrNodeIdRaw != 0 && addrNodeNumber != node.value) {
+        static std::atomic<bool> sLoggedNodeMismatch{false};
+        if (!sLoggedNodeMismatch.exchange(true, std::memory_order_relaxed)) {
+            ASFW_LOG_V2(Async,
+                        "FireWireBusImpl::WriteBlock: FWAddress.nodeID mismatch (addr.nodeID=0x%04x nodeId=%u); using nodeId",
+                        addrNodeIdRaw,
+                        node.value);
+        }
+    }
+
     // Convert interface types to internal types
     WriteParams params{
         .destinationID = static_cast<uint16_t>(node.value),
@@ -68,6 +118,28 @@ AsyncHandle FireWireBusImpl::Lock(
     FW::FwSpeed speed,
     InterfaceCompletionCallback callback)
 {
+    const FW::Generation current{async_.GetBusState().generation16};
+    if (gen != current) {
+        async_.PostToWorkloop(^{
+            if (callback) {
+                callback(AsyncStatus::kStaleGeneration, std::span<const uint8_t>{});
+            }
+        });
+        return AsyncHandle{0};
+    }
+
+    const uint16_t addrNodeIdRaw = addr.nodeID;
+    const uint8_t addrNodeNumber = static_cast<uint8_t>(addrNodeIdRaw & 0x3Fu);
+    if (addrNodeIdRaw != 0 && addrNodeNumber != node.value) {
+        static std::atomic<bool> sLoggedNodeMismatch{false};
+        if (!sLoggedNodeMismatch.exchange(true, std::memory_order_relaxed)) {
+            ASFW_LOG_V2(Async,
+                        "FireWireBusImpl::Lock: FWAddress.nodeID mismatch (addr.nodeID=0x%04x nodeId=%u); using nodeId",
+                        addrNodeIdRaw,
+                        node.value);
+        }
+    }
+
     LockParams params{};
     params.destinationID = static_cast<uint16_t>(node.value);
     params.addressHigh = addr.addressHi;
