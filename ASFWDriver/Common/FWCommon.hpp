@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <type_traits>
 #include <DriverKit/IOReturn.h>
 
 // Forward declaration - FWAddress struct is defined in AsyncTypes.hpp
@@ -318,6 +319,9 @@ struct Generation {
     constexpr bool operator==(const Generation& other) const { return value == other.value; }
     constexpr bool operator!=(const Generation& other) const { return value != other.value; }
 };
+
+static_assert(std::is_trivially_copyable_v<Generation>);
+static_assert(sizeof(Generation) <= sizeof(uint32_t));
 
 /**
  * FireWire node ID (0-63 per bus).

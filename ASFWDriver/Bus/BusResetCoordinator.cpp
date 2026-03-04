@@ -179,11 +179,11 @@ void BusResetCoordinator::ProcessEvent(Event event) {
         ASFW_LOG(BusReset,
                  "══ BUS RESET ══ gen=%u state=%{public}s sinceLastReset=%llums "
                  "prevScanBusy=%d filtersEnabled=%d atArmed=%d",
-                 lastGeneration_, StateString(), sinceLastMs, previousScanHadBusyNodes_,
+                 lastGeneration_.value, StateString(), sinceLastMs, previousScanHadBusyNodes_,
                  filtersEnabled_, atArmed_);
 
-        if ((romScanner_ != nullptr) && (lastGeneration_ > 0U)) {
-            ASFW_LOG(BusReset, "  Aborting ROM scan for gen=%u", lastGeneration_);
+        if ((romScanner_ != nullptr) && (lastGeneration_.value > 0U)) {
+            ASFW_LOG(BusReset, "  Aborting ROM scan for gen=%u", lastGeneration_.value);
             romScanner_->Abort(lastGeneration_);
         }
 
@@ -400,8 +400,9 @@ void BusResetCoordinator::RunStateMachine() {
             A_EnableFilters();
             A_RearmAT();
 
-            if ((asyncSubsystem_ != nullptr) && (lastGeneration_ != 0xFFU)) {
-                asyncSubsystem_->OnBusResetComplete(lastGeneration_);
+            if ((asyncSubsystem_ != nullptr) && (lastGeneration_.value != 0xFFU)) {
+                asyncSubsystem_->OnBusResetComplete(
+                    static_cast<uint8_t>(lastGeneration_.value & 0xFFU));
             }
 
             TransitionTo(State::Complete, "AT contexts re-armed (NodeID valid)");
@@ -434,7 +435,7 @@ void BusResetCoordinator::RunStateMachine() {
 
             if (topologyCallback_ && lastTopology_.has_value() && (workQueue_.get() != nullptr)) {
                 auto topo = *lastTopology_;
-                const auto gen = topo.generation;
+                const Discovery::Generation gen{topo.generation};
 
                 if (previousScanHadBusyNodes_ && currentDiscoveryDelayMs_ > 0) {
                     // DICE/Saffire-class devices: delay discovery to let firmware
@@ -444,7 +445,7 @@ void BusResetCoordinator::RunStateMachine() {
                     // Delay escalates with consecutive failures (2s→4s→6s→8s→10s).
                     const uint32_t delayMs = currentDiscoveryDelayMs_;
                     ASFW_LOG(BusReset, "Discovery delayed %ums for gen=%u (ack_busy in prev scan)",
-                             delayMs, gen);
+                             delayMs, gen.value);
                     workQueue_->DispatchAsync(^{
 #ifdef ASFW_HOST_TEST
                       std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
@@ -454,21 +455,23 @@ void BusResetCoordinator::RunStateMachine() {
                       if (ReadyForDiscovery(gen)) {
                           uint8_t localNode = topo.localNodeId.value_or(0xFF);
                           ASFW_LOG(BusReset, "Discovery start gen=%u local=%u (after %ums delay)",
-                                   gen, localNode, delayMs);
+                                   gen.value, localNode, delayMs);
                           topologyCallback_(topo);
                       } else {
-                          ASFW_LOG(BusReset, "Discovery cancelled gen=%u (stale after delay)", gen);
+                          ASFW_LOG(BusReset, "Discovery cancelled gen=%u (stale after delay)",
+                                   gen.value);
                       }
                     });
                 } else {
-                    ASFW_LOG(BusReset, "Post-reset hooks scheduled for gen=%u", gen);
+                    ASFW_LOG(BusReset, "Post-reset hooks scheduled for gen=%u", gen.value);
                     workQueue_->DispatchAsync(^{
                       if (ReadyForDiscovery(gen)) {
                           uint8_t localNode = topo.localNodeId.value_or(0xFF);
-                          ASFW_LOG(BusReset, "Discovery start gen=%u local=%u", gen, localNode);
+                          ASFW_LOG(BusReset, "Discovery start gen=%u local=%u", gen.value,
+                                   localNode);
                           topologyCallback_(topo);
                       } else {
-                          ASFW_LOG(BusReset, "Discovery deferred gen=%u", gen);
+                          ASFW_LOG(BusReset, "Discovery deferred gen=%u", gen.value);
                       }
                     });
                 }
@@ -600,7 +603,7 @@ void BusResetCoordinator::A_StopFlushAT() {
     }
 
     const uint8_t nextGen =
-        (lastGeneration_ == 0xFFU) ? 0 : static_cast<uint8_t>(lastGeneration_ + 1U);
+        (lastGeneration_.value == 0xFFU) ? 0 : static_cast<uint8_t>(lastGeneration_.value + 1U);
     asyncSubsystem_->OnBusResetBegin(nextGen);
 
     ASFW_LOG(BusReset, "[Action] Stopping AT contexts");
@@ -632,7 +635,7 @@ void BusResetCoordinator::A_DecodeSelfID() {
     lastSelfId_ = result;
 
     if (result && result->valid) {
-        lastGeneration_ = result->generation;
+        lastGeneration_ = Discovery::Generation{result->generation};
         ASFW_LOG(BusReset, "[Action] Self-ID decoded: gen=%u, %zu quads", result->generation,
                  result->quads.size());
         if (asyncSubsystem_ != nullptr) {
@@ -1042,7 +1045,8 @@ bool BusResetCoordinator::ReadyForDiscovery(Discovery::Generation gen) const {
         ASFW_LOG(BusReset,
                  "ReadyForDiscovery(gen=%u): NOT READY — nodeValid=%d filters=%d at=%d "
                  "topo=%d genMatch=%d(last=%u)",
-                 gen, nodeValid, filtersEnabled_, atArmed_, hasTopo, genMatch, lastGeneration_);
+                 gen.value, nodeValid, filtersEnabled_, atArmed_, hasTopo, genMatch,
+                 lastGeneration_.value);
     }
     return ready;
 }

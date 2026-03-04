@@ -141,7 +141,7 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     topology.nodes.push_back({.nodeId = 2, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
 
@@ -203,7 +203,7 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
     topology.nodes.push_back({.nodeId = 3, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
 

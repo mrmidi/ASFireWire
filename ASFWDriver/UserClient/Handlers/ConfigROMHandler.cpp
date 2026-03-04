@@ -40,7 +40,9 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
     const uint8_t nodeId = static_cast<uint8_t>(args->scalarInput[0] & 0xFF);
     const uint16_t generation = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
 
-    ASFW_LOG(UserClient, "ExportConfigROM: nodeId=%u gen=%u", nodeId, generation);
+    const ASFW::Discovery::Generation requestedGen{generation};
+
+    ASFW_LOG(UserClient, "ExportConfigROM: nodeId=%u gen=%u", nodeId, requestedGen.value);
 
     using namespace ASFW::Driver;
     auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
@@ -56,25 +58,25 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
     }
 
-    uint16_t resolvedGeneration = generation;
+    ASFW::Discovery::Generation resolvedGen = requestedGen;
 
     // Lookup ROM by nodeId and generation
-    const auto* rom = romStore->FindByNode(generation, nodeId);
+    const auto* rom = romStore->FindByNode(requestedGen, nodeId);
     if (rom == nullptr) {
         // Fallback: return latest cached ROM for this node (post-reset)
         rom = romStore->FindLatestForNode(nodeId);
         if (rom != nullptr) {
-            resolvedGeneration = rom->gen;
+            resolvedGen = rom->gen;
             ASFW_LOG(UserClient,
                      "ExportConfigROM: Requested gen=%u stale, returning latest gen=%u for node=%u",
-                     generation, resolvedGeneration, nodeId);
+                     requestedGen.value, resolvedGen.value, nodeId);
         }
     }
 
     if (rom == nullptr) {
         ASFW_LOG(UserClient,
                  "ExportConfigROM: ROM not found for node=%u gen=%u (no cached fallback)", nodeId,
-                 generation);
+                 requestedGen.value);
         // Return empty data to indicate "not cached"
         OSData* data = OSData::withCapacity(0);
         if (data == nullptr) {
@@ -104,10 +106,10 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
     }
 
     ASFW_LOG(UserClient, "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u",
-             rom->rawQuadlets.size(), dataSize, nodeId, resolvedGeneration);
+             rom->rawQuadlets.size(), dataSize, nodeId, resolvedGen.value);
 
     if (args->scalarOutput != nullptr && args->scalarOutputCount >= 1) {
-        args->scalarOutput[0] = resolvedGeneration;
+        args->scalarOutput[0] = static_cast<uint64_t>(resolvedGen.value & 0xFFFFU);
         args->scalarOutputCount = 1;
     }
 
@@ -165,7 +167,7 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
 
     // Trigger ROM scan for this node (callback-driven, single-threaded execution model).
     ASFW::Discovery::ROMScanRequest request{};
-    request.gen = topo->generation;
+    request.gen = ASFW::Discovery::Generation{topo->generation};
     request.topology = *topo;
     request.localNodeId = topo->localNodeId.value_or(0xFF);
     request.targetNodes = {nodeId};

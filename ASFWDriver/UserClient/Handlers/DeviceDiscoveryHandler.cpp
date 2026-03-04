@@ -127,7 +127,7 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
         deviceWire.guid = device->GetGUID();
         deviceWire.vendorId = device->GetVendorID();
         deviceWire.modelId = device->GetModelID();
-        deviceWire.generation = device->GetGeneration();
+        deviceWire.generation = device->GetGeneration().value;
         deviceWire.nodeId = device->GetNodeID();
         deviceWire.state = StateToWire(device->GetState());
         deviceWire.unitCount = static_cast<uint8_t>(device->GetUnits().size());

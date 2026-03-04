@@ -1079,7 +1079,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
 
     Discovery::ROMScanRequest request{};
-    request.gen = snap.generation;
+    request.gen = Discovery::Generation{snap.generation};
     request.topology = snap;
     request.localNodeId = localNodeId;
 
@@ -1090,7 +1090,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
 
     if (deps_.irmClient) {
         const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
-        deps_.irmClient->SetIRMNode(irmNodeId, snap.generation);
+        deps_.irmClient->SetIRMNode(irmNodeId, Discovery::Generation{snap.generation});
         ASFW_LOG(Discovery, "IRMClient updated: IRM node=%u, generation=%u", irmNodeId,
                  snap.generation);
     }
@@ -1110,7 +1110,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     }
 
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
-    ASFW_LOG(Discovery, "ROM scan complete for gen=%u, processing results...", gen);
+    ASFW_LOG(Discovery, "ROM scan complete for gen=%u, processing results...", gen.value);
 
     ASFW_LOG(Discovery, "Discovered %zu ROMs (hadBusy=%d)", roms.size(), hadBusyNodes);
 
@@ -1167,7 +1167,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         ASFW_LOG(Discovery, "  GUID: 0x%016llx", deviceRecord.guid);
         ASFW_LOG(Discovery, "  Vendor: 0x%06x", deviceRecord.vendorId);
         ASFW_LOG(Discovery, "  Model: 0x%06x", deviceRecord.modelId);
-        ASFW_LOG(Discovery, "  Node: %u (gen=%u)", rom.nodeId, rom.gen);
+        ASFW_LOG(Discovery, "  Node: %u (gen=%u)", rom.nodeId, rom.gen.value);
         ASFW_LOG(Discovery, "  Kind: %{public}s", DeviceKindString(deviceRecord.kind));
         ASFW_LOG(Discovery, "  Audio Candidate: %{public}s",
                  deviceRecord.isAudioCandidate ? "YES" : "NO");
@@ -1186,14 +1186,15 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
             }
 
             ASFW_LOG(Discovery,
-                     "Device missing from generation %u scan - marking lost (GUID=0x%016llx)", gen,
-                     guid);
+                     "Device missing from generation %u scan - marking lost (GUID=0x%016llx)",
+                     gen.value, guid);
             deps_.deviceManager->MarkDeviceLost(guid);
         }
     }
 
     ASFW_LOG(Discovery, "═══════════════════════════════════════");
-    ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u", roms.size(), gen);
+    ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u", roms.size(),
+             gen.value);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
 }
 

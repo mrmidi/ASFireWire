@@ -322,7 +322,7 @@ struct ScanResult {
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {1};

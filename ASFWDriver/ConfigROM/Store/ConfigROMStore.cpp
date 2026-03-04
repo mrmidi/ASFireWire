@@ -56,11 +56,11 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
 
     ConfigROM romCopy = rom;
 
-    if (romCopy.firstSeen == 0) {
+    if (romCopy.firstSeen == Generation{0}) {
         romCopy.firstSeen = rom.gen;
     }
 
-    if (romCopy.lastValidated == 0) {
+    if (romCopy.lastValidated == Generation{0}) {
         romCopy.lastValidated = rom.gen;
     }
 
@@ -75,11 +75,11 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     romsByGenNode_[key] = romCopy;
 
     auto it = romsByGuid_.find(romCopy.bib.guid);
-    if (it == romsByGuid_.end() || it->second.gen < romCopy.gen) {
+    if (it == romsByGuid_.end() || it->second.gen.value < romCopy.gen.value) {
         romsByGuid_[romCopy.bib.guid] = romCopy;
 
         ASFW_LOG_V2(ConfigROM, "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u",
-                    romCopy.bib.guid, romCopy.gen, romCopy.nodeId,
+                    romCopy.bib.guid, romCopy.gen.value, romCopy.nodeId,
                     static_cast<uint8_t>(romCopy.state));
     }
 }
@@ -116,7 +116,7 @@ const ConfigROM* ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
         if (rom.nodeId != nodeId) {
             continue;
         }
-        if (latest == nullptr || rom.gen > latest->gen) {
+        if (latest == nullptr || rom.gen.value > latest->gen.value) {
             latest = &rom;
         }
     }
@@ -186,7 +186,7 @@ void ConfigROMStore::SuspendAll(Generation newGen) {
     }
 
     ASFW_LOG(ConfigROM, "ConfigROMStore::SuspendAll: Suspended %u ROMs for generation %u",
-             suspendedCount, newGen);
+             suspendedCount, newGen.value);
 }
 
 void ConfigROMStore::ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId) {
@@ -210,7 +210,7 @@ void ConfigROMStore::ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId) {
     if (rom.nodeId != nodeId) {
         ASFW_LOG(ConfigROM,
                  "ConfigROMStore::ValidateROM: GUID 0x%016llx moved node %u→%u in gen %u", guid,
-                 rom.nodeId, nodeId, gen);
+                 rom.nodeId, nodeId, gen.value);
         rom.nodeId = nodeId;
     }
 
@@ -222,7 +222,7 @@ void ConfigROMStore::ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId) {
     romsByGenNode_[newKey] = rom;
 
     ASFW_LOG(ConfigROM, "ConfigROMStore::ValidateROM: Validated GUID 0x%016llx at node %u gen %u",
-             guid, nodeId, gen);
+             guid, nodeId, gen.value);
 }
 
 void ConfigROMStore::InvalidateROM(Guid64 guid) {
@@ -271,7 +271,7 @@ void ConfigROMStore::PruneInvalid() {
 }
 
 ConfigROMStore::GenNodeKey ConfigROMStore::MakeKey(Generation gen, uint8_t nodeId) {
-    return (static_cast<uint32_t>(gen) << 8) | static_cast<uint32_t>(nodeId);
+    return (gen.value << 8) | static_cast<uint32_t>(nodeId);
 }
 
 std::optional<uint8_t> ConfigROMStore::ValidateNodeIdForKey(uint16_t nodeId) {

@@ -133,7 +133,7 @@ void ROMScanSession::Abort() {
         session->nodeScans_.clear();
         session->completedROMs_.clear();
         session->inflight_ = 0;
-        session->gen_ = 0;
+        session->gen_ = Generation{0};
         session->hadBusyNodes_ = false;
     });
 }
@@ -566,7 +566,7 @@ void ROMScanSession::MaybeFinish() {
     if (completionNotified_ || completion_ == nullptr) {
         return;
     }
-    if (gen_ == 0) {
+    if (gen_ == Generation{0}) {
         return;
     }
     if (!nodeScans_.empty() && inflight_ > 0) {
@@ -590,7 +590,7 @@ void ROMScanSession::MaybeFinish() {
     nodeScans_.clear();
     completedROMs_.clear();
     inflight_ = 0;
-    gen_ = 0;
+    gen_ = Generation{0};
     hadBusyNodes_ = false;
 
     if (completion) {

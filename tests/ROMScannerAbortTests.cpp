@@ -160,7 +160,7 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {1};
@@ -212,7 +212,7 @@ TEST(ROMScannerEnsurePrefix, EnsurePrefixCapExceeded_CompletesDeterministically)
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
 
     ROMScanRequest request{};
-    request.gen = topology.generation;
+    request.gen = Generation{topology.generation};
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {1};
@@ -249,4 +249,3 @@ TEST(ROMScannerEnsurePrefix, EnsurePrefixCapExceeded_CompletesDeterministically)
     EXPECT_TRUE(completedROMs[0].vendorName.empty());
     EXPECT_TRUE(completedROMs[0].modelName.empty());
 }
-

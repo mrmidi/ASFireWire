@@ -31,7 +31,7 @@ void ROMScanSession::StartIRMRead(ROMScanNodeStateMachine& node) {
     const Generation gen = gen_;
     auto weakSelf = weak_from_this();
     const auto handle = bus_.ReadQuad(
-        FW::Generation{static_cast<uint32_t>(gen)}, FW::NodeId{nodeId}, addr, FW::FwSpeed::S100,
+        gen, FW::NodeId{nodeId}, addr, FW::FwSpeed::S100,
         [weakSelf, nodeId](Async::AsyncStatus status, std::span<const uint8_t> payload) mutable {
             bool ok = status == Async::AsyncStatus::kSuccess && payload.size() == 4;
             uint32_t valueHost = 0;
@@ -57,7 +57,7 @@ void ROMScanSession::HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_
     if (aborted_.load(std::memory_order_relaxed)) {
         return;
     }
-    if (gen_ == 0) {
+    if (gen_ == Generation{0}) {
         return;
     }
 
@@ -115,8 +115,8 @@ void ROMScanSession::StartIRMLock(ROMScanNodeStateMachine& node) {
     const Generation gen = gen_;
     auto weakSelf = weak_from_this();
     const auto handle = bus_.Lock(
-        FW::Generation{static_cast<uint32_t>(gen)}, FW::NodeId{nodeId}, addr,
-        FW::LockOp::kCompareSwap, std::span<const uint8_t>{casOperand},
+        gen, FW::NodeId{nodeId}, addr, FW::LockOp::kCompareSwap,
+        std::span<const uint8_t>{casOperand},
         /*responseLength=*/4, FW::FwSpeed::S100,
         [weakSelf, nodeId](Async::AsyncStatus status, std::span<const uint8_t> payload) mutable {
             const bool ok = status == Async::AsyncStatus::kSuccess && payload.size() == 4;
@@ -136,7 +136,7 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
     if (aborted_.load(std::memory_order_relaxed)) {
         return;
     }
-    if (gen_ == 0) {
+    if (gen_ == Generation{0}) {
         return;
     }
 
