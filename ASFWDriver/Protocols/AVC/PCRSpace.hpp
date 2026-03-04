@@ -13,6 +13,7 @@
 #include <optional>
 #include "AVCDefs.hpp"
 #include "AVCUnit.hpp"
+#include "../Ports/FireWireBusPort.hpp"
 #include "../../IRM/IRMAllocationManager.hpp"
 
 namespace ASFW::Protocols::AVC {
@@ -110,10 +111,14 @@ public:
     ///
     /// @param unit Associated AV/C unit
     /// @param irmManager IRM allocation manager for bandwidth/channels
-    explicit PCRSpace(AVCUnit& unit, IRM::IRMAllocationManager& irmManager)
+    explicit PCRSpace(AVCUnit& unit,
+                      IRM::IRMAllocationManager& irmManager,
+                      Protocols::Ports::FireWireBusOps& busOps,
+                      Protocols::Ports::FireWireBusInfo& busInfo)
         : unit_(unit),
           irmManager_(irmManager),
-          asyncSubsystem_(unit.GetAsyncSubsystem()) {}
+          busOps_(busOps),
+          busInfo_(busInfo) {}
 
     /// Read PCR value from device
     ///
@@ -194,7 +199,8 @@ private:
 
     AVCUnit& unit_;
     IRM::IRMAllocationManager& irmManager_;
-    Async::AsyncSubsystem& asyncSubsystem_;
+    Protocols::Ports::FireWireBusOps& busOps_;
+    Protocols::Ports::FireWireBusInfo& busInfo_;
 };
 
 } // namespace ASFW::Protocols::AVC

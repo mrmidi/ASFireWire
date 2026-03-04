@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <DriverKit/IOReturn.h>
+#include <DriverKit/IOLib.h>
 
 #if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
 #ifndef OSSwapBigToHostInt32

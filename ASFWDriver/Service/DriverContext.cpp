@@ -5,7 +5,6 @@
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 #include "../Async/AsyncSubsystem.hpp"
-#include "../Async/ResponseCode.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
@@ -22,8 +21,6 @@
 #include "../Hardware/InterruptManager.hpp"
 #include "../Audio/AudioCoordinator.hpp"
 #include "../Logging/Logging.hpp"
-#include "../Protocols/AVC/AVCDiscovery.hpp"
-#include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::Reset() {
@@ -126,38 +123,8 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
     }
 
-    if (!d.avcDiscovery && d.deviceManager && d.asyncSubsystem) {
-        d.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            driver,
-            *d.deviceManager,
-            *d.asyncSubsystem,
-            ctx.audioCoordinator.get()
-        );
-        ASFW_LOG(Controller, "[Controller] ✅ AVCDiscovery initialized");
-    }
-
-    if (!d.fcpResponseRouter && d.avcDiscovery && d.asyncSubsystem) {
-        d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
-            *d.avcDiscovery,
-            d.asyncSubsystem->GetGenerationTracker()
-        );
-        ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter initialized");
-    }
-
-    if (d.fcpResponseRouter && d.asyncSubsystem) {
-        if (auto* router = d.asyncSubsystem->GetPacketRouter()) {
-            router->RegisterRequestHandler(
-                0x1, // tCode for Block Write Request
-                [fcpRouter = d.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
-                    if (fcpRouter) {
-                        return fcpRouter->RouteBlockWrite(packet);
-                    }
-                    return ASFW::Async::ResponseCode::NoResponse;
-                }
-            );
-            ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
-        }
-    }
+    // AV/C discovery wiring is done after ControllerCore is created so it can
+    // depend only on IFireWireBus ports (ControllerCore::Bus()).
 }
 
 kern_return_t DriverWiring::PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx) {

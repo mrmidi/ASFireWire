@@ -21,7 +21,7 @@
 #include <memory>
 #include <span>
 #include "AVCDefs.hpp"
-#include "../../Async/AsyncSubsystem.hpp"
+#include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/FWDevice.hpp"
 
 namespace ASFW::Protocols::AVC {
@@ -130,7 +130,8 @@ public:
 
     virtual bool init() override { return super::init(); }
 
-    virtual bool init(Async::AsyncSubsystem* async,
+    virtual bool init(Protocols::Ports::FireWireBusOps* busOps,
+                      Protocols::Ports::FireWireBusInfo* busInfo,
                       Discovery::FWDevice* device,
                       const FCPTransportConfig& config = {});
 
@@ -152,8 +153,6 @@ public:
 
     const FCPTransportConfig& GetConfig() const { return config_; }
 
-    Async::AsyncSubsystem& GetAsyncSubsystem() { return *async_; }
-
 private:
     struct OutstandingCommand {
         FCPFrame command;
@@ -167,10 +166,7 @@ private:
         uint64_t timeoutToken{0};
     };
 
-    void OnAsyncWriteComplete(Async::AsyncHandle handle,
-                              Async::AsyncStatus status,
-                              uint8_t responseCode,
-                              std::span<const uint8_t> response);
+    void OnAsyncWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response);
 
     Async::AsyncHandle SubmitWriteCommand(const FCPFrame& frame);
 
@@ -186,7 +182,8 @@ private:
 
     void CancelTimeout();
 
-    Async::AsyncSubsystem* async_;
+    Protocols::Ports::FireWireBusOps* busOps_{nullptr};
+    Protocols::Ports::FireWireBusInfo* busInfo_{nullptr};
     Discovery::FWDevice* device_;
     FCPTransportConfig config_;
 
