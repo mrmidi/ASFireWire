@@ -415,6 +415,15 @@ Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
     return deps_.avcDiscovery.get();
 }
 
+void ControllerCore::SetAVCDiscovery(std::shared_ptr<Protocols::AVC::AVCDiscovery> avcDiscovery) {
+    deps_.avcDiscovery = std::move(avcDiscovery);
+}
+
+void ControllerCore::SetFCPResponseRouter(
+    std::shared_ptr<Protocols::AVC::FCPResponseRouter> fcpResponseRouter) {
+    deps_.fcpResponseRouter = std::move(fcpResponseRouter);
+}
+
 IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
 
 void ControllerCore::SetIRMClient(std::shared_ptr<IRM::IRMClient> client) {
@@ -429,6 +438,14 @@ void ControllerCore::SetCMPClient(std::shared_ptr<CMP::CMPClient> client) {
 
 // Phase 2: Interface facade accessors
 Async::IFireWireBus& ControllerCore::Bus() {
+    if (!busImpl_) {
+        ASFW_LOG(Controller, "❌ CRITICAL: Bus() called before facade initialized");
+        __builtin_trap();
+    }
+    return *busImpl_;
+}
+
+Async::IFireWireBus& ControllerCore::Bus() const {
     if (!busImpl_) {
         ASFW_LOG(Controller, "❌ CRITICAL: Bus() called before facade initialized");
         __builtin_trap();
@@ -1128,9 +1145,12 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 
         auto policy = deps_.speedPolicy->ForNode(rom.nodeId);
 
-        // Pass AsyncSubsystem to enable protocol handler creation for known devices
-        auto* asyncSubsystem = deps_.asyncSubsystem.get();
-        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy, asyncSubsystem);
+        auto& bus = this->Bus();
+        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(
+            rom,
+            policy,
+            static_cast<Async::IFireWireBusOps*>(&bus),
+            static_cast<Async::IFireWireBusInfo*>(&bus));
         discoveredGuids.insert(deviceRecord.guid);
 
         if (deps_.deviceManager) {

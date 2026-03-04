@@ -108,6 +108,7 @@ class ControllerCore {
     std::optional<TopologySnapshot> LatestTopology() const;
 
     Async::IFireWireBus& Bus();
+    Async::IFireWireBus& Bus() const;
     Shared::IDMAMemory& DMA();
 
     Async::AsyncSubsystem& AsyncSubsystem() const;
@@ -122,6 +123,8 @@ class ControllerCore {
     Discovery::DeviceRegistry* GetDeviceRegistry() const;
 
     Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
+    void SetAVCDiscovery(std::shared_ptr<Protocols::AVC::AVCDiscovery> avcDiscovery);
+    void SetFCPResponseRouter(std::shared_ptr<Protocols::AVC::FCPResponseRouter> fcpResponseRouter);
 
     IRM::IRMClient* GetIRMClient() const;
     void SetIRMClient(std::shared_ptr<IRM::IRMClient> client);

@@ -25,16 +25,23 @@ using namespace ASFW::Protocols::AVC;
 // Init / Free
 //==============================================================================
 
-bool FCPTransport::init(Async::AsyncSubsystem* async,
+bool FCPTransport::init(Protocols::Ports::FireWireBusOps* busOps,
+                        Protocols::Ports::FireWireBusInfo* busInfo,
                         Discovery::FWDevice* device,
                         const FCPTransportConfig& config) {
     if (!OSObject::init()) {
         return false;
     }
 
-    async_ = async;
+    busOps_ = busOps;
+    busInfo_ = busInfo;
     device_ = device;
     config_ = config;
+
+    if (!busOps_ || !busInfo_) {
+        ASFW_LOG_V1(FCP, "FCPTransport: Missing FireWire bus ports");
+        return false;
+    }
 
     // Allocate lock (DriverKit IOLock)
     lock_ = IOLockAlloc();
@@ -117,10 +124,8 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     auto cmd = std::make_unique<OutstandingCommand>();
     cmd->command = command;
     cmd->completion = std::move(completion);
-    // Keep generation source consistent with RX routing: both should use Async's
-    // generation tracker instead of mixing Discovery device generation.
-    cmd->generation = static_cast<uint32_t>(
-        async_->GetGenerationTracker().GetCurrentState().generation16);
+    // Keep generation source consistent with RX routing: always query bus generation.
+    cmd->generation = static_cast<uint32_t>(busInfo_->GetGeneration().value);
     cmd->retriesLeft = config_.maxRetries;
     cmd->allowBusResetRetry = config_.allowBusResetRetry;
     cmd->gotInterim = false;
@@ -165,7 +170,7 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
     IOLockLock(lock_);
     if (!pending_) {
         IOLockUnlock(lock_);
-        async_->Cancel(handle);
+        busOps_->Cancel(handle);
         return {};
     }
 
@@ -179,20 +184,25 @@ FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command,
 }
 
 ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame) {
-    ASFW::Async::WriteParams params{};
-    params.destinationID = device_->GetNodeID();
-    params.addressHigh = static_cast<uint32_t>((config_.commandAddress >> 32) & 0xFFFFFFFFULL);
-    params.addressLow = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFULL);
-    params.payload = frame.Payload().data();
-    params.length = static_cast<uint32_t>(frame.length);
+    if (!pending_) {
+        return Async::AsyncHandle{0};
+    }
 
-    return async_->Write(params,
-        [this](ASFW::Async::AsyncHandle handle,
-               ASFW::Async::AsyncStatus status,
-               uint8_t responseCode,
-               std::span<const uint8_t> response) {
-            OnAsyncWriteComplete(handle, status, responseCode, response);
-        });
+    const FW::Generation gen{pending_->generation};
+    const FW::NodeId node{static_cast<uint8_t>(device_->GetNodeID() & 0x3Fu)};
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
+    };
+
+    return busOps_->WriteBlock(gen,
+                               node,
+                               addr,
+                               frame.Payload(),
+                               FW::FwSpeed::S100,
+                               [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+                                   this->OnAsyncWriteComplete(status, response);
+                               });
 }
 
 //==============================================================================
@@ -215,7 +225,7 @@ bool FCPTransport::CancelCommand(FCPHandle handle) {
                 "FCPTransport: Cancelling command");
 
     // Cancel async operation
-    async_->Cancel(pending_->asyncHandle);
+    busOps_->Cancel(pending_->asyncHandle);
 
     IOLockUnlock(lock_);
 
@@ -315,12 +325,8 @@ void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
 // Async Write Completion
 //==============================================================================
 
-void FCPTransport::OnAsyncWriteComplete(Async::AsyncHandle handle,
-                                        Async::AsyncStatus status,
-                                        uint8_t responseCode,
+void FCPTransport::OnAsyncWriteComplete(Async::AsyncStatus status,
                                         std::span<const uint8_t> response) {
-    (void)handle;
-    (void)responseCode;
     (void)response;
     IOLockLock(lock_);
 
@@ -446,8 +452,7 @@ void FCPTransport::RetryCommand() {
     }
 
     // Keep retries aligned with Async/RX generation source.
-    pending_->generation = static_cast<uint32_t>(
-        async_->GetGenerationTracker().GetCurrentState().generation16);
+    pending_->generation = static_cast<uint32_t>(busInfo_->GetGeneration().value);
     pending_->gotInterim = false;
 
     ASFW_LOG_V2(FCP,
@@ -468,7 +473,7 @@ void FCPTransport::RetryCommand() {
     IOLockLock(lock_);
     if (!pending_) {
         IOLockUnlock(lock_);
-        async_->Cancel(handle);
+        busOps_->Cancel(handle);
         return;
     }
 

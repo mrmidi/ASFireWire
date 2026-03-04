@@ -51,10 +51,12 @@
 #include "Bus/SelfIDCapture.hpp"
 #include "Controller/ControllerStateMachine.hpp"
 #include "Diagnostics/MetricsSink.hpp"
+#include "Discovery/DeviceManager.hpp"
 #include "Discovery/FWDevice.hpp"
 #include "Audio/AudioCoordinator.hpp"
 #include "Service/DriverContext.hpp"
 #include "Protocols/AVC/AVCDiscovery.hpp"
+#include "Protocols/AVC/FCPResponseRouter.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
 #include "Isoch/Transmit/IsochTransmitContext.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
@@ -177,10 +179,6 @@ kern_return_t IMPL(ASFWDriver, Start) {
                  "ASFWDriver::Start(): DMA coherency tracing %{public}s (requested=%{public}s)",
                  traceActive ? "ENABLED" : "disabled",
                  traceProperty ? "true" : "false");
-
-        // CRITICAL: Re-run EnsureDeps to wire up PacketRouter handlers now that AsyncSubsystem is started
-        // This ensures FCPResponseRouter registers its handler with the newly created PacketRouter
-        DriverWiring::EnsureDeps(this, ctx);
     }
 
     kr = DriverWiring::PrepareWatchdog(*this, ctx);
@@ -192,6 +190,42 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 
     ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.deps);
+
+    if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
+        auto& bus = ctx.controller->Bus();
+        ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
+            this,
+            *ctx.deps.deviceManager,
+            bus,
+            bus,
+            ctx.audioCoordinator.get());
+        ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
+        ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
+    }
+
+    if (!ctx.deps.fcpResponseRouter && ctx.deps.avcDiscovery) {
+        auto& bus = ctx.controller->Bus();
+        ctx.deps.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
+            *ctx.deps.avcDiscovery,
+            bus);
+        ctx.controller->SetFCPResponseRouter(ctx.deps.fcpResponseRouter);
+        ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
+    }
+
+    if (ctx.deps.fcpResponseRouter && ctx.deps.asyncSubsystem) {
+        if (auto* router = ctx.deps.asyncSubsystem->GetPacketRouter()) {
+            router->RegisterRequestHandler(
+                0x1, // tCode for Block Write Request
+                [fcpRouter = ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
+                    if (fcpRouter) {
+                        return fcpRouter->RouteBlockWrite(packet);
+                    }
+                    return ASFW::Async::ResponseCode::NoResponse;
+                }
+            );
+            ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
+        }
+    }
 
     if (ctx.deps.speedPolicy) {
         if (!ctx.deps.romScanner) {

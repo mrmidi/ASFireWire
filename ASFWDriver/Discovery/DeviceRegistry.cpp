@@ -12,7 +12,8 @@ constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
 DeviceRegistry::DeviceRegistry() = default;
 
 DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
-                                             Async::AsyncSubsystem* asyncSubsystem) {
+                                             Async::IFireWireBusOps* busOps,
+                                             Async::IFireWireBusInfo* busInfo) {
     const Guid64 guid = rom.bib.guid;
     
     auto& device = devicesByGuid_[guid];
@@ -67,12 +68,12 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         }
         
 #if !defined(ASFW_HOST_TEST)
-        // Create protocol instance if we don't have one yet AND AsyncSubsystem is available
-        if (!device.protocol && asyncSubsystem) {
+        // Create protocol instance if we don't have one yet AND bus ports are available.
+        if (!device.protocol && busOps && busInfo) {
             ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
                      guid, rom.nodeId);
             device.protocol = Audio::DeviceProtocolFactory::Create(
-                device.vendorId, device.modelId, *asyncSubsystem, rom.nodeId);
+                device.vendorId, device.modelId, *busOps, *busInfo, rom.nodeId);
             
             if (device.protocol) {
                 ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
@@ -85,7 +86,9 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             }
         } else if (!device.protocol) {
             ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
-                     "AsyncSubsystem not provided", guid, rom.nodeId);
+                     "FireWire bus ports not provided",
+                     guid,
+                     rom.nodeId);
         }
 #endif
     } else {

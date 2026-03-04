@@ -12,7 +12,7 @@
 #include "../../Async/Rx/PacketRouter.hpp"
 #include "../../Async/PacketHelpers.hpp"
 #include "../../Async/ResponseCode.hpp"
-#include "../../Bus/GenerationTracker.hpp"
+#include "../Ports/FireWireBusPort.hpp"
 #include <vector>
 
 namespace ASFW::Protocols::AVC {
@@ -26,8 +26,9 @@ using ::ASFW::Async::ResponseCode;
 class FCPResponseRouter {
 public:
     explicit FCPResponseRouter(AVCDiscovery& avcDiscovery,
-                               Async::Bus::GenerationTracker& generationTracker)
-        : avcDiscovery_(avcDiscovery), generationTracker_(generationTracker) {}
+                               Protocols::Ports::FireWireBusInfo& busInfo)
+        : avcDiscovery_(avcDiscovery),
+          busInfo_(busInfo) {}
 
     ResponseCode RouteBlockWrite(const Async::ARPacketView& packet) {
         ASFW_LOG_V3(FCP, "🔍 FCPResponseRouter::RouteBlockWrite CALLED: srcID=0x%04x destID=0x%04x payloadLen=%zu",
@@ -44,7 +45,7 @@ public:
         }
 
         uint16_t srcNodeID = packet.sourceID;
-        uint32_t generation = generationTracker_.GetCurrentState().generation16;
+        uint32_t generation = static_cast<uint32_t>(busInfo_.GetGeneration().value);
         
         ASFW_LOG_V2(FCP, "✅ FCPResponseRouter: FCP response detected! srcNode=0x%04x gen=%u",
                  srcNodeID, generation);
@@ -68,7 +69,7 @@ public:
 
 private:
     AVCDiscovery& avcDiscovery_;
-    Async::Bus::GenerationTracker& generationTracker_;
+    Protocols::Ports::FireWireBusInfo& busInfo_;
 };
 
 } // namespace ASFW::Protocols::AVC

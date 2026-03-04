@@ -6,9 +6,9 @@
 //
 
 #include "PCRSpace.hpp"
-#include "../../Async/Commands/ReadCommand.hpp"
-#include "../../Async/Commands/LockCommand.hpp"
 #include "../../Logging/Logging.hpp"
+
+#include <array>
 
 using namespace ASFW::Protocols::AVC;
 
@@ -36,19 +36,20 @@ void PCRSpace::ReadPCR(PlugType type,
         return;
     }
 
-    // Create async quadlet read command
-    Async::ReadParams readParams;
-    readParams.destinationID = device->GetNodeID();
-    readParams.addressHigh = static_cast<uint32_t>(pcrAddress >> 32);
-    readParams.addressLow = static_cast<uint32_t>(pcrAddress & 0xFFFFFFFF);
-    readParams.length = 4;  // Quadlet size
+    const FW::Generation gen = busInfo_.GetGeneration();
+    const FW::NodeId node{static_cast<uint8_t>(device->GetNodeID() & 0x3Fu)};
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((pcrAddress >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(pcrAddress & 0xFFFFFFFFU),
+    };
 
-    asyncSubsystem_.Read(readParams,
-        [completion, pcrAddress](Async::FWHandle handle,
-                                 Async::AsyncStatus status,
-                                 uint8_t,
-                                 std::span<const uint8_t> response) {
-            (void)handle;  // Unused
+    busOps_.ReadBlock(
+        gen,
+        node,
+        addr,
+        4,
+        FW::FwSpeed::S100,
+        [completion, pcrAddress](Async::AsyncStatus status, std::span<const uint8_t> response) {
             if (status != Async::AsyncStatus::kSuccess) {
                 ASFW_LOG_ERROR(Async,
                              "PCRSpace: PCR read failed at 0x%llx: status=%d",
@@ -134,24 +135,23 @@ void PCRSpace::UpdatePCR(PlugType type,
     lockData[6] = (newRaw >> 8) & 0xFF;
     lockData[7] = newRaw & 0xFF;
 
-    // Create async lock command (compare-swap)
-    Async::LockParams lockParams;
-    lockParams.destinationID = device->GetNodeID();
-    lockParams.addressHigh = static_cast<uint32_t>(pcrAddress >> 32);
-    lockParams.addressLow = static_cast<uint32_t>(pcrAddress & 0xFFFFFFFF);
-    lockParams.operand = lockData.data();
-    lockParams.operandLength = 8;  // Compare-swap is 8 bytes (4 bytes old + 4 bytes new)
-    lockParams.responseLength = 4;  // Response is 4 bytes (the old value before swap)
+    const FW::Generation gen = busInfo_.GetGeneration();
+    const FW::NodeId node{static_cast<uint8_t>(device->GetNodeID() & 0x3Fu)};
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((pcrAddress >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(pcrAddress & 0xFFFFFFFFU),
+    };
+    const std::span<const uint8_t> operand{lockData.data(), lockData.size()};
 
-    // Extended tCode 0x2 = COMPARE_SWAP (per IEEE 1394-1995 Table 6-4)
-    constexpr uint16_t kExtendedTCodeCompareSwap = 0x2;
-
-    asyncSubsystem_.Lock(lockParams, kExtendedTCodeCompareSwap,
-        [completion, pcrAddress, oldRaw, newRaw](Async::FWHandle handle,
-                                                  Async::AsyncStatus status,
-                                                  uint8_t,
-                                                  std::span<const uint8_t> response) {
-            (void)handle;  // Unused
+    busOps_.Lock(gen,
+                 node,
+                 addr,
+                 FW::LockOp::kCompareSwap,
+                 operand,
+                 4,
+                 FW::FwSpeed::S100,
+        [completion, pcrAddress, oldRaw, newRaw](Async::AsyncStatus status,
+                                                std::span<const uint8_t> response) {
             if (status != Async::AsyncStatus::kSuccess) {
                 ASFW_LOG_ERROR(Async,
                              "PCRSpace: PCR lock failed at 0x%llx: status=%d",

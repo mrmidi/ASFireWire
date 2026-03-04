@@ -5,51 +5,37 @@
 
 #include "DICETransaction.hpp"
 #include "../../../../Logging/Logging.hpp"
-#include "../../../../Async/AsyncSubsystem.hpp"
 #include <cstring>
 
 namespace ASFW::Audio::DICE {
 
-DICETransaction::DICETransaction(uint16_t nodeId)
-    : nodeId_(nodeId)
-{
+DICETransaction::DICETransaction(Protocols::Ports::FireWireBusOps& busOps,
+                                 Protocols::Ports::FireWireBusInfo& busInfo,
+                                 uint16_t nodeId)
+    : busOps_(busOps),
+      busInfo_(busInfo),
+      nodeId_(FW::NodeId{static_cast<uint8_t>(nodeId & 0x3Fu)}) {}
+
+Async::FWAddress DICETransaction::MakeAddress(uint32_t offset) const {
+    const uint64_t addr = kDICEBaseAddress + offset;
+    return Async::FWAddress{
+        static_cast<uint16_t>((addr >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(addr & 0xFFFFFFFFU),
+    };
 }
 
-Async::ReadParams DICETransaction::MakeReadParams(uint32_t offset, uint32_t length) const {
-    // DICE base address: 0xFFFFE0000000
-    // Split into addressHigh (upper 16 bits) and addressLow (lower 32 bits)
-    uint64_t addr = kDICEBaseAddress + offset;
-    
-    Async::ReadParams params;
-    params.destinationID = nodeId_;
-    params.addressHigh = static_cast<uint32_t>((addr >> 32) & 0xFFFF);
-    params.addressLow = static_cast<uint32_t>(addr & 0xFFFFFFFF);
-    params.length = length;
-    params.speedCode = 0xFF;  // Auto speed
-    return params;
-}
+void DICETransaction::ReadQuadlet(uint32_t offset,
+                                  std::function<void(IOReturn, uint32_t)> callback) {
+    const auto gen = busInfo_.GetGeneration();
+    const auto addr = MakeAddress(offset);
 
-Async::WriteParams DICETransaction::MakeWriteParams(uint32_t offset, const void* data, uint32_t length) const {
-    uint64_t addr = kDICEBaseAddress + offset;
-    
-    Async::WriteParams params;
-    params.destinationID = nodeId_;
-    params.addressHigh = static_cast<uint32_t>((addr >> 32) & 0xFFFF);
-    params.addressLow = static_cast<uint32_t>(addr & 0xFFFFFFFF);
-    params.payload = data;
-    params.length = length;
-    params.speedCode = 0xFF;  // Auto speed
-    return params;
-}
-
-void DICETransaction::ReadQuadlet(Async::AsyncSubsystem& subsystem, uint32_t offset,
-                                   std::function<void(IOReturn, uint32_t)> callback) {
-    auto params = MakeReadParams(offset, 4);
-    
-    subsystem.Read(params, [callback](Async::AsyncHandle /*handle*/,
-                                       Async::AsyncStatus status,
-                                       uint8_t,
-                                       std::span<const uint8_t> payload) {
+    busOps_.ReadBlock(gen,
+                      nodeId_,
+                      addr,
+                      4,
+                      FW::FwSpeed::S100,
+                      [callback = std::move(callback)](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess || payload.size() < 4) {
             IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnUnderrun : kIOReturnError;
             callback(ret, 0);
@@ -61,24 +47,29 @@ void DICETransaction::ReadQuadlet(Async::AsyncSubsystem& subsystem, uint32_t off
     });
 }
 
-void DICETransaction::WriteQuadlet(Async::AsyncSubsystem& subsystem, uint32_t offset,
-                                    uint32_t value, DICEWriteCallback callback) {
+void DICETransaction::WriteQuadlet(uint32_t offset,
+                                   uint32_t value,
+                                   DICEWriteCallback callback) {
     // Use instance buffer instead of thread_local (not supported in DriverKit)
     QuadletToWire(value, writeQuadletBuffer_);
-    
-    auto params = MakeWriteParams(offset, writeQuadletBuffer_, 4);
-    
-    subsystem.Write(params, [callback](Async::AsyncHandle /*handle*/,
-                                        Async::AsyncStatus status,
-                                        uint8_t,
-                                        std::span<const uint8_t> /*payload*/) {
+
+    const auto gen = busInfo_.GetGeneration();
+    const auto addr = MakeAddress(offset);
+    const std::span<const uint8_t> data{writeQuadletBuffer_, sizeof(writeQuadletBuffer_)};
+
+    busOps_.WriteBlock(gen,
+                       nodeId_,
+                       addr,
+                       data,
+                       FW::FwSpeed::S100,
+                       [callback = std::move(callback)](Async::AsyncStatus status,
+                                                        std::span<const uint8_t>) {
         IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnSuccess : kIOReturnError;
         callback(ret);
     });
 }
 
-void DICETransaction::ReadBlock(Async::AsyncSubsystem& subsystem, uint32_t offset,
-                                 size_t byteCount, DICEReadCallback callback) {
+void DICETransaction::ReadBlock(uint32_t offset, size_t byteCount, DICEReadCallback callback) {
     // Validate alignment
     if (byteCount % 4 != 0) {
         ASFW_LOG(DICE, "ReadBlock: byteCount %zu not quadlet-aligned", byteCount);
@@ -93,12 +84,17 @@ void DICETransaction::ReadBlock(Async::AsyncSubsystem& subsystem, uint32_t offse
         return;
     }
     
-    auto params = MakeReadParams(offset, static_cast<uint32_t>(byteCount));
-    
-    subsystem.Read(params, [callback, byteCount](Async::AsyncHandle /*handle*/,
-                                                  Async::AsyncStatus status,
-                                                  uint8_t,
-                                                  std::span<const uint8_t> payload) {
+    const auto gen = busInfo_.GetGeneration();
+    const auto addr = MakeAddress(offset);
+    const uint32_t length = static_cast<uint32_t>(byteCount);
+
+    busOps_.ReadBlock(gen,
+                      nodeId_,
+                      addr,
+                      length,
+                      FW::FwSpeed::S100,
+                      [callback = std::move(callback), byteCount](Async::AsyncStatus status,
+                                                                  std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess) {
             callback(kIOReturnError, nullptr, 0);
             return;
@@ -114,8 +110,10 @@ void DICETransaction::ReadBlock(Async::AsyncSubsystem& subsystem, uint32_t offse
     });
 }
 
-void DICETransaction::WriteBlock(Async::AsyncSubsystem& subsystem, uint32_t offset,
-                                  const uint8_t* buffer, size_t byteCount, DICEWriteCallback callback) {
+void DICETransaction::WriteBlock(uint32_t offset,
+                                 const uint8_t* buffer,
+                                 size_t byteCount,
+                                 DICEWriteCallback callback) {
     // Validate alignment
     if (byteCount % 4 != 0) {
         ASFW_LOG(DICE, "WriteBlock: byteCount %zu not quadlet-aligned", byteCount);
@@ -129,20 +127,24 @@ void DICETransaction::WriteBlock(Async::AsyncSubsystem& subsystem, uint32_t offs
         return;
     }
     
-    auto params = MakeWriteParams(offset, buffer, static_cast<uint32_t>(byteCount));
-    
-    subsystem.Write(params, [callback](Async::AsyncHandle /*handle*/,
-                                        Async::AsyncStatus status,
-                                        uint8_t,
-                                        std::span<const uint8_t> /*payload*/) {
+    const auto gen = busInfo_.GetGeneration();
+    const auto addr = MakeAddress(offset);
+    const std::span<const uint8_t> data{buffer, byteCount};
+
+    busOps_.WriteBlock(gen,
+                       nodeId_,
+                       addr,
+                       data,
+                       FW::FwSpeed::S100,
+                       [callback = std::move(callback)](Async::AsyncStatus status,
+                                                        std::span<const uint8_t>) {
         IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnSuccess : kIOReturnError;
         callback(ret);
     });
 }
 
-void DICETransaction::ReadGeneralSections(Async::AsyncSubsystem& subsystem,
-                                           std::function<void(IOReturn, GeneralSections)> callback) {
-    ReadBlock(subsystem, 0, GeneralSections::kWireSize, 
+void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSections)> callback) {
+    ReadBlock(0, GeneralSections::kWireSize,
               [callback](IOReturn status, const uint8_t* data, size_t size) {
         if (status != kIOReturnSuccess || size < GeneralSections::kWireSize) {
             callback(status, {});
@@ -164,12 +166,12 @@ void DICETransaction::ReadGeneralSections(Async::AsyncSubsystem& subsystem,
 // Capability Discovery
 // ============================================================================
 
-void DICETransaction::ReadGlobalState(Async::AsyncSubsystem& subsystem, const GeneralSections& sections,
-                                       std::function<void(IOReturn, GlobalState)> callback) {
+void DICETransaction::ReadGlobalState(const GeneralSections& sections,
+                                      std::function<void(IOReturn, GlobalState)> callback) {
     // Read enough of global section for capabilities (0x68 bytes minimum)
     const size_t readSize = (sections.global.size >= 0x68) ? 0x68 : sections.global.size;
     
-    ReadBlock(subsystem, sections.global.offset, readSize,
+    ReadBlock(sections.global.offset, readSize,
               [callback](IOReturn status, const uint8_t* data, size_t size) {
         if (status != kIOReturnSuccess) {
             callback(status, {});
@@ -398,37 +400,15 @@ void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
 }
 } // anonymous namespace
 
-void DICETransaction::ReadTxStreamConfig(Async::AsyncSubsystem& subsystem, const GeneralSections& sections,
-                                          std::function<void(IOReturn, StreamConfig)> callback) {
-    const size_t readSize = (sections.txStreamFormat.size > 512) ? 512 : sections.txStreamFormat.size;
-    if (sections.txStreamFormat.size > 512) {
-        ASFW_LOG(DICE, "TX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
-                 sections.txStreamFormat.size, readSize);
-    }
-    
-    ReadBlock(subsystem, sections.txStreamFormat.offset, readSize,
-              [callback](IOReturn status, const uint8_t* data, size_t size) {
-        if (status != kIOReturnSuccess) {
-            callback(status, {});
-            return;
-        }
-        
-        StreamConfig config = ParseStreamConfig(data, size, false);
-        LogStreamConfigDetails("TX", config);
-        
-        callback(kIOReturnSuccess, config);
-    });
-}
-
-void DICETransaction::ReadRxStreamConfig(Async::AsyncSubsystem& subsystem, const GeneralSections& sections,
-                                          std::function<void(IOReturn, StreamConfig)> callback) {
+void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
+                                        std::function<void(IOReturn, StreamConfig)> callback) {
     const size_t readSize = (sections.rxStreamFormat.size > 512) ? 512 : sections.rxStreamFormat.size;
     if (sections.rxStreamFormat.size > 512) {
         ASFW_LOG(DICE, "RX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
                  sections.rxStreamFormat.size, readSize);
     }
     
-    ReadBlock(subsystem, sections.rxStreamFormat.offset, readSize,
+    ReadBlock(sections.rxStreamFormat.offset, readSize,
               [callback](IOReturn status, const uint8_t* data, size_t size) {
         if (status != kIOReturnSuccess) {
             callback(status, {});
@@ -442,14 +422,36 @@ void DICETransaction::ReadRxStreamConfig(Async::AsyncSubsystem& subsystem, const
     });
 }
 
-void DICETransaction::ReadCapabilities(Async::AsyncSubsystem& subsystem,
-                                        std::function<void(IOReturn, DICECapabilities)> callback) {
+void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
+                                        std::function<void(IOReturn, StreamConfig)> callback) {
+    const size_t readSize = (sections.txStreamFormat.size > 512) ? 512 : sections.txStreamFormat.size;
+    if (sections.txStreamFormat.size > 512) {
+        ASFW_LOG(DICE, "TX stream format section (%u bytes) exceeds read limit %zu; diagnostics may be partial",
+                 sections.txStreamFormat.size, readSize);
+    }
+
+    ReadBlock(sections.txStreamFormat.offset,
+              readSize,
+              [callback = std::move(callback)](IOReturn status, const uint8_t* data, size_t size) {
+                  if (status != kIOReturnSuccess) {
+                      callback(status, {});
+                      return;
+                  }
+
+                  StreamConfig config = ParseStreamConfig(data, size, false);
+                  LogStreamConfigDetails("TX", config);
+
+                  callback(kIOReturnSuccess, config);
+              });
+}
+
+void DICETransaction::ReadCapabilities(std::function<void(IOReturn, DICECapabilities)> callback) {
     // Use shared_ptr to manage state across async callbacks
     auto caps = std::make_shared<DICECapabilities>();
     auto sections = std::make_shared<GeneralSections>();
     
     // Step 1: Read sections
-    ReadGeneralSections(subsystem, [this, &subsystem, caps, sections, callback](IOReturn status, GeneralSections secs) {
+    ReadGeneralSections([this, caps, sections, callback = std::move(callback)](IOReturn status, GeneralSections secs) {
         if (status != kIOReturnSuccess) {
             ASFW_LOG(DICE, "ReadCapabilities: failed to read sections");
             callback(status, {});
@@ -459,7 +461,7 @@ void DICETransaction::ReadCapabilities(Async::AsyncSubsystem& subsystem,
         *sections = secs;
         
         // Step 2: Read global state
-        ReadGlobalState(subsystem, secs, [this, &subsystem, caps, sections, callback](IOReturn status, GlobalState global) {
+        ReadGlobalState(secs, [this, caps, sections, callback](IOReturn status, GlobalState global) {
             if (status != kIOReturnSuccess) {
                 ASFW_LOG(DICE, "ReadCapabilities: failed to read global state");
                 callback(status, {});
@@ -469,7 +471,7 @@ void DICETransaction::ReadCapabilities(Async::AsyncSubsystem& subsystem,
             caps->global = global;
             
             // Step 3: Read TX streams
-            ReadTxStreamConfig(subsystem, *sections, [this, &subsystem, caps, sections, callback](IOReturn status, StreamConfig txConfig) {
+            ReadTxStreamConfig(*sections, [this, caps, sections, callback](IOReturn status, StreamConfig txConfig) {
                 if (status != kIOReturnSuccess) {
                     ASFW_LOG(DICE, "ReadCapabilities: failed to read TX streams");
                     callback(status, {});
@@ -479,7 +481,7 @@ void DICETransaction::ReadCapabilities(Async::AsyncSubsystem& subsystem,
                 caps->txStreams = txConfig;
                 
                 // Step 4: Read RX streams
-                ReadRxStreamConfig(subsystem, *sections, [caps, callback](IOReturn status, StreamConfig rxConfig) {
+                ReadRxStreamConfig(*sections, [caps, callback](IOReturn status, StreamConfig rxConfig) {
                     if (status != kIOReturnSuccess) {
                         ASFW_LOG(DICE, "ReadCapabilities: failed to read RX streams");
                         callback(status, {});
