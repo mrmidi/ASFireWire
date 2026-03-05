@@ -7,20 +7,19 @@
 
 #define _LIBCPP_NO_ABI_TAG 1
 #include <DriverKit/DriverKit.h>
+#include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOInterruptDispatchSource.h>
+#include <DriverKit/IOKitKeys.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOMemoryDescriptor.h>
-#include <DriverKit/IOBufferMemoryDescriptor.h>
-#include <DriverKit/OSSharedPtr.h>
+#include <DriverKit/IOServiceNotificationDispatchSource.h>
 #include <DriverKit/OSAction.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
+#include <DriverKit/OSSharedPtr.h>
 #include <DriverKit/OSString.h>
-#include <DriverKit/OSDictionary.h>
-#include <DriverKit/IOKitKeys.h>
-#include <DriverKit/IOServiceNotificationDispatchSource.h>
 #include <PCIDriverKit/IOPCIDevice.h>
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
@@ -30,35 +29,37 @@
 #include <new>
 #include <string>
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h> // generated from .iig
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>           // generated from .iig
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h> // generated from .iig
 
-#include "Logging/Logging.hpp"
-#include "Logging/LogConfig.hpp"
-#include "Hardware/OHCIConstants.hpp"
-#include "Hardware/RegisterMap.hpp"
-#include "Hardware/InterruptManager.hpp"
-#include "Scheduling/Scheduler.hpp"
-#include "Shared/Memory/DMAMemoryManager.hpp"
-#include "ConfigROM/ROMScanner.hpp"
-#include "ConfigROM/ROMReader.hpp"
-#include "ConfigROM/ConfigROMStager.hpp"
-#include "IRM/IRMClient.hpp"
-#include "Protocols/AVC/CMP/CMPClient.hpp"
 #include "Async/AsyncSubsystem.hpp"
-#include "Async/Interfaces/IFireWireBus.hpp"
 #include "Async/DMAMemoryImpl.hpp"
+#include "Async/Interfaces/IFireWireBus.hpp"
+#include "Async/PacketHelpers.hpp"
+#include "Async/ResponseCode.hpp"
+#include "Audio/AudioCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
+#include "ConfigROM/ConfigROMStager.hpp"
+#include "ConfigROM/ROMReader.hpp"
+#include "ConfigROM/ROMScanner.hpp"
 #include "Controller/ControllerStateMachine.hpp"
 #include "Diagnostics/MetricsSink.hpp"
 #include "Discovery/DeviceManager.hpp"
 #include "Discovery/FWDevice.hpp"
-#include "Audio/AudioCoordinator.hpp"
-#include "Service/DriverContext.hpp"
-#include "Protocols/AVC/AVCDiscovery.hpp"
-#include "Protocols/AVC/FCPResponseRouter.hpp"
+#include "Hardware/InterruptManager.hpp"
+#include "Hardware/OHCIConstants.hpp"
+#include "Hardware/RegisterMap.hpp"
+#include "IRM/IRMClient.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
 #include "Isoch/Transmit/IsochTransmitContext.hpp"
+#include "Logging/LogConfig.hpp"
+#include "Logging/Logging.hpp"
+#include "Protocols/AVC/AVCDiscovery.hpp"
+#include "Protocols/AVC/CMP/CMPClient.hpp"
+#include "Protocols/AVC/FCPResponseRouter.hpp"
+#include "Scheduling/Scheduler.hpp"
+#include "Service/DriverContext.hpp"
+#include "Shared/Memory/DMAMemoryManager.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
 using namespace ASFW::Driver;
@@ -70,14 +71,17 @@ constexpr uint64_t kAsyncWatchdogPeriodUsec = 1000; // 1 ms tick (hybrid: interr
 } // namespace
 
 bool ASFWDriver::init() {
-    if (!super::init()) return false;
+    if (!super::init())
+        return false;
     if (!ivars) {
         ivars = IONewZero(ASFWDriver_IVars, 1);
-        if (!ivars) return false;
+        if (!ivars)
+            return false;
     }
     if (!ivars->context) {
         ivars->context = IONew(ServiceContext, 1);
-        if (!ivars->context) return false;
+        if (!ivars->context)
+            return false;
     }
     return true;
 }
@@ -96,8 +100,10 @@ void ASFWDriver::free() {
 
 kern_return_t IMPL(ASFWDriver, Start) {
     auto kr = Start(provider, SUPERDISPATCH);
-    if (kr != kIOReturnSuccess) return kr;
-    if (!ivars || !ivars->context) return kIOReturnNoMemory;
+    if (kr != kIOReturnSuccess)
+        return kr;
+    if (!ivars || !ivars->context)
+        return kIOReturnNoMemory;
     auto& ctx = *ivars->context;
     ctx.stopping.store(false, std::memory_order_release);
     DriverWiring::EnsureDeps(this, ctx);
@@ -110,28 +116,30 @@ kern_return_t IMPL(ASFWDriver, Start) {
             } else if (auto numberProp = OSDynamicCast(OSNumber, property)) {
                 traceProperty = numberProp->unsigned32BitValue() != 0;
             } else if (auto stringProp = OSDynamicCast(OSString, property)) {
-                traceProperty = stringProp->isEqualTo("1") ||
-                                stringProp->isEqualTo("true") ||
+                traceProperty = stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
                                 stringProp->isEqualTo("TRUE");
             }
         }
         serviceProperties->release();
     }
-    ASFW_LOG(Controller,
-             "ASFWDriver::Start(): ASFWTraceDMACoherency property=%{public}s",
+    ASFW_LOG(Controller, "ASFWDriver::Start(): ASFWTraceDMACoherency property=%{public}s",
              traceProperty ? "true" : "false");
     if (auto statusKr = ctx.statusPublisher.Prepare(); statusKr != kIOReturnSuccess) {
         DriverWiring::CleanupStartFailure(ctx);
         return statusKr;
     }
     kr = DriverWiring::PrepareQueue(*this, ctx);
-    if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
+    if (kr != kIOReturnSuccess) {
+        DriverWiring::CleanupStartFailure(ctx);
+        return kr;
+    }
 
 #ifndef ASFW_HOST_TEST
     // Provider termination notifications (hot-unplug): quiesce ASAP to avoid fatal MMIO reads.
     {
         uint64_t providerEntryId = 0;
-        if (provider && provider->GetRegistryEntryID(&providerEntryId) == kIOReturnSuccess && providerEntryId != 0) {
+        if (provider && provider->GetRegistryEntryID(&providerEntryId) == kIOReturnSuccess &&
+            providerEntryId != 0) {
             auto matching = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
             auto idNum = OSSharedPtr(OSNumber::withNumber(providerEntryId, 64), OSNoRetain);
             if (matching && idNum) {
@@ -144,12 +152,14 @@ kern_return_t IMPL(ASFWDriver, Start) {
                     auto source = OSSharedPtr(rawSource, OSNoRetain);
 
                     OSAction* rawAction = nullptr;
-                    const kern_return_t actionKr = CreateActionProviderNotificationReady(0, &rawAction);
+                    const kern_return_t actionKr =
+                        CreateActionProviderNotificationReady(0, &rawAction);
                     if (actionKr == kIOReturnSuccess && rawAction) {
                         ctx.providerNotificationAction = OSSharedPtr(rawAction, OSNoRetain);
                         ctx.providerNotifications = std::move(source);
 
-                        (void)ctx.providerNotifications->SetHandler(ctx.providerNotificationAction.get());
+                        (void)ctx.providerNotifications->SetHandler(
+                            ctx.providerNotificationAction.get());
                         (void)ctx.providerNotifications->SetEnableWithCompletion(true, nullptr);
                         ASFW_LOG(Controller,
                                  "✅ Provider termination notifications armed (entryID=%llu)",
@@ -162,13 +172,20 @@ kern_return_t IMPL(ASFWDriver, Start) {
 #endif
 
     kr = ctx.deps.hardware->Attach(this, provider);
-    if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
+    if (kr != kIOReturnSuccess) {
+        DriverWiring::CleanupStartFailure(ctx);
+        return kr;
+    }
     kr = DriverWiring::PrepareInterrupts(*this, provider, ctx);
-    if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
+    if (kr != kIOReturnSuccess) {
+        DriverWiring::CleanupStartFailure(ctx);
+        return kr;
+    }
 
     // Initialize AsyncSubsystem (requires hardware, workQueue, and a completion action)
     if (ctx.deps.asyncSubsystem && ctx.deps.hardware && ctx.workQueue && ctx.interruptAction) {
-        kr = ctx.deps.asyncSubsystem->Start(*ctx.deps.hardware, this, ctx.workQueue.get(), ctx.interruptAction.get());
+        kr = ctx.deps.asyncSubsystem->Start(*ctx.deps.hardware, this, ctx.workQueue.get(),
+                                            ctx.interruptAction.get());
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Controller, "AsyncSubsystem::Start() failed: 0x%08x", kr);
             DriverWiring::CleanupStartFailure(ctx);
@@ -177,8 +194,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
         const bool traceActive = ASFW::Shared::DMAMemoryManager::IsTracingEnabled();
         ASFW_LOG(Controller,
                  "ASFWDriver::Start(): DMA coherency tracing %{public}s (requested=%{public}s)",
-                 traceActive ? "ENABLED" : "disabled",
-                 traceProperty ? "true" : "false");
+                 traceActive ? "ENABLED" : "disabled", traceProperty ? "true" : "false");
     }
 
     kr = DriverWiring::PrepareWatchdog(*this, ctx);
@@ -194,20 +210,15 @@ kern_return_t IMPL(ASFWDriver, Start) {
     if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
         auto& bus = ctx.controller->Bus();
         ctx.deps.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            this,
-            *ctx.deps.deviceManager,
-            bus,
-            bus,
-            ctx.audioCoordinator.get());
+            this, *ctx.deps.deviceManager, bus, bus, ctx.audioCoordinator.get());
         ctx.controller->SetAVCDiscovery(ctx.deps.avcDiscovery);
         ASFW_LOG(Controller, "✅ AVCDiscovery initialized");
     }
 
     if (!ctx.deps.fcpResponseRouter && ctx.deps.avcDiscovery) {
         auto& bus = ctx.controller->Bus();
-        ctx.deps.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
-            *ctx.deps.avcDiscovery,
-            bus);
+        ctx.deps.fcpResponseRouter =
+            std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(*ctx.deps.avcDiscovery, bus);
         ctx.controller->SetFCPResponseRouter(ctx.deps.fcpResponseRouter);
         ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
     }
@@ -216,13 +227,24 @@ kern_return_t IMPL(ASFWDriver, Start) {
         if (auto* router = ctx.deps.asyncSubsystem->GetPacketRouter()) {
             router->RegisterRequestHandler(
                 0x1, // tCode for Block Write Request
-                [fcpRouter = ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
+                [fcpRouter =
+                     ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
                     if (fcpRouter) {
-                        return fcpRouter->RouteBlockWrite(packet);
+                        const ASFW::Protocols::Ports::BlockWriteRequestView request{
+                            .sourceID = packet.sourceID,
+                            .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
+                            .payload = packet.payload,
+                        };
+
+                        const auto disposition = fcpRouter->RouteBlockWrite(request);
+                        if (disposition ==
+                            ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
+                            return ASFW::Async::ResponseCode::AddressError;
+                        }
+                        return ASFW::Async::ResponseCode::Complete;
                     }
                     return ASFW::Async::ResponseCode::NoResponse;
-                }
-            );
+                });
             ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
         }
     }
@@ -235,11 +257,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
             }
             ASFW::Discovery::ROMScannerParams scannerParams{};
             ctx.deps.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
-                ctx.controller->Bus(),
-                *ctx.deps.speedPolicy,
-                scannerParams,
-                discoveryQueue
-            );
+                ctx.controller->Bus(), *ctx.deps.speedPolicy, scannerParams, discoveryQueue);
             ASFW_LOG(Controller, "✅ ROMScanner created");
         } else {
             ASFW_LOG(Controller, "Reusing existing ROMScanner instance");
@@ -251,14 +269,17 @@ kern_return_t IMPL(ASFWDriver, Start) {
     }
 
     kr = ctx.controller->Start(provider);
-    if (kr != kIOReturnSuccess) { DriverWiring::CleanupStartFailure(ctx); return kr; }
+    if (kr != kIOReturnSuccess) {
+        DriverWiring::CleanupStartFailure(ctx);
+        return kr;
+    }
 
     if (!ctx.deps.irmClient) {
         ctx.deps.irmClient = std::make_shared<ASFW::IRM::IRMClient>(ctx.controller->Bus());
         ctx.controller->SetIRMClient(ctx.deps.irmClient);
         ASFW_LOG(Controller, "✅ IRMClient initialized");
     }
-    
+
     if (!ctx.deps.cmpClient) {
         ctx.deps.cmpClient = std::make_shared<ASFW::CMP::CMPClient>(ctx.controller->Bus());
         ctx.controller->SetCMPClient(ctx.deps.cmpClient);
@@ -271,16 +292,15 @@ kern_return_t IMPL(ASFWDriver, Start) {
 
     ASFW::LogConfig::Shared().Initialize(this);
 
-    ctx.statusPublisher.Publish(ctx.controller.get(),
-                                ctx.deps.asyncSubsystem.get(),
+    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
                                 SharedStatusReason::Boot);
-    
+
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
     ctx.deps.hardware->IntMaskSet(initialMask);
-    
+
     RegisterService();
     ASFW_LOG(Controller, "ASFWDriver::Start() complete");
-    
+
     return kIOReturnSuccess;
 }
 
@@ -310,8 +330,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         }
 
         ctx.statusPublisher.BindListener(nullptr);
-        ctx.statusPublisher.Publish(ctx.controller.get(),
-                                    ctx.deps.asyncSubsystem.get(),
+        ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
                                     SharedStatusReason::Disconnect);
         if (ctx.deps.asyncSubsystem) {
             ctx.deps.asyncSubsystem->Stop();
@@ -319,18 +338,23 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         if (ctx.controller) {
             ctx.controller->Stop();
         }
-        if (ctx.deps.selfId && ctx.deps.hardware) ctx.deps.selfId->Disarm(*ctx.deps.hardware);
-        if (ctx.deps.selfId) ctx.deps.selfId->ReleaseBuffers();
-        if (ctx.deps.configRomStager && ctx.deps.hardware) ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
+        if (ctx.deps.selfId && ctx.deps.hardware)
+            ctx.deps.selfId->Disarm(*ctx.deps.hardware);
+        if (ctx.deps.selfId)
+            ctx.deps.selfId->ReleaseBuffers();
+        if (ctx.deps.configRomStager && ctx.deps.hardware)
+            ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
     }
     return Stop(provider, SUPERDISPATCH);
 }
 
 kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
-    if (!status) return kIOReturnBadArgument;
+    if (!status)
+        return kIOReturnBadArgument;
     *status = nullptr;
     auto dict = OSDictionary::withCapacity(4);
-    if (!dict) return kIOReturnNoMemory;
+    if (!dict)
+        return kIOReturnNoMemory;
     if (ivars && ivars->context && ivars->context->controller) {
         auto& controller = *ivars->context->controller;
         auto stateStr = std::string(ToString(controller.StateMachine().CurrentState()));
@@ -341,23 +365,29 @@ kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
         if (auto n = OSSharedPtr<OSNumber>(OSNumber::withNumber(m.resetCount, 32), OSNoRetain)) {
             dict->setObject("busResetCount", n.get());
         }
-        if (auto n = OSSharedPtr<OSNumber>(OSNumber::withNumber(m.lastResetStart, 64), OSNoRetain)) {
+        if (auto n =
+                OSSharedPtr<OSNumber>(OSNumber::withNumber(m.lastResetStart, 64), OSNoRetain)) {
             dict->setObject("lastResetStart", n.get());
         }
-        if (auto n = OSSharedPtr<OSNumber>(OSNumber::withNumber(m.lastResetCompletion, 64), OSNoRetain)) {
+        if (auto n = OSSharedPtr<OSNumber>(OSNumber::withNumber(m.lastResetCompletion, 64),
+                                           OSNoRetain)) {
             dict->setObject("lastResetCompletion", n.get());
         }
         if (!m.lastFailureReason.has_value()) {
             dict->removeObject("lastResetFailure");
-        } else if (auto s = OSSharedPtr<OSString>(OSString::withCString(m.lastFailureReason->c_str()), OSNoRetain)) {
+        } else if (auto s = OSSharedPtr<OSString>(
+                       OSString::withCString(m.lastFailureReason->c_str()), OSNoRetain)) {
             dict->setObject("lastResetFailure", s.get());
         }
 
         if (auto topo = controller.LatestTopology()) {
-            if (auto n = OSSharedPtr<OSNumber>(OSNumber::withNumber(topo->generation, 32), OSNoRetain)) {
+            if (auto n =
+                    OSSharedPtr<OSNumber>(OSNumber::withNumber(topo->generation, 32), OSNoRetain)) {
                 dict->setObject("topologyGeneration", n.get());
             }
-            if (auto n = OSSharedPtr<OSNumber>(OSNumber::withNumber(static_cast<uint64_t>(topo->nodes.size()), 32), OSNoRetain)) {
+            if (auto n = OSSharedPtr<OSNumber>(
+                    OSNumber::withNumber(static_cast<uint64_t>(topo->nodes.size()), 32),
+                    OSNoRetain)) {
                 dict->setObject("topologyNodeCount", n.get());
             }
         }
@@ -366,8 +396,7 @@ kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
     return kIOReturnSuccess;
 }
 
-kern_return_t ASFWDriver::CopyControllerSnapshot(OSDictionary** status,
-                                                 uint64_t* sequence,
+kern_return_t ASFWDriver::CopyControllerSnapshot(OSDictionary** status, uint64_t* sequence,
                                                  uint64_t* timestamp) {
     if (status) {
         auto kr = CopyControllerStatus(status);
@@ -399,22 +428,24 @@ kern_return_t ASFWDriver::CopyControllerSnapshot(OSDictionary** status,
 }
 
 void* ASFWDriver::GetControllerCore() const {
-    if (!ivars || !ivars->context) return nullptr;
+    if (!ivars || !ivars->context)
+        return nullptr;
     return ivars->context->controller.get();
 }
 
 void* ASFWDriver::GetAsyncSubsystem() const {
-    if (!ivars || !ivars->context) return nullptr;
+    if (!ivars || !ivars->context)
+        return nullptr;
     return ivars->context->deps.asyncSubsystem.get();
 }
 
 void* ASFWDriver::GetServiceContext() const {
-    if (!ivars) return nullptr;
+    if (!ivars)
+        return nullptr;
     return ivars->context;
 }
 
-kern_return_t IMPL(ASFWDriver, NewUserClient)
-{
+kern_return_t IMPL(ASFWDriver, NewUserClient) {
     if (type != 0) {
         return kIOReturnBadArgument;
     }
@@ -454,10 +485,10 @@ kern_return_t IMPL(ASFWDriver, NewUserClient)
 void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     (void)action;
     (void)count;
-    
+
     // DIAGNOSTIC: Log every interrupt invocation
     ASFW_LOG_V3(Controller, "InterruptOccurred called: time=%llu count=%llu", time, count);
-    
+
     if (!ivars || !ivars->context) {
         ASFW_LOG(Controller, "InterruptOccurred: no ivars or context");
         return;
@@ -472,12 +503,8 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     }
     auto snap = ctx.deps.hardware->CaptureInterruptSnapshot(time);
     ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x", snap.intEvent);
-    ctx.interruptDispatcher.HandleSnapshot(snap,
-                                           *ctx.controller,
-                                           *ctx.deps.hardware,
-                                           *ctx.workQueue,
-                                           ctx.isoch,
-                                           ctx.statusPublisher,
+    ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, *ctx.deps.hardware,
+                                           *ctx.workQueue, ctx.isoch, ctx.statusPublisher,
                                            ctx.deps.asyncSubsystem.get());
 }
 
@@ -501,10 +528,8 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         if (ctx.stopping.load(std::memory_order_acquire)) {
             return;
         }
-        ctx.watchdog.HandleTick(ctx.controller.get(),
-                                ctx.deps.asyncSubsystem.get(),
-                                ctx.isoch.ReceiveContext(),
-                                ctx.isoch.TransmitContext(),
+        ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
+                                ctx.isoch.ReceiveContext(), ctx.isoch.TransmitContext(),
                                 ctx.statusPublisher);
     }
 
@@ -527,11 +552,11 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
     __block bool providerTerminated = false;
     (void)ctx.providerNotifications->DeliverNotifications(
         ^(uint64_t type, IOService* service, uint64_t options) {
-            (void)service;
-            (void)options;
-            if (type == kIOServiceNotificationTypeTerminated) {
-                providerTerminated = true;
-            }
+          (void)service;
+          (void)options;
+          if (type == kIOServiceNotificationTypeTerminated) {
+              providerTerminated = true;
+          }
         });
 
     if (!providerTerminated) {
@@ -563,8 +588,7 @@ void ASFWDriver::RegisterStatusListener(const OSObject* client) {
 
     auto& ctx = *ivars->context;
     ctx.statusPublisher.BindListener(clientObj);
-    ctx.statusPublisher.Publish(ctx.controller.get(),
-                                ctx.deps.asyncSubsystem.get(),
+    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
                                 SharedStatusReason::Manual);
 }
 
@@ -600,7 +624,8 @@ kern_return_t ASFWDriver::SetIsochVerbosity(uint32_t level) const {
 }
 
 kern_return_t ASFWDriver::SetHexDumps(uint32_t enabled) const {
-    ASFW_LOG_INFO(Controller, "UserClient: Setting hex dumps to %{public}s", enabled ? "enabled" : "disabled");
+    ASFW_LOG_INFO(Controller, "UserClient: Setting hex dumps to %{public}s",
+                  enabled ? "enabled" : "disabled");
     ASFW::LogConfig::Shared().SetHexDumps(enabled != 0);
     return kIOReturnSuccess;
 }
@@ -619,16 +644,16 @@ kern_return_t ASFWDriver::SetAudioAutoStart(uint32_t enabled) const {
     return kIOReturnSuccess;
 }
 
-kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity,
-                                      uint32_t* hexDumpsEnabled,
-                                      uint32_t* isochVerbosity) const {
+kern_return_t ASFWDriver::GetLogConfig(uint32_t* asyncVerbosity, uint32_t* hexDumpsEnabled,
+                                       uint32_t* isochVerbosity) const {
     if (!asyncVerbosity || !hexDumpsEnabled || !isochVerbosity) {
         return kIOReturnBadArgument;
     }
     *asyncVerbosity = ASFW::LogConfig::Shared().GetAsyncVerbosity();
     *hexDumpsEnabled = ASFW::LogConfig::Shared().IsHexDumpsEnabled() ? 1 : 0;
     *isochVerbosity = ASFW::LogConfig::Shared().GetIsochVerbosity();
-    ASFW_LOG_INFO(Controller, "UserClient: Reading log configuration (Async=%u, Isoch=%u, HexDumps=%d)",
+    ASFW_LOG_INFO(Controller,
+                  "UserClient: Reading log configuration (Async=%u, Isoch=%u, HexDumps=%d)",
                   *asyncVerbosity, *isochVerbosity, *hexDumpsEnabled);
     return kIOReturnSuccess;
 }
@@ -681,10 +706,7 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
         return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
 
-    return ctx.isoch.StartReceive(channel,
-                                  *ctx.deps.hardware,
-                                  rxMem.detach(),
-                                  rxBytes);
+    return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, rxMem.detach(), rxBytes);
 }
 
 kern_return_t ASFWDriver::StopIsochReceive() {
@@ -749,17 +771,8 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
     const uint32_t streamModeRaw = nub->GetStreamMode();
 
-    return ctx.isoch.StartTransmit(channel,
-                                   *ctx.deps.hardware,
-                                   sid,
-                                   streamModeRaw,
-                                   pcmChannels,
-                                   am824Slots,
-                                   txMem.detach(),
-                                   txBytes,
-                                   nullptr,
-                                   0,
-                                   0);
+    return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
+                                   am824Slots, txMem.detach(), txBytes, nullptr, 0, 0);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {
