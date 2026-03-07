@@ -79,6 +79,23 @@ snapshot before recovery starts.
 Those follow-ups are expressed as deferred software reset requests. The
 coordinator decides when they are allowed to execute.
 
+Gap handling is intentionally two-phase:
+
+- **early mismatch correction**: if validated packet-0 gap counts disagree,
+  request a conservative corrective reset with `gap_count = 63`;
+- **stable-bus optimization**: once delegation/root policy is settled and the
+  local node is the effective IRM, retool only when Apple-style stabilization
+  rules say the observed gap state is still wrong.
+
+Gap state is transactional:
+
+- `lastConfirmedGap` tracks the last stable packet-0 gap observed on an
+  accepted topology;
+- `inFlight` exists only after the coordinator successfully dispatches a
+  corrective reset carrying a new gap target;
+- failed corrective dispatch clears `inFlight` and does not advance the
+  confirmed gap state.
+
 ## Interrupt Ownership
 
 The subsystem intentionally splits interrupt responsibilities:
@@ -137,7 +154,8 @@ High-level recovery order:
 5. `RestoringConfigROM`
    - restore staged Config ROM header / bus options;
    - build validated topology;
-   - evaluate delegation / gap-correction requests.
+   - evaluate delegation first, then gap correction / optimization if no
+     delegation reset is pending.
 6. `ClearingBusReset`
    - clear `IntEvent.busReset` only after AT contexts are inactive.
 7. `Rearming`
@@ -175,6 +193,31 @@ Implementation rule:
   been accepted and the generation/topology path is trusted;
 - software-triggered follow-up resets are deferred until
   `lastSelfIdCompletionNs + 2 s`.
+
+## Gap Count Policy
+
+ASFW follows the same overall shape as Apple's `IOFireWireController`:
+
+- `processSelfIDs()`-style early correction:
+  - if validated packet-0 gap counts are inconsistent, queue a long corrective
+    reset with `gap_count = 63`;
+  - do not publish topology for that generation if the corrective reset is
+    pending.
+- `finishedBusScan()`-style stable-bus optimization:
+  - only evaluate after root / cycle-master delegation has been resolved;
+  - only evaluate when the local node is the effective IRM;
+  - retool if any observed gap is `0`, or if an observed gap matches neither
+    the previous programmed gap nor the current target gap;
+  - do not reset just because a new theoretical target gap was computed.
+
+This keeps the reset path conservative while still converging on a better gap
+count once the bus is stable.
+
+Out of scope for the current policy:
+
+- Apple `pingGap` heuristics;
+- Apple `DSLimited` compatibility mode;
+- bypassing the IEEE 1394-2008 §8.4.5.2 confirmation-reset exception.
 
 ## Self-ID and Topology Validation Rules
 

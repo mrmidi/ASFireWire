@@ -17,7 +17,11 @@ struct HardwareTestState {
     std::vector<HardwareInterface::TestOperation> operations;
     bool busResetIssued{false};
     bool lastBusResetWasShort{false};
+    bool initiateBusResetSucceeds{true};
+    bool lastBusResetSucceeded{true};
     bool phyConfigIssued{false};
+    bool sendPhyConfigSucceeds{true};
+    bool lastPhyConfigSucceeded{true};
     bool globalResumeSent{false};
     bool contenderEnabled{false};
     std::optional<uint8_t> lastGapCount;
@@ -154,10 +158,11 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
                                       std::string_view) {
     return WithState(this, [gapCount, forceRootPhyId](HardwareTestState& state) {
         state.phyConfigIssued = true;
+        state.lastPhyConfigSucceeded = state.sendPhyConfigSucceeds;
         state.lastGapCount = gapCount;
         state.lastForceRootNode = forceRootPhyId;
         state.operations.push_back(TestOperation::SendPhyConfig);
-        return true;
+        return state.sendPhyConfigSucceeds;
     });
 }
 
@@ -173,8 +178,9 @@ bool HardwareInterface::InitiateBusReset(bool shortReset) {
     return WithState(this, [shortReset](HardwareTestState& state) {
         state.busResetIssued = true;
         state.lastBusResetWasShort = shortReset;
+        state.lastBusResetSucceeded = state.initiateBusResetSucceeds;
         state.operations.push_back(TestOperation::InitiateBusReset);
-        return true;
+        return state.initiateBusResetSucceeds;
     });
 }
 
@@ -339,12 +345,29 @@ bool HardwareInterface::TestPhyConfigIssued() const noexcept {
     return WithState(this, [](HardwareTestState& state) { return state.phyConfigIssued; });
 }
 
+bool HardwareInterface::TestLastPhyConfigSucceeded() const noexcept {
+    return WithState(this, [](HardwareTestState& state) { return state.lastPhyConfigSucceeded; });
+}
+
+bool HardwareInterface::TestLastBusResetSucceeded() const noexcept {
+    return WithState(this, [](HardwareTestState& state) { return state.lastBusResetSucceeded; });
+}
+
 std::optional<uint8_t> HardwareInterface::TestLastGapCount() const noexcept {
     return WithState(this, [](HardwareTestState& state) { return state.lastGapCount; });
 }
 
 std::optional<uint8_t> HardwareInterface::TestLastForceRootNode() const noexcept {
     return WithState(this, [](HardwareTestState& state) { return state.lastForceRootNode; });
+}
+
+void HardwareInterface::SetTestSendPhyConfigResult(const bool success) noexcept {
+    WithState(this, [success](HardwareTestState& state) { state.sendPhyConfigSucceeds = success; });
+}
+
+void HardwareInterface::SetTestInitiateBusResetResult(const bool success) noexcept {
+    WithState(this,
+              [success](HardwareTestState& state) { state.initiateBusResetSucceeds = success; });
 }
 
 void HardwareInterface::ResetTestState() noexcept {

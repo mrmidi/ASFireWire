@@ -136,8 +136,12 @@ class HardwareInterface {
     [[nodiscard]] bool TestBusResetIssued() const noexcept;
     [[nodiscard]] bool TestLastBusResetWasShort() const noexcept;
     [[nodiscard]] bool TestPhyConfigIssued() const noexcept;
+    [[nodiscard]] bool TestLastPhyConfigSucceeded() const noexcept;
+    [[nodiscard]] bool TestLastBusResetSucceeded() const noexcept;
     [[nodiscard]] std::optional<uint8_t> TestLastGapCount() const noexcept;
     [[nodiscard]] std::optional<uint8_t> TestLastForceRootNode() const noexcept;
+    void SetTestSendPhyConfigResult(bool success) noexcept;
+    void SetTestInitiateBusResetResult(bool success) noexcept;
     void ResetTestState() noexcept;
 #endif
 

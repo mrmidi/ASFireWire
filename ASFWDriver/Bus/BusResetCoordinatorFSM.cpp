@@ -28,9 +28,7 @@ void BusResetCoordinator::BeginNewResetCycle() {
     stopFlushIssued_ = false;
     filtersEnabled_ = false;
     atArmed_ = false;
-    pendingSoftwareReset_.reset();
-    lastSelfId_.reset();
-    lastTopology_.reset();
+    cycle_.ResetForNewEdge();
 
     if ((romScanner_ != nullptr) && (lastGeneration_.value > 0U)) {
         ++metrics_.abortCount;
@@ -57,7 +55,7 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepIdle() {
 
     ForceUnmaskBusResetIfNeeded();
 
-    if (pendingSoftwareReset_.has_value()) {
+    if (cycle_.pendingReset.has_value()) {
         MaybeDispatchPendingSoftwareReset();
         return StepResult::Finish;
     }
@@ -86,7 +84,7 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
 
     const uint64_t waitedNs = MonotonicNow() - stateEntryTime_;
     if (waitedNs >= static_cast<uint64_t>(kSelfIDTimeoutMs) * 1'000'000ULL) {
-        metrics_.lastFailureReason = "Self-ID timeout";
+        RecordRecoveryReason("Self-ID timeout");
         ClearConsumedSelfIDInterrupts();
         RequestSoftwareReset(
             {ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt, "Self-ID timeout"});
@@ -117,20 +115,28 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRestoringConfigROM() {
     RestoreConfigROM();
     BuildTopology();
 
-    if (lastTopology_.has_value()) {
-        EvaluateRootDelegation(*lastTopology_);
+    if (cycle_.acceptedTopology.has_value()) {
+        EvaluateRootDelegation(*cycle_.acceptedTopology);
 
+        bool delegationRequested = false;
         if (busManager_ != nullptr) {
             if (auto command =
-                    busManager_->AssignCycleMaster(*lastTopology_, topologyManager_->GetBadIRMFlags())) {
+                    busManager_->AssignCycleMaster(*cycle_.acceptedTopology,
+                                                   topologyManager_->GetBadIRMFlags())) {
                 RequestSoftwareReset({ResetRequestKind::Delegation, ResetFlavor::Long, command,
                                       "AssignCycleMaster"});
+                delegationRequested = true;
             }
 
-            if (lastSelfId_.has_value() && !lastTopology_->gapCountConsistent) {
-                if (auto command = busManager_->OptimizeGapCount(*lastTopology_, lastSelfId_->quads)) {
-                    RequestSoftwareReset({ResetRequestKind::GapCorrection, ResetFlavor::Long,
-                                          command, "OptimizeGapCount"});
+            if (!delegationRequested && cycle_.acceptedSelfId.has_value()) {
+                if (const auto gapDecision =
+                        busManager_->EvaluateGapPolicy(*cycle_.acceptedTopology,
+                                                       cycle_.acceptedSelfId->quads)) {
+                    BusManager::PhyConfigCommand command{};
+                    command.gapCount = gapDecision->gapCount;
+                    RequestSoftwareReset({ResetRequestKind::GapCorrection, ResetFlavor::Long, command,
+                                          BusManager::GapDecisionReasonString(gapDecision->reason),
+                                          gapDecision->reason});
                 }
             }
         }
@@ -172,7 +178,7 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRearming() {
 BusResetCoordinator::StepResult BusResetCoordinator::StepComplete() {
     LogMetrics();
 
-    if (pendingSoftwareReset_.has_value()) {
+    if (cycle_.pendingReset.has_value()) {
         TransitionTo(State::Idle, "awaiting deferred software reset");
         MaybeDispatchPendingSoftwareReset();
         return StepResult::Finish;
@@ -181,8 +187,8 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepComplete() {
     SendGlobalResumeIfNeeded();
     TransitionTo(State::Idle, "bus reset cycle complete");
 
-    if (topologyCallback_ && lastTopology_.has_value() && (workQueue_.get() != nullptr)) {
-        auto topo = *lastTopology_;
+    if (topologyCallback_ && cycle_.acceptedTopology.has_value() && (workQueue_.get() != nullptr)) {
+        auto topo = *cycle_.acceptedTopology;
         const Discovery::Generation generation{topo.generation};
 
         if (previousScanHadBusyNodes_ && currentDiscoveryDelayMs_ > 0U) {

@@ -176,6 +176,22 @@ class BusResetCoordinator {
         ResetFlavor flavor{ResetFlavor::Short};
         std::optional<BusManager::PhyConfigCommand> phyConfig;
         std::string reason;
+        std::optional<BusManager::GapDecisionReason> gapDecisionReason;
+    };
+
+    struct ResetCycleState {
+        ResetTimingState timing{};
+        std::optional<SelfIDCapture::Result> acceptedSelfId;
+        std::optional<TopologySnapshot> acceptedTopology;
+        std::optional<ResetRequest> pendingReset;
+        std::optional<std::string> recoveryReason;
+
+        void ResetForNewEdge() noexcept {
+            acceptedSelfId.reset();
+            acceptedTopology.reset();
+            pendingReset.reset();
+            recoveryReason.reset();
+        }
     };
 
     void TransitionTo(State newState, const char* reason);
@@ -211,8 +227,12 @@ class BusResetCoordinator {
     void SendGlobalResumeIfNeeded();
     void EvaluateRootDelegation(const TopologySnapshot& topo);
     void RequestSoftwareReset(ResetRequest request);
+    [[nodiscard]] ResetRequest MergeResetRequests(const ResetRequest& current,
+                                                  const ResetRequest& incoming) const;
     bool MaybeDispatchPendingSoftwareReset();
     bool DispatchSoftwareReset(const ResetRequest& request);
+    void ClearDelegationAttempt();
+    void RecordRecoveryReason(std::string reason);
 
     bool G_ATInactive();
     bool HasSelfIDCompletion() const;
@@ -233,8 +253,6 @@ class BusResetCoordinator {
 
     uint64_t firstIrqTime_{0};
     uint64_t busResetClearTime_{0};
-    std::optional<SelfIDCapture::Result> lastSelfId_;
-    std::optional<TopologySnapshot> lastTopology_;
     TopologyReadyCallback topologyCallback_;
 
     std::atomic<bool> deferredRunScheduled_{false};
@@ -250,14 +268,12 @@ class BusResetCoordinator {
     OSSharedPtr<IODispatchQueue> workQueue_;
 
     SelfIDLatchState selfIdLatch_{};
-    ResetTimingState resetTiming_{};
+    ResetCycleState cycle_{};
     bool busResetMasked_{false};
     Discovery::Generation lastGeneration_{0};
 
     bool filtersEnabled_{false};
     bool atArmed_{false};
-
-    std::optional<ResetRequest> pendingSoftwareReset_;
     bool delegateAttemptActive_{false};
     uint8_t delegateTarget_{0xFF};
     uint32_t delegateRetryCount_{0};

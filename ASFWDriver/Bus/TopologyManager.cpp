@@ -742,34 +742,17 @@ std::vector<uint8_t> TopologyManager::ExtractGapCounts(const std::vector<uint32_
         return gaps;
     }
 
-    // Per IEEE 1394-1995 §8.4.6.2.2, Self-ID packet format:
-    // Bits[31:30] = 10 (Self-ID packet identifier)
-    // Bits[29:24] = Physical ID (node ID)
-    // Bits[23:22] = Packet number (00 for packet 0)
-    // Bits[21:16] = Gap count (6 bits) ← We extract this
-    // Bits[15:0]  = Other fields (link active, contender, etc.)
-    //
-    // Gap count is in bits 16-21 of packet 0 (the first packet in each sequence)
-
-    constexpr uint32_t kSelfIDIdentifier = 0x2;       // bits[31:30] = 10
-    constexpr uint32_t kPacketNumber0 = 0x0;          // bits[23:22] = 00
+    // The base Self-ID quadlet carries the gap count in bits[21:16]. Extended
+    // quadlets reuse high bits for sequence metadata, so we only extract from
+    // the non-extended packet-0 form described by the wire-format helpers.
     constexpr uint32_t kGapCountMask = 0x003F0000;    // bits[21:16]
     constexpr uint32_t kGapCountShift = 16;
 
     for (uint32_t packet : selfIDs) {
-        // Check if this is a Self-ID packet (bits 31:30 == 10)
-        uint32_t identifier = (packet >> 30) & 0x3;
-        if (identifier != kSelfIDIdentifier) {
-            continue;  // Not a Self-ID packet (might be padding)
+        if (!IsSelfIDTag(packet) || IsExtended(packet)) {
+            continue;
         }
 
-        // Check if this is packet 0 in the sequence (bits 23:22 == 00)
-        uint32_t packetNum = (packet >> 22) & 0x3;
-        if (packetNum != kPacketNumber0) {
-            continue;  // Packet 1, 2, or 3 - gap count only in packet 0
-        }
-
-        // Extract gap count (bits 21:16)
         uint8_t gapCount = static_cast<uint8_t>((packet & kGapCountMask) >> kGapCountShift);
         gaps.push_back(gapCount);
     }

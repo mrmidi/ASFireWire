@@ -164,11 +164,6 @@ class ControllerCore {
     // Per Apple's handleCycle64Int: extends 7-bit seconds to full 32-bit counter
     uint32_t busCycleTime_{0};
 
-    // OHCI generates TWO Self-ID complete interrupts: selfIDComplete (bit 16) and selfIDComplete2
-    // (bit 15) Must wait for BOTH before re-arming buffer to avoid UnrecoverableError during DMA
-    bool selfIDComplete1Seen_{false};
-    bool selfIDComplete2Seen_{false};
-
     std::unique_ptr<Async::FireWireBusImpl> busImpl_;
     std::unique_ptr<Async::DMAMemoryImpl> dmaImpl_;
 };

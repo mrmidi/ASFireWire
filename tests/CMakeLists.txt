@@ -250,13 +250,36 @@ target_include_directories(SelfIDCaptureTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SelfIDCaptureTests)
 
+add_executable(BusManagerGapOptimizationTests
+    "${ASFW_TESTS_DIR}/BusManagerGapOptimizationTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(BusManagerGapOptimizationTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BusManagerGapOptimizationTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BusManagerGapOptimizationTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BusManagerGapOptimizationTests)
+
 add_executable(BusResetCoordinatorTests
     "${ASFW_TESTS_DIR}/BusResetCoordinatorTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorFSM.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorActions.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorDiscoveryDelay.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
     "${ASFW_DRIVER_DIR}/Hardware/InterruptManager.cpp"
     "${ASFW_TESTS_DIR}/BusResetCoordinatorDepsStubs.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
