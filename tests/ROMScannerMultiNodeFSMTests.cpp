@@ -126,15 +126,13 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     std::mutex mtx;
     std::condition_variable cv;
     int callbackCount = 0;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
 
     ROMScannerParams params{};
     params.doIRMCheck = false;
 
-    ROMScanner scanner(mockAsync, speedPolicy, params, [&](Generation) {
-        std::lock_guard lock(mtx);
-        callbackCount++;
-        cv.notify_all();
-    });
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
     topology.generation = 11;
@@ -142,7 +140,20 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
     topology.nodes.push_back({.nodeId = 2, .linkActive = true});
 
-    scanner.Begin(11, topology, 0);
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+
+    ASSERT_TRUE(scanner.Start(
+        request,
+        [&](Generation /*gen*/, std::vector<ConfigROM> roms, bool busy) {
+            std::lock_guard lock(mtx);
+            callbackCount++;
+            hadBusyNodes = busy;
+            completedROMs = std::move(roms);
+            cv.notify_all();
+        }));
 
     // Interleaved BIB completion for two nodes.
     mockAsync.WaitForPendingReads(2);
@@ -167,8 +178,8 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     }
 
     EXPECT_EQ(callbackCount, 1);
-    EXPECT_TRUE(scanner.IsIdleFor(11));
-    EXPECT_EQ(scanner.DrainReady(11).size(), 2u);
+    EXPECT_FALSE(hadBusyNodes);
+    EXPECT_EQ(completedROMs.size(), 2u);
 }
 
 TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
@@ -178,22 +189,33 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
     std::mutex mtx;
     std::condition_variable cv;
     bool done = false;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
 
     ROMScannerParams params{};
     params.doIRMCheck = false;
 
-    ROMScanner scanner(mockAsync, speedPolicy, params, [&](Generation) {
-        std::lock_guard lock(mtx);
-        done = true;
-        cv.notify_all();
-    });
+    ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
     topology.generation = 9;
     topology.busBase16 = 0xFFC0;
     topology.nodes.push_back({.nodeId = 3, .linkActive = true});
 
-    scanner.Begin(9, topology, 0);
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+
+    ASSERT_TRUE(scanner.Start(
+        request,
+        [&](Generation /*gen*/, std::vector<ConfigROM> roms, bool busy) {
+            std::lock_guard lock(mtx);
+            done = true;
+            hadBusyNodes = busy;
+            completedROMs = std::move(roms);
+            cv.notify_all();
+        }));
 
     // First BIB returns not-ready payload (q0 == 0), then retry succeeds.
     mockAsync.SimulateFullBIBSuccess(0, CreateBusyBIB());
@@ -205,7 +227,6 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
     }
 
     EXPECT_TRUE(done);
-    EXPECT_TRUE(scanner.HadBusyNodes());
-    EXPECT_TRUE(scanner.IsIdleFor(9));
-    EXPECT_EQ(scanner.DrainReady(9).size(), 1u);
+    EXPECT_TRUE(hadBusyNodes);
+    EXPECT_EQ(completedROMs.size(), 1u);
 }

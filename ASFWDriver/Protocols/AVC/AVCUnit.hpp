@@ -22,7 +22,6 @@
 #include "Subunit.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
-#include "../../Async/AsyncSubsystem.hpp"
 #include "AVCUnitPlugInfoCommand.hpp" // Added include here
 
 namespace ASFW::Protocols::AVC {
@@ -68,7 +67,8 @@ class AVCUnit : public std::enable_shared_from_this<AVCUnit>, public IAVCCommand
 public:
     AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
             std::shared_ptr<Discovery::FWUnit> unit,
-            Async::AsyncSubsystem& asyncSubsystem);
+            Protocols::Ports::FireWireBusOps& busOps,
+            Protocols::Ports::FireWireBusInfo& busInfo);
 
     ~AVCUnit();
 
@@ -97,8 +97,6 @@ public:
 
     FCPTransport& GetFCPTransport() { return *fcpTransport_; }
     const FCPTransport& GetFCPTransport() const { return *fcpTransport_; }
-
-    Async::AsyncSubsystem& GetAsyncSubsystem() { return asyncSubsystem_; }
 
     void OnBusReset(uint32_t newGeneration);
 
@@ -131,7 +129,8 @@ private:
     std::weak_ptr<Discovery::FWDevice> device_;
     std::weak_ptr<Discovery::FWUnit> unit_;
 
-    Async::AsyncSubsystem& asyncSubsystem_;
+    Protocols::Ports::FireWireBusOps& busOps_;
+    Protocols::Ports::FireWireBusInfo& busInfo_;
 
     OSSharedPtr<FCPTransport> fcpTransport_;
 

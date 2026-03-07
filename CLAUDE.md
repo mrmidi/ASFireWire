@@ -93,14 +93,16 @@ Command → `ATContextBase` → descriptor builder → `DescriptorRing` → OHCI
 
 ### Config ROM Subsystem (`ASFWDriver/ConfigROM/`)
 
-The Config ROM pipeline has three layers:
+The Config ROM pipeline is split into small, single-purpose components:
 
-| Class | Role |
-|-------|------|
+| Component | Role |
+|-----------|------|
 | `ConfigROMBuilder` | Builds the local node's ROM image (quadlet array + CRC) |
-| `ROMReader` | Issues async block reads against the 1394 address space at `0xFFFFF0000400` |
-| `ROMScanner` | FSM that drives multi-node ROM discovery; calls `ROMReader`; fires `onScanComplete_` once per generation |
-| `ROMParser` (`ConfigROMStore`) | Pure parsing helpers: `ParseBIB`, `ParseTextDescriptorLeaf`, `ParseRootDirectory` |
+| `ConfigROMStager` | Programs OHCI shadow registers and stages the local ROM (casts isolated in `MemoryMapView`) |
+| `ROMReader` | Issues async **quadlet** reads against Config ROM address space at `0xFFFFF0000400` |
+| `ROMScanner` | FSM-driven multi-node discovery; callback-based `Start()` completes once per generation request |
+| `ConfigROMParser` | Pure parsing helpers (`ParseBIB`, `ParseTextDescriptorLeaf`, bounded scans) |
+| `ConfigROMStore` | Thread-safe cache of discovered ROMs |
 
 **Bus Info Block quadlet layout (TA 1999027 + IEEE 1212):**
 ```
@@ -124,7 +126,7 @@ Use `ASFW::FW::DecodeBusOptions(q2)` / `EncodeBusOptions(d)` / `SetGeneration(q2
 `typeSpec` is at `+1`, **not** `+2`. Stop parsing at the first NUL byte.
 
 **`ROMScanner` one-shot completion guard:**
-`CheckAndNotifyCompletion()` is called from ~20 async callback sites. It fires `onScanComplete_` when all nodes reach `Complete`/`Failed` and `inflightCount_ == 0`. It uses a `bool completionNotified_` latch (set before the callback, cleared only by `Begin()` / `Abort()` / `TriggerManualRead()`) to prevent double-firing. **Do not remove this latch** — without it, queued `ScheduleAdvanceFSM()` dispatches arrive after the first notification, see the same terminal state, and fire a second `onScanComplete_` with a drained (empty) result set, causing all discovered devices to be marked lost.
+`CheckAndNotifyCompletion()` is called from async callback sites. It fires the per-scan completion exactly once when all nodes reach `Complete`/`Failed` and `InflightCount() == 0`. It uses the `ROMScannerCompletionManager` latch (reset by `Start()` / `Abort()`) to prevent double-firing: queued `ScheduleAdvanceFSM()` dispatches can arrive after the first completion, see the same terminal state, and try to signal again.
 
 **`EnsurePrefix` pattern:**
 When `OnRootDirComplete` needs data beyond the root directory (leaves, unit dirs), it calls `EnsurePrefix(nodeId, requiredTotalQuadlets, completionCallback)` which transparently grows `node.partialROM.rawQuadlets` via additional async reads. The completion lambda chains further `EnsurePrefix` calls for nested structures (text leaves, descriptor directories, unit directory entries). Always call `ScheduleAdvanceFSM()` at the end of `EnsurePrefix` callbacks, never `AdvanceFSM()` directly (re-entrancy guard).

@@ -5,7 +5,6 @@
 
 #include "SPro24DspProtocol.hpp"
 #include "../../../../Logging/Logging.hpp"
-#include "../../../../Async/AsyncSubsystem.hpp"
 
 namespace ASFW::Audio::DICE::Focusrite {
 
@@ -167,9 +166,10 @@ void EffectGeneralParams::ToWire(uint8_t* data) const {
 // SPro24DspProtocol Implementation
 // ============================================================================
 
-SPro24DspProtocol::SPro24DspProtocol(Async::AsyncSubsystem& subsystem, uint16_t nodeId)
-    : subsystem_(subsystem)
-    , tx_(nodeId)
+SPro24DspProtocol::SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
+                                     Protocols::Ports::FireWireBusInfo& busInfo,
+                                     uint16_t nodeId)
+    : tx_(busOps, busInfo, nodeId)
 {
     ASFW_LOG(DICE, "SPro24DspProtocol created for node 0x%04x", nodeId);
 }
@@ -201,7 +201,7 @@ void SPro24DspProtocol::InitializeAsync(InitCallback callback) {
     ASFW_LOG(DICE, "SPro24DspProtocol::InitializeAsync starting capability discovery");
     
     // Use ReadCapabilities for full discovery (global + TX + RX streams)
-    tx_.ReadCapabilities(subsystem_, [this, callback](IOReturn status, DICECapabilities caps) {
+    tx_.ReadCapabilities([this, callback](IOReturn status, DICECapabilities caps) {
         if (status != kIOReturnSuccess) {
             ASFW_LOG(DICE, "Failed to read DICE capabilities: 0x%x", status);
             callback(status);
@@ -209,7 +209,7 @@ void SPro24DspProtocol::InitializeAsync(InitCallback callback) {
         }
         
         // Store sections for later use
-        tx_.ReadGeneralSections(subsystem_, [this, callback, caps](IOReturn status, GeneralSections sections) {
+        tx_.ReadGeneralSections([this, callback, caps](IOReturn status, GeneralSections sections) {
             if (status != kIOReturnSuccess) {
                 ASFW_LOG(DICE, "Failed to read general sections: 0x%x", status);
                 callback(status);
@@ -318,20 +318,23 @@ IOReturn SPro24DspProtocol::StartDuplex48k() {
 }
 
 void SPro24DspProtocol::ReadAppSection(uint32_t offset, size_t size, DICEReadCallback callback) {
-    tx_.ReadBlock(subsystem_, appSectionBase_ + offset, size, callback);
+    tx_.ReadBlock(appSectionBase_ + offset, size, std::move(callback));
 }
 
 void SPro24DspProtocol::WriteAppSection(uint32_t offset, const uint8_t* data, size_t size, DICEWriteCallback callback) {
-    tx_.WriteBlock(subsystem_, appSectionBase_ + offset, data, size, callback);
+    tx_.WriteBlock(appSectionBase_ + offset, data, size, std::move(callback));
 }
 
 void SPro24DspProtocol::SendSwNotice(SwNotice notice, VoidCallback callback) {
-    tx_.WriteQuadlet(subsystem_, appSectionBase_ + kSwNoticeOffset, static_cast<uint32_t>(notice), callback);
+    tx_.WriteQuadlet(appSectionBase_ + kSwNoticeOffset,
+                     static_cast<uint32_t>(notice),
+                     std::move(callback));
 }
 
 void SPro24DspProtocol::EnableDsp(bool enable, VoidCallback callback) {
     uint32_t value = enable ? 1 : 0;
-    tx_.WriteQuadlet(subsystem_, appSectionBase_ + kDspEnableOffset, value, 
+    tx_.WriteQuadlet(appSectionBase_ + kDspEnableOffset,
+                     value,
                      [this, callback](IOReturn status) {
         if (status != kIOReturnSuccess) {
             callback(status);
@@ -342,7 +345,7 @@ void SPro24DspProtocol::EnableDsp(bool enable, VoidCallback callback) {
 }
 
 void SPro24DspProtocol::GetEffectParams(ResultCallback<EffectGeneralParams> callback) {
-    tx_.ReadQuadlet(subsystem_, appSectionBase_ + kEffectGeneralOffset,
+    tx_.ReadQuadlet(appSectionBase_ + kEffectGeneralOffset,
                     [callback](IOReturn status, uint32_t value) {
         if (status != kIOReturnSuccess) {
             callback(status, {});
@@ -359,7 +362,8 @@ void SPro24DspProtocol::SetEffectParams(const EffectGeneralParams& params, VoidC
     params.ToWire(data);
     uint32_t value = DICETransaction::QuadletFromWire(data);
     
-    tx_.WriteQuadlet(subsystem_, appSectionBase_ + kEffectGeneralOffset, value,
+    tx_.WriteQuadlet(appSectionBase_ + kEffectGeneralOffset,
+                     value,
                      [this, callback](IOReturn status) {
         if (status != kIOReturnSuccess) {
             callback(status);
@@ -497,7 +501,7 @@ void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
     
     ASFW_LOG(DICE, "Step 1: Setting clock select to 0x%08x (48kHz Internal)", clockSelect);
     
-    tx_.WriteQuadlet(subsystem_, sections_.global.offset + GlobalOffset::kClockSelect, clockSelect,
+    tx_.WriteQuadlet(sections_.global.offset + GlobalOffset::kClockSelect, clockSelect,
                      [this, callback](IOReturn status) {
         if (status != kIOReturnSuccess) {
             ASFW_LOG(DICE, "❌ Failed to set clock select: 0x%x", status);
@@ -512,7 +516,7 @@ void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
         
         ASFW_LOG(DICE, "Step 2: Setting TX isoch channel to %u (Device→Host)", txChannel);
         
-        tx_.WriteQuadlet(subsystem_, sections_.txStreamFormat.offset + TxOffset::kIsochronous, txChannel,
+        tx_.WriteQuadlet(sections_.txStreamFormat.offset + TxOffset::kIsochronous, txChannel,
                          [this, callback](IOReturn status) {
             if (status != kIOReturnSuccess) {
                 ASFW_LOG(DICE, "❌ Failed to set TX isoch channel: 0x%x", status);
@@ -527,7 +531,7 @@ void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
             
             ASFW_LOG(DICE, "Step 3: Setting TX speed to S400");
             
-            tx_.WriteQuadlet(subsystem_, sections_.txStreamFormat.offset + TxOffset::kSpeed, speed,
+            tx_.WriteQuadlet(sections_.txStreamFormat.offset + TxOffset::kSpeed, speed,
                              [this, callback](IOReturn status) {
                 if (status != kIOReturnSuccess) {
                     ASFW_LOG(DICE, "❌ Failed to set TX speed: 0x%x", status);
@@ -542,7 +546,7 @@ void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
                 
                 ASFW_LOG(DICE, "Step 4: Setting RX isoch channel to %u (Host→Device)", rxChannel);
                 
-                tx_.WriteQuadlet(subsystem_, sections_.rxStreamFormat.offset + RxOffset::kIsochronous, rxChannel,
+                tx_.WriteQuadlet(sections_.rxStreamFormat.offset + RxOffset::kIsochronous, rxChannel,
                                  [this, callback](IOReturn status) {
                     if (status != kIOReturnSuccess) {
                         ASFW_LOG(DICE, "❌ Failed to set RX isoch channel: 0x%x", status);
@@ -557,7 +561,7 @@ void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
                     
                     ASFW_LOG(DICE, "Step 5: Enabling streaming (both directions)");
                     
-                    tx_.WriteQuadlet(subsystem_, sections_.global.offset + GlobalOffset::kEnable, enable,
+                    tx_.WriteQuadlet(sections_.global.offset + GlobalOffset::kEnable, enable,
                                      [this, callback](IOReturn status) {
                         if (status != kIOReturnSuccess) {
                             ASFW_LOG(DICE, "❌ Failed to enable streaming: 0x%x", status);
@@ -572,7 +576,7 @@ void SPro24DspProtocol::StartStreamTest(VoidCallback callback) {
                         ASFW_LOG(DICE, "═══════════════════════════════════════════════════════");
                         
                         // Read back RX channel count to see what device reports
-                        tx_.ReadQuadlet(subsystem_, sections_.rxStreamFormat.offset + RxOffset::kNumberAudio,
+                        tx_.ReadQuadlet(sections_.rxStreamFormat.offset + RxOffset::kNumberAudio,
                                        [callback](IOReturn status, uint32_t rxAudioChannels) {
                             if (status == kIOReturnSuccess) {
                                 ASFW_LOG(DICE, "📊 RX (playback) channels: %u", rxAudioChannels);

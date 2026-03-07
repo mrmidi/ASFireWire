@@ -3,105 +3,146 @@
 #include <cstdint>
 #include <map>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
 #include "../Discovery/DiscoveryTypes.hpp"
 
+struct IOLock;
+
 namespace ASFW::Discovery {
 
-// Immutable Config ROM storage with generation-aware lookup.
-// Stores parsed ROM objects deduplicated by GUID and indexed by (generation, nodeId).
-// Implements state management matching Apple IOFireWireROMCache patterns.
+/**
+ * @class ConfigROMStore
+ * @brief Generation-aware Config ROM cache with lookup/state management.
+ *
+ * Stores parsed IEEE 1212 / 1394 Configuration ROM objects, deduplicating them by
+ * GUID (Extended Unique Identifier, EUI-64) and indexing them by generation and node ID.
+ * Implements state management for tracking devices across bus resets, mirroring
+ * Apple IOFireWireROMCache patterns.
+ */
 class ConfigROMStore {
-public:
+  public:
     ConfigROMStore();
-    ~ConfigROMStore() = default;
+    ~ConfigROMStore();
 
-    // Insert parsed ROM (deduplicates by GUID within generation)
+    ConfigROMStore(const ConfigROMStore&) = delete;
+    ConfigROMStore& operator=(const ConfigROMStore&) = delete;
+    ConfigROMStore(ConfigROMStore&&) = delete;
+    ConfigROMStore& operator=(ConfigROMStore&&) = delete;
+
+    /**
+     * @brief Inserts a parsed ROM into the store.
+     *
+     * Deduplicates by GUID (EUI-64) within the given generation.
+     * @param rom The ConfigROM object to insert.
+     */
     void Insert(const ConfigROM& rom);
 
-    // Lookup by generation + nodeId (returns most recent ROM for that node in that gen)
+    /**
+     * @brief Looks up a Config ROM by generation and node ID.
+     *
+     * Returns the most recent ROM for that node in the specified generation.
+     *
+     * @param gen The IEEE 1394 bus generation.
+     * @param nodeId The target node ID.
+     * @return Pointer to the ConfigROM, or nullptr if not found.
+     */
     const ConfigROM* FindByNode(Generation gen, uint8_t nodeId) const;
 
-    // Enhanced lookup with state filtering
+    /**
+     * @brief Enhanced lookup by generation and node ID, with state filtering.
+     *
+     * @param gen The IEEE 1394 bus generation.
+     * @param nodeId The target node ID.
+     * @param allowSuspended If false, ignores ROMs in the Suspended state.
+     * @return Pointer to the ConfigROM, or nullptr if not found/filtered out.
+     */
     const ConfigROM* FindByNode(Generation gen, uint8_t nodeId, bool allowSuspended) const;
 
-    // Lookup the most recent ROM cached for a node across any generation.
+    /**
+     * @brief Looks up the most recently cached ROM for a node across any generation.
+     *
+     * @param nodeId The target node ID.
+     * @return Pointer to the ConfigROM, or nullptr if not found.
+     */
     const ConfigROM* FindLatestForNode(uint8_t nodeId) const;
 
-    // Lookup by GUID (returns most recent ROM across all generations)
+    /**
+     * @brief Looks up a Config ROM by its 64-bit GUID.
+     *
+     * Returns the most recent ROM across all generations for this EUI-64.
+     *
+     * @param guid The 64-bit GUID (EUI-64).
+     * @return Pointer to the ConfigROM, or nullptr if not found.
+     */
     const ConfigROM* FindByGuid(Guid64 guid) const;
 
-    // Export immutable snapshot of all ROMs for a given generation
+    /**
+     * @brief Exports an immutable snapshot of all ROMs for a given generation.
+     *
+     * @param gen The target bus generation.
+     * @return A vector of all active ConfigROMs in that generation.
+     */
     std::vector<ConfigROM> Snapshot(Generation gen) const;
 
-    // Export snapshot filtered by ROM state
+    /**
+     * @brief Exports a snapshot of ROMs filtered by generation and state.
+     *
+     * @param gen The target bus generation.
+     * @param state The required ROMState.
+     * @return A vector of filtered ConfigROMs.
+     */
     std::vector<ConfigROM> SnapshotByState(Generation gen, ROMState state) const;
 
-    // Clear all stored ROMs (e.g., on driver stop)
+    /**
+     * @brief Clears all stored ROMs (e.g., on driver stop).
+     */
     void Clear();
 
     // ========================================================================
     // State Management (Apple IOFireWireROMCache-inspired)
     // ========================================================================
 
-    // Mark all ROMs as suspended (called on bus reset)
+    /**
+     * @brief Marks all valid ROMs as suspended.
+     *
+     * Called when an IEEE 1394 bus reset occurs and a new generation begins.
+     * @param newGen The newly started generation.
+     */
     void SuspendAll(Generation newGen);
 
-    // Validate ROM after bus reset (device reappeared)
+    /**
+     * @brief Validates a ROM after a bus reset (device reappeared).
+     *
+     * @param guid The 64-bit GUID.
+     * @param gen The current generation.
+     * @param nodeId The new node ID of the device.
+     */
     void ValidateROM(Guid64 guid, Generation gen, uint8_t nodeId);
 
-    // Mark ROM as invalid (device disappeared or ROM changed)
+    /**
+     * @brief Marks a ROM as invalid (device disappeared or ROM content changed).
+     *
+     * @param guid The 64-bit GUID to invalidate.
+     */
     void InvalidateROM(Guid64 guid);
 
-    // Remove all invalid ROMs from storage
+    /**
+     * @brief Removes all invalid ROMs from storage.
+     */
     void PruneInvalid();
 
-private:
+  private:
     // Packed key layout: generation in upper bits, node ID in low 8 bits.
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
     static std::optional<uint8_t> ValidateNodeIdForKey(uint16_t nodeId);
 
+    mutable IOLock* lock_{nullptr};
+
     std::map<GenNodeKey, ConfigROM> romsByGenNode_;
     std::map<Guid64, ConfigROM> romsByGuid_;
-};
-
-// Explicit parser boundary for wire-format Config ROM decoding.
-class ConfigROMParser {
-public:
-    // Parse Bus Info Block from 4 quadlets (16 bytes) in BIG-ENDIAN wire format.
-    static std::optional<BusInfoBlock> ParseBIB(const uint32_t* bibQuadlets);
-
-    // Parse root directory entries from BIG-ENDIAN wire format quadlets.
-    static std::vector<RomEntry> ParseRootDirectory(const uint32_t* dirQuadlets,
-                                                    uint32_t maxQuadlets);
-
-    // Parse text descriptor from a leaf at the given ROM offset.
-    static std::string ParseTextDescriptorLeaf(std::span<const uint32_t> allQuadlets,
-                                               uint32_t leafOffsetQuadlets,
-                                               const std::string& endianness);
-
-    // Calculate total Config ROM size from BIB crc_length field.
-    static uint32_t CalculateROMSize(const BusInfoBlock& bib);
-
-private:
-    static uint16_t CRCStep(uint16_t crc, uint16_t data);
-    static uint16_t ComputeCRC16_1212(std::span<const uint32_t> quadletsHost);
-    static bool IsLeafOrDirectory(uint8_t keyType);
-    static uint32_t ComputeScanLimit(uint16_t dirLength, uint32_t maxQuadlets);
-    static std::optional<uint32_t> ComputeTargetOffsetQuadlets(uint8_t keyType,
-                                                               uint32_t value,
-                                                               uint32_t index);
-    static void AppendRecognizedEntry(std::vector<RomEntry>& entries,
-                                      uint8_t keyType,
-                                      uint8_t keyId,
-                                      uint32_t value,
-                                      uint32_t targetOffsetQuadlets);
-
-    static constexpr uint32_t kMaxDirectoryEntriesToScan = 64;
 };
 
 } // namespace ASFW::Discovery

@@ -173,11 +173,13 @@ void ConfigureDuetPhantomOverrides(
 
 AVCDiscovery::AVCDiscovery(IOService* driver,
                            Discovery::IDeviceManager& deviceManager,
-                           Async::AsyncSubsystem& asyncSubsystem,
+                           Protocols::Ports::FireWireBusOps& busOps,
+                           Protocols::Ports::FireWireBusInfo& busInfo,
                            ASFW::Audio::IAVCAudioConfigListener* audioConfigListener)
     : driver_(driver)
     , deviceManager_(deviceManager)
-    , asyncSubsystem_(asyncSubsystem)
+    , busOps_(busOps)
+    , busInfo_(busInfo)
     , audioConfigListener_(audioConfigListener) {
 
     // Allocate lock
@@ -238,7 +240,7 @@ void AVCDiscovery::OnUnitPublished(std::shared_ptr<Discovery::FWUnit> unit) {
     }
 
     // Create AVCUnit
-    auto avcUnit = std::make_shared<AVCUnit>(device, unit, asyncSubsystem_);
+    auto avcUnit = std::make_shared<AVCUnit>(device, unit, busOps_, busInfo_);
 
     // Initialize (probe subunits, plugs)
     avcUnit->Initialize([this, avcUnit, guid](bool success) {
@@ -583,7 +585,8 @@ void AVCDiscovery::PrefetchDuetStateAndCreateNub(
     }
 
     auto protocol = std::make_shared<Audio::Oxford::Apogee::ApogeeDuetProtocol>(
-        asyncSubsystem_,
+        busOps_,
+        busInfo_,
         device->GetNodeID(),
         &avcUnit->GetFCPTransport());
     auto state = std::make_shared<DuetPrefetchState>();

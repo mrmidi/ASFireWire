@@ -6,13 +6,9 @@
 #pragma once
 
 #include "IDeviceProtocol.hpp"
+#include "../Ports/FireWireBusPort.hpp"
 #include <cstdint>
 #include <memory>
-
-// Forward declaration
-namespace ASFW::Async {
-    class AsyncSubsystem;
-}
 
 namespace ASFW::Audio {
 
@@ -56,13 +52,15 @@ public:
     /// Create a protocol handler for the given vendor/model
     /// @param vendorId   IEEE OUI vendor ID from Config ROM
     /// @param modelId    Model ID from Config ROM
-    /// @param subsystem  Async subsystem for FireWire operations
+    /// @param busOps     FireWire bus operations port
+    /// @param busInfo    FireWire bus info port
     /// @param nodeId     Target device node ID
     /// @return Protocol handler, or nullptr if device is not recognized
     static std::unique_ptr<IDeviceProtocol> Create(
         uint32_t vendorId,
         uint32_t modelId,
-        Async::AsyncSubsystem& subsystem,
+        Protocols::Ports::FireWireBusOps& busOps,
+        Protocols::Ports::FireWireBusInfo& busInfo,
         uint16_t nodeId
     );
 };

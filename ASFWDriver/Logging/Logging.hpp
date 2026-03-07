@@ -8,6 +8,8 @@
 #include <DriverKit/IOLib.h> // mach_time
 #endif
 
+#include "LogConfig.hpp"
+
 #ifndef OS_LOG_TYPE_DEFAULT
 #define OS_LOG_TYPE_DEFAULT static_cast<os_log_type_t>(0x00)
 #endif
@@ -217,11 +219,6 @@ struct RlState {
 // Verbosity levels are configured via Info.plist properties:
 //   ASFWAsyncVerbosity, ASFWControllerVerbosity, ASFWHardwareVerbosity
 //
-
-// Forward declaration (LogConfig defined in LogConfig.hpp)
-namespace ASFW {
-class LogConfig;
-}
 
 // Helper macro to get verbosity for a specific category
 // This uses token concatenation to call Get##category##Verbosity()

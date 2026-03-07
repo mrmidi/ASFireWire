@@ -8,7 +8,8 @@
 
 // Forward declaration
 namespace ASFW::Async {
-    class AsyncSubsystem;
+    class IFireWireBusOps;
+    class IFireWireBusInfo;
 }
 
 namespace ASFW::Discovery {
@@ -22,9 +23,11 @@ public:
 
     // Create or update device record from parsed ROM
     // Returns reference to live record
-    // @param asyncSubsystem Optional - if provided and device is known, creates protocol handler
+    // @param busOps Optional - if provided and device is known, creates protocol handler
+    // @param busInfo Optional - paired with busOps (generation/speed queries)
     DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
-                                 Async::AsyncSubsystem* asyncSubsystem = nullptr);
+                                 Async::IFireWireBusOps* busOps = nullptr,
+                                 Async::IFireWireBusInfo* busInfo = nullptr);
 
     // Mark device as discovered (seen in Self-ID, before ROM fetch)
     void MarkDiscovered(Generation gen, uint8_t nodeId);
@@ -66,4 +69,3 @@ private:
 };
 
 } // namespace ASFW::Discovery
-

@@ -15,11 +15,6 @@
 #include <cstdint>
 #include <memory>
 
-// Forward declare AsyncSubsystem
-namespace ASFW::Async {
-    class AsyncSubsystem;
-}
-
 namespace ASFW::Audio::DICE::Focusrite {
 
 // ============================================================================
@@ -111,9 +106,12 @@ public:
     template<typename T> using ResultCallback = std::function<void(IOReturn, T)>;
     
     /// Construct protocol handler
-    /// @param subsystem  Reference to async subsystem
+    /// @param busOps     FireWire bus operations port
+    /// @param busInfo    FireWire bus info port
     /// @param nodeId     Target device node ID
-    SPro24DspProtocol(Async::AsyncSubsystem& subsystem, uint16_t nodeId);
+    SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
+                      Protocols::Ports::FireWireBusInfo& busInfo,
+                      uint16_t nodeId);
     
     /// Initialize protocol (reads sections, caches state)
     /// Note: This starts async operations. Use InitializeAsync for callback-based init.
@@ -190,7 +188,6 @@ public:
     void StartStreamTest(VoidCallback callback);
 
 private:
-    Async::AsyncSubsystem& subsystem_;
     DICETransaction tx_;
     GeneralSections sections_{};
     uint32_t appSectionBase_{0};

@@ -161,7 +161,9 @@ run_tests() {
   require_cmd ctest
 
   log "Configuring tests (cmake) in ${TEST_BUILD_DIR}..."
-  cmake -S "${TESTS_DIR}" -B "${TEST_BUILD_DIR}" -DCMAKE_BUILD_TYPE="${CONFIGURATION}" >/dev/null
+  cmake -S "${TESTS_DIR}" -B "${TEST_BUILD_DIR}" \
+    -DCMAKE_BUILD_TYPE="${CONFIGURATION}" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 
   log "Building tests..."
   # Use cmake --build for portability; forward config for multi-config generators

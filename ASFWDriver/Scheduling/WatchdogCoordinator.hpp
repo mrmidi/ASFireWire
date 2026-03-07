@@ -13,13 +13,13 @@
 
 namespace ASFW {
 namespace Async {
-class AsyncSubsystem;
+class IAsyncSubsystemPort;
 }
 namespace Isoch {
 class IsochReceiveContext;
 class IsochTransmitContext;
-}
-}
+} // namespace Isoch
+} // namespace ASFW
 
 class ASFWDriver;
 
@@ -28,7 +28,7 @@ class ControllerCore;
 class StatusPublisher;
 
 class WatchdogCoordinator {
-public:
+  public:
     WatchdogCoordinator() = default;
     ~WatchdogCoordinator() = default;
 
@@ -38,13 +38,12 @@ public:
 
     void Schedule(uint64_t delayUsec);
 
-    void HandleTick(ControllerCore* controller,
-                    ASFW::Async::AsyncSubsystem* asyncSubsystem,
+    void HandleTick(ControllerCore* controller, ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
                     ASFW::Isoch::IsochReceiveContext* isochReceiveContext,
                     ASFW::Isoch::IsochTransmitContext* isochTransmitContext,
                     StatusPublisher& statusPublisher);
 
-private:
+  private:
     OSSharedPtr<IOTimerDispatchSource> timer_;
     OSSharedPtr<OSAction> action_;
     uint32_t isochLogDivider_{0};
