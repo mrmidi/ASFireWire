@@ -78,7 +78,7 @@ void IRMClient::SetIRMNode(uint8_t irmNodeId, Generation generation) {
     generation_ = generation;
 
     ASFW_LOG(IRM, "IRMClient: Set IRM node=%u generation=%u",
-             irmNodeId, generation);
+             irmNodeId, generation.value);
 }
 
 void IRMClient::AllocateChannel(uint8_t channel,

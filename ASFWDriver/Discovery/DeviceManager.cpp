@@ -462,7 +462,7 @@ bool DeviceManager::UnitMatchesCallback(
 
 DeviceManager::GenNodeKey DeviceManager::MakeKey(Generation gen, uint8_t nodeId)
 {
-    return (static_cast<uint32_t>(gen) << 8) | nodeId;
+    return (gen.value << 8) | static_cast<uint32_t>(nodeId);
 }
 
 } // namespace ASFW::Discovery

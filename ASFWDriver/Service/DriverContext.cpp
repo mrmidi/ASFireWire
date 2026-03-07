@@ -5,25 +5,22 @@
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 #include "../Async/AsyncSubsystem.hpp"
-#include "../Async/ResponseCode.hpp"
+#include "../Audio/AudioCoordinator.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
+#include "../ConfigROM/ConfigROMStore.hpp"
 #include "../Controller/ControllerStateMachine.hpp"
 #include "../Diagnostics/MetricsSink.hpp"
-#include "../ConfigROM/ConfigROMStore.hpp"
 #include "../Discovery/DeviceManager.hpp"
 #include "../Discovery/DeviceRegistry.hpp"
 #include "../Discovery/SpeedPolicy.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Hardware/InterruptManager.hpp"
-#include "../Audio/AudioCoordinator.hpp"
 #include "../Logging/Logging.hpp"
-#include "../Protocols/AVC/AVCDiscovery.hpp"
-#include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::Reset() {
@@ -41,10 +38,11 @@ void ServiceContext::Reset() {
     deps.configRomStager.reset();
     deps.interrupts.reset();
     deps.topology.reset();
-    deps.fcpResponseRouter.reset();  // Clean up FCP router
-    deps.avcDiscovery.reset();       // Clean up AV/C discovery
-    deps.irmClient.reset();          // Clean up IRM client
-    deps.asyncSubsystem.reset();     // Stop and cleanup asyncSubsystem
+    deps.fcpResponseRouter.reset(); // Clean up FCP router
+    deps.avcDiscovery.reset();      // Clean up AV/C discovery
+    deps.irmClient.reset();         // Clean up IRM client
+    deps.asyncController.reset();
+    deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
     statusPublisher.Reset();
     watchdog.Reset();
 #ifndef ASFW_HOST_TEST
@@ -101,6 +99,10 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     if (!d.asyncSubsystem) {
         d.asyncSubsystem = std::make_shared<ASFW::Async::AsyncSubsystem>();
     }
+    if (!d.asyncController && d.asyncSubsystem) {
+        d.asyncController =
+            std::static_pointer_cast<ASFW::Async::IAsyncControllerPort>(d.asyncSubsystem);
+    }
 
     if (!d.speedPolicy) {
         d.speedPolicy = std::make_shared<ASFW::Discovery::SpeedPolicy>();
@@ -117,47 +119,12 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
 
     if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
-            driver,
-            *d.deviceManager,
-            *d.deviceRegistry,
-            ctx.isoch,
-            *d.hardware
-        );
+            driver, *d.deviceManager, *d.deviceRegistry, ctx.isoch, *d.hardware);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
     }
 
-    if (!d.avcDiscovery && d.deviceManager && d.asyncSubsystem) {
-        d.avcDiscovery = std::make_shared<ASFW::Protocols::AVC::AVCDiscovery>(
-            driver,
-            *d.deviceManager,
-            *d.asyncSubsystem,
-            ctx.audioCoordinator.get()
-        );
-        ASFW_LOG(Controller, "[Controller] ✅ AVCDiscovery initialized");
-    }
-
-    if (!d.fcpResponseRouter && d.avcDiscovery && d.asyncSubsystem) {
-        d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
-            *d.avcDiscovery,
-            d.asyncSubsystem->GetGenerationTracker()
-        );
-        ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter initialized");
-    }
-
-    if (d.fcpResponseRouter && d.asyncSubsystem) {
-        if (auto* router = d.asyncSubsystem->GetPacketRouter()) {
-            router->RegisterRequestHandler(
-                0x1, // tCode for Block Write Request
-                [fcpRouter = d.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
-                    if (fcpRouter) {
-                        return fcpRouter->RouteBlockWrite(packet);
-                    }
-                    return ASFW::Async::ResponseCode::NoResponse;
-                }
-            );
-            ASFW_LOG(Controller, "[Controller] ✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
-        }
-    }
+    // AV/C discovery wiring is done after ControllerCore is created so it can
+    // depend only on IFireWireBus ports (ControllerCore::Bus()).
 }
 
 kern_return_t DriverWiring::PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx) {
@@ -165,14 +132,16 @@ kern_return_t DriverWiring::PrepareQueue(ASFWDriver& service, ::ServiceContext& 
     auto kr = service.CopyDispatchQueue("Default", &q);
     if (kr != kIOReturnSuccess || !q) {
         kr = service.CreateDefaultDispatchQueue(&q);
-        if (kr != kIOReturnSuccess || !q) return kr != kIOReturnSuccess ? kr : kIOReturnError;
+        if (kr != kIOReturnSuccess || !q)
+            return kr != kIOReturnSuccess ? kr : kIOReturnError;
     }
     ctx.workQueue = OSSharedPtr(q, OSNoRetain);
     ctx.deps.scheduler->Bind(ctx.workQueue);
     return kIOReturnSuccess;
 }
 
-kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* provider, ::ServiceContext& ctx) {
+kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* provider,
+                                              ::ServiceContext& ctx) {
     if (!provider) {
         return kIOReturnBadArgument;
     }
@@ -192,7 +161,8 @@ kern_return_t DriverWiring::PrepareInterrupts(ASFWDriver& service, IOService* pr
 
     OSAction* action = nullptr;
     auto kr = service.CreateActionInterruptOccurred(0, &action);
-    if (kr != kIOReturnSuccess || !action) return kr != kIOReturnSuccess ? kr : kIOReturnError;
+    if (kr != kIOReturnSuccess || !action)
+        return kr != kIOReturnSuccess ? kr : kIOReturnError;
     ctx.interruptAction = OSSharedPtr(action, OSNoRetain);
     auto intrMgr = ctx.deps.interrupts;
     if (!intrMgr) {
@@ -213,7 +183,10 @@ kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContex
 
 void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     ctx.stopping.store(true, std::memory_order_release);
-    if (ctx.controller) { ctx.controller->Stop(); ctx.controller.reset(); }
+    if (ctx.controller) {
+        ctx.controller->Stop();
+        ctx.controller.reset();
+    }
 
     // CRITICAL: Stop asyncSubsystem BEFORE cancelling watchdog
     // This prevents the crash where watchdog fires after completion queue is deactivated
@@ -221,11 +194,16 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.deps.asyncSubsystem->Stop();
     }
 
-    if (ctx.deps.interrupts) ctx.deps.interrupts->Disable();
-    if (ctx.deps.selfId && ctx.deps.hardware) ctx.deps.selfId->Disarm(*ctx.deps.hardware);
-    if (ctx.deps.selfId) ctx.deps.selfId->ReleaseBuffers();
-    if (ctx.deps.configRomStager && ctx.deps.hardware) ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
-    if (ctx.deps.hardware) ctx.deps.hardware->Detach();
+    if (ctx.deps.interrupts)
+        ctx.deps.interrupts->Disable();
+    if (ctx.deps.selfId && ctx.deps.hardware)
+        ctx.deps.selfId->Disarm(*ctx.deps.hardware);
+    if (ctx.deps.selfId)
+        ctx.deps.selfId->ReleaseBuffers();
+    if (ctx.deps.configRomStager && ctx.deps.hardware)
+        ctx.deps.configRomStager->Teardown(*ctx.deps.hardware);
+    if (ctx.deps.hardware)
+        ctx.deps.hardware->Detach();
     ctx.interruptAction.reset();
     ctx.watchdog.Reset();
 #ifndef ASFW_HOST_TEST

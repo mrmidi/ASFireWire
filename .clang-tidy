@@ -1,0 +1,26 @@
+---
+Checks: >
+  -*,
+  clang-analyzer-*,
+  -clang-analyzer-alpha.*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  performance-*,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-auto,
+  -modernize-avoid-c-arrays,
+  readability-*,
+  -readability-identifier-naming,
+  -readability-magic-numbers
+
+FormatStyle: file
+WarningsAsErrors: ''
+
+# The DriverKit codebase uses common low-level abbreviations (`kr`, `hw`, `it`, `ok`).
+# Keep `readability-identifier-length` enabled, but reduce noise by allowing 2-char names.
+CheckOptions:
+  readability-identifier-length.MinimumVariableNameLength: '2'
+  readability-identifier-length.MinimumParameterNameLength: '2'
+...

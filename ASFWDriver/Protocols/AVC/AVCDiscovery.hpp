@@ -17,10 +17,10 @@
 #include <unordered_set>
 #include "IAVCDiscovery.hpp"
 #include "AVCUnit.hpp"
+#include "../Ports/FireWireBusPort.hpp"
 #include "../../Discovery/IDeviceManager.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
-#include "../../Async/AsyncSubsystem.hpp"
 #include "../../Audio/IAVCAudioConfigListener.hpp"
 #include "../Audio/Oxford/Apogee/ApogeeTypes.hpp"
 
@@ -40,7 +40,8 @@ class AVCDiscovery : public Discovery::IUnitObserver,
 public:
     AVCDiscovery(IOService* driver,
                  Discovery::IDeviceManager& deviceManager,
-                 Async::AsyncSubsystem& asyncSubsystem,
+                 Protocols::Ports::FireWireBusOps& busOps,
+                 Protocols::Ports::FireWireBusInfo& busInfo,
                  ASFW::Audio::IAVCAudioConfigListener* audioConfigListener);
 
     ~AVCDiscovery() override;
@@ -97,7 +98,8 @@ private:
 
     IOService* driver_{nullptr};
     Discovery::IDeviceManager& deviceManager_;
-    Async::AsyncSubsystem& asyncSubsystem_;
+    Protocols::Ports::FireWireBusOps& busOps_;
+    Protocols::Ports::FireWireBusInfo& busInfo_;
     ASFW::Audio::IAVCAudioConfigListener* audioConfigListener_{nullptr};
 
     IOLock* lock_{nullptr};

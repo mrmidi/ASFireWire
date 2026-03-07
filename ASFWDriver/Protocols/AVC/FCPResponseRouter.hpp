@@ -8,67 +8,64 @@
 
 #pragma once
 
+#include "../Ports/FireWireBusPort.hpp"
+#include "../Ports/FireWireRxPort.hpp"
 #include "AVCDiscovery.hpp"
-#include "../../Async/Rx/PacketRouter.hpp"
-#include "../../Async/PacketHelpers.hpp"
-#include "../../Async/ResponseCode.hpp"
-#include "../../Bus/GenerationTracker.hpp"
 #include <vector>
 
 namespace ASFW::Protocols::AVC {
-
-using ::ASFW::Async::ResponseCode;
 
 //==============================================================================
 // FCP Response Router
 //==============================================================================
 
 class FCPResponseRouter {
-public:
+  public:
     explicit FCPResponseRouter(AVCDiscovery& avcDiscovery,
-                               Async::Bus::GenerationTracker& generationTracker)
-        : avcDiscovery_(avcDiscovery), generationTracker_(generationTracker) {}
+                               Protocols::Ports::FireWireBusInfo& busInfo)
+        : avcDiscovery_(avcDiscovery), busInfo_(busInfo) {}
 
-    ResponseCode RouteBlockWrite(const Async::ARPacketView& packet) {
-        ASFW_LOG_V3(FCP, "🔍 FCPResponseRouter::RouteBlockWrite CALLED: srcID=0x%04x destID=0x%04x payloadLen=%zu",
-                 packet.sourceID, packet.destID, packet.payload.size());
-        
-        uint64_t destOffset = Async::ExtractDestOffset(packet.header);
-        
+    Protocols::Ports::BlockWriteDisposition
+    RouteBlockWrite(const Protocols::Ports::BlockWriteRequestView& request) {
+        ASFW_LOG_V3(FCP,
+                    "🔍 FCPResponseRouter::RouteBlockWrite CALLED: srcID=0x%04x payloadLen=%zu",
+                    request.sourceID, request.payload.size());
+
+        const uint64_t destOffset = request.destOffset;
+
         ASFW_LOG_V3(FCP, "🔍 FCPResponseRouter: destOffset=0x%012llx (FCP_RESPONSE=0x%012llx)",
-                 destOffset, kFCPResponseAddress);
+                    destOffset, kFCPResponseAddress);
 
         if (destOffset != kFCPResponseAddress) {
             ASFW_LOG_V3(FCP, "⚠️  FCPResponseRouter: Not an FCP response (offset mismatch)");
-            return ResponseCode::AddressError;
+            return Protocols::Ports::BlockWriteDisposition::kAddressError;
         }
 
-        uint16_t srcNodeID = packet.sourceID;
-        uint32_t generation = generationTracker_.GetCurrentState().generation16;
-        
+        const uint16_t srcNodeID = request.sourceID;
+        const uint32_t generation = busInfo_.GetGeneration().value;
+
         ASFW_LOG_V2(FCP, "✅ FCPResponseRouter: FCP response detected! srcNode=0x%04x gen=%u",
-                 srcNodeID, generation);
+                    srcNodeID, generation);
 
         FCPTransport* transport = avcDiscovery_.GetFCPTransportForNodeID(srcNodeID);
         if (!transport) {
-            ASFW_LOG_V1(FCP, "FCPResponseRouter: FCP response from unknown node 0x%04x",
-                         srcNodeID);
-            return ResponseCode::Complete;
+            ASFW_LOG_V1(FCP, "FCPResponseRouter: FCP response from unknown node 0x%04x", srcNodeID);
+            return Protocols::Ports::BlockWriteDisposition::kComplete;
         }
 
-        std::vector<uint8_t> payloadCopy(packet.payload.begin(), packet.payload.end());
+        std::vector<uint8_t> payloadCopy(request.payload.begin(), request.payload.end());
 
         ASFW_LOG_V2(FCP, "🔄 FCPResponseRouter: Routing to FCPTransport %p (%zu bytes copied)",
-                 transport, payloadCopy.size());
-        transport->OnFCPResponse(srcNodeID, generation, 
+                    transport, payloadCopy.size());
+        transport->OnFCPResponse(srcNodeID, generation,
                                  std::span<const uint8_t>(payloadCopy.data(), payloadCopy.size()));
 
-        return ResponseCode::Complete;
+        return Protocols::Ports::BlockWriteDisposition::kComplete;
     }
 
-private:
+  private:
     AVCDiscovery& avcDiscovery_;
-    Async::Bus::GenerationTracker& generationTracker_;
+    Protocols::Ports::FireWireBusInfo& busInfo_;
 };
 
 } // namespace ASFW::Protocols::AVC

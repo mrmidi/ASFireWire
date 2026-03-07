@@ -71,6 +71,7 @@ struct TopologySnapshot {
     std::optional<uint8_t> irmNodeId;       // IRM-capable node with highest nodeID
     std::optional<uint8_t> localNodeId;     // Our node ID (if valid)
     uint8_t gapCount{63};                   // Optimum gap count for this topology
+    bool gapCountConsistent{true};          // All packet-0 gap counts agree across the capture
     uint8_t nodeCount{0};                   // Total nodes with valid Self-ID
     uint8_t maxHopsFromRoot{0};             // NEW: Maximum hop count from root node
 

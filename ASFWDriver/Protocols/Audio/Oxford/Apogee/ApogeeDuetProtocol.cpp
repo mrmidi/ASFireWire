@@ -382,10 +382,12 @@ struct ApogeeDuetProtocol::VendorCommand {
     }
 };
 
-ApogeeDuetProtocol::ApogeeDuetProtocol(Async::AsyncSubsystem& subsystem,
+ApogeeDuetProtocol::ApogeeDuetProtocol(Protocols::Ports::FireWireBusOps& busOps,
+                                       Protocols::Ports::FireWireBusInfo& busInfo,
                                        uint16_t nodeId,
                                        Protocols::AVC::FCPTransport* fcpTransport)
-    : subsystem_(subsystem)
+    : busOps_(busOps)
+    , busInfo_(busInfo)
     , nodeId_(nodeId)
     , fcpTransport_(fcpTransport) {
 }
@@ -1070,103 +1072,109 @@ void ApogeeDuetProtocol::ClearDisplay(VoidCallback callback) {
 }
 
 void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback) {
-    Async::ReadParams params{};
-    params.destinationID = nodeId_;
-    const uint64_t addr = kMeterBaseAddress + kMeterInputOffset;
-    params.addressHigh = static_cast<uint32_t>((addr >> 32U) & 0xFFFFU);
-    params.addressLow = static_cast<uint32_t>(addr & 0xFFFFFFFFU);
-    params.length = 8;
+    const auto gen = busInfo_.GetGeneration();
+    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    const uint64_t addr64 = kMeterBaseAddress + kMeterInputOffset;
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    };
 
-    subsystem_.Read(
-        params,
-        [callback](Async::AsyncHandle,
-                   Async::AsyncStatus status,
-                   uint8_t,
-                   std::span<const uint8_t> payload) {
-            if (status != Async::AsyncStatus::kSuccess || payload.size() < 8U) {
-                callback(kIOReturnError, {});
-                return;
-            }
+    busOps_.ReadBlock(gen,
+                      node,
+                      addr,
+                      8,
+                      FW::FwSpeed::S100,
+                      [callback = std::move(callback)](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) {
+                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 8U) {
+                              callback(kIOReturnError, {});
+                              return;
+                          }
 
-            InputMeterState state{};
-            state.levels[0] = static_cast<int32_t>(ReadQuadletBE(payload.data()));
-            state.levels[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 4U));
-            callback(kIOReturnSuccess, state);
-        });
+                          InputMeterState state{};
+                          state.levels[0] = static_cast<int32_t>(ReadQuadletBE(payload.data()));
+                          state.levels[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 4U));
+                          callback(kIOReturnSuccess, state);
+                      });
 }
 
 void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback) {
-    Async::ReadParams params{};
-    params.destinationID = nodeId_;
-    const uint64_t addr = kMeterBaseAddress + kMeterMixerOffset;
-    params.addressHigh = static_cast<uint32_t>((addr >> 32U) & 0xFFFFU);
-    params.addressLow = static_cast<uint32_t>(addr & 0xFFFFFFFFU);
-    params.length = 16;
+    const auto gen = busInfo_.GetGeneration();
+    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    const uint64_t addr64 = kMeterBaseAddress + kMeterMixerOffset;
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    };
 
-    subsystem_.Read(
-        params,
-        [callback](Async::AsyncHandle,
-                   Async::AsyncStatus status,
-                   uint8_t,
-                   std::span<const uint8_t> payload) {
-            if (status != Async::AsyncStatus::kSuccess || payload.size() < 16U) {
-                callback(kIOReturnError, {});
-                return;
-            }
+    busOps_.ReadBlock(gen,
+                      node,
+                      addr,
+                      16,
+                      FW::FwSpeed::S100,
+                      [callback = std::move(callback)](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) {
+                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 16U) {
+                              callback(kIOReturnError, {});
+                              return;
+                          }
 
-            MixerMeterState state{};
-            state.streamInputs[0] = static_cast<int32_t>(ReadQuadletBE(payload.data()));
-            state.streamInputs[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 4U));
-            state.mixerOutputs[0] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 8U));
-            state.mixerOutputs[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 12U));
-            callback(kIOReturnSuccess, state);
-        });
+                          MixerMeterState state{};
+                          state.streamInputs[0] = static_cast<int32_t>(ReadQuadletBE(payload.data()));
+                          state.streamInputs[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 4U));
+                          state.mixerOutputs[0] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 8U));
+                          state.mixerOutputs[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 12U));
+                          callback(kIOReturnSuccess, state);
+                      });
 }
 
 void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
-    Async::ReadParams params{};
-    params.destinationID = nodeId_;
+    const auto gen = busInfo_.GetGeneration();
+    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    const uint64_t addr64 = kOxfordCsrBase + kOxfordFirmwareIdOffset;
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    };
 
-    const uint64_t addr = kOxfordCsrBase + kOxfordFirmwareIdOffset;
-    params.addressHigh = static_cast<uint32_t>((addr >> 32U) & 0xFFFFU);
-    params.addressLow = static_cast<uint32_t>(addr & 0xFFFFFFFFU);
-    params.length = 4;
-
-    subsystem_.Read(
-        params,
-        [callback](Async::AsyncHandle,
-                   Async::AsyncStatus status,
-                   uint8_t,
-                   std::span<const uint8_t> payload) {
-            if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
-                callback(kIOReturnError, 0);
-                return;
-            }
-            callback(kIOReturnSuccess, ReadQuadletBE(payload.data()));
-        });
+    busOps_.ReadBlock(gen,
+                      node,
+                      addr,
+                      4,
+                      FW::FwSpeed::S100,
+                      [callback = std::move(callback)](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) {
+                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
+                              callback(kIOReturnError, 0);
+                              return;
+                          }
+                          callback(kIOReturnSuccess, ReadQuadletBE(payload.data()));
+                      });
 }
 
 void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
-    Async::ReadParams params{};
-    params.destinationID = nodeId_;
+    const auto gen = busInfo_.GetGeneration();
+    const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
+    const uint64_t addr64 = kOxfordCsrBase + kOxfordHardwareIdOffset;
+    const Async::FWAddress addr{
+        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    };
 
-    const uint64_t addr = kOxfordCsrBase + kOxfordHardwareIdOffset;
-    params.addressHigh = static_cast<uint32_t>((addr >> 32U) & 0xFFFFU);
-    params.addressLow = static_cast<uint32_t>(addr & 0xFFFFFFFFU);
-    params.length = 4;
-
-    subsystem_.Read(
-        params,
-        [callback](Async::AsyncHandle,
-                   Async::AsyncStatus status,
-                   uint8_t,
-                   std::span<const uint8_t> payload) {
-            if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
-                callback(kIOReturnError, 0);
-                return;
-            }
-            callback(kIOReturnSuccess, ReadQuadletBE(payload.data()));
-        });
+    busOps_.ReadBlock(gen,
+                      node,
+                      addr,
+                      4,
+                      FW::FwSpeed::S100,
+                      [callback = std::move(callback)](Async::AsyncStatus status,
+                                                       std::span<const uint8_t> payload) {
+                          if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
+                              callback(kIOReturnError, 0);
+                              return;
+                          }
+                          callback(kIOReturnSuccess, ReadQuadletBE(payload.data()));
+                      });
 }
 
 } // namespace ASFW::Audio::Oxford::Apogee

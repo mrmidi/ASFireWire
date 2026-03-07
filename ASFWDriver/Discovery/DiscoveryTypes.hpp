@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Common/FWCommon.hpp"
 #include "DiscoveryValues.hpp"  // FwSpeed enum and constants
 #include <cstdint>
 #include <memory>
@@ -18,7 +19,7 @@ namespace ASFW::Discovery {
 // Addressing & Identity
 // ============================================================================
 
-using Generation = uint16_t;
+using Generation = ASFW::FW::Generation;
 using Guid64 = uint64_t;
 
 struct FwAddress {

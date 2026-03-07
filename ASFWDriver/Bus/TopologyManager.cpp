@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,6 +72,15 @@ std::optional<uint8_t> FindRootNode(const std::vector<TopologyNode>& nodes) {
     if (!rootId.has_value()) {
         for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
             if (it->linkActive && it->portCount > 0) {
+                rootId = it->nodeId;
+                break;
+            }
+        }
+    }
+
+    if (!rootId.has_value()) {
+        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+            if (it->linkActive) {
                 rootId = it->nodeId;
                 break;
             }
@@ -147,8 +157,23 @@ uint8_t CalculateMaxHops(const std::vector<TopologyNode>& nodes, uint8_t rootNod
     return maxHops;
 }
 
+[[nodiscard]] bool HasExplicitTreePorts(const std::vector<TopologyNode>& nodes) {
+    for (const auto& node : nodes) {
+        for (const auto state : node.portStates) {
+            if (state == PortState::Parent || state == PortState::Child) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::string>& warnings) {
     if (nodes.empty()) {
+        return;
+    }
+
+    if (!HasExplicitTreePorts(nodes)) {
         return;
     }
 
@@ -210,10 +235,41 @@ void ValidateTopology(const std::vector<TopologyNode>& nodes, std::vector<std::s
     }
 }
 
+[[nodiscard]] bool HasContiguousNodeCoverage(const std::vector<TopologyNode>& nodes) {
+    if (nodes.empty()) {
+        return false;
+    }
+
+    uint8_t expectedNodeId = 0;
+    for (const auto& node : nodes) {
+        if (node.nodeId != expectedNodeId) {
+            return false;
+        }
+        ++expectedNodeId;
+    }
+    return true;
+}
+
+[[nodiscard]] std::string JoinWarnings(const std::vector<std::string>& warnings) {
+    return std::accumulate(
+        warnings.begin(), warnings.end(), std::string{},
+        [](std::string acc, const std::string& warning) {
+            if (!acc.empty()) {
+                acc.append("; ");
+            }
+            acc.append(warning);
+            return acc;
+        });
+}
+
 void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& warnings) {
     for (auto& node : nodes) {
         node.parentNodeIds.clear();
         node.childNodeIds.clear();
+    }
+
+    if (!HasExplicitTreePorts(nodes)) {
+        return;
     }
 
     uint32_t edgesConstructed = 0;
@@ -326,20 +382,43 @@ void TopologyManager::Reset() {
     latest_.reset();
 }
 
-std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result,
-                                                                 uint64_t timestamp,
-                                                                 uint32_t nodeIDReg) {
+void TopologyManager::InvalidateForBusReset() {
+    latest_.reset();
+    ClearBadIRMFlags();
+}
+
+const char* TopologyManager::TopologyBuildErrorCodeString(TopologyBuildErrorCode code) noexcept {
+    switch (code) {
+    case TopologyBuildErrorCode::InvalidSelfID:
+        return "InvalidSelfID";
+    case TopologyBuildErrorCode::EmptySequenceSet:
+        return "EmptySequenceSet";
+    case TopologyBuildErrorCode::MissingNodeCoverage:
+        return "MissingNodeCoverage";
+    case TopologyBuildErrorCode::NoRootNode:
+        return "NoRootNode";
+    case TopologyBuildErrorCode::TreeValidationFailed:
+        return "TreeValidationFailed";
+    }
+    return "Unknown";
+}
+
+std::expected<TopologySnapshot, TopologyManager::TopologyBuildError>
+TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result, uint64_t timestamp,
+                                  uint32_t nodeIDReg) {
     if (!result.valid || result.quads.empty()) {
         ASFW_LOG(Topology, "Self-ID result invalid (crc=%d timeout=%d)",
                result.crcError, result.timedOut);
-        return latest_;
+        return std::unexpected(TopologyBuildError{TopologyBuildErrorCode::InvalidSelfID,
+                                                  "Self-ID result invalid"});
     }
-    
+
     if (result.sequences.empty()) {
         ASFW_LOG(Topology, "Self-ID has quadlets but no valid sequences - invalid data");
-        return latest_;
+        return std::unexpected(TopologyBuildError{TopologyBuildErrorCode::EmptySequenceSet,
+                                                  "Self-ID sequence set is empty"});
     }
-    
+
     // Extract bus/node from NodeID register if valid
     // OHCI NodeID[31] = IDValid; low 16 bits are IEEE 1394 Node_ID: [15:6]=bus, [5:0]=node.
     std::optional<uint8_t> localNodeId;
@@ -464,7 +543,14 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
     snapshot.busBase16 = busBase16;
     snapshot.busNumber = busNumber;
     snapshot.gapCount = CalculateOptimumGapCount(accumulators);
-    
+    {
+        const auto gaps = ExtractGapCounts(result.quads);
+        snapshot.gapCountConsistent =
+            gaps.empty() ||
+            std::adjacent_find(gaps.begin(), gaps.end(),
+                               [](uint8_t lhs, uint8_t rhs) { return lhs != rhs; }) == gaps.end();
+    }
+
     // Mark root node in topology
     if (snapshot.rootNodeId.has_value()) {
         for (auto& node : snapshot.nodes) {
@@ -477,6 +563,24 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
         snapshot.maxHopsFromRoot = CalculateMaxHops(snapshot.nodes, *snapshot.rootNodeId);
     } else {
         snapshot.maxHopsFromRoot = 0;
+    }
+
+    if (!HasContiguousNodeCoverage(snapshot.nodes)) {
+        return std::unexpected(TopologyBuildError{
+            TopologyBuildErrorCode::MissingNodeCoverage,
+            "Self-ID node coverage is not contiguous from the lowest observed node ID"});
+    }
+
+    if (!warnings.empty()) {
+        return std::unexpected(
+            TopologyBuildError{TopologyBuildErrorCode::TreeValidationFailed,
+                               JoinWarnings(warnings)});
+    }
+
+    if (!snapshot.rootNodeId.has_value()) {
+        return std::unexpected(
+            TopologyBuildError{TopologyBuildErrorCode::NoRootNode,
+                               "No root node could be derived from the validated Self-ID tree"});
     }
 
     // Log topology analysis results with rich context
@@ -536,9 +640,6 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
 #endif
     ASFW_LOG(Topology, "=== End Topology Snapshot ===");
 
-    if (!snapshot.rootNodeId.has_value()) {
-        ASFW_LOG(Topology, "⚠️  WARNING: No root node found (no active nodes with ports)");
-    }
     if (!snapshot.irmNodeId.has_value()) {
         ASFW_LOG(Topology, "⚠️  WARNING: No IRM candidate found (no contender nodes)");
     }
@@ -568,15 +669,10 @@ std::optional<TopologySnapshot> TopologyManager::UpdateFromSelfID(const SelfIDCa
         ASFW_LOG(Topology, "⚠️  WARNING: Zero active ports detected - nodes may be isolated");
     }
 
-    for (const auto& warning : warnings) {
-        ASFW_LOG(Topology, "⚠️ %{public}s", warning.c_str());
-    }
-    
-    // Store warnings in snapshot for GUI export
     snapshot.warnings = warnings;
 
     latest_ = snapshot;
-    return latest_;
+    return snapshot;
 }
 
 std::optional<TopologySnapshot> TopologyManager::LatestSnapshot() const {
@@ -646,34 +742,17 @@ std::vector<uint8_t> TopologyManager::ExtractGapCounts(const std::vector<uint32_
         return gaps;
     }
 
-    // Per IEEE 1394-1995 §8.4.6.2.2, Self-ID packet format:
-    // Bits[31:30] = 10 (Self-ID packet identifier)
-    // Bits[29:24] = Physical ID (node ID)
-    // Bits[23:22] = Packet number (00 for packet 0)
-    // Bits[21:16] = Gap count (6 bits) ← We extract this
-    // Bits[15:0]  = Other fields (link active, contender, etc.)
-    //
-    // Gap count is in bits 16-21 of packet 0 (the first packet in each sequence)
-
-    constexpr uint32_t kSelfIDIdentifier = 0x2;       // bits[31:30] = 10
-    constexpr uint32_t kPacketNumber0 = 0x0;          // bits[23:22] = 00
+    // The base Self-ID quadlet carries the gap count in bits[21:16]. Extended
+    // quadlets reuse high bits for sequence metadata, so we only extract from
+    // the non-extended packet-0 form described by the wire-format helpers.
     constexpr uint32_t kGapCountMask = 0x003F0000;    // bits[21:16]
     constexpr uint32_t kGapCountShift = 16;
 
     for (uint32_t packet : selfIDs) {
-        // Check if this is a Self-ID packet (bits 31:30 == 10)
-        uint32_t identifier = (packet >> 30) & 0x3;
-        if (identifier != kSelfIDIdentifier) {
-            continue;  // Not a Self-ID packet (might be padding)
+        if (!IsSelfIDTag(packet) || IsExtended(packet)) {
+            continue;
         }
 
-        // Check if this is packet 0 in the sequence (bits 23:22 == 00)
-        uint32_t packetNum = (packet >> 22) & 0x3;
-        if (packetNum != kPacketNumber0) {
-            continue;  // Packet 1, 2, or 3 - gap count only in packet 0
-        }
-
-        // Extract gap count (bits 21:16)
         uint8_t gapCount = static_cast<uint8_t>((packet & kGapCountMask) >> kGapCountShift);
         gaps.push_back(gapCount);
     }

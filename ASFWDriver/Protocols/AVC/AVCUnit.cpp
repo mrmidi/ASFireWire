@@ -18,8 +18,12 @@ using namespace ASFW::Protocols::AVC;
 
 AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  std::shared_ptr<Discovery::FWUnit> unit,
-                 Async::AsyncSubsystem& asyncSubsystem)
-    : device_(device), unit_(unit), asyncSubsystem_(asyncSubsystem) {
+                 Protocols::Ports::FireWireBusOps& busOps,
+                 Protocols::Ports::FireWireBusInfo& busInfo)
+    : device_(device),
+      unit_(unit),
+      busOps_(busOps),
+      busInfo_(busInfo) {
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -34,7 +38,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     // Create FCP transport
     fcpTransport_ = OSSharedPtr(new FCPTransport, OSNoRetain);
     if (fcpTransport_) {
-        fcpTransport_->init(&asyncSubsystem_, device.get(), config);
+        fcpTransport_->init(&busOps_, &busInfo_, device.get(), config);
 
         // Create DescriptorAccessor for unit-level descriptors (Phase 5)
         descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*fcpTransport_, kAVCSubunitUnit);

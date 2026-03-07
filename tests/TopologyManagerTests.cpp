@@ -45,6 +45,15 @@ uint32_t MakeBaseSelfID(
     return quad;
 }
 
+std::optional<TopologySnapshot> AsOptional(
+    const std::expected<TopologySnapshot, TopologyManager::TopologyBuildError>& snapshot
+) {
+    if (!snapshot.has_value()) {
+        return std::nullopt;
+    }
+    return *snapshot;
+}
+
 } // anonymous namespace
 
 // ============================================================================
@@ -143,7 +152,7 @@ TEST(TopologyManager, RootSelection_MultipleActiveNodes_SelectsHighestNodeID) {
     // Real port topology requires extended Self-ID quadlets
 }
 
-TEST(TopologyManager, RootSelection_NoActiveLinks_ReturnsNullopt) {
+TEST(TopologyManager, RootSelection_NoActiveLinks_ReturnsError) {
     // Create 2 nodes, both with linkActive=false
     auto result = CreateSelfIDResult(
         15,
@@ -159,8 +168,8 @@ TEST(TopologyManager, RootSelection_NoActiveLinks_ReturnsNullopt) {
     const uint32_t nodeIDReg = 0x80000000;
     auto snapshot = manager.UpdateFromSelfID(result, 500000, nodeIDReg);
     
-    ASSERT_TRUE(snapshot.has_value());
-    EXPECT_FALSE(snapshot->rootNodeId.has_value());  // No active root
+    ASSERT_FALSE(snapshot.has_value());
+    EXPECT_EQ(snapshot.error().code, TopologyManager::TopologyBuildErrorCode::NoRootNode);
 }
 
 // ============================================================================
@@ -351,7 +360,7 @@ TEST(TopologyManager, NodeCount_MatchesNumberOfNodes) {
 // Invalid Input Handling Tests
 // ============================================================================
 
-TEST(TopologyManager, InvalidSelfID_ReturnsPreviousSnapshot) {
+TEST(TopologyManager, InvalidSelfID_DoesNotReusePreviousSnapshot) {
     TopologyManager manager;
     
     // First update with valid data
@@ -374,13 +383,14 @@ TEST(TopologyManager, InvalidSelfID_ReturnsPreviousSnapshot) {
     invalidResult.crcError = true;
     
     auto snapshot2 = manager.UpdateFromSelfID(invalidResult, 1500000, 0x80000000);
-    
-    // Should return previous snapshot (generation 10)
-    ASSERT_TRUE(snapshot2.has_value());
-    EXPECT_EQ(snapshot2->generation, 10);  // Unchanged
+
+    ASSERT_FALSE(snapshot2.has_value());
+    EXPECT_EQ(snapshot2.error().code, TopologyManager::TopologyBuildErrorCode::InvalidSelfID);
+    ASSERT_TRUE(manager.LatestSnapshot().has_value());
+    EXPECT_EQ(manager.LatestSnapshot()->generation, 10);
 }
 
-TEST(TopologyManager, EmptyQuads_ReturnsPreviousSnapshot) {
+TEST(TopologyManager, EmptyQuads_ReturnsTypedError) {
     TopologyManager manager;
     
     SelfIDCapture::Result emptyResult;
@@ -388,9 +398,9 @@ TEST(TopologyManager, EmptyQuads_ReturnsPreviousSnapshot) {
     emptyResult.quads.clear();  // Empty quadlet vector
     
     auto snapshot = manager.UpdateFromSelfID(emptyResult, 1600000, 0x80000000);
-    
-    // No previous snapshot, should return nullopt
+
     EXPECT_FALSE(snapshot.has_value());
+    EXPECT_EQ(snapshot.error().code, TopologyManager::TopologyBuildErrorCode::InvalidSelfID);
 }
 
 // ============================================================================
@@ -410,7 +420,7 @@ TEST(TopologyManager, Reset_ClearsSnapshot) {
         {{1, 1}}
     );
     
-    manager.UpdateFromSelfID(result, 1700000, 0x80000000);
+    (void)manager.UpdateFromSelfID(result, 1700000, 0x80000000);
     
     // Verify snapshot exists
     auto snapshot1 = manager.LatestSnapshot();
@@ -441,7 +451,7 @@ TEST(TopologyManager, CompareAndSwap_SameTimestamp_ReturnsNullopt) {
     ASSERT_TRUE(snapshot1.has_value());
     
     // CompareAndSwap with same timestamp should return nullopt
-    auto snapshot2 = manager.CompareAndSwap(snapshot1);
+    auto snapshot2 = manager.CompareAndSwap(AsOptional(snapshot1));
     EXPECT_FALSE(snapshot2.has_value());
 }
 
@@ -476,8 +486,30 @@ TEST(TopologyManager, CompareAndSwap_DifferentTimestamp_ReturnsNewSnapshot) {
     ASSERT_TRUE(snapshot2.has_value());
     
     // CompareAndSwap with old snapshot should return new snapshot
-    auto snapshot3 = manager.CompareAndSwap(snapshot1);
+    auto snapshot3 = manager.CompareAndSwap(AsOptional(snapshot1));
     ASSERT_TRUE(snapshot3.has_value());
     EXPECT_EQ(snapshot3->generation, 26);
     EXPECT_EQ(snapshot3->capturedAt, 2000000u);
+}
+
+TEST(TopologyManager, InvalidateForBusReset_DropsLatestSnapshotAndBadIRMFlags) {
+    TopologyManager manager;
+    auto result = CreateSelfIDResult(
+        27,
+        {
+            0x001B0000,
+            MakeBaseSelfID(0, true, true, 63, 2, 4),
+        },
+        {{1, 1}}
+    );
+
+    auto snapshot = manager.UpdateFromSelfID(result, 2100000, 0x80000000);
+    ASSERT_TRUE(snapshot.has_value());
+
+    manager.MarkNodeAsBadIRM(0);
+    EXPECT_TRUE(manager.IsNodeBadIRM(0));
+
+    manager.InvalidateForBusReset();
+    EXPECT_FALSE(manager.LatestSnapshot().has_value());
+    EXPECT_FALSE(manager.IsNodeBadIRM(0));
 }

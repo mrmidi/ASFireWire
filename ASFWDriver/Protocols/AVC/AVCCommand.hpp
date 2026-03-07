@@ -13,6 +13,7 @@
 #else
 #include <DriverKit/IOLib.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>

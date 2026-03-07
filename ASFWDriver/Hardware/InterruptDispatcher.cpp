@@ -1,23 +1,20 @@
 #include "InterruptDispatcher.hpp"
 
-#include "HardwareInterface.hpp"
-#include "OHCIConstants.hpp"
-#include "RegisterMap.hpp"
-#include "../Async/AsyncSubsystem.hpp"
+#include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Isoch/IsochService.hpp"
 #include "../Logging/Logging.hpp"
+#include "HardwareInterface.hpp"
+#include "OHCIConstants.hpp"
+#include "RegisterMap.hpp"
 
 namespace ASFW::Driver {
 
-void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap,
-                                         ControllerCore& controller,
-                                         HardwareInterface& hardware,
-                                         IODispatchQueue& workQueue,
-                                         IsochService& isoch,
-                                         StatusPublisher& statusPublisher,
-                                         ASFW::Async::AsyncSubsystem* asyncSubsystem) {
+void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
+                                         HardwareInterface& hardware, IODispatchQueue& workQueue,
+                                         IsochService& isoch, StatusPublisher& statusPublisher,
+                                         ASFW::Async::IAsyncSubsystemPort* asyncSubsystem) {
     controller.HandleInterrupt(snap);
 
     // ===== ISOCHRONOUS RECEIVE INTERRUPT =====
@@ -31,9 +28,9 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap,
         if ((snap.isoRecvEvent & 0x01) && isoch.ReceiveContext()) {
             // Dispatch descriptor processing to workqueue (deferred from ISR)
             workQueue.DispatchAsync(^{
-                if (isoch.ReceiveContext()) {
-                    isoch.ReceiveContext()->Poll();
-                }
+              if (isoch.ReceiveContext()) {
+                  isoch.ReceiveContext()->Poll();
+              }
             });
         }
     }
@@ -45,7 +42,8 @@ void InterruptDispatcher::HandleSnapshot(const InterruptSnapshot& snap,
         // DEBUG: Sample interrupt rate
         static uint32_t txIrqCtr = 0;
         if ((++txIrqCtr % 100) == 0) {
-            ASFW_LOG_V3(Controller, "[IRQ] IsoTx Fired! Count=%u IsoTxEvent=0x%08x", txIrqCtr, snap.isoXmitEvent);
+            ASFW_LOG_V3(Controller, "[IRQ] IsoTx Fired! Count=%u IsoTxEvent=0x%08x", txIrqCtr,
+                        snap.isoXmitEvent);
         }
 
         // Clear event bits to acknowledge

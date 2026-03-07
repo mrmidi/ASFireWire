@@ -1,9 +1,10 @@
 #include <gtest/gtest.h>
 
-#include "../ASFWDriver/ConfigROM/ROMScanNodeStateMachine.hpp"
+#include "../ASFWDriver/ConfigROM/Remote/ROMScanNodeStateMachine.hpp"
 
 using ASFW::Discovery::ROMScanNodeStateMachine;
 using ASFW::Discovery::FwSpeed;
+using ASFW::Discovery::Generation;
 
 TEST(ROMScanNodeStateMachineTests, DefaultStateIsIdle) {
     ROMScanNodeStateMachine node;
@@ -12,7 +13,7 @@ TEST(ROMScanNodeStateMachineTests, DefaultStateIsIdle) {
 }
 
 TEST(ROMScanNodeStateMachineTests, AcceptsExpectedNominalTransitions) {
-    ROMScanNodeStateMachine node(5, 11, FwSpeed::S100, 3);
+    ROMScanNodeStateMachine node(5, Generation{11}, FwSpeed::S100, 3);
 
     EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingBIB));
     EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingRootDir));
@@ -22,25 +23,25 @@ TEST(ROMScanNodeStateMachineTests, AcceptsExpectedNominalTransitions) {
 }
 
 TEST(ROMScanNodeStateMachineTests, RejectsInvalidTransition) {
-    ROMScanNodeStateMachine node(6, 12, FwSpeed::S100, 2);
+    ROMScanNodeStateMachine node(6, Generation{12}, FwSpeed::S100, 2);
 
     EXPECT_FALSE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingDetails));
     EXPECT_EQ(node.CurrentState(), ROMScanNodeStateMachine::State::Idle);
 }
 
 TEST(ROMScanNodeStateMachineTests, ResetForGenerationReinitializesNodeData) {
-    ROMScanNodeStateMachine node(6, 12, FwSpeed::S100, 2);
+    ROMScanNodeStateMachine node(6, Generation{12}, FwSpeed::S100, 2);
     node.MutableROM().vendorName = "X";
     node.SetBIBInProgress(true);
     node.ForceState(ROMScanNodeStateMachine::State::Failed);
 
-    node.ResetForGeneration(20, 7, FwSpeed::S200, 4);
+    node.ResetForGeneration(Generation{20}, 7, FwSpeed::S200, 4);
 
     EXPECT_EQ(node.NodeId(), 7);
     EXPECT_EQ(node.CurrentState(), ROMScanNodeStateMachine::State::Idle);
     EXPECT_EQ(node.CurrentSpeed(), FwSpeed::S200);
     EXPECT_EQ(node.RetriesLeft(), 4);
-    EXPECT_EQ(node.ROM().gen, 20);
+    EXPECT_EQ(node.ROM().gen.value, 20u);
     EXPECT_EQ(node.ROM().nodeId, 7);
     EXPECT_TRUE(node.ROM().vendorName.empty());
     EXPECT_FALSE(node.BIBInProgress());

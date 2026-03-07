@@ -1,6 +1,8 @@
 #pragma once
 
+#include <expected>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "../Controller/ControllerTypes.hpp"
@@ -8,19 +10,46 @@
 
 namespace ASFW::Driver {
 
-// Transforms decoded Self-ID data into immutable topology snapshots and offers
-// diffing support so the service can log concise bus changes.
+/**
+ * @class TopologyManager
+ * @brief Builds immutable topology snapshots from validated Self-ID captures.
+ *
+ * Invalid Self-ID input is treated as a hard topology failure for the current
+ * generation. The manager never falls back to a stale snapshot after a reset.
+ */
 class TopologyManager {
-public:
+  public:
+    enum class TopologyBuildErrorCode : uint8_t {
+        InvalidSelfID,
+        EmptySequenceSet,
+        MissingNodeCoverage,
+        NoRootNode,
+        TreeValidationFailed,
+    };
+
+    struct TopologyBuildError {
+        TopologyBuildErrorCode code{TopologyBuildErrorCode::InvalidSelfID};
+        std::string detail;
+    };
+
     TopologyManager();
 
     void Reset();
-    std::optional<TopologySnapshot> UpdateFromSelfID(const SelfIDCapture::Result& result,
-                                                     uint64_t timestamp,
-                                                     uint32_t nodeIDReg);
+    /// Discard the current snapshot at bus-reset begin so stale topology is never reused.
+    void InvalidateForBusReset();
 
-    std::optional<TopologySnapshot> LatestSnapshot() const;
-    std::optional<TopologySnapshot> CompareAndSwap(std::optional<TopologySnapshot> previous);
+    /**
+     * Build a new immutable topology snapshot from a validated Self-ID capture.
+     *
+     * Returns a typed error when the capture or resulting tree is not trustworthy.
+     * Invalid input never reuses the previous snapshot.
+     */
+    [[nodiscard]] std::expected<TopologySnapshot, TopologyBuildError>
+    UpdateFromSelfID(const SelfIDCapture::Result& result, uint64_t timestamp, uint32_t nodeIDReg);
+
+    [[nodiscard]] std::optional<TopologySnapshot> LatestSnapshot() const;
+    [[nodiscard]] std::optional<TopologySnapshot>
+    CompareAndSwap(std::optional<TopologySnapshot> previous);
 
     void MarkNodeAsBadIRM(uint8_t nodeID);
 
@@ -31,8 +60,10 @@ public:
     void ClearBadIRMFlags();
 
     static std::vector<uint8_t> ExtractGapCounts(const std::vector<uint32_t>& selfIDs);
+    [[nodiscard]] static const char* TopologyBuildErrorCodeString(
+        TopologyBuildErrorCode code) noexcept;
 
-private:
+  private:
     std::optional<TopologySnapshot> latest_;
 
     /// Per-node bad IRM flags (indexed by node ID, 0-62)

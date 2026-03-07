@@ -326,17 +326,23 @@ ControllerCore wires topology events to discovery:
 ```cpp
 // 1. Topology builds after Self-ID decode
 busReset->BindCallbacks([this](const TopologySnapshot& snap) {
-    OnTopologyReady(snap);  // Trigger ROMScanner::Begin()
+    OnTopologyReady(snap);  // Build request + start scan
 });
 
-// 2. ROMScanner completes asynchronously
-romScanner->SetCompletionCallback([this](Generation gen) {
-    OnDiscoveryScanComplete(gen);  // Pull ROMs, enumerate devices
-});
+// 2. ROMScanner completes asynchronously (completion fires exactly once per Start())
+void OnTopologyReady(const TopologySnapshot& snap) {
+    Discovery::ROMScanRequest request{};
+    request.gen = snap.generation;
+    request.topology = snap;
+    request.localNodeId = snap.localNodeId.value_or(0xFF);
+
+    romScanner->Start(request, [this](Generation gen, std::vector<ConfigROM> roms, bool hadBusyNodes) {
+        OnDiscoveryScanComplete(gen, std::move(roms), hadBusyNodes);
+    });
+}
 
 // 3. DeviceManager processes discovered ROMs
-void OnDiscoveryScanComplete(Generation gen) {
-    auto roms = romScanner->DrainReady(gen);
+void OnDiscoveryScanComplete(Generation gen, std::vector<ConfigROM> roms, bool hadBusyNodes) {
     deviceManager->ProcessROMs(roms, gen);
 }
 ```
@@ -344,10 +350,10 @@ void OnDiscoveryScanComplete(Generation gen) {
 **Flow:**
 ```
 BusReset IRQ → FSM → SelfIDCapture → TopologyManager::BuildTopology()
-  → OnTopologyReady() → ROMScanner::Begin(gen, topology)
+  → OnTopologyReady() → ROMScanner::Start(request, completion)
   → [ROM reads via AsyncSubsystem]
   → ROMScanner::CheckAndNotifyCompletion()
-  → OnDiscoveryScanComplete(gen)
+  → OnDiscoveryScanComplete(gen, roms, hadBusyNodes)
   → DeviceManager::ProcessROMs()
   → Enumerate devices to UserClient
 ```
