@@ -32,7 +32,7 @@ class BusManager;
 } // namespace ASFW::Driver
 
 namespace ASFW::Async {
-class AsyncSubsystem;
+class IAsyncControllerPort;
 }
 
 namespace ASFW::Discovery {
@@ -41,9 +41,25 @@ class ROMScanner;
 
 namespace ASFW::Driver {
 
-// Coordinates the staged workflow for handling OHCI bus resets.
-// Implements a deterministic FSM that enforces spec-ordered steps
-// (OHCI 1.1 §§6.1.1, 7.2.3.2, 11).
+#ifdef ASFW_HOST_TEST
+class BusResetCoordinatorTestPeer;
+#endif
+
+/**
+ * @class BusResetCoordinator
+ * @brief Orchestrates bus-reset recovery as a staged, deterministic FSM.
+ *
+ * The coordinator owns the sequencing constraints around Self-ID capture,
+ * async transmit quiescence, Config ROM restoration, interrupt ownership, and
+ * post-reset discovery handoff. Heavy work stays off the IRQ path; `OnIrq()`
+ * only latches reset-related bits and schedules deferred processing.
+ *
+ * Key spec constraints preserved here:
+ * - OHCI 1.1 §6.1 / Table 6-1 and §11.5 for `selfIDComplete2` sticky semantics
+ * - OHCI 1.1 §7.2.3.2 for AT inactivity before clearing `IntEvent.busReset`
+ * - IEEE 1394-2008 §8.2.1 for the 2 s software-reset holdoff after Self-ID
+ *   completion, with conservative handling of the §8.4.5.2 gap-count flow
+ */
 class BusResetCoordinator {
   public:
     using TopologyReadyCallback = std::function<void(const TopologySnapshot&)>;
@@ -51,39 +67,45 @@ class BusResetCoordinator {
     enum class State : uint8_t {
         Idle,               // Normal operation, no reset in progress
         Detecting,          // busReset observed, mask interrupt, prime context
-        WaitingSelfID,      // Awaiting selfIDComplete AND selfIDComplete2
+        WaitingSelfID,      // Awaiting a stable Self-ID completion indication
         QuiescingAT,        // Stop and flush AT contexts (AR continues)
         RestoringConfigROM, // 3-step ROM restoration sequence
         ClearingBusReset,   // Preconditions satisfied, clear busReset bit
         Rearming,           // Re-enable filters, re-arm AT contexts
         Complete,           // Publish metrics, unmask busReset, go Idle
-        Error               // Unrecoverable error path
-    };
-
-    enum class Event : uint8_t {
-        IrqBusReset,        // IntEvent.busReset asserted
-        IrqSelfIDComplete,  // IntEvent.selfIDComplete observed
-        IrqSelfIDComplete2, // IntEvent.selfIDComplete2 observed
-        AsyncSynthReset,    // Observed PHY packet in AR/RQ (optional)
-        TimeoutGuard,       // Safety timeout
-        Unrecoverable,      // Unrecoverable error
-        RegFail             // Register access failure
     };
 
     BusResetCoordinator();
     ~BusResetCoordinator();
 
+    /**
+     * @brief Bind the coordinator to controller-owned infrastructure.
+     *
+     * The coordinator does not take ownership of the supplied objects. Callers
+     * must keep them alive for at least as long as the coordinator itself.
+     */
     void Initialize(HardwareInterface* hw, OSSharedPtr<IODispatchQueue> workQueue,
-                    Async::AsyncSubsystem* asyncSys, SelfIDCapture* selfIdCapture,
+                    Async::IAsyncControllerPort* asyncSys, SelfIDCapture* selfIdCapture,
                     ConfigROMStager* configRom, InterruptManager* interrupts,
                     TopologyManager* topology, BusManager* busManager = nullptr,
                     Discovery::ROMScanner* romScanner = nullptr);
 
+    /**
+     * Latch bus-reset related interrupt bits and schedule deferred recovery work.
+     *
+     * OHCI 1.1 §6.1 / Table 6-1 defines `selfIDComplete2` as a sticky companion
+     * to `selfIDComplete`, and §11.5 states it is cleared only via
+     * `IntEventClear`. This ingress path records the bits but leaves the
+     * ordering-sensitive clear/consume policy to the coordinator FSM.
+     */
     void OnIrq(uint32_t intEvent, uint64_t timestamp);
 
+    /// Register the topology publication callback used after a stable reset completes.
     void BindCallbacks(TopologyReadyCallback onTopology);
 
+    /// Return the most recent reset metrics snapshot.
     const BusResetMetrics& Metrics() const { return metrics_; }
+    /// Return the current FSM state.
     State GetState() const { return state_; }
     const char* StateString() const;
     static const char* StateString(State state);
@@ -119,34 +141,82 @@ class BusResetCoordinator {
     void EscalateDiscoveryDelay();
 
   private:
-    void TransitionTo(State newState, const char* reason);
-    void ProcessEvent(Event event);
-    void RunStateMachine();
+#ifdef ASFW_HOST_TEST
+    friend class BusResetCoordinatorTestPeer;
+#endif
 
-    void A_MaskBusReset();
-    void A_UnmaskBusReset();
+    enum class StepResult : uint8_t { Continue, Yield, Finish };
+
+    enum class ResetRequestKind : uint8_t { Recovery, GapCorrection, Delegation, ManualBusManager };
+
+    enum class ResetFlavor : uint8_t { Short, Long };
+
+    struct SelfIDLatchState {
+        bool complete{false};
+        bool stickyComplete{false};
+        uint64_t completeTimeNs{0};
+        uint64_t stickyCompleteTimeNs{0};
+
+        void Reset() noexcept {
+            complete = false;
+            stickyComplete = false;
+            completeTimeNs = 0;
+            stickyCompleteTimeNs = 0;
+        }
+    };
+
+    struct ResetTimingState {
+        uint64_t lastBusResetEdgeNs{0};
+        uint64_t lastSelfIdCompletionNs{0};
+        uint64_t softwareResetBlockedUntilNs{0};
+    };
+
+    struct ResetRequest {
+        ResetRequestKind kind{ResetRequestKind::Recovery};
+        ResetFlavor flavor{ResetFlavor::Short};
+        std::optional<BusManager::PhyConfigCommand> phyConfig;
+        std::string reason;
+    };
+
+    void TransitionTo(State newState, const char* reason);
+    void RunStateMachine();
+    void BeginNewResetCycle();
+    void CompleteCurrentRun();
+    void YieldAndReschedule(uint32_t delayMs, const char* reason);
+
+    StepResult StepIdle();
+    StepResult StepDetecting();
+    StepResult StepWaitingSelfID();
+    StepResult StepQuiescingAT();
+    StepResult StepRestoringConfigROM();
+    StepResult StepClearingBusReset();
+    StepResult StepRearming();
+    StepResult StepComplete();
+
+    void MaskBusReset();
+    void UnmaskBusReset();
     void ForceUnmaskBusResetIfNeeded();
     void HandleStraySelfID();
-    void A_ClearSelfID2Stale();
-    void A_ArmSelfIDBuffer();
-    void A_AckSelfIDPair();
-    void A_StopFlushAT();
-    void A_DecodeSelfID();
-    void A_BuildTopology();
-    void A_RestoreConfigROM();
-    void A_ClearBusReset();
-    void A_EnableFilters();
-    void A_RearmAT();
-    void A_MetricsLog();
-    void A_SendGlobalResumeIfNeeded();
-    void StageDelayedPhyPacket(const BusManager::PhyConfigCommand& command, const char* reason);
-    bool DispatchPendingPhyPacket();
+    void ClearStaleSelfIDComplete2();
+    void ClearConsumedSelfIDInterrupts();
+    void ArmSelfIDBuffer();
+    void StopFlushAT();
+    bool DecodeSelfID();
+    bool BuildTopology();
+    void RestoreConfigROM();
+    void ClearBusReset();
+    void EnableFilters();
+    void RearmAT();
+    void LogMetrics();
+    void SendGlobalResumeIfNeeded();
     void EvaluateRootDelegation(const TopologySnapshot& topo);
-    void ScheduleDeferredRun(uint32_t delayMs, const char* reason);
+    void RequestSoftwareReset(ResetRequest request);
+    bool MaybeDispatchPendingSoftwareReset();
+    bool DispatchSoftwareReset(const ResetRequest& request);
 
     bool G_ATInactive();
-    bool G_HaveSelfIDPair() const;
-    bool G_ROMImageReady();
+    bool HasSelfIDCompletion() const;
+    bool CanAttemptSelfIDDecode() const;
     bool G_NodeIDValid() const;
 
     bool ReadyForDiscovery(Discovery::Generation gen) const;
@@ -155,20 +225,13 @@ class BusResetCoordinator {
 
     State state_{State::Idle};
     uint64_t stateEntryTime_{0};
-    bool selfIDComplete1_{false};
-    bool selfIDComplete2_{false};
-    uint32_t pendingSelfIDCountReg_{0};
-
     std::atomic<bool> workInProgress_{false};
-
-    bool firstBusResetSeen_{false};
-    uint64_t lastResetTimestamp_{0};
+    bool pendingBusResetEdge_{false};
+    bool stopFlushIssued_{false};
 
     BusResetMetrics metrics_{};
 
     uint64_t firstIrqTime_{0};
-    uint64_t selfIDComplete1Time_{0};
-    uint64_t selfIDComplete2Time_{0};
     uint64_t busResetClearTime_{0};
     std::optional<SelfIDCapture::Result> lastSelfId_;
     std::optional<TopologySnapshot> lastTopology_;
@@ -176,7 +239,7 @@ class BusResetCoordinator {
 
     std::atomic<bool> deferredRunScheduled_{false};
     HardwareInterface* hardware_{nullptr};
-    Async::AsyncSubsystem* asyncSubsystem_{nullptr};
+    Async::IAsyncControllerPort* asyncSubsystem_{nullptr};
     SelfIDCapture* selfIdCapture_{nullptr};
     ConfigROMStager* configRomStager_{nullptr};
     InterruptManager* interruptManager_{nullptr};
@@ -186,17 +249,15 @@ class BusResetCoordinator {
 
     OSSharedPtr<IODispatchQueue> workQueue_;
 
-    uint64_t lastResetNs_{0};
-    uint64_t lastSelfIdNs_{0};
+    SelfIDLatchState selfIdLatch_{};
+    ResetTimingState resetTiming_{};
     bool busResetMasked_{false};
     Discovery::Generation lastGeneration_{0};
 
     bool filtersEnabled_{false};
     bool atArmed_{false};
 
-    std::optional<BusManager::PhyConfigCommand> pendingPhyCommand_;
-    std::string pendingPhyReason_;
-    bool pendingManagedReset_{false};
+    std::optional<ResetRequest> pendingSoftwareReset_;
     bool delegateAttemptActive_{false};
     uint8_t delegateTarget_{0xFF};
     uint32_t delegateRetryCount_{0};

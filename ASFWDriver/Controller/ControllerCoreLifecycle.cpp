@@ -5,9 +5,9 @@
 #include <string>
 #include <unordered_set>
 
-#include "../Async/AsyncSubsystem.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
+#include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
@@ -45,14 +45,15 @@ namespace ASFW::Driver {
 ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
     : config_(std::move(config)), deps_(std::move(deps)) {
 
-    if (deps_.asyncSubsystem && deps_.topology) {
-        busImpl_ = std::make_unique<Async::FireWireBusImpl>(*deps_.asyncSubsystem, *deps_.topology);
+    if (deps_.asyncController && deps_.topology) {
+        busImpl_ =
+            std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);
         ASFW_LOG(Controller, "✅ FireWireBusImpl facade created");
     }
 
-    if (deps_.hardware && deps_.asyncSubsystem) {
-        deps_.hardware->SetAsyncSubsystem(deps_.asyncSubsystem.get());
-        ASFW_LOG(Controller, "✅ HardwareInterface bound to AsyncSubsystem for PHY packets");
+    if (deps_.hardware && deps_.asyncController) {
+        deps_.hardware->BindAsyncControllerPort(deps_.asyncController.get());
+        ASFW_LOG(Controller, "✅ HardwareInterface bound to async controller port for PHY packets");
     }
 
     // Note: DMAMemoryImpl will be instantiated lazily in DMA() accessor
@@ -61,7 +62,44 @@ ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
 
 ControllerCore::~ControllerCore() { Stop(); }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void ControllerCore::LogBuildBanner() const {
+    ASFW_LOG(Controller, "═══════════════════════════════════════════════════════════");
+    ASFW_LOG(Controller, "%{public}s", Version::kFullVersionString);
+    ASFW_LOG(Controller, "%{public}s", Version::kBuildInfoString);
+    if (Version::kGitDirty) {
+        ASFW_LOG(Controller, "⚠️  DIRTY BUILD: Working tree has uncommitted changes");
+    }
+    ASFW_LOG(Controller, "Build host: %{public}s", Version::kBuildHost);
+    ASFW_LOG(Controller, "═══════════════════════════════════════════════════════════");
+}
+
+kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
+    if (!(deps_.busReset && deps_.hardware && deps_.scheduler && deps_.asyncController &&
+          deps_.selfId && deps_.configRomStager && deps_.interrupts && deps_.topology)) {
+        ASFW_LOG(Controller,
+                 "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
+        return kIOReturnNoResources;
+    }
+
+    auto workQueue = deps_.scheduler->Queue();
+    ASFW_LOG(Controller, "Initializing BusResetCoordinator");
+
+    deps_.busReset->Initialize(deps_.hardware.get(), workQueue, deps_.asyncController.get(),
+                               deps_.selfId.get(), deps_.configRomStager.get(),
+                               deps_.interrupts.get(), deps_.topology.get(), deps_.busManager.get(),
+                               deps_.romScanner.get());
+
+    ASFW_LOG(Controller, "Binding topology callback for Discovery integration");
+    deps_.busReset->BindCallbacks(
+        [this](const TopologySnapshot& snap) { this->OnTopologyReady(snap); });
+
+    if (deps_.romScanner && deps_.topology) {
+        deps_.romScanner->SetTopologyManager(deps_.topology.get());
+    }
+
+    return kIOReturnSuccess;
+}
+
 kern_return_t ControllerCore::Start(IOService* provider) {
     if (running_) {
         return kIOReturnSuccess;
@@ -72,37 +110,11 @@ kern_return_t ControllerCore::Start(IOService* provider) {
                                          mach_absolute_time());
     }
 
-    ASFW_LOG(Controller, "═══════════════════════════════════════════════════════════");
-    ASFW_LOG(Controller, "%{public}s", Version::kFullVersionString);
-    ASFW_LOG(Controller, "%{public}s", Version::kBuildInfoString);
-    if (Version::kGitDirty) {
-        ASFW_LOG(Controller, "⚠️  DIRTY BUILD: Working tree has uncommitted changes");
-    }
-    ASFW_LOG(Controller, "Build host: %{public}s", Version::kBuildHost);
-    ASFW_LOG(Controller, "═══════════════════════════════════════════════════════════");
+    LogBuildBanner();
 
-    if (deps_.busReset && deps_.hardware && deps_.scheduler && deps_.asyncSubsystem &&
-        deps_.selfId && deps_.configRomStager && deps_.interrupts && deps_.topology) {
-
-        auto workQueue = deps_.scheduler->Queue();
-        ASFW_LOG(Controller, "Initializing BusResetCoordinator");
-
-        deps_.busReset->Initialize(deps_.hardware.get(), workQueue, deps_.asyncSubsystem.get(),
-                                   deps_.selfId.get(), deps_.configRomStager.get(),
-                                   deps_.interrupts.get(), deps_.topology.get(),
-                                   deps_.busManager.get(), deps_.romScanner.get());
-
-        ASFW_LOG(Controller, "Binding topology callback for Discovery integration");
-        deps_.busReset->BindCallbacks(
-            [this](const TopologySnapshot& snap) { this->OnTopologyReady(snap); });
-
-        if (deps_.romScanner && deps_.topology) {
-            deps_.romScanner->SetTopologyManager(deps_.topology.get());
-        }
-    } else {
-        ASFW_LOG(Controller,
-                 "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
-        return kIOReturnNoResources;
+    const kern_return_t initStatus = InitializeBusResetAndDiscovery();
+    if (initStatus != kIOReturnSuccess) {
+        return initStatus;
     }
 
     hardwareAttached_ = (provider != nullptr);
@@ -522,7 +534,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     }
 
     // Step 7: Set Physical Upper Bound (256MB CSR address range)
-    // TODO: investigate if this is required or only needed for remote DMA
+    // TODO(ASFW-DMA): Confirm whether remote DMA still requires this register programming.
     // Per Linux ohci_enable(): Don't pre-write NodeID; bus reset will assign it from Self-ID
     // The kProvisionalNodeId value would be immediately overwritten anyway
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
@@ -560,7 +572,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
             ++irContextsCleared;
         }
     }
-    ASFW_LOG(Hardware, "⚠️  TODO: ISOCHRONOUS DMA STACK REQUIRED ⚠️");
+    ASFW_LOG(Hardware, "Isochronous DMA stack is still required before this path is enabled");
     ASFW_LOG(Hardware, "Cleared multi-channel mode on %u IR contexts (support=0x%08x)",
              irContextsCleared, irContextSupport);
     ASFW_LOG(Hardware,
@@ -633,8 +645,8 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
         ASFW_LOG(Hardware, "Skipping forced reset; relying on auto reset from linkEnable");
     }
 
-    if (deps_.asyncSubsystem) {
-        const kern_return_t armStatus = deps_.asyncSubsystem->ArmARContextsOnly();
+    if (deps_.asyncController) {
+        const kern_return_t armStatus = deps_.asyncController->ArmARContextsOnly();
         if (armStatus != kIOReturnSuccess) {
             ASFW_LOG(Hardware, "Failed to arm AR contexts: 0x%08x", armStatus);
             return armStatus;
@@ -649,7 +661,7 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     const bool linkEnabled = (hw.ReadHCControl() & HCControlBits::kLinkEnable) != 0;
     const uint32_t configRomMap = hw.Read(Register32::kConfigROMMap);
     const char* selfIdState = deps_.selfId ? "armed" : "missing";
-    const char* asyncState = deps_.asyncSubsystem ? "armed" : "missing";
+    const char* asyncState = deps_.asyncController ? "armed" : "missing";
 
     ASFW_LOG(Hardware,
              "OHCI init complete: version=0x%08x link=%{public}s configROM=0x%08x "

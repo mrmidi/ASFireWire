@@ -2,12 +2,13 @@
 
 #include <algorithm>
 #include <cstring>
+#include <span>
 #include <string>
 
 #include "../Common/BarrierUtils.hpp"
+#include "../Hardware/RegisterMap.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "Logging.hpp"
-#include "../Hardware/RegisterMap.hpp"
 #include "TopologyTypes.hpp"
 
 namespace {
@@ -16,6 +17,47 @@ constexpr size_t kSelfIDAlignment = 2048; // OHCI 1.1 Table 11-1
 
 constexpr size_t RoundUp(size_t value, size_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
+}
+
+using DecodeError = ASFW::Driver::SelfIDCapture::DecodeError;
+using DecodeErrorCode = ASFW::Driver::SelfIDCapture::DecodeErrorCode;
+
+[[nodiscard]] DecodeError MakeDecodeError(DecodeErrorCode code, uint32_t countRegister,
+                                          uint32_t generation, size_t quadletIndex = 0) {
+    return DecodeError{code, countRegister, generation, quadletIndex};
+}
+
+[[nodiscard]] std::expected<std::vector<uint32_t>, DecodeError>
+NormalizeSelfIDQuadlets(std::span<const uint32_t> rawQuadlets, uint32_t countRegister,
+                        uint32_t generation) {
+    if (rawQuadlets.size() <= 1) {
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::EmptyCapture, countRegister, generation));
+    }
+
+    const auto payload = rawQuadlets.subspan(1);
+    if ((payload.size() % 2U) != 0U) {
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::InvalidInversePair, countRegister, generation,
+                            rawQuadlets.size() - 1));
+    }
+
+    std::vector<uint32_t> normalized;
+    normalized.reserve(1 + payload.size() / 2U);
+    normalized.push_back(rawQuadlets.front());
+
+    for (size_t index = 0; index < payload.size(); index += 2U) {
+        const uint32_t quadlet = payload[index];
+        const uint32_t inverse = payload[index + 1U];
+        if (quadlet != ~inverse) {
+            return std::unexpected(
+                MakeDecodeError(DecodeErrorCode::InvalidInversePair, countRegister, generation,
+                                index + 1U));
+        }
+        normalized.push_back(quadlet);
+    }
+
+    return normalized;
 }
 
 } // namespace
@@ -138,29 +180,55 @@ void SelfIDCapture::Disarm(HardwareInterface& hw) {
     armed_ = false;
 }
 
-std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountReg, HardwareInterface& hw) const {
+const char* SelfIDCapture::DecodeErrorCodeString(DecodeErrorCode code) noexcept {
+    switch (code) {
+    case DecodeErrorCode::BufferUnavailable:
+        return "BufferUnavailable";
+    case DecodeErrorCode::ControllerErrorBit:
+        return "ControllerErrorBit";
+    case DecodeErrorCode::EmptyCapture:
+        return "EmptyCapture";
+    case DecodeErrorCode::CountOverflow:
+        return "CountOverflow";
+    case DecodeErrorCode::NullMapAddress:
+        return "NullMapAddress";
+    case DecodeErrorCode::GenerationMismatch:
+        return "GenerationMismatch";
+    case DecodeErrorCode::InvalidInversePair:
+        return "InvalidInversePair";
+    case DecodeErrorCode::MalformedSequence:
+        return "MalformedSequence";
+    }
+    return "Unknown";
+}
+
+std::expected<SelfIDCapture::Result, SelfIDCapture::DecodeError>
+SelfIDCapture::Decode(uint32_t selfIDCountReg, HardwareInterface& hw) const {
     if (!segmentValid_ || !map_) {
-        return std::nullopt;
+        return std::unexpected(MakeDecodeError(DecodeErrorCode::BufferUnavailable, selfIDCountReg,
+                                               0));
     }
 
-    const uint32_t quadCount = (selfIDCountReg & SelfIDCountBits::kSizeMask) >> SelfIDCountBits::kSizeShift;
-    const uint32_t generation = (selfIDCountReg & SelfIDCountBits::kGenerationMask) >> SelfIDCountBits::kGenerationShift;
+    const uint32_t quadCount =
+        (selfIDCountReg & SelfIDCountBits::kSizeMask) >> SelfIDCountBits::kSizeShift;
+    const uint32_t generation =
+        (selfIDCountReg & SelfIDCountBits::kGenerationMask) >> SelfIDCountBits::kGenerationShift;
     const bool error = (selfIDCountReg & SelfIDCountBits::kError) != 0;
 
-    Result result;
-    result.generation = generation;
-    result.crcError = error;
-
-    if (quadCount == 0 || error) {
-        result.timedOut = (quadCount == 0);
-        result.valid = false;
-        return result;
+    if (quadCount == 0) {
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::EmptyCapture, selfIDCountReg, generation));
     }
-    
+
+    if (error) {
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::ControllerErrorBit, selfIDCountReg, generation));
+    }
+
     if (quadCount > quadCapacity_) {
         ASFW_LOG(Hardware, "Self-ID quadCount=%u exceeds buffer capacity=%zu", quadCount, quadCapacity_);
-        result.valid = false;
-        return result;
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::CountOverflow, selfIDCountReg, generation));
     }
 
     const size_t cappedQuads = std::min<size_t>(quadCount, quadCapacity_);
@@ -170,42 +238,52 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
     const uint64_t addr = map_->GetAddress();
     if (addr == 0) {
         ASFW_LOG(Hardware, "Self-ID map address is NULL - buffer mapping failed");
-        result.valid = false;
-        result.timedOut = false;
-        return result;
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::NullMapAddress, selfIDCountReg, generation));
     }
-    
+
     const auto* base = reinterpret_cast<const uint32_t*>(addr);
-    
+
     if (cappedQuads > 0) {
         const uint32_t headerQuad = base[0];
         const uint32_t genMem = (headerQuad >> 16) & 0xFF;
-        
+
         const uint32_t selfIDCountReg2 = hw.Read(Register32::kSelfIDCount);
-        const uint32_t generation2 = (selfIDCountReg2 & SelfIDCountBits::kGenerationMask) >> SelfIDCountBits::kGenerationShift;
-        
+        const uint32_t generation2 =
+            (selfIDCountReg2 & SelfIDCountBits::kGenerationMask) >> SelfIDCountBits::kGenerationShift;
+
         if (generation != genMem) {
-            ASFW_LOG(Hardware, "Self-ID generation mismatch (buffer vs initial read): buffer=%u register1=%u", 
+            ASFW_LOG(Hardware,
+                     "Self-ID generation mismatch (buffer vs initial read): buffer=%u register1=%u",
                      genMem, generation);
-            result.valid = false;
-            result.crcError = false;
-            result.timedOut = false;
-            return result;
+            return std::unexpected(
+                MakeDecodeError(DecodeErrorCode::GenerationMismatch, selfIDCountReg, generation));
         }
-        
+
         if (generation != generation2) {
             ASFW_LOG(Hardware, "Self-ID generation mismatch (initial vs double-read): register1=%u register2=%u",
                      generation, generation2);
-            result.valid = false;
-            result.crcError = false;
-            result.timedOut = false;
-            return result;
+            return std::unexpected(
+                MakeDecodeError(DecodeErrorCode::GenerationMismatch, selfIDCountReg, generation));
         }
-        
+
         ASFW_LOG(Hardware, "Self-ID generation VALIDATED: %u", generation);
     }
-    
-    result.quads.assign(base, base + cappedQuads);
+
+    const auto rawQuadlets = std::span<const uint32_t>(base, cappedQuads);
+    auto normalized = NormalizeSelfIDQuadlets(rawQuadlets, selfIDCountReg, generation);
+    if (!normalized) {
+        ASFW_LOG(Hardware, "Self-ID normalization failed: %{public}s at quadlet=%zu",
+                 DecodeErrorCodeString(normalized.error().code), normalized.error().quadletIndex);
+        return std::unexpected(normalized.error());
+    }
+
+    Result result;
+    result.generation = generation;
+    result.valid = true;
+    result.timedOut = false;
+    result.crcError = false;
+    result.quads = std::move(*normalized);
 
     SelfIDSequenceEnumerator enumerator;
     if (result.quads.size() > 1) {
@@ -218,14 +296,11 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
 
     bool enumeratorError = false;
     while (enumerator.quadlet_count > 0) {
-        if (enumerator.cursor && !IsSelfIDTag(*enumerator.cursor)) {
-            ASFW_LOG_SELF_ID("Skipping non-Self-ID quadlet: 0x%08x tag=%u",
-                              *enumerator.cursor, (*enumerator.cursor >> 30) & 0x3);
-            enumerator.cursor++;
-            enumerator.quadlet_count--;
-            continue;
+        if (enumerator.cursor == nullptr || !IsSelfIDTag(*enumerator.cursor)) {
+            enumeratorError = true;
+            break;
         }
-        
+
         auto item = enumerator.next();
         if (!item.has_value()) {
             enumeratorError = true;
@@ -236,9 +311,11 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
         result.sequences.emplace_back(startIndex, count);
     }
 
-    result.valid = !result.quads.empty() && !enumeratorError;
-    result.timedOut = false;
-    
+    if (enumeratorError) {
+        return std::unexpected(
+            MakeDecodeError(DecodeErrorCode::MalformedSequence, selfIDCountReg, generation));
+    }
+
     ASFW_LOG(Hardware, "Self-ID decode complete: valid=%d quads=%zu sequences=%zu enumeratorError=%d",
              result.valid, result.quads.size(), result.sequences.size(), enumeratorError);
     std::string seqSummary;
@@ -255,11 +332,7 @@ std::optional<SelfIDCapture::Result> SelfIDCapture::Decode(uint32_t selfIDCountR
         seqSummary = "none";
     }
     ASFW_LOG(Hardware, "🧵 Sequences: %{public}s", seqSummary.c_str());
-    if (!result.valid) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
-        ASFW_LOG(Hardware, "❌ Self-ID decode flagged invalid data - inspect sequences above");
-    } else {
-        ASFW_LOG(Hardware, "✅ Self-ID decode valid");
-    }
+    ASFW_LOG(Hardware, "✅ Self-ID decode valid");
 #if ASFW_DEBUG_SELF_ID
     ASFW_LOG_SELF_ID("=== End Self-ID Debug ===");
 #endif

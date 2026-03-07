@@ -18,6 +18,7 @@ set(ASFW_COMMON_INCLUDES
     "${ASFW_DRIVER_DIR}/Async"
     "${ASFW_DRIVER_DIR}/Core"
     "${ASFW_DRIVER_DIR}/Bus"
+    "${ASFW_DRIVER_DIR}/Logging"
     "${ASFW_DRIVERKIT_DIR}"
     "${ASFW_DRIVER_DIR}/Hardware"
     "${ASFW_DRIVER_DIR}/Testing"
@@ -189,6 +190,93 @@ target_compile_definitions(TopologyGapExtractionTests
 
 target_include_directories(TopologyGapExtractionTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+add_executable(TopologyManagerTests
+    "${ASFW_TESTS_DIR}/TopologyManagerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(TopologyManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TopologyManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TopologyManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TopologyManagerTests)
+
+add_executable(SelfIDSequenceTests
+    "${ASFW_TESTS_DIR}/SelfIDSequenceTests.cpp"
+)
+
+target_link_libraries(SelfIDSequenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SelfIDSequenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SelfIDSequenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SelfIDSequenceTests)
+
+add_executable(SelfIDCaptureTests
+    "${ASFW_TESTS_DIR}/SelfIDCaptureTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SelfIDCaptureTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SelfIDCaptureTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SelfIDCaptureTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SelfIDCaptureTests)
+
+add_executable(BusResetCoordinatorTests
+    "${ASFW_TESTS_DIR}/BusResetCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorFSM.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorActions.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorDiscoveryDelay.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Hardware/InterruptManager.cpp"
+    "${ASFW_TESTS_DIR}/BusResetCoordinatorDepsStubs.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(BusResetCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BusResetCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BusResetCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BusResetCoordinatorTests)
+
 # PHY Packets Tests - Encoding/decoding validation, gap=0 bug regression
 add_executable(PhyPacketsTests
     "${ASFW_TESTS_DIR}/PhyPacketsTests.cpp"
@@ -205,6 +293,28 @@ target_compile_definitions(PhyPacketsTests
 )
 
 target_include_directories(PhyPacketsTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+# =============================================================================
+# FireWire IOReturn Tests - FireWire-family status encoding and boundary mapping
+# =============================================================================
+add_executable(FireWireIOReturnTests
+    "${ASFW_TESTS_DIR}/FireWireIOReturnTests.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(FireWireIOReturnTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(FireWireIOReturnTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(FireWireIOReturnTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(FireWireIOReturnTests)
 
 # =============================================================================
 # DMA Memory Tests - FakeDMAMemory unit tests

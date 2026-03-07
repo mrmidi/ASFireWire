@@ -5,9 +5,9 @@
 #include <string>
 #include <unordered_set>
 
-#include "../Async/AsyncSubsystem.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
+#include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
@@ -69,7 +69,9 @@ std::optional<TopologySnapshot> ControllerCore::LatestTopology() const {
     return std::nullopt;
 }
 
-Discovery::ConfigROMStore* ControllerCore::GetConfigROMStore() const { return deps_.romStore.get(); }
+Discovery::ConfigROMStore* ControllerCore::GetConfigROMStore() const {
+    return deps_.romStore.get();
+}
 
 Discovery::ROMScanner* ControllerCore::GetROMScanner() const { return deps_.romScanner.get(); }
 
@@ -77,13 +79,21 @@ void ControllerCore::AttachROMScanner(std::shared_ptr<Discovery::ROMScanner> rom
     deps_.romScanner = std::move(romScanner);
 }
 
-Discovery::IDeviceManager* ControllerCore::GetDeviceManager() const { return deps_.deviceManager.get(); }
+Discovery::IDeviceManager* ControllerCore::GetDeviceManager() const {
+    return deps_.deviceManager.get();
+}
 
-Discovery::IUnitRegistry* ControllerCore::GetUnitRegistry() const { return deps_.deviceManager.get(); }
+Discovery::IUnitRegistry* ControllerCore::GetUnitRegistry() const {
+    return deps_.deviceManager.get();
+}
 
-Discovery::DeviceRegistry* ControllerCore::GetDeviceRegistry() const { return deps_.deviceRegistry.get(); }
+Discovery::DeviceRegistry* ControllerCore::GetDeviceRegistry() const {
+    return deps_.deviceRegistry.get();
+}
 
-Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const { return deps_.avcDiscovery.get(); }
+Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
+    return deps_.avcDiscovery.get();
+}
 
 void ControllerCore::SetAVCDiscovery(std::shared_ptr<Protocols::AVC::AVCDiscovery> avcDiscovery) {
     deps_.avcDiscovery = std::move(avcDiscovery);
@@ -124,8 +134,8 @@ Async::IFireWireBus& ControllerCore::Bus() const {
 }
 
 Shared::IDMAMemory& ControllerCore::DMA() {
-    if (!dmaImpl_ && deps_.asyncSubsystem) {
-        auto* dmaManager = deps_.asyncSubsystem->GetDMAManager();
+    if (!dmaImpl_ && deps_.asyncController) {
+        auto* dmaManager = deps_.asyncController->GetDMAManager();
         if (dmaManager != nullptr) {
             dmaImpl_ = std::make_unique<Async::DMAMemoryImpl>(*dmaManager);
             ASFW_LOG(Controller, "✅ DMAMemoryImpl facade created");
@@ -137,13 +147,12 @@ Shared::IDMAMemory& ControllerCore::DMA() {
     return *dmaImpl_;
 }
 
-Async::AsyncSubsystem& ControllerCore::AsyncSubsystem() const {
-    if (!deps_.asyncSubsystem) {
+Async::IAsyncControllerPort& ControllerCore::AsyncSubsystem() const {
+    if (!deps_.asyncController) {
         ASFW_LOG(Controller, "❌ CRITICAL: AsyncSubsystem() called with null dependency");
         __builtin_trap();
     }
-    return *deps_.asyncSubsystem;
+    return *deps_.asyncController;
 }
 
 } // namespace ASFW::Driver
-

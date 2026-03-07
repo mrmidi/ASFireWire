@@ -2,12 +2,12 @@
 
 #include <algorithm>
 
+#include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "Logging.hpp"
-#include "../Async/AsyncSubsystem.hpp"
 
 #ifndef ASFW_HOST_TEST
-#include <DriverKit/IOService.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOService.h>
 #include <DriverKit/OSAction.h>
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 #else
@@ -18,12 +18,18 @@
 namespace {
 struct IOLockGuard {
     IOLock* lock;
-    explicit IOLockGuard(IOLock* l) : lock(l) { if (lock) IOLockLock(lock); }
-    ~IOLockGuard() { if (lock) IOLockUnlock(lock); }
+    explicit IOLockGuard(IOLock* l) : lock(l) {
+        if (lock)
+            IOLockLock(lock);
+    }
+    ~IOLockGuard() {
+        if (lock)
+            IOLockUnlock(lock);
+    }
     IOLockGuard(const IOLockGuard&) = delete;
     IOLockGuard& operator=(const IOLockGuard&) = delete;
 };
-}
+} // namespace
 
 namespace ASFW::Driver {
 
@@ -35,11 +41,9 @@ constexpr uint16_t kRequiredCommandBits = kIOPCICommandBusMaster | kIOPCICommand
 #else
 constexpr uint16_t kRequiredCommandBits = 0;
 #endif
-}
+} // namespace
 
-HardwareInterface::HardwareInterface() {
-    phyLock_ = IOLockAlloc();
-}
+HardwareInterface::HardwareInterface() { phyLock_ = IOLockAlloc(); }
 
 HardwareInterface::~HardwareInterface() {
     if (phyLock_) {
@@ -68,12 +72,12 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     uint16_t vendorId = 0, deviceId = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetVendorID, &vendorId);
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetDeviceID, &deviceId);
-    
+
     quirk_agere_lsi_ = (vendorId == 0x11c1 && (deviceId == 0x5901 || deviceId == 0x5900));
     if (quirk_agere_lsi_) {
         ASFW_LOG(Hardware, "⚠️  Agere/LSI chipset detected");
     }
-    
+
     uint16_t command = 0;
     pci->ConfigurationRead16(kIOPCIConfigurationOffsetCommand, &command);
 
@@ -100,10 +104,8 @@ kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
         return kr;
     }
 
-    const bool barIsMemory = (barType == kPCIBARTypeM32 ||
-                              barType == kPCIBARTypeM32PF ||
-                              barType == kPCIBARTypeM64 ||
-                              barType == kPCIBARTypeM64PF);
+    const bool barIsMemory = (barType == kPCIBARTypeM32 || barType == kPCIBARTypeM32PF ||
+                              barType == kPCIBARTypeM64 || barType == kPCIBARTypeM64PF);
     if (!barIsMemory) {
         pci->Close(owner);
         return kIOReturnUnsupported;
@@ -139,8 +141,9 @@ void HardwareInterface::Detach() {
     barType_ = 0;
 }
 
-void HardwareInterface::SetAsyncSubsystem(ASFW::Async::AsyncSubsystem* subsystem) noexcept {
-    asyncSubsystem_ = subsystem;
+void HardwareInterface::BindAsyncControllerPort(
+    ASFW::Async::IAsyncControllerPort* controllerPort) noexcept {
+    asyncControllerPort_ = controllerPort;
 }
 
 uint32_t HardwareInterface::Read(Register32 reg) const noexcept {
@@ -209,10 +212,13 @@ InterruptSnapshot HardwareInterface::CaptureInterruptSnapshot(uint64_t timestamp
         return snapshot;
     }
 
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIntEvent), &snapshot.intEvent);
+    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIntEvent),
+                          &snapshot.intEvent);
     snapshot.intMask = 0;
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoXmitEvent), &snapshot.isoXmitEvent);
-    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoRecvEvent), &snapshot.isoRecvEvent);
+    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoXmitEvent),
+                          &snapshot.isoXmitEvent);
+    device_->MemoryRead32(barIndex_, static_cast<uint64_t>(Register32::kIsoRecvEvent),
+                          &snapshot.isoRecvEvent);
     return snapshot;
 }
 
@@ -222,8 +228,8 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
     if (!device_) {
         return false;
     }
-    if (!asyncSubsystem_) {
-        ASFW_LOG_ERROR(Hardware, "PHY CONFIG send aborted - AsyncSubsystem not bound");
+    if (!asyncControllerPort_) {
+        ASFW_LOG_ERROR(Hardware, "PHY CONFIG send aborted - async controller port not bound");
         return false;
     }
 
@@ -251,12 +257,8 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
 
     const auto quadlets = AlphaPhyConfigPacket{config}.EncodeBusOrder();
 
-    ASFW_LOG(Hardware,
-             "PHY CONFIG (forceRoot=%d root=%u gapUpdate=%d gap=%u) quad=0x%08x",
-             config.forceRoot,
-             config.rootId,
-             config.gapCountOptimization,
-             config.gapCount,
+    ASFW_LOG(Hardware, "PHY CONFIG (forceRoot=%d root=%u gapUpdate=%d gap=%u) quad=0x%08x",
+             config.forceRoot, config.rootId, config.gapCountOptimization, config.gapCount,
              quadlets[0]);
 
     ASFW::Async::PhyParams params{};
@@ -264,36 +266,26 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
     params.quadlet2 = quadlets[1];
 
     auto completion = [packetQuad = quadlets[0]](ASFW::Async::AsyncHandle handle,
-                                                 ASFW::Async::AsyncStatus status,
-                                                 uint8_t,
+                                                 ASFW::Async::AsyncStatus status, uint8_t,
                                                  std::span<const uint8_t> /*response*/) {
         if (status == ASFW::Async::AsyncStatus::kSuccess) {
-            ASFW_LOG(Hardware,
-                     "PHY CONFIG complete handle=0x%x quad=0x%08x",
-                     handle.value,
+            ASFW_LOG(Hardware, "PHY CONFIG complete handle=0x%x quad=0x%08x", handle.value,
                      packetQuad);
         } else {
-            ASFW_LOG_ERROR(Hardware,
-                           "PHY CONFIG handle=0x%x failed status=%u quad=0x%08x",
-                           handle.value,
-                           static_cast<unsigned>(status),
-                           packetQuad);
+            ASFW_LOG_ERROR(Hardware, "PHY CONFIG handle=0x%x failed status=%u quad=0x%08x",
+                           handle.value, static_cast<unsigned>(status), packetQuad);
         }
     };
 
-    const auto handle = asyncSubsystem_->PhyRequest(params, std::move(completion));
+    const auto handle = asyncControllerPort_->PhyRequest(params, std::move(completion));
     if (!handle) {
-        ASFW_LOG_ERROR(Hardware,
-                       "PHY CONFIG submission rejected (handle=0) quad=0x%08x",
+        ASFW_LOG_ERROR(Hardware, "PHY CONFIG submission rejected (handle=0) quad=0x%08x",
                        quadlets[0]);
         return false;
     }
 
-    ASFW_LOG(Hardware,
-             "PHY CONFIG submitted handle=0x%x data=(0x%08x, 0x%08x)",
-             handle.value,
-             params.quadlet1,
-             params.quadlet2);
+    ASFW_LOG(Hardware, "PHY CONFIG submitted handle=0x%x data=(0x%08x, 0x%08x)", handle.value,
+             params.quadlet1, params.quadlet2);
     return true;
 }
 
@@ -301,8 +293,8 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
     if (!device_) {
         return false;
     }
-    if (!asyncSubsystem_) {
-        ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME aborted - AsyncSubsystem not bound");
+    if (!asyncControllerPort_) {
+        ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME aborted - async controller port not bound");
         return false;
     }
 
@@ -317,20 +309,21 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
     params.quadlet2 = quadlets[1];
 
     auto completion = [packetQuad = quadlets[0]](ASFW::Async::AsyncHandle handle,
-                                                 ASFW::Async::AsyncStatus status,
-                                                 uint8_t,
+                                                 ASFW::Async::AsyncStatus status, uint8_t,
                                                  std::span<const uint8_t>) {
         if (status == ASFW::Async::AsyncStatus::kSuccess) {
-            ASFW_LOG(Hardware, "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x", handle.value, packetQuad);
+            ASFW_LOG(Hardware, "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x", handle.value,
+                     packetQuad);
         } else {
             ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME handle=0x%x failed status=%u quad=0x%08x",
                            handle.value, static_cast<unsigned>(status), packetQuad);
         }
     };
 
-    const auto handle = asyncSubsystem_->PhyRequest(params, std::move(completion));
+    const auto handle = asyncControllerPort_->PhyRequest(params, std::move(completion));
     if (!handle) {
-        ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME submission rejected (handle=0) quad=0x%08x", quadlets[0]);
+        ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME submission rejected (handle=0) quad=0x%08x",
+                       quadlets[0]);
         return false;
     }
 
@@ -442,8 +435,8 @@ bool HardwareInterface::WritePhyRegister(uint8_t address, uint8_t value) {
 }
 
 bool HardwareInterface::WritePhyRegisterUnlocked(uint8_t address, uint8_t value) {
-    const uint32_t phyControl = (static_cast<uint32_t>(address) << 8) |
-                                static_cast<uint32_t>(value) | 0x4000u;
+    const uint32_t phyControl =
+        (static_cast<uint32_t>(address) << 8) | static_cast<uint32_t>(value) | 0x4000u;
 
     Write(Register32::kPhyControl, phyControl);
     FlushPostedWrites();
@@ -530,18 +523,22 @@ void HardwareInterface::IntMaskClear(uint32_t bits) {
     FlushPostedWrites();
 }
 
-std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {
+std::optional<HardwareInterface::DMABuffer>
+HardwareInterface::AllocateDMA(size_t length, uint64_t options, size_t alignment) {
     if (!device_) {
         ASFW_LOG_V0(Hardware, "DMA allocation failed - no PCI device");
         return std::nullopt;
     }
 
-    if ((options & (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) != (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) {
+    if ((options & (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) !=
+        (kIOMemoryDirectionOut | kIOMemoryDirectionIn)) {
         ASFW_LOG(Hardware, "⚠️  AllocateDMA: options=0x%llx may not be bidirectional", options);
     }
 
-    if (alignment == 0) alignment = 64;
-    if (alignment < 16) alignment = 16;
+    if (alignment == 0)
+        alignment = 64;
+    if (alignment < 16)
+        alignment = 16;
     if ((alignment & (alignment - 1)) != 0) {
         ASFW_LOG_V0(Hardware, "AllocateDMA: alignment=%zu is not power-of-two", alignment);
         return std::nullopt;
@@ -578,13 +575,8 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     uint32_t segmentCount = 32;
     uint64_t flags = 0;
 
-    kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions,
-                                buffer,
-                                0,
-                                length,
-                                &flags,
-                                &segmentCount,
-                                segments);
+    kr = command->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, buffer, 0, length, &flags,
+                                &segmentCount, segments);
 
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_V0(Hardware, "IODMACommand::PrepareForDMA failed: 0x%08x", kr);
@@ -599,7 +591,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
         buffer->release();
         return std::nullopt;
     }
-    
+
     if (segments[0].length < length) {
         ASFW_LOG_V0(Hardware, "❌ AllocateDMA: partial mapping len=%llu need=%zu",
                     (unsigned long long)segments[0].length, length);
@@ -618,21 +610,20 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     }
 
     if ((mappedAddress & (alignment - 1)) != 0) {
-        ASFW_LOG_V0(Hardware, "❌ CRITICAL: DMA buffer misaligned! iova=0x%llx requested=%zu", mappedAddress, alignment);
+        ASFW_LOG_V0(Hardware, "❌ CRITICAL: DMA buffer misaligned! iova=0x%llx requested=%zu",
+                    mappedAddress, alignment);
         command->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         buffer->release();
         return std::nullopt;
     }
 
-    ASFW_LOG_V2(Hardware, "DMA buffer allocated: iova=0x%llx size=%zu align=%zu",
-                mappedAddress, length, alignment);
+    ASFW_LOG_V2(Hardware, "DMA buffer allocated: iova=0x%llx size=%zu align=%zu", mappedAddress,
+                length, alignment);
 
-    return DMABuffer{
-        .descriptor = OSSharedPtr(buffer, OSNoRetain),
-        .dmaCommand = std::move(command),
-        .deviceAddress = mappedAddress,
-        .length = length
-    };
+    return DMABuffer{.descriptor = OSSharedPtr(buffer, OSNoRetain),
+                     .dmaCommand = std::move(command),
+                     .deviceAddress = mappedAddress,
+                     .length = length};
 }
 
 OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
@@ -643,16 +634,15 @@ OSSharedPtr<IODMACommand> HardwareInterface::CreateDMACommand() {
     IODMACommandSpecification spec{};
     spec.maxAddressBits = kDefaultDMAMaxAddressBits;
     IODMACommand* command = nullptr;
-    kern_return_t kr = IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &command);
+    kern_return_t kr =
+        IODMACommand::Create(device_.get(), kIODMACommandCreateNoOptions, &spec, &command);
     if (kr != kIOReturnSuccess || command == nullptr) {
         return nullptr;
     }
     return OSSharedPtr(command, OSNoRetain);
 }
 
-uint32_t HardwareInterface::ReadHCControl() const noexcept {
-    return Read(Register32::kHCControl);
-}
+uint32_t HardwareInterface::ReadHCControl() const noexcept { return Read(Register32::kHCControl); }
 
 void HardwareInterface::SetHCControlBits(uint32_t bits) noexcept {
     WriteAndFlush(Register32::kHCControlSet, bits);
@@ -662,24 +652,18 @@ void HardwareInterface::ClearHCControlBits(uint32_t bits) noexcept {
     WriteAndFlush(Register32::kHCControlClear, bits);
 }
 
-uint32_t HardwareInterface::ReadNodeID() const noexcept {
-    return Read(Register32::kNodeID);
-}
+uint32_t HardwareInterface::ReadNodeID() const noexcept { return Read(Register32::kNodeID); }
 
 namespace {
 
 // Generic wait-for-register helper with device ejection detection and flexible logging.
 // Template parameters:
 //   ReadFn: callable returning uint32_t (reads the state register, NOT a strobe)
-//   LogFn: callable(const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected)
+//   LogFn: callable(const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool
+//   ejected)
 template <typename ReadFn, typename LogFn>
-static bool WaitForRegister(ReadFn&& read32,
-                            uint32_t mask,
-                            bool expectSet,
-                            uint32_t timeoutUsec,
-                            uint32_t pollIntervalUsec,
-                            const char* name,
-                            LogFn&& logFn) {
+static bool WaitForRegister(ReadFn&& read32, uint32_t mask, bool expectSet, uint32_t timeoutUsec,
+                            uint32_t pollIntervalUsec, const char* name, LogFn&& logFn) {
     if (pollIntervalUsec == 0) {
         pollIntervalUsec = 100;
     }
@@ -723,44 +707,40 @@ static bool WaitForRegister(ReadFn&& read32,
 
 } // anonymous namespace
 
-bool HardwareInterface::WaitHC(uint32_t mask,
-                               bool expectSet,
-                               uint32_t timeoutUsec,
+bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                                uint32_t pollIntervalUsec) const {
     if (!device_) {
         return false;
     }
 
     return WaitForRegister(
-        [this] { return Read(Register32::kHCControl); },
-        mask, expectSet, timeoutUsec, pollIntervalUsec, "HCControl",
+        [this] { return Read(Register32::kHCControl); }, mask, expectSet, timeoutUsec,
+        pollIntervalUsec, "HCControl",
         [](const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected) {
             if (ejected) {
-                ASFW_LOG(Hardware, "%{public}s: device gone (0x%08x) tries=%llu t=%lluus",
-                         name, value, attempts, usec);
+                ASFW_LOG(Hardware, "%{public}s: device gone (0x%08x) tries=%llu t=%lluus", name,
+                         value, attempts, usec);
             } else {
                 const char* unit = (usec >= 1000) ? "ms" : "usec";
                 const uint64_t t = (usec >= 1000) ? usec / 1000 : usec;
-                ASFW_LOG(Hardware, "%{public}s: 0x%08x tries=%llu t=%llu%{public}s",
-                         name, value, attempts, t, unit);
+                ASFW_LOG(Hardware, "%{public}s: 0x%08x tries=%llu t=%llu%{public}s", name, value,
+                         attempts, t, unit);
             }
         });
 }
 
-bool HardwareInterface::WaitLink(uint32_t mask,
-                                 bool expectSet,
-                                 uint32_t timeoutUsec,
+bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                                  uint32_t pollIntervalUsec) const {
     if (!device_) {
         return false;
     }
 
     return WaitForRegister(
-        [this] { return Read(Register32::kLinkControl); },
-        mask, expectSet, timeoutUsec, pollIntervalUsec, "LinkControl",
+        [this] { return Read(Register32::kLinkControl); }, mask, expectSet, timeoutUsec,
+        pollIntervalUsec, "LinkControl",
         [](const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected) {
-            ASFW_LOG(Hardware, "%{public}s: 0x%08x tries=%llu t=%lluus ejected=%d",
-                     name, value, attempts, usec, ejected);
+            ASFW_LOG(Hardware, "%{public}s: 0x%08x tries=%llu t=%lluus ejected=%d", name, value,
+                     attempts, usec, ejected);
         });
 }
 
@@ -772,13 +752,13 @@ bool HardwareInterface::WaitNodeIdValid(uint32_t timeoutMs) const {
     return WaitForRegister(
         [this] { return Read(Register32::kNodeID); },
         /*mask=*/0x80000000u, /*expectSet=*/true,
-        /*timeoutUsec=*/timeoutMs * 1000, /*pollIntervalUsec=*/1000,
-        "NodeID",
+        /*timeoutUsec=*/timeoutMs * 1000, /*pollIntervalUsec=*/1000, "NodeID",
         [](const char* name, uint32_t value, uint64_t attempts, uint64_t usec, bool ejected) {
-            const uint32_t bus  = (value >> 16) & 0x3FFu;
-            const uint32_t node = (value >>  0) & 0x3Fu;
+            const uint32_t bus = (value >> 16) & 0x3FFu;
+            const uint32_t node = (value >> 0) & 0x3Fu;
             const bool valid = (value & 0x80000000u) != 0;
-            ASFW_LOG(Hardware, "%{public}s: 0x%08x valid=%d bus=%u node=%u tries=%llu t=%lluus ejected=%d",
+            ASFW_LOG(Hardware,
+                     "%{public}s: 0x%08x valid=%d bus=%u node=%u tries=%llu t=%lluus ejected=%d",
                      name, value, valid, bus, node, attempts, usec, ejected);
         });
 }

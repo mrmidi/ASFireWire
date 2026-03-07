@@ -5,9 +5,9 @@
 #include <string>
 #include <unordered_set>
 
-#include "../Async/AsyncSubsystem.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
+#include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
@@ -67,7 +67,7 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     }
 
     ASFW_LOG_V3(Controller, "HandleInterrupt: events=0x%08x AsyncSubsystem=%p", events,
-                deps_.asyncSubsystem.get());
+                deps_.asyncController.get());
 
     // Detailed interrupt decode (adapted from Linux log_irqs)
     const std::string eventDecode = DiagnosticLogger::DecodeInterruptEvents(events);
@@ -114,44 +114,40 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         HandleCycle64Seconds();
     }
 
-    // Feed relevant events to BusResetCoordinator FSM (it filters what it needs)
+    uint32_t faultAcks = 0;
+
     const uint32_t busResetRelevantBits =
-        IntEventBits::kBusReset | IntEventBits::kSelfIDComplete | IntEventBits::kSelfIDComplete2 |
-        IntEventBits::kUnrecoverableError | IntEventBits::kRegAccessFail;
+        IntEventBits::kBusReset | IntEventBits::kSelfIDComplete | IntEventBits::kSelfIDComplete2;
     if (deps_.busReset && ((events & busResetRelevantBits) != 0U)) {
         deps_.busReset->OnIrq(events & busResetRelevantBits, snapshot.timestamp);
     }
 
     // Dispatch AT Request completions
-    if (deps_.asyncSubsystem && ((events & IntEventBits::kReqTxComplete) != 0U)) {
+    if (deps_.asyncController && ((events & IntEventBits::kReqTxComplete) != 0U)) {
         ASFW_LOG_V3(Controller, "AT Request complete interrupt (transmit done)");
-        deps_.asyncSubsystem->OnTxInterrupt();
+        deps_.asyncController->OnTxInterrupt();
         // TODO(ASFW-Logging): Add DiagnosticLogger::DecodeAsyncPacket() call once we extract packet
         // headers
     }
 
     // Dispatch AT Response completions
-    if (deps_.asyncSubsystem && ((events & IntEventBits::kRespTxComplete) != 0U)) {
+    if (deps_.asyncController && ((events & IntEventBits::kRespTxComplete) != 0U)) {
         ASFW_LOG_V3(Controller, "AT Response complete interrupt (transmit done)");
-        deps_.asyncSubsystem->OnTxInterrupt();
+        deps_.asyncController->OnTxInterrupt();
     }
 
-    if (deps_.asyncSubsystem && ((events & IntEventBits::kRQPkt) != 0U)) {
+    if (deps_.asyncController && ((events & IntEventBits::kRQPkt) != 0U)) {
         ASFW_LOG_V3(Controller, "AR Request interrupt (RQPkt: async receive packet available)");
-        deps_.asyncSubsystem->OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType::Request);
+        deps_.asyncController->OnRxRequestInterrupt();
     }
 
-    if (deps_.asyncSubsystem && ((events & IntEventBits::kRSPkt) != 0U)) {
+    if (deps_.asyncController && ((events & IntEventBits::kRSPkt) != 0U)) {
         ASFW_LOG_V3(Controller, "AR Response interrupt (RSPkt: async receive packet available)");
-        deps_.asyncSubsystem->OnRxInterrupt(ASFW::Async::AsyncSubsystem::ARContextType::Response);
+        deps_.asyncController->OnRxResponseInterrupt();
     }
 
     if ((events & IntEventBits::kBusReset) != 0U) {
         ASFW_LOG(Controller, "Bus reset detected @ %llu ns", snapshot.timestamp);
-
-        if (deps_.interrupts) {
-            deps_.interrupts->MaskInterrupts(&hw, IntEventBits::kBusReset);
-        }
     }
 
     if ((events & IntEventBits::kSelfIDComplete) != 0U) { // 0x0001_0000 bit 16
@@ -164,9 +160,25 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
 
     // FSM handles all of the above through proper state machine transitions
 
-    // Only clear non-reset events here (AR/AT completions, errors, etc.)
+    if ((events & IntEventBits::kPostedWriteErr) != 0U) {
+        faultAcks |= IntEventBits::kPostedWriteErr;
+    }
+
+    if ((events & IntEventBits::kUnrecoverableError) != 0U) {
+        faultAcks |= IntEventBits::kUnrecoverableError;
+    }
+
+    if ((events & IntEventBits::kRegAccessFail) != 0U) {
+        faultAcks |= IntEventBits::kRegAccessFail;
+    }
+
+    if (faultAcks != 0U) {
+        hw.ClearIntEvents(faultAcks);
+    }
+
+    // Only clear non-reset, non-sticky completion events generically here.
     uint32_t toAck = events & ~(IntEventBits::kBusReset | IntEventBits::kSelfIDComplete |
-                                IntEventBits::kSelfIDComplete2);
+                                IntEventBits::kSelfIDComplete2 | faultAcks);
     if (toAck != 0U) {
         hw.ClearIntEvents(toAck);
     }
@@ -175,4 +187,3 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
 }
 
 } // namespace ASFW::Driver
-

@@ -32,6 +32,7 @@ class IDMAMemory;
 
 namespace ASFW::Async {
 class AsyncSubsystem;
+class IAsyncControllerPort;
 class IFireWireBus;
 class FireWireBusImpl;
 class DMAMemoryImpl;
@@ -80,6 +81,7 @@ class ControllerCore {
         std::shared_ptr<MetricsSink> metrics;
         std::shared_ptr<ControllerStateMachine> stateMachine;
         std::shared_ptr<ASFW::Async::AsyncSubsystem> asyncSubsystem;
+        std::shared_ptr<ASFW::Async::IAsyncControllerPort> asyncController;
 
         std::shared_ptr<ASFW::Discovery::SpeedPolicy> speedPolicy;
         std::shared_ptr<ASFW::Discovery::ConfigROMStore> romStore;
@@ -111,7 +113,7 @@ class ControllerCore {
     Async::IFireWireBus& Bus() const;
     Shared::IDMAMemory& DMA();
 
-    Async::AsyncSubsystem& AsyncSubsystem() const;
+    Async::IAsyncControllerPort& AsyncSubsystem() const;
 
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;
@@ -133,6 +135,8 @@ class ControllerCore {
     void SetCMPClient(std::shared_ptr<CMP::CMPClient> client);
 
   private:
+    void LogBuildBanner() const;
+    kern_return_t InitializeBusResetAndDiscovery();
     kern_return_t PerformSoftReset() const;
     kern_return_t InitialiseHardware(IOService* provider);
     kern_return_t EnableInterruptsAndStartBus();

@@ -4,7 +4,7 @@
 
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>
 
-#include "../Async/AsyncSubsystem.hpp"
+#include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Diagnostics/StatusPublisher.hpp"
 #include "../Isoch/IsochReceiveContext.hpp"
@@ -89,7 +89,7 @@ void WatchdogCoordinator::Schedule(uint64_t delayUsec) {
 }
 
 void WatchdogCoordinator::HandleTick(ControllerCore* controller,
-                                     ASFW::Async::AsyncSubsystem* asyncSubsystem,
+                                     ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
                                      ASFW::Isoch::IsochReceiveContext* isochReceiveContext,
                                      ASFW::Isoch::IsochTransmitContext* isochTransmitContext,
                                      StatusPublisher& statusPublisher) {
@@ -97,8 +97,7 @@ void WatchdogCoordinator::HandleTick(ControllerCore* controller,
         asyncSubsystem->OnTimeoutTick();
         const auto stats = asyncSubsystem->GetWatchdogStats();
         statusPublisher.UpdateAsyncWatchdog(static_cast<uint32_t>(stats.expiredTransactions),
-                                            stats.tickCount,
-                                            stats.lastTickUsec);
+                                            stats.tickCount, stats.lastTickUsec);
     }
 
     if (isochReceiveContext) {

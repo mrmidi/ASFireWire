@@ -8,22 +8,24 @@
 #include <mutex>
 #include <optional>
 
+#include "Interfaces/IAsyncControllerPort.hpp"
+
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
 #else
-#include <DriverKit/IOReturn.h>
+#include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOReturn.h>
+#include <DriverKit/OSAction.h>
 #include <DriverKit/OSObject.h>
 #include <DriverKit/OSSharedPtr.h>
-#include <DriverKit/OSAction.h>
-#include <DriverKit/IODispatchQueue.h>
 #endif
 
-#include "AsyncTypes.hpp"
 #include "../Bus/GenerationTracker.hpp"
+#include "AsyncTypes.hpp"
+#include "Rx/RxPath.hpp"
 #include "Track/CompletionQueue.hpp"
 #include "Track/Tracking.hpp"
-#include "Rx/RxPath.hpp"
 
 namespace ASFW::Driver {
 class HardwareInterface;
@@ -36,8 +38,8 @@ class BusResetPacketCapture;
 namespace ASFW::Async {
 
 // Import Shared types used by AsyncSubsystem
-using ASFW::Shared::DescriptorRing;
 using ASFW::Shared::BufferRing;
+using ASFW::Shared::DescriptorRing;
 using ASFW::Shared::DMAMemoryManager;
 
 // Forward declarations
@@ -49,28 +51,32 @@ class PacketRouter;
 class ResponseSender;
 
 // Forward declaration for Tx Submitter (two-path TX FSM)
-namespace Tx { class Submitter; }
+namespace Tx {
+class Submitter;
+}
 
 // Forward declarations - new architecture
-#include "../Shared/Rings/DescriptorRing.hpp"
-#include "../Shared/Rings/BufferRing.hpp"
 #include "../Shared/Memory/DMAMemoryManager.hpp"
+#include "../Shared/Rings/BufferRing.hpp"
+#include "../Shared/Rings/DescriptorRing.hpp"
 class ATRequestContext;
 class ATResponseContext;
 class ARRequestContext;
 class ARResponseContext;
 
-namespace Engine { class ContextManager; }
+namespace Engine {
+class ContextManager;
+}
 
 template <typename TCompletionQueue> class Track_Tracking;
 
 template <typename Derived> class AsyncCommand;
 
-class AsyncSubsystem {
-public:
+class AsyncSubsystem : public IAsyncControllerPort {
+  public:
     AsyncSubsystem();
-    ~AsyncSubsystem();
-    
+    ~AsyncSubsystem() override;
+
     template <typename Derived> friend class AsyncCommand;
 
     enum class ARContextType {
@@ -78,112 +84,114 @@ public:
         Response,
     };
 
-    kern_return_t Start(Driver::HardwareInterface& hw,
-                        OSObject* owner,
-                        ::IODispatchQueue* workloopQueue,
-                        ::OSAction* completionAction,
+    kern_return_t Start(Driver::HardwareInterface& hw, OSObject* owner,
+                        ::IODispatchQueue* workloopQueue, ::OSAction* completionAction,
                         size_t completionQueueCapacityBytes = 64 * 1024);
-    
+
     kern_return_t ArmDMAContexts();
-    
-    kern_return_t ArmARContextsOnly();
-    
+
+    kern_return_t ArmARContextsOnly() override;
+
     void Stop();
 
-    AsyncHandle Read(const ReadParams& params, CompletionCallback callback);
+    AsyncHandle Read(const ReadParams& params, CompletionCallback callback) override;
 
-    AsyncHandle ReadWithRetry(const ReadParams& params,
-                             const RetryPolicy& retryPolicy,
-                             CompletionCallback callback);
+    AsyncHandle ReadWithRetry(const ReadParams& params, const RetryPolicy& retryPolicy,
+                              CompletionCallback callback) override;
 
-    AsyncHandle Write(const WriteParams& params, CompletionCallback callback);
-    AsyncHandle Lock(const LockParams& params, uint16_t extendedTCode, CompletionCallback callback);
-    AsyncHandle CompareSwap(const CompareSwapParams& params, CompareSwapCallback callback);
+    AsyncHandle Write(const WriteParams& params, CompletionCallback callback) override;
+    AsyncHandle Lock(const LockParams& params, uint16_t extendedTCode,
+                     CompletionCallback callback) override;
+    AsyncHandle CompareSwap(const CompareSwapParams& params, CompareSwapCallback callback) override;
     AsyncHandle Stream(const StreamParams& params);
-    AsyncHandle PhyRequest(const PhyParams& params, CompletionCallback callback);
-    bool Cancel(AsyncHandle handle);
+    AsyncHandle PhyRequest(const PhyParams& params, CompletionCallback callback) override;
+    bool Cancel(AsyncHandle handle) override;
 
-	    void PostToWorkloop(void (^block)()) {
+    void PostToWorkloop(void (^block)()) override {
 #ifdef ASFW_HOST_TEST
-	        if (hostDeferPostedWork_.load(std::memory_order_acquire)) {
-	            std::function<void()> work = block;
-	            {
-	                std::lock_guard lock(hostPostedWorkLock_);
-	                hostPostedWork_.push_back(std::move(work));
-	            }
-	            return;
-	        }
+        if (hostDeferPostedWork_.load(std::memory_order_acquire)) {
+            std::function<void()> work = block;
+            {
+                std::lock_guard lock(hostPostedWorkLock_);
+                hostPostedWork_.push_back(std::move(work));
+            }
+            return;
+        }
 #endif
-	        if (workloopQueue_) {
-	            workloopQueue_->DispatchAsync(block);
-	            return;
-	        }
+        if (workloopQueue_) {
+            workloopQueue_->DispatchAsync(block);
+            return;
+        }
 
         // Fallback: If the workloop queue isn't available (mis-wired early init or host test),
         // do not silently drop work that may carry required completions (e.g. Cancel()).
-	        if (block) {
-	            block();
-	        }
-	    }
+        if (block) {
+            block();
+        }
+    }
 
 #ifdef ASFW_HOST_TEST
-	    // Host-only hooks for deterministic testing of "no inline completion" guarantees.
-	    void HostTest_SetDeferPostedWork(bool enabled) {
-	        hostDeferPostedWork_.store(enabled, std::memory_order_release);
-	    }
+    // Host-only hooks for deterministic testing of "no inline completion" guarantees.
+    void HostTest_SetDeferPostedWork(bool enabled) {
+        hostDeferPostedWork_.store(enabled, std::memory_order_release);
+    }
 
-	    void HostTest_DrainPostedWork() {
-	        std::deque<std::function<void()>> work;
-	        {
-	            std::lock_guard lock(hostPostedWorkLock_);
-	            work.swap(hostPostedWork_);
-	        }
-	        for (auto& fn : work) {
-	            if (fn) {
-	                fn();
-	            }
-	        }
-	    }
+    void HostTest_DrainPostedWork() {
+        std::deque<std::function<void()>> work;
+        {
+            std::lock_guard lock(hostPostedWorkLock_);
+            work.swap(hostPostedWork_);
+        }
+        for (auto& fn : work) {
+            if (fn) {
+                fn();
+            }
+        }
+    }
 #endif
 
-    void OnTxInterrupt();
+    void OnTxInterrupt() override;
     void OnRxInterrupt(ARContextType contextType);
+    void OnRxRequestInterrupt() override { OnRxInterrupt(ARContextType::Request); }
+    void OnRxResponseInterrupt() override { OnRxInterrupt(ARContextType::Response); }
     void OnBusReset();
-    void OnBusResetBegin(uint8_t nextGen);
-    void OnBusResetComplete(uint8_t stableGen);
-    void ConfirmBusGeneration(uint8_t confirmedGeneration);
-    void OnTimeoutTick();
+    void OnBusResetBegin(uint8_t nextGen) override;
+    void OnBusResetComplete(uint8_t stableGen) override;
+    void ConfirmBusGeneration(uint8_t confirmedGeneration) override;
+    void OnTimeoutTick() override;
 
-    struct WatchdogStats {
-        uint64_t tickCount{0};
-        uint64_t expiredTransactions{0};
-        uint64_t drainedTxCompletions{0};
-        uint64_t contextsRearmed{0};
-        uint64_t lastTickUsec{0};
-    };
+    [[nodiscard]] AsyncWatchdogStats GetWatchdogStats() const override;
 
-    [[nodiscard]] WatchdogStats GetWatchdogStats() const;
+    void StopATContextsOnly() override;
 
-    void StopATContextsOnly();
-    
-    void FlushATContexts();
+    void FlushATContexts() override;
 
-    void RearmATContexts();
+    void RearmATContexts() override;
 
     void DumpState();
 
-    Debug::BusResetPacketCapture* GetBusResetCapture() const {
+    Debug::BusResetPacketCapture* GetBusResetCapture() const override {
         return busResetCapture_.get();
     }
 
-    [[nodiscard]] std::optional<AsyncStatusSnapshot> GetStatusSnapshot() const;
-    
+    [[nodiscard]] std::optional<AsyncStatusSnapshot> GetStatusSnapshot() const override;
+
     [[nodiscard]] std::optional<TransactionContext> PrepareTransactionContext();
-    
+
     [[nodiscard]] uint64_t GetCurrentTimeUsec() const;
 
     [[nodiscard]] Bus::GenerationTracker::BusState GetBusState() const {
         return generationTracker_->GetCurrentState();
+    }
+
+    [[nodiscard]] AsyncBusStateSnapshot GetBusStateSnapshot() const override {
+        const auto state = generationTracker_ ? generationTracker_->GetCurrentState()
+                                              : Bus::GenerationTracker::BusState{};
+        return AsyncBusStateSnapshot{
+            .generation16 = state.generation16,
+            .generation8 = state.generation8,
+            .localNodeID = state.localNodeID,
+        };
     }
 
     [[nodiscard]] Bus::GenerationTracker& GetGenerationTracker() {
@@ -205,11 +213,9 @@ public:
     [[nodiscard]] Driver::HardwareInterface* GetHardware() { return hardware_; }
     [[nodiscard]] PacketRouter* GetPacketRouter() { return packetRouter_.get(); }
 
-    [[nodiscard]] DMAMemoryManager* GetDMAManager() {
-        return contextManager_ ? contextManager_->DmaManager() : nullptr;
-    }
+    [[nodiscard]] DMAMemoryManager* GetDMAManager() override;
 
-private:
+  private:
     std::atomic<uint32_t> is_bus_reset_in_progress_{0};
 
     Driver::HardwareInterface* hardware_{nullptr};
@@ -237,10 +243,10 @@ private:
     AsyncMetricsSink* metricsSink_{nullptr};
     std::unique_ptr<Debug::BusResetPacketCapture> busResetCapture_{};
     bool isRunning_{false};
-    
+
     std::unique_ptr<ASFW::Async::Engine::ContextManager> contextManager_;
 
-	    std::unique_ptr<ASFW::Async::Tx::Submitter> submitter_;
+    std::unique_ptr<ASFW::Async::Tx::Submitter> submitter_;
 
     void HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t newGeneration);
     void Teardown(bool disableHardware);
@@ -258,51 +264,42 @@ private:
     std::atomic<uint64_t> watchdogExpiredCount_{0};
     std::atomic<uint64_t> watchdogDrainedCompletions_{0};
     std::atomic<uint64_t> watchdogContextsRearmed_{0};
-	    std::atomic<uint64_t> watchdogLastTickUsec_{0};
-	    
-	    struct PendingCommandState {
-	        ReadParams params{};
-	        RetryPolicy retryPolicy{};
-	        CompletionCallback userCallback{nullptr};
-	        uint8_t retriesRemaining{0};
-	        AsyncHandle publicHandle{};      // Stable handle returned to caller (ReadWithRetry)
-	        AsyncHandle currentHandle{};     // Underlying transaction handle (Read)
-	        std::atomic<bool> cancelRequested{false};
-	        AsyncSubsystem* subsystem{nullptr};
+    std::atomic<uint64_t> watchdogLastTickUsec_{0};
 
-	        PendingCommandState(const ReadParams& p,
-	                            const RetryPolicy& pol,
-	                            CompletionCallback cb,
-	                            AsyncHandle publicHandleIn,
-	                            AsyncSubsystem* sub)
-	            : params(p),
-	              retryPolicy(pol),
-	              userCallback(std::move(cb)),
-	              retriesRemaining(pol.maxRetries),
-	              publicHandle(publicHandleIn),
-	              currentHandle{},
-	              subsystem(sub)
-	        {}
-	    };
+    struct PendingCommandState {
+        ReadParams params{};
+        RetryPolicy retryPolicy{};
+        CompletionCallback userCallback{nullptr};
+        uint8_t retriesRemaining{0};
+        AsyncHandle publicHandle{};  // Stable handle returned to caller (ReadWithRetry)
+        AsyncHandle currentHandle{}; // Underlying transaction handle (Read)
+        std::atomic<bool> cancelRequested{false};
+        AsyncSubsystem* subsystem{nullptr};
 
-	    using PendingCommandPtr = std::shared_ptr<PendingCommandState>;
+        PendingCommandState(const ReadParams& p, const RetryPolicy& pol, CompletionCallback cb,
+                            AsyncHandle publicHandleIn, AsyncSubsystem* sub)
+            : params(p), retryPolicy(pol), userCallback(std::move(cb)),
+              retriesRemaining(pol.maxRetries), publicHandle(publicHandleIn), currentHandle{},
+              subsystem(sub) {}
+    };
 
-	    std::unique_ptr<std::deque<PendingCommandPtr>> commandQueue_{};
-	    IOLock* commandQueueLock_{nullptr};
-	    std::atomic<bool> commandInFlight_{false};
-	    PendingCommandPtr inFlightCommand_{};
+    using PendingCommandPtr = std::shared_ptr<PendingCommandState>;
+
+    std::unique_ptr<std::deque<PendingCommandPtr>> commandQueue_{};
+    IOLock* commandQueueLock_{nullptr};
+    std::atomic<bool> commandInFlight_{false};
+    PendingCommandPtr inFlightCommand_{};
 
 #ifdef ASFW_HOST_TEST
-	    std::atomic<bool> hostDeferPostedWork_{false};
-	    mutable std::mutex hostPostedWorkLock_{};
-	    std::deque<std::function<void()>> hostPostedWork_{};
+    std::atomic<bool> hostDeferPostedWork_{false};
+    mutable std::mutex hostPostedWorkLock_{};
+    std::deque<std::function<void()>> hostPostedWork_{};
 #endif
-	    
-	    void ExecuteNextCommand();
-	    
-	    void OnCommandCompleteInternal(AsyncHandle handle, AsyncStatus status,
-	                                   const void* payload, uint32_t payloadSize,
-	                                   PendingCommandState* cmd);
-	};
+
+    void ExecuteNextCommand();
+
+    void OnCommandCompleteInternal(AsyncHandle handle, AsyncStatus status, const void* payload,
+                                   uint32_t payloadSize, PendingCommandState* cmd);
+};
 
 } // namespace ASFW::Async

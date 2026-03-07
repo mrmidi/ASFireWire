@@ -6,13 +6,14 @@
 //
 
 #include "DeviceDiscoveryHandler.hpp"
-#include "ASFWDriver.h"
 #include "../../Controller/ControllerCore.hpp"
-#include "../../Discovery/IDeviceManager.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Discovery/FWUnit.hpp"
+#include "../../Discovery/IDeviceManager.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../WireFormats/DeviceDiscoveryWireFormats.hpp"
+#include "ASFWDriver.h"
+#include "ControllerCoreAccess.hpp"
 
 #include <DriverKit/OSData.h>
 
@@ -28,11 +29,16 @@ using namespace Wire;
 uint8_t StateToWire(Discovery::FWDevice::State state) {
     using State = Discovery::FWDevice::State;
     switch (state) {
-        case State::Created:    return 0;
-        case State::Ready:      return 1;
-        case State::Suspended:  return 2;
-        case State::Terminated: return 3;
-        default:                return 0;
+    case State::Created:
+        return 0;
+    case State::Ready:
+        return 1;
+    case State::Suspended:
+        return 2;
+    case State::Terminated:
+        return 3;
+    default:
+        return 0;
     }
 }
 
@@ -42,11 +48,16 @@ uint8_t StateToWire(Discovery::FWDevice::State state) {
 uint8_t UnitStateToWire(Discovery::FWUnit::State state) {
     using State = Discovery::FWUnit::State;
     switch (state) {
-        case State::Created:    return 0;
-        case State::Ready:      return 1;
-        case State::Suspended:  return 2;
-        case State::Terminated: return 3;
-        default:                return 0;
+    case State::Created:
+        return 0;
+    case State::Ready:
+        return 1;
+    case State::Suspended:
+        return 2;
+    case State::Terminated:
+        return 3;
+    default:
+        return 0;
     }
 }
 
@@ -61,10 +72,7 @@ void CopyStringToBuffer(char* dest, size_t destSize, std::string_view src) {
 
 } // anonymous namespace
 
-DeviceDiscoveryHandler::DeviceDiscoveryHandler(ASFWDriver* driver)
-    : driver_(driver)
-{
-}
+DeviceDiscoveryHandler::DeviceDiscoveryHandler(ASFWDriver* driver) : driver_(driver) {}
 
 kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArguments* args) {
     if (!args) {
@@ -78,7 +86,7 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
     }
 
     // Get ControllerCore from driver
-    auto* controllerCore = static_cast<Driver::ControllerCore*>(driver_->GetControllerCore());
+    auto* controllerCore = GetControllerCorePtr(driver_);
     if (!controllerCore) {
         ASFW_LOG(UserClient, "GetDiscoveredDevices: controller not available");
         return kIOReturnNotReady;
@@ -134,8 +142,10 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
         deviceWire._padding = 0;
 
         // Copy vendor and model names
-        CopyStringToBuffer(deviceWire.vendorName, sizeof(deviceWire.vendorName), device->GetVendorName());
-        CopyStringToBuffer(deviceWire.modelName, sizeof(deviceWire.modelName), device->GetModelName());
+        CopyStringToBuffer(deviceWire.vendorName, sizeof(deviceWire.vendorName),
+                           device->GetVendorName());
+        CopyStringToBuffer(deviceWire.modelName, sizeof(deviceWire.modelName),
+                           device->GetModelName());
 
         if (!data->appendBytes(&deviceWire, sizeof(deviceWire))) {
             data->release();
@@ -152,8 +162,10 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
             memset(unitWire._padding, 0, sizeof(unitWire._padding));
 
             // Copy vendor and product names
-            CopyStringToBuffer(unitWire.vendorName, sizeof(unitWire.vendorName), unit->GetVendorName());
-            CopyStringToBuffer(unitWire.productName, sizeof(unitWire.productName), unit->GetProductName());
+            CopyStringToBuffer(unitWire.vendorName, sizeof(unitWire.vendorName),
+                               unit->GetVendorName());
+            CopyStringToBuffer(unitWire.productName, sizeof(unitWire.productName),
+                               unit->GetProductName());
 
             if (!data->appendBytes(&unitWire, sizeof(unitWire))) {
                 data->release();

@@ -6,14 +6,15 @@
 //
 
 #include "BusResetHandler.hpp"
-#include "ASFWDriver.h"
 #include "../../Controller/ControllerCore.hpp"
+#include "../../Debug/BusResetPacketCapture.hpp"
 #include "../../Diagnostics/ControllerMetrics.hpp"
 #include "../../Diagnostics/MetricsSink.hpp"
-#include "../../Async/AsyncSubsystem.hpp"
-#include "../../Debug/BusResetPacketCapture.hpp"
-#include "../WireFormats/BusResetWireFormats.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../WireFormats/BusResetWireFormats.hpp"
+#include "ASFWDriver.h"
+#include "AsyncPortAccess.hpp"
+#include "ControllerCoreAccess.hpp"
 
 #include <DriverKit/OSData.h>
 #include <algorithm>
@@ -21,9 +22,7 @@
 
 namespace ASFW::UserClient {
 
-BusResetHandler::BusResetHandler(ASFWDriver* driver)
-    : driver_(driver) {
-}
+BusResetHandler::BusResetHandler(ASFWDriver* driver) : driver_(driver) {}
 
 kern_return_t BusResetHandler::GetBusResetCount(IOUserClientMethodArguments* args) {
     // Return bus reset count, generation, and timestamp
@@ -34,7 +33,7 @@ kern_return_t BusResetHandler::GetBusResetCount(IOUserClientMethodArguments* arg
 
     // Get real metrics from ControllerCore
     using namespace ASFW::Driver;
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (!controller) {
         // Driver not fully initialized yet
         args->scalarOutput[0] = 0;
@@ -77,21 +76,23 @@ kern_return_t BusResetHandler::GetBusResetHistory(IOUserClientMethodArguments* a
     using namespace ASFW::Debug;
 
     // Get capture from driver's async subsystem
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
         // Return empty if not available
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (!data)
+            return kIOReturnNoMemory;
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;
     }
 
-    auto* capture = asyncSys->GetBusResetCapture();
+    auto* capture = asyncPort->GetBusResetCapture();
     if (!capture) {
         // Return empty if not available
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (!data)
+            return kIOReturnNoMemory;
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;
@@ -102,7 +103,8 @@ kern_return_t BusResetHandler::GetBusResetHistory(IOUserClientMethodArguments* a
     if (startIndex >= totalCount) {
         // startIndex out of range, return empty
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (!data)
+            return kIOReturnNoMemory;
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;
@@ -121,7 +123,8 @@ kern_return_t BusResetHandler::GetBusResetHistory(IOUserClientMethodArguments* a
     // Copy packets from capture to wire format
     for (size_t i = 0; i < returnCount; i++) {
         auto snapshot = capture->GetSnapshot(startIndex + i);
-        if (!snapshot) break;  // Shouldn't happen, but be safe
+        if (!snapshot)
+            break; // Shouldn't happen, but be safe
 
         Wire::BusResetPacketWire wire{};
         wire.captureTimestamp = snapshot->captureTimestamp;
@@ -156,12 +159,12 @@ kern_return_t BusResetHandler::ClearHistory(IOUserClientMethodArguments* args) {
     // Clear bus reset packet history
     using namespace ASFW::Async;
 
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
-        return kIOReturnSuccess;  // Nothing to clear
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
+        return kIOReturnSuccess; // Nothing to clear
     }
 
-    auto* capture = asyncSys->GetBusResetCapture();
+    auto* capture = asyncPort->GetBusResetCapture();
     if (capture) {
         capture->Clear();
     }

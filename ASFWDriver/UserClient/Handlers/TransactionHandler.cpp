@@ -6,11 +6,12 @@
 //
 
 #include "TransactionHandler.hpp"
+#include "../../Logging/Logging.hpp"
+#include "../Core/UserClientRuntimeState.hpp"
+#include "../Storage/TransactionStorage.hpp"
 #include "ASFWDriver.h"
 #include "ASFWDriverUserClient.h"
-#include "../../Async/AsyncSubsystem.hpp"
-#include "../Storage/TransactionStorage.hpp"
-#include "../../Logging/Logging.hpp"
+#include "AsyncPortAccess.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
@@ -18,32 +19,29 @@
 namespace ASFW::UserClient {
 
 TransactionHandler::TransactionHandler(ASFWDriver* driver, TransactionStorage* storage)
-    : driver_(driver), storage_(storage) {
-}
+    : driver_(driver), storage_(storage) {}
 
-void TransactionHandler::AsyncCompletionCallback(
-    ASFW::Async::AsyncHandle handle,
-    ASFW::Async::AsyncStatus status,
-    uint8_t responseCode,
-    void* context,
-    const void* responsePayload,
-    uint32_t responseLength) {
+void TransactionHandler::AsyncCompletionCallback(ASFW::Async::AsyncHandle handle,
+                                                 ASFW::Async::AsyncStatus status,
+                                                 uint8_t responseCode, void* context,
+                                                 const void* responsePayload,
+                                                 uint32_t responseLength) {
 
     auto* userClient = static_cast<ASFWDriverUserClient*>(context);
-    if (!userClient || !userClient->ivars || !userClient->ivars->transactionStorage) {
+    auto* runtimeState = GetRuntimeState(userClient);
+    if (runtimeState == nullptr) {
         return;
     }
 
-    auto* storage = static_cast<TransactionStorage*>(userClient->ivars->transactionStorage);
-
     // Store result in ring buffer
-    storage->StoreResult(handle.value, static_cast<uint32_t>(status), responseCode,
-                        responsePayload, responseLength);
+    runtimeState->TransactionResults().StoreResult(handle.value, static_cast<uint32_t>(status),
+                                                   responseCode, responsePayload, responseLength);
 
     // Send async notification to GUI
     userClient->NotifyTransactionComplete(handle.value, static_cast<uint32_t>(status));
 
-    ASFW_LOG(UserClient, "AsyncTransactionCompletion: handle=0x%04x status=%u rCode=0x%02x len=%u stored",
+    ASFW_LOG(UserClient,
+             "AsyncTransactionCompletion: handle=0x%04x status=%u rCode=0x%02x len=%u stored",
              handle.value, static_cast<uint32_t>(status), responseCode, responseLength);
 }
 
@@ -60,13 +58,13 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
-    ASFW_LOG(UserClient, "AsyncRead: dest=0x%04x addr=0x%04x:%08x len=%u",
-             destinationID, addressHi, addressLo, length);
+    ASFW_LOG(UserClient, "AsyncRead: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID, addressHi,
+             addressLo, length);
 
     using namespace ASFW::Async;
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
-        ASFW_LOG(UserClient, "AsyncRead: AsyncSubsystem not available");
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
+        ASFW_LOG(UserClient, "AsyncRead: Async port not available");
         return kIOReturnNotReady;
     }
 
@@ -79,10 +77,14 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
 
     // Initiate async read with completion callback
     userClient->retain();
-    AsyncHandle handle = asyncSys->Read(params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode, std::span<const uint8_t> responsePayload) {
-        AsyncCompletionCallback(handle, status, responseCode, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
-        userClient->release();
-    });
+    AsyncHandle handle = asyncPort->Read(
+        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+                             std::span<const uint8_t> responsePayload) {
+            AsyncCompletionCallback(handle, status, responseCode, userClient,
+                                    responsePayload.data(),
+                                    static_cast<uint32_t>(responsePayload.size()));
+            userClient->release();
+        });
     if (!handle) {
         userClient->release();
         ASFW_LOG(UserClient, "AsyncRead: Failed to initiate transaction");
@@ -92,7 +94,8 @@ kern_return_t TransactionHandler::AsyncRead(IOUserClientMethodArguments* args,
     args->scalarOutput[0] = handle.value;
     args->scalarOutputCount = 1;
 
-    ASFW_LOG(UserClient, "AsyncRead: Initiated with handle=0x%04x (with completion callback)", handle.value);
+    ASFW_LOG(UserClient, "AsyncRead: Initiated with handle=0x%04x (with completion callback)",
+             handle.value);
     return kIOReturnSuccess;
 }
 
@@ -129,18 +132,18 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
     if (length != actualPayloadSize) {
-        ASFW_LOG(UserClient, "AsyncWrite: Length mismatch (specified=%u actual=%u)",
-                 length, actualPayloadSize);
+        ASFW_LOG(UserClient, "AsyncWrite: Length mismatch (specified=%u actual=%u)", length,
+                 actualPayloadSize);
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG(UserClient, "AsyncWrite: dest=0x%04x addr=0x%04x:%08x len=%u",
-             destinationID, addressHi, addressLo, length);
+    ASFW_LOG(UserClient, "AsyncWrite: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID,
+             addressHi, addressLo, length);
 
     using namespace ASFW::Async;
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
-        ASFW_LOG(UserClient, "AsyncWrite: AsyncSubsystem not available");
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
+        ASFW_LOG(UserClient, "AsyncWrite: Async port not available");
         return kIOReturnNotReady;
     }
 
@@ -161,10 +164,14 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
 
     // Initiate async write with completion callback
     userClient->retain();
-    AsyncHandle handle = asyncSys->Write(params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode, std::span<const uint8_t> responsePayload) {
-        AsyncCompletionCallback(handle, status, responseCode, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
-        userClient->release();
-    });
+    AsyncHandle handle = asyncPort->Write(
+        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+                             std::span<const uint8_t> responsePayload) {
+            AsyncCompletionCallback(handle, status, responseCode, userClient,
+                                    responsePayload.data(),
+                                    static_cast<uint32_t>(responsePayload.size()));
+            userClient->release();
+        });
     if (!handle) {
         userClient->release();
         ASFW_LOG(UserClient, "AsyncWrite: Failed to initiate transaction");
@@ -174,7 +181,8 @@ kern_return_t TransactionHandler::AsyncWrite(IOUserClientMethodArguments* args,
     args->scalarOutput[0] = handle.value;
     args->scalarOutputCount = 1;
 
-    ASFW_LOG(UserClient, "AsyncWrite: Initiated with handle=0x%04x (with completion callback)", handle.value);
+    ASFW_LOG(UserClient, "AsyncWrite: Initiated with handle=0x%04x (with completion callback)",
+             handle.value);
     return kIOReturnSuccess;
 }
 
@@ -191,13 +199,13 @@ kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* ar
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
-    ASFW_LOG(UserClient, "AsyncBlockRead: dest=0x%04x addr=0x%04x:%08x len=%u",
-             destinationID, addressHi, addressLo, length);
+    ASFW_LOG(UserClient, "AsyncBlockRead: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID,
+             addressHi, addressLo, length);
 
     using namespace ASFW::Async;
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
-        ASFW_LOG(UserClient, "AsyncBlockRead: AsyncSubsystem not available");
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
+        ASFW_LOG(UserClient, "AsyncBlockRead: Async port not available");
         return kIOReturnNotReady;
     }
 
@@ -209,10 +217,14 @@ kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* ar
     params.forceBlock = true;
 
     userClient->retain();
-    AsyncHandle handle = asyncSys->Read(params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode, std::span<const uint8_t> responsePayload) {
-        AsyncCompletionCallback(handle, status, responseCode, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
-        userClient->release();
-    });
+    AsyncHandle handle = asyncPort->Read(
+        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+                             std::span<const uint8_t> responsePayload) {
+            AsyncCompletionCallback(handle, status, responseCode, userClient,
+                                    responsePayload.data(),
+                                    static_cast<uint32_t>(responsePayload.size()));
+            userClient->release();
+        });
     if (!handle) {
         userClient->release();
         ASFW_LOG(UserClient, "AsyncBlockRead: Failed to initiate transaction");
@@ -222,7 +234,8 @@ kern_return_t TransactionHandler::AsyncBlockRead(IOUserClientMethodArguments* ar
     args->scalarOutput[0] = handle.value;
     args->scalarOutputCount = 1;
 
-    ASFW_LOG(UserClient, "AsyncBlockRead: Initiated with handle=0x%04x (with completion callback)", handle.value);
+    ASFW_LOG(UserClient, "AsyncBlockRead: Initiated with handle=0x%04x (with completion callback)",
+             handle.value);
     return kIOReturnSuccess;
 }
 
@@ -258,18 +271,18 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     const uint32_t length = static_cast<uint32_t>(args->scalarInput[3] & 0xFFFFFFFFu);
 
     if (length != actualPayloadSize) {
-        ASFW_LOG(UserClient, "AsyncBlockWrite: Length mismatch (specified=%u actual=%u)",
-                 length, actualPayloadSize);
+        ASFW_LOG(UserClient, "AsyncBlockWrite: Length mismatch (specified=%u actual=%u)", length,
+                 actualPayloadSize);
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG(UserClient, "AsyncBlockWrite: dest=0x%04x addr=0x%04x:%08x len=%u",
-             destinationID, addressHi, addressLo, length);
+    ASFW_LOG(UserClient, "AsyncBlockWrite: dest=0x%04x addr=0x%04x:%08x len=%u", destinationID,
+             addressHi, addressLo, length);
 
     using namespace ASFW::Async;
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
-        ASFW_LOG(UserClient, "AsyncBlockWrite: AsyncSubsystem not available");
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
+        ASFW_LOG(UserClient, "AsyncBlockWrite: Async port not available");
         return kIOReturnNotReady;
     }
 
@@ -288,10 +301,14 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     params.forceBlock = true;
 
     userClient->retain();
-    AsyncHandle handle = asyncSys->Write(params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode, std::span<const uint8_t> responsePayload) {
-        AsyncCompletionCallback(handle, status, responseCode, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
-        userClient->release();
-    });
+    AsyncHandle handle = asyncPort->Write(
+        params, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+                             std::span<const uint8_t> responsePayload) {
+            AsyncCompletionCallback(handle, status, responseCode, userClient,
+                                    responsePayload.data(),
+                                    static_cast<uint32_t>(responsePayload.size()));
+            userClient->release();
+        });
     if (!handle) {
         userClient->release();
         ASFW_LOG(UserClient, "AsyncBlockWrite: Failed to initiate transaction");
@@ -301,7 +318,8 @@ kern_return_t TransactionHandler::AsyncBlockWrite(IOUserClientMethodArguments* a
     args->scalarOutput[0] = handle.value;
     args->scalarOutputCount = 1;
 
-    ASFW_LOG(UserClient, "AsyncBlockWrite: Initiated with handle=0x%04x (with completion callback)", handle.value);
+    ASFW_LOG(UserClient, "AsyncBlockWrite: Initiated with handle=0x%04x (with completion callback)",
+             handle.value);
     return kIOReturnSuccess;
 }
 
@@ -391,7 +409,7 @@ kern_return_t TransactionHandler::RegisterTransactionListener(IOUserClientMethod
 }
 
 kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* args,
-                                                    ASFWDriverUserClient* userClient) {
+                                                   ASFWDriverUserClient* userClient) {
     // Input scalars: destinationID[16], addressHi[16], addressLo[32], size[8]
     // structureInput: compareValue (4 or 8 bytes) + newValue (4 or 8 bytes)
     // Output: handle[16], locked[8]
@@ -416,7 +434,7 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
     const uint16_t destinationID = static_cast<uint16_t>(args->scalarInput[0] & 0xFFFF);
     const uint16_t addressHi = static_cast<uint16_t>(args->scalarInput[1] & 0xFFFF);
     const uint32_t addressLo = static_cast<uint32_t>(args->scalarInput[2] & 0xFFFFFFFFu);
-    const uint8_t size = static_cast<uint8_t>(args->scalarInput[3] & 0xFF);  // 4 or 8 bytes
+    const uint8_t size = static_cast<uint8_t>(args->scalarInput[3] & 0xFF); // 4 or 8 bytes
 
     // Validate size (32-bit = 4 bytes, 64-bit = 8 bytes)
     if (size != 4 && size != 8) {
@@ -433,13 +451,13 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG(UserClient, "AsyncCompareSwap: dest=0x%04x addr=0x%04x:%08x size=%u",
-             destinationID, addressHi, addressLo, size);
+    ASFW_LOG(UserClient, "AsyncCompareSwap: dest=0x%04x addr=0x%04x:%08x size=%u", destinationID,
+             addressHi, addressLo, size);
 
     using namespace ASFW::Async;
-    auto* asyncSys = static_cast<AsyncSubsystem*>(driver_->GetAsyncSubsystem());
-    if (!asyncSys) {
-        ASFW_LOG(UserClient, "AsyncCompareSwap: AsyncSubsystem not available");
+    auto* asyncPort = GetAsyncSubsystemPort(driver_);
+    if (!asyncPort) {
+        ASFW_LOG(UserClient, "AsyncCompareSwap: Async port not available");
         return kIOReturnNotReady;
     }
 
@@ -454,9 +472,9 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
     LockParams params{};
     params.destinationID = destinationID;
     params.addressHigh = addressHi;
-   params.addressLow = addressLo;
+    params.addressLow = addressLo;
     params.operand = operand;
-    params.operandLength = expectedOperandSize;  // compare + swap quadlets
+    params.operandLength = expectedOperandSize; // compare + swap quadlets
     params.responseLength = size;               // IEEE 1394 returns old value (size bytes)
 
     // Extended tCode for compare-swap
@@ -466,18 +484,23 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
     // Initiate async compare-swap with completion callback
     // NOTE: Lock completion includes old value in response payload
     userClient->retain();
-    AsyncHandle handle = asyncSys->Lock(params, extendedTCode, [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode, std::span<const uint8_t> responsePayload) {
-        // For compare-swap, responsePayload contains the old value read from memory
-        // locked = true if compare succeeded (old == compare), false otherwise
-        bool locked = (status == AsyncStatus::kSuccess);
+    AsyncHandle handle = asyncPort->Lock(
+        params, extendedTCode,
+        [userClient](AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+                     std::span<const uint8_t> responsePayload) {
+            // For compare-swap, responsePayload contains the old value read from memory
+            // locked = true if compare succeeded (old == compare), false otherwise
+            bool locked = (status == AsyncStatus::kSuccess);
 
-        // Store result with lock status and old value
-        AsyncCompletionCallback(handle, status, responseCode, userClient, responsePayload.data(), static_cast<uint32_t>(responsePayload.size()));
+            // Store result with lock status and old value
+            AsyncCompletionCallback(handle, status, responseCode, userClient,
+                                    responsePayload.data(),
+                                    static_cast<uint32_t>(responsePayload.size()));
 
-        ASFW_LOG(UserClient, "AsyncCompareSwap completion: handle=0x%04x locked=%{public}s",
-                 handle.value, locked ? "YES" : "NO");
-        userClient->release();
-    });
+            ASFW_LOG(UserClient, "AsyncCompareSwap completion: handle=0x%04x locked=%{public}s",
+                     handle.value, locked ? "YES" : "NO");
+            userClient->release();
+        });
 
     if (!handle) {
         userClient->release();
@@ -487,10 +510,12 @@ kern_return_t TransactionHandler::AsyncCompareSwap(IOUserClientMethodArguments* 
 
     // Return handle and preliminary lock status (actual result comes via callback)
     args->scalarOutput[0] = handle.value;
-    args->scalarOutput[1] = 0;  // locked status unknown until completion
+    args->scalarOutput[1] = 0; // locked status unknown until completion
     args->scalarOutputCount = 2;
 
-    ASFW_LOG(UserClient, "AsyncCompareSwap: Initiated with handle=0x%04x (with completion callback)", handle.value);
+    ASFW_LOG(UserClient,
+             "AsyncCompareSwap: Initiated with handle=0x%04x (with completion callback)",
+             handle.value);
     return kIOReturnSuccess;
 }
 

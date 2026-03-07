@@ -3,7 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <DriverKit/IOLib.h>
-#include "../Core/KR.hpp"
+#include "../Core/KernReturnCompat.hpp"
 #include "DescriptorBuilder.hpp"
 #include "../Track/PayloadRegistry.hpp"
 
