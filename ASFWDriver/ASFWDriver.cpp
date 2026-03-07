@@ -292,7 +292,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
 
     ASFW::LogConfig::Shared().Initialize(this);
 
-    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
+    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 SharedStatusReason::Boot);
 
     const uint32_t initialMask = IntMaskBits::kMasterIntEnable | kBaseIntMask;
@@ -330,7 +330,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         }
 
         ctx.statusPublisher.BindListener(nullptr);
-        ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
+        ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                     SharedStatusReason::Disconnect);
         if (ctx.deps.asyncSubsystem) {
             ctx.deps.asyncSubsystem->Stop();
@@ -436,7 +436,7 @@ void* ASFWDriver::GetControllerCore() const {
 void* ASFWDriver::GetAsyncSubsystem() const {
     if (!ivars || !ivars->context)
         return nullptr;
-    return ivars->context->deps.asyncSubsystem.get();
+    return ivars->context->deps.asyncController.get();
 }
 
 void* ASFWDriver::GetServiceContext() const {
@@ -505,7 +505,7 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
     ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x", snap.intEvent);
     ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, *ctx.deps.hardware,
                                            *ctx.workQueue, ctx.isoch, ctx.statusPublisher,
-                                           ctx.deps.asyncSubsystem.get());
+                                           ctx.deps.asyncController.get());
 }
 
 void ASFWDriver::ScheduleAsyncWatchdog(uint64_t delayUsec) {
@@ -528,7 +528,7 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         if (ctx.stopping.load(std::memory_order_acquire)) {
             return;
         }
-        ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
+        ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 ctx.isoch.ReceiveContext(), ctx.isoch.TransmitContext(),
                                 ctx.statusPublisher);
     }
@@ -588,7 +588,7 @@ void ASFWDriver::RegisterStatusListener(const OSObject* client) {
 
     auto& ctx = *ivars->context;
     ctx.statusPublisher.BindListener(clientObj);
-    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncSubsystem.get(),
+    ctx.statusPublisher.Publish(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 SharedStatusReason::Manual);
 }
 

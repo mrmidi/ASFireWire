@@ -10,6 +10,7 @@
 #include "../../ConfigROM/ROMScanner.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Logging/Logging.hpp"
+#include "ControllerCoreAccess.hpp"
 
 #if __has_include("ASFWDriver.h")
 #include "ASFWDriver.h"
@@ -45,7 +46,7 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
     ASFW_LOG(UserClient, "ExportConfigROM: nodeId=%u gen=%u", nodeId, requestedGen.value);
 
     using namespace ASFW::Driver;
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (controller == nullptr) {
         ASFW_LOG(UserClient, "ExportConfigROM: controller is NULL");
         return kIOReturnNotReady;
@@ -132,7 +133,7 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
     ASFW_LOG(UserClient, "TriggerROMRead: nodeId=%u", nodeId);
 
     using namespace ASFW::Driver;
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (controller == nullptr) {
         ASFW_LOG(UserClient, "TriggerROMRead: controller is NULL");
         args->scalarOutput[0] = 2; // failed

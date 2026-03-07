@@ -2,31 +2,31 @@
 #include "Engine/ContextManager.hpp"
 
 // Command architecture
-#include "Commands/ReadCommand.hpp"
-#include "Commands/WriteCommand.hpp"
 #include "Commands/LockCommand.hpp"
 #include "Commands/PhyCommand.hpp"
+#include "Commands/ReadCommand.hpp"
+#include "Commands/WriteCommand.hpp"
 
-#include "Rx/ARPacketParser.hpp"
-#include "Tx/DescriptorBuilder.hpp"
-#include "Tx/Submitter.hpp"
-#include "Track/LabelAllocator.hpp"
-#include "Tx/PacketBuilder.hpp"
-#include "Track/CompletionQueue.hpp"
-#include "Core/TransactionManager.hpp"  // Phase 2.0
+#include "../Debug/BusResetPacketCapture.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Logging/Logging.hpp"
-#include "../Debug/BusResetPacketCapture.hpp"
+#include "Core/TransactionManager.hpp"
+#include "Rx/ARPacketParser.hpp"
+#include "Track/CompletionQueue.hpp"
+#include "Track/LabelAllocator.hpp"
 #include "Track/Tracking.hpp"
+#include "Tx/DescriptorBuilder.hpp"
+#include "Tx/PacketBuilder.hpp"
+#include "Tx/Submitter.hpp"
 
 // New context architecture
 #include "../Shared/Memory/DMAMemoryManager.hpp"
-#include "../Shared/Rings/DescriptorRing.hpp"
 #include "../Shared/Rings/BufferRing.hpp"
-#include "Contexts/ATRequestContext.hpp"
-#include "Contexts/ATResponseContext.hpp"
+#include "../Shared/Rings/DescriptorRing.hpp"
 #include "Contexts/ARRequestContext.hpp"
 #include "Contexts/ARResponseContext.hpp"
+#include "Contexts/ATRequestContext.hpp"
+#include "Contexts/ATResponseContext.hpp"
 #include "Rx/PacketRouter.hpp"
 #include "Tx/ResponseSender.hpp"
 
@@ -38,8 +38,8 @@
 #include <memory>
 #include <optional>
 
-#include <DriverKit/IOService.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/IOService.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSNumber.h>
@@ -62,14 +62,15 @@ uint64_t GetCurrentMonotonicTimeUsec() {
 
 constexpr uint32_t kAsyncInterruptMask = 0x0000000Du;
 constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
-// TODO: S100 hardcoded for maximum hardware compatibility (especially Agere/LSI FW643E).
+// TODO(ASFW-Topology): Replace the compatibility S100 default with topology-driven speed
+// selection once the async startup path can query the negotiated link speed.
 // Replace with topology-based speed queries when TopologyManager is available.
 // NOTE: Apple's IOFireWireFamily uses speed downgrade strategy for discovery:
 //   - Start at S400 for initial Config ROM read (faster discovery)
 //   - Downgrade to S100 after first successful transaction (reliability)
 //   - See packet trace: 060:3279:1136 (s400) → 060:3291:0385 (s100)
 // FIXED: Speed encoding bug corrected in PacketBuilder.cpp (shift 16→24 per OHCI spec)
-constexpr uint8_t kDefaultAsyncSpeed = 0;  // S100 (98.304 Mbps)
+constexpr uint8_t kDefaultAsyncSpeed = 0; // S100 (98.304 Mbps)
 constexpr size_t kDefaultCompletionQueueCapacity = 64 * 1024;
 
 bool ShouldEnableCoherencyTrace(OSObject* owner) {
@@ -84,8 +85,7 @@ bool ShouldEnableCoherencyTrace(OSObject* owner) {
                 } else if (auto numberProp = OSDynamicCast(OSNumber, property)) {
                     enabled = numberProp->unsigned32BitValue() != 0;
                 } else if (auto stringProp = OSDynamicCast(OSString, property)) {
-                    enabled = stringProp->isEqualTo("1") ||
-                              stringProp->isEqualTo("true") ||
+                    enabled = stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
                               stringProp->isEqualTo("TRUE");
                 }
             }
@@ -103,23 +103,21 @@ struct RetryState {
     CompletionCallback userCallback;
     uint8_t attemptsRemaining;
     AsyncHandle currentHandle{};
-    AsyncSubsystem* subsystem;  // Back-pointer for re-submission
+    AsyncSubsystem* subsystem; // Back-pointer for re-submission
 
-    RetryState(const ReadParams& p, const RetryPolicy& pol,
-               CompletionCallback cb, AsyncSubsystem* sub)
-        : params(p), policy(pol), userCallback(cb)
-        , attemptsRemaining(pol.maxRetries), subsystem(sub) {}
+    RetryState(const ReadParams& p, const RetryPolicy& pol, CompletionCallback cb,
+               AsyncSubsystem* sub)
+        : params(p), policy(pol), userCallback(cb), attemptsRemaining(pol.maxRetries),
+          subsystem(sub) {}
 };
 
 // Static callback function that implements retry logic
 // This matches Apple's IOFWAsyncCommand::complete() pattern where retries
 // are decremented and execute() is called again on transient failures
-// Signature matches CompletionCallback: (AsyncHandle, AsyncStatus, responseCode, std::span<const uint8_t>)
-void ReadWithRetryCallback(AsyncHandle handle,
-                           AsyncStatus status,
-                           uint8_t responseCode,
-                           std::span<const uint8_t> responsePayload,
-                           RetryState* state) {
+// Signature matches CompletionCallback: (AsyncHandle, AsyncStatus, responseCode, std::span<const
+// uint8_t>)
+void ReadWithRetryCallback(AsyncHandle handle, AsyncStatus status, uint8_t responseCode,
+                           std::span<const uint8_t> responsePayload, RetryState* state) {
 
     // Check if retry is needed (Apple's pattern: retry on timeout/busy)
     bool shouldRetry = false;
@@ -134,7 +132,8 @@ void ReadWithRetryCallback(AsyncHandle handle,
             shouldRetry = true;
             retryReason = "busy";
         }
-        // TODO: Add speed fallback on type error (Apple's pattern in IOFWReadCommand::gotPacket)
+        // TODO(ASFW-Async): Add speed fallback on type error (Apple's
+        // IOFWReadCommand::gotPacket pattern).
         // if (status == AsyncStatus::kTypeError && state->policy.speedFallback) {
         //     state->params.speedCode = 0;  // Downgrade to S100
         //     shouldRetry = true;
@@ -154,26 +153,26 @@ void ReadWithRetryCallback(AsyncHandle handle,
         if (state->policy.retryDelayUsec > 0) {
             const uint32_t delayMs = static_cast<uint32_t>(state->policy.retryDelayUsec / 1000);
             if (delayMs > 0) {
-                IOSleep(delayMs);  // Convert µs to ms
+                IOSleep(delayMs); // Convert µs to ms
             }
         }
 
         // Re-submit transaction (Apple pattern: call execute() again)
         // Note: This creates a new handle - cancellation of original handle won't
         // affect retries. This matches Apple's behavior where commands are atomic.
-        state->currentHandle = state->subsystem->Read(
-            state->params,
-            [state](AsyncHandle h, AsyncStatus s, uint8_t rc, std::span<const uint8_t> payload) {
+        state->currentHandle =
+            state->subsystem->Read(state->params, [state](AsyncHandle h, AsyncStatus s, uint8_t rc,
+                                                          std::span<const uint8_t> payload) {
                 ReadWithRetryCallback(h, s, rc, payload, state);
-            }
-        );
+            });
 
         if (!state->currentHandle) {
             // Retry submission failed - invoke user callback with error
             ASFW_LOG_ERROR(Async, "ReadWithRetry: Re-submission failed after %{public}s",
-                          retryReason);
+                           retryReason);
             if (state->userCallback) {
-                state->userCallback(handle, AsyncStatus::kHardwareError, 0xFF, std::span<const uint8_t>{});
+                state->userCallback(handle, AsyncStatus::kHardwareError, 0xFF,
+                                    std::span<const uint8_t>{});
             }
             delete state;
         }
@@ -189,22 +188,18 @@ void ReadWithRetryCallback(AsyncHandle handle,
         if (state->userCallback) {
             state->userCallback(handle, status, responseCode, responsePayload);
         }
-        delete state;  // Free retry state
+        delete state; // Free retry state
     }
 }
 
 struct PayloadContext {
     PayloadContext() = default;
-    ~PayloadContext() {
-        Reset();
-    }
+    ~PayloadContext() { Reset(); }
 
     PayloadContext(const PayloadContext&) = delete;
     PayloadContext& operator=(const PayloadContext&) = delete;
 
-    bool Initialize(Driver::HardwareInterface& hw,
-                    const void* logicalData,
-                    std::size_t length,
+    bool Initialize(Driver::HardwareInterface& hw, const void* logicalData, std::size_t length,
                     uint64_t options) {
         Reset();
 
@@ -235,14 +230,11 @@ struct PayloadContext {
 #if defined(IODMACommand_Synchronize_ID)
             if (dmaBuffer_.dmaCommand) {
                 const kern_return_t syncKr = dmaBuffer_.dmaCommand->Synchronize(
-                    /*options*/0,
-                    /*offset*/0,
-                    static_cast<uint64_t>(length));
+                    /*options*/ 0,
+                    /*offset*/ 0, static_cast<uint64_t>(length));
                 if (syncKr != kIOReturnSuccess) {
-                    ASFW_LOG(Async,
-                             "PayloadContext(Stream): Synchronize failed kr=0x%x len=%zu",
-                             syncKr,
-                             length);
+                    ASFW_LOG(Async, "PayloadContext(Stream): Synchronize failed kr=0x%x len=%zu",
+                             syncKr, length);
                     OSSynchronizeIO();
                 }
             } else {
@@ -276,23 +268,15 @@ struct PayloadContext {
         length_ = 0;
     }
 
-    [[nodiscard]] uint64_t DeviceAddress() const noexcept {
-        return dmaBuffer_.deviceAddress;
-    }
+    [[nodiscard]] uint64_t DeviceAddress() const noexcept { return dmaBuffer_.deviceAddress; }
 
-    [[nodiscard]] uint8_t* VirtualAddress() const noexcept {
-        return virtualAddress_;
-    }
+    [[nodiscard]] uint8_t* VirtualAddress() const noexcept { return virtualAddress_; }
 
-    [[nodiscard]] const void* LogicalAddress() const noexcept {
-        return logicalAddress_;
-    }
+    [[nodiscard]] const void* LogicalAddress() const noexcept { return logicalAddress_; }
 
-    [[nodiscard]] std::size_t Length() const noexcept {
-        return length_;
-    }
+    [[nodiscard]] std::size_t Length() const noexcept { return length_; }
 
-private:
+  private:
     Driver::HardwareInterface::DMABuffer dmaBuffer_{};
     IOMemoryMap* mapping_{nullptr};
     uint8_t* virtualAddress_{nullptr};
@@ -302,10 +286,8 @@ private:
 
 } // namespace
 
-kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
-                                    OSObject* owner,
-                                    IODispatchQueue* workloopQueue,
-                                    OSAction* completionAction,
+kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw, OSObject* owner,
+                                    IODispatchQueue* workloopQueue, OSAction* completionAction,
                                     size_t completionQueueCapacityBytes) {
     if (isRunning_) {
         ASFW_LOG(Async, "Already running, returning success");
@@ -313,8 +295,8 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     }
 
     if (!owner || !workloopQueue || !completionAction) {
-        ASFW_LOG(Async, "Bad arguments: owner=%p queue=%p action=%p",
-               owner, workloopQueue, completionAction);
+        ASFW_LOG(Async, "Bad arguments: owner=%p queue=%p action=%p", owner, workloopQueue,
+                 completionAction);
         return kIOReturnBadArgument;
     }
 
@@ -360,23 +342,22 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     txnMgrResult = txnMgr_->Initialize();
     if (!txnMgrResult) {
         txnMgrResult.error().Log();
-        kr = txnMgrResult.error().kr;
+        kr = txnMgrResult.error().BoundaryStatus();
         failureStage = "TransactionManager";
         goto fail;
     }
 
     if (!generationTracker_) {
-        generationTracker_ = std::make_unique<ASFW::Async::Bus::GenerationTracker>(*labelAllocator_);
+        generationTracker_ =
+            std::make_unique<ASFW::Async::Bus::GenerationTracker>(*labelAllocator_);
     }
     generationTracker_->Reset();
 
     packetBuilder_ = std::make_unique<PacketBuilder>();
 
     {
-        kr = CompletionQueue::Create(workloopQueue_,
-                                     completionQueueCapacityBytes,
-                                     completionAction_.get(),
-                                     completionQueue);
+        kr = CompletionQueue::Create(workloopQueue_, completionQueueCapacityBytes,
+                                     completionAction_.get(), completionQueue);
         if (kr != kIOReturnSuccess || !completionQueue) {
             ASFW_LOG(Async, "FAILED: CompletionQueue::Create returned 0x%08x", kr);
             failureStage = "CompletionQueue";
@@ -389,11 +370,7 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     }
 
     tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
-        labelAllocator_.get(),
-        txnMgr_.get(),
-        *completionQueue_,
-        nullptr
-    );
+        labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr);
 
     {
         constexpr size_t kATReqDescCount = 256;
@@ -407,10 +384,10 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
         Engine::ProvisionSpec spec{};
         spec.atReqDescCount = kATReqDescCount;
         spec.atRespDescCount = kATRespDescCount;
-        spec.arReqBufCount  = kARReqBufferCount;
-        spec.arReqBufSize   = kARReqBufferSize;
+        spec.arReqBufCount = kARReqBufferCount;
+        spec.arReqBufSize = kARReqBufferSize;
         spec.arRespBufCount = kARRespBufferCount;
-        spec.arRespBufSize  = kARRespBufferSize;
+        spec.arRespBufSize = kARRespBufferSize;
 
         kern_return_t pkr = contextManager_->provision(*hardware_, spec);
         if (pkr != kIOReturnSuccess) {
@@ -444,23 +421,19 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
         submitter_ = std::make_unique<Tx::Submitter>(*contextManager_, *descriptorBuilder_);
         if (tracking_ && contextManager_) {
             contextManager_->SetPayloads(tracking_->Payloads());
-            if (submitter_) submitter_->SetPayloads(tracking_->Payloads());
+            if (submitter_)
+                submitter_->SetPayloads(tracking_->Payloads());
 
             tracking_->SetContextManager(contextManager_.get());
         }
 
         packetRouter_ = std::make_unique<PacketRouter>();
         rxPath_ = std::make_unique<Rx::RxPath>(*contextManager_->GetArRequestContext(),
-                                               *contextManager_->GetArResponseContext(),
-                                               *tracking_,
-                                               *generationTracker_,
-                                               *packetRouter_);
+                                               *contextManager_->GetArResponseContext(), *tracking_,
+                                               *generationTracker_, *packetRouter_);
 
-        responseSender_ = std::make_unique<ResponseSender>(
-            *descriptorBuilderResponse_,
-            *submitter_,
-            *contextManager_,
-            *generationTracker_);
+        responseSender_ = std::make_unique<ResponseSender>(*descriptorBuilderResponse_, *submitter_,
+                                                           *contextManager_, *generationTracker_);
         packetRouter_->SetResponseSender(responseSender_.get());
 
         ASFW_LOG(Async, "✓ ContextManager provisioned");
@@ -472,8 +445,7 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw,
     hardware_->SetLinkControlBits(kLinkControlRcvPhyPktBit);
 
     // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
-    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO,
-                  "AsyncSubsystem::Start complete (DMA always uncached)");
+    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA always uncached)");
 
     watchdogTickCount_.store(0, std::memory_order_relaxed);
     watchdogExpiredCount_.store(0, std::memory_order_relaxed);
@@ -537,7 +509,7 @@ kern_return_t AsyncSubsystem::ArmARContextsOnly() {
         return kIOReturnNoResources;
     }
 
-    ASFW_LOG(Async, "Phase 2B: Arming AR contexts only via ContextManager (receive)");
+    ASFW_LOG(Async, "Arming AR contexts via ContextManager (receive path)");
     kern_return_t kr = contextManager_->armAR();
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Async, "FAILED: ContextManager::armAR (kr=0x%08x)", kr);
@@ -636,7 +608,8 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
     const uint32_t nodeIdReg = hardware_->ReadNodeID();
     constexpr uint32_t kNodeIDValidBit = 0x80000000u;
     if ((nodeIdReg & kNodeIDValidBit) == 0) {
-        ASFW_LOG_ERROR(Async, "PrepareTransactionContext: NodeID valid bit not set (reg=0x%08x)", nodeIdReg);
+        ASFW_LOG_ERROR(Async, "PrepareTransactionContext: NodeID valid bit not set (reg=0x%08x)",
+                       nodeIdReg);
         return std::nullopt;
     }
     const uint16_t sourceNodeID = static_cast<uint16_t>(nodeIdReg & 0xFFFFu);
@@ -645,8 +618,9 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
     const auto busState = generationTracker_->GetCurrentState();
     const uint8_t currentGeneration = busState.generation8;
 
-    // Step 5: Resolve speed code (TODO: query TopologyManager, default S100 for compatibility)
-    const uint8_t speedCode = kDefaultAsyncSpeed;  // S100 (98.304 Mbps)
+    // Step 5: Resolve speed code. TODO(ASFW-Topology): query TopologyManager instead of using the
+    // compatibility S100 default.
+    const uint8_t speedCode = kDefaultAsyncSpeed; // S100 (98.304 Mbps)
 
     // Step 6: Build TransactionContext with PacketContext
     TransactionContext txCtx{};
@@ -658,9 +632,7 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
     return txCtx;
 }
 
-uint64_t AsyncSubsystem::GetCurrentTimeUsec() const {
-    return GetCurrentMonotonicTimeUsec();
-}
+uint64_t AsyncSubsystem::GetCurrentTimeUsec() const { return GetCurrentMonotonicTimeUsec(); }
 
 void AsyncSubsystem::OnTimeoutTick() {
     if (!isRunning_) {
@@ -693,4 +665,3 @@ void AsyncSubsystem::OnTimeoutTick() {
 }
 
 } // namespace ASFW::Async
-

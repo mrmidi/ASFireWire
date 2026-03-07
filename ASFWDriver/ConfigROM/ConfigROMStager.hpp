@@ -1,10 +1,14 @@
 #pragma once
 
+#ifdef ASFW_HOST_TEST
+#include "../Testing/HostDriverKitStubs.hpp"
+#else
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IODMACommand.h>
 #include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/IOReturn.h>
 #include <DriverKit/OSSharedPtr.h>
+#endif
 
 #include "ConfigROMBuilder.hpp"
 

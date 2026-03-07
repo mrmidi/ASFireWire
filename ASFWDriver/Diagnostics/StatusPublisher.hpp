@@ -18,9 +18,9 @@
 
 namespace ASFW {
 namespace Async {
-class AsyncSubsystem;
+class IAsyncSubsystemPort;
 }
-}
+} // namespace ASFW
 
 class ASFWDriverUserClient;
 
@@ -29,17 +29,15 @@ namespace ASFW::Driver {
 class ControllerCore;
 
 class StatusPublisher {
-public:
+  public:
     StatusPublisher() = default;
     ~StatusPublisher() = default;
 
     kern_return_t Prepare();
     void Reset();
 
-    void Publish(ControllerCore* controller,
-                 const ASFW::Async::AsyncSubsystem* asyncSubsystem,
-                 SharedStatusReason reason,
-                 uint32_t detailMask = 0);
+    void Publish(ControllerCore* controller, const ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
+                 SharedStatusReason reason, uint32_t detailMask = 0);
 
     void BindListener(::ASFWDriverUserClient* client);
     void UnbindListener(::ASFWDriverUserClient* client);
@@ -48,13 +46,12 @@ public:
 
     void SetLastAsyncCompletion(uint64_t machTime);
 
-    void UpdateAsyncWatchdog(uint32_t asyncTimeoutCount,
-                             uint64_t watchdogTickCount,
+    void UpdateAsyncWatchdog(uint32_t asyncTimeoutCount, uint64_t watchdogTickCount,
                              uint64_t watchdogLastTickUsec);
 
     const SharedStatusBlock* StatusBlock() const { return statusBlock_; }
 
-private:
+  private:
     OSSharedPtr<IOBufferMemoryDescriptor> statusMemory_;
     OSSharedPtr<IOMemoryMap> statusMap_;
     SharedStatusBlock* statusBlock_{nullptr};

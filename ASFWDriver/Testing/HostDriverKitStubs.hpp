@@ -3,6 +3,7 @@
 #ifdef ASFW_HOST_TEST
 
 #include <mach/kern_return.h>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -183,7 +184,11 @@ public:
         if (!segmentOut) return kIOReturnBadArgument;
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);
-        segmentOut[0] = seg;
+        static std::atomic<uint32_t> sMockIOVA{0x10000000u};
+        const uint32_t size = static_cast<uint32_t>(length > 0 ? length : seg.length);
+        const uint32_t next = sMockIOVA.fetch_add(size + 0x1000u, std::memory_order_relaxed);
+        segmentOut[0].address = next;
+        segmentOut[0].length = seg.length;
         *segments = 1;
         return kIOReturnSuccess;
     }

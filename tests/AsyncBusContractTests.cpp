@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 
+#include "ASFWDriver/Async/AsyncSubsystem.hpp"
 #include "ASFWDriver/Async/FireWireBusImpl.hpp"
 #include "ASFWDriver/Async/Track/Tracking.hpp"
 #include "ASFWDriver/Bus/TopologyManager.hpp"
@@ -16,8 +17,7 @@ using namespace ASFW::Async;
 // Host-side helper that mirrors the minimal transaction-handle cancellation pattern:
 // Extract the transaction, mark cancelled, invoke response handler, free label.
 [[nodiscard]] bool CancelTransactionHandleForTest(TransactionManager& txnMgr,
-                                                  LabelAllocator& allocator,
-                                                  AsyncHandle handle) {
+                                                  LabelAllocator& allocator, AsyncHandle handle) {
     if (!handle || handle.value < 1 || handle.value > 64) {
         return false;
     }
@@ -116,11 +116,7 @@ TEST(AsyncBusContract, GenerationMismatch_AdapterCompletesStaleGeneration_AsyncN
     const ASFW::FW::Generation stale{current.value + 1};
 
     ASFW::Async::FWAddress addr{0xFFFF, 0xF0000400};
-    (void)bus.ReadBlock(stale,
-                        ASFW::FW::NodeId{1},
-                        addr,
-                        4,
-                        ASFW::FW::FwSpeed::S100,
+    (void)bus.ReadBlock(stale, ASFW::FW::NodeId{1}, addr, 4, ASFW::FW::FwSpeed::S100,
                         [&](ASFW::Async::AsyncStatus s, std::span<const uint8_t> payload) {
                             called = true;
                             status = s;

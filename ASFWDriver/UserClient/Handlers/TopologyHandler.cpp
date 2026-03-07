@@ -6,20 +6,19 @@
 //
 
 #include "TopologyHandler.hpp"
-#include "ASFWDriver.h"
 #include "../../Controller/ControllerCore.hpp"
-#include "../WireFormats/TopologyWireFormats.hpp"
-#include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
+#include "../../Logging/Logging.hpp"
+#include "../WireFormats/TopologyWireFormats.hpp"
+#include "ASFWDriver.h"
+#include "ControllerCoreAccess.hpp"
 
 #include <DriverKit/OSData.h>
 #include <cstring>
 
 namespace ASFW::UserClient {
 
-TopologyHandler::TopologyHandler(ASFWDriver* driver)
-    : driver_(driver) {
-}
+TopologyHandler::TopologyHandler(ASFWDriver* driver) : driver_(driver) {}
 
 kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* args) {
     // Return Self-ID capture with raw quadlets and sequences
@@ -33,14 +32,13 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG_V3(UserClient, "kMethodGetSelfIDCapture - structureInput=%p structureOutput=%p maxSize=%llu",
-             args->structureInput,
-             args->structureOutput,
-             args->structureOutputMaximumSize);
+    ASFW_LOG_V3(UserClient,
+                "kMethodGetSelfIDCapture - structureInput=%p structureOutput=%p maxSize=%llu",
+                args->structureInput, args->structureOutput, args->structureOutputMaximumSize);
 
     using namespace ASFW::Driver;
 
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (!controller) {
         ASFW_LOG_V0(UserClient, "kMethodGetSelfIDCapture - controller is NULL");
         return kIOReturnNotReady;
@@ -49,14 +47,16 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
     auto topo = controller->LatestTopology();
     if (!topo || !topo->selfIDData.valid) {
         // No valid Self-ID data available
-        ASFW_LOG_V3(UserClient, "kMethodGetSelfIDCapture - no valid Self-ID data (topo=%d valid=%d)",
-                 topo.has_value() ? 1 : 0,
-                 topo.has_value() ? (topo->selfIDData.valid ? 1 : 0) : 0);
+        ASFW_LOG_V3(
+            UserClient, "kMethodGetSelfIDCapture - no valid Self-ID data (topo=%d valid=%d)",
+            topo.has_value() ? 1 : 0, topo.has_value() ? (topo->selfIDData.valid ? 1 : 0) : 0);
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (!data)
+            return kIOReturnNoMemory;
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
-        ASFW_LOG_V3(UserClient, "kMethodGetSelfIDCapture EXIT: setting structureOutput len=0 (no data yet)");
+        ASFW_LOG_V3(UserClient,
+                    "kMethodGetSelfIDCapture EXIT: setting structureOutput len=0 (no data yet)");
         return kIOReturnSuccess;
     }
 
@@ -69,7 +69,8 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
     size_t totalSize = headerSize + quadletsSize + sequencesSize;
 
     OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
-    if (!data) return kIOReturnNoMemory;
+    if (!data)
+        return kIOReturnNoMemory;
 
     // Write header
     Wire::SelfIDMetricsWire wire{};
@@ -113,8 +114,10 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
 
     args->structureOutput = data;
     args->structureOutputDescriptor = nullptr;
-    ASFW_LOG_V3(UserClient, "kMethodGetSelfIDCapture EXIT: setting structureOutput len=%zu (gen=%u quads=%u seqs=%u)",
-             data ? data->getLength() : 0, wire.generation, wire.quadletCount, wire.sequenceCount);
+    ASFW_LOG_V3(
+        UserClient,
+        "kMethodGetSelfIDCapture EXIT: setting structureOutput len=%zu (gen=%u quads=%u seqs=%u)",
+        data ? data->getLength() : 0, wire.generation, wire.quadletCount, wire.sequenceCount);
     return kIOReturnSuccess;
 }
 
@@ -129,14 +132,13 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
         return kIOReturnBadArgument;
     }
 
-    ASFW_LOG_V3(UserClient, "kMethodGetTopologySnapshot - structureInput=%p structureOutput=%p maxSize=%llu",
-             args->structureInput,
-             args->structureOutput,
-             args->structureOutputMaximumSize);
+    ASFW_LOG_V3(UserClient,
+                "kMethodGetTopologySnapshot - structureInput=%p structureOutput=%p maxSize=%llu",
+                args->structureInput, args->structureOutput, args->structureOutputMaximumSize);
 
     using namespace ASFW::Driver;
 
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (!controller) {
         ASFW_LOG_V0(UserClient, "kMethodGetTopologySnapshot - controller is NULL");
         return kIOReturnNotReady;
@@ -147,10 +149,12 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
         // No topology available
         ASFW_LOG_V3(UserClient, "kMethodGetTopologySnapshot - no topology available");
         OSData* data = OSData::withCapacity(0);
-        if (!data) return kIOReturnNoMemory;
+        if (!data)
+            return kIOReturnNoMemory;
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
-        ASFW_LOG_V3(UserClient, "kMethodGetTopologySnapshot EXIT: setting structureOutput len=0 (no data yet)");
+        ASFW_LOG_V3(UserClient,
+                    "kMethodGetTopologySnapshot EXIT: setting structureOutput len=0 (no data yet)");
         return kIOReturnSuccess;
     }
 
@@ -173,7 +177,8 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
     size_t totalSize = headerSize + nodesBaseSize + portStatesSize + warningsSize;
 
     OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
-    if (!data) return kIOReturnNoMemory;
+    if (!data)
+        return kIOReturnNoMemory;
 
     // Write snapshot header
     Wire::TopologySnapshotWire snapWire{};
@@ -185,7 +190,7 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
     snapWire.localNodeId = topo->localNodeId.value_or(0xFF);
     snapWire.gapCount = topo->gapCount;
     snapWire.warningCount = static_cast<uint8_t>(topo->warnings.size());
-    snapWire.busBase16 = topo->busBase16;  // Serialize bus base for node ID construction
+    snapWire.busBase16 = topo->busBase16; // Serialize bus base for node ID construction
 
     if (!data->appendBytes(&snapWire, sizeof(snapWire))) {
         data->release();
@@ -234,8 +239,11 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
 
     args->structureOutput = data;
     args->structureOutputDescriptor = nullptr;
-    ASFW_LOG_V3(UserClient, "kMethodGetTopologySnapshot EXIT: setting structureOutput len=%zu (gen=%u nodes=%u root=%u)",
-             data ? data->getLength() : 0, snapWire.generation, snapWire.nodeCount, snapWire.rootNodeId);
+    ASFW_LOG_V3(UserClient,
+                "kMethodGetTopologySnapshot EXIT: setting structureOutput len=%zu (gen=%u nodes=%u "
+                "root=%u)",
+                data ? data->getLength() : 0, snapWire.generation, snapWire.nodeCount,
+                snapWire.rootNodeId);
     return kIOReturnSuccess;
 }
 

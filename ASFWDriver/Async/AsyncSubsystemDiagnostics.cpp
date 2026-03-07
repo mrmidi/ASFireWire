@@ -18,14 +18,9 @@ std::optional<AsyncStatusSnapshot> AsyncSubsystem::GetStatusSnapshot() const {
         }
     }
 
-    auto populateDescriptor = [](AsyncDescriptorStatus& out,
-                                 const DescriptorRing* ring,
-                                 const uint8_t* virt,
-                                 uint64_t iova,
-                                 uint32_t commandPtr,
-                                 uint32_t count,
-                                 uint32_t stride,
-                                 uint32_t strideFallback) {
+    auto populateDescriptor = [](AsyncDescriptorStatus& out, const DescriptorRing* ring,
+                                 const uint8_t* virt, uint64_t iova, uint32_t commandPtr,
+                                 uint32_t count, uint32_t stride, uint32_t strideFallback) {
         out.descriptorVirt = reinterpret_cast<uint64_t>(virt);
         out.descriptorIOVA = iova;
         if (count == 0 && ring != nullptr) {
@@ -36,9 +31,7 @@ std::optional<AsyncStatusSnapshot> AsyncSubsystem::GetStatusSnapshot() const {
         out.commandPtr = commandPtr;
     };
 
-    auto populateBuffers = [](AsyncBufferStatus& out,
-                              const BufferRing* ring,
-                              const uint8_t* virt,
+    auto populateBuffers = [](AsyncBufferStatus& out, const BufferRing* ring, const uint8_t* virt,
                               uint64_t iova) {
         out.bufferVirt = reinterpret_cast<uint64_t>(virt);
         out.bufferIOVA = iova;
@@ -52,62 +45,36 @@ std::optional<AsyncStatusSnapshot> AsyncSubsystem::GetStatusSnapshot() const {
     // Populate descriptor info and buffer rings from ContextManager
     {
         auto* atReqRing = contextManager_->AtRequestRing();
-        populateDescriptor(snapshot.atRequest,
-                           atReqRing,
-                           nullptr,
-                           0,
-                           0,
-                           0,
-                           0,
+        populateDescriptor(snapshot.atRequest, atReqRing, nullptr, 0, 0, 0, 0,
                            static_cast<uint32_t>(sizeof(HW::OHCIDescriptorImmediate)));
     }
     {
         auto* atRspRing = contextManager_->AtResponseRing();
-        populateDescriptor(snapshot.atResponse,
-                           atRspRing,
-                           nullptr,
-                           0,
-                           0,
-                           0,
-                           0,
+        populateDescriptor(snapshot.atResponse, atRspRing, nullptr, 0, 0, 0, 0,
                            static_cast<uint32_t>(sizeof(HW::OHCIDescriptorImmediate)));
     }
     {
         auto* arReqRing = contextManager_->ArRequestRing();
-        populateDescriptor(snapshot.arRequest,
-                           nullptr,
-                           nullptr,
-                           0,
-                           0,
-                           0,
-                           0,
+        populateDescriptor(snapshot.arRequest, nullptr, nullptr, 0, 0, 0, 0,
                            static_cast<uint32_t>(sizeof(HW::OHCIDescriptor)));
-        populateBuffers(snapshot.arRequestBuffers,
-                        arReqRing,
-                        nullptr,
-                        0);
+        populateBuffers(snapshot.arRequestBuffers, arReqRing, nullptr, 0);
     }
     {
         auto* arRspRing = contextManager_->ArResponseRing();
-        populateDescriptor(snapshot.arResponse,
-                           nullptr,
-                           nullptr,
-                           0,
-                           0,
-                           0,
-                           0,
+        populateDescriptor(snapshot.arResponse, nullptr, nullptr, 0, 0, 0, 0,
                            static_cast<uint32_t>(sizeof(HW::OHCIDescriptor)));
-        populateBuffers(snapshot.arResponseBuffers,
-                        arRspRing,
-                        nullptr,
-                        0);
+        populateBuffers(snapshot.arResponseBuffers, arRspRing, nullptr, 0);
     }
 
     return snapshot;
 }
 
-AsyncSubsystem::WatchdogStats AsyncSubsystem::GetWatchdogStats() const {
-    WatchdogStats stats{};
+DMAMemoryManager* AsyncSubsystem::GetDMAManager() {
+    return contextManager_ ? contextManager_->DmaManager() : nullptr;
+}
+
+AsyncWatchdogStats AsyncSubsystem::GetWatchdogStats() const {
+    AsyncWatchdogStats stats{};
     stats.tickCount = watchdogTickCount_.load(std::memory_order_relaxed);
     stats.expiredTransactions = watchdogExpiredCount_.load(std::memory_order_relaxed);
     stats.drainedTxCompletions = watchdogDrainedCompletions_.load(std::memory_order_relaxed);
@@ -121,4 +88,3 @@ void AsyncSubsystem::DumpState() {
 }
 
 } // namespace ASFW::Async
-

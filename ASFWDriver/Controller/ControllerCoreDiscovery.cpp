@@ -5,7 +5,6 @@
 #include <string>
 #include <unordered_set>
 
-#include "../Async/AsyncSubsystem.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
@@ -165,9 +164,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 
         auto& bus = this->Bus();
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(
-            rom,
-            policy,
-            static_cast<Async::IFireWireBusOps*>(&bus),
+            rom, policy, static_cast<Async::IFireWireBusOps*>(&bus),
             static_cast<Async::IFireWireBusInfo*>(&bus));
         discoveredGuids.insert(deviceRecord.guid);
 
@@ -217,4 +214,3 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 }
 
 } // namespace ASFW::Driver
-

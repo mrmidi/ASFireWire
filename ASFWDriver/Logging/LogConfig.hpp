@@ -71,6 +71,9 @@ public:
      */
     uint8_t GetDiscoveryVerbosity() const;
     uint8_t GetConfigROMVerbosity() const;
+    uint8_t GetBusResetVerbosity() const { return GetControllerVerbosity(); }
+    uint8_t GetTopologyVerbosity() const { return GetDiscoveryVerbosity(); }
+    uint8_t GetBusManagerVerbosity() const { return GetControllerVerbosity(); }
 
     /**
      * @brief Get UserClient subsystem verbosity level (0-4)
@@ -148,6 +151,9 @@ public:
      */
     void SetDiscoveryVerbosity(uint8_t level);
     void SetConfigROMVerbosity(uint8_t level);
+    void SetBusResetVerbosity(uint8_t level) { SetControllerVerbosity(level); }
+    void SetTopologyVerbosity(uint8_t level) { SetDiscoveryVerbosity(level); }
+    void SetBusManagerVerbosity(uint8_t level) { SetControllerVerbosity(level); }
 
     /**
      * @brief Set UserClient verbosity at runtime
