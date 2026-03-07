@@ -9,7 +9,7 @@ namespace ASFW::Driver {
 bool BusResetCoordinator::ReadyForDiscovery(Discovery::Generation gen) const {
     const bool nodeValid = G_NodeIDValid();
     const bool genMatch = (gen == lastGeneration_);
-    const bool hasTopo = lastTopology_.has_value();
+    const bool hasTopo = cycle_.acceptedTopology.has_value();
     const bool ready = nodeValid && filtersEnabled_ && atArmed_ && hasTopo && genMatch;
 
     if (!ready) {
@@ -60,4 +60,3 @@ void BusResetCoordinator::EscalateDiscoveryDelay() {
 }
 
 } // namespace ASFW::Driver
-

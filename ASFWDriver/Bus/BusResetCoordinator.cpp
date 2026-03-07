@@ -51,8 +51,7 @@ void SleepForDelay(uint32_t delayMs) {
 }
 
 void LogStateTransition(ASFW::Driver::BusResetCoordinator::State previousState,
-                        ASFW::Driver::BusResetCoordinator::State nextState,
-                        const char* reason) {
+                        ASFW::Driver::BusResetCoordinator::State nextState, const char* reason) {
     ASFW_LOG_V2(BusReset, "[FSM] %{public}s -> %{public}s: %{public}s",
                 ASFW::Driver::BusResetCoordinator::StateString(previousState),
                 ASFW::Driver::BusResetCoordinator::StateString(nextState), reason);
@@ -83,12 +82,11 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
     state_ = State::Idle;
     selfIdLatch_.Reset();
     pendingBusResetEdge_ = false;
-    pendingSoftwareReset_.reset();
+    cycle_ = ResetCycleState{};
     delegateAttemptActive_ = false;
     delegateTarget_ = 0xFF;
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;
-    pendingSoftwareReset_.reset();
     stopFlushIssued_ = false;
 
     if (hardware_ == nullptr || workQueue_.get() == nullptr || asyncSubsystem_ == nullptr ||
@@ -102,7 +100,7 @@ void BusResetCoordinator::OnIrq(uint32_t intEvent, uint64_t timestamp) {
     bool relevant = false;
 
     if ((intEvent & IntEventBits::kBusReset) != 0U) {
-        resetTiming_.lastBusResetEdgeNs = timestamp;
+        cycle_.timing.lastBusResetEdgeNs = timestamp;
         pendingBusResetEdge_ = true;
         relevant = true;
         LogBusResetEdgeLatched(timestamp);
@@ -137,8 +135,7 @@ void BusResetCoordinator::BindCallbacks(TopologyReadyCallback onTopology) {
 
 uint64_t BusResetCoordinator::MonotonicNow() {
 #ifdef ASFW_HOST_TEST
-    using namespace std::chrono;
-    return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+    return ASFW::Testing::HostMonotonicNow();
 #else
     static mach_timebase_info_data_t info{};
     if (info.denom == 0) {
@@ -207,6 +204,16 @@ void BusResetCoordinator::YieldAndReschedule(uint32_t delayMs, const char* reaso
         LogDeferredRunAlreadyScheduled(reason);
         return;
     }
+
+#ifdef ASFW_HOST_TEST
+    if (workQueue_->UsesManualDispatchForTesting()) {
+        workQueue_->DispatchAsyncAfter(static_cast<uint64_t>(delayMs) * 1'000'000ULL, ^{
+          deferredRunScheduled_.store(false, std::memory_order_release);
+          RunStateMachine();
+        });
+        return;
+    }
+#endif
 
     workQueue_->DispatchAsync(^{
       SleepForDelay(delayMs);
