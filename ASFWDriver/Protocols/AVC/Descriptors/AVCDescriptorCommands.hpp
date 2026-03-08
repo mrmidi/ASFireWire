@@ -10,6 +10,7 @@
 
 #include "DescriptorTypes.hpp"
 #include "../AVCCommand.hpp"
+#include "../../../Common/CallbackUtils.hpp"
 #include <vector>
 
 namespace ASFW::Protocols::AVC {
@@ -28,8 +29,9 @@ public:
         : AVCCommand(transport, BuildCdb(subunitAddr, specifier, subfunction)) {}
 
     void Submit(std::function<void(AVCResult)> completion) {
-        AVCCommand::Submit([completion](AVCResult result, const AVCCdb& response) {
-            completion(result);
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([completionState](AVCResult result, const AVCCdb&) {
+            Common::InvokeSharedCallback(completionState, result);
         });
     }
 
@@ -80,8 +82,9 @@ public:
 
     void Submit(std::function<void(AVCResult, const ReadResult&)> completion) {
         size_t specSize = specifierSize_;
+        auto completionState = Common::ShareCallback(std::move(completion));
         
-        AVCCommand::Submit([completion, specSize](AVCResult result, const AVCCdb& response) {
+        AVCCommand::Submit([completionState, specSize](AVCResult result, const AVCCdb& response) {
             ReadResult readResult;
             readResult.status = ReadResultStatus::kComplete; // Default
             readResult.dataLength = 0;
@@ -120,17 +123,19 @@ public:
                 }
             }
             
-            completion(result, readResult);
+            Common::InvokeSharedCallback(completionState, result, readResult);
         });
     }
 
 private:
     size_t specifierSize_; // Store for response parsing
 
-    static AVCCdb BuildCdb(uint8_t subunitAddr, 
-                          const DescriptorSpecifier& specifier,
-                          uint16_t offset, 
-                          uint16_t length) {
+    // Positional specifier/offset/length follows the descriptor read command layout.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    static AVCCdb BuildCdb(uint8_t subunitAddr,
+                           const DescriptorSpecifier& specifier,
+                           uint16_t offset, // NOLINT(bugprone-easily-swappable-parameters)
+                           uint16_t length) {
         AVCCdb cdb;
         cdb.ctype = static_cast<uint8_t>(AVCCommandType::kControl);
         cdb.subunit = subunitAddr; // FCP Frame Header handles subunit addressing
@@ -167,8 +172,9 @@ public:
         : AVCCommand(transport, BuildCdb(subunitAddr, specifier)) {}
 
     void Submit(std::function<void(AVCResult)> completion) {
-        AVCCommand::Submit([completion](AVCResult result, const AVCCdb& response) {
-            completion(result);
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([completionState](AVCResult result, const AVCCdb&) {
+            Common::InvokeSharedCallback(completionState, result);
         });
     }
 

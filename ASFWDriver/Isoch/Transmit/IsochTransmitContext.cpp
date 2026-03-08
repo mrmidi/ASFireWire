@@ -445,11 +445,6 @@ void IsochTransmitContext::DumpPayloadBuffers(uint32_t numPackets) const noexcep
     ring_.DumpPayloadBuffers(numPackets);
 }
 
-void IsochTransmitContext::PrimeOnly() noexcept {
-    if (!ring_.HasRings()) return;
-    ring_.Prime(audio_);
-}
-
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
     ring_.DumpDescriptorRing(startPacket, numPackets);
 }

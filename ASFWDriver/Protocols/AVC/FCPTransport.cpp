@@ -190,10 +190,10 @@ ASFW::Async::AsyncHandle FCPTransport::SubmitWriteCommand(const FCPFrame& frame)
 
     const FW::Generation gen{pending_->generation};
     const FW::NodeId node{static_cast<uint8_t>(device_->GetNodeID() & 0x3Fu)};
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((config_.commandAddress >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(config_.commandAddress & 0xFFFFFFFFU),
+    }};
 
     return busOps_->WriteBlock(gen,
                                node,
@@ -238,6 +238,7 @@ bool FCPTransport::CancelCommand(FCPHandle handle) {
 // Response Reception
 //==============================================================================
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void FCPTransport::OnFCPResponse(uint16_t srcNodeID,
                                  uint32_t generation,
                                  std::span<const uint8_t> payload) {

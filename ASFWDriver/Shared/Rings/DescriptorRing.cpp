@@ -38,6 +38,7 @@ uint32_t DescriptorRing::CommandPtrWordTo(const HW::OHCIDescriptor* target, uint
     return (static_cast<uint32_t>(addr) & 0xFFFFFFF0u) | z;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 uint32_t DescriptorRing::CommandPtrWordFromIOVA(uint32_t iova32, uint8_t zBlocks) const noexcept {
     if (storage_.empty() || descIOVABase_ == 0) return 0;
     if ((iova32 & 0xFULL) != 0) return 0;
@@ -69,6 +70,7 @@ const HW::OHCIDescriptor* DescriptorRing::At(size_t index) const noexcept {
     return &storage_[index];
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool DescriptorRing::LocatePreviousLast(size_t tailIndex, HW::OHCIDescriptor*& outDescriptor, size_t& outIndex, uint8_t& outBlocks) noexcept {
     outDescriptor = nullptr; outIndex = 0; outBlocks = 0;
     if (capacity_ == 0) return false;

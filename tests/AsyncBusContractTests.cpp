@@ -115,7 +115,10 @@ TEST(AsyncBusContract, GenerationMismatch_AdapterCompletesStaleGeneration_AsyncN
     const ASFW::FW::Generation current{async.GetBusState().generation16};
     const ASFW::FW::Generation stale{current.value + 1};
 
-    ASFW::Async::FWAddress addr{0xFFFF, 0xF0000400};
+    ASFW::Async::FWAddress addr{ASFW::Async::FWAddress::AddressParts{
+        .addressHi = 0xFFFF,
+        .addressLo = 0xF0000400,
+    }};
     (void)bus.ReadBlock(stale, ASFW::FW::NodeId{1}, addr, 4, ASFW::FW::FwSpeed::S100,
                         [&](ASFW::Async::AsyncStatus s, std::span<const uint8_t> payload) {
                             called = true;

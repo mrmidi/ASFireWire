@@ -82,6 +82,7 @@ void IsochTxVerifier::Kick(const Inputs& inputs) noexcept {
 #endif
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void IsochTxVerifier::CaptureBeforeOverwrite(uint32_t packetIndex,
                                              uint32_t hwPacketIndexCmdPtr,
                                              uint32_t cmdPtr,
@@ -245,7 +246,7 @@ void IsochTxVerifier::RunWork() noexcept {
             : inputs_.pcmChannels;
         const uint16_t expectedDataReq = static_cast<uint16_t>(
             Encoding::kCIPHeaderSize +
-            inputs_.framesPerPacket * expectedAm824Slots * sizeof(uint32_t));
+            static_cast<size_t>(inputs_.framesPerPacket) * expectedAm824Slots * sizeof(uint32_t));
 
         const bool isNoDataByReq = (e.reqCount == expectedNoDataReq);
         const bool isDataByReq = (e.reqCount > expectedNoDataReq);

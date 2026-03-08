@@ -70,6 +70,8 @@ public:
      * \param size Size in bytes
      * \param physAddr Physical address (for DMA)
      */
+    // Positional `(address, size, physAddr)` mirrors the DMA allocation result.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     PayloadHandle(DMAMemoryManager* dmaMgr, uint64_t address, size_t size, uint64_t physAddr) noexcept
         : dmaMgr_(dmaMgr), address_(address), size_(size), physAddr_(physAddr) {}
 

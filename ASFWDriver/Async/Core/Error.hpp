@@ -10,7 +10,6 @@
 #include "../../Logging/Logging.hpp"
 #include <DriverKit/IOReturn.h>
 #include <expected>
-#include <string_view>
 
 namespace ASFW::Async {
 
@@ -32,11 +31,14 @@ struct SourceLocation {
                              int l = __builtin_LINE()) noexcept
         : file(f), function(fn), line(l) {}
 
-    /// Extract filename from full path (strips directory)
-    [[nodiscard]] constexpr std::string_view FileName() const noexcept {
-        std::string_view path(file);
-        auto pos = path.find_last_of('/');
-        return (pos != std::string_view::npos) ? path.substr(pos + 1) : path;
+    [[nodiscard]] constexpr const char* FileNameCString() const noexcept {
+        const char* name = file;
+        for (const char* cursor = file; *cursor != '\0'; ++cursor) {
+            if (*cursor == '/') {
+                name = cursor + 1;
+            }
+        }
+        return name;
     }
 
     /// Format as "file:line" for compact logging
@@ -178,7 +180,7 @@ struct Error {
         ASFW_LOG_ERROR(Async,
                        "[%{public}s/%{public}s] %{public}s:%d in %{public}s() - status=0x%08x "
                        "(%{public}s)",
-                       ToString(severity), ToString(code), location.FileName().data(),
+                       ToString(severity), ToString(code), location.FileNameCString(),
                        location.line, location.function, boundaryStatus, message);
     }
 
@@ -186,7 +188,7 @@ struct Error {
         ASFW_LOG(Async,
                  "[%{public}s/%{public}s] %{public}s:%d in %{public}s() - status=0x%08x "
                  "(%{public}s)",
-                 ToString(severity), ToString(code), location.FileName().data(), location.line,
+                 ToString(severity), ToString(code), location.FileNameCString(), location.line,
                  location.function, boundaryStatus, message);
     }
 };

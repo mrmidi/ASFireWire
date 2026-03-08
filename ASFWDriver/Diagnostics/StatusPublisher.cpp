@@ -177,6 +177,7 @@ void StatusPublisher::SetLastAsyncCompletion(uint64_t machTime) {
     lastAsyncCompletionMach_.store(machTime, std::memory_order_release);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void StatusPublisher::UpdateAsyncWatchdog(uint32_t asyncTimeoutCount, uint64_t watchdogTickCount,
                                           uint64_t watchdogLastTickUsec) {
     asyncTimeoutCount_.store(asyncTimeoutCount, std::memory_order_release);

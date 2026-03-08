@@ -23,11 +23,16 @@ using Generation = ASFW::FW::Generation;
 using Guid64 = uint64_t;
 
 struct FwAddress {
+    struct BusNodeParts {
+        uint16_t bus{0};
+        uint8_t node{0xFF};
+    };
+
     uint16_t bus{0};
     uint16_t node{0xFFFF};
     
     FwAddress() = default;
-    FwAddress(uint16_t b, uint8_t n) : bus(b), node(n) {}
+    constexpr explicit FwAddress(BusNodeParts parts) noexcept : bus(parts.bus), node(parts.node) {}
 };
 
 // ============================================================================

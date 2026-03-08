@@ -601,8 +601,13 @@ TEST_F(CompareAndSwapPacketTest, Descriptor_ControlWord_OutputMoreImmediate_ReqC
     constexpr uint8_t intCtrl = OHCIDescriptor::kIntNever;        // i=0x0
     constexpr uint8_t branchCtrl = OHCIDescriptor::kBranchNever;  // b=0x0 (required for OUTPUT_MORE)
 
-    const uint32_t control = OHCIDescriptor::BuildControl(
-        reqCount, cmd, key, intCtrl, branchCtrl, false);
+    const uint32_t control = OHCIDescriptor::BuildControl({
+        .reqCount = reqCount,
+        .command = cmd,
+        .key = key,
+        .interruptBits = intCtrl,
+        .branchBits = branchCtrl,
+    });
 
     // Extract reqCount field (lower 16 bits)
     const uint16_t extractedReqCount = static_cast<uint16_t>(control & 0xFFFFu);
@@ -636,8 +641,13 @@ TEST_F(CompareAndSwapPacketTest, Descriptor_ControlWord_OutputLast_ReqCount8) {
     constexpr uint8_t intCtrl = OHCIDescriptor::kIntAlways;       // i=0x3 (interrupt on completion)
     constexpr uint8_t branchCtrl = OHCIDescriptor::kBranchAlways; // b=0x3 (always branch)
 
-    const uint32_t control = OHCIDescriptor::BuildControl(
-        reqCount, cmd, key, intCtrl, branchCtrl, false);
+    const uint32_t control = OHCIDescriptor::BuildControl({
+        .reqCount = reqCount,
+        .command = cmd,
+        .key = key,
+        .interruptBits = intCtrl,
+        .branchBits = branchCtrl,
+    });
 
     // Extract reqCount field
     const uint16_t extractedReqCount = static_cast<uint16_t>(control & 0xFFFFu);
@@ -696,13 +706,13 @@ TEST_F(CompareAndSwapPacketTest, Descriptor_TwoDescriptorChain_HeaderAndPayload)
     std::memcpy(headerDesc.immediateData, headerBuffer.data(), headerSize);
 
     // Set control word: reqCount=16, OUTPUT_MORE, Immediate, i=Never, b=Never
-    headerDesc.common.control = OHCIDescriptor::BuildControl(
-        16,  // reqCount = 16 bytes (4 quadlets)
-        OHCIDescriptor::kCmdOutputMore,
-        OHCIDescriptor::kKeyImmediate,
-        OHCIDescriptor::kIntNever,
-        OHCIDescriptor::kBranchNever,
-        false);
+    headerDesc.common.control = OHCIDescriptor::BuildControl({
+        .reqCount = 16,
+        .command = OHCIDescriptor::kCmdOutputMore,
+        .key = OHCIDescriptor::kKeyImmediate,
+        .interruptBits = OHCIDescriptor::kIntNever,
+        .branchBits = OHCIDescriptor::kBranchNever,
+    });
 
     headerDesc.common.branchWord = 0;  // Ignored for OUTPUT_MORE (uses contiguity)
 
@@ -720,13 +730,13 @@ TEST_F(CompareAndSwapPacketTest, Descriptor_TwoDescriptorChain_HeaderAndPayload)
     std::memset(&payloadDesc, 0, sizeof(payloadDesc));
 
     // Set control word: reqCount=8, OUTPUT_LAST, Standard, i=Always, b=Always
-    payloadDesc.control = OHCIDescriptor::BuildControl(
-        8,  // reqCount = 8 bytes (compare + swap operands)
-        OHCIDescriptor::kCmdOutputLast,
-        OHCIDescriptor::kKeyStandard,
-        OHCIDescriptor::kIntAlways,
-        OHCIDescriptor::kBranchAlways,
-        false);
+    payloadDesc.control = OHCIDescriptor::BuildControl({
+        .reqCount = 8,
+        .command = OHCIDescriptor::kCmdOutputLast,
+        .key = OHCIDescriptor::kKeyStandard,
+        .interruptBits = OHCIDescriptor::kIntAlways,
+        .branchBits = OHCIDescriptor::kBranchAlways,
+    });
 
     payloadDesc.branchWord = 0;  // EOL marker
     payloadDesc.dataAddress = 0x12345000;  // Mock payload IOVA (4-byte aligned)

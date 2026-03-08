@@ -99,6 +99,7 @@ public:
                                     bool value) override;
 
     // Mapping helper for tests and call sites.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static bool TryMapBooleanControl(uint32_t classIdFourCC,
                                      uint32_t element,
                                      uint8_t& outChannelIndex) noexcept {

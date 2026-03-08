@@ -19,7 +19,7 @@ OSSharedPtr<ASFWProtocolBooleanControl> ASFWProtocolBooleanControl::Create(
     IOUserAudioObjectPropertyElement controlElement,
     IOUserAudioObjectPropertyScope controlScope,
     IOUserAudioClassID controlClassID,
-    uint32_t classIdFourCC,
+    uint32_t classIdFourCC, // NOLINT(bugprone-easily-swappable-parameters)
     uint32_t routedElement)
 {
     auto* control = OSTypeAlloc(ASFWProtocolBooleanControl);
@@ -42,6 +42,8 @@ OSSharedPtr<ASFWProtocolBooleanControl> ASFWProtocolBooleanControl::Create(
     return OSSharedPtr(control, OSNoRetain);
 }
 
+// The property signature mirrors IOUserAudio property routing inputs.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool ASFWProtocolBooleanControl::init(
     ASFWAudioDriver* ownerDriver,
     bool isSettable,
@@ -49,7 +51,7 @@ bool ASFWProtocolBooleanControl::init(
     IOUserAudioObjectPropertyElement controlElement,
     IOUserAudioObjectPropertyScope controlScope,
     IOUserAudioClassID controlClassID,
-    uint32_t classIdFourCC,
+    uint32_t classIdFourCC, // NOLINT(bugprone-easily-swappable-parameters)
     uint32_t routedElement)
 {
     if (!ownerDriver) {

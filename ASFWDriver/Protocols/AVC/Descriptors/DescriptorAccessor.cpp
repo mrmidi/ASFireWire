@@ -7,6 +7,7 @@
 
 #include "DescriptorAccessor.hpp"
 #include "../AVCDefs.hpp"
+#include "../../../Common/CallbackUtils.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../../../Logging/LogConfig.hpp"
 #include <algorithm>
@@ -28,6 +29,7 @@ DescriptorAccessor::DescriptorAccessor(FCPTransport& transport, uint8_t subunitA
 
 void DescriptorAccessor::openForRead(const DescriptorSpecifier& specifier,
                                      SimpleCompletion completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR: subunit=0x%02x, specifier type=0x%02x, size=%zu",
                   subunitAddr_, static_cast<uint8_t>(specifier.type), specifier.size());
     
@@ -38,27 +40,28 @@ void DescriptorAccessor::openForRead(const DescriptorSpecifier& specifier,
         OpenDescriptorSubfunction::kReadOpen
     );
     
-    cmd->Submit([completion](AVCResult result) {
+    cmd->Submit([completionState](AVCResult result) {
         bool success = IsSuccess(result);
         ASFW_LOG_V3(Discovery, "OPEN DESCRIPTOR result: %d (success=%d)", 
                       static_cast<int>(result), success);
-        completion(success);
+        Common::InvokeSharedCallback(completionState, success);
     });
 }
 
 void DescriptorAccessor::close(const DescriptorSpecifier& specifier,
                                SimpleCompletion completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     auto cmd = std::make_shared<AVCCloseDescriptorCommand>(
         transport_,
         subunitAddr_,
         specifier
     );
     
-    cmd->Submit([completion](AVCResult result) {
+    cmd->Submit([completionState](AVCResult result) {
         bool success = IsSuccess(result);
         ASFW_LOG_V3(Discovery, "CLOSE DESCRIPTOR result: %d (success=%d)",
                       static_cast<int>(result), success);
-        completion(success);
+        Common::InvokeSharedCallback(completionState, success);
     });
 }
 

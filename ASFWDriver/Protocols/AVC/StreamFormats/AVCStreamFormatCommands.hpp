@@ -13,6 +13,7 @@
 
 #include "../AVCCommand.hpp"
 #include "../IAVCCommandSubmitter.hpp"
+#include "../../../Common/CallbackUtils.hpp"
 #include "StreamFormatTypes.hpp"
 #include "StreamFormatParser.hpp"
 #include <vector>
@@ -53,11 +54,13 @@ public:
     /// @param plugNum Plug number
     /// @param isInput true for input/destination plug, false for output/source plug
     /// @param useAlternateOpcode true to use 0x2F instead of 0xBF
+    // Positional plug-addressing follows the AV/C command layout.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     AVCStreamFormatCommand(IAVCCommandSubmitter& submitter,
-                          uint8_t subunitAddr,
-                          uint8_t plugNum,
-                          bool isInput,
-                          bool useAlternateOpcode = false)
+                           uint8_t subunitAddr,
+                           uint8_t plugNum,
+                           bool isInput,
+                           bool useAlternateOpcode = false)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, plugNum, isInput,
                        kStreamFormatSubfunc_Current, 0xFF,
@@ -71,12 +74,13 @@ public:
     /// @param isInput true for input/destination plug, false for output/source plug
     /// @param listIndex Index in supported format list (0-based)
     /// @param useAlternateOpcode true to use 0x2F instead of 0xBF
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     AVCStreamFormatCommand(IAVCCommandSubmitter& submitter,
-                          uint8_t subunitAddr,
-                          uint8_t plugNum,
-                          bool isInput,
-                          uint8_t listIndex,
-                          bool useAlternateOpcode = false)
+                           uint8_t subunitAddr,
+                           uint8_t plugNum,
+                           bool isInput,
+                           uint8_t listIndex,
+                           bool useAlternateOpcode = false)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, plugNum, isInput,
                        kStreamFormatSubfunc_Supported, listIndex,
@@ -90,12 +94,13 @@ public:
     /// @param isInput true for input/destination plug, false for output/source plug
     /// @param format Format to set
     /// @param useAlternateOpcode true to use 0x2F instead of 0xBF
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     AVCStreamFormatCommand(IAVCCommandSubmitter& submitter,
-                          uint8_t subunitAddr,
-                          uint8_t plugNum,
-                          bool isInput,
-                          const AudioStreamFormat& format,
-                          bool useAlternateOpcode = false)
+                           uint8_t subunitAddr,
+                           uint8_t plugNum,
+                           bool isInput,
+                           const AudioStreamFormat& format,
+                           bool useAlternateOpcode = false)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, plugNum, isInput,
                        kStreamFormatSubfunc_Current, 0xFF,
@@ -109,12 +114,13 @@ public:
     /// Submit command with parsed format response
     /// Uses StreamFormatParser for robust parsing
     void Submit(std::function<void(AVC::AVCResult, const std::optional<AudioStreamFormat>&)> completion) {
-        submitter_.SubmitCommand(cdb_, [this, completion](AVC::AVCResult result, const AVC::AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        submitter_.SubmitCommand(cdb_, [this, completionState](AVC::AVCResult result, const AVC::AVCCdb& response) {
             if (AVC::IsSuccess(result)) {
                 auto format = ParseFormatResponse(response);
-                completion(result, format);
+                Common::InvokeSharedCallback(completionState, result, format);
             } else {
-                completion(result, std::nullopt);
+                Common::InvokeSharedCallback(completionState, result, std::optional<AudioStreamFormat>{});
             }
         });
     }
@@ -128,8 +134,9 @@ private:
     // CDB Building
     //==========================================================================
 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static AVC::AVCCdb BuildCdb(uint8_t subunitAddr, uint8_t plugNum, bool isInput,
-                                uint8_t subfunction, uint8_t listIndex, bool useAlternateOpcode,
+                                uint8_t subfunction, uint8_t listIndex, bool useAlternateOpcode, // NOLINT(bugprone-easily-swappable-parameters)
                                 const AudioStreamFormat* formatToSet = nullptr) {
         AVC::AVCCdb cdb;
         // If setting format, use CONTROL, otherwise STATUS
@@ -261,14 +268,15 @@ inline void QueryAllSupportedFormats(
 ) {
     auto formats = std::make_shared<std::vector<AudioStreamFormat>>();
     auto iteration = std::make_shared<uint8_t>(0);
+    auto completionState = Common::ShareCallback(std::move(completion));
 
     // Recursive lambda for iteration
     // Use shared_ptr to allow capturing itself
     auto queryNext = std::make_shared<std::function<void()>>();
     
-    *queryNext = [&submitter, subunitAddr, plugNum, isInput, maxIterations, formats, iteration, completion, queryNext]() {
+    *queryNext = [&submitter, subunitAddr, plugNum, isInput, maxIterations, formats, iteration, completionState, queryNext]() {
         if (*iteration >= maxIterations) {
-            completion(*formats);
+            Common::InvokeSharedCallback(completionState, *formats);
             return;
         }
 
@@ -276,7 +284,7 @@ inline void QueryAllSupportedFormats(
             submitter, subunitAddr, plugNum, isInput, *iteration
         );
 
-        cmd->Submit([formats, iteration, completion, queryNext](
+        cmd->Submit([formats, iteration, completionState, queryNext](
             AVC::AVCResult result,
             const std::optional<AudioStreamFormat>& format
         ) {
@@ -286,7 +294,7 @@ inline void QueryAllSupportedFormats(
                 (*queryNext)(); // Query next format
             } else {
                 // No more formats or error - done
-                completion(*formats);
+                Common::InvokeSharedCallback(completionState, *formats);
             }
         });
     };

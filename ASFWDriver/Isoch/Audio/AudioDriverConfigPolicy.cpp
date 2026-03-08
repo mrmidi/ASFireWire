@@ -18,7 +18,7 @@ void AppendBoolControl(ParsedAudioDriverConfig& inOutConfig,
 } // namespace
 
 void InitializeAudioDriverConfigDefaults(ParsedAudioDriverConfig& outConfig) {
-    memset(&outConfig, 0, sizeof(outConfig));
+    outConfig = {};
 
     strlcpy(outConfig.deviceName, "FireWire Audio", sizeof(outConfig.deviceName));
     outConfig.channelCount = kDefaultChannelCount;

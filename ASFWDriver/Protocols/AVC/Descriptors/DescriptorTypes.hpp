@@ -231,7 +231,8 @@ struct DescriptorSpecifier {
     /// 6.2.4 Entry descriptor specified by position
     /// Structure: [20] + [list ID (variable)] + [entry position (variable)]
     /// Note: sizes defined in Unit Identifier
-    static DescriptorSpecifier forEntryPosition(const std::vector<uint8_t>& listID, 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    static DescriptorSpecifier forEntryPosition(const std::vector<uint8_t>& listID,
                                                 const std::vector<uint8_t>& position) {
         std::vector<uint8_t> data = listID;
         data.insert(data.end(), position.begin(), position.end());

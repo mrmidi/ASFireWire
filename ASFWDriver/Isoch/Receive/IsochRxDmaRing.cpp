@@ -51,12 +51,13 @@ kern_return_t IsochRxDmaRing::SetupRings(Memory::IIsochDMAMemory& dma,
             const uint8_t interruptBits =
                 (i % 8 == 7) ? Async::HW::OHCIDescriptor::kIntAlways : Async::HW::OHCIDescriptor::kIntNever;
 
-            uint32_t control = Async::HW::OHCIDescriptor::BuildControl(
-                reqCount,
-                Async::HW::OHCIDescriptor::kCmdInputLast,
-                Async::HW::OHCIDescriptor::kKeyStandard,
-                interruptBits,
-                Async::HW::OHCIDescriptor::kBranchAlways);
+            uint32_t control = Async::HW::OHCIDescriptor::BuildControl({
+                .reqCount = reqCount,
+                .command = Async::HW::OHCIDescriptor::kCmdInputLast,
+                .key = Async::HW::OHCIDescriptor::kKeyStandard,
+                .interruptBits = interruptBits,
+                .branchBits = Async::HW::OHCIDescriptor::kBranchAlways,
+            });
             control |= (1u << (Async::HW::OHCIDescriptor::kStatusShift + Async::HW::OHCIDescriptor::kControlHighShift));
             desc->control = control;
 
@@ -123,12 +124,13 @@ kern_return_t IsochRxDmaRing::SetupRings(Memory::IIsochDMAMemory& dma,
         const uint8_t interruptBits =
             (i % 8 == 7) ? Async::HW::OHCIDescriptor::kIntAlways : Async::HW::OHCIDescriptor::kIntNever;
 
-        uint32_t control = Async::HW::OHCIDescriptor::BuildControl(
-            reqCount,
-            Async::HW::OHCIDescriptor::kCmdInputLast,
-            Async::HW::OHCIDescriptor::kKeyStandard,
-            interruptBits,
-            Async::HW::OHCIDescriptor::kBranchAlways);
+        uint32_t control = Async::HW::OHCIDescriptor::BuildControl({
+            .reqCount = reqCount,
+            .command = Async::HW::OHCIDescriptor::kCmdInputLast,
+            .key = Async::HW::OHCIDescriptor::kKeyStandard,
+            .interruptBits = interruptBits,
+            .branchBits = Async::HW::OHCIDescriptor::kBranchAlways,
+        });
         control |= (1u << (Async::HW::OHCIDescriptor::kStatusShift + Async::HW::OHCIDescriptor::kControlHighShift));
         desc->control = control;
 

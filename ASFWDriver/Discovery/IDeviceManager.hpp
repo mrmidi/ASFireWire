@@ -5,6 +5,7 @@
 #include <vector>
 #include <optional>
 #include "DiscoveryTypes.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace ASFW::Discovery {
 
@@ -125,9 +126,8 @@ public:
             try {
                 unregister_();
             } catch (...) {
-                // Unregister must not throw from a destructor.
-                // Virtual Unregister* implementations should be noexcept;
-                // swallow defensively to prevent std::terminate.
+                ASFW_LOG_ERROR(Discovery,
+                               "ObserverGuard: unregister callback threw during destruction");
             }
         }
     }

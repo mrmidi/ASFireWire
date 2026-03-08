@@ -72,7 +72,9 @@ private:
         uint32_t cipQ1Host{0};
         uint16_t reqCount{0};
         uint16_t audioQuadletCount{0};
-        std::array<uint32_t, Tx::Layout::kAudioWriteAhead * Config::kMaxAmdtpDbs> audioHost{};
+        std::array<uint32_t,
+                   static_cast<size_t>(Tx::Layout::kAudioWriteAhead) * Config::kMaxAmdtpDbs>
+            audioHost{};
     };
 
     static constexpr uint32_t kTraceCapacity = 1024;

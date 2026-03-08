@@ -1,4 +1,5 @@
 #include "IRMAllocationManager.hpp"
+#include "../Common/CallbackUtils.hpp"
 #include "../Logging/Logging.hpp"
 #include <os/log.h>
 
@@ -64,9 +65,10 @@ void IRMAllocationManager::Allocate(uint8_t channel,
 void IRMAllocationManager::Release(AllocationCallback callback,
                                     const RetryPolicy& retryPolicy)
 {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     if (!isAllocated_) {
         ASFW_LOG(IRM, "AllocationManager: No allocation to release");
-        callback(AllocationStatus::Success);
+        Common::InvokeSharedCallback(callbackState, AllocationStatus::Success);
         return;
     }
 
@@ -84,8 +86,8 @@ void IRMAllocationManager::Release(AllocationCallback callback,
 
     // Release resources
     irmClient_.ReleaseResources(channelToRelease, bandwidthToRelease,
-        [callback](AllocationStatus status) {
-            callback(status);
+        [callbackState](AllocationStatus status) {
+            Common::InvokeSharedCallback(callbackState, status);
         },
         retryPolicy);
 }

@@ -35,8 +35,9 @@ constexpr uint32_t BusNameQuadletHostOrder() noexcept {
     return ASFW::FW::kBusNameQuadlet;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] bool CanTreatAsEOF(ROMReader::QuadletReadPolicy policy, Async::AsyncStatus status,
-                                 size_t payloadSizeBytes, uint32_t completedQuadlets) noexcept {
+                                 size_t payloadSizeBytes, uint32_t completedQuadlets) noexcept { // NOLINT(bugprone-easily-swappable-parameters)
     if (policy != ROMReader::QuadletReadPolicy::AllowPartialEOF) {
         return false;
     }
@@ -58,9 +59,10 @@ void ROMReader::ReadQuadletsBE(uint8_t nodeId, Generation generation, FwSpeed sp
                        std::move(callback), policy);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void ROMReader::ReadQuadletsBEImpl(Async::IFireWireBus& bus,
                                    OSSharedPtr<IODispatchQueue> dispatchQueue, uint8_t nodeId,
-                                   Generation generation, FwSpeed speed, uint32_t offsetBytes,
+                                   Generation generation, FwSpeed speed, uint32_t offsetBytes, // NOLINT(bugprone-easily-swappable-parameters)
                                    uint32_t quadletCount, CompletionCallback callback,
                                    QuadletReadPolicy policy) {
     if (FW::ConfigROMAddr::kAddressHi != 0xFFFF) {
@@ -117,8 +119,11 @@ void ROMReader::ScheduleQuadletReadStep(const std::shared_ptr<QuadletReadContext
 
     const uint32_t addressLo =
         ctx->baseAddress + (ctx->quadletIndex * ASFW::ConfigROM::kQuadletBytes);
-    Async::FWAddress addr{FW::ConfigROMAddr::kAddressHi, addressLo,
-                          static_cast<uint16_t>(ctx->nodeId)};
+    Async::FWAddress addr{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = FW::ConfigROMAddr::kAddressHi,
+        .addressLo = addressLo,
+        .nodeID = static_cast<uint16_t>(ctx->nodeId),
+    }};
 
     Async::InterfaceCompletionCallback completionHandler =
         [ctx](Async::AsyncStatus status, std::span<const uint8_t> payload) mutable {

@@ -9,19 +9,21 @@
 #include "../AVCUnit.hpp"
 #include "../AVCCommands.hpp"
 #include "../AudioFunctionBlockCommand.hpp"
+#include "../../../Common/CallbackUtils.hpp"
 #include "../../../Logging/Logging.hpp"
 
 using namespace ASFW::Protocols::AVC::Audio;
 
 void AudioSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     ASFW_LOG_INFO(Discovery, "AudioSubunit: Parsing capabilities for Audio subunit (id=%d)", GetID());
     
     auto unitPtr = unit.shared_from_this();
     
-    QueryPlugCounts(unit, [this, unitPtr, completion](bool success) {
+    QueryPlugCounts(unit, [this, unitPtr, completionState](bool success) {
         if (!success) {
             ASFW_LOG_WARNING(Discovery, "AudioSubunit: Failed to query plug counts");
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
             return;
         }
         
@@ -37,41 +39,43 @@ void AudioSubunit::ParseCapabilities(AVCUnit& unit, std::function<void(bool)> co
                 inputPlugs_[i].plugNumber = i;
                 inputPlugs_[i].isInput = true;
             }
-            QueryPlugFormats(*unitPtr, 0, true, completion);
+            QueryPlugFormats(*unitPtr, 0, true, *completionState);
         } else if (numOutputPlugs_ > 0) {
             outputPlugs_.resize(numOutputPlugs_);
             for (size_t i = 0; i < numOutputPlugs_; ++i) {
                 outputPlugs_[i].plugNumber = i;
                 outputPlugs_[i].isInput = false;
             }
-            QueryPlugFormats(*unitPtr, 0, false, completion);
+            QueryPlugFormats(*unitPtr, 0, false, *completionState);
         } else {
             ASFW_LOG_INFO(Discovery, "AudioSubunit: No plugs to query");
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         }
     });
 }
 
 void AudioSubunit::QueryPlugCounts(AVCUnit& unit, std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     uint8_t subunitAddr = (static_cast<uint8_t>(GetType()) << 3) | (GetID() & 0x07);
     
     auto cmd = std::make_shared<AVCPlugInfoCommand>(unit.GetFCPTransport(), subunitAddr);
     
-    cmd->Submit([this, completion, cmd](AVCResult result, const AVCPlugInfoCommand::PlugInfo& info) {
+    cmd->Submit([this, completionState, cmd](AVCResult result, const AVCPlugInfoCommand::PlugInfo& info) {
         if (IsSuccess(result)) {
             numInputPlugs_ = info.numDestPlugs;
             numOutputPlugs_ = info.numSrcPlugs;
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         } else {
             ASFW_LOG_ERROR(Discovery, "AudioSubunit: PLUG_INFO failed: result=%d",
                           static_cast<int>(result));
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
         }
     });
 }
 
 void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInput,
                                    std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     auto& plugs = isInput ? inputPlugs_ : outputPlugs_;
     
     if (plugIndex >= plugs.size()) {
@@ -81,10 +85,10 @@ void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInpu
                 outputPlugs_[i].plugNumber = i;
                 outputPlugs_[i].isInput = false;
             }
-            QueryPlugFormats(unit, 0, false, completion);
+            QueryPlugFormats(unit, 0, false, *completionState);
         } else {
             ASFW_LOG_INFO(Discovery, "AudioSubunit: Finished querying all plug formats");
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         }
         return;
     }
@@ -97,7 +101,7 @@ void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInpu
     auto cmd = std::make_shared<AVCStreamFormatCommand>(unit.GetFCPTransport(),
                                                         subunitAddr, plugNum, isInput);
     
-    cmd->Submit([this, unitPtr, plugIndex, isInput, completion, cmd](
+    cmd->Submit([this, unitPtr, plugIndex, isInput, completionState, cmd](
                 AVCResult result, const std::optional<StreamFormat>& format) {
         auto& plugs = isInput ? inputPlugs_ : outputPlugs_;
         
@@ -112,11 +116,13 @@ void AudioSubunit::QueryPlugFormats(AVCUnit& unit, size_t plugIndex, bool isInpu
                            plugs[plugIndex].plugNumber, isInput ? "input" : "output");
         }
         
-        QueryPlugFormats(*unitPtr, plugIndex + 1, isInput, completion);
+        QueryPlugFormats(*unitPtr, plugIndex + 1, isInput, *completionState);
     });
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void AudioSubunit::SetAudioVolume(AVCUnit& unit, uint8_t plugId, int16_t volume, std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     uint8_t subunitAddr = (static_cast<uint8_t>(GetType()) << 3) | (GetID() & 0x07);
     
     // Volume data: 2 bytes, big endian
@@ -133,18 +139,19 @@ void AudioSubunit::SetAudioVolume(AVCUnit& unit, uint8_t plugId, int16_t volume,
         data
     );
     
-    cmd->Submit([completion, cmd](AVCResult result, const std::vector<uint8_t>&) {
+    cmd->Submit([completionState, cmd](AVCResult result, const std::vector<uint8_t>&) {
         if (IsSuccess(result)) {
             ASFW_LOG_V1(AVC, "AudioSubunit: Set volume success");
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         } else {
             ASFW_LOG_ERROR(AVC, "AudioSubunit: Set volume failed: result=%d", static_cast<int>(result));
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
         }
     });
 }
 
 void AudioSubunit::SetAudioMute(AVCUnit& unit, uint8_t plugId, bool mute, std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     uint8_t subunitAddr = (static_cast<uint8_t>(GetType()) << 3) | (GetID() & 0x07);
     
     // Mute data: 1 byte (0x70 = Mute, 0x60 = Unmute) - typical for Audio Subunit
@@ -161,14 +168,13 @@ void AudioSubunit::SetAudioMute(AVCUnit& unit, uint8_t plugId, bool mute, std::f
         std::vector<uint8_t>{muteVal}
     );
     
-    cmd->Submit([completion, cmd](AVCResult result, const std::vector<uint8_t>&) {
+    cmd->Submit([completionState, cmd](AVCResult result, const std::vector<uint8_t>&) {
         if (IsSuccess(result)) {
             ASFW_LOG_V1(AVC, "AudioSubunit: Set mute success");
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         } else {
             ASFW_LOG_ERROR(AVC, "AudioSubunit: Set mute failed: result=%d", static_cast<int>(result));
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
         }
     });
 }
-

@@ -86,7 +86,7 @@ class AsyncSubsystem : public IAsyncControllerPort {
 
     kern_return_t Start(Driver::HardwareInterface& hw, OSObject* owner,
                         ::IODispatchQueue* workloopQueue, ::OSAction* completionAction,
-                        size_t completionQueueCapacityBytes = 64 * 1024);
+                        size_t completionQueueCapacityBytes = size_t{64} * 1024u);
 
     kern_return_t ArmDMAContexts();
 
@@ -250,6 +250,12 @@ class AsyncSubsystem : public IAsyncControllerPort {
 
     void HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t newGeneration);
     void Teardown(bool disableHardware);
+    [[nodiscard]] kern_return_t InitializeCoreStartState(size_t completionQueueCapacityBytes,
+                                                         const char*& failureStage);
+    [[nodiscard]] kern_return_t ProvisionAsyncDataPath(const char*& failureStage);
+    void FinalizeStart();
+    [[nodiscard]] kern_return_t FailStart(const char* failureStage, kern_return_t kr);
+    void ResetWatchdogCounters() noexcept;
 
     [[nodiscard]] bool EnsureATContextsRunning(const char* reason);
 
