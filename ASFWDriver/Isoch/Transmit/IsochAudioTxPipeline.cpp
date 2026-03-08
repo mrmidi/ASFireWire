@@ -14,15 +14,17 @@ inline uint32_t EncodeMidiPlaceholderSlot(uint32_t midiSlotIndex) noexcept {
     return Encoding::AM824Encoder::encodeLabelOnly(label);
 }
 
+// Positional arguments mirror PCM input then AM824 output layout.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 inline void EncodePcmFramesWithAm824Placeholders(const int32_t* pcmInterleaved,
-                                                 uint32_t frames,
+                                                 uint32_t frames, // NOLINT(bugprone-easily-swappable-parameters)
                                                  uint32_t pcmChannels,
                                                  uint32_t am824Slots,
                                                  uint32_t* outWireQuadlets) noexcept {
     const uint32_t midiSlots = (am824Slots > pcmChannels) ? (am824Slots - pcmChannels) : 0;
     for (uint32_t f = 0; f < frames; ++f) {
-        const int32_t* frameIn = pcmInterleaved + (f * pcmChannels);
-        uint32_t* frameOut = outWireQuadlets + (f * am824Slots);
+        const int32_t* frameIn = pcmInterleaved + (static_cast<size_t>(f) * pcmChannels);
+        uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824Slots);
 
         for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
             frameOut[ch] = Encoding::AM824Encoder::encode(frameIn[ch]);
@@ -98,6 +100,7 @@ void IsochAudioTxPipeline::SetZeroCopyOutputBuffer(void* base, uint64_t bytes, u
              assembler_.isZeroCopyEnabled() ? "ENABLED" : "fallback");
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
                                               uint32_t streamModeRaw,
                                               uint32_t requestedChannels,
@@ -151,7 +154,8 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
              effectiveStreamMode_ == Encoding::StreamMode::kBlocking ? "blocking" : "non-blocking");
 
     const uint32_t framesPerDataPacket = assembler_.samplesPerDataPacket();
-    const uint32_t payloadBytes = framesPerDataPacket * am824Slots * sizeof(uint32_t);
+    const uint32_t payloadBytes = static_cast<uint32_t>(
+        static_cast<size_t>(framesPerDataPacket) * am824Slots * sizeof(uint32_t));
     const uint32_t packetBytes = Encoding::kCIPHeaderSize + payloadBytes;
     ASFW_LOG(Isoch,
              "IT: Channel geometry resolved pcm=%u dbs=%u midiSlots=%u framesPerData=%u payloadBytes=%u packetBytes=%u",
@@ -469,7 +473,8 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextSilentPacket(uint32_t transmitCycle)
     }
 
     Tx::IsochTxPacket out{};
-    out.words = reinterpret_cast<const uint32_t*>(pkt.data);
+    std::memcpy(silentPacketStorage_.data(), pkt.data, pkt.size);
+    out.words = reinterpret_cast<const uint32_t*>(silentPacketStorage_.data());
     out.sizeBytes = pkt.size;
     out.isData = pkt.isData;
     out.dbc = pkt.dbc;
@@ -559,8 +564,8 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         }
 
         if (framesRead < framesPerPacket) {
-            const size_t samplesRead = framesRead * pcmChannels;
-            const size_t totalSamples = framesPerPacket * pcmChannels;
+            const size_t samplesRead = static_cast<size_t>(framesRead) * pcmChannels;
+            const size_t totalSamples = static_cast<size_t>(framesPerPacket) * pcmChannels;
             std::memset(&samples[samplesRead], 0,
                         (totalSamples - samplesRead) * sizeof(int32_t));
         }

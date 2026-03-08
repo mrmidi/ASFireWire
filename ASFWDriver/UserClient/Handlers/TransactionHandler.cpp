@@ -21,9 +21,11 @@ namespace ASFW::UserClient {
 TransactionHandler::TransactionHandler(ASFWDriver* driver, TransactionStorage* storage)
     : driver_(driver), storage_(storage) {}
 
+// Callback signature is fixed by the async subsystem completion contract.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void TransactionHandler::AsyncCompletionCallback(ASFW::Async::AsyncHandle handle,
                                                  ASFW::Async::AsyncStatus status,
-                                                 uint8_t responseCode, void* context,
+                                                 uint8_t responseCode, void* context, // NOLINT(bugprone-easily-swappable-parameters)
                                                  const void* responsePayload,
                                                  uint32_t responseLength) {
 

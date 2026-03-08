@@ -6,6 +6,7 @@
 
 #include "ApogeeDuetProtocol.hpp"
 
+#include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../../AVC/AVCDefs.hpp"
 #include "../../../AVC/FCPTransport.hpp"
@@ -37,7 +38,6 @@ constexpr uint8_t kCTypeStatus = 0x01;
 constexpr uint8_t kSubunitUnit = 0xFF;
 constexpr uint8_t kOpcodeVendorDependent = 0x00;
 constexpr uint32_t kControlSyncTimeoutMs = 1500;
-constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
 
 constexpr size_t kVendorHeaderSize = 9; // OUI(3) + Prefix(3) + Code + Arg1 + Arg2.
@@ -105,6 +105,7 @@ constexpr size_t kVendorHeaderSize = 9; // OUI(3) + Prefix(3) + Code + Arg1 + Ar
     return OutputMuteMode::Never;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void BuildMuteMode(OutputMuteMode mode, bool& mute, bool& unmute) noexcept {
     switch (mode) {
         case OutputMuteMode::Never:
@@ -172,6 +173,7 @@ struct ApogeeDuetProtocol::VendorCommand {
         return command;
     }
 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static VendorCommand InGain(uint8_t index, uint8_t value) {
         VendorCommand command{};
         command.code = Code::InGain;
@@ -187,6 +189,7 @@ struct ApogeeDuetProtocol::VendorCommand {
         return command;
     }
 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static VendorCommand MixerSrc(uint8_t source, uint8_t destination, uint16_t gain) {
         VendorCommand command{};
         command.code = Code::MixerSrc;
@@ -499,8 +502,9 @@ IOReturn ApogeeDuetProtocol::SetBooleanControlValue(uint32_t classIdFourCC,
 void ApogeeDuetProtocol::SendVendorCommand(const VendorCommand& command,
                                            bool isStatus,
                                            VendorResultCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     if (!fcpTransport_) {
-        callback(kIOReturnNotReady, command);
+        Common::InvokeSharedCallback(callbackState, kIOReturnNotReady, command);
         return;
     }
 
@@ -514,7 +518,7 @@ void ApogeeDuetProtocol::SendVendorCommand(const VendorCommand& command,
 
     if (paddedLength < Protocols::AVC::kAVCFrameMinSize ||
         paddedLength > Protocols::AVC::kAVCFrameMaxSize) {
-        callback(kIOReturnBadArgument, command);
+        Common::InvokeSharedCallback(callbackState, kIOReturnBadArgument, command);
         return;
     }
 
@@ -537,22 +541,22 @@ void ApogeeDuetProtocol::SendVendorCommand(const VendorCommand& command,
 
     const auto handle = fcpTransport_->SubmitCommand(
         frame,
-        [callback, command, isStatus](FCPStatus status, const FCPFrame& response) {
+        [callbackState, command, isStatus](FCPStatus status, const FCPFrame& response) {
             const IOReturn transportStatus = MapFCPStatusToIOReturn(status);
             if (transportStatus != kIOReturnSuccess) {
-                callback(transportStatus, command);
+                Common::InvokeSharedCallback(callbackState, transportStatus, command);
                 return;
             }
 
             if (response.length < Protocols::AVC::kAVCFrameMinSize) {
-                callback(kIOReturnBadMessageID, command);
+                Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
                 return;
             }
 
             const AVCResult avcResult = CTypeToResult(response.data[0]);
             const IOReturn avcStatus = MapAVCResultToIOReturn(avcResult);
             if (avcStatus != kIOReturnSuccess) {
-                callback(avcStatus, command);
+                Common::InvokeSharedCallback(callbackState, avcStatus, command);
                 return;
             }
 
@@ -561,12 +565,12 @@ void ApogeeDuetProtocol::SendVendorCommand(const VendorCommand& command,
                 const size_t operandLength = response.length - 3U;
                 std::span<const uint8_t> payload{response.data.data() + 3U, operandLength};
                 if (!parsed.ParseStatusPayload(payload)) {
-                    callback(kIOReturnBadMessageID, command);
+                    Common::InvokeSharedCallback(callbackState, kIOReturnBadMessageID, command);
                     return;
                 }
             }
 
-            callback(kIOReturnSuccess, parsed);
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, parsed);
         });
     (void)handle;
 }
@@ -965,158 +969,185 @@ uint32_t ApogeeDuetProtocol::ReadQuadletBE(const uint8_t* data) noexcept {
 }
 
 void ApogeeDuetProtocol::GetKnobState(ResultCallback<KnobState> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildKnobStateQuery(),
         true,
-        [callback](IOReturn status, const std::vector<VendorCommand>& responses) {
+        [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess || responses.empty()) {
-                callback(status != kIOReturnSuccess ? status : kIOReturnError, {});
+                Common::InvokeSharedCallback(callbackState,
+                                             status != kIOReturnSuccess ? status : kIOReturnError,
+                                             KnobState{});
                 return;
             }
-            callback(kIOReturnSuccess, ParseKnobState(responses[0]));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseKnobState(responses[0]));
         });
 }
 
 void ApogeeDuetProtocol::SetKnobState(const KnobState& state, VoidCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         {BuildKnobStateControl(state)},
         false,
-        [callback](IOReturn status, const std::vector<VendorCommand>&) { callback(status); });
+        [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
+            Common::InvokeSharedCallback(callbackState, status);
+        });
 }
 
 void ApogeeDuetProtocol::GetOutputParams(ResultCallback<OutputParams> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildOutputParamsQuery(),
         true,
-        [callback](IOReturn status, const std::vector<VendorCommand>& responses) {
+        [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
-                callback(status, {});
+                Common::InvokeSharedCallback(callbackState, status, OutputParams{});
                 return;
             }
-            callback(kIOReturnSuccess, ParseOutputParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseOutputParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetOutputParams(const OutputParams& params, VoidCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildOutputParamsControl(params),
         false,
-        [callback](IOReturn status, const std::vector<VendorCommand>&) { callback(status); });
+        [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
+            Common::InvokeSharedCallback(callbackState, status);
+        });
 }
 
 void ApogeeDuetProtocol::GetInputParams(ResultCallback<InputParams> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildInputParamsQuery(),
         true,
-        [callback](IOReturn status, const std::vector<VendorCommand>& responses) {
+        [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
-                callback(status, {});
+                Common::InvokeSharedCallback(callbackState, status, InputParams{});
                 return;
             }
-            callback(kIOReturnSuccess, ParseInputParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseInputParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetInputParams(const InputParams& params, VoidCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildInputParamsControl(params),
         false,
-        [callback](IOReturn status, const std::vector<VendorCommand>&) { callback(status); });
+        [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
+            Common::InvokeSharedCallback(callbackState, status);
+        });
 }
 
 void ApogeeDuetProtocol::GetMixerParams(ResultCallback<MixerParams> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildMixerParamsQuery(),
         true,
-        [callback](IOReturn status, const std::vector<VendorCommand>& responses) {
+        [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
-                callback(status, {});
+                Common::InvokeSharedCallback(callbackState, status, MixerParams{});
                 return;
             }
-            callback(kIOReturnSuccess, ParseMixerParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseMixerParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetMixerParams(const MixerParams& params, VoidCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildMixerParamsControl(params),
         false,
-        [callback](IOReturn status, const std::vector<VendorCommand>&) { callback(status); });
+        [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
+            Common::InvokeSharedCallback(callbackState, status);
+        });
 }
 
 void ApogeeDuetProtocol::GetDisplayParams(ResultCallback<DisplayParams> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildDisplayParamsQuery(),
         true,
-        [callback](IOReturn status, const std::vector<VendorCommand>& responses) {
+        [callbackState](IOReturn status, const std::vector<VendorCommand>& responses) {
             if (status != kIOReturnSuccess) {
-                callback(status, {});
+                Common::InvokeSharedCallback(callbackState, status, DisplayParams{});
                 return;
             }
-            callback(kIOReturnSuccess, ParseDisplayParams(responses));
+            Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, ParseDisplayParams(responses));
         });
 }
 
 void ApogeeDuetProtocol::SetDisplayParams(const DisplayParams& params, VoidCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         BuildDisplayParamsControl(params),
         false,
-        [callback](IOReturn status, const std::vector<VendorCommand>&) { callback(status); });
+        [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
+            Common::InvokeSharedCallback(callbackState, status);
+        });
 }
 
 void ApogeeDuetProtocol::ClearDisplay(VoidCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     ExecuteVendorSequence(
         {VendorCommand::Make(VendorCommand::Code::DisplayClear)},
         false,
-        [callback](IOReturn status, const std::vector<VendorCommand>&) { callback(status); });
+        [callbackState](IOReturn status, const std::vector<VendorCommand>&) {
+            Common::InvokeSharedCallback(callbackState, status);
+        });
 }
 
 void ApogeeDuetProtocol::GetInputMeter(ResultCallback<InputMeterState> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     const auto gen = busInfo_.GetGeneration();
     const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
     const uint64_t addr64 = kMeterBaseAddress + kMeterInputOffset;
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    }};
 
     busOps_.ReadBlock(gen,
                       node,
                       addr,
                       8,
                       FW::FwSpeed::S100,
-                      [callback = std::move(callback)](Async::AsyncStatus status,
+                      [callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
                           if (status != Async::AsyncStatus::kSuccess || payload.size() < 8U) {
-                              callback(kIOReturnError, {});
+                              Common::InvokeSharedCallback(callbackState, kIOReturnError, InputMeterState{});
                               return;
                           }
 
                           InputMeterState state{};
                           state.levels[0] = static_cast<int32_t>(ReadQuadletBE(payload.data()));
                           state.levels[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 4U));
-                          callback(kIOReturnSuccess, state);
+                          Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, state);
                       });
 }
 
 void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     const auto gen = busInfo_.GetGeneration();
     const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
     const uint64_t addr64 = kMeterBaseAddress + kMeterMixerOffset;
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    }};
 
     busOps_.ReadBlock(gen,
                       node,
                       addr,
                       16,
                       FW::FwSpeed::S100,
-                      [callback = std::move(callback)](Async::AsyncStatus status,
+                      [callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
                           if (status != Async::AsyncStatus::kSuccess || payload.size() < 16U) {
-                              callback(kIOReturnError, {});
+                              Common::InvokeSharedCallback(callbackState, kIOReturnError, MixerMeterState{});
                               return;
                           }
 
@@ -1125,55 +1156,59 @@ void ApogeeDuetProtocol::GetMixerMeter(ResultCallback<MixerMeterState> callback)
                           state.streamInputs[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 4U));
                           state.mixerOutputs[0] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 8U));
                           state.mixerOutputs[1] = static_cast<int32_t>(ReadQuadletBE(payload.data() + 12U));
-                          callback(kIOReturnSuccess, state);
+                          Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, state);
                       });
 }
 
 void ApogeeDuetProtocol::GetFirmwareId(ResultCallback<uint32_t> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     const auto gen = busInfo_.GetGeneration();
     const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
     const uint64_t addr64 = kOxfordCsrBase + kOxfordFirmwareIdOffset;
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    }};
 
     busOps_.ReadBlock(gen,
                       node,
                       addr,
                       4,
                       FW::FwSpeed::S100,
-                      [callback = std::move(callback)](Async::AsyncStatus status,
+                      [callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
                           if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
-                              callback(kIOReturnError, 0);
+                              Common::InvokeSharedCallback(callbackState, kIOReturnError, 0u);
                               return;
                           }
-                          callback(kIOReturnSuccess, ReadQuadletBE(payload.data()));
+                          Common::InvokeSharedCallback(callbackState, kIOReturnSuccess,
+                                                       ReadQuadletBE(payload.data()));
                       });
 }
 
 void ApogeeDuetProtocol::GetHardwareId(ResultCallback<uint32_t> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     const auto gen = busInfo_.GetGeneration();
     const auto node = FW::NodeId{static_cast<uint8_t>(nodeId_ & 0x3Fu)};
     const uint64_t addr64 = kOxfordCsrBase + kOxfordHardwareIdOffset;
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((addr64 >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(addr64 & 0xFFFFFFFFU),
+    }};
 
     busOps_.ReadBlock(gen,
                       node,
                       addr,
                       4,
                       FW::FwSpeed::S100,
-                      [callback = std::move(callback)](Async::AsyncStatus status,
+                      [callbackState](Async::AsyncStatus status,
                                                        std::span<const uint8_t> payload) {
                           if (status != Async::AsyncStatus::kSuccess || payload.size() < 4U) {
-                              callback(kIOReturnError, 0);
+                              Common::InvokeSharedCallback(callbackState, kIOReturnError, 0u);
                               return;
                           }
-                          callback(kIOReturnSuccess, ReadQuadletBE(payload.data()));
+                          Common::InvokeSharedCallback(callbackState, kIOReturnSuccess,
+                                                       ReadQuadletBE(payload.data()));
                       });
 }
 

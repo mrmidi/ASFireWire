@@ -53,6 +53,7 @@ HardwareInterface::~HardwareInterface() {
     Detach();
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t HardwareInterface::Attach(IOService* owner, IOService* provider) {
     if (device_) {
         return kIOReturnSuccess;
@@ -707,6 +708,7 @@ static bool WaitForRegister(ReadFn&& read32, uint32_t mask, bool expectSet, uint
 
 } // anonymous namespace
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                                uint32_t pollIntervalUsec) const {
     if (!device_) {
@@ -729,6 +731,7 @@ bool HardwareInterface::WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUs
         });
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool HardwareInterface::WaitLink(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                                  uint32_t pollIntervalUsec) const {
     if (!device_) {

@@ -21,8 +21,9 @@ static inline uint16_t ReadBE16(const uint8_t* data) {
 // AVCInfoBlock - Construction
 //==============================================================================
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 AVCInfoBlock::AVCInfoBlock(
-    uint16_t compoundLength,
+    uint16_t compoundLength, // NOLINT(bugprone-easily-swappable-parameters)
     uint16_t primaryFieldsLength,
     uint16_t type,
     std::vector<uint8_t> primaryData,
@@ -76,7 +77,6 @@ std::expected<AVCInfoBlock, AVCResult> AVCInfoBlock::Parse(
     // compound_length excludes itself (2 bytes), so total size is +2
     size_t claimedTotalSize = static_cast<size_t>(compoundLength) + 2;
     size_t effectiveLength = length;
-    bool truncated = false;
 
     // compound_length includes Type(2) + PrimLen(2) + Fields...
     // So minimum valid compound_length is 4.
@@ -90,7 +90,6 @@ std::expected<AVCInfoBlock, AVCResult> AVCInfoBlock::Parse(
         ASFW_LOG_V3(Discovery,
             "Info block truncated: claimed %zu bytes (len=%u), available %zu bytes. Parsing what is available.",
             claimedTotalSize, compoundLength, length);
-        truncated = true;
         effectiveLength = length;
     } else {
         effectiveLength = claimedTotalSize;

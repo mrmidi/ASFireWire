@@ -71,7 +71,7 @@ constexpr uint32_t kLinkControlRcvPhyPktBit = 1u << 12;
 //   - See packet trace: 060:3279:1136 (s400) → 060:3291:0385 (s100)
 // FIXED: Speed encoding bug corrected in PacketBuilder.cpp (shift 16→24 per OHCI spec)
 constexpr uint8_t kDefaultAsyncSpeed = 0; // S100 (98.304 Mbps)
-constexpr size_t kDefaultCompletionQueueCapacity = 64 * 1024;
+constexpr size_t kDefaultCompletionQueueCapacity = size_t{64} * 1024u;
 
 bool ShouldEnableCoherencyTrace(OSObject* owner) {
     bool enabled = false;
@@ -286,6 +286,157 @@ struct PayloadContext {
 
 } // namespace
 
+kern_return_t AsyncSubsystem::InitializeCoreStartState(size_t completionQueueCapacityBytes,
+                                                       const char*& failureStage) {
+    if (!labelAllocator_) {
+        labelAllocator_ = std::make_unique<LabelAllocator>();
+    }
+    labelAllocator_->Reset();
+
+    sharedLock_ = ::IOLockAlloc();
+    if (!sharedLock_) {
+        failureStage = "AllocSharedLock";
+        return kIOReturnNoMemory;
+    }
+
+    commandQueue_ = std::make_unique<std::deque<PendingCommandPtr>>();
+    commandQueueLock_ = ::IOLockAlloc();
+    if (!commandQueueLock_) {
+        failureStage = "AllocCommandQueueLock";
+        return kIOReturnNoMemory;
+    }
+    commandInFlight_.store(false, std::memory_order_release);
+
+    txnMgr_ = std::make_unique<TransactionManager>();
+    Result<void> txnMgrResult = txnMgr_->Initialize();
+    if (!txnMgrResult) {
+        txnMgrResult.error().Log();
+        failureStage = "TransactionManager";
+        return txnMgrResult.error().BoundaryStatus();
+    }
+
+    if (!generationTracker_) {
+        generationTracker_ = std::make_unique<ASFW::Async::Bus::GenerationTracker>(*labelAllocator_);
+    }
+    generationTracker_->Reset();
+
+    packetBuilder_ = std::make_unique<PacketBuilder>();
+
+    std::unique_ptr<CompletionQueue> completionQueue;
+    const kern_return_t kr = CompletionQueue::Create(workloopQueue_, completionQueueCapacityBytes,
+                                                     completionAction_.get(), completionQueue);
+    if (kr != kIOReturnSuccess || !completionQueue) {
+        ASFW_LOG(Async, "FAILED: CompletionQueue::Create returned 0x%08x", kr);
+        failureStage = "CompletionQueue";
+        return kr != kIOReturnSuccess ? kr : kIOReturnNoMemory;
+    }
+
+    completionQueue_ = std::move(completionQueue);
+    completionQueue_->SetClientBound();
+    completionQueue_->Activate();
+
+    tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
+        labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr);
+    return kIOReturnSuccess;
+}
+
+kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) {
+    constexpr size_t kATReqDescCount = 256;
+    constexpr size_t kATRespDescCount = 64;
+    constexpr size_t kARReqBufferCount = 128;
+    constexpr size_t kARReqBufferSize = 4096 + 64;
+    constexpr size_t kARRespBufferCount = 256;
+    constexpr size_t kARRespBufferSize = 4096 + 64;
+
+    contextManager_ = std::make_unique<Engine::ContextManager>();
+
+    Engine::ProvisionSpec spec{};
+    spec.atReqDescCount = kATReqDescCount;
+    spec.atRespDescCount = kATRespDescCount;
+    spec.arReqBufCount = kARReqBufferCount;
+    spec.arReqBufSize = kARReqBufferSize;
+    spec.arRespBufCount = kARRespBufferCount;
+    spec.arRespBufSize = kARRespBufferSize;
+
+    const kern_return_t provisionKr = contextManager_->provision(*hardware_, spec);
+    if (provisionKr != kIOReturnSuccess) {
+        ASFW_LOG(Async, "FAILED: ContextManager::provision (kr=0x%08x)", provisionKr);
+        failureStage = "ContextManagerProvision";
+        return provisionKr;
+    }
+
+    DMAMemoryManager::SetTracingEnabled(ShouldEnableCoherencyTrace(owner_));
+    if (DMAMemoryManager::IsTracingEnabled()) {
+        ASFW_LOG(Async, "AsyncSubsystem: coherency tracing enabled (ASFWTraceDMACoherency)");
+    }
+
+    descriptorBuilder_ = contextManager_->GetDescriptorBuilderRequest();
+    descriptorBuilderResponse_ = contextManager_->GetDescriptorBuilderResponse();
+
+    if (!descriptorBuilder_) {
+        ASFW_LOG_ERROR(Async, "AsyncSubsystem: descriptorBuilder (request) unavailable");
+        failureStage = "DescriptorBuilderReq";
+        return kIOReturnNoResources;
+    }
+    if (!descriptorBuilderResponse_) {
+        ASFW_LOG_ERROR(Async, "AsyncSubsystem: descriptorBuilder (response) unavailable");
+        failureStage = "DescriptorBuilderRsp";
+        return kIOReturnNoResources;
+    }
+
+    submitter_ = std::make_unique<Tx::Submitter>(*contextManager_, *descriptorBuilder_);
+    if (tracking_ && contextManager_) {
+        contextManager_->SetPayloads(tracking_->Payloads());
+        if (submitter_) {
+            submitter_->SetPayloads(tracking_->Payloads());
+        }
+
+        tracking_->SetContextManager(contextManager_.get());
+    }
+
+    packetRouter_ = std::make_unique<PacketRouter>();
+    rxPath_ = std::make_unique<Rx::RxPath>(*contextManager_->GetArRequestContext(),
+                                           *contextManager_->GetArResponseContext(), *tracking_,
+                                           *generationTracker_, *packetRouter_);
+
+    responseSender_ = std::make_unique<ResponseSender>(*descriptorBuilderResponse_, *submitter_,
+                                                       *contextManager_, *generationTracker_);
+    packetRouter_->SetResponseSender(responseSender_.get());
+
+    ASFW_LOG(Async, "✓ ContextManager provisioned");
+    return kIOReturnSuccess;
+}
+
+void AsyncSubsystem::ResetWatchdogCounters() noexcept {
+    watchdogTickCount_.store(0, std::memory_order_relaxed);
+    watchdogExpiredCount_.store(0, std::memory_order_relaxed);
+    watchdogDrainedCompletions_.store(0, std::memory_order_relaxed);
+    watchdogContextsRearmed_.store(0, std::memory_order_relaxed);
+    watchdogLastTickUsec_.store(0, std::memory_order_relaxed);
+}
+
+void AsyncSubsystem::FinalizeStart() {
+    busResetCapture_ = std::make_unique<Debug::BusResetPacketCapture>();
+
+    hardware_->SetInterruptMask(kAsyncInterruptMask, true);
+    hardware_->SetLinkControlBits(kLinkControlRcvPhyPktBit);
+
+    // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
+    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA always uncached)");
+
+    ResetWatchdogCounters();
+    is_bus_reset_in_progress_.store(0, std::memory_order_release);
+    isRunning_ = true;
+}
+
+kern_return_t AsyncSubsystem::FailStart(const char* failureStage, kern_return_t kr) {
+    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_ERROR,
+                  "AsyncSubsystem::Start failed at stage %{public}s (kr=0x%08x)",
+                  failureStage ? failureStage : "unknown", kr);
+    Teardown(false);
+    return kr == kIOReturnSuccess ? kIOReturnError : kr;
+}
+
 kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw, OSObject* owner,
                                     IODispatchQueue* workloopQueue, OSAction* completionAction,
                                     size_t completionQueueCapacityBytes) {
@@ -305,167 +456,25 @@ kern_return_t AsyncSubsystem::Start(Driver::HardwareInterface& hw, OSObject* own
     }
 
     // Initial bus state is managed by GenerationTracker. Reset tracker state now.
-
     hardware_ = &hw;
     owner_ = owner;
     workloopQueue_ = workloopQueue;
     completionAction_ = OSSharedPtr(completionAction, OSRetain);
 
-    kern_return_t kr = kIOReturnSuccess;
     const char* failureStage = nullptr;
-
-    if (!labelAllocator_) {
-        labelAllocator_ = std::make_unique<LabelAllocator>();
-    }
-    labelAllocator_->Reset();
-
-    Result<void> txnMgrResult = {};
-    std::unique_ptr<CompletionQueue> completionQueue;
-
-    sharedLock_ = ::IOLockAlloc();
-    if (!sharedLock_) {
-        kr = kIOReturnNoMemory;
-        failureStage = "AllocSharedLock";
-        goto fail;
+    const kern_return_t coreKr =
+        InitializeCoreStartState(completionQueueCapacityBytes, failureStage);
+    if (coreKr != kIOReturnSuccess) {
+        return FailStart(failureStage, coreKr);
     }
 
-    commandQueue_ = std::make_unique<std::deque<PendingCommandPtr>>();
-    commandQueueLock_ = ::IOLockAlloc();
-    if (!commandQueueLock_) {
-        kr = kIOReturnNoMemory;
-        failureStage = "AllocCommandQueueLock";
-        goto fail;
-    }
-    commandInFlight_.store(false, std::memory_order_release);
-
-    txnMgr_ = std::make_unique<TransactionManager>();
-    txnMgrResult = txnMgr_->Initialize();
-    if (!txnMgrResult) {
-        txnMgrResult.error().Log();
-        kr = txnMgrResult.error().BoundaryStatus();
-        failureStage = "TransactionManager";
-        goto fail;
+    const kern_return_t provisionKr = ProvisionAsyncDataPath(failureStage);
+    if (provisionKr != kIOReturnSuccess) {
+        return FailStart(failureStage, provisionKr);
     }
 
-    if (!generationTracker_) {
-        generationTracker_ =
-            std::make_unique<ASFW::Async::Bus::GenerationTracker>(*labelAllocator_);
-    }
-    generationTracker_->Reset();
-
-    packetBuilder_ = std::make_unique<PacketBuilder>();
-
-    {
-        kr = CompletionQueue::Create(workloopQueue_, completionQueueCapacityBytes,
-                                     completionAction_.get(), completionQueue);
-        if (kr != kIOReturnSuccess || !completionQueue) {
-            ASFW_LOG(Async, "FAILED: CompletionQueue::Create returned 0x%08x", kr);
-            failureStage = "CompletionQueue";
-            goto fail;
-        }
-        completionQueue_ = std::move(completionQueue);
-
-        completionQueue_->SetClientBound();
-        completionQueue_->Activate();
-    }
-
-    tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
-        labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr);
-
-    {
-        constexpr size_t kATReqDescCount = 256;
-        constexpr size_t kATRespDescCount = 64;
-        constexpr size_t kARReqBufferCount = 128;
-        constexpr size_t kARReqBufferSize = 4096 + 64;
-        constexpr size_t kARRespBufferCount = 256;
-        constexpr size_t kARRespBufferSize = 4096 + 64;
-
-        contextManager_ = std::make_unique<Engine::ContextManager>();
-        Engine::ProvisionSpec spec{};
-        spec.atReqDescCount = kATReqDescCount;
-        spec.atRespDescCount = kATRespDescCount;
-        spec.arReqBufCount = kARReqBufferCount;
-        spec.arReqBufSize = kARReqBufferSize;
-        spec.arRespBufCount = kARRespBufferCount;
-        spec.arRespBufSize = kARRespBufferSize;
-
-        kern_return_t pkr = contextManager_->provision(*hardware_, spec);
-        if (pkr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "FAILED: ContextManager::provision (kr=0x%08x)", pkr);
-            kr = pkr;
-            failureStage = "ContextManagerProvision";
-            goto fail;
-        }
-
-        DMAMemoryManager::SetTracingEnabled(ShouldEnableCoherencyTrace(owner_));
-        if (DMAMemoryManager::IsTracingEnabled()) {
-            ASFW_LOG(Async, "AsyncSubsystem: coherency tracing enabled (ASFWTraceDMACoherency)");
-        }
-
-        descriptorBuilder_ = contextManager_->GetDescriptorBuilderRequest();
-        descriptorBuilderResponse_ = contextManager_->GetDescriptorBuilderResponse();
-
-        if (!descriptorBuilder_) {
-            ASFW_LOG_ERROR(Async, "AsyncSubsystem: descriptorBuilder (request) unavailable");
-            kr = kIOReturnNoResources;
-            failureStage = "DescriptorBuilderReq";
-            goto fail;
-        }
-        if (!descriptorBuilderResponse_) {
-            ASFW_LOG_ERROR(Async, "AsyncSubsystem: descriptorBuilder (response) unavailable");
-            kr = kIOReturnNoResources;
-            failureStage = "DescriptorBuilderRsp";
-            goto fail;
-        }
-
-        submitter_ = std::make_unique<Tx::Submitter>(*contextManager_, *descriptorBuilder_);
-        if (tracking_ && contextManager_) {
-            contextManager_->SetPayloads(tracking_->Payloads());
-            if (submitter_)
-                submitter_->SetPayloads(tracking_->Payloads());
-
-            tracking_->SetContextManager(contextManager_.get());
-        }
-
-        packetRouter_ = std::make_unique<PacketRouter>();
-        rxPath_ = std::make_unique<Rx::RxPath>(*contextManager_->GetArRequestContext(),
-                                               *contextManager_->GetArResponseContext(), *tracking_,
-                                               *generationTracker_, *packetRouter_);
-
-        responseSender_ = std::make_unique<ResponseSender>(*descriptorBuilderResponse_, *submitter_,
-                                                           *contextManager_, *generationTracker_);
-        packetRouter_->SetResponseSender(responseSender_.get());
-
-        ASFW_LOG(Async, "✓ ContextManager provisioned");
-    }
-
-    busResetCapture_ = std::make_unique<Debug::BusResetPacketCapture>();
-
-    hardware_->SetInterruptMask(kAsyncInterruptMask, true);
-    hardware_->SetLinkControlBits(kLinkControlRcvPhyPktBit);
-
-    // Report DMA cache mode (always uncached since kIOMemoryMapCacheModeInhibit works reliably)
-    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_INFO, "AsyncSubsystem::Start complete (DMA always uncached)");
-
-    watchdogTickCount_.store(0, std::memory_order_relaxed);
-    watchdogExpiredCount_.store(0, std::memory_order_relaxed);
-    watchdogDrainedCompletions_.store(0, std::memory_order_relaxed);
-    watchdogContextsRearmed_.store(0, std::memory_order_relaxed);
-    watchdogLastTickUsec_.store(0, std::memory_order_relaxed);
-
-    is_bus_reset_in_progress_.store(0, std::memory_order_release);
-    isRunning_ = true;
+    FinalizeStart();
     return kIOReturnSuccess;
-
-fail:
-    ASFW_LOG_TYPE(Async, OS_LOG_TYPE_ERROR,
-                  "AsyncSubsystem::Start failed at stage %{public}s (kr=0x%08x)",
-                  failureStage ? failureStage : "unknown", kr);
-    Teardown(false);
-    if (kr == kIOReturnSuccess) {
-        kr = kIOReturnError;
-    }
-    return kr;
 }
 
 kern_return_t AsyncSubsystem::ArmDMAContexts() {

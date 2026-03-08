@@ -3,6 +3,7 @@
 
 #include "AVCAudioBackend.hpp"
 
+#include "../../Common/DriverKitOwnership.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
@@ -126,9 +127,10 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
     // Ensure queues exist before wiring to isoch contexts.
     nub->EnsureRxQueueCreated();
-    OSSharedPtr<IOBufferMemoryDescriptor> rxMem{};
+    IOBufferMemoryDescriptor* rxMemRaw = nullptr;
     uint64_t rxBytes = 0;
-    const kern_return_t rxCopy = nub->CopyRxQueueMemory(rxMem.attach(), &rxBytes);
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMemRaw, &rxBytes);
+    auto rxMem = Common::AdoptRetained(rxMemRaw);
     if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
         return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
@@ -137,7 +139,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
     {
         const kern_return_t krRx = isoch_.StartReceive(kDefaultIrChannel,
                                                        hardware_,
-                                                       rxMem.detach(),
+                                                       rxMem,
                                                        rxBytes);
         if (krRx != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartReceive failed GUID=0x%016llx kr=0x%x", guid, krRx);
@@ -174,9 +176,10 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         // AV/C playback streams normally have PCM-only wire slots.
         const uint32_t am824Slots = config.outputChannelCount;
 
-        OSSharedPtr<IOBufferMemoryDescriptor> txMem{};
+        IOBufferMemoryDescriptor* txMemRaw = nullptr;
         uint64_t txBytes = 0;
-        const kern_return_t txCopy = nub->CopyTransmitQueueMemory(txMem.attach(), &txBytes);
+        const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMemRaw, &txBytes);
+        auto txMem = Common::AdoptRetained(txMemRaw);
         if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
             (void)isoch_.StopReceive();
             // Best-effort: disconnect oPCR.
@@ -190,7 +193,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                                                         streamModeRaw,
                                                         config.outputChannelCount,
                                                         am824Slots,
-                                                        txMem.detach(),
+                                                        txMem,
                                                         txBytes,
                                                         nullptr,
                                                         0,

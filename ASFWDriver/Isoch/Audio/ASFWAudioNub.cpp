@@ -85,8 +85,9 @@ static uint32_t FallbackOutputChannels(const ASFWAudioNub_IVars* iv) {
     return ClampAudioChannels(iv->outputChannelCount ? iv->outputChannelCount : iv->channelCount);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 static bool TryResolveRuntimeAudioChannels(ASFWAudioNub_IVars* iv,
-                                           uint32_t& outInputChannels,
+                                           uint32_t& outInputChannels, // NOLINT(bugprone-easily-swappable-parameters)
                                            uint32_t& outOutputChannels)
 {
     if (!iv) {

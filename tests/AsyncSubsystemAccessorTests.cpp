@@ -83,7 +83,8 @@ TEST_F(AsyncSubsystemAccessorTest, GetGenerationTracker_LazyInitialization) {
 
 TEST_F(AsyncSubsystemAccessorTest, GetBusState_ReturnsValidStateAfterLazyInit) {
     // Must call GetGenerationTracker first to initialize
-    subsystem.GetGenerationTracker();
+    auto& tracker = subsystem.GetGenerationTracker();
+    (void)tracker;
     
     // Now GetBusState should work
     auto state = subsystem.GetBusState();
@@ -108,7 +109,8 @@ TEST_F(AsyncSubsystemAccessorTest, GetGenerationTracker_CreatesLabelAllocator) {
 
 TEST_F(AsyncSubsystemAccessorTest, MultipleGetBusStateCalls_ConsistentResults) {
     // Initialize tracker first
-    subsystem.GetGenerationTracker();
+    auto& tracker = subsystem.GetGenerationTracker();
+    (void)tracker;
     
     auto state1 = subsystem.GetBusState();
     auto state2 = subsystem.GetBusState();
@@ -117,5 +119,3 @@ TEST_F(AsyncSubsystemAccessorTest, MultipleGetBusStateCalls_ConsistentResults) {
     EXPECT_EQ(state1.generation16, state2.generation16);
     EXPECT_EQ(state1.localNodeID, state2.localNodeID);
 }
-
-

@@ -11,6 +11,7 @@
 #pragma once
 
 #include "IAVCCommandSubmitter.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include <functional>
 
 namespace ASFW::Protocols::AVC {
@@ -39,11 +40,12 @@ public:
 
     /// Submit command
     void Submit(std::function<void(AVCResult, const UnitPlugCounts&)> completion) {
-        submitter_.SubmitCommand(cdb_, [completion](AVCResult result, const AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        submitter_.SubmitCommand(cdb_, [completionState](AVCResult result, const AVCCdb& response) {
             if (IsSuccess(result)) {
-                completion(result, ParseResponse(response));
+                Common::InvokeSharedCallback(completionState, result, ParseResponse(response));
             } else {
-                completion(result, UnitPlugCounts{});
+                Common::InvokeSharedCallback(completionState, result, UnitPlugCounts{});
             }
         });
     }

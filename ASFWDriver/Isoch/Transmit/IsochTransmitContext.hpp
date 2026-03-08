@@ -119,7 +119,6 @@ public:
     
     void LogStatistics() const noexcept;
     void DumpPayloadBuffers(uint32_t numPackets = 4) const noexcept;
-    void PrimeOnly() noexcept;
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 private:

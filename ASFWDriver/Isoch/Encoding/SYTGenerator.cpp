@@ -36,6 +36,7 @@ void SYTGenerator::reset() noexcept {
     ASFW_LOG(Isoch, "SYTGenerator: Reset (cycle-based mode)");
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 uint16_t SYTGenerator::computeDataSYT(uint32_t transmitCycle, uint32_t samplesInPacket) noexcept {
     if (!initialized_) return kNoInfo;
     if (samplesInPacket == 0 || ticksPerSample_ == 0) return kNoInfo;

@@ -37,6 +37,7 @@ bool ConfigROMParser::IsLeafOrDirectory(uint8_t keyType) {
     return keyType == EntryType::kLeaf || keyType == EntryType::kDirectory;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 uint32_t ConfigROMParser::ComputeScanLimit(uint16_t dirLength, uint32_t maxQuadlets) {
     auto scanLimit = static_cast<uint32_t>(dirLength);
     if (maxQuadlets > 1 && (maxQuadlets - 1) < scanLimit) {
@@ -47,6 +48,7 @@ uint32_t ConfigROMParser::ComputeScanLimit(uint16_t dirLength, uint32_t maxQuadl
 }
 
 std::optional<uint32_t>
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 ConfigROMParser::ComputeTargetOffsetQuadlets(uint8_t keyType, uint32_t value, uint32_t index) {
     if (!ConfigROMParser::IsLeafOrDirectory(keyType)) {
         return std::nullopt;
@@ -63,6 +65,7 @@ ConfigROMParser::ComputeTargetOffsetQuadlets(uint8_t keyType, uint32_t value, ui
     return static_cast<uint32_t>(rel);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void ConfigROMParser::AppendRecognizedEntry(std::vector<RomEntry>& entries, uint8_t keyType,
                                             uint8_t keyId, uint32_t value,
                                             uint32_t targetOffsetQuadlets) {

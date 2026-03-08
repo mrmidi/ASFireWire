@@ -49,14 +49,14 @@ inline uint64_t DefaultHostMonotonicNow() {
 }
 
 inline std::function<uint64_t()>& HostMonotonicClockOverride() {
-    static std::function<uint64_t()> override;
-    return override;
+    static std::function<uint64_t()> clockOverride;
+    return clockOverride;
 }
 
 inline uint64_t HostMonotonicNow() {
-    auto& override = HostMonotonicClockOverride();
-    if (override) {
-        return override();
+    auto& clockOverride = HostMonotonicClockOverride();
+    if (clockOverride) {
+        return clockOverride();
     }
     return DefaultHostMonotonicNow();
 }

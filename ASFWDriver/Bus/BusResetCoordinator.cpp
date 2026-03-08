@@ -96,6 +96,7 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
     }
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void BusResetCoordinator::OnIrq(uint32_t intEvent, uint64_t timestamp) {
     bool relevant = false;
 

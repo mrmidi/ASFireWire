@@ -53,6 +53,7 @@ IsochReceiveContext::Registers IsochReceiveContext::GetRegisters(uint8_t index) 
     };
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextIndex) {
     if (!hardware_ || !dmaMemory_) {
         return kIOReturnNotReady;
@@ -198,4 +199,3 @@ void IsochReceiveContext::LogHardwareState() {
 }
 
 } // namespace ASFW::Isoch
-

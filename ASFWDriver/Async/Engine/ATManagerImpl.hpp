@@ -36,7 +36,7 @@ inline const char* ToString(ATState s) noexcept {
 template<typename ContextT, typename RingT, typename RoleTag>
 kern_return_t ATManager<ContextT, RingT, RoleTag>::Submit(DescriptorChain&& chain, const AsyncCmdOptions& opts) {
     if (chain.Empty()) {
-        ASFW_LOG_ERROR(Async, "[%{public}s] Submit: Empty chain", RoleTag::kContextName.data());
+        ASFW_LOG_ERROR(Async, "[%{public}s] Submit: Empty chain", RoleTag::kContextName);
         return kIOReturnBadArgument;
     }
 
@@ -72,7 +72,7 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::Submit(DescriptorChain&& chai
             return kIOReturnSuccess;
         }
         // Fall through to PATH 1 fallback on failure
-        ASFW_LOG_V2(Async, "[%{public}s] PATH 2 failed, falling back to PATH 1", RoleTag::kContextName.data());
+        ASFW_LOG_V2(Async, "[%{public}s] PATH 2 failed, falling back to PATH 1", RoleTag::kContextName);
     }
 
     // V1: Compact AT transmit one-liner for packet flow visibility
@@ -121,7 +121,7 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath1_(const Descriptor
     ctx().WriteCommandPtr(cmdPtr);
     ctx().WriteControlSet(kContextControlRunBit);
 
-    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM head=%lu tail=%lu z=%u cmdPtr=0x%08x", RoleTag::kContextName.data(), txid, generation_, (unsigned long)ring().Head(), (unsigned long)ring().Tail(), z, cmdPtr);
+    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P1_ARM head=%lu tail=%lu z=%u cmdPtr=0x%08x", RoleTag::kContextName, txid, generation_, (unsigned long)ring().Head(), (unsigned long)ring().Tail(), z, cmdPtr);
 
     trace_.push({NowNs(), txid, generation_, ATEvent::P1_ARM, cmdPtr, z});
 
@@ -162,7 +162,7 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const Descriptor
     if (linkResult != kIOReturnSuccess) {
         ASFW_LOG_V2(Async,
                     "ctx=%{public}s txid=%u gen=%u P2_FALLBACK cause=%{public}s",
-                    RoleTag::kContextName.data(),
+                    RoleTag::kContextName,
                     txid,
                     generation_,
                     "LinkTailTo");
@@ -178,10 +178,10 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const Descriptor
     const bool run = (ctrl & kContextControlRunBit) != 0;
     const bool dead = (ctrl & kContextControlDeadBit) != 0;
 
-    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u WAKE_GUARD ctrl=0x%08x run=%d dead=%d", RoleTag::kContextName.data(), txid, generation_, ctrl, run ? 1 : 0, dead ? 1 : 0);
+    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u WAKE_GUARD ctrl=0x%08x run=%d dead=%d", RoleTag::kContextName, txid, generation_, ctrl, run ? 1 : 0, dead ? 1 : 0);
 
     if (!run || dead) {
-        ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u P2_FALLBACK cause=%{public}s", RoleTag::kContextName.data(), txid, generation_, !run ? "RUN0" : "DEAD");
+        ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u P2_FALLBACK cause=%{public}s", RoleTag::kContextName, txid, generation_, !run ? "RUN0" : "DEAD");
         UnlinkTail_();
         trace_.push({NowNs(), txid, generation_, ATEvent::P2_FALLBACK, ctrl, 0});
         return kIOReturnNotReady;
@@ -192,7 +192,7 @@ kern_return_t ATManager<ContextT, RingT, RoleTag>::SubmitPath2_(const Descriptor
     // NO POLLING - Apple never polls ACTIVE after WAKE in PATH-2!
     ctx().WriteControlSet(kContextControlWakeBit);
 
-    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P2_WAKE pulsed", RoleTag::kContextName.data(), txid, generation_);
+    ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u P2_WAKE pulsed", RoleTag::kContextName, txid, generation_);
     trace_.push({NowNs(), txid, generation_, ATEvent::P2_WAKE, 0, 0});
 
     // Ring update under lock
@@ -223,7 +223,7 @@ void ATManager<ContextT, RingT, RoleTag>::RequestStop(uint32_t txid, const char*
 template<typename ContextT, typename RingT, typename RoleTag>
 void ATManager<ContextT, RingT, RoleTag>::requestStop_(uint32_t txid, const char* why) noexcept {
     if (this->state_ != State::RUNNING) {
-        ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u STOP_SKIP state=%{public}s", RoleTag::kContextName.data(), txid, generation_, ToString(this->state_));
+        ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u STOP_SKIP state=%{public}s", RoleTag::kContextName, txid, generation_, ToString(this->state_));
         return;
     }
 
@@ -248,14 +248,14 @@ void ATManager<ContextT, RingT, RoleTag>::requestStop_(uint32_t txid, const char
     // Verify ring is empty before rotation
     if (ring().Head() != ring().Tail()) {
         ASFW_LOG_ERROR(Async, "[%{public}s] STOP: Ring not empty (head=%zu tail=%zu)",
-                       RoleTag::kContextName.data(), ring().Head(), ring().Tail());
+                       RoleTag::kContextName, ring().Head(), ring().Tail());
     }
 
     rotateRingBy2_();
     ring().SetPrevLastBlocks(0);
     ++generation_;
 
-    ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u STOP_IMM why=%{public}s elapsed_us=%lu gen=%u", RoleTag::kContextName.data(), txid, generation_, why, (unsigned long)elapsed, generation_);
+    ASFW_LOG_V2(Async, "ctx=%{public}s txid=%u gen=%u STOP_IMM why=%{public}s elapsed_us=%lu gen=%u", RoleTag::kContextName, txid, generation_, why, (unsigned long)elapsed, generation_);
     trace_.push({NowNs(), txid, generation_, ATEvent::STOP_IMM, static_cast<uint32_t>(elapsed), generation_});
 
     Base::Transition(State::IDLE, txid, "stopped");

@@ -159,7 +159,8 @@ public:
 
         // Set response handler (wraps meta.callback)
         txn->SetResponseHandler([callback = meta.callback, label]
-                                (kern_return_t kr, uint8_t responseCode, std::span<const uint8_t> data) {
+                                (kern_return_t kr, uint8_t responseCode, std::span<const uint8_t> data) // NOLINT(bugprone-easily-swappable-parameters)
+                                {
             ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] ENTRY: tLabel=%u callback=%p valid=%d kr=0x%x",
                         label, &callback, callback ? 1 : 0, kr);
             if (callback) {

@@ -84,6 +84,8 @@ public:
     }
 
     // Creator-side initialization (run once by ASFWAudioNub that owns the memory)
+    // Positional initialization arguments mirror the backing shared-memory layout.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static bool InitializeInPlace(void* base, uint64_t bytes, uint32_t capacityFrames,
                                   uint32_t numChannels = 2) {
         if (!base) return false;
@@ -258,10 +260,12 @@ public:
         const uint32_t idx = w & mask_;
         const uint32_t first = std::min(n, capacity_ - idx);
         const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
 
-        std::memcpy(&data_[idx * ch], interleavedData, size_t(first) * ch * sizeof(int32_t));
+        std::memcpy(&data_[static_cast<size_t>(idx) * ch], interleavedData, firstSamples * sizeof(int32_t));
         if (second) {
-            std::memcpy(&data_[0], &interleavedData[first * ch], size_t(second) * ch * sizeof(int32_t));
+            std::memcpy(&data_[0], &interleavedData[firstSamples], secondSamples * sizeof(int32_t));
         }
 
         // Publish data then bump index
@@ -285,10 +289,12 @@ public:
         const uint32_t idx = r & mask_;
         const uint32_t first = std::min(n, capacity_ - idx);
         const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
 
-        std::memcpy(outInterleavedData, &data_[idx * ch], size_t(first) * ch * sizeof(int32_t));
+        std::memcpy(outInterleavedData, &data_[static_cast<size_t>(idx) * ch], firstSamples * sizeof(int32_t));
         if (second) {
-            std::memcpy(&outInterleavedData[first * ch], &data_[0], size_t(second) * ch * sizeof(int32_t));
+            std::memcpy(&outInterleavedData[firstSamples], &data_[0], secondSamples * sizeof(int32_t));
         }
 
         hdr_->readIndexFrames.v.store(r + n, std::memory_order_release);
@@ -310,10 +316,12 @@ public:
         const uint32_t idx = r & mask_;
         const uint32_t first = std::min(n, capacity_ - idx);
         const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
 
-        std::memcpy(outInterleavedData, &data_[idx * ch], size_t(first) * ch * sizeof(int32_t));
+        std::memcpy(outInterleavedData, &data_[static_cast<size_t>(idx) * ch], firstSamples * sizeof(int32_t));
         if (second) {
-            std::memcpy(&outInterleavedData[first * ch], &data_[0], size_t(second) * ch * sizeof(int32_t));
+            std::memcpy(&outInterleavedData[firstSamples], &data_[0], secondSamples * sizeof(int32_t));
         }
 
         return n;

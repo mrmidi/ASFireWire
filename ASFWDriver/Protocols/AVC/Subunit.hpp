@@ -43,10 +43,15 @@ public:
     uint8_t GetNumDestPlugs() const { return numDestPlugs_; }
     uint8_t GetNumSrcPlugs() const { return numSrcPlugs_; }
 
+    struct PlugCounts {
+        uint8_t dest{0};
+        uint8_t src{0};
+    };
+
     /// Set plug counts (called by AVCUnit after PLUG_INFO)
-    void SetPlugCounts(uint8_t dest, uint8_t src) {
-        numDestPlugs_ = dest;
-        numSrcPlugs_ = src;
+    void SetPlugCounts(PlugCounts counts) {
+        numDestPlugs_ = counts.dest;
+        numSrcPlugs_ = counts.src;
     }
 
     /// Parse capabilities (optional, override in subclasses)
