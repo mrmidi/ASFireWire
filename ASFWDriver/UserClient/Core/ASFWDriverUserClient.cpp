@@ -477,6 +477,8 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
     }
 }
 
+// LOCALONLY user-client ABI entry point.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::AsyncRead(uint16_t destinationID, uint16_t addressHi,
                                               uint32_t addressLo, uint32_t length,
                                               uint16_t* handle) {
@@ -488,6 +490,7 @@ kern_return_t ASFWDriverUserClient::AsyncRead(uint16_t destinationID, uint16_t a
     return kIOReturnUnsupported;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::AsyncWrite(uint16_t destinationID, uint16_t addressHi,
                                                uint32_t addressLo, uint32_t length,
                                                const void* payload, uint16_t* handle) {
@@ -499,9 +502,10 @@ kern_return_t ASFWDriverUserClient::AsyncWrite(uint16_t destinationID, uint16_t 
     return kIOReturnUnsupported;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::AsyncCompareSwap(uint16_t destinationID, uint16_t addressHi,
                                                      uint32_t addressLo, uint8_t size,
-                                                     const void* compareValue, const void* newValue,
+                                                     const void* compareValue, const void* newValue, // NOLINT(bugprone-easily-swappable-parameters)
                                                      uint16_t* handle, uint8_t* locked) {
     // LOCALONLY method - implementation is in TransactionHandler via ExternalMethod case 17
     // This should never be called directly
@@ -514,6 +518,7 @@ kern_return_t ASFWDriverUserClient::AsyncCompareSwap(uint16_t destinationID, uin
     return kIOReturnUnsupported;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void ASFWDriverUserClient::NotifyStatus(uint64_t sequence, uint32_t reason) {
     if (!ivars || !ivars->actionLock) {
         return;
@@ -564,6 +569,7 @@ void ASFWDriverUserClient::NotifyTransactionComplete(uint16_t handle, uint32_t s
     action->release();
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriverUserClient::GetTransactionResult(uint16_t handle, uint32_t* status,
                                                          uint32_t* dataLength, void* data,
                                                          uint32_t maxDataLength) {

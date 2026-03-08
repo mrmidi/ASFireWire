@@ -672,6 +672,7 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     return kIOReturnSuccess;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidHi,
                                              uint32_t guidLo) const {
     if (!deps_.configRom || !deps_.configRomStager || !deps_.hardware) {

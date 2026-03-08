@@ -229,14 +229,14 @@ kern_return_t ARContextBase<Derived, Tag>::Initialize(
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG(Async, "%{public}s: failed to allocate lock",
-                 this->ContextName().data());
+                 this->ContextNameCString());
         return kIOReturnNoMemory;
     }
 
     bufferRing_ = &bufferRing;
 
     ASFW_LOG(Async, "%{public}s: initialized with %zu buffers x %zu bytes",
-             this->ContextName().data(),
+             this->ContextNameCString(),
              bufferRing.BufferCount(),
              bufferRing.BufferSize());
 
@@ -247,13 +247,13 @@ template<typename Derived, ContextRole Tag>
 kern_return_t ARContextBase<Derived, Tag>::Arm(uint32_t commandPtr) noexcept {
     if (!this->hw_) {
         ASFW_LOG(Async, "%{public}s: Arm called before Initialize",
-                 this->ContextName().data());
+                 this->ContextNameCString());
         return kIOReturnNotReady;
     }
 
     // Check if already running
     if (this->IsRunning()) {
-        ASFW_LOG(Async, "%{public}s: already running", this->ContextName().data());
+        ASFW_LOG(Async, "%{public}s: already running", this->ContextNameCString());
         return kIOReturnBusy;
     }
 
@@ -277,14 +277,14 @@ kern_return_t ARContextBase<Derived, Tag>::Arm(uint32_t commandPtr) noexcept {
     for (int i = 0; i < 50; ++i) {
         if (this->IsActive()) {
             ASFW_LOG(Async, "%{public}s: armed and active (CommandPtr=0x%08x)",
-                     this->ContextName().data(), commandPtr);
+                     this->ContextNameCString(), commandPtr);
             return kIOReturnSuccess;
         }
         IOSleep(1);  // 1ms delay
     }
 
     ASFW_LOG(Async, "%{public}s: armed (info: not active yet after 50ms, may activate after reset)",
-             this->ContextName().data());
+             this->ContextNameCString());
     // Not fatal - hardware may start later
     return kIOReturnSuccess;
 }
@@ -312,14 +312,14 @@ kern_return_t ARContextBase<Derived, Tag>::Stop(uint32_t timeoutMs) noexcept {
     for (uint32_t elapsed = 0; elapsed < timeoutMs; elapsed += kPollIntervalMs) {
         if (!this->IsActive()) {
             ASFW_LOG(Async, "%{public}s: stopped after %u ms",
-                     this->ContextName().data(), elapsed);
+                     this->ContextNameCString(), elapsed);
             return kIOReturnSuccess;
         }
         IOSleep(kPollIntervalMs);
     }
 
     ASFW_LOG(Async, "%{public}s: stop timeout after %u ms (still active)",
-             this->ContextName().data(), timeoutMs);
+             this->ContextNameCString(), timeoutMs);
     return kIOReturnTimeout;
 }
 
@@ -387,11 +387,11 @@ kern_return_t ARContextBase<Derived, Tag>::Recycle(size_t index) noexcept {
         // DIAGNOSTIC: Log wake bit write to trace hardware notification
         ASFW_LOG(Async,
                  "♻️  %{public}s: Wrote WAKE bit after recycling buffer[%zu]",
-                 this->ContextName().data(), index);
+                 this->ContextNameCString(), index);
     } else {
         ASFW_LOG(Async,
                  "⚠️  %{public}s: Recycle failed for buffer[%zu], kr=0x%08x (wake NOT written)",
-                 this->ContextName().data(), index, result);
+                 this->ContextNameCString(), index, result);
     }
 
     IOLockUnlock(lock_);

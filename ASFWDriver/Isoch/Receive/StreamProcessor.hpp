@@ -92,7 +92,7 @@ public:
         
         // Payload Calculation (cipLength = total minus isoch header, payloadBytes = minus CIP header)
         size_t payloadBytes = cipLength - 8;  // Subtract 8 bytes for CIP header
-        size_t dbsBytes = header->dataBlockSize * 4;
+        size_t dbsBytes = static_cast<size_t>(header->dataBlockSize) * 4u;
         
         if (dbsBytes == 0) {
             // Should not happen for AM824

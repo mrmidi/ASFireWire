@@ -6,6 +6,7 @@
 //
 
 #include "CMPClient.hpp"
+#include "../../../Common/CallbackUtils.hpp"
 #include "../../../Logging/Logging.hpp"
 #include <DriverKit/IOLib.h>
 #include <os/log.h>
@@ -40,7 +41,11 @@ void CMPClient::SetDeviceNode(uint8_t nodeId, IRM::Generation generation) {
 // ============================================================================
 
 void CMPClient::ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback) {
-    Async::FWAddress addr{PCRRegisters::kAddressHi, addressLo};
+    auto callbackState = Common::ShareCallback(std::move(callback));
+    Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = PCRRegisters::kAddressHi,
+        .addressLo = addressLo,
+    }};
     
     // PCR operations use device's max speed (typically S400)
     // Note: CMP to device PCRs can use full speed (unlike IRM which requires S100)
@@ -52,7 +57,7 @@ void CMPClient::ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback) {
              addressLo, deviceNodeId_, generation_.value);
     
     busOps_.ReadQuad(gen, node, addr, speed,
-        [callback, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        [callbackState, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {
             if (status == Async::AsyncStatus::kSuccess && payload.size() == 4) {
                 uint32_t raw = 0;
                 std::memcpy(&raw, payload.data(), sizeof(raw));
@@ -64,21 +69,25 @@ void CMPClient::ReadPCRQuadlet(uint32_t addressLo, PCRReadCallback callback) {
                          PCRBits::GetP2P(hostValue),
                          PCRBits::GetChannel(hostValue));
                 
-                callback(true, hostValue);
+                Common::InvokeSharedCallback(callbackState, true, hostValue);
             } else {
                 ASFW_LOG(CMP,
                          "CMPClient: Read PCR 0x%08X failed: status=%{public}s(%u)",
                          addressLo,
                          ASFW::Async::ToString(status),
                          static_cast<unsigned>(status));
-                callback(false, 0);
+                Common::InvokeSharedCallback(callbackState, false, 0u);
             }
         });
 }
 
 void CMPClient::CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t desired,
                                 CMPCallback callback) {
-    Async::FWAddress addr{PCRRegisters::kAddressHi, addressLo};
+    auto callbackState = Common::ShareCallback(std::move(callback));
+    Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = PCRRegisters::kAddressHi,
+        .addressLo = addressLo,
+    }};
     
     FW::FwSpeed speed{2};  // S400
     FW::NodeId node{deviceNodeId_};
@@ -96,7 +105,7 @@ void CMPClient::CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t d
     
     busOps_.Lock(gen, node, addr, FW::LockOp::kCompareSwap,
         std::span{operand}, 4, speed,
-        [callback, expected, desired, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        [callbackState, expected, desired, addressLo](Async::AsyncStatus status, std::span<const uint8_t> payload) {
             if (status == Async::AsyncStatus::kSuccess && payload.size() == 4) {
                 uint32_t raw = 0;
                 std::memcpy(&raw, payload.data(), sizeof(raw));
@@ -106,11 +115,11 @@ void CMPClient::CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t d
                 if (succeeded) {
                     ASFW_LOG(CMP, "CMPClient: Lock PCR 0x%08X succeeded (0x%08X → 0x%08X)",
                              addressLo, expected, desired);
-                    callback(CMPStatus::Success);
+                    Common::InvokeSharedCallback(callbackState, CMPStatus::Success);
                 } else {
                     ASFW_LOG(CMP, "CMPClient: Lock PCR 0x%08X contention (expected=0x%08X actual=0x%08X)",
                              addressLo, expected, oldValue);
-                    callback(CMPStatus::Failed);
+                    Common::InvokeSharedCallback(callbackState, CMPStatus::Failed);
                 }
             } else {
                 ASFW_LOG(CMP,
@@ -118,7 +127,7 @@ void CMPClient::CompareSwapPCR(uint32_t addressLo, uint32_t expected, uint32_t d
                          addressLo,
                          ASFW::Async::ToString(status),
                          static_cast<unsigned>(status));
-                callback(CMPStatus::Failed);
+                Common::InvokeSharedCallback(callbackState, CMPStatus::Failed);
             }
         });
 }

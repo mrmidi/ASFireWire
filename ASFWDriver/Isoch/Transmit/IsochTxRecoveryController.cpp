@@ -42,6 +42,7 @@ bool IsochTxRecoveryController::TryBegin(uint64_t nowNs, uint32_t& outReasons) n
     return true;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void IsochTxRecoveryController::Complete(uint64_t nowNs, uint32_t reasons, bool success) noexcept {
     if (success) {
         lastRestartNs_.store(nowNs, std::memory_order_relaxed);
@@ -55,4 +56,3 @@ void IsochTxRecoveryController::Complete(uint64_t nowNs, uint32_t reasons, bool 
 }
 
 } // namespace ASFW::Isoch
-

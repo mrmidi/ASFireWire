@@ -115,7 +115,10 @@ TEST(BusOptionsFieldsTests, Encode_AllTrue_AllMax) {
 
 TEST(BusOptionsFieldsTests, SetGeneration_UpdatesOnlyGenerationBits) {
     // Start with canonical example (generation=0), bump to generation=9.
-    const uint32_t updated = ASFW::FW::SetGeneration(kTA1999027BusOptions, 9);
+    const uint32_t updated = ASFW::FW::SetGeneration({
+        .busOptionsHost = kTA1999027BusOptions,
+        .gen4 = 9,
+    });
 
     const auto d = ASFW::FW::DecodeBusOptions(updated);
     EXPECT_EQ(d.generation, 9u);
@@ -136,7 +139,10 @@ TEST(BusOptionsFieldsTests, SetGeneration_PreservesReservedBits) {
     // Inject non-zero reserved bits [11:10] and [3] into the quadlet to confirm
     // SetGeneration does not corrupt them.
     constexpr uint32_t kWithReserved = kTA1999027BusOptions | 0x00000C08u; // bits 11,10,3
-    const uint32_t updated = ASFW::FW::SetGeneration(kWithReserved, 5);
+    const uint32_t updated = ASFW::FW::SetGeneration({
+        .busOptionsHost = kWithReserved,
+        .gen4 = 5,
+    });
 
     // Generation updated.
     EXPECT_EQ(ASFW::FW::DecodeBusOptions(updated).generation, 5u);
@@ -147,7 +153,10 @@ TEST(BusOptionsFieldsTests, SetGeneration_PreservesReservedBits) {
 
 TEST(BusOptionsFieldsTests, SetGeneration_ClampTo4Bits) {
     // Values > 0xF should be masked to low 4 bits.
-    const uint32_t updated = ASFW::FW::SetGeneration(kTA1999027BusOptions, 0x1F); // 5 bits
+    const uint32_t updated = ASFW::FW::SetGeneration({
+        .busOptionsHost = kTA1999027BusOptions,
+        .gen4 = 0x1F,
+    }); // 5 bits
     EXPECT_EQ(ASFW::FW::DecodeBusOptions(updated).generation, 0xFu); // only low 4 kept
 }
 

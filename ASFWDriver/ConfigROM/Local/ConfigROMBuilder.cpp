@@ -31,6 +31,7 @@ void ConfigROMBuilder::Build(uint32_t busOptions, uint64_t guid, uint32_t nodeCa
     Finalize();
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void ConfigROMBuilder::Begin(uint32_t busOptions, uint64_t guid, uint32_t nodeCapabilities) {
     (void)nodeCapabilities; // value provided later via AddImmediateEntry
     Reset();
@@ -44,7 +45,10 @@ void ConfigROMBuilder::Begin(uint32_t busOptions, uint64_t guid, uint32_t nodeCa
     // Bus information block (5 quadlets)
     Append(0); // header placeholder
     Append(ASFW::FW::kBusNameQuadlet);
-    Append(ASFW::FW::SetGeneration(busOptions, 0));
+    Append(ASFW::FW::SetGeneration({
+        .busOptionsHost = busOptions,
+        .gen4 = 0,
+    }));
     Append(guidHi);
     Append(guidLo);
     FinaliseBIB();
@@ -135,7 +139,10 @@ void ConfigROMBuilder::UpdateGeneration(uint8_t generation) {
     if (quadCount_ < 3) {
         return;
     }
-    words_[2] = ASFW::FW::SetGeneration(lastBusOptions_, generation);
+    words_[2] = ASFW::FW::SetGeneration({
+        .busOptionsHost = lastBusOptions_,
+        .gen4 = generation,
+    });
     FinaliseBIB();
 }
 

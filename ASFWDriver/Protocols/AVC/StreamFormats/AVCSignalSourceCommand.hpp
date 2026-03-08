@@ -12,6 +12,7 @@
 #pragma once
 
 #include "../IAVCCommandSubmitter.hpp"
+#include "../../../Common/CallbackUtils.hpp"
 #include "StreamFormatTypes.hpp"
 #include <functional>
 
@@ -38,21 +39,24 @@ public:
     /// @param subunitAddr Subunit address
     /// @param destPlugNumber Destination plug number to query
     /// @param isSubunitPlug true for subunit plug, false for unit plug
+    // Positional plug-addressing follows the AV/C signal-source wire format.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     AVCSignalSourceCommand(IAVCCommandSubmitter& submitter,
-                          uint8_t subunitAddr,
-                          uint8_t destPlugNumber,
-                          bool isSubunitPlug = true)
+                           uint8_t subunitAddr,
+                           uint8_t destPlugNumber,
+                           bool isSubunitPlug = true)
         : submitter_(submitter)
         , cdb_(BuildCdb(subunitAddr, destPlugNumber, isSubunitPlug)) {}
 
     /// Submit command with connection info response
     void Submit(std::function<void(AVC::AVCResult, const ConnectionInfo&)> completion) {
-        submitter_.SubmitCommand(cdb_, [completion](AVC::AVCResult result, const AVC::AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        submitter_.SubmitCommand(cdb_, [completionState](AVC::AVCResult result, const AVC::AVCCdb& response) {
             if (AVC::IsSuccess(result)) {
                 auto connInfo = ParseConnectionInfo(response);
-                completion(result, connInfo);
+                Common::InvokeSharedCallback(completionState, result, connInfo);
             } else {
-                completion(result, ConnectionInfo{});
+                Common::InvokeSharedCallback(completionState, result, ConnectionInfo{});
             }
         });
     }
@@ -61,6 +65,7 @@ private:
     IAVCCommandSubmitter& submitter_;
     AVC::AVCCdb cdb_;
 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static AVC::AVCCdb BuildCdb(uint8_t subunitAddr, uint8_t destPlugNumber, bool isSubunitPlug) {
         AVC::AVCCdb cdb;
         cdb.ctype = static_cast<uint8_t>(AVC::AVCCommandType::kStatus);

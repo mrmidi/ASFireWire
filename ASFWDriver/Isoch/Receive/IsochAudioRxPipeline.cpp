@@ -65,9 +65,10 @@ void IsochAudioRxPipeline::OnPacket(const uint8_t* payload, size_t length) noexc
     }
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
-                                    uint32_t packetsProcessed,
-                                    uint64_t pollStartMachTicks) noexcept {
+                                     uint32_t packetsProcessed, // NOLINT(bugprone-easily-swappable-parameters)
+                                     uint64_t pollStartMachTicks) noexcept {
     if (packetsProcessed > 0) {
         const uint64_t end = mach_absolute_time();
         const uint64_t deltaTicks = end - pollStartMachTicks;

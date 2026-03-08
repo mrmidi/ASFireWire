@@ -58,13 +58,26 @@ struct alignas(16) OHCIDescriptor {
     static constexpr uint8_t kBranchNever = 0b00;
     static constexpr uint8_t kBranchAlways = 0b11;
 
-    [[nodiscard]] static constexpr uint32_t BuildControl(uint16_t reqCount, uint8_t cmd, uint8_t key, uint8_t i, uint8_t b, bool ping = false) noexcept {
-        const uint8_t cmd_masked = cmd & 0xF;
-        const uint8_t key_masked = key & 0x7;
-        const uint8_t i_masked = i & 0x3;
-        const uint8_t b_masked = b & 0x3;
-        const uint32_t high = (static_cast<uint32_t>(cmd_masked) << kCmdShift) | (static_cast<uint32_t>(key_masked) << kKeyShift) | (static_cast<uint32_t>(i_masked) << kIntShift) | (static_cast<uint32_t>(b_masked) << kBranchShift) | (ping ? (1u << kPingShift) : 0);
-        return ((high & 0xFFFFu) << kControlHighShift) | (reqCount & 0xFFFFu);
+    struct ControlFields {
+        uint16_t reqCount{0};
+        uint8_t command{0};
+        uint8_t key{0};
+        uint8_t interruptBits{0};
+        uint8_t branchBits{0};
+        bool ping{false};
+    };
+
+    [[nodiscard]] static constexpr uint32_t BuildControl(const ControlFields& fields) noexcept {
+        const uint8_t cmd_masked = fields.command & 0xF;
+        const uint8_t key_masked = fields.key & 0x7;
+        const uint8_t i_masked = fields.interruptBits & 0x3;
+        const uint8_t b_masked = fields.branchBits & 0x3;
+        const uint32_t high = (static_cast<uint32_t>(cmd_masked) << kCmdShift) |
+                              (static_cast<uint32_t>(key_masked) << kKeyShift) |
+                              (static_cast<uint32_t>(i_masked) << kIntShift) |
+                              (static_cast<uint32_t>(b_masked) << kBranchShift) |
+                              (fields.ping ? (1u << kPingShift) : 0);
+        return ((high & 0xFFFFu) << kControlHighShift) | (fields.reqCount & 0xFFFFu);
     }
 
     static inline void PatchBranch(OHCIDescriptor& desc, uint8_t b) noexcept {
@@ -127,30 +140,42 @@ struct IsochHeader {
 };
 
 struct ITDescriptorBuilder {
+    struct OutputMoreImmediateParams {
+        uint32_t isochHeaderLE{0};
+        uint32_t cipQ0LE{0};
+        uint8_t interruptBits{OHCIDescriptor::kIntNever};
+    };
+
+    struct OutputLastParams {
+        uint32_t dataIOVA{0};
+        uint16_t payloadSize{0};
+        uint32_t branchIOVA{0};
+        uint8_t zValue{0};
+        uint8_t interruptBits{OHCIDescriptor::kIntNever};
+    };
+
     // OUTPUT_MORE-Immediate (32 bytes)
     // - Control: cmd=0, key=2 (Immediate), b=0, i=0/3, reqCount=4 (CIP Q0 only)
     // - Immediate[0]: IsochHeader (Framing - NOT payload) - Mapped to branchWord offset
     // - Immediate[1]: CIP Q0 (First 4 bytes of payload)   - Mapped to statusWord offset
-    static void BuildOutputMoreImmediate(OHCIDescriptorImmediate& desc, 
-                                        uint32_t isochHeaderLE, 
-                                        uint32_t cipQ0LE, 
-                                        uint8_t interruptBits = OHCIDescriptor::kIntNever) {
+    static void BuildOutputMoreImmediate(OHCIDescriptorImmediate& desc,
+                                         const OutputMoreImmediateParams& params) {
         constexpr uint16_t kReqCount = 4; // CIP Q0 only (IsochHeader is not payload)
-        desc.common.control = OHCIDescriptor::BuildControl(
-            kReqCount,
-            OHCIDescriptor::kCmdOutputMore,
-            OHCIDescriptor::kKeyImmediate,
-            interruptBits,
-            OHCIDescriptor::kBranchNever
-        );
+        desc.common.control = OHCIDescriptor::BuildControl({
+            .reqCount = kReqCount,
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyImmediate,
+            .interruptBits = params.interruptBits,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
         
         // CRITICAL FIX: For OUTPUT_MORE-Immediate, the first 16 bytes contain Imm0 and Imm1.
         // In the generic OHCIDescriptor struct, these map to:
         // offset 0x08 (branchWord) -> Imm0 (IsochHeader)
         // offset 0x0C (statusWord) -> Imm1 (CIP Q0)
         desc.common.dataAddress = 0; // Skip (offset 0x04)
-        desc.common.branchWord = isochHeaderLE; 
-        desc.common.statusWord = cipQ0LE; 
+        desc.common.branchWord = params.isochHeaderLE;
+        desc.common.statusWord = params.cipQ0LE;
 
         // Second 16-byte block is unused for this specific format
         desc.immediateData[0] = 0;
@@ -163,25 +188,20 @@ struct ITDescriptorBuilder {
     // - Control: cmd=1, s=1 (update status), key=0, b=3, reqCount=payloadSize
     // - DataAddress: Payload Ptr
     // - Branch: Next Descriptor
-    static void BuildOutputLast(OHCIDescriptor& desc,
-                               uint32_t dataIOVA,
-                               uint16_t payloadSize,
-                               uint32_t branchIOVA,
-                               uint8_t zValue,
-                               uint8_t interruptBits = OHCIDescriptor::kIntNever) {
-        desc.control = OHCIDescriptor::BuildControl(
-            payloadSize,
-            OHCIDescriptor::kCmdOutputLast,
-            OHCIDescriptor::kKeyStandard,
-            interruptBits,
-            OHCIDescriptor::kBranchAlways // Mandatory for ring
-        );
+    static void BuildOutputLast(OHCIDescriptor& desc, const OutputLastParams& params) {
+        desc.control = OHCIDescriptor::BuildControl({
+            .reqCount = params.payloadSize,
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = params.interruptBits,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
         // Set Status Update bit (s=1)
         desc.control |= (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
         
-        desc.dataAddress = dataIOVA;
-        desc.branchWord = MakeBranchWordAT(branchIOVA, zValue); // Note: IT uses "Z" too
-        AR_init_status(desc, payloadSize);
+        desc.dataAddress = params.dataIOVA;
+        desc.branchWord = MakeBranchWordAT(params.branchIOVA, params.zValue); // Note: IT uses "Z" too
+        AR_init_status(desc, params.payloadSize);
     }
     
     // OUTPUT_LAST-Immediate removed per expert recommendation.

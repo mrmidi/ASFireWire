@@ -10,6 +10,7 @@
 #pragma once
 
 #include "AVCCommand.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include <vector>
 
 namespace ASFW::Protocols::AVC {
@@ -52,13 +53,14 @@ public:
     ///
     /// @param completion Callback with result and parsed plug info
     void Submit(std::function<void(AVCResult, const PlugInfo&)> completion) {
-        AVCCommand::Submit([this, completion](AVCResult result,
-                                               const AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([this, completionState](AVCResult result,
+                                                   const AVCCdb& response) {
             if (IsSuccess(result)) {
                 PlugInfo info = ParseResponse(response);
-                completion(result, info);
+                Common::InvokeSharedCallback(completionState, result, info);
             } else {
-                completion(result, {});
+                Common::InvokeSharedCallback(completionState, result, PlugInfo{});
             }
         });
     }
@@ -69,6 +71,8 @@ private:
     /// @param subunitType Subunit type (0xFF = unit)
     /// @param subunitID Subunit ID (0-7)
     /// @return Command CDB
+    // Positional AV/C subunit fields are kept in wire-order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static AVCCdb BuildCdb(uint8_t subunitType, uint8_t subunitID) {
         AVCCdb cdb;
         cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
@@ -152,13 +156,14 @@ public:
     ///
     /// @param completion Callback with result and parsed subunit info
     void Submit(std::function<void(AVCResult, const SubunitInfo&)> completion) {
-        AVCCommand::Submit([this, completion](AVCResult result,
-                                               const AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([this, completionState](AVCResult result,
+                                                   const AVCCdb& response) {
             if (IsSuccess(result)) {
                 SubunitInfo info = ParseResponse(response);
-                completion(result, info);
+                Common::InvokeSharedCallback(completionState, result, info);
             } else {
-                completion(result, {});
+                Common::InvokeSharedCallback(completionState, result, SubunitInfo{});
             }
         });
     }

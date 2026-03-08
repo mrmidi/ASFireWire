@@ -25,6 +25,7 @@ TransactionStorage::~TransactionStorage() {
     }
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool TransactionStorage::StoreResult(uint16_t handle, uint32_t status, uint8_t responseCode,
                                      const void* responsePayload,
                                      uint32_t responseLength) {

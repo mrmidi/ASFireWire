@@ -3,6 +3,7 @@
 
 #include "DiceAudioBackend.hpp"
 
+#include "../../Common/DriverKitOwnership.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/Audio/DeviceProtocolFactory.hpp"
 
@@ -205,16 +206,18 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
     // Ensure queues exist before wiring to isoch contexts.
     nub->EnsureRxQueueCreated();
-    OSSharedPtr<IOBufferMemoryDescriptor> rxMem{};
+    IOBufferMemoryDescriptor* rxMemRaw = nullptr;
     uint64_t rxBytes = 0;
-    const kern_return_t rxCopy = nub->CopyRxQueueMemory(rxMem.attach(), &rxBytes);
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMemRaw, &rxBytes);
+    auto rxMem = Common::AdoptRetained(rxMemRaw);
     if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
         return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
 
-    OSSharedPtr<IOBufferMemoryDescriptor> txMem{};
+    IOBufferMemoryDescriptor* txMemRaw = nullptr;
     uint64_t txBytes = 0;
-    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(txMem.attach(), &txBytes);
+    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMemRaw, &txBytes);
+    auto txMem = Common::AdoptRetained(txMemRaw);
     if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
         return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
     }
@@ -237,9 +240,9 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
     params.hostToDeviceAm824Slots = caps.hostToDeviceAm824Slots;
     params.streamMode = Model::StreamMode::kBlocking;
 
-    params.rxQueueMemory = rxMem.detach();
+    params.rxQueueMemory = rxMem;
     params.rxQueueBytes = rxBytes;
-    params.txQueueMemory = txMem.detach();
+    params.txQueueMemory = txMem;
     params.txQueueBytes = txBytes;
 
     // DICE playback: no zero-copy for now (explicitly disabled by policy).

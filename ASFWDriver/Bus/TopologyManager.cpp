@@ -404,6 +404,7 @@ const char* TopologyManager::TopologyBuildErrorCodeString(TopologyBuildErrorCode
 }
 
 std::expected<TopologySnapshot, TopologyManager::TopologyBuildError>
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result, uint64_t timestamp,
                                   uint32_t nodeIDReg) {
     if (!result.valid || result.quads.empty()) {

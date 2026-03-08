@@ -14,6 +14,7 @@
 #include "../../Shared/TxSharedQueue.hpp"
 #include "../../Logging/Logging.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -88,6 +89,8 @@ public:
     // -------------------------------------------------------------------------
     // Tx::IIsochTxPacketProvider
     // -------------------------------------------------------------------------
+    // The returned payload pointer remains valid until the next
+    // NextSilentPacket() call on this pipeline instance.
     [[nodiscard]] Tx::IsochTxPacket NextSilentPacket(uint32_t transmitCycle) noexcept override;
 
     // -------------------------------------------------------------------------
@@ -117,6 +120,7 @@ private:
     } adaptiveFill_;
 
     Encoding::PacketAssembler assembler_{};
+    alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
     Shared::TxSharedQueueSPSC sharedTxQueue_{};
 
     // ZERO-COPY: Direct pointer to CoreAudio output buffer

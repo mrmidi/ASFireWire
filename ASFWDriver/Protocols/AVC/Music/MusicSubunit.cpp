@@ -434,148 +434,6 @@ static std::string ExtractPlugName(const ASFW::Protocols::AVC::Descriptors::AVCI
     return "";
 }
 
-// Extract plugs from RoutingStatus block (0x8108) using position-based direction
-// Apple's VirtualMusicSubunit.cpp shows: first numDestPlugs blocks are Input, next numSourcePlugs are Output
-static void ExtractPlugsFromRoutingStatus(
-    const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& routingBlock,
-    std::vector<MusicSubunit::PlugInfo>& plugs)
-{
-    using namespace ASFW::Protocols::AVC::Descriptors;
-    using namespace ASFW::Protocols::AVC::StreamFormats;
-    
-    const auto& primaryData = routingBlock.GetPrimaryData();
-    
-    // RoutingStatus primary fields: [0]=numDestPlugs, [1]=numSourcePlugs, [2-3]=musicPlugCount
-    if (primaryData.size() < 2) {
-        ASFW_LOG_V0(MusicSubunit, "RoutingStatus: Primary fields too short (%zu bytes)", primaryData.size());
-        return;
-    }
-    
-    uint8_t numDestPlugs = primaryData[0];
-    uint8_t numSourcePlugs = primaryData[1];
-    
-    ASFW_LOG_V1(MusicSubunit, "RoutingStatus: numDestPlugs=%u, numSourcePlugs=%u", numDestPlugs, numSourcePlugs);
-    
-    // Find all SubunitPlugInfo (0x8109) blocks in order (recursive to handle nested structures)
-    auto subunitPlugInfoBlocks = routingBlock.FindAllNestedRecursive(0x8109);
-    
-    ASFW_LOG_V3(MusicSubunit, "RoutingStatus: Found %zu SubunitPlugInfo blocks", subunitPlugInfoBlocks.size());
-    
-    // Process each SubunitPlugInfo block
-    size_t blockIndex = 0;
-    for (const auto& plugInfoBlock : subunitPlugInfoBlocks) {
-        const auto& plugPrimaryData = plugInfoBlock.GetPrimaryData();
-        
-        // SubunitPlugInfo primary fields: [0]=subunit_plug_id, [1-2]=fdf_fmt, [3]=usage, [4-5]=numClusters, [6-7]=numChannels
-        if (plugPrimaryData.size() < 4) {
-            ASFW_LOG_V3(MusicSubunit, "SubunitPlugInfo: Primary fields too short (%zu bytes)", plugPrimaryData.size());
-            blockIndex++;
-            continue;
-        }
-        
-        PlugInfo plug;
-        plug.plugID = plugPrimaryData[0];  // Byte 0 is the actual subunit_plug_id
-        
-        // Map Usage (byte 3) to MusicPlugType
-        uint8_t usage = plugPrimaryData[3];
-        if (usage == 0x04 || usage == 0x05 || usage == 0x0B) {
-            plug.type = MusicPlugType::kAudio;
-        } else {
-            plug.type = static_cast<MusicPlugType>(usage);
-        }
-        
-        // Determine direction from position:
-        // - Blocks 0 to (numDestPlugs-1) are Destination (Input)
-        // - Blocks numDestPlugs to (numDestPlugs+numSourcePlugs-1) are Source (Output)
-        plug.direction = PlugDirection::kInput;  // default: dest plugs and out-of-range
-        if (blockIndex >= numDestPlugs) {
-            if (blockIndex < static_cast<size_t>(numDestPlugs + numSourcePlugs)) {
-                plug.direction = PlugDirection::kOutput;
-            } else {
-                ASFW_LOG_V1(MusicSubunit, "SubunitPlugInfo: Block %zu beyond expected count (dest=%u, src=%u)",
-                            blockIndex, numDestPlugs, numSourcePlugs);
-            }
-        }
-        
-        // Extract name from nested blocks
-        plug.name = ExtractPlugName(plugInfoBlock);
-        
-        if (!plug.name.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Found Plug ID %u (%{public}s): '%{public}s'",
-                        plug.plugID, 
-                        plug.direction == PlugDirection::kInput ? "Input" : "Output",
-                        plug.name.c_str());
-        } else {
-            ASFW_LOG_V1(MusicSubunit, "MusicSubunit: Plug ID %u (%{public}s) has no name", 
-                        plug.plugID,
-                        plug.direction == PlugDirection::kInput ? "Input" : "Output");
-        }
-        // Extract ClusterInfo (0x810A) blocks and their signals
-        // ClusterInfo contains: formatCode, portType, numSignals, then signal entries
-        auto clusterBlocks = plugInfoBlock.FindAllNestedRecursive(0x810A);
-        
-        ASFW_LOG_V1(MusicSubunit, "Plug %u: Found %zu ClusterInfo blocks", plug.plugID, clusterBlocks.size());
-        
-        for (const auto& clusterBlock : clusterBlocks) {
-            const auto& clusterData = clusterBlock.GetPrimaryData();
-            
-            // ClusterInfo primary fields: [0]=formatCode, [1]=portType, [2]=numSignals
-            // Followed by 4 bytes per signal: musicPlugID(2), channel(1), location(1)
-            if (clusterData.size() < 3) {
-                ASFW_LOG_V1(MusicSubunit, "ClusterInfo: Too short (%zu bytes)", clusterData.size());
-                continue;
-            }
-            
-            ChannelFormatInfo channelFormat;
-            channelFormat.formatCode = static_cast<StreamFormatCode>(clusterData[0]);
-            uint8_t numSignals = clusterData[2];
-            channelFormat.channelCount = numSignals;
-            
-            ASFW_LOG_V1(MusicSubunit, "ClusterInfo: formatCode=0x%02X, numSignals=%u, dataSize=%zu",
-                        clusterData[0], numSignals, clusterData.size());
-            
-            // Parse signal entries (4 bytes each)
-            for (uint8_t sig = 0; sig < numSignals; ++sig) {
-                size_t sigOffset = 3 + sig * 4;
-                if (sigOffset + 4 > clusterData.size()) break;
-                
-                ChannelFormatInfo::ChannelDetail detail;
-                detail.musicPlugID = (static_cast<uint16_t>(clusterData[sigOffset]) << 8) | 
-                                     clusterData[sigOffset + 1];
-                detail.position = sig;  // Position within cluster
-                // clusterData[sigOffset + 2] = channel index within stream
-                // clusterData[sigOffset + 3] = location code (ignored for now)
-                
-                // Name will be populated later from MusicPlugChannel lookup
-                channelFormat.channels.push_back(detail);
-                
-                ASFW_LOG_V1(MusicSubunit, "  Signal %u: musicPlugID=0x%04X, position=%u",
-                            sig, detail.musicPlugID, detail.position);
-            }
-            
-            ASFW_LOG_V1(MusicSubunit, "ClusterInfo: Added %zu channels to format", channelFormat.channels.size());
-            
-            // Add to currentFormat (will be populated later with rate info)
-            if (!plug.currentFormat) {
-                AudioStreamFormat fmt;
-                fmt.formatHierarchy = FormatHierarchy::kAM824;
-                fmt.subtype = AM824Subtype::kCompound;
-                fmt.channelFormats.push_back(channelFormat);
-                plug.currentFormat = fmt;
-            } else {
-                plug.currentFormat->channelFormats.push_back(channelFormat);
-            }
-        }
-        
-        plugs.push_back(plug);
-        blockIndex++;
-    }
-    
-    // Also extract MusicPlugInfo (0x810B) blocks for individual channel names
-    // These provide more granular names like "Analog Out 1", "Analog In 2"
-    // Accessible via ExtractMusicPlugChannels helper below
-}
-
 // Extract individual channel names from MusicPlugInfo (0x810B) blocks
 // These blocks contain per-channel information with music_plug_id and name
 static void ExtractMusicPlugChannels(
@@ -613,27 +471,6 @@ static void ExtractMusicPlugChannels(
         channels.push_back(channel);
     }
 }
-
-// Helper to extract plug info from a block (recursive) - used as fallback when no RoutingStatus found
-static void ExtractPlugsFromBlock(
-    const ASFW::Protocols::AVC::Descriptors::AVCInfoBlock& block,
-    std::vector<MusicSubunit::PlugInfo>& plugs)
-{
-    using namespace ASFW::Protocols::AVC::Descriptors;
-    using namespace ASFW::Protocols::AVC::StreamFormats;
-
-    // Check for RoutingStatus (0x8108) - this contains the plug direction info
-    if (block.GetType() == 0x8108) {
-        ExtractPlugsFromRoutingStatus(block, plugs);
-        return;  // Don't recurse further - RoutingStatus handles its children
-    }
-    
-    // Recurse into children to find RoutingStatus blocks
-    for (const auto& child : block.GetNestedBlocks()) {
-        ExtractPlugsFromBlock(child, plugs);
-    }
-}
-
 
 //==============================================================================
 // Music Subunit Identifier Descriptor Parser
@@ -1460,6 +1297,7 @@ void MusicSubunit::LogConnection(size_t index, const StreamFormats::ConnectionIn
     }
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void MusicSubunit::SetAudioVolume(ASFW::Protocols::AVC::IAVCCommandSubmitter& submitter, uint8_t plugId, int16_t volume, std::function<void(bool)> completion) {
     // Target Audio Subunit 0 (0x01 << 3 | 0 = 0x08)
     uint8_t subunitAddr = (static_cast<uint8_t>(AVCSubunitType::kAudio) << 3) | 0;

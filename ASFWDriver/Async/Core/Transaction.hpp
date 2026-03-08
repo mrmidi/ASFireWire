@@ -75,6 +75,7 @@ enum class TransactionState : uint8_t {
 };
 
 // Compile-time state transition validation (encodes IEEE 1394 protocol)
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 constexpr bool IsValidTransition(TransactionState from, TransactionState to) noexcept {
     switch (from) {
         case TransactionState::Created:

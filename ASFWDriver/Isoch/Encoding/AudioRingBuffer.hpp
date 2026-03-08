@@ -34,8 +34,10 @@ namespace Encoding {
 /// Channel count is runtime (1..Isoch::Config::kMaxPcmChannels).
 /// FrameCount is compile-time (power of 2 for efficient modulo).
 ///
+// Cacheline separation here is intentional for the SPSC hot path.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 template <uint32_t FrameCount = Isoch::Config::kAudioRingBufferFrames>
-class AudioRingBuffer {
+class AudioRingBuffer { // NOLINT(clang-analyzer-optin.performance.Padding)
 public:
     static_assert((FrameCount & (FrameCount - 1)) == 0,
                   "FrameCount must be power of 2 for efficient modulo");
@@ -119,7 +121,9 @@ public:
         if (toRead == 0) {
             underrunCount_.fetch_add(1, std::memory_order_relaxed);
             // Fill output with silence
-            std::memset(data, 0, frameCount * channelCount_ * sizeof(int32_t));
+            std::memset(data,
+                        0,
+                        static_cast<size_t>(frameCount) * channelCount_ * sizeof(int32_t));
             return 0;
         }
 

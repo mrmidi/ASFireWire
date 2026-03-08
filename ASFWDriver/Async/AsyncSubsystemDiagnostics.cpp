@@ -18,8 +18,10 @@ std::optional<AsyncStatusSnapshot> AsyncSubsystem::GetStatusSnapshot() const {
         }
     }
 
+    // Positional arguments mirror the snapshot fields being copied.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     auto populateDescriptor = [](AsyncDescriptorStatus& out, const DescriptorRing* ring,
-                                 const uint8_t* virt, uint64_t iova, uint32_t commandPtr,
+                                 const uint8_t* virt, uint64_t iova, uint32_t commandPtr, // NOLINT(bugprone-easily-swappable-parameters)
                                  uint32_t count, uint32_t stride, uint32_t strideFallback) {
         out.descriptorVirt = reinterpret_cast<uint64_t>(virt);
         out.descriptorIOVA = iova;
