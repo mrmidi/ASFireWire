@@ -39,6 +39,7 @@
 #include "Async/ResponseCode.hpp"
 #include "Audio/AudioCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
+#include "Common/DriverKitOwnership.hpp"
 #include "ConfigROM/ConfigROMStager.hpp"
 #include "ConfigROM/ROMReader.hpp"
 #include "ConfigROM/ROMScanner.hpp"
@@ -396,6 +397,8 @@ kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
     return kIOReturnSuccess;
 }
 
+// Positional out-parameters are part of the existing driver/user-client contract.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t ASFWDriver::CopyControllerSnapshot(OSDictionary** status, uint64_t* sequence,
                                                  uint64_t* timestamp) {
     if (status) {
@@ -699,14 +702,15 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
 
     nub->EnsureRxQueueCreated();
 
-    OSSharedPtr<IOBufferMemoryDescriptor> rxMem{};
+    IOBufferMemoryDescriptor* rxMemRaw = nullptr;
     uint64_t rxBytes = 0;
-    const kern_return_t rxCopy = nub->CopyRxQueueMemory(rxMem.attach(), &rxBytes);
+    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMemRaw, &rxBytes);
+    auto rxMem = ASFW::Common::AdoptRetained(rxMemRaw);
     if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
         return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
 
-    return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, rxMem.detach(), rxBytes);
+    return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, rxMem, rxBytes);
 }
 
 kern_return_t ASFWDriver::StopIsochReceive() {
@@ -751,9 +755,10 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    OSSharedPtr<IOBufferMemoryDescriptor> txMem{};
+    IOBufferMemoryDescriptor* txMemRaw = nullptr;
     uint64_t txBytes = 0;
-    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(txMem.attach(), &txBytes);
+    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMemRaw, &txBytes);
+    auto txMem = ASFW::Common::AdoptRetained(txMemRaw);
     if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
         return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
     }
@@ -772,7 +777,7 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     const uint32_t streamModeRaw = nub->GetStreamMode();
 
     return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
-                                   am824Slots, txMem.detach(), txBytes, nullptr, 0, 0);
+                                   am824Slots, txMem, txBytes, nullptr, 0, 0);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {

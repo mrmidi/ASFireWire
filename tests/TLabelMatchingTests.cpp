@@ -200,7 +200,9 @@ TEST_F(TLabelMatchingTest, PacketBuilder_BitPositionVerification_Label0) {
     uint8_t label = 0;
 
     uint8_t headerBuffer[16] = {0};
-    builder_.BuildReadQuadlet(params, label, context, headerBuffer, sizeof(headerBuffer));
+    const size_t headerSize =
+        builder_.BuildReadQuadlet(params, label, context, headerBuffer, sizeof(headerBuffer));
+    ASSERT_NE(0u, headerSize);
 
     uint32_t quadlet0;
     std::memcpy(&quadlet0, headerBuffer, sizeof(quadlet0));
@@ -247,7 +249,9 @@ TEST_F(TLabelMatchingTest, PacketBuilder_BitPositionVerification_Label48) {
     uint8_t label = 48;
 
     uint8_t headerBuffer[16] = {0};
-    builder_.BuildReadQuadlet(params, label, context, headerBuffer, sizeof(headerBuffer));
+    const size_t headerSize =
+        builder_.BuildReadQuadlet(params, label, context, headerBuffer, sizeof(headerBuffer));
+    ASSERT_NE(0u, headerSize);
 
     uint32_t quadlet0;
     std::memcpy(&quadlet0, headerBuffer, sizeof(quadlet0));

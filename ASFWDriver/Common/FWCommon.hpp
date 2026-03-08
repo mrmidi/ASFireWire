@@ -530,10 +530,15 @@ struct BusOptionsDecoded {
 
 // Convenience: update only the generation bits and preserve all other bits (including reserved
 // bits).
-[[nodiscard]] constexpr uint32_t SetGeneration(uint32_t busOptionsHost, uint8_t gen4) noexcept {
-    const uint32_t cleared = (busOptionsHost & ~BusOptionsFields::kGenerationMask);
+struct GenerationUpdate {
+    uint32_t busOptionsHost{0};
+    uint8_t gen4{0};
+};
+
+[[nodiscard]] constexpr uint32_t SetGeneration(GenerationUpdate update) noexcept {
+    const uint32_t cleared = (update.busOptionsHost & ~BusOptionsFields::kGenerationMask);
     const uint32_t genBits =
-        (static_cast<uint32_t>(gen4 & 0x0Fu) << BusOptionsFields::kGenerationShift);
+        (static_cast<uint32_t>(update.gen4 & 0x0Fu) << BusOptionsFields::kGenerationShift);
     return cleared | genBits;
 }
 

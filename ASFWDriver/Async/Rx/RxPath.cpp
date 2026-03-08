@@ -52,7 +52,6 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
     {
         auto* ctx = &arRequestContext_;
         const char* ctxLabel = "AR Request";
-        const ARContextType ctxType = ARContextType::Request;
 
         auto recycle = [&](size_t descriptorIndex) {
             const kern_return_t recycleKr = ctx->Recycle(descriptorIndex);

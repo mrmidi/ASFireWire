@@ -37,6 +37,8 @@ public:
     /// Construct a CIP header builder.
     /// @param sid Source node ID (6 bits, from OHCI NodeID register)
     /// @param dbs Data block size in quadlets (2 for stereo)
+    // Positional `(sid, dbs)` matches the CIP header field order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     explicit CIPHeaderBuilder(uint8_t sid = 0, uint8_t dbs = 2) noexcept
         : sid_(sid & 0x3F), dbs_(dbs) {}
     
@@ -75,6 +77,7 @@ public:
     ///   [23:16] FDF = Format dependent field (SFC for audio)
     ///   [15:0]  SYT = Presentation timestamp (0xFFFF for NO-DATA)
     ///
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     CIPHeader build(uint8_t dbc, uint16_t syt, bool isNoData = false) const noexcept {
         CIPHeader header;
         

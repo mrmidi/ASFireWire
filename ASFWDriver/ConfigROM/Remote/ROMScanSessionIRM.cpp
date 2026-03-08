@@ -25,8 +25,10 @@ void ROMScanSession::StartIRMRead(ROMScanNodeStateMachine& node) {
 
     ++inflight_;
 
-    Async::FWAddress addr{IRM::IRMRegisters::kAddressHi,
-                          IRM::IRMRegisters::kChannelsAvailable63_32};
+    Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = IRM::IRMRegisters::kAddressHi,
+        .addressLo = IRM::IRMRegisters::kChannelsAvailable63_32,
+    }};
 
     const Generation gen = gen_;
     auto weakSelf = weak_from_this();
@@ -103,8 +105,10 @@ void ROMScanSession::StartIRMLock(ROMScanNodeStateMachine& node) {
 
     ++inflight_;
 
-    Async::FWAddress addr{IRM::IRMRegisters::kAddressHi,
-                          IRM::IRMRegisters::kChannelsAvailable63_32};
+    Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = IRM::IRMRegisters::kAddressHi,
+        .addressLo = IRM::IRMRegisters::kChannelsAvailable63_32,
+    }};
 
     std::array<uint8_t, 8> casOperand{};
     const uint32_t beCompare = OSSwapHostToBigInt32(0xFFFFFFFFU);

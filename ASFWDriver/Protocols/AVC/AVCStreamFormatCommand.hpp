@@ -9,6 +9,7 @@
 #pragma once
 
 #include "AVCCommand.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include <vector>
 #include <optional>
 
@@ -42,41 +43,46 @@ struct StreamFormat {
 class AVCStreamFormatCommand : public AVCCommand {
 public:
     /// Constructor for querying current format
+    // Positional plug-addressing follows the AV/C command encoding.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     AVCStreamFormatCommand(FCPTransport& transport,
-                          uint8_t subunitAddr,
-                          uint8_t plugNum,
-                          bool isInput,
-                          bool useAlternateOpcode = false)
+                           uint8_t subunitAddr,
+                           uint8_t plugNum,
+                           bool isInput,
+                           bool useAlternateOpcode = false)
         : AVCCommand(transport, BuildCdb(subunitAddr, plugNum, isInput, 
                                         kStreamFormatSubfunc_Current, 0xFF,
                                         useAlternateOpcode)) {}
     
     /// Constructor for querying supported formats
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     AVCStreamFormatCommand(FCPTransport& transport,
-                          uint8_t subunitAddr,
-                          uint8_t plugNum,
-                          bool isInput,
-                          uint8_t listIndex,
-                          bool useAlternateOpcode = false)
+                           uint8_t subunitAddr,
+                           uint8_t plugNum,
+                           bool isInput,
+                           uint8_t listIndex,
+                           bool useAlternateOpcode = false)
         : AVCCommand(transport, BuildCdb(subunitAddr, plugNum, isInput,
                                         kStreamFormatSubfunc_Supported, listIndex,
                                         useAlternateOpcode)) {}
     
     /// Submit command with parsed format response
     void Submit(std::function<void(AVCResult, const std::optional<StreamFormat>&)> completion) {
-        AVCCommand::Submit([completion](AVCResult result, const AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([completionState](AVCResult result, const AVCCdb& response) {
             if (IsSuccess(result)) {
                 auto format = ParseFormat(response);
-                completion(result, format);
+                Common::InvokeSharedCallback(completionState, result, format);
             } else {
-                completion(result, std::nullopt);
+                Common::InvokeSharedCallback(completionState, result, std::optional<StreamFormat>{});
             }
         });
     }
 
 private:
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static AVCCdb BuildCdb(uint8_t subunitAddr, uint8_t plugNum, bool isInput,
-                          uint8_t subfunction, uint8_t listIndex, bool useAlternateOpcode) {
+                           uint8_t subfunction, uint8_t listIndex, bool useAlternateOpcode) { // NOLINT(bugprone-easily-swappable-parameters)
         AVCCdb cdb;
         cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
         cdb.subunit = subunitAddr;

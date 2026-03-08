@@ -192,7 +192,10 @@ TEST(ConfigROMBuilderTests, UpdateGenerationRefreshesBusInfoAndHeaderCrc) {
     const uint32_t busInfo = builder.BusInfoQuad();
     EXPECT_EQ((busInfo & ASFW::FW::BusOptionsFields::kGenerationMask) >> ASFW::FW::BusOptionsFields::kGenerationShift, 9u);
     EXPECT_EQ((busInfo & ~ASFW::FW::BusOptionsFields::kGenerationMask), (busOptions & ~ASFW::FW::BusOptionsFields::kGenerationMask));
-    EXPECT_EQ(busInfo, SetGeneration(busOptions, 9));
+    EXPECT_EQ(busInfo, SetGeneration({
+        .busOptionsHost = busOptions,
+        .gen4 = 9,
+    }));
 
     const uint32_t header = builder.HeaderQuad();
     EXPECT_EQ(header >> 24, 4u);

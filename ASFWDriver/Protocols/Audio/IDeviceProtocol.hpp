@@ -72,6 +72,8 @@ public:
     }
 
     /// Check if protocol can expose/control a boolean control.
+    // These virtuals intentionally match the host-facing `(class, element[, value])` contract.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     virtual bool SupportsBooleanControl(uint32_t classIdFourCC,
                                         uint32_t element) const {
         (void)classIdFourCC;
@@ -80,6 +82,7 @@ public:
     }
 
     /// Read protocol-backed boolean control value.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     virtual IOReturn GetBooleanControlValue(uint32_t classIdFourCC,
                                             uint32_t element,
                                             bool& outValue) {
@@ -90,6 +93,7 @@ public:
     }
 
     /// Write protocol-backed boolean control value.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     virtual IOReturn SetBooleanControlValue(uint32_t classIdFourCC,
                                             uint32_t element,
                                             bool value) {

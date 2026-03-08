@@ -1,9 +1,13 @@
 #include "AudioSharedMemoryBridge.hpp"
 
+#include "../../Common/DriverKitOwnership.hpp"
+
+#include <utility>
+
 namespace ASFW::Isoch::Audio {
 namespace {
 
-kern_return_t MapSharedQueue(IOBufferMemoryDescriptor* queueMemory,
+kern_return_t MapSharedQueue(OSSharedPtr<IOBufferMemoryDescriptor> queueMemory,
                              uint64_t queueBytes,
                              OSSharedPtr<IOBufferMemoryDescriptor>& outQueueMemory,
                              OSSharedPtr<IOMemoryMap>& outQueueMap,
@@ -19,26 +23,18 @@ kern_return_t MapSharedQueue(IOBufferMemoryDescriptor* queueMemory,
         return kIOReturnBadArgument;
     }
 
-    outQueueMemory.reset(queueMemory, OSNoRetain);
+    outQueueMemory = std::move(queueMemory);
     outQueueBytes = queueBytes;
 
-    IOMemoryMap* queueMapRaw = nullptr;
-    kern_return_t mappingStatus = queueMemory->CreateMapping(
-        kIOMemoryMapCacheModeDefault,
-        0,
-        0,
-        0,
-        0,
-        &queueMapRaw);
-    if (mappingStatus != kIOReturnSuccess || !queueMapRaw) {
+    const kern_return_t mappingStatus =
+        Common::CreateSharedMapping(outQueueMemory, outQueueMap);
+    if (mappingStatus != kIOReturnSuccess) {
         outQueueMemory.reset();
         outQueueBytes = 0;
-        return (mappingStatus == kIOReturnSuccess) ? kIOReturnNoMemory : mappingStatus;
+        return mappingStatus;
     }
 
-    outQueueMap.reset(queueMapRaw, OSNoRetain);
-
-    void* baseAddress = reinterpret_cast<void*>(queueMapRaw->GetAddress());
+    void* baseAddress = reinterpret_cast<void*>(outQueueMap->GetAddress());
     if (!outQueue.Attach(baseAddress, queueBytes)) {
         outQueueMap.reset();
         outQueueMemory.reset();
@@ -58,15 +54,18 @@ kern_return_t MapRxQueueFromNub(ASFWAudioNub& nub,
                                 uint64_t& outQueueBytes,
                                 ASFW::Shared::TxSharedQueueSPSC& outQueueReader,
                                 bool& outQueueValid) {
-    IOBufferMemoryDescriptor* queueMemory = nullptr;
+    IOBufferMemoryDescriptor* queueMemoryRaw = nullptr;
     uint64_t queueBytes = 0;
-    const kern_return_t copyStatus = nub.CopyRxQueueMemory(&queueMemory, &queueBytes);
+    const kern_return_t copyStatus = nub.CopyRxQueueMemory(&queueMemoryRaw, &queueBytes);
     if (copyStatus != kIOReturnSuccess) {
+        if (queueMemoryRaw) {
+            queueMemoryRaw->release();
+        }
         outQueueValid = false;
         return copyStatus;
     }
 
-    return MapSharedQueue(queueMemory,
+    return MapSharedQueue(Common::AdoptRetained(queueMemoryRaw),
                           queueBytes,
                           outQueueMemory,
                           outQueueMap,
@@ -81,15 +80,18 @@ kern_return_t MapTxQueueFromNub(ASFWAudioNub& nub,
                                 uint64_t& outQueueBytes,
                                 ASFW::Shared::TxSharedQueueSPSC& outQueueWriter,
                                 bool& outQueueValid) {
-    IOBufferMemoryDescriptor* queueMemory = nullptr;
+    IOBufferMemoryDescriptor* queueMemoryRaw = nullptr;
     uint64_t queueBytes = 0;
-    const kern_return_t copyStatus = nub.CopyTransmitQueueMemory(&queueMemory, &queueBytes);
+    const kern_return_t copyStatus = nub.CopyTransmitQueueMemory(&queueMemoryRaw, &queueBytes);
     if (copyStatus != kIOReturnSuccess) {
+        if (queueMemoryRaw) {
+            queueMemoryRaw->release();
+        }
         outQueueValid = false;
         return copyStatus;
     }
 
-    return MapSharedQueue(queueMemory,
+    return MapSharedQueue(Common::AdoptRetained(queueMemoryRaw),
                           queueBytes,
                           outQueueMemory,
                           outQueueMap,
@@ -98,13 +100,15 @@ kern_return_t MapTxQueueFromNub(ASFWAudioNub& nub,
                           outQueueValid);
 }
 
+// Positional output parameters mirror the shared-memory mapping state being populated.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t MapZeroCopyOutputFromNub(bool enableZeroCopy,
                                        ASFWAudioNub& nub,
                                        uint32_t channelCount,
                                        OSSharedPtr<IOBufferMemoryDescriptor>& outStreamOutputBuffer,
                                        OSSharedPtr<IOBufferMemoryDescriptor>& outSharedOutputBuffer,
                                        OSSharedPtr<IOMemoryMap>& outSharedOutputMap,
-                                       uint64_t& outSharedOutputBytes,
+                                       uint64_t& outSharedOutputBytes, // NOLINT(bugprone-easily-swappable-parameters)
                                        uint32_t& outZeroCopyFrameCapacity,
                                        bool& outZeroCopyEnabled) {
     outZeroCopyEnabled = false;
@@ -121,40 +125,37 @@ kern_return_t MapZeroCopyOutputFromNub(bool enableZeroCopy,
     uint64_t sharedOutputBytes = 0;
     kern_return_t copyStatus = nub.CopyOutputAudioMemory(&sharedOutputRaw, &sharedOutputBytes);
     if (copyStatus != kIOReturnSuccess || !sharedOutputRaw || sharedOutputBytes == 0) {
+        if (sharedOutputRaw) {
+            sharedOutputRaw->release();
+        }
         return (copyStatus == kIOReturnSuccess) ? kIOReturnNoMemory : copyStatus;
     }
 
-    outSharedOutputBuffer.reset(sharedOutputRaw, OSNoRetain);
+    outSharedOutputBuffer = Common::AdoptRetained(sharedOutputRaw);
     outSharedOutputBytes = sharedOutputBytes;
 
-    IOMemoryMap* outputMapRaw = nullptr;
-    kern_return_t mappingStatus = sharedOutputRaw->CreateMapping(
-        kIOMemoryMapCacheModeDefault,
-        0,
-        0,
-        0,
-        0,
-        &outputMapRaw);
-    if (mappingStatus != kIOReturnSuccess || !outputMapRaw) {
+    const kern_return_t mappingStatus =
+        Common::CreateSharedMapping(outSharedOutputBuffer, outSharedOutputMap);
+    if (mappingStatus != kIOReturnSuccess) {
         outSharedOutputBuffer.reset();
         outSharedOutputBytes = 0;
-        return (mappingStatus == kIOReturnSuccess) ? kIOReturnNoMemory : mappingStatus;
+        return mappingStatus;
     }
 
-    outSharedOutputMap.reset(outputMapRaw, OSNoRetain);
     outZeroCopyEnabled = true;
     if (channelCount > 0) {
         outZeroCopyFrameCapacity = static_cast<uint32_t>(
             sharedOutputBytes / (sizeof(int32_t) * channelCount));
     }
 
-    outStreamOutputBuffer.reset(sharedOutputRaw, OSRetain);
+    outStreamOutputBuffer = outSharedOutputBuffer;
     return kIOReturnSuccess;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void ResetZeroCopyState(OSSharedPtr<IOBufferMemoryDescriptor>& inOutSharedOutputBuffer,
                         OSSharedPtr<IOMemoryMap>& inOutSharedOutputMap,
-                        uint64_t& inOutSharedOutputBytes,
+                        uint64_t& inOutSharedOutputBytes, // NOLINT(bugprone-easily-swappable-parameters)
                         uint32_t& inOutZeroCopyFrameCapacity,
                         bool& inOutZeroCopyEnabled) {
     inOutZeroCopyEnabled = false;

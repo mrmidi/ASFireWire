@@ -15,7 +15,7 @@ namespace {
 
 [[nodiscard]] bool ReadOSBoolValue(OSObject* object, bool fallback) {
     auto* booleanObject = OSDynamicCast(OSBoolean, object);
-    if (!booleanObject) {
+    if (booleanObject == nullptr) {
         return fallback;
     }
     return booleanObject == kOSBooleanTrue;
@@ -93,7 +93,7 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
         const uint32_t cappedCount = std::min(rates->getCount(), kMaxSampleRates);
         for (uint32_t i = 0; i < cappedCount; ++i) {
             auto* rate = OSDynamicCast(OSNumber, rates->getObject(i));
-            if (!rate) {
+            if (rate == nullptr) {
                 continue;
             }
             inOutConfig.sampleRates[inOutConfig.sampleRateCount++] =
@@ -128,7 +128,7 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
             auto* classNumber = OSDynamicCast(OSNumber, entry->getObject("ClassID"));
             auto* scopeNumber = OSDynamicCast(OSNumber, entry->getObject("Scope"));
             auto* elementNumber = OSDynamicCast(OSNumber, entry->getObject("Element"));
-            if (!classNumber || !scopeNumber || !elementNumber) {
+            if (classNumber == nullptr || scopeNumber == nullptr || elementNumber == nullptr) {
                 continue;
             }
 

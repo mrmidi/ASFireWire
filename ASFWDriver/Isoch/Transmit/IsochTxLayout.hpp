@@ -40,7 +40,8 @@ struct Layout final {
 
     // Worst-case packet size we reserve per slot (kept simple: fixed stride per packet).
     static constexpr uint32_t kMaxPacketSize = 4096;
-    static constexpr size_t kPayloadBufferSize = kNumPackets * kMaxPacketSize;
+    static constexpr size_t kPayloadBufferSize =
+        static_cast<size_t>(kNumPackets) * static_cast<size_t>(kMaxPacketSize);
 
     // Guard band in packets used by verifier mismatch checks.
     static constexpr uint32_t kGuardBandPackets = 4;
@@ -52,11 +53,11 @@ struct Layout final {
     // Static assertions
     static_assert(kDescriptorsPerPage >= kBlocksPerPacket, "Need at least one packet per page");
     static_assert((kDescriptorsPerPage % kBlocksPerPacket) == 0, "Keep packets within a page");
-    static_assert((kDescriptorsPerPage * kDescriptorStride) <= kUsablePerPage, "Must fit in usable space");
+    static_assert((static_cast<size_t>(kDescriptorsPerPage) * kDescriptorStride) <= kUsablePerPage,
+                  "Must fit in usable space");
     static_assert(kBlocksPerPacket == 3, "Z must be 3 for OMI(2)+OL(1)");
     static_assert(sizeof(Async::HW::OHCIDescriptor) == 16, "OHCI descriptor must be 16 bytes");
     static_assert(kDescriptorStride == sizeof(Async::HW::OHCIDescriptor), "Stride must match descriptor size");
 };
 
 } // namespace ASFW::Isoch::Tx
-

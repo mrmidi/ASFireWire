@@ -156,29 +156,46 @@ enum class AsyncStatus : uint8_t {
  * Default constructor creates invalid address (0xdead:0xcafebabe) per Apple convention.
  */
 struct FWAddress {
+    struct AddressParts {
+        uint16_t addressHi{0};
+        uint32_t addressLo{0};
+    };
+
+    struct QualifiedAddressParts {
+        uint16_t addressHi{0};
+        uint32_t addressLo{0};
+        uint16_t nodeID{0};
+    };
+
+    struct PackedAddressSource {
+        uint64_t target{0};
+        uint16_t nodeIDOverride{0};
+    };
+
     uint16_t nodeID{0};      ///< Bus/node identifier (bus[15:10], node[5:0])
     uint16_t addressHi{0};   ///< Top 16 bits of 48-bit address
     uint32_t addressLo{0};   ///< Bottom 32 bits of 48-bit address
 
     /// Default constructor: invalid address (0xdead:0xcafebabe per Apple)
-    FWAddress() : nodeID(0), addressHi(0xdead), addressLo(0xcafebabe) {}
+    constexpr FWAddress() noexcept : nodeID(0), addressHi(0xdead), addressLo(0xcafebabe) {}
 
     /// Constructor with address only (nodeID defaults to 0)
-    FWAddress(uint16_t h, uint32_t l) : nodeID(0), addressHi(h), addressLo(l) {}
+    constexpr explicit FWAddress(AddressParts parts) noexcept
+        : nodeID(0), addressHi(parts.addressHi), addressLo(parts.addressLo) {}
 
     /// Full constructor with nodeID
-    FWAddress(uint16_t h, uint32_t l, uint16_t n) : nodeID(n), addressHi(h), addressLo(l) {}
+    constexpr explicit FWAddress(QualifiedAddressParts parts) noexcept
+        : nodeID(parts.nodeID), addressHi(parts.addressHi), addressLo(parts.addressLo) {}
 
     /// Copy constructor
-    FWAddress(const FWAddress& a) : nodeID(a.nodeID), addressHi(a.addressHi), addressLo(a.addressLo) {}
+    constexpr FWAddress(const FWAddress& a) noexcept = default;
 
-    /// Create FWAddress from 64-bit target (Apple IOFWUserCommand pattern)
-    /// @param target 64-bit address: bits[63:48] = nodeID, bits[47:32] = addressHi, bits[31:0] = addressLo
-    /// @param nodeIDOverride Optional override for nodeID (if provided, overrides target[63:48])
-    static FWAddress FromU64(uint64_t target, uint16_t nodeIDOverride = 0) {
-        FWAddress addr = FW::Unpack(target);
-        if (nodeIDOverride != 0) {
-            addr.nodeID = nodeIDOverride;
+    /// Create FWAddress from packed address source (Apple IOFWUserCommand pattern)
+    /// @param source Packed source where target encodes nodeID/address and nodeIDOverride optionally replaces target[63:48]
+    static FWAddress FromU64(PackedAddressSource source) {
+        FWAddress addr = FW::Unpack(source.target);
+        if (source.nodeIDOverride != 0) {
+            addr.nodeID = source.nodeIDOverride;
         }
         return addr;
     }

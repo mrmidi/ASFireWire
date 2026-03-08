@@ -48,12 +48,12 @@ constexpr uint64_t kPCR_iPCRBase = kPCRBaseAddress + 0x80;
 
 /// Get oPCR address for plug number
 inline constexpr uint64_t GetOPCRAddress(uint8_t plugNum) {
-    return kPCR_oPCRBase + (plugNum * 4);
+    return kPCR_oPCRBase + (static_cast<uint64_t>(plugNum) * 4ULL);
 }
 
 /// Get iPCR address for plug number
 inline constexpr uint64_t GetIPCRAddress(uint8_t plugNum) {
-    return kPCR_iPCRBase + (plugNum * 4);
+    return kPCR_iPCRBase + (static_cast<uint64_t>(plugNum) * 4ULL);
 }
 
 //==============================================================================

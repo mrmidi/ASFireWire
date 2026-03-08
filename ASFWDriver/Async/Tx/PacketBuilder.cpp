@@ -119,11 +119,6 @@ static_assert(sizeof(HeaderPhyPacket) == 16);
 
     return true;
 }
-
-[[nodiscard]] uint16_t EncodeSourceNodeID(const PacketContext& context) {
-    return static_cast<uint16_t>(context.sourceNodeID & kNodeIDMask);
-}
-
 } // namespace
 
 std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
@@ -416,8 +411,9 @@ std::size_t PacketBuilder::BuildWriteBlock(const WriteParams& params,
     return headerSize;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 std::size_t PacketBuilder::BuildLock(const LockParams& params,
-                                     uint8_t label,
+                                     uint8_t label, // NOLINT(bugprone-easily-swappable-parameters)
                                      uint16_t extendedTCode,
                                      const PacketContext& context,
                                      void* headerBuffer,

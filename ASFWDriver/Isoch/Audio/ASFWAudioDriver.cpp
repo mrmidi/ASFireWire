@@ -85,6 +85,8 @@ struct AudioDriverSharedMemoryState {
     bool rxQueueValid{false};
 };
 
+// Runtime layout is intentionally organized around hot-path state ownership, not field packing.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 struct AudioDriverRuntimeState {
     OSSharedPtr<IOTimerDispatchSource> timestampTimer;
     OSSharedPtr<OSAction> timestampTimerAction;
@@ -475,6 +477,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     uint32_t formatCount = ivars->device.sampleRateCount > 8 ? 8 : ivars->device.sampleRateCount;
     
     for (uint32_t i = 0; i < formatCount; i++) {
+        // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
         auto fillFormat = [](IOUserAudioStreamBasicDescription& fmt, double sampleRate, uint32_t channels) {
             fmt.mSampleRate = sampleRate;
             fmt.mFormatID = IOUserAudioFormatID::LinearPCM;

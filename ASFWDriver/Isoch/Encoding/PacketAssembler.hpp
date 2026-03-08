@@ -42,10 +42,11 @@ constexpr uint32_t kSamplesPerDataPacket = 8;
 constexpr uint32_t kCIPHeaderSize = 8;
 
 /// Compile-time max audio payload size (8 frames × max AM824 slots × 4 bytes)
-constexpr uint32_t kMaxAudioDataSize = kSamplesPerDataPacket * Isoch::Config::kMaxAmdtpDbs * sizeof(uint32_t);
+constexpr size_t kMaxAudioDataSize =
+    static_cast<size_t>(kSamplesPerDataPacket) * Isoch::Config::kMaxAmdtpDbs * sizeof(uint32_t);
 
 /// Compile-time max assembled packet size (CIP header + max audio data)
-constexpr uint32_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
+constexpr size_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
 
 /// Underrun diagnostic snapshot (1A: detection).
 /// All fields atomically updated in assembleDataPacket() hot path.
@@ -76,6 +77,8 @@ struct AssembledPacket {
 ///   3. Call assembleNext() for each FireWire cycle (8000/sec)
 ///   4. Transmit or validate the assembled packet
 ///
+// Hot-path layout intentionally keeps cadence, DBC, ring-buffer, and diagnostics separate.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 class PacketAssembler {
 public:
     /// Construct a packet assembler.
@@ -98,7 +101,9 @@ public:
 
     /// Get runtime data packet size in bytes.
     uint32_t dataPacketSize() const noexcept {
-        return kCIPHeaderSize + samplesPerDataPacket() * am824SlotCount_ * sizeof(uint32_t);
+        const size_t payloadBytes =
+            static_cast<size_t>(samplesPerDataPacket()) * am824SlotCount_ * sizeof(uint32_t);
+        return static_cast<uint32_t>(kCIPHeaderSize + payloadBytes);
     }
 
     /// Get DATA packet frame count for the active stream mode (48k paths only).
@@ -121,6 +126,8 @@ public:
     /// Reconfigure PCM channels and wire AM824 slot count (CIP DBS).
     /// `am824Slots` may exceed `channels` when the stream carries non-audio slots
     /// such as MIDI conformant data.
+    // Positional arguments mirror PCM-channels / wire-slots / SID reconfiguration.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void reconfigureAM824(uint32_t channels, uint32_t am824Slots, uint8_t sid) noexcept {
         channelCount_ = channels;
         am824SlotCount_ = am824Slots;
@@ -310,8 +317,8 @@ private:
             underrunDiag_.lastDbc.store(packet.dbc, std::memory_order_relaxed);
 
             // SAFETY: Zero remaining samples to prevent encoding stale stack data
-            size_t samplesRead = framesRead * channelCount_;
-            size_t totalSamples = framesPerPacket * channelCount_;
+            size_t samplesRead = static_cast<size_t>(framesRead) * channelCount_;
+            size_t totalSamples = static_cast<size_t>(framesPerPacket) * channelCount_;
             std::memset(&samples[samplesRead], 0, (totalSamples - samplesRead) * sizeof(int32_t));
         }
 
@@ -358,8 +365,8 @@ private:
                                         uint32_t frames,
                                         uint32_t* outWireQuadlets) const noexcept {
         for (uint32_t f = 0; f < frames; ++f) {
-            const int32_t* frameIn = pcmInterleaved + (f * channelCount_);
-            uint32_t* frameOut = outWireQuadlets + (f * am824SlotCount_);
+            const int32_t* frameIn = pcmInterleaved + (static_cast<size_t>(f) * channelCount_);
+            uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824SlotCount_);
 
             for (uint32_t ch = 0; ch < channelCount_; ++ch) {
                 frameOut[ch] = AM824Encoder::encode(frameIn[ch]);
@@ -373,7 +380,7 @@ private:
     void fillSilentAm824Frames(uint32_t frames, uint32_t* outWireQuadlets) const noexcept {
         const uint32_t silence = AM824Encoder::encodeSilence();
         for (uint32_t f = 0; f < frames; ++f) {
-            uint32_t* frameOut = outWireQuadlets + (f * am824SlotCount_);
+            uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824SlotCount_);
             for (uint32_t ch = 0; ch < channelCount_; ++ch) {
                 frameOut[ch] = silence;
             }
@@ -429,6 +436,7 @@ private:
     
 public:
     /// Snapshot debug counters for 1Hz logging (resets counters atomically)
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void snapshotDebug(uint64_t& dataPkts, uint64_t& underruns) noexcept {
         dataPkts = dbgDataPackets_.exchange(0, std::memory_order_relaxed);
         underruns = dbgUnderrunPackets_.exchange(0, std::memory_order_relaxed);
@@ -436,8 +444,9 @@ public:
 
     /// 1A: Record an underrun from external caller (zero-copy path).
     /// Called by IsochTransmitContext when zeroCopyFillBefore < framesPerPacket.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void recordUnderrun(uint32_t fillLevel, uint32_t requestedFrames,
-                        uint32_t availableFrames, uint64_t cycleNumber,
+                        uint32_t availableFrames, uint64_t cycleNumber, // NOLINT(bugprone-easily-swappable-parameters)
                         uint8_t dbc) noexcept {
         underrunDiag_.underrunCount.fetch_add(1, std::memory_order_relaxed);
         underrunDiag_.lastFillLevel.store(fillLevel, std::memory_order_relaxed);

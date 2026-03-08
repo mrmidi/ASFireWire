@@ -2,12 +2,14 @@
 
 #include <DriverKit/IOLib.h>
 #include <atomic>
+#include <utility>
 
 #include "IsochReceiveContext.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/AudioTxProfiles.hpp"
 #include "Encoding/TimingUtils.hpp"
+#include "../Common/DriverKitOwnership.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Logging/Logging.hpp"
 
@@ -15,14 +17,11 @@ namespace ASFW::Driver {
 
 kern_return_t IsochService::StartReceive(uint8_t channel,
                                          HardwareInterface& hardware,
-                                         IOBufferMemoryDescriptor* rxQueueMemory,
+                                         OSSharedPtr<IOBufferMemoryDescriptor> rxQueueMemory,
                                          uint64_t rxQueueBytes) {
     if (isochReceiveContext_ &&
         isochReceiveContext_->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
         ASFW_LOG(Controller, "[Isoch] IR already running; StartReceive is idempotent");
-        if (rxQueueMemory) {
-            rxQueueMemory->release();
-        }
         return kIOReturnSuccess;
     }
 
@@ -30,23 +29,15 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
 
     void* rxQueueBase = nullptr;
     if (rxQueueMemory && rxQueueBytes > 0) {
-        rxQueue_.memory.reset(rxQueueMemory, OSNoRetain);
+        rxQueue_.memory = std::move(rxQueueMemory);
         rxQueue_.bytes = rxQueueBytes;
 
-        IOMemoryMap* mapRaw = nullptr;
-        const kern_return_t mappingStatus = rxQueueMemory->CreateMapping(
-            kIOMemoryMapCacheModeDefault,
-            0,
-            0,
-            0,
-            0,
-            &mapRaw);
-        if (mappingStatus != kIOReturnSuccess || !mapRaw) {
+        const kern_return_t mappingStatus =
+            Common::CreateSharedMapping(rxQueue_.memory, rxQueue_.map);
+        if (mappingStatus != kIOReturnSuccess) {
             rxQueue_.Reset();
-            return (mappingStatus == kIOReturnSuccess) ? kIOReturnNoMemory : mappingStatus;
+            return mappingStatus;
         }
-
-        rxQueue_.map.reset(mapRaw, OSNoRetain);
         rxQueueBase = rxQueue_.BaseAddress();
     }
 
@@ -60,11 +51,13 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem) {
             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Failed to create Memory Manager");
+            rxQueue_.Reset();
             return kIOReturnNoMemory;
         }
 
         if (!isochMem->Initialize(hardware)) {
             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Failed to initialize DMA slabs");
+            rxQueue_.Reset();
             return kIOReturnNoMemory;
         }
 
@@ -72,6 +65,7 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
 
         if (!isochReceiveContext_) {
             ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: Context creation failed");
+            rxQueue_.Reset();
             return kIOReturnNoMemory;
         }
         ASFW_LOG(Controller, "[Isoch] ✅ provisioned Isoch Context with Dedicated Memory");
@@ -119,7 +113,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           uint32_t streamModeRaw,
                                           uint32_t pcmChannels,
                                           uint32_t am824Slots,
-                                          IOBufferMemoryDescriptor* txQueueMemory,
+                                          OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory,
                                           uint64_t txQueueBytes,
                                           void* zeroCopyBase,
                                           uint64_t zeroCopyBytes,
@@ -128,9 +122,6 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     if (isochTransmitContext_ &&
         isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
         ASFW_LOG(Controller, "[Isoch] IT already running; StartTransmit is idempotent");
-        if (txQueueMemory) {
-            txQueueMemory->release();
-        }
         return kIOReturnSuccess;
     }
 
@@ -138,23 +129,15 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
     void* txQueueBase = nullptr;
     if (txQueueMemory && txQueueBytes > 0) {
-        txQueue_.memory.reset(txQueueMemory, OSNoRetain);
+        txQueue_.memory = std::move(txQueueMemory);
         txQueue_.bytes = txQueueBytes;
 
-        IOMemoryMap* mapRaw = nullptr;
-        const kern_return_t mappingStatus = txQueueMemory->CreateMapping(
-            kIOMemoryMapCacheModeDefault,
-            0,
-            0,
-            0,
-            0,
-            &mapRaw);
-        if (mappingStatus != kIOReturnSuccess || !mapRaw) {
+        const kern_return_t mappingStatus =
+            Common::CreateSharedMapping(txQueue_.memory, txQueue_.map);
+        if (mappingStatus != kIOReturnSuccess) {
             txQueue_.Reset();
-            return (mappingStatus == kIOReturnSuccess) ? kIOReturnNoMemory : mappingStatus;
+            return mappingStatus;
         }
-
-        txQueue_.map.reset(mapRaw, OSNoRetain);
         txQueueBase = txQueue_.BaseAddress();
     }
 
@@ -342,31 +325,20 @@ kern_return_t IsochService::StopTransmit() {
 
 kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                        HardwareInterface& hardware) {
-    // Ownership: callers pass retained IOBufferMemoryDescriptor* values (from
-    // ASFWAudioNub::Copy*QueueMemory). IsochService consumes them regardless of
-    // outcome, releasing on all early-return paths.
-    IOBufferMemoryDescriptor* rxQueueMemory = params.rxQueueMemory;
-    IOBufferMemoryDescriptor* txQueueMemory = params.txQueueMemory;
-
     if (params.guid == 0) {
-        if (rxQueueMemory) rxQueueMemory->release();
-        if (txQueueMemory) txQueueMemory->release();
         return kIOReturnBadArgument;
     }
 
     if (activeGuid_ != 0 && activeGuid_ != params.guid) {
         // Transport layer is currently global. Control-plane enforces single-device too.
-        if (rxQueueMemory) rxQueueMemory->release();
-        if (txQueueMemory) txQueueMemory->release();
         return kIOReturnBusy;
     }
 
     const kern_return_t krRx = StartReceive(params.irChannel,
                                            hardware,
-                                           rxQueueMemory,
+                                           params.rxQueueMemory,
                                            params.rxQueueBytes);
     if (krRx != kIOReturnSuccess) {
-        if (txQueueMemory) txQueueMemory->release();
         return krRx;
     }
 
@@ -377,7 +349,7 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                             streamModeRaw,
                                             params.hostOutputPcmChannels,
                                             params.hostToDeviceAm824Slots,
-                                            txQueueMemory,
+                                            params.txQueueMemory,
                                             params.txQueueBytes,
                                             params.zeroCopyBase,
                                             params.zeroCopyBytes,

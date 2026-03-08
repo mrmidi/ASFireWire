@@ -361,7 +361,7 @@ void IsochTxDmaRing::DumpPayloadBuffers(uint32_t numPackets) const noexcept {
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
         const uint8_t* payloadVirt = reinterpret_cast<const uint8_t*>(buf.virtualBase) +
-                                     (pktIdx * Layout::kMaxPacketSize);
+                                     (static_cast<size_t>(pktIdx) * Layout::kMaxPacketSize);
         const uint32_t* payload32 = reinterpret_cast<const uint32_t*>(payloadVirt);
 
         const uint32_t cip0 = payload32[0];

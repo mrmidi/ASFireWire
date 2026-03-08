@@ -8,6 +8,7 @@
 #pragma once
 
 #include "AVCCommand.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include "StreamFormats/StreamFormatTypes.hpp"
 #include <vector>
 
@@ -34,15 +35,17 @@ public:
         : AVCCommand(transport, BuildCdb(subunitAddr, isInput, plugID)) {}
 
     void Submit(std::function<void(AVCResult, SignalFormat)> completion) {
-        AVCCommand::Submit([completion](AVCResult result, const AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([completionState](AVCResult result, const AVCCdb& response) {
             if (IsSuccess(result) && response.operandLength >= 2) {
                 SignalFormat fmt;
                 fmt.format = response.operands[0];
                 // Use Music Subunit specific mapping
                 fmt.sampleRate = StreamFormats::MusicSubunitCodeToSampleRate(response.operands[1]);
-                completion(result, fmt);
+                Common::InvokeSharedCallback(completionState, result, fmt);
             } else {
-                completion(result, {0xFF, StreamFormats::SampleRate::kUnknown});
+                Common::InvokeSharedCallback(completionState, result,
+                                             SignalFormat{0xFF, StreamFormats::SampleRate::kUnknown});
             }
         });
     }
@@ -75,14 +78,15 @@ public:
         : AVCCommand(transport, BuildCdb(plugID)) {}
 
     void Submit(std::function<void(AVCResult, SignalFormat)> completion) {
-        AVCCommand::Submit([completion](AVCResult result, const AVCCdb& response) {
+        auto completionState = Common::ShareCallback(std::move(completion));
+        AVCCommand::Submit([completionState](AVCResult result, const AVCCdb& response) {
             if (IsSuccess(result) && response.operandLength >= 3) {
                 SignalFormat fmt;
                 fmt.formatHierarchy = response.operands[1];
                 fmt.formatSync = response.operands[2];
-                completion(result, fmt);
+                Common::InvokeSharedCallback(completionState, result, fmt);
             } else {
-                completion(result, {0xFF, 0xFF});
+                Common::InvokeSharedCallback(completionState, result, SignalFormat{0xFF, 0xFF});
             }
         });
     }

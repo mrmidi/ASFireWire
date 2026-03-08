@@ -154,6 +154,8 @@ inline const char* PowerClassToString(PowerClass p) {
 // Extract the 2-bit port status for port index (0..15). Returns PortState.
 // Ports are packed as p0 (bits 7:6), p1 (5:4), p2 (3:2) in the primary quadlet, extended
 // ports appear in subsequent quadlets for extended Self-ID packets.
+// Positional `(quad, portIndex)` mirrors the Self-ID wire layout.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 inline PortState ExtractPortState(uint32_t quad, unsigned portIndex) {
     // Only supports first 3 ports in the base quadlet; callers should read extended
     // quadlets for p3..p15 as described in Figure 16-11 when IsExtended() is true.

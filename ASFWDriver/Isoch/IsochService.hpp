@@ -15,6 +15,7 @@
 #include "Core/ExternalSyncBridge.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "../Audio/Model/ASFWAudioDevice.hpp"
+#include "../Common/DriverKitOwnership.hpp"
 
 namespace ASFW::Driver {
 
@@ -37,9 +38,9 @@ struct IsochDuplexStartParams {
 
     ASFW::Audio::Model::StreamMode streamMode{ASFW::Audio::Model::StreamMode::kNonBlocking};
 
-    IOBufferMemoryDescriptor* rxQueueMemory{nullptr};
+    OSSharedPtr<IOBufferMemoryDescriptor> rxQueueMemory{};
     uint64_t rxQueueBytes{0};
-    IOBufferMemoryDescriptor* txQueueMemory{nullptr};
+    OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory{};
     uint64_t txQueueBytes{0};
 
     void* zeroCopyBase{nullptr};
@@ -54,7 +55,7 @@ public:
 
     kern_return_t StartReceive(uint8_t channel,
                                HardwareInterface& hardware,
-                               IOBufferMemoryDescriptor* rxQueueMemory,
+                               OSSharedPtr<IOBufferMemoryDescriptor> rxQueueMemory,
                                uint64_t rxQueueBytes);
 
     kern_return_t StopReceive();
@@ -65,7 +66,7 @@ public:
                                 uint32_t streamModeRaw,
                                 uint32_t pcmChannels,
                                 uint32_t am824Slots,
-                                IOBufferMemoryDescriptor* txQueueMemory,
+                                OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory,
                                 uint64_t txQueueBytes,
                                 void* zeroCopyBase,
                                 uint64_t zeroCopyBytes,

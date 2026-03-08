@@ -50,8 +50,10 @@ public:
     // Observe one RX CIP sample and publish it when valid for 48k sync tracking.
     // Returns true when establish threshold is reached and caller should log transition.
     // Caller must set bridge.clockEstablished after emitting transition log.
+    // These arguments are ordered to match the RX packet fields consumed together.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     bool ObserveSample(ExternalSyncBridge& bridge,
-                       uint64_t nowHostTicks,
+                       uint64_t nowHostTicks, // NOLINT(bugprone-easily-swappable-parameters)
                        uint16_t syt,
                        uint8_t fdf,
                        uint8_t dbs,
@@ -84,8 +86,9 @@ public:
                 consecutiveValid_ >= kEstablishValidUpdates);
     }
 
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     bool HandleStale(ExternalSyncBridge& bridge,
-                     uint64_t nowHostTicks,
+                     uint64_t nowHostTicks, // NOLINT(bugprone-easily-swappable-parameters)
                      uint64_t staleThresholdHostTicks) noexcept {
         if (!bridge.active.load(std::memory_order_acquire)) {
             consecutiveValid_ = 0;

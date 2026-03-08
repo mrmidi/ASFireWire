@@ -39,7 +39,7 @@ public:
         lock_ = IOLockAlloc();
         if (!lock_) {
             // Log but don't fail - lock may be allocated later
-            ASFW_LOG_ERROR(Async, "[%{public}s] Failed to allocate lock", RoleTag::kContextName.data());
+            ASFW_LOG_ERROR(Async, "[%{public}s] Failed to allocate lock", RoleTag::kContextName);
         }
     }
 
@@ -77,7 +77,7 @@ protected:
      */
     void Transition(StateEnum newState, uint32_t txid, const char* why) {
         state_ = newState;
-        ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u state=%{public}s: %{public}s (head=%lu tail=%lu)", RoleTag::kContextName.data(), txid, 0, PolicyT::ToStr(newState), why, (unsigned long)ring_.Head(), (unsigned long)ring_.Tail());
+        ASFW_LOG_V3(Async, "ctx=%{public}s txid=%u gen=%u state=%{public}s: %{public}s (head=%lu tail=%lu)", RoleTag::kContextName, txid, 0, PolicyT::ToStr(newState), why, (unsigned long)ring_.Head(), (unsigned long)ring_.Tail());
     }
 
     /**

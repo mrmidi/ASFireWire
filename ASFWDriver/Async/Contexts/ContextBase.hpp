@@ -25,7 +25,7 @@ namespace ASFW::Async {
  *     static constexpr Driver::Register32 kControlSetReg = ...;
  *     static constexpr Driver::Register32 kControlClearReg = ...;
  *     static constexpr Driver::Register32 kCommandPtrReg = ...;
- *     static constexpr std::string_view kContextName = "My Context";
+ *     static constexpr const char kContextName[] = "My Context";
  * };
  * static_assert(ContextRole<MyContextTag>);
  * \endcode
@@ -56,7 +56,7 @@ struct ATRequestTag {
         static_cast<Driver::Register32>(DMAContextHelpers::AsReqTrContextControlClear);
     static constexpr Driver::Register32 kCommandPtrReg =
         static_cast<Driver::Register32>(DMAContextHelpers::AsReqTrCommandPtr);
-    static constexpr std::string_view kContextName = "AT Request";
+    static constexpr const char kContextName[] = "AT Request";
 };
 
 /**
@@ -77,7 +77,7 @@ struct ATResponseTag {
         static_cast<Driver::Register32>(DMAContextHelpers::AsRspTrContextControlClear);
     static constexpr Driver::Register32 kCommandPtrReg =
         static_cast<Driver::Register32>(DMAContextHelpers::AsRspTrCommandPtr);
-    static constexpr std::string_view kContextName = "AT Response";
+    static constexpr const char kContextName[] = "AT Response";
 };
 
 /**
@@ -102,7 +102,7 @@ struct ARRequestTag {
         static_cast<Driver::Register32>(DMAContextHelpers::AsReqRcvContextControlClear);
     static constexpr Driver::Register32 kCommandPtrReg =
         static_cast<Driver::Register32>(DMAContextHelpers::AsReqRcvCommandPtr);
-    static constexpr std::string_view kContextName = "AR Request";
+    static constexpr const char kContextName[] = "AR Request";
 };
 
 /**
@@ -123,7 +123,7 @@ struct ARResponseTag {
         static_cast<Driver::Register32>(DMAContextHelpers::AsRspRcvContextControlClear);
     static constexpr Driver::Register32 kCommandPtrReg =
         static_cast<Driver::Register32>(DMAContextHelpers::AsRspRcvCommandPtr);
-    static constexpr std::string_view kContextName = "AR Response";
+    static constexpr const char kContextName[] = "AR Response";
 };
 
 // Compile-time validation
@@ -272,6 +272,10 @@ public:
      * \return Human-readable context name from role tag
      */
     [[nodiscard]] constexpr std::string_view ContextName() const noexcept {
+        return Tag::kContextName;
+    }
+
+    [[nodiscard]] constexpr const char* ContextNameCString() const noexcept {
         return Tag::kContextName;
     }
 

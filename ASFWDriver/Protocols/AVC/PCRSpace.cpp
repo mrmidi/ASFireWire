@@ -6,6 +6,7 @@
 //
 
 #include "PCRSpace.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <array>
@@ -19,11 +20,12 @@ using namespace ASFW::Protocols::AVC;
 void PCRSpace::ReadPCR(PlugType type,
                        uint8_t plugNum,
                        std::function<void(std::optional<PCRValue>)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     if (plugNum > 30) {
         ASFW_LOG_ERROR(Async,
                      "PCRSpace: Invalid plug number %u (max 30)",
                      plugNum);
-        completion(std::nullopt);
+        Common::InvokeSharedCallback(completionState, std::optional<PCRValue>{});
         return;
     }
 
@@ -32,16 +34,16 @@ void PCRSpace::ReadPCR(PlugType type,
     auto device = unit_.GetDevice();
     if (!device) {
         ASFW_LOG_ERROR(Async, "PCRSpace: Device destroyed");
-        completion(std::nullopt);
+        Common::InvokeSharedCallback(completionState, std::optional<PCRValue>{});
         return;
     }
 
     const FW::Generation gen = busInfo_.GetGeneration();
     const FW::NodeId node{static_cast<uint8_t>(device->GetNodeID() & 0x3Fu)};
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((pcrAddress >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(pcrAddress & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((pcrAddress >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(pcrAddress & 0xFFFFFFFFU),
+    }};
 
     busOps_.ReadBlock(
         gen,
@@ -49,13 +51,13 @@ void PCRSpace::ReadPCR(PlugType type,
         addr,
         4,
         FW::FwSpeed::S100,
-        [completion, pcrAddress](Async::AsyncStatus status, std::span<const uint8_t> response) {
+        [completionState, pcrAddress](Async::AsyncStatus status, std::span<const uint8_t> response) {
             if (status != Async::AsyncStatus::kSuccess) {
                 ASFW_LOG_ERROR(Async,
                              "PCRSpace: PCR read failed at 0x%llx: status=%d",
                              pcrAddress,
                              static_cast<int>(status));
-                completion(std::nullopt);
+                Common::InvokeSharedCallback(completionState, std::optional<PCRValue>{});
                 return;
             }
 
@@ -63,7 +65,7 @@ void PCRSpace::ReadPCR(PlugType type,
                 ASFW_LOG_ERROR(Async,
                              "PCRSpace: PCR read response too short: %zu bytes",
                              response.size());
-                completion(std::nullopt);
+                Common::InvokeSharedCallback(completionState, std::optional<PCRValue>{});
                 return;
             }
 
@@ -81,7 +83,7 @@ void PCRSpace::ReadPCR(PlugType type,
                         pcrAddress, raw,
                         pcr.online, pcr.channel, pcr.p2pCount);
 
-            completion(pcr);
+            Common::InvokeSharedCallback(completionState, std::optional<PCRValue>{pcr});
         });
 }
 
@@ -94,18 +96,19 @@ void PCRSpace::UpdatePCR(PlugType type,
                          const PCRValue& oldValue,
                          const PCRValue& newValue,
                          std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     if (plugNum > 30) {
         ASFW_LOG_ERROR(Async,
                      "PCRSpace: Invalid plug number %u (max 30)",
                      plugNum);
-        completion(false);
+        Common::InvokeSharedCallback(completionState, false);
         return;
     }
 
     if (!newValue.IsValid()) {
         ASFW_LOG_ERROR(Async,
                      "PCRSpace: Invalid PCR value");
-        completion(false);
+        Common::InvokeSharedCallback(completionState, false);
         return;
     }
 
@@ -114,7 +117,7 @@ void PCRSpace::UpdatePCR(PlugType type,
     auto device = unit_.GetDevice();
     if (!device) {
         ASFW_LOG_ERROR(Async, "PCRSpace: Device destroyed");
-        completion(false);
+        Common::InvokeSharedCallback(completionState, false);
         return;
     }
 
@@ -137,10 +140,10 @@ void PCRSpace::UpdatePCR(PlugType type,
 
     const FW::Generation gen = busInfo_.GetGeneration();
     const FW::NodeId node{static_cast<uint8_t>(device->GetNodeID() & 0x3Fu)};
-    const Async::FWAddress addr{
-        static_cast<uint16_t>((pcrAddress >> 32U) & 0xFFFFU),
-        static_cast<uint32_t>(pcrAddress & 0xFFFFFFFFU),
-    };
+    const Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((pcrAddress >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(pcrAddress & 0xFFFFFFFFU),
+    }};
     const std::span<const uint8_t> operand{lockData.data(), lockData.size()};
 
     busOps_.Lock(gen,
@@ -150,14 +153,14 @@ void PCRSpace::UpdatePCR(PlugType type,
                  operand,
                  4,
                  FW::FwSpeed::S100,
-        [completion, pcrAddress, oldRaw, newRaw](Async::AsyncStatus status,
+        [completionState, pcrAddress, oldRaw, newRaw](Async::AsyncStatus status,
                                                 std::span<const uint8_t> response) {
             if (status != Async::AsyncStatus::kSuccess) {
                 ASFW_LOG_ERROR(Async,
                              "PCRSpace: PCR lock failed at 0x%llx: status=%d",
                              pcrAddress,
                              static_cast<int>(status));
-                completion(false);
+                Common::InvokeSharedCallback(completionState, false);
                 return;
             }
 
@@ -165,7 +168,7 @@ void PCRSpace::UpdatePCR(PlugType type,
                 ASFW_LOG_ERROR(Async,
                              "PCRSpace: PCR lock response too short: %zu bytes",
                              response.size());
-                completion(false);
+                Common::InvokeSharedCallback(completionState, false);
                 return;
             }
 
@@ -180,7 +183,7 @@ void PCRSpace::UpdatePCR(PlugType type,
                              "PCRSpace: PCR lock compare failed: "
                              "expected 0x%08x, got 0x%08x",
                              oldRaw, actualOld);
-                completion(false);
+                Common::InvokeSharedCallback(completionState, false);
                 return;
             }
 
@@ -188,7 +191,7 @@ void PCRSpace::UpdatePCR(PlugType type,
                         "PCRSpace: Updated PCR[%llu]: 0x%08x → 0x%08x",
                         pcrAddress, oldRaw, newRaw);
 
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         });
 }
 
@@ -199,12 +202,13 @@ void PCRSpace::UpdatePCR(PlugType type,
 void PCRSpace::CreateConnection(uint8_t plugNum,
                                  PlugType plugType,
                                  std::function<void(std::optional<uint8_t>)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     // Step 1: Read current PCR value
-    ReadPCR(plugType, plugNum, [this, plugNum, plugType, completion](std::optional<PCRValue> currentPCR) {
+    ReadPCR(plugType, plugNum, [this, plugNum, plugType, completionState](std::optional<PCRValue> currentPCR) {
         if (!currentPCR) {
             ASFW_LOG_ERROR(Async,
                          "PCRSpace: Failed to read PCR for connection");
-            completion(std::nullopt);
+            Common::InvokeSharedCallback(completionState, std::optional<uint8_t>{});
             return;
         }
 
@@ -218,7 +222,7 @@ void PCRSpace::CreateConnection(uint8_t plugNum,
         // For now, stub out with a placeholder channel
         ASFW_LOG_ERROR(Async,
                      "PCRSpace: IRM allocation not yet implemented");
-        completion(std::nullopt);
+        Common::InvokeSharedCallback(completionState, std::optional<uint8_t>{});
     });
 }
 
@@ -226,12 +230,13 @@ void PCRSpace::DestroyConnection(uint8_t plugNum,
                                   PlugType plugType,
                                   uint8_t channel,
                                   std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     // Step 1: Read current PCR value
-    ReadPCR(plugType, plugNum, [this, plugNum, plugType, channel, completion](std::optional<PCRValue> currentPCR) {
+    ReadPCR(plugType, plugNum, [this, plugNum, plugType, channel, completionState](std::optional<PCRValue> currentPCR) {
         if (!currentPCR) {
             ASFW_LOG_ERROR(Async,
                          "PCRSpace: Failed to read PCR for disconnection");
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
             return;
         }
 
@@ -250,11 +255,11 @@ void PCRSpace::DestroyConnection(uint8_t plugNum,
         uint32_t bandwidth = CalculateBandwidth();
 
         UpdatePCR(plugType, plugNum, *currentPCR, newPCR,
-            [this, channel, bandwidth, completion](bool success) {
+            [this, channel, bandwidth, completionState](bool success) {
                 if (!success) {
                     ASFW_LOG_ERROR(Async,
                                  "PCRSpace: Failed to update PCR for disconnection");
-                    completion(false);
+                    Common::InvokeSharedCallback(completionState, false);
                     return;
                 }
 
@@ -267,7 +272,7 @@ void PCRSpace::DestroyConnection(uint8_t plugNum,
                             "PCRSpace: Connection destroyed (channel %u - IRM release not implemented)",
                             channel);
 
-                completion(true);
+                Common::InvokeSharedCallback(completionState, true);
             });
     });
 }
