@@ -15,7 +15,7 @@ namespace ASFW::Shared {
 class IDMAMemory;
 
 struct FilledBufferInfo {
-    void* virtualAddress;
+    uint8_t* virtualAddress;
     size_t startOffset;
     size_t bytesFilled;
     size_t descriptorIndex;
@@ -29,15 +29,17 @@ public:
     [[nodiscard]] bool Finalize(uint64_t descriptorsPhysBase, uint64_t buffersPhysBase) noexcept;
     [[nodiscard]] std::optional<FilledBufferInfo> Dequeue() noexcept;
     [[nodiscard]] kern_return_t Recycle(size_t index) noexcept;
-    [[nodiscard]] void* GetBufferAddress(size_t index) const noexcept;
+    [[nodiscard]] uint8_t* GetBufferAddress(size_t index) const noexcept;
     [[nodiscard]] size_t Head() const noexcept { return head_; }
     [[nodiscard]] size_t BufferCount() const noexcept { return bufferCount_; }
     [[nodiscard]] size_t BufferSize() const noexcept { return bufferSize_; }
     [[nodiscard]] uint32_t CommandPtrWord() const noexcept;
     void BindDma(IDMAMemory* dma) noexcept;
     void PublishAllDescriptorsOnce() noexcept;
-    [[nodiscard]] void* DescriptorBaseVA() noexcept { return descriptors_.data(); }
-    [[nodiscard]] const void* DescriptorBaseVA() const noexcept { return descriptors_.data(); }
+    [[nodiscard]] HW::OHCIDescriptor* DescriptorBaseVA() noexcept { return descriptors_.data(); }
+    [[nodiscard]] const HW::OHCIDescriptor* DescriptorBaseVA() const noexcept {
+        return descriptors_.data();
+    }
     
     // Low-level access for custom programming (Isoch, etc.)
     [[nodiscard]] HW::OHCIDescriptor* GetDescriptor(size_t index) noexcept {
@@ -55,7 +57,7 @@ public:
         return descIOVABase_ + (index * sizeof(HW::OHCIDescriptor));
     }
 
-    [[nodiscard]] void* GetElementVA(size_t index) const noexcept {
+    [[nodiscard]] uint8_t* GetElementVA(size_t index) const noexcept {
         return GetBufferAddress(index);
     }
     

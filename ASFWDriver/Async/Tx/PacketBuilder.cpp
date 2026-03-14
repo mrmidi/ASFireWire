@@ -124,7 +124,7 @@ static_assert(sizeof(HeaderPhyPacket) == 16);
 std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
                                             uint8_t label,
                                             const PacketContext& context,
-                                            void* headerBuffer,
+                                            uint8_t* headerBuffer,
                                             std::size_t bufferSize) const {
     // 12 bytes for read-quadlet - NO ADDITIONAL DATA!
     constexpr std::size_t headerSize = sizeof(HeaderNoData);
@@ -141,7 +141,7 @@ std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderNoData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderNoData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -205,7 +205,7 @@ std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
 std::size_t PacketBuilder::BuildReadBlock(const ReadParams& params,
                                           uint8_t label,
                                           const PacketContext& context,
-                                          void* headerBuffer,
+                                          uint8_t* headerBuffer,
                                           std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderBlockData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -221,7 +221,7 @@ std::size_t PacketBuilder::BuildReadBlock(const ReadParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderBlockData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -273,7 +273,7 @@ std::size_t PacketBuilder::BuildReadBlock(const ReadParams& params,
 std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
                                              uint8_t label,
                                              const PacketContext& context,
-                                             void* headerBuffer,
+                                             uint8_t* headerBuffer,
                                              std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderQuadletData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -289,7 +289,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderQuadletData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderQuadletData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -346,7 +346,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
 std::size_t PacketBuilder::BuildWriteBlock(const WriteParams& params,
                                            uint8_t label,
                                            const PacketContext& context,
-                                           void* headerBuffer,
+                                           uint8_t* headerBuffer,
                                            std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderBlockData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -362,7 +362,7 @@ std::size_t PacketBuilder::BuildWriteBlock(const WriteParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderBlockData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -416,7 +416,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
                                      uint8_t label, // NOLINT(bugprone-easily-swappable-parameters)
                                      uint16_t extendedTCode,
                                      const PacketContext& context,
-                                     void* headerBuffer,
+                                     uint8_t* headerBuffer,
                                      std::size_t bufferSize) const {
     constexpr std::size_t headerSize = sizeof(HeaderBlockData);
     if (bufferSize < headerSize || headerBuffer == nullptr) {
@@ -436,7 +436,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
         return 0;
     }
 
-    auto* header = static_cast<HeaderBlockData*>(headerBuffer);
+    auto* header = reinterpret_cast<HeaderBlockData*>(headerBuffer);
     std::memset(header, 0, headerSize);
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
@@ -489,7 +489,7 @@ std::size_t PacketBuilder::BuildLock(const LockParams& params,
 
 std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
                                           const PhyParams& params,
-                                          void* headerBuffer,
+                                          uint8_t* headerBuffer,
                                           std::size_t bufferSize) const {
     // PHY packet: 12 bytes transmitted (3 quadlets) per OHCI §7.8.1.4 Figure 7-14
     // Apple's implementation: reqCount=12 (not 16!)
@@ -507,7 +507,7 @@ std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
     }
 
     // Use byte pointer for direct big-endian wire format construction
-    auto* bytes = static_cast<uint8_t*>(headerBuffer);
+    auto* bytes = headerBuffer;
 
     // Quadlet 0: include tLabel in host-order word so ExtractTLabel() (bits[15:10]) matches tracking.
     // Retry/priority left at zero; tCode=0xE in bits [7:4].

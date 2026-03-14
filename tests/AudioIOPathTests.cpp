@@ -23,11 +23,12 @@ struct QueueFixture {
     explicit QueueFixture(uint32_t capacityFrames, uint32_t channels) {
         const uint64_t bytes = TxSharedQueueSPSC::RequiredBytes(capacityFrames, channels);
         backing.resize(bytes);
-        const bool initialized = TxSharedQueueSPSC::InitializeInPlace(backing.data(),
+        auto* queueBytes = reinterpret_cast<uint8_t*>(backing.data());
+        const bool initialized = TxSharedQueueSPSC::InitializeInPlace(queueBytes,
                                                                       backing.size(),
                                                                       capacityFrames,
                                                                       channels);
-        const bool attached = initialized && queue.Attach(backing.data(), backing.size());
+        const bool attached = initialized && queue.Attach(queueBytes, backing.size());
         ok = initialized && attached;
     }
 };

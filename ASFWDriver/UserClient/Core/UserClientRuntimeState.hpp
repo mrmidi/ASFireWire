@@ -21,9 +21,8 @@ namespace ASFW::UserClient {
 /**
  * @brief Typed bridge that owns UserClient handlers and transient transaction storage.
  *
- * DriverKit's IIG ivars force an opaque pointer field. This object keeps that
- * opacity confined to a single bridge while the rest of the UserClient logic
- * stays fully typed.
+ * The generated UserClient ivars hold an opaque pointer to this bridge because
+ * IIG cannot model plain project C++ class pointers directly.
  */
 class UserClientRuntimeState final {
   public:

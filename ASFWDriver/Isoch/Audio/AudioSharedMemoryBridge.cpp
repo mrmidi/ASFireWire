@@ -34,7 +34,7 @@ kern_return_t MapSharedQueue(OSSharedPtr<IOBufferMemoryDescriptor> queueMemory,
         return mappingStatus;
     }
 
-    void* baseAddress = reinterpret_cast<void*>(outQueueMap->GetAddress());
+    uint8_t* baseAddress = reinterpret_cast<uint8_t*>(outQueueMap->GetAddress());
     if (!outQueue.Attach(baseAddress, queueBytes)) {
         outQueueMap.reset();
         outQueueMemory.reset();

@@ -17,6 +17,9 @@
 #else
 // `ASFWDriver.h` is generated from `ASFWDriver/ASFWDriver.iig` by Xcode/IIG.
 // Provide a minimal declaration so `clang-tidy` (and non-Xcode builds) can parse this file.
+namespace ASFW::Driver {
+class ControllerCore;
+}
 class ASFWDriver {
   public:
     [[nodiscard]] void* GetControllerCore() const;
@@ -59,29 +62,21 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
     }
 
-    ASFW::Discovery::Generation resolvedGen = requestedGen;
-
-    // Lookup ROM by nodeId and generation
     const auto* rom = romStore->FindByNode(requestedGen, nodeId);
-    if (rom == nullptr) {
-        // Fallback: return latest cached ROM for this node (post-reset)
-        rom = romStore->FindLatestForNode(nodeId);
-        if (rom != nullptr) {
-            resolvedGen = rom->gen;
-            ASFW_LOG(UserClient,
-                     "ExportConfigROM: Requested gen=%u stale, returning latest gen=%u for node=%u",
-                     requestedGen.value, resolvedGen.value, nodeId);
-        }
-    }
 
     if (rom == nullptr) {
         ASFW_LOG(UserClient,
-                 "ExportConfigROM: ROM not found for node=%u gen=%u (no cached fallback)", nodeId,
-                 requestedGen.value);
+                 "ExportConfigROM: ROM not found for node=%u gen=%u (exact-generation lookup "
+                 "only; no stale fallback)",
+                 nodeId, requestedGen.value);
         // Return empty data to indicate "not cached"
         OSData* data = OSData::withCapacity(0);
         if (data == nullptr) {
             return kIOReturnNoMemory;
+        }
+        if (args->scalarOutput != nullptr && args->scalarOutputCount >= 1) {
+            args->scalarOutput[0] = static_cast<uint64_t>(requestedGen.value & 0xFFFFU);
+            args->scalarOutputCount = 1;
         }
         args->structureOutput = data;
         args->structureOutputDescriptor = nullptr;
@@ -106,11 +101,12 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         return kIOReturnNoMemory;
     }
 
-    ASFW_LOG(UserClient, "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u",
-             rom->rawQuadlets.size(), dataSize, nodeId, resolvedGen.value);
+    ASFW_LOG(UserClient,
+             "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u",
+             rom->rawQuadlets.size(), dataSize, nodeId, requestedGen.value);
 
     if (args->scalarOutput != nullptr && args->scalarOutputCount >= 1) {
-        args->scalarOutput[0] = static_cast<uint64_t>(resolvedGen.value & 0xFFFFU);
+        args->scalarOutput[0] = static_cast<uint64_t>(requestedGen.value & 0xFFFFU);
         args->scalarOutputCount = 1;
     }
 
@@ -172,6 +168,18 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
     request.topology = *topo;
     request.localNodeId = topo->localNodeId.value_or(0xFF);
     request.targetNodes = {nodeId};
+
+    if (auto* romStore = controller->GetConfigROMStore(); romStore != nullptr) {
+        if (const auto* cached = romStore->FindByNode(request.gen, nodeId, true); cached != nullptr &&
+            cached->bib.guid != 0) {
+            ASFW_LOG(UserClient,
+                     "TriggerROMRead: invalidating exact-generation cached ROM for nodeId=%u "
+                     "cachedGen=%u guid=0x%016llx before manual reread",
+                     nodeId, cached->gen.value, cached->bib.guid);
+            romStore->InvalidateROM(cached->bib.guid);
+            romStore->PruneInvalid();
+        }
+    }
 
     const bool initiated = controller->StartDiscoveryScan(request);
 

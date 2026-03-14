@@ -6,6 +6,22 @@
 
 namespace ASFW::IRM {
 
+struct IRMClient::ChannelLockState {
+    AllocationCallback userCallback;
+    uint8_t channel{0};
+    uint32_t addressLo{0};
+    uint32_t bitMask{0};
+    bool allocate{false};
+    uint8_t retriesLeft{0};
+};
+
+struct IRMClient::BandwidthLockState {
+    AllocationCallback userCallback;
+    uint32_t units{0};
+    bool allocate{false};
+    uint8_t retriesLeft{0};
+};
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -259,16 +275,7 @@ void IRMClient::PerformChannelLock(uint8_t channel, bool allocate,
              allocate ? "Allocating" : "Releasing",
              channel, addressLo, bitMask);
 
-    struct LockContext {
-        AllocationCallback userCallback;
-        uint8_t channel;
-        uint32_t addressLo;
-        uint32_t bitMask;
-        bool allocate;
-        uint8_t retriesLeft;
-    };
-
-    auto ctx = std::make_shared<LockContext>(LockContext{
+    auto ctx = std::make_shared<ChannelLockState>(ChannelLockState{
         std::move(callback),
         channel,
         addressLo,
@@ -277,61 +284,7 @@ void IRMClient::PerformChannelLock(uint8_t channel, bool allocate,
         retryPolicy.maxRetries
     });
 
-    std::function<void()> performLock;
-    performLock = [this, ctx, performLock]() {
-        ReadIRMQuadlet(ctx->addressLo,
-            [this, ctx, performLock](bool success, uint32_t value) {
-                if (!success) {
-                    ASFW_LOG_ERROR(IRM, "Channel read failed");
-                    ctx->userCallback(AllocationStatus::Timeout);
-                    return;
-                }
-
-                uint32_t currentValue = value;
-                uint32_t newValue;
-                if (ctx->allocate) {
-                    if ((currentValue & ctx->bitMask) == 0) {
-                        ASFW_LOG(IRM, "Channel %u not available (current=0x%08x mask=0x%08x)",
-                                 ctx->channel, currentValue, ctx->bitMask);
-                        ctx->userCallback(AllocationStatus::NoResources);
-                        return;
-                    }
-                    newValue = currentValue & ~ctx->bitMask;
-                } else {
-                    newValue = currentValue | ctx->bitMask;
-                }
-
-                CompareSwapIRMQuadlet(ctx->addressLo, currentValue, newValue,
-                    [this, ctx, currentValue, performLock](bool success, uint32_t oldValue) {
-                        if (!success) {
-                            ASFW_LOG_ERROR(IRM, "Channel lock operation failed");
-                            ctx->userCallback(AllocationStatus::Timeout);
-                            return;
-                        }
-
-                        if (oldValue == currentValue) {
-                            ASFW_LOG(IRM, "Channel %u %{public}s succeeded",
-                                     ctx->channel,
-                                     ctx->allocate ? "allocation" : "release");
-                            ctx->userCallback(AllocationStatus::Success);
-                        } else {
-                            ASFW_LOG(IRM, "Channel lock contention "
-                                     "(expected=0x%08x actual=0x%08x retries=%u)",
-                                     currentValue, oldValue, ctx->retriesLeft);
-
-                            if (ctx->retriesLeft > 0) {
-                                ctx->retriesLeft--;
-                                performLock();
-                            } else {
-                                ASFW_LOG(IRM, "Channel lock exhausted retries");
-                                ctx->userCallback(AllocationStatus::NoResources);
-                            }
-                        }
-                    });
-            });
-    };
-
-    performLock();
+    StartChannelLock(ctx);
 }
 
 void IRMClient::PerformBandwidthLock(uint32_t units, bool allocate,
@@ -341,77 +294,139 @@ void IRMClient::PerformBandwidthLock(uint32_t units, bool allocate,
     ASFW_LOG(IRM, "%{public}s bandwidth %u units",
              allocate ? "Allocating" : "Releasing", units);
 
-    struct BandwidthContext {
-        AllocationCallback userCallback;
-        uint32_t units;
-        bool allocate;
-        uint8_t retriesLeft;
-    };
-
-    auto ctx = std::make_shared<BandwidthContext>(BandwidthContext{
+    auto ctx = std::make_shared<BandwidthLockState>(BandwidthLockState{
         std::move(callback),
         units,
         allocate,
         retryPolicy.maxRetries
     });
 
-    std::function<void()> performLock;
-    performLock = [this, ctx, performLock]() {
-        ReadIRMQuadlet(IRMRegisters::kBandwidthAvailable,
-            [this, ctx, performLock](bool success, uint32_t value) {
-                if (!success) {
-                    ASFW_LOG_ERROR(IRM, "Bandwidth read failed");
-                    ctx->userCallback(AllocationStatus::Timeout);
-                    return;
-                }
+    StartBandwidthLock(ctx);
+}
 
-                uint32_t currentBandwidth = value;
+void IRMClient::StartChannelLock(const std::shared_ptr<ChannelLockState>& ctx) {
+    ReadIRMQuadlet(ctx->addressLo, [this, ctx](bool success, uint32_t currentValue) {
+        OnChannelRead(ctx, success, currentValue);
+    });
+}
 
-                uint32_t newBandwidth;
-                if (ctx->allocate) {
-                    if (currentBandwidth < ctx->units) {
-                        ASFW_LOG(IRM, "Insufficient bandwidth (available=%u needed=%u)",
-                                 currentBandwidth, ctx->units);
-                        ctx->userCallback(AllocationStatus::NoResources);
-                        return;
-                    }
-                    newBandwidth = currentBandwidth - ctx->units;
-                } else {
-                    newBandwidth = currentBandwidth + ctx->units;
-                }
+void IRMClient::OnChannelRead(const std::shared_ptr<ChannelLockState>& ctx,
+                              const bool success,
+                              const uint32_t currentValue) {
+    if (!success) {
+        ASFW_LOG_ERROR(IRM, "Channel read failed");
+        ctx->userCallback(AllocationStatus::Timeout);
+        return;
+    }
 
-                CompareSwapIRMQuadlet(IRMRegisters::kBandwidthAvailable,
-                    currentBandwidth, newBandwidth,
-                    [this, ctx, currentBandwidth, performLock](bool success, uint32_t oldValue) {
-                        if (!success) {
-                            ASFW_LOG_ERROR(IRM, "Bandwidth lock operation failed");
-                            ctx->userCallback(AllocationStatus::Timeout);
-                            return;
-                        }
+    uint32_t newValue = currentValue | ctx->bitMask;
+    if (ctx->allocate) {
+        if ((currentValue & ctx->bitMask) == 0) {
+            ASFW_LOG(IRM, "Channel %u not available (current=0x%08x mask=0x%08x)",
+                     ctx->channel, currentValue, ctx->bitMask);
+            ctx->userCallback(AllocationStatus::NoResources);
+            return;
+        }
+        newValue = currentValue & ~ctx->bitMask;
+    }
 
-                        if (oldValue == currentBandwidth) {
-                            ASFW_LOG(IRM, "Bandwidth %{public}s succeeded (%u units)",
-                                     ctx->allocate ? "allocation" : "release",
-                                     ctx->units);
-                            ctx->userCallback(AllocationStatus::Success);
-                        } else {
-                            ASFW_LOG(IRM, "Bandwidth lock contention "
-                                     "(expected=%u actual=%u retries=%u)",
-                                     currentBandwidth, oldValue, ctx->retriesLeft);
+    CompareSwapIRMQuadlet(ctx->addressLo, currentValue, newValue,
+                          [this, ctx, currentValue](bool compareSwapSuccess, uint32_t oldValue) {
+                              OnChannelCompareSwap(ctx, currentValue, compareSwapSuccess, oldValue);
+                          });
+}
 
-                            if (ctx->retriesLeft > 0) {
-                                ctx->retriesLeft--;
-                                performLock();
-                            } else {
-                                ASFW_LOG(IRM, "Bandwidth lock exhausted retries");
-                                ctx->userCallback(AllocationStatus::NoResources);
-                            }
-                        }
-                    });
-            });
-    };
+void IRMClient::OnChannelCompareSwap(const std::shared_ptr<ChannelLockState>& ctx,
+                                     const uint32_t expectedValue,
+                                     const bool success,
+                                     const uint32_t oldValue) {
+    if (!success) {
+        ASFW_LOG_ERROR(IRM, "Channel lock operation failed");
+        ctx->userCallback(AllocationStatus::Timeout);
+        return;
+    }
 
-    performLock();
+    if (oldValue == expectedValue) {
+        ASFW_LOG(IRM, "Channel %u %{public}s succeeded",
+                 ctx->channel,
+                 ctx->allocate ? "allocation" : "release");
+        ctx->userCallback(AllocationStatus::Success);
+        return;
+    }
+
+    ASFW_LOG(IRM, "Channel lock contention (expected=0x%08x actual=0x%08x retries=%u)",
+             expectedValue, oldValue, ctx->retriesLeft);
+    if (ctx->retriesLeft == 0) {
+        ASFW_LOG(IRM, "Channel lock exhausted retries");
+        ctx->userCallback(AllocationStatus::NoResources);
+        return;
+    }
+
+    ctx->retriesLeft--;
+    StartChannelLock(ctx);
+}
+
+void IRMClient::StartBandwidthLock(const std::shared_ptr<BandwidthLockState>& ctx) {
+    ReadIRMQuadlet(IRMRegisters::kBandwidthAvailable,
+                   [this, ctx](bool success, uint32_t currentBandwidth) {
+                       OnBandwidthRead(ctx, success, currentBandwidth);
+                   });
+}
+
+void IRMClient::OnBandwidthRead(const std::shared_ptr<BandwidthLockState>& ctx,
+                                const bool success,
+                                const uint32_t currentBandwidth) {
+    if (!success) {
+        ASFW_LOG_ERROR(IRM, "Bandwidth read failed");
+        ctx->userCallback(AllocationStatus::Timeout);
+        return;
+    }
+
+    uint32_t newBandwidth = currentBandwidth + ctx->units;
+    if (ctx->allocate) {
+        if (currentBandwidth < ctx->units) {
+            ASFW_LOG(IRM, "Insufficient bandwidth (available=%u needed=%u)",
+                     currentBandwidth, ctx->units);
+            ctx->userCallback(AllocationStatus::NoResources);
+            return;
+        }
+        newBandwidth = currentBandwidth - ctx->units;
+    }
+
+    CompareSwapIRMQuadlet(IRMRegisters::kBandwidthAvailable, currentBandwidth, newBandwidth,
+                          [this, ctx, currentBandwidth](bool compareSwapSuccess, uint32_t oldValue) {
+                              OnBandwidthCompareSwap(ctx, currentBandwidth, compareSwapSuccess, oldValue);
+                          });
+}
+
+void IRMClient::OnBandwidthCompareSwap(const std::shared_ptr<BandwidthLockState>& ctx,
+                                       const uint32_t expectedBandwidth,
+                                       const bool success,
+                                       const uint32_t oldValue) {
+    if (!success) {
+        ASFW_LOG_ERROR(IRM, "Bandwidth lock operation failed");
+        ctx->userCallback(AllocationStatus::Timeout);
+        return;
+    }
+
+    if (oldValue == expectedBandwidth) {
+        ASFW_LOG(IRM, "Bandwidth %{public}s succeeded (%u units)",
+                 ctx->allocate ? "allocation" : "release",
+                 ctx->units);
+        ctx->userCallback(AllocationStatus::Success);
+        return;
+    }
+
+    ASFW_LOG(IRM, "Bandwidth lock contention (expected=%u actual=%u retries=%u)",
+             expectedBandwidth, oldValue, ctx->retriesLeft);
+    if (ctx->retriesLeft == 0) {
+        ASFW_LOG(IRM, "Bandwidth lock exhausted retries");
+        ctx->userCallback(AllocationStatus::NoResources);
+        return;
+    }
+
+    ctx->retriesLeft--;
+    StartBandwidthLock(ctx);
 }
 
 } // namespace ASFW::IRM

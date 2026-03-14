@@ -16,7 +16,7 @@ struct PayloadContext::DMABufferImpl {
 
 std::unique_ptr<PayloadContext> PayloadContext::Create(
     ASFW::Driver::HardwareInterface& hw,
-    const void* data,
+    const uint8_t* data,
     std::size_t length,
     uint64_t direction) {
     
@@ -35,20 +35,13 @@ uint64_t PayloadContext::DeviceAddress() const noexcept {
     return deviceAddress_;
 }
 
-std::shared_ptr<void> PayloadContext::IntoShared(std::unique_ptr<PayloadContext>&& up) {
-    // Transfer ownership from unique_ptr to shared_ptr with custom deleter
-    // Deleter casts void* back to PayloadContext* for proper destruction
-    return std::shared_ptr<void>(
-        up.release(),
-        [](void* p) {
-            delete static_cast<PayloadContext*>(p);
-        }
-    );
+std::shared_ptr<PayloadContext> PayloadContext::IntoShared(std::unique_ptr<PayloadContext>&& up) {
+    return std::shared_ptr<PayloadContext>(std::move(up));
 }
 
 bool PayloadContext::Initialize(
     ASFW::Driver::HardwareInterface& hw,
-    const void* data,
+    const uint8_t* data,
     std::size_t length,
     uint64_t direction) {
     

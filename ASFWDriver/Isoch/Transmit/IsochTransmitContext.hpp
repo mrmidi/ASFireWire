@@ -86,7 +86,8 @@ public:
                             uint8_t sid,
                             uint32_t streamModeRaw = 0,
                             uint32_t requestedChannels = 0,
-                            uint32_t requestedAm824Slots = 0) noexcept;
+                            uint32_t requestedAm824Slots = 0,
+                            Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824) noexcept;
     kern_return_t Start() noexcept;
     void Stop() noexcept;
     
@@ -98,7 +99,7 @@ public:
     State GetState() const noexcept { return state_; }
     Encoding::AudioRingBuffer<>& RingBuffer() noexcept { return audio_.RingBuffer(); }
 
-    void SetSharedTxQueue(void* base, uint64_t bytes) noexcept;
+    void SetSharedTxQueue(uint8_t* base, uint64_t bytes) noexcept;
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
     uint32_t SharedTxFillLevelFrames() const noexcept;
     uint32_t SharedTxCapacityFrames() const noexcept;
@@ -106,7 +107,7 @@ public:
     // ZERO-COPY: Set direct output audio buffer (from ASFWAudioNub)
     // This is the same buffer that CoreAudio writes to via IOUserAudioStream
     // No intermediate copy needed - IT DMA reads directly!
-    void SetZeroCopyOutputBuffer(void* base, uint64_t bytes, uint32_t frameCapacity) noexcept;
+    void SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes, uint32_t frameCapacity) noexcept;
     bool IsZeroCopyEnabled() const noexcept { return audio_.IsZeroCopyEnabled(); }
     Encoding::StreamMode RequestedStreamMode() const noexcept { return audio_.RequestedStreamMode(); }
     Encoding::StreamMode EffectiveStreamMode() const noexcept { return audio_.EffectiveStreamMode(); }

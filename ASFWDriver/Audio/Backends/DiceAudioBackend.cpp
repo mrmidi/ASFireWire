@@ -17,12 +17,27 @@ namespace ASFW::Audio {
 
 namespace {
 
-constexpr uint8_t kDefaultIrChannel = 0;
-constexpr uint8_t kDefaultItChannel = 1;
+// Match the clean original saffire.kext bring-up on SPro24DSP:
+// DICE RX (host->device playback) uses isoch channel 0 and
+// DICE TX (device->host capture) uses isoch channel 1.
+constexpr uint8_t kDefaultIrChannel = 1;
+constexpr uint8_t kDefaultItChannel = 0;
 
 inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
     // OHCI NodeID register: low 6 bits are node number.
     return static_cast<uint8_t>(hw.ReadNodeID() & 0x3Fu);
+}
+
+[[nodiscard]] constexpr Encoding::AudioWireFormat ResolveDicePlaybackWireFormat(
+    const Discovery::DeviceRecord& record,
+    const AudioStreamRuntimeCaps& caps) noexcept {
+    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
+        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
+        caps.hostOutputPcmChannels == 8 &&
+        caps.hostToDeviceAm824Slots == 9) {
+        return Encoding::AudioWireFormat::kRawPcm24In32;
+    }
+    return Encoding::AudioWireFormat::kAM824;
 }
 
 } // namespace
@@ -214,52 +229,125 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
     }
 
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = kDefaultIrChannel,
+        .hostToDeviceIsoChannel = kDefaultItChannel,
+    };
+
+    const kern_return_t claimStatus = isoch_.BeginSplitDuplex(guid);
+    if (claimStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: BeginSplitDuplex failed GUID=%llx kr=0x%x",
+                       guid,
+                       claimStatus);
+        return claimStatus;
+    }
+
+    const auto rollback = [this, record, guid]() {
+        const kern_return_t stopKr = isoch_.StopDuplex(guid);
+        if (stopKr != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend: host duplex rollback failed GUID=%llx kr=0x%x",
+                           guid,
+                           stopKr);
+        }
+        const IOReturn stopStatus = record->protocol->StopDuplex();
+        if (stopStatus != kIOReturnSuccess && stopStatus != kIOReturnUnsupported) {
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend: StopDuplex rollback failed GUID=%llx status=0x%x",
+                           guid,
+                           stopStatus);
+        }
+    };
+
+    const IOReturn cfg = record->protocol->StartDuplex48k(channels);
+    if (cfg != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio, "DiceAudioBackend: StartDuplex48k failed GUID=%llx status=0x%x", guid, cfg);
+        rollback();
+        return cfg;
+    }
+
+    const kern_return_t krRx = isoch_.StartReceive(channels.deviceToHostIsoChannel,
+                                                   hardware_,
+                                                   rxMem,
+                                                   rxBytes);
+    if (krRx != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio, "DiceAudioBackend: StartReceive failed GUID=%llx kr=0x%x", guid, krRx);
+        rollback();
+        return krRx;
+    }
+
+    const IOReturn armStatus = record->protocol->ArmDuplex48kAfterReceiveStart();
+    if (armStatus != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: ArmDuplex48kAfterReceiveStart failed GUID=%llx status=0x%x",
+                       guid,
+                       armStatus);
+        rollback();
+        return armStatus;
+    }
+
     IOBufferMemoryDescriptor* txMemRaw = nullptr;
     uint64_t txBytes = 0;
     const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMemRaw, &txBytes);
     auto txMem = Common::AdoptRetained(txMemRaw);
     if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
+        rollback();
         return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
     }
 
-    const IOReturn cfg = record->protocol->StartDuplex48k();
-    if (cfg != kIOReturnSuccess && cfg != kIOReturnUnsupported) {
-        ASFW_LOG_ERROR(Audio, "DiceAudioBackend: StartDuplex48k failed GUID=%llx status=0x%x", guid, cfg);
-        return cfg;
+    const uint8_t sid = ReadLocalSid(hardware_);
+    const uint32_t streamModeRaw = static_cast<uint32_t>(Model::StreamMode::kBlocking);
+    const Encoding::AudioWireFormat wireFormat = ResolveDicePlaybackWireFormat(*record, caps);
+    const kern_return_t krTx = isoch_.StartTransmit(channels.hostToDeviceIsoChannel,
+                                                    hardware_,
+                                                    sid,
+                                                    streamModeRaw,
+                                                    caps.hostOutputPcmChannels,
+                                                    caps.hostToDeviceAm824Slots,
+                                                    wireFormat,
+                                                    txMem,
+                                                    txBytes,
+                                                    nullptr,
+                                                    0,
+                                                    0);
+    if (krTx != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio, "DiceAudioBackend: StartTransmit failed GUID=%llx kr=0x%x", guid, krTx);
+        rollback();
+        return krTx;
     }
 
-    Driver::IsochDuplexStartParams params{};
-    params.guid = guid;
-    params.irChannel = kDefaultIrChannel;
-    params.itChannel = kDefaultItChannel;
-    params.sid = ReadLocalSid(hardware_);
-    params.sampleRateHz = caps.sampleRateHz;
-    params.hostInputPcmChannels = caps.hostInputPcmChannels;
-    params.hostOutputPcmChannels = caps.hostOutputPcmChannels;
-    params.deviceToHostAm824Slots = caps.deviceToHostAm824Slots;
-    params.hostToDeviceAm824Slots = caps.hostToDeviceAm824Slots;
-    params.streamMode = Model::StreamMode::kBlocking;
-
-    params.rxQueueMemory = rxMem;
-    params.rxQueueBytes = rxBytes;
-    params.txQueueMemory = txMem;
-    params.txQueueBytes = txBytes;
-
-    // DICE playback: no zero-copy for now (explicitly disabled by policy).
-    params.zeroCopyBase = nullptr;
-    params.zeroCopyBytes = 0;
-    params.zeroCopyFrames = 0;
-
-    const kern_return_t kr = isoch_.StartDuplex(params, hardware_);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio, "DiceAudioBackend: StartDuplex failed GUID=%llx kr=0x%x", guid, kr);
+    const IOReturn completion = record->protocol->CompleteDuplex48kStart();
+    if (completion != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: CompleteDuplex48kStart failed GUID=%llx status=0x%x",
+                       guid,
+                       completion);
+        rollback();
+        return completion;
     }
-    return kr;
+
+    return kIOReturnSuccess;
 }
 
 IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
-    return isoch_.StopDuplex(guid);
+    const kern_return_t stopKr = isoch_.StopDuplex(guid);
+
+    if (auto* record = registry_.FindByGuid(guid); record && record->protocol) {
+        const IOReturn protocolStop = record->protocol->StopDuplex();
+        if (protocolStop != kIOReturnSuccess && protocolStop != kIOReturnUnsupported) {
+            ASFW_LOG_ERROR(Audio,
+                           "DiceAudioBackend: StopDuplex failed GUID=%llx status=0x%x",
+                           guid,
+                           protocolStop);
+            if (stopKr == kIOReturnSuccess) {
+                return protocolStop;
+            }
+        }
+    }
+
+    return stopKr;
 }
 
 } // namespace ASFW::Audio

@@ -24,6 +24,10 @@ namespace ASFW::Testing {
  */
 class FakeDMAMemory final : public Shared::IDMAMemory {
 public:
+    using Shared::IDMAMemory::FetchFromDevice;
+    using Shared::IDMAMemory::PublishToDevice;
+    using Shared::IDMAMemory::VirtToIOVA;
+
     static constexpr size_t kDefaultSlabSize = 2 * 1024 * 1024;
     static constexpr uint64_t kBaseIOVA = 0x10000000ULL;
 
@@ -54,22 +58,22 @@ public:
         return region;
     }
 
-    uint64_t VirtToIOVA(const void* virt) const noexcept override {
+    uint64_t VirtToIOVA(const std::byte* virt) const noexcept override {
         if (!IsInRange(virt)) return 0;
-        auto* p = static_cast<const uint8_t*>(virt);
+        auto* p = reinterpret_cast<const uint8_t*>(virt);
         return baseIOVA_ + static_cast<uint64_t>(p - slab_.data());
     }
 
-    void* IOVAToVirt(uint64_t iova) const noexcept override {
+    std::byte* IOVAToVirt(uint64_t iova) const noexcept override {
         if (!IsInRange(iova)) return nullptr;
-        return const_cast<uint8_t*>(slab_.data() + (iova - baseIOVA_));
+        return reinterpret_cast<std::byte*>(slab_.data() + (iova - baseIOVA_));
     }
 
-    void PublishToDevice(const void*, size_t) const noexcept override {
+    void PublishToDevice(const std::byte*, size_t) const noexcept override {
         std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 
-    void FetchFromDevice(const void*, size_t) const noexcept override {
+    void FetchFromDevice(const std::byte*, size_t) const noexcept override {
         std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 
@@ -96,9 +100,9 @@ private:
         return (size + 15) & ~size_t{15};
     }
 
-    bool IsInRange(const void* ptr) const noexcept {
+    bool IsInRange(const std::byte* ptr) const noexcept {
         if (slab_.empty() || !ptr) return false;
-        auto* p = static_cast<const uint8_t*>(ptr);
+        auto* p = reinterpret_cast<const uint8_t*>(ptr);
         return p >= slab_.data() && p < slab_.data() + slab_.size();
     }
 
@@ -112,4 +116,3 @@ private:
 };
 
 } // namespace ASFW::Testing
-

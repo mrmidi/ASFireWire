@@ -18,6 +18,9 @@ namespace ASFW::Audio::DICE {
 /// Base address for DICE CSR space (IEEE 1394 private space)
 constexpr uint64_t kDICEBaseAddress = 0xFFFFE0000000ULL;
 
+/// Base offset for the TCAT extension space relative to DICE CSR space.
+constexpr uint32_t kDICEExtensionOffset = 0x00200000U;
+
 // ============================================================================
 // Section Definition
 // ============================================================================
@@ -64,6 +67,39 @@ struct GeneralSections {
         s.rxStreamFormat = Section::FromWire(data + 16);
         s.extSync        = Section::FromWire(data + 24);
         s.reserved       = Section::FromWire(data + 32);
+        return s;
+    }
+};
+
+// ============================================================================
+// TCAT Extension Sections
+// ============================================================================
+
+/// TCAT protocol extension sections.
+struct ExtensionSections {
+    Section caps;           ///< Capability section
+    Section command;        ///< Command section
+    Section mixer;          ///< Mixer section
+    Section peak;           ///< Peak meter section
+    Section router;         ///< Router configuration section
+    Section streamFormat;   ///< Stream format section
+    Section currentConfig;  ///< Current configuration section
+    Section standalone;     ///< Standalone configuration section
+    Section application;    ///< Vendor-specific application section
+
+    static constexpr size_t kWireSize = 9 * Section::kWireSize;
+
+    static ExtensionSections FromWire(const uint8_t* data) {
+        ExtensionSections s;
+        s.caps          = Section::FromWire(data);
+        s.command       = Section::FromWire(data + 8);
+        s.mixer         = Section::FromWire(data + 16);
+        s.peak          = Section::FromWire(data + 24);
+        s.router        = Section::FromWire(data + 32);
+        s.streamFormat  = Section::FromWire(data + 40);
+        s.currentConfig = Section::FromWire(data + 48);
+        s.standalone    = Section::FromWire(data + 56);
+        s.application   = Section::FromWire(data + 64);
         return s;
     }
 };
@@ -134,6 +170,73 @@ namespace GlobalOffset {
     constexpr uint32_t kClockCaps      = 0x64;
     constexpr uint32_t kClockSourceNames = 0x68;  // Variable length
 }
+
+namespace ClockSelect {
+    constexpr uint32_t kSourceMask = 0x000000FF;
+    constexpr uint32_t kRateMask   = 0x0000FF00;
+    constexpr uint32_t kRateShift  = 8;
+}
+
+namespace StatusBits {
+    constexpr uint32_t kSourceLocked    = 0x00000001;
+    constexpr uint32_t kNominalRateMask = 0x0000FF00;
+    constexpr uint32_t kNominalRateShift = 8;
+}
+
+namespace ExtStatusBits {
+    constexpr uint32_t kArx1Locked = 0x00000040;
+    constexpr uint32_t kArx2Locked = 0x00000080;
+    constexpr uint32_t kArx3Locked = 0x00000100;
+    constexpr uint32_t kArx4Locked = 0x00000200;
+    constexpr uint32_t kArx1Slip   = 0x00400000;
+    constexpr uint32_t kArx2Slip   = 0x00800000;
+    constexpr uint32_t kArx3Slip   = 0x01000000;
+    constexpr uint32_t kArx4Slip   = 0x02000000;
+}
+
+[[nodiscard]] constexpr bool IsSourceLocked(uint32_t status) noexcept {
+    return (status & StatusBits::kSourceLocked) != 0;
+}
+
+[[nodiscard]] constexpr uint32_t NominalRateIndex(uint32_t status) noexcept {
+    return (status & StatusBits::kNominalRateMask) >> StatusBits::kNominalRateShift;
+}
+
+[[nodiscard]] constexpr uint32_t RateHzFromIndex(uint32_t index) noexcept {
+    switch (index) {
+    case 0x00:
+        return 32000;
+    case 0x01:
+        return 44100;
+    case 0x02:
+        return 48000;
+    case 0x03:
+        return 88200;
+    case 0x04:
+        return 96000;
+    case 0x05:
+        return 176400;
+    case 0x06:
+        return 192000;
+    default:
+        return 0;
+    }
+}
+
+[[nodiscard]] constexpr uint32_t NominalRateHz(uint32_t status) noexcept {
+    return RateHzFromIndex(NominalRateIndex(status));
+}
+
+[[nodiscard]] constexpr bool IsArx1Locked(uint32_t extStatus) noexcept {
+    return (extStatus & ExtStatusBits::kArx1Locked) != 0;
+}
+
+[[nodiscard]] constexpr bool HasArx1Slip(uint32_t extStatus) noexcept {
+    return (extStatus & ExtStatusBits::kArx1Slip) != 0;
+}
+
+constexpr uint64_t kOwnerNoOwner = 0xFFFF000000000000ULL;
+constexpr uint32_t kOwnerNodeShift = 48;
 
 /// TX stream section offsets (relative to TX section base)
 namespace TxOffset {
@@ -267,6 +370,30 @@ namespace Notify {
     constexpr uint32_t kLockChange       = 0x00000010;
     constexpr uint32_t kClockAccepted    = 0x00000020;
     constexpr uint32_t kExtStatus        = 0x00000040;
+}
+
+namespace ExtensionCommandOffset {
+    constexpr uint32_t kOpcode = 0x0000;
+    constexpr uint32_t kReturn = 0x0004;
+}
+
+namespace ExtensionCommandOpcode {
+    constexpr uint32_t kExecute = 0x80000000;
+    constexpr uint32_t kRateLow = 0x00010000;
+    constexpr uint32_t kRateMiddle = 0x00020000;
+    constexpr uint32_t kRateHigh = 0x00040000;
+    constexpr uint32_t kLoadRouter = 0x00000001;
+    constexpr uint32_t kLoadStreamConfig = 0x00000002;
+    constexpr uint32_t kLoadRouterStreamConfig = 0x00000003;
+}
+
+namespace CurrentConfigOffset {
+    constexpr uint32_t kLowRouter = 0x0000;
+    constexpr uint32_t kLowStream = 0x1000;
+    constexpr uint32_t kMiddleRouter = 0x2000;
+    constexpr uint32_t kMiddleStream = 0x3000;
+    constexpr uint32_t kHighRouter = 0x4000;
+    constexpr uint32_t kHighStream = 0x5000;
 }
 
 } // namespace ASFW::Audio::DICE

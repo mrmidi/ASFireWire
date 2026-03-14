@@ -140,7 +140,8 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
         return kIOReturnNotReady;
     }
 
-    const auto* controllerCore = static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore());
+    const auto* controllerCore =
+        static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore());
     if (!controllerCore) {
         return kIOReturnNotReady;
     }
@@ -232,7 +233,7 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     }
 
     // Initialize SPSC queue in shared memory
-    auto* base = reinterpret_cast<void*>(map->GetAddress());
+    auto* base = reinterpret_cast<uint8_t*>(map->GetAddress());
     if (const bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(
             base, bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels);
         !initOk) {
@@ -247,7 +248,8 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     iv->txQueueBytes = bytes;
 
     ASFW_LOG(Audio, "ASFWAudioNub: TX queue created: %llu bytes, %u frames capacity, ch=%u base=%p",
-             bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels, base);
+             bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels,
+             static_cast<const void*>(base));
 
     return kIOReturnSuccess;
 }
@@ -313,7 +315,7 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     }
 
     // Initialize SPSC queue in shared memory
-    auto* base = reinterpret_cast<void*>(map->GetAddress());
+    auto* base = reinterpret_cast<uint8_t*>(map->GetAddress());
     if (const bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(
             base, bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels);
         !initOk) {
@@ -328,7 +330,8 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     iv->rxQueueBytes = bytes;
 
     ASFW_LOG(Audio, "ASFWAudioNub: RX queue created: %llu bytes, %u frames capacity, ch=%u base=%p",
-             bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels, base);
+             bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels,
+             static_cast<const void*>(base));
 
     return kIOReturnSuccess;
 }
@@ -579,7 +582,7 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
     }
 
     // Zero the buffer initially
-    auto* base = reinterpret_cast<void*>(map->GetAddress());
+    auto* base = reinterpret_cast<uint8_t*>(map->GetAddress());
     memset(base, 0, bufferBytes);
 
     iv->outputAudioMem = mem;    // retained
@@ -588,7 +591,8 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
     iv->outputAudioFrameCapacity = ASFW::Isoch::Config::kAudioIoPeriodFrames;
 
     ASFW_LOG(Audio, "ASFWAudioNub: ZERO-COPY output audio buffer created: %llu bytes, %u frames (%u ch), base=%p",
-             bufferBytes, ASFW::Isoch::Config::kAudioIoPeriodFrames, outputChannels, base);
+             bufferBytes, ASFW::Isoch::Config::kAudioIoPeriodFrames, outputChannels,
+             static_cast<const void*>(base));
 
     return kIOReturnSuccess;
 }

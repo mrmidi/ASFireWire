@@ -5,6 +5,11 @@
 
 namespace ASFW::Async {
 
+namespace {
+constexpr uint32_t kQueuedHandleBase = 0x80000000u;
+constexpr uint32_t kMaxTransactionHandle = 64;
+}
+
 AsyncHandle AsyncSubsystem::ReadWithRetry(const ReadParams& params,
                                          const RetryPolicy& retryPolicy,
                                          CompletionCallback callback) {
@@ -46,95 +51,96 @@ bool AsyncSubsystem::Cancel(AsyncHandle handle) {
         return false;
     }
 
-    // ---------------------------------------------------------------------
-    // 1) ReadWithRetry placeholder handles (queued command queue path)
-    // ---------------------------------------------------------------------
-    if (handle.value >= 0x80000000u) {
-        if (!commandQueue_ || !commandQueueLock_) {
-            return false;
-        }
-
-        CompletionCallback cancelledCallback{nullptr};
-        PendingCommandPtr inFlight{};
-
-        ::IOLockLock(commandQueueLock_);
-
-        // Search pending queue first.
-        for (auto it = commandQueue_->begin(); it != commandQueue_->end(); ++it) {
-            const auto& cmd = *it;
-            if (!cmd) {
-                continue;
-            }
-            if (cmd->publicHandle.value == handle.value) {
-                cancelledCallback = cmd->userCallback;
-                commandQueue_->erase(it);
-                ::IOLockUnlock(commandQueueLock_);
-
-                // Must not invoke callback inline on the cancel path.
-                PostToWorkloop(^{
-                    if (cancelledCallback) {
-                        cancelledCallback(handle, AsyncStatus::kAborted, 0xFF, std::span<const uint8_t>{});
-                    }
-                });
-                return true;
-            }
-        }
-
-        // Not queued: check the single in-flight queued command (queue is serial).
-        inFlight = inFlightCommand_;
-        ::IOLockUnlock(commandQueueLock_);
-
-        if (!inFlight || inFlight->publicHandle.value != handle.value) {
-            return false;
-        }
-
-        inFlight->cancelRequested.store(true, std::memory_order_release);
-
-        // If the underlying transaction has been submitted, cancel it too.
-        const AsyncHandle underlying = inFlight->currentHandle;
-        if (underlying) {
-            (void)Cancel(underlying);
-        }
-
-        return true;
+    if (handle.value >= kQueuedHandleBase) {
+        return CancelQueuedCommand(handle);
     }
 
-    // ---------------------------------------------------------------------
-    // 2) Normal async transaction handles (tLabel+1 => 1..64)
-    // ---------------------------------------------------------------------
-    if (handle.value >= 1 && handle.value <= 64) {
-        if (!txnMgr_ || !tracking_) {
-            return false;
-        }
-
-        const uint8_t label = static_cast<uint8_t>(handle.value - 1);
-        auto txnPtr = txnMgr_->Extract(TLabel{label});
-        if (!txnPtr) {
-            return false;
-        }
-
-        if (auto* alloc = tracking_->GetLabelAllocator()) {
-            alloc->Free(label);
-        }
-
-        // Must not invoke callback inline on the cancel path.
-        Transaction* raw = txnPtr.release();
-        PostToWorkloop(^{
-            if (!raw) {
-                return;
-            }
-
-            if (!IsTerminalState(raw->state())) {
-                raw->TransitionTo(TransactionState::Cancelled, "AsyncSubsystem::Cancel");
-                raw->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
-            }
-            delete raw;
-        });
-
-        return true;
+    if (handle.value >= 1 && handle.value <= kMaxTransactionHandle) {
+        return CancelTransactionHandle(handle);
     }
 
     return false;
+}
+
+bool AsyncSubsystem::CancelQueuedCommand(AsyncHandle handle) {
+    if (!commandQueue_ || !commandQueueLock_) {
+        return false;
+    }
+
+    CompletionCallback cancelledCallback{nullptr};
+    PendingCommandPtr inFlight{};
+
+    ::IOLockLock(commandQueueLock_);
+    for (auto it = commandQueue_->begin(); it != commandQueue_->end(); ++it) {
+        const auto& cmd = *it;
+        if (!cmd) {
+            continue;
+        }
+        if (cmd->publicHandle.value != handle.value) {
+            continue;
+        }
+
+        cancelledCallback = cmd->userCallback;
+        commandQueue_->erase(it);
+        ::IOLockUnlock(commandQueueLock_);
+        PostQueuedCancellation(handle, cancelledCallback);
+        return true;
+    }
+
+    inFlight = inFlightCommand_;
+    ::IOLockUnlock(commandQueueLock_);
+    return CancelQueuedCommandInFlight(handle, inFlight);
+}
+
+bool AsyncSubsystem::CancelQueuedCommandInFlight(AsyncHandle handle,
+                                                 const PendingCommandPtr& inFlight) {
+    if (!inFlight || inFlight->publicHandle.value != handle.value) {
+        return false;
+    }
+
+    inFlight->cancelRequested.store(true, std::memory_order_release);
+    if (const AsyncHandle underlying = inFlight->currentHandle; underlying) {
+        (void)Cancel(underlying);
+    }
+    return true;
+}
+
+bool AsyncSubsystem::CancelTransactionHandle(AsyncHandle handle) {
+    if (!txnMgr_ || !tracking_) {
+        return false;
+    }
+
+    const uint8_t label = static_cast<uint8_t>(handle.value - 1);
+    auto txnPtr = txnMgr_->Extract(TLabel{label});
+    if (!txnPtr) {
+        return false;
+    }
+
+    if (auto* alloc = tracking_->GetLabelAllocator()) {
+        alloc->Free(label);
+    }
+
+    auto txn = std::shared_ptr<Transaction>(std::move(txnPtr));
+    PostToWorkloop(^{
+        if (!txn) {
+            return;
+        }
+
+        if (!IsTerminalState(txn->state())) {
+            txn->TransitionTo(TransactionState::Cancelled, "AsyncSubsystem::Cancel");
+            txn->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
+        }
+    });
+
+    return true;
+}
+
+void AsyncSubsystem::PostQueuedCancellation(AsyncHandle handle, CompletionCallback callback) {
+    PostToWorkloop(^{
+        if (callback) {
+            callback(handle, AsyncStatus::kAborted, 0xFF, std::span<const uint8_t>{});
+        }
+    });
 }
 
 // ============================================================================
@@ -306,4 +312,3 @@ void AsyncSubsystem::ExecuteNextCommand() {
 }
 
 } // namespace ASFW::Async
-

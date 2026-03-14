@@ -201,3 +201,55 @@ TEST(ROMReaderHeaderFirstTests, HeaderFirstCapsAt64Entries) {
     EXPECT_TRUE(success);
     EXPECT_EQ(dataLength, totalQuadlets * 4u);
 }
+
+TEST(ROMReaderHeaderFirstTests, HeaderFirstFailsOnTruncatedDirectoryBody) {
+    MemoryFireWireBus bus;
+    bus.SetGeneration(1);
+    bus.SetLocalNode(0);
+
+    constexpr uint32_t kRootDirOffsetBytes = 20;
+
+    // Header claims 3 entries, but only 1 entry is present.
+    std::vector<uint8_t> romBytes(kRootDirOffsetBytes + 8, 0);
+    romBytes[kRootDirOffsetBytes + 0] = 0x00;
+    romBytes[kRootDirOffsetBytes + 1] = 0x03;
+    romBytes[kRootDirOffsetBytes + 2] = 0x00;
+    romBytes[kRootDirOffsetBytes + 3] = 0x00;
+    romBytes[kRootDirOffsetBytes + 4] = 0x03;
+    romBytes[kRootDirOffsetBytes + 5] = 0x00;
+    romBytes[kRootDirOffsetBytes + 6] = 0x00;
+    romBytes[kRootDirOffsetBytes + 7] = 0x01;
+
+    bus.SetConfigROM(1, std::move(romBytes));
+
+    ASFW::Discovery::ROMReader reader(bus, nullptr);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool called = false;
+    bool success = true;
+    ASFW::Async::AsyncStatus status = ASFW::Async::AsyncStatus::kSuccess;
+    uint32_t dataLength = 0;
+    reader.ReadRootDirQuadlets(1,
+                               /*generation=*/ASFW::Discovery::Generation{1},
+                               /*speed=*/ASFW::FW::FwSpeed::S100,
+                               /*offsetBytes=*/kRootDirOffsetBytes,
+                               /*count=*/0,
+                               [&](const ASFW::Discovery::ROMReader::ReadResult& res) {
+                                   std::lock_guard lock(mutex);
+                                   called = true;
+                                   success = res.success;
+                                   status = res.status;
+                                   dataLength = res.DataLengthBytes();
+                                   cv.notify_one();
+                               });
+
+    {
+        std::unique_lock lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(1), [&] { return called; }));
+    }
+
+    EXPECT_FALSE(success);
+    EXPECT_EQ(status, ASFW::Async::AsyncStatus::kShortRead);
+    EXPECT_EQ(dataLength, 8u); // header + single completed entry for diagnostics
+}

@@ -39,6 +39,142 @@ uint32_t IsochTxDmaRing::BuildIsochHeaderQ0(uint8_t channel) noexcept {
            (0u & 0xF);
 }
 
+void IsochTxDmaRing::CopyPacketPayload(uint8_t* payloadVirt, const IsochTxPacket& pkt) noexcept {
+    if (pkt.sizeBytes == 0 || !pkt.words) {
+        return;
+    }
+
+    uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
+    const size_t count32 = pkt.sizeBytes / 4;
+    for (size_t wordIndex = 0; wordIndex < count32; ++wordIndex) {
+        dst32[wordIndex] = pkt.words[wordIndex];
+    }
+}
+
+uint32_t IsochTxDmaRing::ComputeDeltaConsumed(const uint32_t hwPacketIndex) noexcept {
+    const uint32_t prevHwPacketIndex = lastHwPacketIndex_;
+    const uint32_t deltaConsumed =
+        (hwPacketIndex >= prevHwPacketIndex)
+            ? (hwPacketIndex - prevHwPacketIndex)
+            : ((Layout::kNumPackets - prevHwPacketIndex) + hwPacketIndex);
+    lastHwPacketIndex_ = hwPacketIndex;
+
+    ringPacketsAhead_ -= deltaConsumed;
+    if (ringPacketsAhead_ > Layout::kNumPackets) {
+        ringPacketsAhead_ = 0;
+    }
+
+    return deltaConsumed;
+}
+
+void IsochTxDmaRing::UpdateGapCounters(const uint32_t gap) noexcept {
+    counters_.lastDmaGapPackets.store(gap, std::memory_order_relaxed);
+    uint32_t prevMin = counters_.minDmaGapPackets.load(std::memory_order_relaxed);
+    while (gap < prevMin &&
+           !counters_.minDmaGapPackets.compare_exchange_weak(
+               prevMin, gap, std::memory_order_relaxed, std::memory_order_relaxed)) {
+    }
+
+    constexpr uint32_t kCriticalGapThreshold = Layout::kNumPackets / 5;
+    if (gap < kCriticalGapThreshold) {
+        counters_.criticalGapEvents.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void IsochTxDmaRing::ResyncCycleTracking(const uint32_t hwPacketIndex,
+                                         const uint32_t deltaConsumed,
+                                         RefillOutcome& out) noexcept {
+    if (deltaConsumed == 0 || !cycleTrackingValid_) {
+        return;
+    }
+
+    const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
+    auto* processedOL = slab_.GetDescriptorPtr(lastProcessedPkt * Layout::kBlocksPerPacket + 2);
+    const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
+    out.hwTimestamp = hwTimestamp;
+
+    if (processedOL->statusWord == 0) {
+        return;
+    }
+
+    const uint32_t hwCycle = hwTimestamp & 0x1FFF;
+    lastHwTimestamp_ = hwTimestamp;
+
+    const uint32_t aheadCount =
+        (softwareFillIndex_ + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
+    nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
+}
+
+bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
+                                  const uint32_t hwPacketIndex,
+                                  const uint32_t cmdPtr,
+                                  IIsochTxPacketProvider& provider,
+                                  IsochTxCaptureHook* captureHook,
+                                  RefillOutcome& out) noexcept {
+    const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
+    uint8_t* payloadVirt = slab_.PayloadPtr(pktIdx);
+    const uint32_t payloadIOVA = slab_.PayloadIOVA(pktIdx);
+    if (!payloadVirt) {
+        counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (captureHook) {
+        auto* existingLastDesc = slab_.GetDescriptorPtr(descBase + 2);
+        captureHook->CaptureBeforeOverwrite(pktIdx,
+                                            hwPacketIndex,
+                                            cmdPtr,
+                                            existingLastDesc,
+                                            reinterpret_cast<const uint32_t*>(payloadVirt));
+    }
+
+    const auto pkt = provider.NextSilentPacket(nextTransmitCycle_);
+    nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
+
+    if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
+        counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (descBase >= Layout::kRingBlocks ||
+        (descBase + Layout::kBlocksPerPacket - 1) >= Layout::kRingBlocks) {
+        counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    CopyPacketPayload(payloadVirt, pkt);
+
+    auto* lastDesc = slab_.GetDescriptorPtr(descBase + 2);
+    const uint16_t lastReqCount = static_cast<uint16_t>(pkt.sizeBytes);
+    const uint32_t existingControl = lastDesc->control & 0xFFFF0000u;
+    lastDesc->control = existingControl | lastReqCount;
+    lastDesc->dataAddress = payloadIOVA;
+    lastDesc->statusWord = 0;
+
+    auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(slab_.GetDescriptorPtr(descBase));
+    const uint32_t isochHeaderQ1 = (static_cast<uint32_t>(pkt.sizeBytes) & 0xFFFFu) << 16;
+    immDesc->immediateData[1] = isochHeaderQ1;
+
+    out.packetsFilled++;
+    if (pkt.isData) {
+        out.dataPackets++;
+    } else {
+        out.noDataPackets++;
+    }
+
+    return true;
+}
+
+void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
+    softwareFillIndex_ = (softwareFillIndex_ + toFill) % Layout::kNumPackets;
+    ringPacketsAhead_ += toFill;
+
+    std::atomic_thread_fence(std::memory_order_release);
+    ASFW::Driver::WriteBarrier();
+
+    counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
+}
+
 IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provider) noexcept {
     constexpr uint32_t numPackets = Layout::kNumPackets;
     PrimeStats stats{};
@@ -77,13 +213,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
             return stats;
         }
 
-        if (pkt.sizeBytes > 0 && pkt.words) {
-            uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
-            const size_t count32 = pkt.sizeBytes / 4;
-            for (size_t k = 0; k < count32; ++k) {
-                dst32[k] = pkt.words[k];
-            }
-        }
+        CopyPacketPayload(payloadVirt, pkt);
 
         const uint32_t isochHeaderQ0 = BuildIsochHeaderQ0(channel_);
         const uint32_t isochHeaderQ1 = (static_cast<uint32_t>(static_cast<uint16_t>(pkt.sizeBytes)) << 16);
@@ -176,47 +306,12 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
 
     out.hwPacketIndex = hwPacketIndex;
 
-    // Fill-ahead policy tracking
-    const uint32_t prevHwPacketIndex = lastHwPacketIndex_;
-    uint32_t deltaConsumed = 0;
-    if (hwPacketIndex >= prevHwPacketIndex) {
-        deltaConsumed = hwPacketIndex - prevHwPacketIndex;
-    } else {
-        deltaConsumed = (Layout::kNumPackets - prevHwPacketIndex) + hwPacketIndex;
-    }
-    lastHwPacketIndex_ = hwPacketIndex;
-
-    ringPacketsAhead_ -= deltaConsumed;
-    if (ringPacketsAhead_ > Layout::kNumPackets) {
-        ringPacketsAhead_ = 0;
-    }
+    const uint32_t deltaConsumed = ComputeDeltaConsumed(hwPacketIndex);
 
     // Gap monitoring
     const uint32_t gap = ringPacketsAhead_;
-    counters_.lastDmaGapPackets.store(gap, std::memory_order_relaxed);
-    uint32_t prevMin = counters_.minDmaGapPackets.load(std::memory_order_relaxed);
-    while (gap < prevMin && !counters_.minDmaGapPackets.compare_exchange_weak(
-               prevMin, gap, std::memory_order_relaxed, std::memory_order_relaxed)) {}
-    constexpr uint32_t kCriticalGapThreshold = Layout::kNumPackets / 5;
-    if (gap < kCriticalGapThreshold) {
-        counters_.criticalGapEvents.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // Cycle resync from hardware timestamp (descriptor completion timestamp)
-    if (deltaConsumed > 0 && cycleTrackingValid_) {
-        const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
-        auto* processedOL = slab_.GetDescriptorPtr(lastProcessedPkt * Layout::kBlocksPerPacket + 2);
-        const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
-        out.hwTimestamp = hwTimestamp;
-
-        if (processedOL->statusWord != 0) {
-            const uint32_t hwCycle = hwTimestamp & 0x1FFF;
-            lastHwTimestamp_ = hwTimestamp;
-
-            const uint32_t aheadCount = (softwareFillIndex_ + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
-            nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
-        }
-    }
+    UpdateGapCounters(gap);
+    ResyncCycleTracking(hwPacketIndex, deltaConsumed, out);
 
     // Phase 2: keep ring full with silent/cadence-correct packets
     const uint32_t toFill = (ringPacketsAhead_ < Layout::kMaxWriteAhead)
@@ -227,72 +322,12 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
 
         for (uint32_t i = 0; i < toFill; ++i) {
             const uint32_t pktIdx = (softwareFillIndex_ + i) % Layout::kNumPackets;
-            const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
-
-            uint8_t* payloadVirt = slab_.PayloadPtr(pktIdx);
-            const uint32_t payloadIOVA = slab_.PayloadIOVA(pktIdx);
-            if (!payloadVirt) {
-                counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
+            if (!RefillPacket(pktIdx, hwPacketIndex, cmdPtr, provider, captureHook, out)) {
                 return out;
-            }
-
-            if (captureHook) {
-                auto* existingLastDesc = slab_.GetDescriptorPtr(descBase + 2);
-                captureHook->CaptureBeforeOverwrite(pktIdx,
-                                                    hwPacketIndex,
-                                                    cmdPtr,
-                                                    existingLastDesc,
-                                                    reinterpret_cast<const uint32_t*>(payloadVirt));
-            }
-
-            const auto pkt = provider.NextSilentPacket(nextTransmitCycle_);
-            nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
-
-            if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
-                counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
-                return out;
-            }
-
-            if (descBase >= Layout::kRingBlocks || (descBase + Layout::kBlocksPerPacket - 1) >= Layout::kRingBlocks) {
-                counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
-                return out;
-            }
-
-            if (pkt.sizeBytes > 0 && pkt.words) {
-                uint32_t* dst32 = reinterpret_cast<uint32_t*>(payloadVirt);
-                const size_t count32 = pkt.sizeBytes / 4;
-                for (size_t k = 0; k < count32; ++k) {
-                    dst32[k] = pkt.words[k];
-                }
-            }
-
-            auto* lastDesc = slab_.GetDescriptorPtr(descBase + 2);
-            const uint16_t lastReqCount = static_cast<uint16_t>(pkt.sizeBytes);
-
-            const uint32_t existingControl = lastDesc->control & 0xFFFF0000u;
-            lastDesc->control = existingControl | lastReqCount;
-            lastDesc->dataAddress = payloadIOVA;
-            lastDesc->statusWord = 0;
-
-            auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(slab_.GetDescriptorPtr(descBase));
-            const uint32_t isochHeaderQ1 = (static_cast<uint32_t>(pkt.sizeBytes) & 0xFFFFu) << 16;
-            immDesc->immediateData[1] = isochHeaderQ1;
-
-            out.packetsFilled++;
-            if (pkt.isData) {
-                out.dataPackets++;
-            } else {
-                out.noDataPackets++;
             }
         }
 
-        softwareFillIndex_ = (softwareFillIndex_ + toFill) % Layout::kNumPackets;
-        ringPacketsAhead_ += toFill;
-
-        std::atomic_thread_fence(std::memory_order_release);
-        ASFW::Driver::WriteBarrier();
-
-        counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
+        CommitRefill(toFill);
     }
 
     // Phase 3: near-HW audio injection

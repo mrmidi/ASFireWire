@@ -27,7 +27,7 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
 
     rxQueue_.Reset();
 
-    void* rxQueueBase = nullptr;
+    uint8_t* rxQueueBase = nullptr;
     if (rxQueueMemory && rxQueueBytes > 0) {
         rxQueue_.memory = std::move(rxQueueMemory);
         rxQueue_.bytes = rxQueueBytes;
@@ -113,9 +113,10 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           uint32_t streamModeRaw,
                                           uint32_t pcmChannels,
                                           uint32_t am824Slots,
+                                          ASFW::Encoding::AudioWireFormat wireFormat,
                                           OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory,
                                           uint64_t txQueueBytes,
-                                          void* zeroCopyBase,
+                                          const int32_t* zeroCopyBase,
                                           uint64_t zeroCopyBytes,
                                           uint32_t zeroCopyFrames) {
 
@@ -127,7 +128,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
     txQueue_.Reset();
 
-    void* txQueueBase = nullptr;
+    uint8_t* txQueueBase = nullptr;
     if (txQueueMemory && txQueueBytes > 0) {
         txQueue_.memory = std::move(txQueueMemory);
         txQueue_.bytes = txQueueBytes;
@@ -185,7 +186,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         startTargetFill = target;
         ASFW_LOG(Controller,
                  "[Isoch] ✅ ZERO-COPY wired! AudioBuffer base=%p bytes=%llu frames=%u targetFill=%u",
-                 zeroCopyBase,
+                 static_cast<const void*>(zeroCopyBase),
                  zeroCopyBytes,
                  zeroCopyFrames,
                  startTargetFill);
@@ -256,7 +257,8 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                                    sid,
                                                    streamModeRaw,
                                                    pcmChannels,
-                                                   am824Slots);
+                                                   am824Slots,
+                                                   wireFormat);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
         isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
@@ -323,15 +325,29 @@ kern_return_t IsochService::StopTransmit() {
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
-                                       HardwareInterface& hardware) {
-    if (params.guid == 0) {
+kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
+    if (guid == 0) {
         return kIOReturnBadArgument;
     }
 
-    if (activeGuid_ != 0 && activeGuid_ != params.guid) {
+    if (activeGuid_ != 0 && activeGuid_ != guid) {
         // Transport layer is currently global. Control-plane enforces single-device too.
         return kIOReturnBusy;
+    }
+
+    activeGuid_ = guid;
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochService::BeginSplitDuplex(uint64_t guid) {
+    return ClaimDuplexGuid(guid);
+}
+
+kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
+                                       HardwareInterface& hardware) {
+    const kern_return_t claimStatus = ClaimDuplexGuid(params.guid);
+    if (claimStatus != kIOReturnSuccess) {
+        return claimStatus;
     }
 
     const kern_return_t krRx = StartReceive(params.irChannel,
@@ -339,6 +355,7 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                            params.rxQueueMemory,
                                            params.rxQueueBytes);
     if (krRx != kIOReturnSuccess) {
+        activeGuid_ = 0;
         return krRx;
     }
 
@@ -349,6 +366,7 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                             streamModeRaw,
                                             params.hostOutputPcmChannels,
                                             params.hostToDeviceAm824Slots,
+                                            params.hostToDeviceWireFormat,
                                             params.txQueueMemory,
                                             params.txQueueBytes,
                                             params.zeroCopyBase,
@@ -356,10 +374,9 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                             params.zeroCopyFrames);
     if (krTx != kIOReturnSuccess) {
         StopReceive();
+        activeGuid_ = 0;
         return krTx;
     }
-
-    activeGuid_ = params.guid;
     return kIOReturnSuccess;
 }
 

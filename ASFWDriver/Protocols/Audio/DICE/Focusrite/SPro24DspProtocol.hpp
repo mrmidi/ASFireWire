@@ -12,6 +12,7 @@
 #include "../../IDeviceProtocol.hpp"
 #include <array>
 #include <atomic>
+#include <vector>
 #include <cstdint>
 #include <memory>
 
@@ -129,7 +130,10 @@ public:
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     
     /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
-    IOReturn StartDuplex48k() override;
+    IOReturn StartDuplex48k(const AudioDuplexChannels& channels) override;
+    IOReturn ArmDuplex48kAfterReceiveStart() override;
+    IOReturn CompleteDuplex48kStart() override;
+    IOReturn StopDuplex() override;
     
     // ========================================================================
     // Async Initialization
@@ -188,10 +192,19 @@ public:
     void StartStreamTest(VoidCallback callback);
 
 private:
+    Protocols::Ports::FireWireBusInfo& busInfo_;
     DICETransaction tx_;
     GeneralSections sections_{};
+    ExtensionSections extensionSections_{};
     uint32_t appSectionBase_{0};
+    uint32_t commandSectionBase_{0};
+    uint32_t routerSectionBase_{0};
+    uint32_t currentConfigBase_{0};
     bool initialized_{false};
+    bool ownerClaimed_{false};
+    bool duplexPrepared_{false};
+    bool duplexArmed_{false};
+    bool duplexRunning_{false};
 
     // Runtime-discovered DICE stream caps (authoritative after async capability discovery).
     std::atomic<uint32_t> runtimeSampleRateHz_{0};
@@ -203,12 +216,26 @@ private:
     
     /// Send software notice to commit changes
     void SendSwNotice(SwNotice notice, VoidCallback callback);
+
+    void HandleCapabilityDiscovery(IOReturn status, DICECapabilities caps, InitCallback callback);
+    void HandleGeneralSectionsRead(IOReturn status,
+                                   DICECapabilities caps,
+                                   GeneralSections sections,
+                                   InitCallback callback);
+    void HandleExtensionSectionsRead(IOReturn status,
+                                     DICECapabilities caps,
+                                     ExtensionSections sections,
+                                     InitCallback callback);
+    void CacheRuntimeCaps(const DICECapabilities& caps) noexcept;
+    void LogInitializationSummary(const DICECapabilities& caps) const;
     
     /// Read from application section
     void ReadAppSection(uint32_t offset, size_t size, DICEReadCallback callback);
     
     /// Write to application section
     void WriteAppSection(uint32_t offset, const uint8_t* data, size_t size, DICEWriteCallback callback);
+
+    [[nodiscard]] uint32_t ExtensionAbsoluteOffset(const Section& section, uint32_t offset = 0) const noexcept;
 };
 
 } // namespace ASFW::Audio::DICE::Focusrite

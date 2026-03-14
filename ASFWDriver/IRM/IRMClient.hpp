@@ -55,6 +55,9 @@ public:
     [[nodiscard]] Generation GetGeneration() const { return generation_; }
 
 private:
+    struct ChannelLockState;
+    struct BandwidthLockState;
+
     Async::IFireWireBusOps& busOps_;
 
     uint8_t irmNodeId_{0xFF};
@@ -74,9 +77,27 @@ private:
                            AllocationCallback callback,
                            const RetryPolicy& retryPolicy);
 
+    void StartChannelLock(const std::shared_ptr<ChannelLockState>& ctx);
+    void OnChannelRead(const std::shared_ptr<ChannelLockState>& ctx,
+                       bool success,
+                       uint32_t currentValue);
+    void OnChannelCompareSwap(const std::shared_ptr<ChannelLockState>& ctx,
+                              uint32_t expectedValue,
+                              bool success,
+                              uint32_t oldValue);
+
     void PerformBandwidthLock(uint32_t units, bool allocate,
                              AllocationCallback callback,
                              const RetryPolicy& retryPolicy);
+
+    void StartBandwidthLock(const std::shared_ptr<BandwidthLockState>& ctx);
+    void OnBandwidthRead(const std::shared_ptr<BandwidthLockState>& ctx,
+                         bool success,
+                         uint32_t currentBandwidth);
+    void OnBandwidthCompareSwap(const std::shared_ptr<BandwidthLockState>& ctx,
+                                uint32_t expectedBandwidth,
+                                bool success,
+                                uint32_t oldValue);
 };
 
 } // namespace ASFW::IRM

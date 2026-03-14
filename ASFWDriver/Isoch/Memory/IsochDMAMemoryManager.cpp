@@ -168,19 +168,20 @@ std::optional<ASFW::Shared::DMARegion> IsochDMAMemoryManager::AllocateRegion(siz
     return std::nullopt;
 }
 
-uint64_t IsochDMAMemoryManager::VirtToIOVA(const void* virt) const noexcept {
+uint64_t IsochDMAMemoryManager::VirtToIOVA(const std::byte* virt) const noexcept {
     const uint64_t d = descMgr_.VirtToIOVA(virt);
     if (d != 0) return d;
     return payloadMgr_.VirtToIOVA(virt);
 }
 
-void* IsochDMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
-    void* d = descMgr_.IOVAToVirt(iova);
+std::byte* IsochDMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
+    std::byte* d = descMgr_.IOVAToVirt(iova);
     if (d != nullptr) return d;
     return payloadMgr_.IOVAToVirt(iova);
 }
 
-void IsochDMAMemoryManager::PublishToDevice(const void* address, size_t length) const noexcept {
+void IsochDMAMemoryManager::PublishToDevice(const std::byte* address,
+                                            size_t length) const noexcept {
     if (address == nullptr || length == 0) {
         ::ASFW::Driver::IoBarrier();
         return;
@@ -197,7 +198,8 @@ void IsochDMAMemoryManager::PublishToDevice(const void* address, size_t length) 
     ::ASFW::Driver::IoBarrier();
 }
 
-void IsochDMAMemoryManager::FetchFromDevice(const void* address, size_t length) const noexcept {
+void IsochDMAMemoryManager::FetchFromDevice(const std::byte* address,
+                                            size_t length) const noexcept {
     if (address == nullptr || length == 0) {
         ::ASFW::Driver::IoBarrier();
         return;

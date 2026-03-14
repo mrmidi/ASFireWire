@@ -225,11 +225,16 @@ class BusResetCoordinator {
     void RearmAT();
     void LogMetrics();
     void SendGlobalResumeIfNeeded();
+    void MaybeRequestTopologyDrivenReset();
     void EvaluateRootDelegation(const TopologySnapshot& topo);
     void RequestSoftwareReset(ResetRequest request);
     [[nodiscard]] ResetRequest MergeResetRequests(const ResetRequest& current,
                                                   const ResetRequest& incoming) const;
     bool MaybeDispatchPendingSoftwareReset();
+    void ClearSoftwareResetTracking(const ResetRequest& request, bool carriesDelegation);
+    [[nodiscard]] bool ApplySoftwareResetPhyConfig(const ResetRequest& request,
+                                                   bool carriesDelegation);
+    void NoteIssuedGapReset(const ResetRequest& request);
     bool DispatchSoftwareReset(const ResetRequest& request);
     void ClearDelegationAttempt();
     void RecordRecoveryReason(std::string reason);

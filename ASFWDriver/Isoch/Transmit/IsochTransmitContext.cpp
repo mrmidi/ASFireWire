@@ -37,7 +37,7 @@ IsochTransmitContext::~IsochTransmitContext() noexcept {
     verifier_.Shutdown();
 }
 
-void IsochTransmitContext::SetSharedTxQueue(void* base, uint64_t bytes) noexcept {
+void IsochTransmitContext::SetSharedTxQueue(uint8_t* base, uint64_t bytes) noexcept {
     audio_.SetSharedTxQueue(base, bytes);
 }
 
@@ -53,7 +53,8 @@ uint32_t IsochTransmitContext::SharedTxCapacityFrames() const noexcept {
     return audio_.SharedTxCapacityFrames();
 }
 
-void IsochTransmitContext::SetZeroCopyOutputBuffer(void* base, uint64_t bytes, uint32_t frameCapacity) noexcept {
+void IsochTransmitContext::SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes,
+                                                   uint32_t frameCapacity) noexcept {
     audio_.SetZeroCopyOutputBuffer(base, bytes, frameCapacity);
 }
 
@@ -61,7 +62,8 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
                                               uint8_t sid,
                                               uint32_t streamModeRaw,
                                               uint32_t requestedChannels,
-                                              uint32_t requestedAm824Slots) noexcept {
+                                              uint32_t requestedAm824Slots,
+                                              Encoding::AudioWireFormat wireFormat) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
         return kIOReturnBusy;
     }
@@ -71,7 +73,8 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
     channel_ = channel;
     ring_.SetChannel(channel_);
 
-    const kern_return_t krAudio = audio_.Configure(sid, streamModeRaw, requestedChannels, requestedAm824Slots);
+    const kern_return_t krAudio = audio_.Configure(
+        sid, streamModeRaw, requestedChannels, requestedAm824Slots, wireFormat);
     if (krAudio != kIOReturnSuccess) {
         return krAudio;
     }
@@ -375,6 +378,7 @@ void IsochTransmitContext::KickTxVerifier() noexcept {
     in.framesPerPacket = audio_.FramesPerDataPacket();
     in.pcmChannels = audio_.ChannelCount();
     in.am824Slots = audio_.Am824SlotCount();
+    in.audioWireFormat = audio_.WireFormat();
     in.zeroCopyEnabled = audio_.IsZeroCopyEnabled();
     in.sharedTxQueueValid = audio_.SharedTxQueueValid();
     in.sharedTxQueueFillFrames = audio_.SharedTxFillLevelFrames();

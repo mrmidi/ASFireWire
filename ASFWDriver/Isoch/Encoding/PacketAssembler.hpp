@@ -35,6 +35,34 @@ enum class StreamMode : uint8_t {
     kBlocking = 1,
 };
 
+enum class AudioWireFormat : uint8_t {
+    kAM824 = 0,
+    kRawPcm24In32 = 1,
+};
+
+/// Encodes raw signed 24-bit PCM carried in a 32-bit slot.
+///
+/// This matches the original Saffire Pro 24 DSP 9-slot playback stream:
+/// sign-extended 24-bit audio in a 32-bit container, byte-swapped for wire.
+struct RawPcm24In32Encoder {
+    static constexpr uint32_t encode(int32_t pcmSample) noexcept {
+        const int32_t normalized = NormalizeSigned24In32LowAligned(pcmSample);
+        return byteSwap32(static_cast<uint32_t>(normalized));
+    }
+
+    static constexpr uint32_t encodeSilence() noexcept {
+        return 0u;
+    }
+
+private:
+    static constexpr uint32_t byteSwap32(uint32_t x) noexcept {
+        return ((x & 0xFF000000) >> 24) |
+               ((x & 0x00FF0000) >> 8)  |
+               ((x & 0x0000FF00) << 8)  |
+               ((x & 0x000000FF) << 24);
+    }
+};
+
 /// Compile-time maximum frames per DATA packet (48k blocking path).
 constexpr uint32_t kSamplesPerDataPacket = 8;
 
@@ -161,6 +189,14 @@ public:
     /// Get configured stream mode.
     StreamMode streamMode() const noexcept {
         return streamMode_;
+    }
+
+    void setAudioWireFormat(AudioWireFormat format) noexcept {
+        audioWireFormat_ = format;
+    }
+
+    AudioWireFormat audioWireFormat() const noexcept {
+        return audioWireFormat_;
     }
     
     /// Get reference to the audio ring buffer for writing samples.
@@ -322,9 +358,9 @@ private:
             std::memset(&samples[samplesRead], 0, (totalSamples - samplesRead) * sizeof(int32_t));
         }
 
-        // Encode samples to AM824 format
+        // Encode samples to the configured wire format.
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
-        encodeInterleavedFramesToAm824(samples, framesPerPacket, audioQuadlets);
+        encodeInterleavedFrames(samples, framesPerPacket, audioQuadlets);
     }
     
     /// Assemble a silent DATA packet (CIP header + zero-filled audio).
@@ -337,10 +373,9 @@ private:
         std::memcpy(packet.data, &cip.q0, 4);
         std::memcpy(packet.data + 4, &cip.q1, 4);
 
-        // IMPORTANT: Silent audio must still be valid AM824/MBLA (label 0x40),
-        // otherwise some devices interpret it as garbage (audible noise).
+        // Silent audio still needs to match the active wire format exactly.
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
-        fillSilentAm824Frames(framesPerPacket, audioQuadlets);
+        fillSilentFrames(framesPerPacket, audioQuadlets);
     }
 
     /// Assemble a NO-DATA packet (8 bytes: CIP only).
@@ -361,6 +396,19 @@ private:
         return AM824Encoder::encodeLabelOnly(label);
     }
 
+    void encodeInterleavedFrames(const int32_t* pcmInterleaved,
+                                 uint32_t frames,
+                                 uint32_t* outWireQuadlets) const noexcept {
+        switch (audioWireFormat_) {
+            case AudioWireFormat::kAM824:
+                encodeInterleavedFramesToAm824(pcmInterleaved, frames, outWireQuadlets);
+                return;
+            case AudioWireFormat::kRawPcm24In32:
+                encodeInterleavedFramesToRawPcm24In32(pcmInterleaved, frames, outWireQuadlets);
+                return;
+        }
+    }
+
     void encodeInterleavedFramesToAm824(const int32_t* pcmInterleaved,
                                         uint32_t frames,
                                         uint32_t* outWireQuadlets) const noexcept {
@@ -370,6 +418,37 @@ private:
 
             for (uint32_t ch = 0; ch < channelCount_; ++ch) {
                 frameOut[ch] = AM824Encoder::encode(frameIn[ch]);
+            }
+            for (uint32_t s = 0; s < midiSlotsPerEvent_; ++s) {
+                frameOut[channelCount_ + s] = encodeMidiPlaceholder(s);
+            }
+        }
+    }
+
+    void encodeInterleavedFramesToRawPcm24In32(const int32_t* pcmInterleaved,
+                                               uint32_t frames,
+                                               uint32_t* outWireQuadlets) const noexcept {
+        for (uint32_t f = 0; f < frames; ++f) {
+            const int32_t* frameIn = pcmInterleaved + (static_cast<size_t>(f) * channelCount_);
+            uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824SlotCount_);
+
+            for (uint32_t ch = 0; ch < channelCount_; ++ch) {
+                frameOut[ch] = RawPcm24In32Encoder::encode(frameIn[ch]);
+            }
+            for (uint32_t s = 0; s < midiSlotsPerEvent_; ++s) {
+                frameOut[channelCount_ + s] = encodeMidiPlaceholder(s);
+            }
+        }
+    }
+
+    void fillSilentFrames(uint32_t frames, uint32_t* outWireQuadlets) const noexcept {
+        const uint32_t silence = (audioWireFormat_ == AudioWireFormat::kAM824)
+            ? AM824Encoder::encodeSilence()
+            : RawPcm24In32Encoder::encodeSilence();
+        for (uint32_t f = 0; f < frames; ++f) {
+            uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824SlotCount_);
+            for (uint32_t ch = 0; ch < channelCount_; ++ch) {
+                frameOut[ch] = silence;
             }
             for (uint32_t s = 0; s < midiSlotsPerEvent_; ++s) {
                 frameOut[channelCount_ + s] = encodeMidiPlaceholder(s);
@@ -426,6 +505,7 @@ private:
     mutable uint32_t zeroCopyReadPos_{0}; // mutable for read position tracking
     bool zeroCopyEnabled_{false};
     StreamMode streamMode_{StreamMode::kBlocking};
+    AudioWireFormat audioWireFormat_{AudioWireFormat::kAM824};
     
     // 1A: Underrun diagnostics (RT-safe atomics, read from Poll)
     UnderrunDiag underrunDiag_;

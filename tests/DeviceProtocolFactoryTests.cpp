@@ -37,4 +37,14 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
         DeviceProtocolFactory::kApogeeDuetModelId));
 }
 
+TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
+    constexpr uint64_t guid = 0x00130e0402004713ULL;
+
+    const auto known = DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
+    ASSERT_TRUE(known.has_value());
+    EXPECT_EQ(known->vendorId, DeviceProtocolFactory::kFocusriteVendorId);
+    EXPECT_EQ(known->modelId, DeviceProtocolFactory::kSPro24DspModelId);
+    EXPECT_EQ(known->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+}
+
 } // namespace

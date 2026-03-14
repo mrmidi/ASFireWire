@@ -114,7 +114,7 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
     }
 }
 
-void IsochAudioRxPipeline::SetSharedRxQueue(void* base, uint64_t bytes) noexcept {
+void IsochAudioRxPipeline::SetSharedRxQueue(uint8_t* base, uint64_t bytes) noexcept {
     if (!base || bytes == 0) {
         (void)rxSharedQueue_.Attach(nullptr, 0);
         streamProcessor_.SetOutputSharedQueue(nullptr);
@@ -126,7 +126,8 @@ void IsochAudioRxPipeline::SetSharedRxQueue(void* base, uint64_t bytes) noexcept
         streamProcessor_.SetOutputSharedQueue(&rxSharedQueue_);
         ASFW_LOG(Isoch, "[Isoch] IR: Shared RX queue attached (%llu bytes)", bytes);
     } else {
-        ASFW_LOG(Isoch, "[Isoch] IR: Failed to attach shared RX queue (base=%p bytes=%llu)", base, bytes);
+        ASFW_LOG(Isoch, "[Isoch] IR: Failed to attach shared RX queue (base=%p bytes=%llu)",
+                 static_cast<const void*>(base), bytes);
         (void)rxSharedQueue_.Attach(nullptr, 0);
         streamProcessor_.SetOutputSharedQueue(nullptr);
     }

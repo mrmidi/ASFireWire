@@ -11,6 +11,28 @@ namespace detail {
 
 constexpr uint32_t kRxTargetFillFrames = 2048;
 
+[[nodiscard]] size_t PCMByteCount(uint32_t frames, uint32_t channels) noexcept {
+    return size_t(frames) * sizeof(int32_t) * channels;
+}
+
+void ZeroFrames(int32_t* pcm, uint32_t frames, uint32_t channels) {
+    if (!pcm || frames == 0 || channels == 0) {
+        return;
+    }
+    std::memset(pcm, 0, PCMByteCount(frames, channels));
+}
+
+[[nodiscard]] uint32_t ReadFramesOrZero(Shared::TxSharedQueueSPSC& reader,
+                                        int32_t* pcm,
+                                        uint32_t frames,
+                                        uint32_t channels) {
+    const uint32_t framesRead = reader.Read(pcm, frames);
+    if (framesRead < frames) {
+        ZeroFrames(pcm + (static_cast<size_t>(framesRead) * channels), frames - framesRead, channels);
+    }
+    return framesRead;
+}
+
 void MaybeDrainRxStartup(AudioIOPathState& state) {
     if (!state.rxQueueValid || !state.rxQueueReader || !state.rxStartupDrained || *state.rxStartupDrained) {
         return;
@@ -53,38 +75,26 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
     }
 
     const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
-    const size_t firstBytes = size_t(firstFrames) * sizeof(int32_t) * ch;
-    const size_t secondBytes = size_t(secondFrames) * sizeof(int32_t) * ch;
-
     MaybeDrainRxStartup(state);
 
-    if (state.rxQueueValid && state.rxQueueReader) {
-            auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);
-            const uint32_t read1 = state.rxQueueReader->Read(pcmFirst, firstFrames);
-            if (read1 < firstFrames) {
-                memset(pcmFirst + (static_cast<size_t>(read1) * ch),
-                       0,
-                       size_t(firstFrames - read1) * sizeof(int32_t) * ch);
-            }
+    auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);
+    auto* pcmSecond = reinterpret_cast<int32_t*>(segment.address);
 
-        if (secondFrames > 0) {
-            auto* pcmSecond = reinterpret_cast<int32_t*>(segment.address);
-            if (read1 == firstFrames) {
-                const uint32_t read2 = state.rxQueueReader->Read(pcmSecond, secondFrames);
-                if (read2 < secondFrames) {
-                    memset(pcmSecond + (static_cast<size_t>(read2) * ch),
-                           0,
-                           size_t(secondFrames - read2) * sizeof(int32_t) * ch);
-                }
-            } else {
-                memset(pcmSecond, 0, secondBytes);
-            }
-        }
+    if (!state.rxQueueValid || !state.rxQueueReader) {
+        ZeroFrames(pcmFirst, firstFrames, ch);
+        ZeroFrames(pcmSecond, secondFrames, ch);
+        return kIOReturnSuccess;
+    }
+
+    const uint32_t read1 = ReadFramesOrZero(*state.rxQueueReader, pcmFirst, firstFrames, ch);
+    if (secondFrames == 0) {
+        return kIOReturnSuccess;
+    }
+
+    if (read1 == firstFrames) {
+        static_cast<void>(ReadFramesOrZero(*state.rxQueueReader, pcmSecond, secondFrames, ch));
     } else {
-        memset(reinterpret_cast<void*>(segment.address + offsetBytes), 0, firstBytes);
-        if (secondFrames > 0) {
-            memset(reinterpret_cast<void*>(segment.address), 0, secondBytes);
-        }
+        ZeroFrames(pcmSecond, secondFrames, ch);
     }
 
     return kIOReturnSuccess;

@@ -17,13 +17,17 @@ using ASFW::Shared::DMARegion;
  */
 class DMAMemoryImpl final : public IDMAMemory {
 public:
+    using IDMAMemory::FetchFromDevice;
+    using IDMAMemory::PublishToDevice;
+    using IDMAMemory::VirtToIOVA;
+
     explicit DMAMemoryImpl(DMAMemoryManager& mgr);
 
     std::optional<DMARegion> AllocateRegion(size_t size, size_t alignment) override;
-    uint64_t VirtToIOVA(const void* virt) const noexcept override;
-    void* IOVAToVirt(uint64_t iova) const noexcept override;
-    void PublishToDevice(const void* address, size_t length) const noexcept override;
-    void FetchFromDevice(const void* address, size_t length) const noexcept override;
+    uint64_t VirtToIOVA(const std::byte* virt) const noexcept override;
+    std::byte* IOVAToVirt(uint64_t iova) const noexcept override;
+    void PublishToDevice(const std::byte* address, size_t length) const noexcept override;
+    void FetchFromDevice(const std::byte* address, size_t length) const noexcept override;
     size_t TotalSize() const noexcept override;
     size_t AvailableSize() const noexcept override;
 

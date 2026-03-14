@@ -232,6 +232,12 @@ void WriteQuadlets(std::vector<uint32_t>& rom, uint32_t startQuadlet,
     return rom;
 }
 
+[[nodiscard]] std::vector<uint32_t> BuildROMImageVendorModelLeafsWithBIBCrcLength4() {
+    auto rom = BuildROMImageVendorModelLeafs();
+    rom[0] = MakeBIBHeader(/*busInfoLength=*/4, /*crcLength=*/4, /*crc=*/0);
+    return rom;
+}
+
 [[nodiscard]] std::vector<uint32_t> BuildROMImageDescriptorDirFallback() {
     constexpr uint32_t kRootDirStart = 5;
     constexpr uint32_t kDescriptorDirAbs = 8;
@@ -372,6 +378,19 @@ TEST(ROMScannerDetails, VendorAndModelLeafs_Parsed) {
     ASSERT_EQ(res.roms.size(), 1u);
     EXPECT_EQ(res.roms[0].vendorName, "ACME_CORP");
     EXPECT_EQ(res.roms[0].modelName, "MODEL_X");
+}
+
+TEST(ROMScannerDetails, VendorAndModelLeafs_ParsedWhenBIBCrcLengthEqualsBusInfoLength) {
+    ScriptedRomBus bus;
+    const auto rom = BuildROMImageVendorModelLeafsWithBIBCrcLength4();
+
+    const auto res = RunScanToCompletion(bus, rom);
+
+    EXPECT_EQ(res.callbackCount, 1);
+    ASSERT_EQ(res.roms.size(), 1u);
+    EXPECT_EQ(res.roms[0].vendorName, "ACME_CORP");
+    EXPECT_EQ(res.roms[0].modelName, "MODEL_X");
+    EXPECT_GT(res.roms[0].rawQuadlets.size(), 5u);
 }
 
 TEST(ROMScannerDetails, DescriptorDirFallback_PicksFirstValidLeaf) {

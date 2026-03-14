@@ -10,6 +10,17 @@
 
 using namespace ASFW::Encoding;
 
+namespace {
+
+[[nodiscard]] uint32_t ReadWireQuadlet(const uint8_t* bytes) noexcept {
+    return (static_cast<uint32_t>(bytes[0]) << 24) |
+           (static_cast<uint32_t>(bytes[1]) << 16) |
+           (static_cast<uint32_t>(bytes[2]) << 8) |
+           static_cast<uint32_t>(bytes[3]);
+}
+
+} // namespace
+
 //==============================================================================
 // Initial State Tests
 //==============================================================================
@@ -368,6 +379,82 @@ TEST(PacketAssemblerTests, NonBlockingModeSupportsExtraAm824SlotsForMidi) {
     // First frame: slot 0 is MBLA silence (label 0x40), slot 8 is MIDI placeholder (label 0x80).
     EXPECT_EQ(data.data[8 + (0 * 4)], 0x40);
     EXPECT_EQ(data.data[8 + (8 * 4)], 0x80);
+}
+
+TEST(PacketAssemblerTests, BlockingModeSupportsRawPcm24In32ForNineSlotPlayback) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.reconfigureAM824(/*pcmChannels=*/8, /*am824Slots=*/9, /*sid=*/0x05);
+    assembler.setStreamMode(StreamMode::kBlocking);
+    assembler.setAudioWireFormat(AudioWireFormat::kRawPcm24In32);
+
+    int32_t samples[64] = {};
+    samples[0] = 0x00035ff3;
+    samples[1] = static_cast<int32_t>(0xfffd9aabU);
+    samples[8] = 0x0014fe4a;
+    samples[9] = 0x000b920b;
+    assembler.ringBuffer().write(samples, 8);
+
+    AssembledPacket noData = assembler.assembleNext(0);
+    EXPECT_FALSE(noData.isData);
+    EXPECT_EQ(noData.size, 8u);
+
+    AssembledPacket data = assembler.assembleNext(0);
+    EXPECT_TRUE(data.isData);
+    EXPECT_EQ(data.size, 296u);
+
+    // Original Saffire.kext sends raw signed 24-bit PCM in 32-bit slots, not 0x40-labeled MBLA.
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (0 * 4)), 0x00035ff3u);
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (1 * 4)), 0xfffd9aabu);
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (2 * 4)), 0x00000000u);
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (8 * 4)), 0x80000000u);
+
+    const size_t frame1Base = 8 + (9 * 4);
+    EXPECT_EQ(ReadWireQuadlet(data.data + frame1Base + (0 * 4)), 0x0014fe4au);
+    EXPECT_EQ(ReadWireQuadlet(data.data + frame1Base + (1 * 4)), 0x000b920bu);
+    EXPECT_EQ(ReadWireQuadlet(data.data + frame1Base + (8 * 4)), 0x80000000u);
+}
+
+TEST(PacketAssemblerTests, BlockingModeRawPcm24In32SignExtendsNegativeSamples) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.reconfigureAM824(/*pcmChannels=*/8, /*am824Slots=*/9, /*sid=*/0x05);
+    assembler.setStreamMode(StreamMode::kBlocking);
+    assembler.setAudioWireFormat(AudioWireFormat::kRawPcm24In32);
+
+    int32_t samples[64] = {};
+    samples[0] = static_cast<int32_t>(0x00fd9aabU);  // negative 24-bit sample without sign extension
+    samples[1] = static_cast<int32_t>(0x00ffffffU);  // -1 without sign extension
+    assembler.ringBuffer().write(samples, 8);
+
+    AssembledPacket noData = assembler.assembleNext(0);
+    EXPECT_FALSE(noData.isData);
+
+    AssembledPacket data = assembler.assembleNext(0);
+    EXPECT_TRUE(data.isData);
+    EXPECT_EQ(data.size, 296u);
+
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (0 * 4)), 0xfffd9aabu);
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (1 * 4)), 0xffffffffu);
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (8 * 4)), 0x80000000u);
+}
+
+TEST(PacketAssemblerTests, BlockingModeRawPcm24In32UsesZeroForSilentAudioSlots) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.reconfigureAM824(/*pcmChannels=*/8, /*am824Slots=*/9, /*sid=*/0x05);
+    assembler.setStreamMode(StreamMode::kBlocking);
+    assembler.setAudioWireFormat(AudioWireFormat::kRawPcm24In32);
+
+    AssembledPacket noData = assembler.assembleNext(0);
+    EXPECT_FALSE(noData.isData);
+
+    AssembledPacket data = assembler.assembleNext(0);
+    EXPECT_TRUE(data.isData);
+    EXPECT_EQ(data.size, 296u);
+
+    for (uint32_t slot = 0; slot < 8; ++slot) {
+        SCOPED_TRACE("slot " + std::to_string(slot));
+        EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (slot * 4)), 0x00000000u);
+    }
+    EXPECT_EQ(ReadWireQuadlet(data.data + 8 + (8 * 4)), 0x80000000u);
 }
 
 TEST(PacketAssemblerTests, FourChannelDataWithAudio) {

@@ -86,7 +86,7 @@ public:
     // Creator-side initialization (run once by ASFWAudioNub that owns the memory)
     // Positional initialization arguments mirror the backing shared-memory layout.
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    static bool InitializeInPlace(void* base, uint64_t bytes, uint32_t capacityFrames,
+    static bool InitializeInPlace(uint8_t* base, uint64_t bytes, uint32_t capacityFrames,
                                   uint32_t numChannels = 2) {
         if (!base) return false;
         if (!IsPowerOfTwo(capacityFrames)) return false;
@@ -119,7 +119,7 @@ public:
     }
 
     // Attach to existing shared memory (both producer and consumer call this)
-    bool Attach(void* base, uint64_t bytes) {
+    bool Attach(uint8_t* base, uint64_t bytes) {
         hdr_ = nullptr;
         data_ = nullptr;
         capacity_ = 0;
@@ -139,8 +139,7 @@ public:
         const uint64_t need = RequiredBytes(hdr->capacityFrames, hdr->channels);
         if (bytes < need) return false;
 
-        uint8_t* base8 = reinterpret_cast<uint8_t*>(base);
-        data_ = reinterpret_cast<int32_t*>(base8 + hdr->dataOffsetBytes);
+        data_ = reinterpret_cast<int32_t*>(base + hdr->dataOffsetBytes);
 
         hdr_ = hdr;
         capacity_ = hdr->capacityFrames;

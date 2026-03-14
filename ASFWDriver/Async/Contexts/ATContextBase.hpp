@@ -287,6 +287,33 @@ protected:
     // Used to know how many blocks to advance head when consuming completions
 
 private:
+    struct SubmitState {
+        size_t headIndex{0};
+        size_t tailIndex{0};
+        size_t capacity{0};
+        size_t freeBlocks{0};
+        size_t neededBlocks{0};
+        uint32_t commandPtr{0};
+        bool ringEmpty{false};
+        bool needsReArm{false};
+    };
+
+    struct ScanState {
+        size_t capacity{0};
+        size_t headIndex{0};
+        size_t tailIndex{0};
+        HW::OHCIDescriptor* desc{nullptr};
+        bool isImmediate{false};
+        uint16_t xferStatus{0};
+        uint8_t eventCodeRaw{0};
+        uint8_t ackCount{0};
+        uint8_t ackCode{0};
+        OHCIEventCode eventCode{OHCIEventCode::kEvtNoStatus};
+        uint8_t command{0};
+        uint8_t key{0};
+        uint16_t timeStamp{0};
+    };
+
     /// Descriptor ring for tracking in-flight chains
     DescriptorRing* ring_{nullptr};
 
@@ -301,6 +328,31 @@ private:
 
     /// Lock for serializing SubmitChain() operations (tail patch + tail update)
     IOLock* submitLock_{nullptr};
+
+    void LockSubmit() noexcept;
+    void UnlockSubmit() noexcept;
+    [[nodiscard]] kern_return_t PrepareSubmitState(const DescriptorBuilder::DescriptorChain& chain,
+                                                   SubmitState& state) const noexcept;
+    [[nodiscard]] kern_return_t SubmitViaRearm(const DescriptorBuilder::DescriptorChain& chain,
+                                               const SubmitState& state) noexcept;
+    [[nodiscard]] kern_return_t SubmitViaAppend(const DescriptorBuilder::DescriptorChain& chain,
+                                                const SubmitState& state) noexcept;
+    [[nodiscard]] size_t CommitSubmittedChain(const DescriptorBuilder::DescriptorChain& chain,
+                                              size_t capacity) noexcept;
+    [[nodiscard]] bool LoadScanState(ScanState& state) noexcept;
+    void FetchScanDescriptor(const ScanState& state) noexcept;
+    void HandlePendingDescriptor(const ScanState& state) noexcept;
+    [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
+                                            uint32_t& commandPtrAddr,
+                                            uint32_t& headIOVA,
+                                            bool& isRunning,
+                                            bool& isActive) noexcept;
+    [[nodiscard]] bool DecodeCompletionState(ScanState& state) const noexcept;
+    void ClearDescriptorBlocks(size_t headIndex, uint8_t blocks, size_t capacity) noexcept;
+    void StopIfRingDrained(const char* scopeTag, size_t newHead, bool logWhenNotEmpty) noexcept;
+    [[nodiscard]] uint8_t ExtractCompletionTLabel(const ScanState& state) const noexcept;
+    void LogCompletionTelemetry(const ScanState& state) const noexcept;
+    [[nodiscard]] TxCompletion MakeCompletion(const ScanState& state, uint8_t tLabel) const noexcept;
 
     /// Utility to rewrite descriptor branch control field
     static void ClearDescriptorStatus(HW::OHCIDescriptor& desc) noexcept;
@@ -495,158 +547,17 @@ kern_return_t ATContextBase<Derived, Tag>::Stop() noexcept {
 template<typename Derived, ContextRole Tag>
 kern_return_t ATContextBase<Derived, Tag>::SubmitChain(
     DescriptorBuilder::DescriptorChain&& chain) noexcept {
-
-    if (!ring_ || !hw_ || !dmaManager_) {
-        ASFW_LOG_ERROR(Async, "SubmitChain FAILED: not ready (ring=%p hw=%p dma=%p)",
-                      ring_, hw_, dmaManager_);
-        return kIOReturnNotReady;
+    SubmitState state;
+    const kern_return_t prepareResult = PrepareSubmitState(chain, state);
+    if (prepareResult != kIOReturnSuccess) {
+        return prepareResult;
     }
 
-    if (chain.Empty()) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: empty chain");
-        return kIOReturnBadArgument;
-    }
-
-    if (!chain.last) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: chain tail descriptor missing");
-        return kIOReturnInternalError;
-    }
-
-    ASFW_LOG(Async, "  🔧 SubmitChain: Entering (chain: first=%p last=%p firstIOVA=0x%08x firstBlocks=%u)",
-             chain.first, chain.last, chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
-
-    // Step 1: Check ring capacity
-    const size_t tailIndex = ring_->Tail();
-    const size_t headIndex = ring_->Head();
-    const size_t capacity = ring_->Capacity();
-
-    if (capacity <= 1) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: ring capacity insufficient (capacity=%zu)", capacity);
-        return kIOReturnInternalError;
-    }
-
-    ASFW_LOG(Async, "  🔧 Ring state: head=%zu tail=%zu capacity=%zu",
-             headIndex, tailIndex, capacity);
-
-    const size_t usedBlocks = (tailIndex >= headIndex)
-        ? (tailIndex - headIndex)
-        : (capacity - headIndex + tailIndex);
-    const size_t freeBlocks = capacity - usedBlocks - 1; // keep one block open to distinguish empty/full
-    const size_t needed = static_cast<size_t>(chain.TotalBlocks());
-
-    ASFW_LOG(Async, "  🔧 Space check: freeBlocks=%zu needed=%zu", freeBlocks, needed);
-
-    if (needed == 0 || needed > freeBlocks) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: insufficient space (freeBlocks=%zu needed=%zu)",
-                 freeBlocks, needed);
-        return kIOReturnNoSpace;
-    }
-
-    // Step 3: Two-path execution model (per Apple's implementation @ DECOMPILATION.md)
-    const bool ringEmpty = (headIndex == tailIndex);
-    // Use TotalBlocks as the Z nibble per OHCI; chain.firstBlocks alone is incorrect for header+payload chains
-    const uint32_t commandPtr = HW::MakeBranchWordAT(chain.firstIOVA32, chain.TotalBlocks());
-    if (commandPtr == 0) {
-        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: invalid CommandPtr encoding (iova=0x%08x blocks=%u)",
-                 chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
-        return kIOReturnInternalError;
-    }
-
-    // Check hardware state for diagnostic logging
-    const bool hwIsRunning = this->IsRunning();
-    const bool hwIsActive = this->IsActive();
-    ASFW_LOG(Async, "  🔧 Ring state: %{public}s, contextRunning=%d, hw.run=%d, hw.active=%d",
-             ringEmpty ? "EMPTY" : "HAS DATA", contextRunning_, hwIsRunning, hwIsActive);
-
-    // Decide which path: PATH 1 (arm/re-arm) or PATH 2 (append)
-    // - If context not running (software state), use PATH 1
-    // - If ring is empty (drained after previous completion), use PATH 1 (re-arm)
-    // - Otherwise use PATH 2 (append to running context)
-    // 
-    // NOTE: If IsRunning() && !IsActive(), still try PATH 2 (append + wake).
-    // Hardware may have idled briefly but will wake when we set the wake bit.
-    // Only re-arm (Path 1) if software state is IDLE, RUN bit cleared, or ring drained.
-    const bool needsReArm = !contextRunning_ || !hwIsRunning || ringEmpty;
-
-    if (needsReArm) {
-        ASFW_LOG(Async,
-                 "  🔧 PATH 1: %{public}s - programming CommandPtr via Arm() (cmdPtr=0x%08x)",
-                 !contextRunning_ ? "First command" : "Re-arming after drain",
-                 commandPtr);
-
-        kern_return_t armResult = this->Arm(commandPtr);
-        if (armResult != kIOReturnSuccess) {
-            ASFW_LOG(Async, "  ❌ PATH 1 Arm() failed: 0x%x", armResult);
-            return armResult;
-        }
-
-        if (submitLock_) {
-            IOLockLock(submitLock_);
-        }
-        const size_t newTail = (chain.lastRingIndex + 1) % capacity;
-        ring_->SetTail(newTail);
-        // PrevLastBlocks should record the number of blocks in the LAST descriptor (1 or 2)
-        ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
-        if (submitLock_) {
-            IOLockUnlock(submitLock_);
-        }
-    } else {
-        // Path 2: Append to running context - Link branchWord + set wake bit
-        // Ring has data and context is running (run bit set)
-        // NOTE: Even if hardware is not currently active (active=0), we still use append + wake.
-        // The wake bit will cause hardware to resume processing descriptors.
-
-        HW::OHCIDescriptor* prevLast = nullptr;
-        size_t prevLastIndex = 0;
-        uint8_t prevBlocks = 0;
-        if (!ring_->LocatePreviousLast(tailIndex, prevLast, prevLastIndex, prevBlocks)) {
-            ASFW_LOG(Async,
-                     "  ❌ SubmitChain FAILED: unable to locate previous LAST descriptor (tail=%zu)",
-                     tailIndex);
-            return kIOReturnInternalError;
-        }
-
-        // Diagnostic: Log previous descriptor state before patching
-        const uint32_t prevControlBefore = prevLast->control;
-        const uint32_t prevBranchWordBefore = prevLast->branchWord;
-        const bool prevImmediate = HW::IsImmediate(*prevLast);
-        const size_t flushLength = prevImmediate ? sizeof(HW::OHCIDescriptorImmediate)
-                                                 : sizeof(HW::OHCIDescriptor);
-        ASFW_LOG(Async,
-                 "  🔧 PATH 2: Linking prevLast[%zu] blocks=%u imm=%u ctrl=0x%08x branch=0x%08x -> newCmdPtr=0x%08x",
-                 prevLastIndex,
-                 prevBlocks,
-                 prevImmediate ? 1u : 0u,
-                 prevControlBefore,
-                 prevBranchWordBefore,
-                 commandPtr);
-
-        // Lock around tail patch + tail update to serialize with concurrent SubmitChain calls
-        if (submitLock_) {
-            IOLockLock(submitLock_);
-        }
-
-        // Step 2: Update branch pointer and ensure visibility before waking hardware.
-        prevLast->branchWord = commandPtr;
-        if (dmaManager_) {
-            dmaManager_->PublishRange(prevLast, flushLength);
-        }
-        ::ASFW::Driver::IoBarrier();
-
-        // Step 3: Set wake bit to notify hardware of new descriptor chain
-        // Use global constant (bit 12 = 0x1000, verified against Linux/Apple/OHCI spec)
-        this->WriteControlSet(kContextControlWakeBit);
-
-        // Step 4: Update tail index under lock
-        const size_t newTail = (chain.lastRingIndex + 1) % capacity;
-        ring_->SetTail(newTail);
-        ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
-
-        if (submitLock_) {
-            IOLockUnlock(submitLock_);
-        }
-
-        ASFW_LOG(Async, "  ✅ PATH 2 complete: branchWord linked, control updated, wake bit set, tail=%zu", newTail);
+    const kern_return_t submitResult = state.needsReArm
+        ? SubmitViaRearm(chain, state)
+        : SubmitViaAppend(chain, state);
+    if (submitResult != kIOReturnSuccess) {
+        return submitResult;
     }
 
     ASFW_LOG(Async, "  ✅ SubmitChain complete: chain submitted successfully");
@@ -677,280 +588,413 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
     };
 
     while (true) {
-        const size_t headIndex = ring_->Head();
-        const size_t tailIndex = ring_->Tail();
-
-        if (headIndex == tailIndex) {
+        ScanState state;
+        state.capacity = capacity;
+        if (!LoadScanState(state)) {
             unlock();
             return std::nullopt;
         }
 
-        HW::OHCIDescriptor* desc = ring_->At(headIndex);
-        if (!desc) {
+        if (state.xferStatus == 0) {
+            HandlePendingDescriptor(state);
             unlock();
             return std::nullopt;
         }
 
-        const bool isImm = HW::IsImmediate(*desc);
-        if (dmaManager_) {
-            dmaManager_->FetchRange(desc, isImm ? sizeof(HW::OHCIDescriptorImmediate)
-                                                : sizeof(HW::OHCIDescriptor));
-        }
-
-        // APPLE'S APPROACH: No explicit barriers in descriptor scanning (per decompilation)
-        // - Direct loads from descriptors
-        // - Relies on hardware ordering or volatile semantics
-        // - DSB from IoBarrier is sufficient for device memory
-        //
-        // TESTING: Barrier disabled to verify if it's CAUSING the bug, not fixing it
-        // If uncached memory works correctly, IoBarrier (DSB) alone should be sufficient.
-        //
-        // See: ANALYSIS_DMA_BARRIERS_AND_CACHE_COHERENCY.md for full technical details
-        //
-        // Driver::ReadBarrier();  // ⚠️  DISABLED: May cause reordering with device memory on ARM64
-
-        if (DMAMemoryManager::IsTracingEnabled()) {
-            ASFW_LOG(Async,
-                     "  🔍 ScanCompletion: ReadBarrier DISABLED (uncached device memory, DSB sufficient)");
-        }
-
-        const uint16_t xferStatus = HW::AT_xferStatus(*desc);
-        if (xferStatus == 0) {
-            // Per Apple's handleCompletedCommand (DecompilationAnalysis_handleCompletedCommand.md):
-            // When statusWord==0, hardware hasn't completed. But check if this is an
-            // ORPHANED descriptor - one that was cancelled/timed out and hardware skipped over.
-            //
-            // Detection: If CommandPtr has advanced past this descriptor, it's orphaned.
-            // Hardware processes descriptors sequentially via branch_address linkage.
-            // If CommandPtr > head descriptor's IOVA, the head descriptor was skipped.
-            
-            const uint32_t commandPtr = this->ReadCommandPtr();
-            const uint32_t headIOVA = ring_->CommandPtrWordTo(desc, 0) & 0xFFFFFFF0u;
-            const uint32_t commandPtrAddr = commandPtr & 0xFFFFFFF0u;
-            
-            // Check if CommandPtr has moved beyond head (orphaned descriptor)
-            // OR if context is idle (CommandPtr == 0 or context not running)
-            const uint32_t controlReg = this->ReadControl();
-            const bool isRunning = (controlReg & kContextControlRunBit) != 0;
-            const bool isActive = (controlReg & kContextControlActiveBit) != 0;
-            
-            // Descriptor is orphaned if:
-            // 1. Context is not running/active (hardware bypassed this descriptor), OR
-            // 2. CommandPtr has moved past this descriptor
-            const bool isOrphaned = (!isRunning && !isActive) ||
-                                    (commandPtrAddr != headIOVA && commandPtrAddr != 0);
-            
-            if (isOrphaned) {
-                // Skip orphaned descriptor by advancing head
-                ASFW_LOG_V3(Async,
-                         "ScanCompletion: Skipping ORPHANED descriptor at head=%zu (cmdPtr=0x%08x headIOVA=0x%08x run=%d active=%d)",
-                         headIndex, commandPtrAddr, headIOVA, isRunning ? 1 : 0, isActive ? 1 : 0);
-                
-                // Clear the descriptor status and advance head (like Apple's deferred completion)
-                const bool isImm = HW::IsImmediate(*desc);
-                const uint8_t blocks = isImm ? 2 : 1;
-                
-                for (uint8_t i = 0; i < blocks; ++i) {
-                    const size_t clearIndex = (headIndex + i) % ring_->Capacity();
-                    HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
-                    if (clearDesc) {
-                        ClearDescriptorStatus(*clearDesc);
-                        if (dmaManager_) {
-                            const size_t flushSize = HW::IsImmediate(*clearDesc) 
-                                ? sizeof(HW::OHCIDescriptorImmediate) : sizeof(HW::OHCIDescriptor);
-                            dmaManager_->PublishRange(clearDesc, flushSize);
-                        }
-                    }
-                }
-                
-                const size_t newHead = (headIndex + blocks) % ring_->Capacity();
-                ring_->SetHead(newHead);
-                ASFW_LOG_V3(Async, "ScanCompletion: head %zu→%zu (ORPHANED, %u blocks)", headIndex, newHead, blocks);
-                
-                unlock();
-                // Return a synthetic completion with evt_no_status for orphaned descriptors
-                // This signals to caller that descriptor was cleaned up but had no real completion
-                return std::nullopt;  // Caller should loop to check next descriptor
-            }
-            
-            // Not orphaned - hardware is still processing, return without advancing
+        if (!DecodeCompletionState(state)) {
             unlock();
             return std::nullopt;
         }
 
-        uint8_t eventCodeRaw = static_cast<uint8_t>(xferStatus & 0x1F);
-        const uint8_t ackCount = static_cast<uint8_t>((xferStatus >> 5) & 0x07);
-        const uint8_t ackCode = static_cast<uint8_t>((xferStatus >> 12) & 0x0F);
-        OHCIEventCode eventCode = static_cast<OHCIEventCode>(eventCodeRaw);
-
-        if (eventCodeRaw == 0x10 && hw_->HasAgereQuirk()) {
-            ASFW_LOG(Async,
-                     "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=3)",
-                     ackCount);
-            eventCode = OHCIEventCode::kAckComplete;
-            eventCodeRaw = static_cast<uint8_t>(OHCIEventCode::kAckComplete);
-        }
-
-        if (eventCode == OHCIEventCode::kEvtNoStatus ||
-            eventCode == OHCIEventCode::kEvtDescriptorRead) {
-            unlock();
-            return std::nullopt;
-        }
-
-        const uint16_t controlHi = static_cast<uint16_t>(desc->control >> HW::OHCIDescriptor::kControlHighShift);
-        const uint8_t cmd = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
-        const uint8_t key = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kKeyShift) & 0x7);
-
-        if (cmd != HW::OHCIDescriptor::kCmdOutputLast) {
-            const uint8_t blocks = (key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
-            for (uint8_t i = 0; i < blocks; ++i) {
-                const size_t clearIndex = (headIndex + i) % capacity;
-                HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
-                if (!clearDesc) {
-                    continue;
-                }
-                ClearDescriptorStatus(*clearDesc);
-                if (dmaManager_) {
-                    const bool isImmDesc = HW::IsImmediate(*clearDesc);
-                    const size_t flushSize = isImmDesc ? sizeof(HW::OHCIDescriptorImmediate)
-                                                       : sizeof(HW::OHCIDescriptor);
-                    dmaManager_->PublishRange(clearDesc, flushSize);
-                }
-            }
-
-            const size_t newHead = (headIndex + blocks) % capacity;
+        const uint8_t blocksConsumed = (state.key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
+        if (state.command != HW::OHCIDescriptor::kCmdOutputLast) {
+            ClearDescriptorBlocks(state.headIndex, blocksConsumed, state.capacity);
+            const size_t newHead = (state.headIndex + blocksConsumed) % state.capacity;
             ring_->SetHead(newHead);
-            ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (non-OUTPUT_LAST, %u blocks)", headIndex, newHead, blocks);
-
-            // ✅ Apple's pattern: Stop context when ring becomes empty (non-OUTPUT_LAST path)
-            if (ring_->IsEmpty()) {
-                ring_->SetPrevLastBlocks(0);
-
-                // Clear run bit and wait for hardware to quiesce (Apple's escalating delay)
-                this->WriteControlClear(kContextControlRunBit);
-                const kern_return_t quiesceResult = WaitForQuiesce();
-
-                if (quiesceResult == kIOReturnSuccess) {
-                    contextRunning_ = false;
-                    ASFW_LOG(Async,
-                             "  ✅ ScanCompletion (non-OUTPUT_LAST): Ring empty, context quiesced");
-                } else {
-                    ASFW_LOG_ERROR(Async,
-                                   "  ⚠️ ScanCompletion (non-OUTPUT_LAST): Ring empty, but quiesce failed (0x%x)",
-                                   quiesceResult);
-                    // Keep contextRunning_=true to force re-arm on next submit
-                }
-            }
+            ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (non-OUTPUT_LAST, %u blocks)",
+                        state.headIndex, newHead, blocksConsumed);
+            StopIfRingDrained("ScanCompletion (non-OUTPUT_LAST)", newHead, false);
             continue;
         }
 
-        ASFW_LOG_V3(Async,
-                 "🔍 ScanCompletion: head=%zu tail=%zu desc=%p",
-                 headIndex, tailIndex, desc);
-        ASFW_LOG_V3(Async,
-                 "  xferStatus=0x%04x → ackCount=%u eventCode=0x%02x (%{public}s)",
-                 xferStatus, ackCount, eventCodeRaw, ToString(eventCode));
-
-        if (ackCount > 3 && hw_->HasAgereQuirk()) {
-            ASFW_LOG(Async,
-                     "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=3 (Agere/LSI ignores ATRetries register)",
-                     ackCount);
-        }
-
-        if (ackCount == 0 && (eventCodeRaw == 0x1B || eventCodeRaw == 0x14 ||
-                              eventCodeRaw == 0x15 || eventCodeRaw == 0x16)) {
-            ASFW_LOG(Async,
-                     "  ⚠️  SUSPICIOUS: ackCount=0 for %{public}s (hardware should retry!)",
-                     ToString(eventCode));
-        } else if (ackCount == 3 && (eventCodeRaw == 0x1B || eventCodeRaw == 0x14 ||
-                                     eventCodeRaw == 0x15 || eventCodeRaw == 0x16)) {
-            ASFW_LOG_V3(Async,
-                     "  ✓ ackCount=3: Hardware exhausted retries for %{public}s (expected)",
-                     ToString(eventCode));
-        } else if (ackCount > 0) {
-            ASFW_LOG_V3(Async, "  ℹ️  Transmission attempts: %u", ackCount + 1);
-        }
-
-        const uint16_t timeStamp = HW::AT_timeStamp(*desc);
-
-        uint8_t tLabel = 0xFF;
-        if (key == HW::OHCIDescriptor::kKeyImmediate) {
-            auto* immDesc = reinterpret_cast<HW::OHCIDescriptorImmediate*>(desc);
-            tLabel = HW::ExtractTLabel(immDesc);
-        } else {
-            const size_t headerIndex = (headIndex + capacity - 2) % capacity;
-            auto* headerDesc = ring_->At(headerIndex);
-            if (headerDesc && HW::IsImmediate(*headerDesc)) {
-                auto* immHeader = reinterpret_cast<HW::OHCIDescriptorImmediate*>(headerDesc);
-                tLabel = HW::ExtractTLabel(immHeader);
-            }
-        }
-
-        const uint8_t blocksConsumed = (key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
-        const size_t newHead = (headIndex + blocksConsumed) % capacity;
-
-        for (uint8_t i = 0; i < blocksConsumed; ++i) {
-            const size_t clearIndex = (headIndex + i) % capacity;
-            HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
-            if (!clearDesc) {
-                continue;
-            }
-            ClearDescriptorStatus(*clearDesc);
-            if (dmaManager_) {
-                const bool isImmDesc = HW::IsImmediate(*clearDesc);
-                const size_t flushSize = isImmDesc ? sizeof(HW::OHCIDescriptorImmediate)
-                                                   : sizeof(HW::OHCIDescriptor);
-                dmaManager_->PublishRange(clearDesc, flushSize);
-            }
-        }
-
+        LogCompletionTelemetry(state);
+        const uint8_t tLabel = ExtractCompletionTLabel(state);
+        ClearDescriptorBlocks(state.headIndex, blocksConsumed, state.capacity);
+        const size_t newHead = (state.headIndex + blocksConsumed) % state.capacity;
         ring_->SetHead(newHead);
-        ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (OUTPUT_LAST, %u blocks)", headIndex, newHead, blocksConsumed);
+        ASFW_LOG_V2(Async, "ScanCompletion: head %zu→%zu (OUTPUT_LAST, %u blocks)",
+                    state.headIndex, newHead, blocksConsumed);
+        StopIfRingDrained("ScanCompletion", newHead, true);
 
-        // ✅ Apple's stopDMAAfterTransmit pattern: Stop context when ring becomes empty
-        // After advancing head, if ring is now empty (head==tail), we must:
-        // 1. Mark ring empty by setting prevLastBlocks=0 (signals next PATH 1)
-        // 2. Clear RUN bit to stop hardware fetching
-        // 3. Wait for hardware to quiesce (Apple's escalating delay pattern)
-        // 4. Mark contextRunning_=false only if quiesce succeeds
-        if (ring_->IsEmpty()) {
-            ring_->SetPrevLastBlocks(0);  // Mark ring empty for next PATH 1
-
-            // Clear run bit and wait for hardware to quiesce (Apple's escalating delay)
-            this->WriteControlClear(kContextControlRunBit);
-            const kern_return_t quiesceResult = WaitForQuiesce();
-
-            if (quiesceResult == kIOReturnSuccess) {
-                contextRunning_ = false;
-                ASFW_LOG_V3(Async,
-                         "  ✅ ScanCompletion: Ring empty (head=%zu tail=%zu), context quiesced",
-                         newHead, ring_->Tail());
-            } else {
-                ASFW_LOG_ERROR(Async,
-                               "  ⚠️ ScanCompletion: Ring empty (head=%zu tail=%zu), but quiesce failed (0x%x)",
-                               newHead, ring_->Tail(), quiesceResult);
-                // Keep contextRunning_=true to force re-arm on next submit
-            }
-        } else {
-            ASFW_LOG_V3(Async,
-                     "  🔧 ScanCompletion: Ring has data (head=%zu tail=%zu), context continues",
-                     newHead, ring_->Tail());
-        }
-
-        TxCompletion completion;
-        completion.eventCode = eventCode;
-        completion.timeStamp = timeStamp;
-        completion.ackCount = ackCount;
-        completion.ackCode = ackCode;
-        completion.tLabel = tLabel;
-        completion.descriptor = desc;
-        completion.isResponseContext = std::is_same_v<Tag, ATResponseTag>;
+        const TxCompletion completion = MakeCompletion(state, tLabel);
         unlock();
         return completion;
     }
 }
 
 
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::LockSubmit() noexcept {
+    if (submitLock_) {
+        IOLockLock(submitLock_);
+    }
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::UnlockSubmit() noexcept {
+    if (submitLock_) {
+        IOLockUnlock(submitLock_);
+    }
+}
+
+template<typename Derived, ContextRole Tag>
+kern_return_t ATContextBase<Derived, Tag>::PrepareSubmitState(
+    const DescriptorBuilder::DescriptorChain& chain,
+    SubmitState& state) const noexcept {
+    if (!ring_ || !hw_ || !dmaManager_) {
+        ASFW_LOG_ERROR(Async, "SubmitChain FAILED: not ready (ring=%p hw=%p dma=%p)",
+                       ring_, hw_, dmaManager_);
+        return kIOReturnNotReady;
+    }
+    if (chain.Empty()) {
+        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: empty chain");
+        return kIOReturnBadArgument;
+    }
+    if (!chain.last) {
+        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: chain tail descriptor missing");
+        return kIOReturnInternalError;
+    }
+
+    ASFW_LOG(Async, "  🔧 SubmitChain: Entering (chain: first=%p last=%p firstIOVA=0x%08x firstBlocks=%u)",
+             chain.first, chain.last, chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
+
+    state.headIndex = ring_->Head();
+    state.tailIndex = ring_->Tail();
+    state.capacity = ring_->Capacity();
+    if (state.capacity <= 1) {
+        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: ring capacity insufficient (capacity=%zu)", state.capacity);
+        return kIOReturnInternalError;
+    }
+
+    ASFW_LOG(Async, "  🔧 Ring state: head=%zu tail=%zu capacity=%zu",
+             state.headIndex, state.tailIndex, state.capacity);
+
+    const size_t usedBlocks = (state.tailIndex >= state.headIndex)
+        ? (state.tailIndex - state.headIndex)
+        : (state.capacity - state.headIndex + state.tailIndex);
+    state.freeBlocks = state.capacity - usedBlocks - 1;
+    state.neededBlocks = static_cast<size_t>(chain.TotalBlocks());
+    ASFW_LOG(Async, "  🔧 Space check: freeBlocks=%zu needed=%zu", state.freeBlocks, state.neededBlocks);
+
+    if (state.neededBlocks == 0 || state.neededBlocks > state.freeBlocks) {
+        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: insufficient space (freeBlocks=%zu needed=%zu)",
+                 state.freeBlocks, state.neededBlocks);
+        return kIOReturnNoSpace;
+    }
+
+    state.ringEmpty = (state.headIndex == state.tailIndex);
+    state.commandPtr = HW::MakeBranchWordAT(chain.firstIOVA32, chain.TotalBlocks());
+    if (state.commandPtr == 0) {
+        ASFW_LOG(Async, "  ❌ SubmitChain FAILED: invalid CommandPtr encoding (iova=0x%08x blocks=%u)",
+                 chain.firstIOVA32, static_cast<unsigned>(chain.firstBlocks));
+        return kIOReturnInternalError;
+    }
+
+    const bool hwIsRunning = this->IsRunning();
+    const bool hwIsActive = this->IsActive();
+    ASFW_LOG(Async, "  🔧 Ring state: %{public}s, contextRunning=%d, hw.run=%d, hw.active=%d",
+             state.ringEmpty ? "EMPTY" : "HAS DATA", contextRunning_, hwIsRunning, hwIsActive);
+    state.needsReArm = !contextRunning_ || !hwIsRunning || state.ringEmpty;
+    return kIOReturnSuccess;
+}
+
+template<typename Derived, ContextRole Tag>
+kern_return_t ATContextBase<Derived, Tag>::SubmitViaRearm(
+    const DescriptorBuilder::DescriptorChain& chain,
+    const SubmitState& state) noexcept {
+    ASFW_LOG(Async,
+             "  🔧 PATH 1: %{public}s - programming CommandPtr via Arm() (cmdPtr=0x%08x)",
+             !contextRunning_ ? "First command" : "Re-arming after drain",
+             state.commandPtr);
+
+    const kern_return_t armResult = this->Arm(state.commandPtr);
+    if (armResult != kIOReturnSuccess) {
+        ASFW_LOG(Async, "  ❌ PATH 1 Arm() failed: 0x%x", armResult);
+        return armResult;
+    }
+
+    LockSubmit();
+    const size_t newTail = CommitSubmittedChain(chain, state.capacity);
+    UnlockSubmit();
+    ASFW_LOG(Async, "  ✅ PATH 1 complete: command pointer armed, tail=%zu", newTail);
+    return kIOReturnSuccess;
+}
+
+template<typename Derived, ContextRole Tag>
+kern_return_t ATContextBase<Derived, Tag>::SubmitViaAppend(
+    const DescriptorBuilder::DescriptorChain& chain,
+    const SubmitState& state) noexcept {
+    HW::OHCIDescriptor* prevLast = nullptr;
+    size_t prevLastIndex = 0;
+    uint8_t prevBlocks = 0;
+    if (!ring_->LocatePreviousLast(state.tailIndex, prevLast, prevLastIndex, prevBlocks)) {
+        ASFW_LOG(Async,
+                 "  ❌ SubmitChain FAILED: unable to locate previous LAST descriptor (tail=%zu)",
+                 state.tailIndex);
+        return kIOReturnInternalError;
+    }
+
+    const uint32_t prevControlBefore = prevLast->control;
+    const uint32_t prevBranchWordBefore = prevLast->branchWord;
+    const bool prevImmediate = HW::IsImmediate(*prevLast);
+    const size_t flushLength = prevImmediate ? sizeof(HW::OHCIDescriptorImmediate)
+                                             : sizeof(HW::OHCIDescriptor);
+    ASFW_LOG(Async,
+             "  🔧 PATH 2: Linking prevLast[%zu] blocks=%u imm=%u ctrl=0x%08x branch=0x%08x -> newCmdPtr=0x%08x",
+             prevLastIndex,
+             prevBlocks,
+             prevImmediate ? 1u : 0u,
+             prevControlBefore,
+             prevBranchWordBefore,
+             state.commandPtr);
+
+    LockSubmit();
+    prevLast->branchWord = state.commandPtr;
+    if (dmaManager_) {
+        dmaManager_->PublishRange(prevLast, flushLength);
+    }
+    ::ASFW::Driver::IoBarrier();
+    this->WriteControlSet(kContextControlWakeBit);
+    const size_t newTail = CommitSubmittedChain(chain, state.capacity);
+    UnlockSubmit();
+
+    ASFW_LOG(Async, "  ✅ PATH 2 complete: branchWord linked, control updated, wake bit set, tail=%zu", newTail);
+    return kIOReturnSuccess;
+}
+
+template<typename Derived, ContextRole Tag>
+size_t ATContextBase<Derived, Tag>::CommitSubmittedChain(
+    const DescriptorBuilder::DescriptorChain& chain,
+    size_t capacity) noexcept {
+    const size_t newTail = (chain.lastRingIndex + 1) % capacity;
+    ring_->SetTail(newTail);
+    ring_->SetPrevLastBlocks(static_cast<uint8_t>(chain.lastBlocks));
+    return newTail;
+}
+
+template<typename Derived, ContextRole Tag>
+bool ATContextBase<Derived, Tag>::LoadScanState(ScanState& state) noexcept {
+    state.headIndex = ring_->Head();
+    state.tailIndex = ring_->Tail();
+    if (state.headIndex == state.tailIndex) {
+        return false;
+    }
+
+    state.desc = ring_->At(state.headIndex);
+    if (!state.desc) {
+        return false;
+    }
+
+    state.isImmediate = HW::IsImmediate(*state.desc);
+    FetchScanDescriptor(state);
+    state.xferStatus = HW::AT_xferStatus(*state.desc);
+    return true;
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) noexcept {
+    if (dmaManager_) {
+        dmaManager_->FetchRange(state.desc,
+                                state.isImmediate ? sizeof(HW::OHCIDescriptorImmediate)
+                                                  : sizeof(HW::OHCIDescriptor));
+    }
+
+    if (DMAMemoryManager::IsTracingEnabled()) {
+        ASFW_LOG(Async,
+                 "  🔍 ScanCompletion: ReadBarrier DISABLED (uncached device memory, DSB sufficient)");
+    }
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::HandlePendingDescriptor(const ScanState& state) noexcept {
+    uint32_t commandPtrAddr = 0;
+    uint32_t headIOVA = 0;
+    bool isRunning = false;
+    bool isActive = false;
+    if (!IsOrphanedDescriptor(state, commandPtrAddr, headIOVA, isRunning, isActive)) {
+        return;
+    }
+
+    ASFW_LOG_V3(Async,
+                "ScanCompletion: Skipping ORPHANED descriptor at head=%zu (cmdPtr=0x%08x headIOVA=0x%08x run=%d active=%d)",
+                state.headIndex, commandPtrAddr, headIOVA, isRunning ? 1 : 0, isActive ? 1 : 0);
+
+    const uint8_t blocks = state.isImmediate ? 2 : 1;
+    ClearDescriptorBlocks(state.headIndex, blocks, state.capacity);
+    const size_t newHead = (state.headIndex + blocks) % state.capacity;
+    ring_->SetHead(newHead);
+    ASFW_LOG_V3(Async, "ScanCompletion: head %zu→%zu (ORPHANED, %u blocks)",
+                state.headIndex, newHead, blocks);
+}
+
+template<typename Derived, ContextRole Tag>
+bool ATContextBase<Derived, Tag>::IsOrphanedDescriptor(const ScanState& state,
+                                                       uint32_t& commandPtrAddr,
+                                                       uint32_t& headIOVA,
+                                                       bool& isRunning,
+                                                       bool& isActive) noexcept {
+    const uint32_t commandPtr = this->ReadCommandPtr();
+    headIOVA = ring_->CommandPtrWordTo(state.desc, 0) & 0xFFFFFFF0u;
+    commandPtrAddr = commandPtr & 0xFFFFFFF0u;
+
+    const uint32_t controlReg = this->ReadControl();
+    isRunning = (controlReg & kContextControlRunBit) != 0;
+    isActive = (controlReg & kContextControlActiveBit) != 0;
+    return (!isRunning && !isActive) ||
+           (commandPtrAddr != headIOVA && commandPtrAddr != 0);
+}
+
+template<typename Derived, ContextRole Tag>
+bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const noexcept {
+    state.eventCodeRaw = static_cast<uint8_t>(state.xferStatus & 0x1F);
+    state.ackCount = static_cast<uint8_t>((state.xferStatus >> 5) & 0x07);
+    state.ackCode = static_cast<uint8_t>((state.xferStatus >> 12) & 0x0F);
+    state.eventCode = static_cast<OHCIEventCode>(state.eventCodeRaw);
+
+    if (state.eventCodeRaw == 0x10 && hw_->HasAgereQuirk()) {
+        ASFW_LOG(Async,
+                 "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=3)",
+                 state.ackCount);
+        state.eventCode = OHCIEventCode::kAckComplete;
+        state.eventCodeRaw = static_cast<uint8_t>(OHCIEventCode::kAckComplete);
+    }
+
+    if (state.eventCode == OHCIEventCode::kEvtNoStatus ||
+        state.eventCode == OHCIEventCode::kEvtDescriptorRead) {
+        return false;
+    }
+
+    const uint16_t controlHi = static_cast<uint16_t>(
+        state.desc->control >> HW::OHCIDescriptor::kControlHighShift);
+    state.command = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
+    state.key = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kKeyShift) & 0x7);
+    state.timeStamp = HW::AT_timeStamp(*state.desc);
+    return true;
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::ClearDescriptorBlocks(size_t headIndex,
+                                                        uint8_t blocks,
+                                                        size_t capacity) noexcept {
+    for (uint8_t i = 0; i < blocks; ++i) {
+        const size_t clearIndex = (headIndex + i) % capacity;
+        HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
+        if (!clearDesc) {
+            continue;
+        }
+
+        ClearDescriptorStatus(*clearDesc);
+        if (dmaManager_) {
+            const bool isImmDesc = HW::IsImmediate(*clearDesc);
+            const size_t flushSize = isImmDesc ? sizeof(HW::OHCIDescriptorImmediate)
+                                               : sizeof(HW::OHCIDescriptor);
+            dmaManager_->PublishRange(clearDesc, flushSize);
+        }
+    }
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::StopIfRingDrained(const char* scopeTag,
+                                                    size_t newHead,
+                                                    bool logWhenNotEmpty) noexcept {
+    if (!ring_->IsEmpty()) {
+        if (logWhenNotEmpty) {
+            ASFW_LOG_V3(Async,
+                        "  🔧 %{public}s: Ring has data (head=%zu tail=%zu), context continues",
+                        scopeTag, newHead, ring_->Tail());
+        }
+        return;
+    }
+
+    ring_->SetPrevLastBlocks(0);
+    this->WriteControlClear(kContextControlRunBit);
+    const kern_return_t quiesceResult = WaitForQuiesce();
+    if (quiesceResult == kIOReturnSuccess) {
+        contextRunning_ = false;
+        ASFW_LOG_V3(Async,
+                    "  ✅ %{public}s: Ring empty (head=%zu tail=%zu), context quiesced",
+                    scopeTag, newHead, ring_->Tail());
+        return;
+    }
+
+    ASFW_LOG_ERROR(Async,
+                   "  ⚠️ %{public}s: Ring empty (head=%zu tail=%zu), but quiesce failed (0x%x)",
+                   scopeTag, newHead, ring_->Tail(), quiesceResult);
+}
+
+template<typename Derived, ContextRole Tag>
+uint8_t ATContextBase<Derived, Tag>::ExtractCompletionTLabel(const ScanState& state) const noexcept {
+    if (state.key == HW::OHCIDescriptor::kKeyImmediate) {
+        auto* immDesc = reinterpret_cast<HW::OHCIDescriptorImmediate*>(state.desc);
+        return HW::ExtractTLabel(immDesc);
+    }
+
+    const size_t headerIndex = (state.headIndex + state.capacity - 2) % state.capacity;
+    auto* headerDesc = ring_->At(headerIndex);
+    if (headerDesc && HW::IsImmediate(*headerDesc)) {
+        auto* immHeader = reinterpret_cast<HW::OHCIDescriptorImmediate*>(headerDesc);
+        return HW::ExtractTLabel(immHeader);
+    }
+
+    return 0xFF;
+}
+
+template<typename Derived, ContextRole Tag>
+void ATContextBase<Derived, Tag>::LogCompletionTelemetry(const ScanState& state) const noexcept {
+    ASFW_LOG_V3(Async,
+                "🔍 ScanCompletion: head=%zu tail=%zu desc=%p",
+                state.headIndex, state.tailIndex, state.desc);
+    ASFW_LOG_V3(Async,
+                "  xferStatus=0x%04x → ackCount=%u eventCode=0x%02x (%{public}s)",
+                state.xferStatus, state.ackCount, state.eventCodeRaw, ToString(state.eventCode));
+
+    if (state.ackCount > 3 && hw_->HasAgereQuirk()) {
+        ASFW_LOG(Async,
+                 "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=3 (Agere/LSI ignores ATRetries register)",
+                 state.ackCount);
+    }
+
+    if (state.ackCount == 0 &&
+        (state.eventCodeRaw == 0x1B || state.eventCodeRaw == 0x14 ||
+         state.eventCodeRaw == 0x15 || state.eventCodeRaw == 0x16)) {
+        ASFW_LOG(Async,
+                 "  ⚠️  SUSPICIOUS: ackCount=0 for %{public}s (hardware should retry!)",
+                 ToString(state.eventCode));
+    } else if (state.ackCount == 3 &&
+               (state.eventCodeRaw == 0x1B || state.eventCodeRaw == 0x14 ||
+                state.eventCodeRaw == 0x15 || state.eventCodeRaw == 0x16)) {
+        ASFW_LOG_V3(Async,
+                    "  ✓ ackCount=3: Hardware exhausted retries for %{public}s (expected)",
+                    ToString(state.eventCode));
+    } else if (state.ackCount > 0) {
+        ASFW_LOG_V3(Async, "  ℹ️  Transmission attempts: %u", state.ackCount + 1);
+    }
+}
+
+template<typename Derived, ContextRole Tag>
+TxCompletion ATContextBase<Derived, Tag>::MakeCompletion(const ScanState& state,
+                                                         uint8_t tLabel) const noexcept {
+    TxCompletion completion;
+    completion.eventCode = state.eventCode;
+    completion.timeStamp = state.timeStamp;
+    completion.ackCount = state.ackCount;
+    completion.ackCode = state.ackCode;
+    completion.tLabel = tLabel;
+    completion.descriptor = state.desc;
+    completion.isResponseContext = std::is_same_v<Tag, ATResponseTag>;
+    return completion;
+}
 
 template<typename Derived, ContextRole Tag>
 void ATContextBase<Derived, Tag>::ClearDescriptorStatus(HW::OHCIDescriptor& desc) noexcept {

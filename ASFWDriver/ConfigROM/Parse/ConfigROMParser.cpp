@@ -203,7 +203,16 @@ ConfigROMParser::ParseDirectory(std::span<const uint32_t> dirQuadletsBE, uint32_
     const uint32_t hdr = OSSwapBigToHostInt32(dirQuadletsBE[0]);
     const uint32_t len = (hdr >> 16) & 0xFFFFU;
     const auto available = static_cast<uint32_t>(dirQuadletsBE.size() - 1);
-    const uint32_t count = std::min({len, available, entryCap});
+    if (len > available) {
+        ASFW_LOG(ConfigROM,
+                 "ConfigROMParser::ParseDirectory: truncated directory header claims %u entries, "
+                 "only %u available",
+                 len, available);
+        return std::unexpected(
+            Error{.code = ErrorCode::OutOfBounds, .offsetQuadlets = available + 1});
+    }
+
+    const uint32_t count = std::min(len, entryCap);
 
     std::vector<DirectoryEntry> out;
     out.reserve(count);

@@ -9,17 +9,9 @@ namespace ASFW::Discovery {
 constexpr uint32_t kUnitSpecId_TA = 0x00A02D;
 constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
 
-DeviceRegistry::DeviceRegistry() = default;
+namespace {
 
-DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
-                                             Async::IFireWireBusOps* busOps,
-                                             Async::IFireWireBusInfo* busInfo) {
-    const Guid64 guid = rom.bib.guid;
-    
-    auto& device = devicesByGuid_[guid];
-    
-    device.guid = guid;
-
+void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
     for (const auto& entry : rom.rootDirMinimal) {
         if (entry.key == CfgKey::VendorId) {
             device.vendorId = entry.value;
@@ -28,7 +20,6 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         }
     }
 
-    // Prefer Unit_Directory-derived spec/version (24-bit) over any legacy root dir keys.
     device.unitSpecId.reset();
     device.unitSwVersion.reset();
     for (const auto& unit : rom.unitDirectories) {
@@ -45,7 +36,134 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
 
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
+}
+
+void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
+    if (const auto known =
+            Audio::DeviceProtocolFactory::LookupKnownIdentity(device.vendorId, device.modelId);
+        known.has_value()) {
+        if (device.vendorName.empty() && known->vendorName) {
+            device.vendorName = known->vendorName;
+        }
+        if (device.modelName.empty() && known->modelName) {
+            device.modelName = known->modelName;
+        }
+        return;
+    }
+
+    const auto inferred = Audio::DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
+    if (!inferred.has_value()) {
+        return;
+    }
+
+    const uint32_t prevVendorId = device.vendorId;
+    const uint32_t prevModelId = device.modelId;
+    device.vendorId = inferred->vendorId;
+    device.modelId = inferred->modelId;
+
+    if (device.vendorName.empty() && inferred->vendorName) {
+        device.vendorName = inferred->vendorName;
+    }
+    if (device.modelName.empty() && inferred->modelName) {
+        device.modelName = inferred->modelName;
+    }
+
+    ASFW_LOG(Discovery,
+             "Inferred known device identity from GUID=0x%016llx: vendor 0x%06x->0x%06x model "
+             "0x%06x->0x%06x",
+             guid, prevVendorId, device.vendorId, prevModelId, device.modelId);
+}
+
+void MaybeCreateKnownProtocol(DeviceRecord& device,
+                              Guid64 guid,
+                              uint16_t romNodeId,
+                              std::optional<uint8_t> operationalNodeId,
+                              Async::IFireWireBusOps* busOps,
+                              Async::IFireWireBusInfo* busInfo) {
+#if !defined(ASFW_HOST_TEST)
+    if (device.protocol || !busOps || !busInfo || !operationalNodeId.has_value()) {
+        if (!device.protocol && (!busOps || !busInfo || !operationalNodeId.has_value())) {
+            ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
+                     "FireWire bus ports not provided",
+                     guid,
+                     romNodeId);
+        }
+        return;
+    }
+
+    ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
+             guid, romNodeId);
+    device.protocol = Audio::DeviceProtocolFactory::Create(
+        device.vendorId, device.modelId, *busOps, *busInfo, *operationalNodeId);
+
+    if (device.protocol) {
+        ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
+                 device.protocol->GetName());
+        device.protocol->Initialize();
+        return;
+    }
+
+    ASFW_LOG(Discovery, "❌ Protocol creation failed for vendor=0x%06x model=0x%06x",
+             device.vendorId, device.modelId);
+#else
+    (void)device;
+    (void)guid;
+    (void)romNodeId;
+    (void)operationalNodeId;
+    (void)busOps;
+    (void)busInfo;
+#endif
+}
+
+const char* DeviceKindString(DeviceKind kind) noexcept {
+    switch (kind) {
+        case DeviceKind::AV_C:
+            return "AV_C";
+        case DeviceKind::TA_61883:
+            return "TA_61883";
+        case DeviceKind::VendorSpecificAudio:
+            return "VendorAudio";
+        case DeviceKind::Storage:
+            return "Storage";
+        case DeviceKind::Camera:
+            return "Camera";
+        default:
+            return "Unknown";
+    }
+}
+
+void LogDeviceUpsert(Guid64 guid, const DeviceRecord& device, const ConfigROM& rom) {
+    const char* kindStr = DeviceKindString(device.kind);
+    if (!device.vendorName.empty() && !device.modelName.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
+        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
+                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
+                 guid, device.vendorId, device.vendorName.c_str(),
+                 device.modelId, device.modelName.c_str(), kindStr,
+                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
+        return;
+    }
+
+    ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
+             "kind=%{public}s audioCandidate=%d node=%u gen=%u",
+             guid, device.vendorId, device.modelId, kindStr,
+             device.isAudioCandidate, rom.nodeId, rom.gen.value);
+}
+
+} // namespace
+
+DeviceRegistry::DeviceRegistry() = default;
+
+DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
+                                             Async::IFireWireBusOps* busOps,
+                                             Async::IFireWireBusInfo* busInfo) {
+    const Guid64 guid = rom.bib.guid;
+    const auto operationalNodeId = TryOperationalNodeId(rom.nodeId);
     
+    auto& device = devicesByGuid_[guid];
+    device.guid = guid;
+    PopulateDeviceIdentity(device, rom);
+    MaybeInferKnownIdentityFromGuid(device, guid);
+
     // Known device profiles can choose their integration mode:
     // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
     // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
@@ -57,40 +175,14 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
                  device.vendorId,
                  device.modelId,
                  static_cast<unsigned>(integrationMode));
-
         if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
         } else {
-            // kAVCDriven: keep AV/C classification so CMP/plug discovery remains applicable.
             device.kind = ClassifyDevice(rom);
             device.isAudioCandidate = IsAudioCandidate(rom);
         }
-        
-#if !defined(ASFW_HOST_TEST)
-        // Create protocol instance if we don't have one yet AND bus ports are available.
-        if (!device.protocol && busOps && busInfo) {
-            ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
-                     guid, rom.nodeId);
-            device.protocol = Audio::DeviceProtocolFactory::Create(
-                device.vendorId, device.modelId, *busOps, *busInfo, rom.nodeId);
-            
-            if (device.protocol) {
-                ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
-                         device.protocol->GetName());
-                // Start async initialization to discover device capabilities
-                device.protocol->Initialize();
-            } else {
-                ASFW_LOG(Discovery, "❌ Protocol creation failed for vendor=0x%06x model=0x%06x",
-                         device.vendorId, device.modelId);
-            }
-        } else if (!device.protocol) {
-            ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
-                     "FireWire bus ports not provided",
-                     guid,
-                     rom.nodeId);
-        }
-#endif
+        MaybeCreateKnownProtocol(device, guid, rom.nodeId, operationalNodeId, busOps, busInfo);
     } else {
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);
@@ -112,33 +204,16 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         device.link.maxPayloadBytes = maxFromRec;
     }
     device.state = LifeState::Identified;
-    
-    GenNodeKey key = MakeKey(rom.gen, rom.nodeId);
-    genNodeToGuid_[key] = guid;
-    
-    const char* kindStr = "Unknown";
-    switch (device.kind) {
-        case DeviceKind::AV_C: kindStr = "AV_C"; break;
-        case DeviceKind::TA_61883: kindStr = "TA_61883"; break;
-        case DeviceKind::VendorSpecificAudio: kindStr = "VendorAudio"; break;
-        case DeviceKind::Storage: kindStr = "Storage"; break;
-        case DeviceKind::Camera: kindStr = "Camera"; break;
-        default: break;
+
+    if (operationalNodeId.has_value()) {
+        GenNodeKey key = MakeKey(rom.gen, *operationalNodeId);
+        genNodeToGuid_[key] = guid;
+    } else {
+        ASFW_LOG(Discovery, "Skipping node-index update for GUID=0x%016llx with invalid nodeId=%u",
+                 guid, rom.nodeId);
     }
 
-    if (!device.vendorName.empty() && !device.modelName.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
-        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
-                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
-                 guid, device.vendorId, device.vendorName.c_str(),
-                 device.modelId, device.modelName.c_str(), kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
-    } else {
-        ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
-                 "kind=%{public}s audioCandidate=%d node=%u gen=%u",
-                 guid, device.vendorId, device.modelId, kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
-    }
-    
+    LogDeviceUpsert(guid, device, rom);
     return device;
 }
 
@@ -178,7 +253,7 @@ void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
         auto devIt = devicesByGuid_.find(guid);
         if (devIt != devicesByGuid_.end()) {
             devIt->second.state = LifeState::Lost;
-            devIt->second.nodeId = 0xFF;  // Clear nodeId
+            devIt->second.nodeId = kInvalidNodeId;
             ASFW_LOG(Discovery, "Device lost: GUID=0x%016llx node=%u gen=%u",
                      guid, nodeId, gen.value);
         }

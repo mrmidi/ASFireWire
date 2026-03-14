@@ -191,7 +191,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     #endif
 
     // Get virtual address of buffer START (caller will add startOffset)
-    void* bufferAddr = GetBufferAddress(index);
+    uint8_t* bufferAddr = GetBufferAddress(index);
     if (!bufferAddr) {
         ASFW_LOG(Async, "BufferRing::Dequeue: invalid buffer address at index %zu", index);
         return std::nullopt;
@@ -199,8 +199,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
 
     // CRITICAL FIX: Invalidate buffer cache ONLY for the NEW bytes
     if (dma_) {
-        auto* byte_ptr = static_cast<uint8_t*>(bufferAddr);
-        dma_->FetchFromDevice(byte_ptr + start_offset, new_bytes);
+        dma_->FetchFromDevice(bufferAddr + start_offset, new_bytes);
     }
 
     // Update tracking: remember how many total bytes we've now returned
@@ -290,7 +289,7 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
     return kIOReturnSuccess;
 }
 
-void* BufferRing::GetBufferAddress(size_t index) const noexcept {
+uint8_t* BufferRing::GetBufferAddress(size_t index) const noexcept {
     if (index >= bufferCount_) return nullptr;
     const size_t offset = index * bufferSize_;
     if (offset + bufferSize_ > buffers_.size()) return nullptr;

@@ -300,8 +300,8 @@ kern_return_t IsochHandler::GetIsochRxMetrics(IOUserClientMethodArguments* args)
     ASFW_LOG_V3(UserClient, "GetIsochRxMetrics called");
 
     // Get the isoch receive context to fetch metrics
-    auto* context =
-        static_cast<ASFW::Isoch::IsochReceiveContext*>(driver_->GetIsochReceiveContext());
+    auto* context = static_cast<ASFW::Isoch::IsochReceiveContext*>(
+        driver_->GetIsochReceiveContext());
     if (!context) {
         ASFW_LOG_V3(UserClient, "GetIsochRxMetrics: No active context");
         // Return zeroed snapshot
@@ -353,8 +353,8 @@ kern_return_t IsochHandler::ResetIsochRxMetrics(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
 
     // Get context
-    auto* context =
-        static_cast<ASFW::Isoch::IsochReceiveContext*>(driver_->GetIsochReceiveContext());
+    auto* context = static_cast<ASFW::Isoch::IsochReceiveContext*>(
+        driver_->GetIsochReceiveContext());
     if (!context) {
         return kIOReturnNotReady;
     }

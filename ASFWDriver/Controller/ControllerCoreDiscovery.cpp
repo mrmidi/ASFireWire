@@ -158,9 +158,16 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     discoveredGuids.reserve(roms.size());
 
     for (const auto& rom : roms) {
+        const auto nodeId = ASFW::Discovery::TryOperationalNodeId(rom.nodeId);
+        if (!nodeId.has_value()) {
+            ASFW_LOG(Discovery, "Skipping ROM with invalid nodeId=%u gen=%u during discovery",
+                     rom.nodeId, rom.gen.value);
+            continue;
+        }
+
         deps_.romStore->Insert(rom);
 
-        auto policy = deps_.speedPolicy->ForNode(rom.nodeId);
+        auto policy = deps_.speedPolicy->ForNode(*nodeId);
 
         auto& bus = this->Bus();
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(

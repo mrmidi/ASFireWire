@@ -56,3 +56,38 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
         thread.join();
     }
 }
+
+TEST(ConfigROMStoreConcurrencyTests, SameGenerationInsertRefreshesGuidCache) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
+
+    auto truncated = MakeROM(ASFW::Discovery::Generation{2}, 2, kGuid);
+    truncated.rawQuadlets = {0x04040B5Du, 0x31333934u, 0xE0FF8112u, 0x00130E04u, 0x02004713u};
+    store.Insert(truncated);
+
+    auto complete = truncated;
+    complete.rawQuadlets.push_back(0x00000000u);
+    store.Insert(complete);
+
+    const auto* byGuid = store.FindByGuid(kGuid);
+    ASSERT_NE(byGuid, nullptr);
+    EXPECT_EQ(byGuid->gen.value, 2u);
+    EXPECT_EQ(byGuid->rawQuadlets.size(), 6u);
+}
+
+TEST(ConfigROMStoreConcurrencyTests, InvalidateRemovesGenerationNodeReachability) {
+    ASFW::Discovery::ConfigROMStore store;
+
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x00130e0402004713ULL;
+    store.Insert(MakeROM(ASFW::Discovery::Generation{2}, 2, kGuid));
+
+    ASSERT_NE(store.FindByNode(ASFW::Discovery::Generation{2}, 2), nullptr);
+    ASSERT_NE(store.FindByGuid(kGuid), nullptr);
+
+    store.InvalidateROM(kGuid);
+
+    EXPECT_EQ(store.FindByNode(ASFW::Discovery::Generation{2}, 2), nullptr);
+    ASSERT_NE(store.FindByGuid(kGuid), nullptr);
+    EXPECT_EQ(store.FindByGuid(kGuid)->state, ASFW::Discovery::ROMState::Invalid);
+}

@@ -54,7 +54,7 @@ TEST(IsochRxDmaRingTests, DrainCompleted_ProcessesOneDescriptorAndRearms) {
     auto* d0 = ring.DescriptorAt(0);
     ASSERT_NE(d0, nullptr);
 
-    auto* payload = static_cast<uint8_t*>(ring.PayloadVA(0));
+    auto* payload = ring.PayloadVA(0);
     ASSERT_NE(payload, nullptr);
 
     payload[0] = 0x11;
@@ -86,4 +86,3 @@ TEST(IsochRxDmaRingTests, DrainCompleted_ProcessesOneDescriptorAndRearms) {
     EXPECT_EQ(ASFW::Async::HW::AR_xferStatus(*d0), 0u);
     EXPECT_EQ(ASFW::Async::HW::AR_resCount(*d0), reqCount);
 }
-

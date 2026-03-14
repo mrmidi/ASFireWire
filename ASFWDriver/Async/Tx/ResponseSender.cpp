@@ -83,7 +83,7 @@ void ResponseSender::SendWriteResponse(const ARPacketView& request, ResponseCode
     header[2] = 0;
 
     auto chain = builder_.BuildTransactionChain(
-        header,
+        reinterpret_cast<const uint8_t*>(header),
         sizeof(header),
         /*payloadDeviceAddress*/ 0,
         /*payloadSize*/ 0,

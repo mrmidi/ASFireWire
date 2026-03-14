@@ -24,6 +24,9 @@ using DICEReadCallback = std::function<void(IOReturn status, const uint8_t* data
 /// Callback for DICE write operations
 using DICEWriteCallback = std::function<void(IOReturn status)>;
 
+/// Callback for octlet-sized DICE lock/read operations
+using DICEOctletCallback = std::function<void(IOReturn status, uint64_t value)>;
+
 /// DICE transaction operations
 /// 
 /// Provides read/write operations to DICE address space.
@@ -63,6 +66,10 @@ public:
     /// Read general sections layout from DICE device
     /// @param callback   Callback with parsed sections
     void ReadGeneralSections(std::function<void(IOReturn, GeneralSections)> callback);
+
+    /// Read TCAT extension sections layout from DICE device.
+    /// @param callback   Callback with parsed extension sections
+    void ReadExtensionSections(std::function<void(IOReturn, ExtensionSections)> callback);
     
     // ========================================================================
     // Capability Discovery
@@ -89,6 +96,16 @@ public:
     /// Read all device capabilities (global + TX + RX streams)
     /// @param callback   Callback with complete capabilities
     void ReadCapabilities(std::function<void(IOReturn, DICECapabilities)> callback);
+
+    /// Compare-swap a 64-bit DICE register and return the previous value.
+    /// @param offset     Offset from DICE base address
+    /// @param expected   Expected old value (host byte order)
+    /// @param desired    Replacement value (host byte order)
+    /// @param callback   Callback with previous value
+    void CompareSwapOctlet(uint32_t offset,
+                           uint64_t expected,
+                           uint64_t desired,
+                           DICEOctletCallback callback);
     
     // ========================================================================
     // Utility Functions (static)
@@ -108,6 +125,30 @@ public:
         data[1] = static_cast<uint8_t>((value >> 16) & 0xFF);
         data[2] = static_cast<uint8_t>((value >> 8) & 0xFF);
         data[3] = static_cast<uint8_t>(value & 0xFF);
+    }
+
+    /// Convert big-endian wire octlet to host byte order
+    static uint64_t OctletFromWire(const uint8_t* data) {
+        return (static_cast<uint64_t>(data[0]) << 56) |
+               (static_cast<uint64_t>(data[1]) << 48) |
+               (static_cast<uint64_t>(data[2]) << 40) |
+               (static_cast<uint64_t>(data[3]) << 32) |
+               (static_cast<uint64_t>(data[4]) << 24) |
+               (static_cast<uint64_t>(data[5]) << 16) |
+               (static_cast<uint64_t>(data[6]) << 8)  |
+               static_cast<uint64_t>(data[7]);
+    }
+
+    /// Convert host byte order octlet to big-endian wire format
+    static void OctletToWire(uint64_t value, uint8_t* data) {
+        data[0] = static_cast<uint8_t>((value >> 56) & 0xFF);
+        data[1] = static_cast<uint8_t>((value >> 48) & 0xFF);
+        data[2] = static_cast<uint8_t>((value >> 40) & 0xFF);
+        data[3] = static_cast<uint8_t>((value >> 32) & 0xFF);
+        data[4] = static_cast<uint8_t>((value >> 24) & 0xFF);
+        data[5] = static_cast<uint8_t>((value >> 16) & 0xFF);
+        data[6] = static_cast<uint8_t>((value >> 8) & 0xFF);
+        data[7] = static_cast<uint8_t>(value & 0xFF);
     }
 
 private:

@@ -31,7 +31,7 @@ public:
                    uint32_t packetsProcessed,
                    uint64_t pollStartMachTicks) noexcept;
 
-    void SetSharedRxQueue(void* base, uint64_t bytes) noexcept;
+    void SetSharedRxQueue(uint8_t* base, uint64_t bytes) noexcept;
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
 
     [[nodiscard]] StreamProcessor& StreamProcessorRef() noexcept { return streamProcessor_; }
