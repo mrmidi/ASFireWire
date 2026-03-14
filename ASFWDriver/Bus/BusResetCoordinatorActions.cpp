@@ -466,42 +466,56 @@ bool BusResetCoordinator::DispatchSoftwareReset(const ResetRequest& request) {
              resetKindString(request.kind), resetFlavorString(request.flavor),
              request.reason.c_str());
 
-    if (request.phyConfig.has_value()) {
-        const auto& command = *request.phyConfig;
-        if (command.setContender.has_value()) {
-            hardware_->SetContender(*command.setContender);
-        }
-
-        if (!hardware_->SendPhyConfig(command.gapCount, command.forceRootNodeID,
-                                      request.reason.c_str())) {
-            RecordRecoveryReason(std::string{"PHY config dispatch failed: "} + request.reason);
-            if (request.gapDecisionReason.has_value() && busManager_ != nullptr) {
-                busManager_->ClearInFlightGapReset();
-            }
-            if (carriesDelegation) {
-                ClearDelegationAttempt();
-            }
-            return false;
-        }
+    if (!ApplySoftwareResetPhyConfig(request, carriesDelegation)) {
+        return false;
     }
 
     if (!hardware_->InitiateBusReset(request.flavor == ResetFlavor::Short)) {
         RecordRecoveryReason(std::string{"Software reset dispatch failed: "} + request.reason);
-        if (request.gapDecisionReason.has_value() && busManager_ != nullptr) {
-            busManager_->ClearInFlightGapReset();
-        }
-        if (carriesDelegation) {
-            ClearDelegationAttempt();
-        }
+        ClearSoftwareResetTracking(request, carriesDelegation);
         return false;
     }
 
+    NoteIssuedGapReset(request);
+    return true;
+}
+
+void BusResetCoordinator::ClearSoftwareResetTracking(const ResetRequest& request,
+                                                     bool carriesDelegation) {
+    if (request.gapDecisionReason.has_value() && busManager_ != nullptr) {
+        busManager_->ClearInFlightGapReset();
+    }
+    if (carriesDelegation) {
+        ClearDelegationAttempt();
+    }
+}
+
+bool BusResetCoordinator::ApplySoftwareResetPhyConfig(const ResetRequest& request,
+                                                      bool carriesDelegation) {
+    if (!request.phyConfig.has_value()) {
+        return true;
+    }
+
+    const auto& command = *request.phyConfig;
+    if (command.setContender.has_value()) {
+        hardware_->SetContender(*command.setContender);
+    }
+
+    if (hardware_->SendPhyConfig(command.gapCount, command.forceRootNodeID,
+                                 request.reason.c_str())) {
+        return true;
+    }
+
+    RecordRecoveryReason(std::string{"PHY config dispatch failed: "} + request.reason);
+    ClearSoftwareResetTracking(request, carriesDelegation);
+    return false;
+}
+
+void BusResetCoordinator::NoteIssuedGapReset(const ResetRequest& request) {
     if (request.gapDecisionReason.has_value() && request.phyConfig.has_value() &&
         request.phyConfig->gapCount.has_value() && (busManager_ != nullptr)) {
         busManager_->NoteGapResetIssued(*request.phyConfig->gapCount, *request.gapDecisionReason);
     }
-
-    return true;
 }
 
 void BusResetCoordinator::ClearDelegationAttempt() {

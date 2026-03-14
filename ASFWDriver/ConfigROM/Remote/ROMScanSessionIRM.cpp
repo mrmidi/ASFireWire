@@ -173,17 +173,6 @@ void ROMScanSession::HandleIRMLockComplete(uint8_t nodeId, bool success) {
 }
 
 void ROMScanSession::ContinueAfterIRMCheck(ROMScanNodeStateMachine& node) {
-    if (node.ROM().bib.crcLength <= node.ROM().bib.busInfoLength) {
-        if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete,
-                                 "IRM check complete minimal ROM complete")) {
-            Pump();
-            return;
-        }
-        completedROMs_.push_back(std::move(node.MutableROM()));
-        Pump();
-        return;
-    }
-
     StartRootDirRead(node);
 }
 

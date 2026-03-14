@@ -17,37 +17,37 @@ public:
     [[nodiscard]] std::size_t BuildReadQuadlet(const ReadParams& params,
                                                uint8_t label,
                                                const PacketContext& context,
-                                               void* headerBuffer,
+                                               uint8_t* headerBuffer,
                                                std::size_t bufferSize) const;
 
     [[nodiscard]] std::size_t BuildReadBlock(const ReadParams& params,
                                              uint8_t label,
                                              const PacketContext& context,
-                                             void* headerBuffer,
+                                             uint8_t* headerBuffer,
                                              std::size_t bufferSize) const;
 
     [[nodiscard]] std::size_t BuildWriteQuadlet(const WriteParams& params,
                                                 uint8_t label,
                                                 const PacketContext& context,
-                                                void* headerBuffer,
+                                                uint8_t* headerBuffer,
                                                 std::size_t bufferSize) const;
 
     [[nodiscard]] std::size_t BuildWriteBlock(const WriteParams& params,
                                               uint8_t label,
                                               const PacketContext& context,
-                                              void* headerBuffer,
+                                              uint8_t* headerBuffer,
                                               std::size_t bufferSize) const;
 
     [[nodiscard]] std::size_t BuildLock(const LockParams& params,
                                         uint8_t label,
                                         uint16_t extendedTCode,
                                         const PacketContext& context,
-                                        void* headerBuffer,
+                                        uint8_t* headerBuffer,
                                         std::size_t bufferSize) const;
 
     [[nodiscard]] std::size_t BuildPhyPacket(uint8_t label,
                                              const PhyParams& params,
-                                             void* headerBuffer,
+                                             uint8_t* headerBuffer,
                                              std::size_t bufferSize) const;
 };
 

@@ -42,7 +42,7 @@ TEST_F(FakeDMAMemoryTest, IOVAToVirtRoundTrip) {
     auto region = dma_.AllocateRegion(128);
     ASSERT_TRUE(region.has_value());
 
-    void* virt = dma_.IOVAToVirt(region->deviceBase + 64);
+    auto* virt = dma_.IOVAToPtr<uint8_t>(region->deviceBase + 64);
     EXPECT_EQ(virt, region->virtualBase + 64);
 }
 
@@ -74,4 +74,3 @@ TEST_F(FakeDMAMemoryTest, ResetClearsSlabAndCursor) {
 }
 
 } // namespace ASFW::Testing
-

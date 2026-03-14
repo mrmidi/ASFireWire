@@ -137,7 +137,6 @@ class ConfigROMStore {
     // Packed key layout: generation in upper bits, node ID in low 8 bits.
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
-    static std::optional<uint8_t> ValidateNodeIdForKey(uint16_t nodeId);
 
     mutable IOLock* lock_{nullptr};
 

@@ -32,6 +32,7 @@ public:
         uint32_t framesPerPacket{0};
         uint32_t pcmChannels{0};
         uint32_t am824Slots{0};
+        Encoding::AudioWireFormat audioWireFormat{Encoding::AudioWireFormat::kAM824};
         bool zeroCopyEnabled{false};
         bool sharedTxQueueValid{false};
         uint32_t sharedTxQueueFillFrames{0};
@@ -62,6 +63,8 @@ public:
     [[nodiscard]] uint64_t DroppedTrace() const noexcept { return trace_.dropped.load(std::memory_order_relaxed); }
 
 private:
+    using ParsedCIP = decltype(TxVerify::ParseCIPFromHostWords(uint32_t{}, uint32_t{}));
+
     struct TraceEntry {
         uint32_t packetIndex{0};
         uint32_t hwPacketIndexCmdPtr{0};
@@ -102,7 +105,71 @@ private:
         uint64_t lastDroppedTrace{0};
     };
 
+    struct CounterDeltaSnapshot {
+        uint64_t curInjectResets{0};
+        uint64_t curInjectMissed{0};
+        uint64_t curUnderrunSilenced{0};
+        uint64_t curCriticalGap{0};
+        uint64_t curDbcDisc{0};
+        uint64_t curDroppedTrace{0};
+
+        uint64_t deltaResets{0};
+        uint64_t deltaMissed{0};
+        uint64_t deltaUnderrunSilenced{0};
+        uint64_t deltaCriticalGap{0};
+        uint64_t deltaDbcDisc{0};
+        uint64_t deltaDropped{0};
+    };
+
+    struct PacketExpectations {
+        uint16_t expectedNoDataReq{0};
+        uint16_t expectedDataReq{0};
+        uint32_t expectedAm824Slots{0};
+        uint32_t slotsPerFrame{1};
+        uint32_t pcmSlots{0};
+        Encoding::AudioWireFormat audioWireFormat{Encoding::AudioWireFormat::kAM824};
+    };
+
+    struct AudioPayloadScan {
+        bool allSilence{true};
+        bool sawAllZero{false};
+        bool sawInvalidLabel{false};
+        bool sawInvalidLabelNonZero{false};
+        uint8_t badLabel{0};
+        uint32_t badWord{0};
+    };
+
     [[nodiscard]] bool Pop(TraceEntry& out) noexcept;
+    void DrainTrace() noexcept;
+    [[nodiscard]] CounterDeltaSnapshot CaptureCounterDeltas() const noexcept;
+    void LogCounterDeltas(const CounterDeltaSnapshot& deltas) const noexcept;
+    [[nodiscard]] uint32_t UpdateCounterState(const CounterDeltaSnapshot& deltas) noexcept;
+    [[nodiscard]] PacketExpectations BuildPacketExpectations() const noexcept;
+    [[nodiscard]] static uint8_t ExpectedAM824Label(
+        uint32_t slotInFrame,
+        const PacketExpectations& expectations) noexcept;
+    static void RecordInvalidLabel(AudioPayloadScan& scan, uint32_t q) noexcept;
+    [[nodiscard]] static AudioPayloadScan ScanAudioPayload(
+        const TraceEntry& entry,
+        const PacketExpectations& expectations) noexcept;
+    void ProcessTraceEntries(const PacketExpectations& expectations, uint64_t deltaMissed,
+                             uint32_t& restartReasons) noexcept;
+    void ProcessTraceEntry(const TraceEntry& entry, const PacketExpectations& expectations,
+                           uint64_t deltaMissed, uint32_t& restartReasons) noexcept;
+    void CheckCompletionAndPacketShape(const TraceEntry& entry,
+                                       const PacketExpectations& expectations,
+                                       const ParsedCIP& cip,
+                                       bool isNoData,
+                                       bool isData,
+                                       uint32_t& restartReasons) const noexcept;
+    void CheckDbcContinuity(const TraceEntry& entry,
+                            const ParsedCIP& cip,
+                            bool isData,
+                            uint32_t& restartReasons) noexcept;
+    void CheckAudioPayload(const TraceEntry& entry,
+                           const PacketExpectations& expectations,
+                           uint64_t deltaMissed,
+                           uint32_t& restartReasons) noexcept;
     void RunWork() noexcept;
 
     Inputs inputs_{};

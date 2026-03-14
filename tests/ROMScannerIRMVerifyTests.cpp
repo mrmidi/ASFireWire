@@ -176,7 +176,7 @@ std::vector<uint32_t> CreateMinimalIRMCapableBIB() {
 
 } // namespace
 
-TEST(ROMScannerIRMVerify, IRMVerify_MinimalROM_DoesVerifyThenCompletes) {
+TEST(ROMScannerIRMVerify, IRMVerify_CrcLengthFour_StillReadsRootDirectory) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
@@ -216,7 +216,7 @@ TEST(ROMScannerIRMVerify, IRMVerify_MinimalROM_DoesVerifyThenCompletes) {
     const auto bib = CreateMinimalIRMCapableBIB();
     mockAsync.SimulateFullBIBSuccess(/*startReadIndex=*/0, bib);
 
-    // IRM verify should run even on "minimal ROM" when doIRMCheck is enabled.
+    // IRM verify should run before the root directory read.
     mockAsync.WaitForPendingReads(5);
     ASSERT_GE(mockAsync.pendingReads_.size(), 5u);
 
@@ -242,6 +242,17 @@ TEST(ROMScannerIRMVerify, IRMVerify_MinimalROM_DoesVerifyThenCompletes) {
 
     const std::array<uint8_t, 4> lockResponse{};
     mockAsync.SimulateLockSuccess(0, lockResponse);
+
+    mockAsync.WaitForPendingReads(6);
+    ASSERT_GE(mockAsync.pendingReads_.size(), 6u);
+
+    const auto& rootDirRead = mockAsync.pendingReads_[5];
+    EXPECT_EQ(rootDirRead.length, 4u);
+    EXPECT_EQ(rootDirRead.address.addressHi, ASFW::FW::ConfigROMAddr::kAddressHi);
+    EXPECT_EQ(rootDirRead.address.addressLo, ASFW::FW::ConfigROMAddr::kAddressLo + 20u);
+
+    const std::array<uint32_t, 1> emptyRootDir{0x00000000};
+    mockAsync.SimulateReadSuccess(5, emptyRootDir);
 
     {
         std::unique_lock lock(mtx);

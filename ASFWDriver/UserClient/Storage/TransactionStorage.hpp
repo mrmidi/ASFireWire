@@ -43,7 +43,7 @@ public:
     // Store a completed transaction result
     // Returns true if stored, false if buffer full (oldest dropped)
     bool StoreResult(uint16_t handle, uint32_t status, uint8_t responseCode,
-                    const void* responsePayload, uint32_t responseLength);
+                     const uint8_t* responsePayload, uint32_t responseLength);
 
     // Find and retrieve a result by handle
     // Returns nullptr if not found

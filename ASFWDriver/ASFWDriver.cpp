@@ -38,6 +38,8 @@
 #include "Async/PacketHelpers.hpp"
 #include "Async/ResponseCode.hpp"
 #include "Audio/AudioCoordinator.hpp"
+#include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
+#include "Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "Bus/SelfIDCapture.hpp"
 #include "Common/DriverKitOwnership.hpp"
 #include "ConfigROM/ConfigROMStager.hpp"
@@ -69,6 +71,160 @@ class ASFWDriverUserClient;
 
 namespace {
 constexpr uint64_t kAsyncWatchdogPeriodUsec = 1000; // 1 ms tick (hybrid: interrupt + timer backup)
+
+[[nodiscard]] constexpr ASFW::Encoding::AudioWireFormat ResolveHostToDeviceWireFormat(
+    uint32_t vendorId,
+    uint32_t modelId,
+    uint32_t pcmChannels,
+    uint32_t am824Slots) noexcept {
+    if (vendorId == ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId &&
+        modelId == ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId &&
+        pcmChannels == 8 &&
+        am824Slots == 9) {
+        return ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
+    }
+    return ASFW::Encoding::AudioWireFormat::kAM824;
+}
+
+#ifndef ASFW_HOST_TEST
+void ArmProviderTerminationNotifications(ASFWDriver& driver, IOService* provider,
+                                         ServiceContext& ctx) {
+    uint64_t providerEntryId = 0;
+    if (!provider || provider->GetRegistryEntryID(&providerEntryId) != kIOReturnSuccess ||
+        providerEntryId == 0) {
+        return;
+    }
+
+    auto matching = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
+    auto idNum = OSSharedPtr(OSNumber::withNumber(providerEntryId, 64), OSNoRetain);
+    if (!matching || !idNum) {
+        return;
+    }
+
+    matching->setObject(kIORegistryEntryIDKey, idNum.get());
+
+    IOServiceNotificationDispatchSource* rawSource = nullptr;
+    const kern_return_t notifyKr =
+        IOServiceNotificationDispatchSource::Create(matching.get(), 0, ctx.workQueue.get(),
+                                                   &rawSource);
+    if (notifyKr != kIOReturnSuccess || rawSource == nullptr) {
+        return;
+    }
+
+    auto source = OSSharedPtr(rawSource, OSNoRetain);
+
+    OSAction* rawAction = nullptr;
+    const kern_return_t actionKr = driver.CreateActionProviderNotificationReady(0, &rawAction);
+    if (actionKr != kIOReturnSuccess || rawAction == nullptr) {
+        return;
+    }
+
+    ctx.providerNotificationAction = OSSharedPtr(rawAction, OSNoRetain);
+    ctx.providerNotifications = std::move(source);
+
+    (void)ctx.providerNotifications->SetHandler(ctx.providerNotificationAction.get());
+    (void)ctx.providerNotifications->SetEnableWithCompletion(true, nullptr);
+    ASFW_LOG(Controller, "✅ Provider termination notifications armed (entryID=%llu)",
+             providerEntryId);
+}
+#endif
+
+ASFW::Async::ResponseCode RouteFcpBlockWrite(
+    ASFW::Protocols::AVC::FCPResponseRouter* fcpRouter,
+    const ASFW::Async::ARPacketView& packet) {
+    if (fcpRouter == nullptr) {
+        return ASFW::Async::ResponseCode::NoResponse;
+    }
+
+    const ASFW::Protocols::Ports::BlockWriteRequestView request{
+        .sourceID = packet.sourceID,
+        .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
+        .payload = packet.payload,
+    };
+
+    const auto disposition = fcpRouter->RouteBlockWrite(request);
+    if (disposition == ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
+        return ASFW::Async::ResponseCode::AddressError;
+    }
+    return ASFW::Async::ResponseCode::Complete;
+}
+
+ASFW::Async::ResponseCode RouteDiceNotificationQuadletWrite(
+    const ASFW::Async::ARPacketView& packet) {
+    const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+    if (destOffset != ASFW::Audio::DICE::NotificationMailbox::kHandlerOffset) {
+        return ASFW::Async::ResponseCode::AddressError;
+    }
+
+    if (packet.header.size() < 16) {
+        return ASFW::Async::ResponseCode::TypeError;
+    }
+
+    const uint32_t bits =
+        ASFW::Audio::DICE::NotificationMailbox::PublishWireQuadlet(packet.header.data() + 12);
+    ASFW_LOG(DICE, "DICE notification quadlet received: bits=0x%08x", bits);
+    return ASFW::Async::ResponseCode::Complete;
+}
+
+void RegisterFcpBlockWriteHandler(ServiceContext& ctx) {
+    if (!ctx.deps.fcpResponseRouter || !ctx.deps.asyncSubsystem) {
+        return;
+    }
+
+    auto* router = ctx.deps.asyncSubsystem->GetPacketRouter();
+    if (router == nullptr) {
+        return;
+    }
+
+    router->RegisterRequestHandler(
+        0x1,
+        [fcpRouter = ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
+            return RouteFcpBlockWrite(fcpRouter, packet);
+        });
+    ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
+}
+
+void RegisterDiceNotificationHandler(ServiceContext& ctx) {
+    if (!ctx.deps.asyncSubsystem) {
+        return;
+    }
+
+    auto* router = ctx.deps.asyncSubsystem->GetPacketRouter();
+    if (router == nullptr) {
+        return;
+    }
+
+    router->RegisterRequestHandler(
+        0x0,
+        [](const ASFW::Async::ARPacketView& packet) {
+            return RouteDiceNotificationQuadletWrite(packet);
+        });
+    ASFW_LOG(Controller, "✅ DICE notification handler wired to PacketRouter (tCode 0x0)");
+}
+
+void EnsureRomScanner(ServiceContext& ctx) {
+    if (!ctx.deps.speedPolicy || !ctx.controller) {
+        return;
+    }
+
+    if (!ctx.deps.romScanner) {
+        OSSharedPtr<IODispatchQueue> discoveryQueue = nullptr;
+        if (ctx.deps.scheduler) {
+            discoveryQueue = ctx.deps.scheduler->Queue();
+        }
+
+        ASFW::Discovery::ROMScannerParams scannerParams{};
+        ctx.deps.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
+            ctx.controller->Bus(), *ctx.deps.speedPolicy, scannerParams, discoveryQueue);
+        ASFW_LOG(Controller, "✅ ROMScanner created");
+    } else {
+        ASFW_LOG(Controller, "Reusing existing ROMScanner instance");
+    }
+
+    if (ctx.deps.romScanner) {
+        ctx.controller->AttachROMScanner(ctx.deps.romScanner);
+    }
+}
 } // namespace
 
 bool ASFWDriver::init() {
@@ -137,39 +293,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
 
 #ifndef ASFW_HOST_TEST
     // Provider termination notifications (hot-unplug): quiesce ASAP to avoid fatal MMIO reads.
-    {
-        uint64_t providerEntryId = 0;
-        if (provider && provider->GetRegistryEntryID(&providerEntryId) == kIOReturnSuccess &&
-            providerEntryId != 0) {
-            auto matching = OSSharedPtr(OSDictionary::withCapacity(1), OSNoRetain);
-            auto idNum = OSSharedPtr(OSNumber::withNumber(providerEntryId, 64), OSNoRetain);
-            if (matching && idNum) {
-                matching->setObject(kIORegistryEntryIDKey, idNum.get());
-
-                IOServiceNotificationDispatchSource* rawSource = nullptr;
-                const kern_return_t notifyKr = IOServiceNotificationDispatchSource::Create(
-                    matching.get(), 0, ctx.workQueue.get(), &rawSource);
-                if (notifyKr == kIOReturnSuccess && rawSource) {
-                    auto source = OSSharedPtr(rawSource, OSNoRetain);
-
-                    OSAction* rawAction = nullptr;
-                    const kern_return_t actionKr =
-                        CreateActionProviderNotificationReady(0, &rawAction);
-                    if (actionKr == kIOReturnSuccess && rawAction) {
-                        ctx.providerNotificationAction = OSSharedPtr(rawAction, OSNoRetain);
-                        ctx.providerNotifications = std::move(source);
-
-                        (void)ctx.providerNotifications->SetHandler(
-                            ctx.providerNotificationAction.get());
-                        (void)ctx.providerNotifications->SetEnableWithCompletion(true, nullptr);
-                        ASFW_LOG(Controller,
-                                 "✅ Provider termination notifications armed (entryID=%llu)",
-                                 providerEntryId);
-                    }
-                }
-            }
-        }
-    }
+    ArmProviderTerminationNotifications(*this, provider, ctx);
 #endif
 
     kr = ctx.deps.hardware->Attach(this, provider);
@@ -224,50 +348,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
         ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
     }
 
-    if (ctx.deps.fcpResponseRouter && ctx.deps.asyncSubsystem) {
-        if (auto* router = ctx.deps.asyncSubsystem->GetPacketRouter()) {
-            router->RegisterRequestHandler(
-                0x1, // tCode for Block Write Request
-                [fcpRouter =
-                     ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
-                    if (fcpRouter) {
-                        const ASFW::Protocols::Ports::BlockWriteRequestView request{
-                            .sourceID = packet.sourceID,
-                            .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
-                            .payload = packet.payload,
-                        };
+    RegisterFcpBlockWriteHandler(ctx);
+    RegisterDiceNotificationHandler(ctx);
 
-                        const auto disposition = fcpRouter->RouteBlockWrite(request);
-                        if (disposition ==
-                            ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
-                            return ASFW::Async::ResponseCode::AddressError;
-                        }
-                        return ASFW::Async::ResponseCode::Complete;
-                    }
-                    return ASFW::Async::ResponseCode::NoResponse;
-                });
-            ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
-        }
-    }
-
-    if (ctx.deps.speedPolicy) {
-        if (!ctx.deps.romScanner) {
-            OSSharedPtr<IODispatchQueue> discoveryQueue = nullptr;
-            if (ctx.deps.scheduler) {
-                discoveryQueue = ctx.deps.scheduler->Queue();
-            }
-            ASFW::Discovery::ROMScannerParams scannerParams{};
-            ctx.deps.romScanner = std::make_shared<ASFW::Discovery::ROMScanner>(
-                ctx.controller->Bus(), *ctx.deps.speedPolicy, scannerParams, discoveryQueue);
-            ASFW_LOG(Controller, "✅ ROMScanner created");
-        } else {
-            ASFW_LOG(Controller, "Reusing existing ROMScanner instance");
-        }
-
-        if (ctx.deps.romScanner) {
-            ctx.controller->AttachROMScanner(ctx.deps.romScanner);
-        }
-    }
+    EnsureRomScanner(ctx);
 
     kr = ctx.controller->Start(provider);
     if (kr != kIOReturnSuccess) {
@@ -765,19 +849,24 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
 
     const uint32_t pcmChannels = nub->GetOutputChannelCount();
     uint32_t am824Slots = pcmChannels;
+    ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
     if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
         record && record->protocol) {
         ASFW::Audio::AudioStreamRuntimeCaps caps{};
         if (record->protocol->GetRuntimeAudioStreamCaps(caps) && caps.hostToDeviceAm824Slots > 0) {
             am824Slots = caps.hostToDeviceAm824Slots;
         }
+        wireFormat = ResolveHostToDeviceWireFormat(record->vendorId,
+                                                   record->modelId,
+                                                   pcmChannels,
+                                                   am824Slots);
     }
 
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
     const uint32_t streamModeRaw = nub->GetStreamMode();
 
     return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
-                                   am824Slots, txMem, txBytes, nullptr, 0, 0);
+                                   am824Slots, wireFormat, txMem, txBytes, nullptr, 0, 0);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {

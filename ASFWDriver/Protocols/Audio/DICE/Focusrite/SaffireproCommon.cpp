@@ -8,92 +8,147 @@
 
 namespace ASFW::Audio::DICE::Focusrite {
 
+namespace {
+
+constexpr size_t kOutputPairCount = 3;
+
+uint32_t ClampVolumeToWire(int8_t logicalVolume) noexcept {
+    int value = logicalVolume;
+    if (value < OutputGroupState::kVolMin) {
+        value = OutputGroupState::kVolMin;
+    } else if (value > OutputGroupState::kVolMax) {
+        value = OutputGroupState::kVolMax;
+    }
+
+    return static_cast<uint32_t>(OutputGroupState::kVolMax - static_cast<int8_t>(value));
+}
+
+} // namespace
+
 // ============================================================================
 // InputParams
 // ============================================================================
 
 InputParams InputParams::FromWire(const uint8_t* data) {
     InputParams p;
-    
-    // Mic levels: bytes 0-1
-    p.micLevels[0] = static_cast<MicInputLevel>(data[0]);
-    p.micLevels[1] = static_cast<MicInputLevel>(data[1]);
-    
-    // Line levels: bytes 2-3
-    p.lineLevels[0] = static_cast<LineInputLevel>(data[2]);
-    p.lineLevels[1] = static_cast<LineInputLevel>(data[3]);
-    
+
+    const uint32_t micFlags = DICETransaction::QuadletFromWire(data);
+    const uint32_t lineFlags = DICETransaction::QuadletFromWire(data + 4);
+
+    for (size_t i = 0; i < p.micLevels.size(); ++i) {
+        const uint16_t flags = static_cast<uint16_t>(micFlags >> (16 * i));
+        p.micLevels[i] = (flags & 0x0002U) != 0
+            ? MicInputLevel::Instrument
+            : MicInputLevel::Line;
+    }
+
+    for (size_t i = 0; i < p.lineLevels.size(); ++i) {
+        const uint16_t flags = static_cast<uint16_t>(lineFlags >> (16 * i));
+        p.lineLevels[i] = (flags & 0x0001U) != 0
+            ? LineInputLevel::High
+            : LineInputLevel::Low;
+    }
+
     return p;
 }
 
 void InputParams::ToWire(uint8_t* data) const {
-    data[0] = static_cast<uint8_t>(micLevels[0]);
-    data[1] = static_cast<uint8_t>(micLevels[1]);
-    data[2] = static_cast<uint8_t>(lineLevels[0]);
-    data[3] = static_cast<uint8_t>(lineLevels[1]);
-    data[4] = 0;  // Reserved
-    data[5] = 0;
-    data[6] = 0;
-    data[7] = 0;
+    uint32_t micFlags = 0;
+    for (size_t i = 0; i < micLevels.size(); ++i) {
+        if (micLevels[i] == MicInputLevel::Instrument) {
+            micFlags |= 0x0002U << (16 * i);
+        }
+    }
+
+    uint32_t lineFlags = 0;
+    for (size_t i = 0; i < lineLevels.size(); ++i) {
+        if (lineLevels[i] == LineInputLevel::High) {
+            lineFlags |= 0x0001U << (16 * i);
+        }
+    }
+
+    DICETransaction::QuadletToWire(micFlags, data);
+    DICETransaction::QuadletToWire(lineFlags, data + 4);
 }
 
 // ============================================================================
 // OutputGroupState
 // ============================================================================
 
-OutputGroupState OutputGroupState::FromWire(const uint8_t* data, size_t entryCount) {
+OutputGroupState OutputGroupState::FromWire(const uint8_t* data) {
     OutputGroupState s;
-    
-    // First quadlet: mute/dim status
-    uint32_t status = DICETransaction::QuadletFromWire(data);
-    s.muteEnabled = (status & 0x01) != 0;
-    s.dimEnabled  = (status & 0x02) != 0;
-    
-    // Second quadlet: hardware knob value
-    s.hwKnobValue = static_cast<int8_t>(DICETransaction::QuadletFromWire(data + 4) & 0x7F);
-    
-    // Per-output entries start at offset 8
-    // Each entry: 4 bytes (volume, flags)
-    for (size_t i = 0; i < entryCount && i < 6; ++i) {
-        size_t offset = 8 + i * 8;
-        
-        uint32_t volData = DICETransaction::QuadletFromWire(data + offset);
-        s.volumes[i] = static_cast<int8_t>(volData & 0x7F);
-        s.volMutes[i] = (volData & 0x80) != 0;
-        
-        uint32_t flags = DICETransaction::QuadletFromWire(data + offset + 4);
-        s.volHwCtls[i]  = (flags & 0x01) != 0;
-        s.muteHwCtls[i] = (flags & 0x02) != 0;
-        s.dimHwCtls[i]  = (flags & 0x04) != 0;
+
+    s.muteEnabled = DICETransaction::QuadletFromWire(data) != 0;
+    s.dimEnabled = DICETransaction::QuadletFromWire(data + 4) != 0;
+
+    for (size_t pair = 0; pair < kOutputPairCount; ++pair) {
+        const size_t pos = 0x08 + pair * 4;
+        const uint32_t packedVols = DICETransaction::QuadletFromWire(data + pos);
+        for (size_t lane = 0; lane < 2; ++lane) {
+            const size_t index = pair * 2 + lane;
+            const int8_t stored = static_cast<int8_t>((packedVols >> (lane * 8)) & 0xFFU);
+            s.volumes[index] = static_cast<int8_t>(kVolMax - stored);
+        }
     }
-    
+
+    for (size_t pair = 0; pair < kOutputPairCount; ++pair) {
+        const size_t pos = 0x1C + pair * 4;
+        const uint32_t flags = DICETransaction::QuadletFromWire(data + pos);
+        const size_t index = pair * 2;
+        s.volHwCtls[index + 0] = (flags & (1U << 0)) != 0;
+        s.volHwCtls[index + 1] = (flags & (1U << 1)) != 0;
+        s.volMutes[index + 0] = (flags & (1U << 2)) != 0;
+        s.volMutes[index + 1] = (flags & (1U << 3)) != 0;
+    }
+
+    const uint32_t dimMuteHw = DICETransaction::QuadletFromWire(data + 0x30);
+    for (size_t i = 0; i < s.muteHwCtls.size(); ++i) {
+        s.muteHwCtls[i] = (dimMuteHw & (1U << i)) != 0;
+        s.dimHwCtls[i] = (dimMuteHw & (1U << (i + 10))) != 0;
+    }
+
+    s.hwKnobValue = static_cast<int8_t>(static_cast<int32_t>(DICETransaction::QuadletFromWire(data + 0x48)));
     return s;
 }
 
 void OutputGroupState::ToWire(uint8_t* data) const {
-    // First quadlet: mute/dim status
-    uint32_t status = 0;
-    if (muteEnabled) status |= 0x01;
-    if (dimEnabled)  status |= 0x02;
-    DICETransaction::QuadletToWire(status, data);
-    
-    // Second quadlet: hardware knob value
-    DICETransaction::QuadletToWire(static_cast<uint32_t>(hwKnobValue) & 0x7F, data + 4);
-    
-    // Per-output entries
-    for (size_t i = 0; i < 6; ++i) {
-        size_t offset = 8 + i * 8;
-        
-        uint32_t volData = static_cast<uint32_t>(volumes[i]) & 0x7F;
-        if (volMutes[i]) volData |= 0x80;
-        DICETransaction::QuadletToWire(volData, data + offset);
-        
-        uint32_t flags = 0;
-        if (volHwCtls[i])  flags |= 0x01;
-        if (muteHwCtls[i]) flags |= 0x02;
-        if (dimHwCtls[i])  flags |= 0x04;
-        DICETransaction::QuadletToWire(flags, data + offset + 4);
+    for (size_t i = 0; i < kOutputGroupStateSize; ++i) {
+        data[i] = 0;
     }
+
+    DICETransaction::QuadletToWire(muteEnabled ? 1U : 0U, data);
+    DICETransaction::QuadletToWire(dimEnabled ? 1U : 0U, data + 4);
+
+    for (size_t pair = 0; pair < kOutputPairCount; ++pair) {
+        const size_t index = pair * 2;
+        const uint32_t packedVols =
+            ClampVolumeToWire(volumes[index + 0]) |
+            (ClampVolumeToWire(volumes[index + 1]) << 8);
+        DICETransaction::QuadletToWire(packedVols, data + 0x08 + pair * 4);
+    }
+
+    for (size_t pair = 0; pair < kOutputPairCount; ++pair) {
+        const size_t index = pair * 2;
+        uint32_t flags = 0;
+        if (volHwCtls[index + 0]) flags |= 1U << 0;
+        if (volHwCtls[index + 1]) flags |= 1U << 1;
+        if (volMutes[index + 0]) flags |= 1U << 2;
+        if (volMutes[index + 1]) flags |= 1U << 3;
+        DICETransaction::QuadletToWire(flags, data + 0x1C + pair * 4);
+    }
+
+    uint32_t dimMuteHw = 0;
+    for (size_t i = 0; i < muteHwCtls.size(); ++i) {
+        if (muteHwCtls[i]) {
+            dimMuteHw |= 1U << i;
+        }
+        if (dimHwCtls[i]) {
+            dimMuteHw |= 1U << (i + 10);
+        }
+    }
+    DICETransaction::QuadletToWire(dimMuteHw, data + 0x30);
+
+    DICETransaction::QuadletToWire(static_cast<uint32_t>(static_cast<int32_t>(hwKnobValue)), data + 0x48);
 }
 
 } // namespace ASFW::Audio::DICE::Focusrite

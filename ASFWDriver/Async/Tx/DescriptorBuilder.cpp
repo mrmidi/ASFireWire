@@ -25,12 +25,12 @@ namespace {
 constexpr std::size_t kImmediateCapacity = 16;
 constexpr std::size_t kInvalidRingIndex = std::numeric_limits<std::size_t>::max();
 
-inline void TraceBytes(const char* tag, const void* data, size_t length) {
+inline void TraceBytes(const char* tag, const uint8_t* data, size_t length) {
     if (!DMAMemoryManager::IsTracingEnabled() || data == nullptr || length == 0) {
         return;
     }
 
-    const auto* bytes = static_cast<const uint8_t*>(data);
+    const auto* bytes = data;
     const size_t preview = std::min(length, static_cast<size_t>(64));
     char line[3 * 16 + 1];
 
@@ -53,6 +53,11 @@ inline void TraceBytes(const char* tag, const void* data, size_t length) {
                  offset,
                  line);
     }
+}
+
+template <typename T>
+inline void TraceBytes(const char* tag, const T* data, size_t length) {
+    TraceBytes(tag, reinterpret_cast<const uint8_t*>(data), length);
 }
 
 } // namespace
@@ -127,7 +132,7 @@ size_t DescriptorBuilder::ReserveBlocks(uint8_t blocks) noexcept {
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(const void* headerData,
+DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(const uint8_t* headerData,
                                                                             std::size_t headerSize, // NOLINT(bugprone-easily-swappable-parameters)
                                                                             uint64_t payloadDeviceAddress,
                                                                             std::size_t payloadSize,
@@ -539,9 +544,12 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
             ASFW_LOG_V1(Async, "   ❌ ERROR: Header reqCount is %u, should be 16!", headerReqCount);
         }
 
-        // Only validate payload size for LOCK transactions (tCode 0x9)
-        if (tCode == 0x9 && payloadReqCount != 8) {
-            ASFW_LOG_V1(Async, "   ❌ ERROR: LOCK payload reqCount is %u, should be 8!", payloadReqCount);
+        // LOCK transactions can carry either 8-byte or 16-byte operands.
+        if (tCode == 0x9 && payloadReqCount != payloadSize) {
+            ASFW_LOG_V1(Async,
+                        "   ❌ ERROR: LOCK payload reqCount is %u, should be %zu!",
+                        payloadReqCount,
+                        payloadSize);
         }
 
         // Re-check Q3 after descriptor configuration (ensure it wasn't corrupted)

@@ -159,7 +159,7 @@ final class RomExplorerViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            guard let data = connector.getConfigROM(nodeId: node.nodeId, generation: gen) else {
+            guard let result = connector.getConfigROM(nodeId: node.nodeId, generation: gen) else {
                 DispatchQueue.main.async {
                     self.isLoading = false
                     self.liveReadState = .idle
@@ -170,9 +170,12 @@ final class RomExplorerViewModel: ObservableObject {
                 return
             }
             DispatchQueue.main.async {
-                self.parseAndPublishROM(data: data,
+                let staleSuffix = result.isExactGenerationMatch
+                    ? ""
+                    : " (stale cache gen \(result.resolvedGeneration), requested gen \(gen))"
+                self.parseAndPublishROM(data: result.data,
                                         sourceType: .driver,
-                                        statusMessage: "ROM loaded from cache (\(data.count) bytes)")
+                                        statusMessage: "ROM loaded from cache (\(result.data.count) bytes)\(staleSuffix)")
             }
         }
     }
@@ -232,11 +235,16 @@ final class RomExplorerViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
-            if let data = connector.getConfigROM(nodeId: nodeId, generation: gen) {
+            if let result = connector.getConfigROM(nodeId: nodeId, generation: gen) {
                 DispatchQueue.main.async {
-                    self.parseAndPublishROM(data: data,
-                                            sourceType: .driver,
-                                            statusMessage: "ROM read complete (\(data.count) bytes)")
+                    if result.isExactGenerationMatch {
+                        self.parseAndPublishROM(data: result.data,
+                                                sourceType: .driver,
+                                                statusMessage: "ROM read complete (\(result.data.count) bytes)")
+                    } else {
+                        self.statusMessage = "Waiting for fresh ROM read... saw stale cache from gen \(result.resolvedGeneration)"
+                        self.pollForROM(nodeId: nodeId, remainingRetries: remainingRetries - 1)
+                    }
                 }
             } else {
                 DispatchQueue.main.async {

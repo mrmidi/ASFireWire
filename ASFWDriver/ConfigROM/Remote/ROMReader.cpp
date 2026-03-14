@@ -355,22 +355,38 @@ void ROMReader::ReadRootDirQuadlets(uint8_t nodeId, Generation generation, FwSpe
             ReadQuadletsBEImpl(
                 *bus, dispatchQueue, nodeId, generation, speed,
                 offsetBytes + ASFW::ConfigROM::kQuadletBytes, entryCount,
-                [nodeId, generation, offsetBytes, hdrBe,
+                [nodeId, generation, offsetBytes, entryCount, hdrBe,
                  completionHolder](ReadResult entries) mutable {
                     if (!completionHolder || !*completionHolder) {
                         return;
                     }
 
                     ReadResult out{};
-                    out.success = true;
                     out.nodeId = nodeId;
                     out.generation = generation;
                     out.address = FW::ConfigROMAddr::kAddressLo + offsetBytes;
-                    out.status = entries.status;
+
+                    const uint32_t actualEntryCount =
+                        static_cast<uint32_t>(entries.quadletsBE.size());
+                    const bool complete = entries.success &&
+                                          entries.status == Async::AsyncStatus::kSuccess &&
+                                          actualEntryCount == entryCount;
+                    const bool truncated = actualEntryCount < entryCount;
+                    if (!complete) {
+                        ASFW_LOG(
+                            ConfigROM,
+                            "ROMReader::ReadRootDirQuadlets: incomplete root directory read "
+                            "node=%u offset=0x%x expectedEntries=%u actualEntries=%u status=%{public}s",
+                            nodeId, offsetBytes, entryCount, actualEntryCount,
+                            Async::ToString(entries.status));
+                    }
+
+                    out.success = complete;
+                    out.status = truncated ? Async::AsyncStatus::kShortRead : entries.status;
 
                     out.quadletsBE.reserve(1 + entries.quadletsBE.size());
                     out.quadletsBE.push_back(hdrBe);
-                    if (entries.success) {
+                    if (!entries.quadletsBE.empty()) {
                         out.quadletsBE.insert(out.quadletsBE.end(), entries.quadletsBE.begin(),
                                               entries.quadletsBE.end());
                     }

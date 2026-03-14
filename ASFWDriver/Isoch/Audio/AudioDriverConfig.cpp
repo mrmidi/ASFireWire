@@ -48,14 +48,7 @@ void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& inOutConfig) {
     }
 }
 
-} // namespace
-
-void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
-                                          ParsedAudioDriverConfig& inOutConfig) {
-    if (!properties) {
-        return;
-    }
-
+void ParseIdentityProperties(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
     if (auto* guid = OSDynamicCast(OSNumber, properties->getObject("ASFWGUID"))) {
         inOutConfig.guid = guid->unsigned64BitValue();
     }
@@ -71,78 +64,109 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     if (auto* outputChannels = OSDynamicCast(OSNumber, properties->getObject("ASFWOutputChannelCount"))) {
         inOutConfig.outputChannelCount = outputChannels->unsigned32BitValue();
     }
+}
 
-    inOutConfig.hasPhantomOverride = ReadOSBoolValue(properties->getObject("ASFWHasPhantomOverride"), false);
+void ParsePhantomProperties(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
+    inOutConfig.hasPhantomOverride =
+        ReadOSBoolValue(properties->getObject("ASFWHasPhantomOverride"), false);
     if (auto* supportedMask = OSDynamicCast(OSNumber, properties->getObject("ASFWPhantomSupportedMask"))) {
         inOutConfig.phantomSupportedMask = supportedMask->unsigned32BitValue();
     }
     if (auto* initialMask = OSDynamicCast(OSNumber, properties->getObject("ASFWPhantomInitialMask"))) {
         inOutConfig.phantomInitialMask = initialMask->unsigned32BitValue();
     }
+}
 
+void ParseDevicePresentationProperties(OSDictionary* properties,
+                                       ParsedAudioDriverConfig& inOutConfig) {
     if (auto* name = OSDynamicCast(OSString, properties->getObject("ASFWDeviceName"))) {
         strlcpy(inOutConfig.deviceName, name->getCStringNoCopy(), sizeof(inOutConfig.deviceName));
     }
-
     if (auto* count = OSDynamicCast(OSNumber, properties->getObject("ASFWChannelCount"))) {
         inOutConfig.channelCount = count->unsigned32BitValue();
     }
+    if (auto* rate = OSDynamicCast(OSNumber, properties->getObject("ASFWCurrentSampleRate"))) {
+        inOutConfig.currentSampleRate = static_cast<double>(rate->unsigned32BitValue());
+    }
+    if (auto* mode = OSDynamicCast(OSNumber, properties->getObject("ASFWStreamMode"))) {
+        inOutConfig.streamMode = (mode->unsigned32BitValue() ==
+                                  static_cast<uint32_t>(StreamMode::kBlocking))
+            ? StreamMode::kBlocking
+            : StreamMode::kNonBlocking;
+    }
+}
 
-    if (auto* rates = OSDynamicCast(OSArray, properties->getObject("ASFWSampleRates"))) {
-        inOutConfig.sampleRateCount = 0;
-        const uint32_t cappedCount = std::min(rates->getCount(), kMaxSampleRates);
-        for (uint32_t i = 0; i < cappedCount; ++i) {
-            auto* rate = OSDynamicCast(OSNumber, rates->getObject(i));
-            if (rate == nullptr) {
-                continue;
-            }
-            inOutConfig.sampleRates[inOutConfig.sampleRateCount++] =
-                static_cast<double>(rate->unsigned32BitValue());
-        }
+void ParseSampleRates(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
+    auto* rates = OSDynamicCast(OSArray, properties->getObject("ASFWSampleRates"));
+    if (rates == nullptr) {
+        return;
     }
 
+    inOutConfig.sampleRateCount = 0;
+    const uint32_t cappedCount = std::min(rates->getCount(), kMaxSampleRates);
+    for (uint32_t i = 0; i < cappedCount; ++i) {
+        auto* rate = OSDynamicCast(OSNumber, rates->getObject(i));
+        if (rate == nullptr) {
+            continue;
+        }
+        inOutConfig.sampleRates[inOutConfig.sampleRateCount++] =
+            static_cast<double>(rate->unsigned32BitValue());
+    }
+}
+
+void ParsePlugNames(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
     if (auto* inputName = OSDynamicCast(OSString, properties->getObject("ASFWInputPlugName"))) {
         strlcpy(inOutConfig.inputPlugName, inputName->getCStringNoCopy(), sizeof(inOutConfig.inputPlugName));
     }
     if (auto* outputName = OSDynamicCast(OSString, properties->getObject("ASFWOutputPlugName"))) {
         strlcpy(inOutConfig.outputPlugName, outputName->getCStringNoCopy(), sizeof(inOutConfig.outputPlugName));
     }
+}
 
-    if (auto* rate = OSDynamicCast(OSNumber, properties->getObject("ASFWCurrentSampleRate"))) {
-        inOutConfig.currentSampleRate = static_cast<double>(rate->unsigned32BitValue());
+void ParseBoolControlOverrides(OSDictionary* properties, ParsedAudioDriverConfig& inOutConfig) {
+    auto* overrideArray = OSDynamicCast(OSArray, properties->getObject("ASFWBoolControlOverrides"));
+    if (overrideArray == nullptr) {
+        return;
     }
 
-    if (auto* mode = OSDynamicCast(OSNumber, properties->getObject("ASFWStreamMode"))) {
-        inOutConfig.streamMode = (mode->unsigned32BitValue() == static_cast<uint32_t>(StreamMode::kBlocking))
-            ? StreamMode::kBlocking
-            : StreamMode::kNonBlocking;
-    }
-
-    if (auto* overrideArray = OSDynamicCast(OSArray, properties->getObject("ASFWBoolControlOverrides"))) {
-        for (uint32_t index = 0; index < overrideArray->getCount(); ++index) {
-            auto* entry = OSDynamicCast(OSDictionary, overrideArray->getObject(index));
-            if (!entry) {
-                continue;
-            }
-
-            auto* classNumber = OSDynamicCast(OSNumber, entry->getObject("ClassID"));
-            auto* scopeNumber = OSDynamicCast(OSNumber, entry->getObject("Scope"));
-            auto* elementNumber = OSDynamicCast(OSNumber, entry->getObject("Element"));
-            if (classNumber == nullptr || scopeNumber == nullptr || elementNumber == nullptr) {
-                continue;
-            }
-
-            const BoolControlDescriptor descriptor{
-                .classIdFourCC = classNumber->unsigned32BitValue(),
-                .scopeFourCC = scopeNumber->unsigned32BitValue(),
-                .element = elementNumber->unsigned32BitValue(),
-                .isSettable = ReadOSBoolValue(entry->getObject("Settable"), false),
-                .initialValue = ReadOSBoolValue(entry->getObject("Initial"), false),
-            };
-            AppendBoolControl(inOutConfig, descriptor);
+    for (uint32_t index = 0; index < overrideArray->getCount(); ++index) {
+        auto* entry = OSDynamicCast(OSDictionary, overrideArray->getObject(index));
+        if (!entry) {
+            continue;
         }
+
+        auto* classNumber = OSDynamicCast(OSNumber, entry->getObject("ClassID"));
+        auto* scopeNumber = OSDynamicCast(OSNumber, entry->getObject("Scope"));
+        auto* elementNumber = OSDynamicCast(OSNumber, entry->getObject("Element"));
+        if (classNumber == nullptr || scopeNumber == nullptr || elementNumber == nullptr) {
+            continue;
+        }
+
+        const BoolControlDescriptor descriptor{
+            .classIdFourCC = classNumber->unsigned32BitValue(),
+            .scopeFourCC = scopeNumber->unsigned32BitValue(),
+            .element = elementNumber->unsigned32BitValue(),
+            .isSettable = ReadOSBoolValue(entry->getObject("Settable"), false),
+            .initialValue = ReadOSBoolValue(entry->getObject("Initial"), false),
+        };
+        AppendBoolControl(inOutConfig, descriptor);
+    }
+}
+
+} // namespace
+
+void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
+                                          ParsedAudioDriverConfig& inOutConfig) {
+    if (!properties) {
+        return;
     }
 
+    ParseIdentityProperties(properties, inOutConfig);
+    ParsePhantomProperties(properties, inOutConfig);
+    ParseDevicePresentationProperties(properties, inOutConfig);
+    ParseSampleRates(properties, inOutConfig);
+    ParsePlugNames(properties, inOutConfig);
+    ParseBoolControlOverrides(properties, inOutConfig);
     BuildChannelNamesFromPlugs(inOutConfig);
 }
 

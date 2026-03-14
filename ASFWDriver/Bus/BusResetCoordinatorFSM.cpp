@@ -116,34 +116,44 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRestoringConfigROM() {
     BuildTopology();
 
     if (cycle_.acceptedTopology.has_value()) {
-        EvaluateRootDelegation(*cycle_.acceptedTopology);
-
-        bool delegationRequested = false;
-        if (busManager_ != nullptr) {
-            if (auto command =
-                    busManager_->AssignCycleMaster(*cycle_.acceptedTopology,
-                                                   topologyManager_->GetBadIRMFlags())) {
-                RequestSoftwareReset({ResetRequestKind::Delegation, ResetFlavor::Long, command,
-                                      "AssignCycleMaster"});
-                delegationRequested = true;
-            }
-
-            if (!delegationRequested && cycle_.acceptedSelfId.has_value()) {
-                if (const auto gapDecision =
-                        busManager_->EvaluateGapPolicy(*cycle_.acceptedTopology,
-                                                       cycle_.acceptedSelfId->quads)) {
-                    BusManager::PhyConfigCommand command{};
-                    command.gapCount = gapDecision->gapCount;
-                    RequestSoftwareReset({ResetRequestKind::GapCorrection, ResetFlavor::Long, command,
-                                          BusManager::GapDecisionReasonString(gapDecision->reason),
-                                          gapDecision->reason});
-                }
-            }
-        }
+        MaybeRequestTopologyDrivenReset();
     }
 
     TransitionTo(State::ClearingBusReset, "Config ROM restored");
     return StepResult::Continue;
+}
+
+void BusResetCoordinator::MaybeRequestTopologyDrivenReset() {
+    if (!cycle_.acceptedTopology.has_value() || busManager_ == nullptr) {
+        return;
+    }
+
+    EvaluateRootDelegation(*cycle_.acceptedTopology);
+
+    if (auto command =
+            busManager_->AssignCycleMaster(*cycle_.acceptedTopology,
+                                           topologyManager_->GetBadIRMFlags())) {
+        RequestSoftwareReset({ResetRequestKind::Delegation, ResetFlavor::Long, command,
+                              "AssignCycleMaster"});
+        return;
+    }
+
+    if (!cycle_.acceptedSelfId.has_value()) {
+        return;
+    }
+
+    const auto gapDecision =
+        busManager_->EvaluateGapPolicy(*cycle_.acceptedTopology,
+                                       cycle_.acceptedSelfId->quads);
+    if (!gapDecision) {
+        return;
+    }
+
+    BusManager::PhyConfigCommand command{};
+    command.gapCount = gapDecision->gapCount;
+    RequestSoftwareReset({ResetRequestKind::GapCorrection, ResetFlavor::Long, command,
+                          BusManager::GapDecisionReasonString(gapDecision->reason),
+                          gapDecision->reason});
 }
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepClearingBusReset() {

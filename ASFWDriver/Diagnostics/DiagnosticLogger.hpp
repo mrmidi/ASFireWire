@@ -134,6 +134,14 @@ private:
         return (selfId >> 24) & 0x3F;
     }
 
+    static size_t GetSelfIDSequenceLength(std::span<const uint32_t> selfIdBuffer, size_t start) noexcept;
+    static void AppendPortRange(std::string& out,
+                                std::span<const uint32_t> sequence,
+                                size_t firstPort,
+                                size_t portCount);
+    static void AppendPrimarySelfID(std::string& out, std::span<const uint32_t> sequence);
+    static void AppendExtendedSelfIDs(std::string& out, std::span<const uint32_t> sequence);
+
     // Extract port status from Self-ID sequence
     static PortStatus GetPortStatus(std::span<const uint32_t> sequence, size_t portIndex);
 };

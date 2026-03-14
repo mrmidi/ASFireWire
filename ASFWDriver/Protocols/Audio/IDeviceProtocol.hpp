@@ -26,6 +26,11 @@ struct AudioStreamRuntimeCaps {
     uint32_t sampleRateHz{0};
 };
 
+struct AudioDuplexChannels {
+    uint8_t deviceToHostIsoChannel{0};  // DICE TX / host IR
+    uint8_t hostToDeviceIsoChannel{1};  // DICE RX / host IT
+};
+
 /// Interface for device-specific protocol handlers
 ///
 /// Device protocols are instantiated by DeviceProtocolFactory when a
@@ -62,7 +67,27 @@ public:
     /// Optional bring-up hook to configure device-side duplex streaming at 48kHz.
     /// Drivers can call this before starting host IR/IT contexts.
     /// Implementations should be idempotent and return quickly.
-    virtual IOReturn StartDuplex48k() { return kIOReturnUnsupported; }
+    virtual IOReturn StartDuplex48k(const AudioDuplexChannels& channels) {
+        (void)channels;
+        return kIOReturnUnsupported;
+    }
+
+    /// Optional hook after host IR is already running, but before host IT starts.
+    /// DICE devices can use this to arm device-side transmit so IR can establish SYT.
+    virtual IOReturn ArmDuplex48kAfterReceiveStart() {
+        return kIOReturnUnsupported;
+    }
+
+    /// Optional completion hook after host IR/IT contexts are running.
+    /// DICE devices can use this to verify stream lock/state.
+    virtual IOReturn CompleteDuplex48kStart() {
+        return kIOReturnUnsupported;
+    }
+
+    /// Optional teardown hook to stop device-side duplex state.
+    virtual IOReturn StopDuplex() {
+        return kIOReturnUnsupported;
+    }
 
     /// Update volatile runtime context that can change across bus resets.
     virtual void UpdateRuntimeContext(uint16_t nodeId,

@@ -35,6 +35,7 @@ struct IsochDuplexStartParams {
 
     uint32_t deviceToHostAm824Slots{0};
     uint32_t hostToDeviceAm824Slots{0};
+    ASFW::Encoding::AudioWireFormat hostToDeviceWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
 
     ASFW::Audio::Model::StreamMode streamMode{ASFW::Audio::Model::StreamMode::kNonBlocking};
 
@@ -43,7 +44,7 @@ struct IsochDuplexStartParams {
     OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory{};
     uint64_t txQueueBytes{0};
 
-    void* zeroCopyBase{nullptr};
+    const int32_t* zeroCopyBase{nullptr};
     uint64_t zeroCopyBytes{0};
     uint32_t zeroCopyFrames{0};
 };
@@ -66,13 +67,16 @@ public:
                                 uint32_t streamModeRaw,
                                 uint32_t pcmChannels,
                                 uint32_t am824Slots,
+                                ASFW::Encoding::AudioWireFormat wireFormat,
                                 OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory,
                                 uint64_t txQueueBytes,
-                                void* zeroCopyBase,
+                                const int32_t* zeroCopyBase,
                                 uint64_t zeroCopyBytes,
                                 uint32_t zeroCopyFrames);
 
     kern_return_t StopTransmit();
+
+    kern_return_t BeginSplitDuplex(uint64_t guid);
 
     kern_return_t StartDuplex(const IsochDuplexStartParams& params,
                               HardwareInterface& hardware);
@@ -85,6 +89,8 @@ public:
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
 private:
+    kern_return_t ClaimDuplexGuid(uint64_t guid);
+
     struct SharedQueueMapping {
         OSSharedPtr<IOBufferMemoryDescriptor> memory{};
         OSSharedPtr<IOMemoryMap> map{};
@@ -96,8 +102,8 @@ private:
             bytes = 0;
         }
 
-        [[nodiscard]] void* BaseAddress() const noexcept {
-            return map ? reinterpret_cast<void*>(static_cast<uintptr_t>(map->GetAddress())) : nullptr;
+        [[nodiscard]] uint8_t* BaseAddress() const noexcept {
+            return map ? reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(map->GetAddress())) : nullptr;
         }
     };
 

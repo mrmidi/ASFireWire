@@ -72,3 +72,15 @@ TEST(ConfigROMBIBParseTests, CRC_Mismatch_IsWarning_NotFailure) {
     EXPECT_EQ(bibRes->computed.value(), 0xEABFu);
     EXPECT_EQ(bibRes->bib.crc, 0xEABEu);
 }
+
+TEST(ConfigROMBIBParseTests, ParseDirectory_FailsWhenHeaderExceedsAvailableEntries) {
+    const std::array<uint32_t, 2> dirWire = {
+        WireU32FromBENumeric(0x00030000u), // header claims 3 entries
+        WireU32FromBENumeric(0x03000001u), // only one entry available
+    };
+
+    auto parsed = ASFW::Discovery::ConfigROMParser::ParseDirectory(std::span{dirWire}, 64);
+    ASSERT_FALSE(parsed.has_value());
+    EXPECT_EQ(parsed.error().code, ASFW::Discovery::ConfigROMParser::ErrorCode::OutOfBounds);
+    EXPECT_EQ(parsed.error().offsetQuadlets, 2u);
+}

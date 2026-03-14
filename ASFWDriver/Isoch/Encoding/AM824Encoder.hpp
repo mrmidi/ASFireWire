@@ -15,6 +15,19 @@
 namespace ASFW {
 namespace Encoding {
 
+/// Normalize a 24-bit signed PCM value stored in the low 24 bits of a 32-bit word.
+///
+/// Some producers provide 24-in-32 samples without sign-extending bit 23 into the
+/// upper byte. The Saffire raw 9-slot playback path expects canonical signed 32-bit
+/// values before byte-swapping to wire order, so this helper reconstructs that form.
+constexpr int32_t NormalizeSigned24In32LowAligned(int32_t pcmSample) noexcept {
+    uint32_t sample24 = static_cast<uint32_t>(pcmSample) & 0x00FFFFFFu;
+    if ((sample24 & 0x00800000u) != 0u) {
+        sample24 |= 0xFF000000u;
+    }
+    return static_cast<int32_t>(sample24);
+}
+
 /// AM824 label byte for MBLA (Multi-bit Linear Audio)
 constexpr uint8_t kAM824LabelMBLA = 0x40;
 /// AM824 label base for MIDI conformant data (IEC 61883-6)

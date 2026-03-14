@@ -180,7 +180,7 @@ uint32_t IsochReceiveContext::Poll() {
     return processed;
 }
 
-void IsochReceiveContext::SetSharedRxQueue(void* base, uint64_t bytes) {
+void IsochReceiveContext::SetSharedRxQueue(uint8_t* base, uint64_t bytes) {
     audio_.SetSharedRxQueue(base, bytes);
 }
 

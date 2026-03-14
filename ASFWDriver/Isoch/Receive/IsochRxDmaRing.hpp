@@ -63,7 +63,7 @@ public:
             }
 
             const uint16_t actualLength = (resCount <= reqCount) ? static_cast<uint16_t>(reqCount - resCount) : 0;
-            auto* payloadVA = static_cast<uint8_t*>(bufferRing_.GetElementVA(idx));
+            auto* payloadVA = bufferRing_.GetElementVA(idx);
             if (payloadVA && actualLength > 0) {
                 dma.FetchFromDevice(payloadVA, actualLength);
             }
@@ -97,7 +97,9 @@ public:
 
     [[nodiscard]] OHCIDescriptor* DescriptorAt(size_t index) noexcept { return bufferRing_.GetDescriptor(index); }
 
-    [[nodiscard]] void* PayloadVA(size_t index) const noexcept { return bufferRing_.GetElementVA(index); }
+    [[nodiscard]] uint8_t* PayloadVA(size_t index) const noexcept {
+        return bufferRing_.GetElementVA(index);
+    }
 
     [[nodiscard]] uint32_t Descriptor0IOVA() const noexcept;
 
@@ -108,4 +110,3 @@ private:
 };
 
 } // namespace ASFW::Isoch::Rx
-

@@ -1247,6 +1247,27 @@ target_include_directories(DeviceProtocolFactoryTests PRIVATE ${ASFW_COMMON_INCL
 
 gtest_discover_tests(DeviceProtocolFactoryTests)
 
+# DICE / Focusrite protocol serialization tests
+add_executable(DiceFocusriteSerializationTests
+    "${ASFW_TESTS_DIR}/DiceFocusriteSerializationTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(DiceFocusriteSerializationTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiceFocusriteSerializationTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiceFocusriteSerializationTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DiceFocusriteSerializationTests)
+
 # Apogee protocol boolean control mapping tests
 add_executable(ApogeeBooleanControlMappingTests
     "${ASFW_TESTS_DIR}/ApogeeBooleanControlMappingTests.cpp"

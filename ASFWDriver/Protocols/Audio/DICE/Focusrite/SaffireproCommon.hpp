@@ -68,6 +68,7 @@ enum class SwNotice : uint32_t {
     EqHighCh1       = 0x16,
     Reverb          = 0x1A,
     DspEnable       = 0x1C,
+    RoutingRefresh  = 0x20,
     // Aliases for cleaner naming
     DspChanged         = 0x1C,  // Same as DspEnable
     EffectChanged      = 0x05,  // Same as ChStripFlags
@@ -115,7 +116,7 @@ struct InputParams {
 struct OutputGroupState {
     bool muteEnabled{false};
     bool dimEnabled{false};
-    std::array<int8_t, 6> volumes{};      ///< Per-output volume (0-127, inverted)
+    std::array<int8_t, 6> volumes{};      ///< Per-output logical volume (0=min, 127=max)
     std::array<bool, 6> volMutes{};       ///< Per-output mute
     std::array<bool, 6> volHwCtls{};      ///< Per-output hardware knob control
     std::array<bool, 6> muteHwCtls{};     ///< Per-output hardware mute button
@@ -127,7 +128,7 @@ struct OutputGroupState {
     static constexpr int8_t kVolMax = 127;
     
     /// Parse from big-endian wire format (0x50 bytes)
-    static OutputGroupState FromWire(const uint8_t* data, size_t entryCount);
+    static OutputGroupState FromWire(const uint8_t* data);
     
     /// Serialize to big-endian wire format (0x50 bytes)
     void ToWire(uint8_t* data) const;

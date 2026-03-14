@@ -93,43 +93,69 @@ void WatchdogCoordinator::HandleTick(ControllerCore* controller,
                                      ASFW::Isoch::IsochReceiveContext* isochReceiveContext,
                                      ASFW::Isoch::IsochTransmitContext* isochTransmitContext,
                                      StatusPublisher& statusPublisher) {
-    if (asyncSubsystem) {
-        asyncSubsystem->OnTimeoutTick();
-        const auto stats = asyncSubsystem->GetWatchdogStats();
-        statusPublisher.UpdateAsyncWatchdog(static_cast<uint32_t>(stats.expiredTransactions),
-                                            stats.tickCount, stats.lastTickUsec);
-    }
-
-    if (isochReceiveContext) {
-        if (isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
-            isochReceiveContext->Poll();
-        }
-        if (++isochLogDivider_ >= 500) {
-            isochLogDivider_ = 0;
-            if (isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running) {
-                if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-                    isochReceiveContext->GetStreamProcessor().LogStatistics();
-                    isochReceiveContext->LogHardwareState();
-                }
-            }
-        }
-    }
-
-    if (isochTransmitContext) {
-        if (isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running) {
-            isochTransmitContext->Poll();
-            isochTransmitContext->ServiceTxRecovery();
-            isochTransmitContext->KickTxVerifier();
-        }
-        if (++itLogDivider_ >= 1000) {
-            itLogDivider_ = 0;
-            if (isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running) {
-                isochTransmitContext->LogStatistics();
-            }
-        }
-    }
-
+    TickAsyncSubsystem(asyncSubsystem, statusPublisher);
+    TickIsochReceive(isochReceiveContext);
+    TickIsochTransmit(isochTransmitContext);
     statusPublisher.Publish(controller, asyncSubsystem, SharedStatusReason::Watchdog);
+}
+
+void WatchdogCoordinator::TickAsyncSubsystem(
+    ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
+    StatusPublisher& statusPublisher) const {
+    if (!asyncSubsystem) {
+        return;
+    }
+
+    asyncSubsystem->OnTimeoutTick();
+    const auto stats = asyncSubsystem->GetWatchdogStats();
+    statusPublisher.UpdateAsyncWatchdog(static_cast<uint32_t>(stats.expiredTransactions),
+                                        stats.tickCount,
+                                        stats.lastTickUsec);
+}
+
+void WatchdogCoordinator::TickIsochReceive(
+    ASFW::Isoch::IsochReceiveContext* isochReceiveContext) {
+    if (!isochReceiveContext) {
+        return;
+    }
+
+    const bool isRunning =
+        isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running;
+    if (isRunning) {
+        isochReceiveContext->Poll();
+    }
+
+    if (++isochLogDivider_ < 500) {
+        return;
+    }
+    isochLogDivider_ = 0;
+    if (isRunning && (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3)) {
+        isochReceiveContext->GetStreamProcessor().LogStatistics();
+        isochReceiveContext->LogHardwareState();
+    }
+}
+
+void WatchdogCoordinator::TickIsochTransmit(
+    ASFW::Isoch::IsochTransmitContext* isochTransmitContext) {
+    if (!isochTransmitContext) {
+        return;
+    }
+
+    const bool isRunning =
+        isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running;
+    if (isRunning) {
+        isochTransmitContext->Poll();
+        isochTransmitContext->ServiceTxRecovery();
+        isochTransmitContext->KickTxVerifier();
+    }
+
+    if (++itLogDivider_ < 1000) {
+        return;
+    }
+    itLogDivider_ = 0;
+    if (isRunning) {
+        isochTransmitContext->LogStatistics();
+    }
 }
 
 } // namespace ASFW::Driver

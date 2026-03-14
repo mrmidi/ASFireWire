@@ -100,7 +100,7 @@ public:
                uint16_t addressHi,
                uint32_t addressLo,
                uint32_t length,
-               const void* payload,
+               const uint8_t* payload,
                uint16_t* handle) LOCALONLY;
 
     // AsyncCompareSwap: Initiate an async compare-and-swap (lock) transaction
@@ -111,8 +111,8 @@ public:
                      uint16_t addressHi,
                      uint32_t addressLo,
                      uint8_t size,
-                     const void* compareValue,
-                     const void* newValue,
+                     const uint8_t* compareValue,
+                     const uint8_t* newValue,
                      uint16_t* handle,
                      uint8_t* locked) LOCALONLY;
 
@@ -123,7 +123,7 @@ public:
     GetTransactionResult(uint16_t handle,
                         uint32_t* status,
                         uint32_t* dataLength,
-                        void* data,
+                        uint8_t* data,
                         uint32_t maxDataLength) LOCALONLY;
 
     void NotifyStatus(uint64_t sequence,
@@ -142,7 +142,7 @@ struct ASFWDriverUserClient_IVars {
     bool statusRegistered;
     OSAction* transactionAction;
     bool transactionListenerRegistered;
-    void* runtimeState;  // ASFW::UserClient::UserClientRuntimeState* (opaque bridge)
+    void* runtimeState;
     IOLock* actionLock;
     bool stopping;
 };

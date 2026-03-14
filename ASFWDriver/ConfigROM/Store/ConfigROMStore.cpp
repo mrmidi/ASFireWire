@@ -64,7 +64,7 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
         romCopy.lastValidated = rom.gen;
     }
 
-    const auto nodeIdForKey = ValidateNodeIdForKey(romCopy.nodeId);
+    const auto nodeIdForKey = TryOperationalNodeId(romCopy.nodeId);
     if (!nodeIdForKey.has_value()) {
         ASFW_LOG_V0(ConfigROM, "ConfigROMStore::Insert: Invalid nodeId=%u for keying, skipping",
                     romCopy.nodeId);
@@ -75,7 +75,11 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     romsByGenNode_[key] = romCopy;
 
     auto it = romsByGuid_.find(romCopy.bib.guid);
-    if (it == romsByGuid_.end() || it->second.gen.value < romCopy.gen.value) {
+    const bool replaceGuidEntry =
+        it == romsByGuid_.end() || it->second.gen.value < romCopy.gen.value ||
+        (it->second.gen == romCopy.gen &&
+         it->second.rawQuadlets.size() <= romCopy.rawQuadlets.size());
+    if (replaceGuidEntry) {
         romsByGuid_[romCopy.bib.guid] = romCopy;
 
         ASFW_LOG_V2(ConfigROM, "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u",
@@ -234,9 +238,22 @@ void ConfigROMStore::InvalidateROM(Guid64 guid) {
     }
 
     it->second.state = ROMState::Invalid;
-    it->second.nodeId = 0xFF;
+    it->second.nodeId = kInvalidNodeId;
 
-    ASFW_LOG(ConfigROM, "ConfigROMStore::InvalidateROM: Invalidated GUID 0x%016llx", guid);
+    size_t erasedNodeEntries = 0;
+    for (auto nodeIt = romsByGenNode_.begin(); nodeIt != romsByGenNode_.end();) {
+        if (nodeIt->second.bib.guid == guid) {
+            nodeIt = romsByGenNode_.erase(nodeIt);
+            ++erasedNodeEntries;
+            continue;
+        }
+        ++nodeIt;
+    }
+
+    ASFW_LOG(ConfigROM,
+             "ConfigROMStore::InvalidateROM: Invalidated GUID 0x%016llx and removed %zu "
+             "generation/node entries",
+             guid, erasedNodeEntries);
 }
 
 void ConfigROMStore::PruneInvalid() {
@@ -272,13 +289,6 @@ void ConfigROMStore::PruneInvalid() {
 
 ConfigROMStore::GenNodeKey ConfigROMStore::MakeKey(Generation gen, uint8_t nodeId) {
     return (gen.value << 8) | static_cast<uint32_t>(nodeId);
-}
-
-std::optional<uint8_t> ConfigROMStore::ValidateNodeIdForKey(uint16_t nodeId) {
-    if (nodeId > 0xFFU) {
-        return std::nullopt;
-    }
-    return static_cast<uint8_t>(nodeId);
 }
 
 } // namespace ASFW::Discovery

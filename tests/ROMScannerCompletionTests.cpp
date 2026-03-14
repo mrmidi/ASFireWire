@@ -175,12 +175,9 @@ public:
     }
 };
 
-// Helper to create minimal BIB (Bus Info Block) for testing
-// Q0: info_length=1 (minimal ROM), crc_length=1, crc=valid
-// Format: [31:24]=info_length, [23:16]=crc_length, [15:0]=crc
-std::vector<uint32_t> CreateMinimalBIB() {
-    // Minimal BIB: header quadlet + 4 quadlets of zeros
-    // info_length=4 (standard BIB), crc_length=4 (minimal total ROM), crc=0x0000
+// Helper to create a standard BIB for testing.
+// crc_length describes only the CRC coverage of the BIB payload, not total ROM length.
+std::vector<uint32_t> CreateStandardBIBWithCrcLength4() {
     return {0x04040000, 0, 0, 0, 0};
 }
 
@@ -198,15 +195,14 @@ std::vector<uint32_t> CreateFullBIB(uint64_t guid = 0x0123456789ABCDEF) {
 } // anonymous namespace
 
 // ============================================================================
-// Manual Read Completion Tests - Verifies Apple-style immediate completion
+// Manual Read Completion Tests
 // ============================================================================
 
-TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
-    // This test verifies the fix for the missing completion notification bug
+TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRootHeader) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
-    bool callbackInvoked = false;
+    int callbackCount = 0;
     Generation completedGen{0};
     bool hadBusyNodes = false;
     std::vector<ConfigROM> completedROMs;
@@ -231,7 +227,7 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
 
     ScanCompletionCallback onComplete = [&](Generation gen, std::vector<ConfigROM> roms, bool busy) {
         std::lock_guard lock(mtx);
-        callbackInvoked = true;
+        ++callbackCount;
         completedGen = gen;
         hadBusyNodes = busy;
         completedROMs = std::move(roms);
@@ -244,23 +240,30 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     mockAsync.WaitForPendingReads(1);
     EXPECT_EQ(mockAsync.GetPendingReadCount(), 1);  // BIB read started (Q0)
 
-    // Simulate BIB read completion with minimal ROM
-    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+    // Simulate BIB read completion. Even with crc_length=4, the scanner must still fetch q5.
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithCrcLength4());
+    EXPECT_EQ(callbackCount, 0) << "Callback must wait for the root directory header";
+
+    mockAsync.WaitForPendingReads(5);
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 5);
+
+    // Simulate an empty root directory header at q5.
+    mockAsync.SimulateReadSuccess(4, {0x00000000});
 
     // Wait for async completion
     {
         std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackCount] { return callbackCount > 0; });
     }
 
-    // CRITICAL: Callback should be invoked immediately (Apple pattern)
-    EXPECT_TRUE(callbackInvoked) << "Completion callback should be invoked immediately after ROM read completes";
+    EXPECT_EQ(callbackCount, 1);
     EXPECT_EQ(completedGen.value, 42u);
     EXPECT_FALSE(hadBusyNodes);
 
     EXPECT_EQ(completedROMs.size(), 1u);
     EXPECT_EQ(completedROMs[0].nodeId, 1);
     EXPECT_EQ(completedROMs[0].gen.value, 42u);
+    EXPECT_EQ(completedROMs[0].rawQuadlets.size(), 6u);
 }
 
 TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
@@ -357,7 +360,9 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
     mockAsync.WaitForPendingReads(1);
 
     // Simulate completion - should not crash
-    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithCrcLength4());
+    mockAsync.WaitForPendingReads(5);
+    mockAsync.SimulateReadSuccess(4, {0x00000000});
 
     // Give moment for async transitions
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -467,8 +472,8 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     // Node 2: index 1 (Q0), index 3 (Q2), index 5 (Q3), index 7 (Q4)
     // This interleaved pattern happens because ROMReader is sequential per-node but concurrent across nodes.
     
-    mockAsync.SimulateReadSuccess(0, {CreateMinimalBIB()[0]}); // Node 1 Q0
-    mockAsync.SimulateReadSuccess(1, {CreateMinimalBIB()[0]}); // Node 2 Q0
+    mockAsync.SimulateReadSuccess(0, {CreateStandardBIBWithCrcLength4()[0]}); // Node 1 Q0
+    mockAsync.SimulateReadSuccess(1, {CreateStandardBIBWithCrcLength4()[0]}); // Node 2 Q0
     
     mockAsync.WaitForPendingReads(4);
     mockAsync.SimulateReadSuccess(2, {0}); // Node 1 Q2
@@ -481,6 +486,10 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     mockAsync.WaitForPendingReads(8);
     mockAsync.SimulateReadSuccess(6, {0}); // Node 1 Q4
     mockAsync.SimulateReadSuccess(7, {0}); // Node 2 Q4
+
+    mockAsync.WaitForPendingReads(10);
+    mockAsync.SimulateReadSuccess(8, {0x00000000}); // Node 1 root dir header
+    mockAsync.SimulateReadSuccess(9, {0x00000000}); // Node 2 root dir header
 
     // Wait for async completion
     {
@@ -527,7 +536,9 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
 
     ASSERT_TRUE(scanner.Start(request1, onComplete));
     mockAsync.WaitForPendingReads(1);
-    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithCrcLength4());
+    mockAsync.WaitForPendingReads(5);
+    mockAsync.SimulateReadSuccess(4, {0x00000000});
 
     // Wait for first completion
     {
@@ -544,8 +555,10 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
     request2.targetNodes = {1};
 
     ASSERT_TRUE(scanner.Start(request2, onComplete));
-    mockAsync.WaitForPendingReads(5); // 4 from first + 1 for second
-    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB());
+    mockAsync.WaitForPendingReads(6); // 5 from first scan + 1 for second
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithCrcLength4());
+    mockAsync.WaitForPendingReads(10);
+    mockAsync.SimulateReadSuccess(9, {0x00000000});
 
     // Wait for second completion
     {

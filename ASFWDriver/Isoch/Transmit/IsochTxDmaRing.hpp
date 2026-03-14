@@ -129,6 +129,19 @@ public:
 
 private:
     [[nodiscard]] static uint32_t BuildIsochHeaderQ0(uint8_t channel) noexcept;
+    static void CopyPacketPayload(uint8_t* payloadVirt, const IsochTxPacket& pkt) noexcept;
+    [[nodiscard]] uint32_t ComputeDeltaConsumed(uint32_t hwPacketIndex) noexcept;
+    void UpdateGapCounters(uint32_t gap) noexcept;
+    void ResyncCycleTracking(uint32_t hwPacketIndex,
+                             uint32_t deltaConsumed,
+                             RefillOutcome& out) noexcept;
+    [[nodiscard]] bool RefillPacket(uint32_t pktIdx,
+                                    uint32_t hwPacketIndex,
+                                    uint32_t cmdPtr,
+                                    IIsochTxPacketProvider& provider,
+                                    IsochTxCaptureHook* captureHook,
+                                    RefillOutcome& out) noexcept;
+    void CommitRefill(uint32_t toFill) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};
@@ -147,4 +160,3 @@ private:
 };
 
 } // namespace ASFW::Isoch::Tx
-

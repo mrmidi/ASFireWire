@@ -18,6 +18,109 @@
 
 namespace ASFW::UserClient {
 
+namespace {
+
+void SetStructureOutput(IOUserClientMethodArguments* args, OSData* data) {
+    args->structureOutput = data;
+    args->structureOutputDescriptor = nullptr;
+}
+
+[[nodiscard]] OSData* CreateEmptyOutput() {
+    return OSData::withCapacity(0);
+}
+
+[[nodiscard]] bool AppendBytesOrRelease(OSData* data, const uint8_t* bytes, size_t length) {
+    if (data->appendBytes(bytes, length)) {
+        return true;
+    }
+
+    data->release();
+    return false;
+}
+
+template <typename T>
+[[nodiscard]] bool AppendValueOrRelease(OSData* data, const T& value) {
+    return AppendBytesOrRelease(data,
+                                reinterpret_cast<const uint8_t*>(&value),
+                                sizeof(value));
+}
+
+[[nodiscard]] OSData* SerializeTopologySnapshot(const ASFW::Driver::TopologySnapshot& topo) {
+    const size_t headerSize = sizeof(Wire::TopologySnapshotWire);
+    const size_t nodesBaseSize = topo.nodes.size() * sizeof(Wire::TopologyNodeWire);
+
+    size_t portStatesSize = 0;
+    for (const auto& node : topo.nodes) {
+        portStatesSize += node.portStates.size();
+    }
+
+    size_t warningsSize = 0;
+    for (const auto& warning : topo.warnings) {
+        warningsSize += warning.length() + 1;
+    }
+
+    const size_t totalSize = headerSize + nodesBaseSize + portStatesSize + warningsSize;
+    OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
+    if (!data) {
+        return nullptr;
+    }
+
+    Wire::TopologySnapshotWire snapWire{};
+    snapWire.generation = topo.generation;
+    snapWire.capturedAt = topo.capturedAt;
+    snapWire.nodeCount = topo.nodeCount;
+    snapWire.rootNodeId = topo.rootNodeId.value_or(0xFF);
+    snapWire.irmNodeId = topo.irmNodeId.value_or(0xFF);
+    snapWire.localNodeId = topo.localNodeId.value_or(0xFF);
+    snapWire.gapCount = topo.gapCount;
+    snapWire.warningCount = static_cast<uint8_t>(topo.warnings.size());
+    snapWire.busBase16 = topo.busBase16;
+
+    if (!AppendValueOrRelease(data, snapWire)) {
+        return nullptr;
+    }
+
+    for (const auto& node : topo.nodes) {
+        Wire::TopologyNodeWire nodeWire{};
+        nodeWire.nodeId = node.nodeId;
+        nodeWire.portCount = node.portCount;
+        nodeWire.gapCount = node.gapCount;
+        nodeWire.powerClass = node.powerClass;
+        nodeWire.maxSpeedMbps = node.maxSpeedMbps;
+        nodeWire.isIRMCandidate = node.isIRMCandidate ? 1 : 0;
+        nodeWire.linkActive = node.linkActive ? 1 : 0;
+        nodeWire.initiatedReset = node.initiatedReset ? 1 : 0;
+        nodeWire.isRoot = node.isRoot ? 1 : 0;
+        nodeWire.parentPort = node.parentPort.value_or(0xFF);
+        nodeWire.portStateCount = static_cast<uint8_t>(node.portStates.size());
+
+        if (!AppendValueOrRelease(data, nodeWire)) {
+            return nullptr;
+        }
+
+        for (auto portState : node.portStates) {
+            const uint8_t state = static_cast<uint8_t>(portState);
+            if (!AppendValueOrRelease(data, state)) {
+                return nullptr;
+            }
+        }
+    }
+
+    for (const auto& warning : topo.warnings) {
+        const char* str = warning.c_str();
+        const size_t len = warning.length() + 1;
+        if (!AppendBytesOrRelease(data,
+                                  reinterpret_cast<const uint8_t*>(str),
+                                  len)) {
+            return nullptr;
+        }
+    }
+
+    return data;
+}
+
+} // namespace
+
 TopologyHandler::TopologyHandler(ASFWDriver* driver) : driver_(driver) {}
 
 kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* args) {
@@ -148,102 +251,26 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
     if (!topo) {
         // No topology available
         ASFW_LOG_V3(UserClient, "kMethodGetTopologySnapshot - no topology available");
-        OSData* data = OSData::withCapacity(0);
+        OSData* data = CreateEmptyOutput();
         if (!data)
             return kIOReturnNoMemory;
-        args->structureOutput = data;
-        args->structureOutputDescriptor = nullptr;
+        SetStructureOutput(args, data);
         ASFW_LOG_V3(UserClient,
                     "kMethodGetTopologySnapshot EXIT: setting structureOutput len=0 (no data yet)");
         return kIOReturnSuccess;
     }
 
-    // Calculate size for variable-length data
-    size_t headerSize = sizeof(Wire::TopologySnapshotWire);
-    size_t nodesBaseSize = topo->nodes.size() * sizeof(Wire::TopologyNodeWire);
-
-    // Calculate port states size
-    size_t portStatesSize = 0;
-    for (const auto& node : topo->nodes) {
-        portStatesSize += node.portStates.size();
-    }
-
-    // Calculate warnings size (null-terminated strings)
-    size_t warningsSize = 0;
-    for (const auto& warning : topo->warnings) {
-        warningsSize += warning.length() + 1; // +1 for null terminator
-    }
-
-    size_t totalSize = headerSize + nodesBaseSize + portStatesSize + warningsSize;
-
-    OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
-    if (!data)
-        return kIOReturnNoMemory;
-
-    // Write snapshot header
-    Wire::TopologySnapshotWire snapWire{};
-    snapWire.generation = topo->generation;
-    snapWire.capturedAt = topo->capturedAt;
-    snapWire.nodeCount = topo->nodeCount;
-    snapWire.rootNodeId = topo->rootNodeId.value_or(0xFF);
-    snapWire.irmNodeId = topo->irmNodeId.value_or(0xFF);
-    snapWire.localNodeId = topo->localNodeId.value_or(0xFF);
-    snapWire.gapCount = topo->gapCount;
-    snapWire.warningCount = static_cast<uint8_t>(topo->warnings.size());
-    snapWire.busBase16 = topo->busBase16; // Serialize bus base for node ID construction
-
-    if (!data->appendBytes(&snapWire, sizeof(snapWire))) {
-        data->release();
+    OSData* data = SerializeTopologySnapshot(*topo);
+    if (!data) {
         return kIOReturnNoMemory;
     }
 
-    // Write nodes
-    for (const auto& node : topo->nodes) {
-        Wire::TopologyNodeWire nodeWire{};
-        nodeWire.nodeId = node.nodeId;
-        nodeWire.portCount = node.portCount;
-        nodeWire.gapCount = node.gapCount;
-        nodeWire.powerClass = node.powerClass;
-        nodeWire.maxSpeedMbps = node.maxSpeedMbps;
-        nodeWire.isIRMCandidate = node.isIRMCandidate ? 1 : 0;
-        nodeWire.linkActive = node.linkActive ? 1 : 0;
-        nodeWire.initiatedReset = node.initiatedReset ? 1 : 0;
-        nodeWire.isRoot = node.isRoot ? 1 : 0;
-        nodeWire.parentPort = node.parentPort.value_or(0xFF);
-        nodeWire.portStateCount = static_cast<uint8_t>(node.portStates.size());
-
-        if (!data->appendBytes(&nodeWire, sizeof(nodeWire))) {
-            data->release();
-            return kIOReturnNoMemory;
-        }
-
-        // Write port states for this node
-        for (auto portState : node.portStates) {
-            uint8_t state = static_cast<uint8_t>(portState);
-            if (!data->appendBytes(&state, sizeof(state))) {
-                data->release();
-                return kIOReturnNoMemory;
-            }
-        }
-    }
-
-    // Write warnings as null-terminated strings
-    for (const auto& warning : topo->warnings) {
-        const char* str = warning.c_str();
-        size_t len = warning.length() + 1; // Include null terminator
-        if (!data->appendBytes(str, len)) {
-            data->release();
-            return kIOReturnNoMemory;
-        }
-    }
-
-    args->structureOutput = data;
-    args->structureOutputDescriptor = nullptr;
+    SetStructureOutput(args, data);
     ASFW_LOG_V3(UserClient,
                 "kMethodGetTopologySnapshot EXIT: setting structureOutput len=%zu (gen=%u nodes=%u "
                 "root=%u)",
-                data ? data->getLength() : 0, snapWire.generation, snapWire.nodeCount,
-                snapWire.rootNodeId);
+                data ? data->getLength() : 0, topo->generation, topo->nodeCount,
+                topo->rootNodeId.value_or(0xFF));
     return kIOReturnSuccess;
 }
 

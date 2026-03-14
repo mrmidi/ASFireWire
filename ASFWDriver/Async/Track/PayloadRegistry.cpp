@@ -1,4 +1,5 @@
 #include "PayloadRegistry.hpp"
+#include "../Tx/PayloadContext.hpp"
 
 #ifdef ASFW_HOST_TEST
     #include <thread>
@@ -19,14 +20,15 @@ PayloadRegistry::~PayloadRegistry() {
     if (lock_) { ::IOLockFree(lock_); lock_ = nullptr; }
 }
 
-void PayloadRegistry::Attach(uint32_t handle, std::shared_ptr<void> payload, uint32_t epoch) {
+void PayloadRegistry::Attach(uint32_t handle, std::shared_ptr<PayloadContext> payload,
+                             uint32_t epoch) {
     if (!lock_) return;
     ::IOLockLock(lock_);
     map_[handle] = Entry{ std::move(payload), epoch };
     ::IOLockUnlock(lock_);
 }
 
-std::shared_ptr<void> PayloadRegistry::Detach(uint32_t handle) {
+std::shared_ptr<PayloadContext> PayloadRegistry::Detach(uint32_t handle) {
     if (!lock_) return nullptr;
     ::IOLockLock(lock_);
     auto it = map_.find(handle);

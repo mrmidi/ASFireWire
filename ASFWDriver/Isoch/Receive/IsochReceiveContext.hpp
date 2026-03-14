@@ -77,7 +77,7 @@ public:
 
     StreamProcessor& GetStreamProcessor() { return audio_.StreamProcessorRef(); }
 
-    void SetSharedRxQueue(void* base, uint64_t bytes);
+    void SetSharedRxQueue(uint8_t* base, uint64_t bytes);
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
 
     void LogHardwareState();

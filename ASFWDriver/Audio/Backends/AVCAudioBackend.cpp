@@ -193,6 +193,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                                                         streamModeRaw,
                                                         config.outputChannelCount,
                                                         am824Slots,
+                                                        ASFW::Encoding::AudioWireFormat::kAM824,
                                                         txMem,
                                                         txBytes,
                                                         nullptr,

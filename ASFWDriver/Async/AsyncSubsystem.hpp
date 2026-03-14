@@ -302,6 +302,12 @@ class AsyncSubsystem : public IAsyncControllerPort {
     std::deque<std::function<void()>> hostPostedWork_{};
 #endif
 
+    [[nodiscard]] bool CancelQueuedCommand(AsyncHandle handle);
+    [[nodiscard]] bool CancelQueuedCommandInFlight(AsyncHandle handle,
+                                                   const PendingCommandPtr& inFlight);
+    [[nodiscard]] bool CancelTransactionHandle(AsyncHandle handle);
+    void PostQueuedCancellation(AsyncHandle handle, CompletionCallback callback);
+
     void ExecuteNextCommand();
 
     void OnCommandCompleteInternal(AsyncHandle handle, AsyncStatus status, const void* payload,

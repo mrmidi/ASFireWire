@@ -137,7 +137,12 @@ public:
      * \par Performance
      * O(1) pointer arithmetic (no table lookup required).
      */
-    [[nodiscard]] uint64_t VirtToIOVA(const void* virt) const noexcept;
+    [[nodiscard]] uint64_t VirtToIOVA(const std::byte* virt) const noexcept;
+
+    template <typename T>
+    [[nodiscard]] uint64_t VirtToIOVA(const T* virt) const noexcept {
+        return VirtToIOVA(reinterpret_cast<const std::byte*>(virt));
+    }
 
     /**
      * \brief Convert physical address to virtual address.
@@ -161,7 +166,12 @@ public:
      * \par Performance
      * O(1) pointer arithmetic (no table lookup required).
      */
-    [[nodiscard]] void* IOVAToVirt(uint64_t iova) const noexcept;
+    [[nodiscard]] std::byte* IOVAToVirt(uint64_t iova) const noexcept;
+
+    template <typename T = std::byte>
+    [[nodiscard]] T* IOVAToPtr(uint64_t iova) const noexcept {
+        return reinterpret_cast<T*>(IOVAToVirt(iova));
+    }
 
     /**
      * \brief Enable or disable verbose DMA coherency tracing.
@@ -185,7 +195,12 @@ public:
      * \param address Start of range to publish (must be within slab)
      * \param length Length in bytes
      */
-    void PublishRange(const void* address, size_t length) const noexcept;
+    void PublishRange(const std::byte* address, size_t length) const noexcept;
+
+    template <typename T>
+    void PublishRange(const T* address, size_t length) const noexcept {
+        PublishRange(reinterpret_cast<const std::byte*>(address), length);
+    }
 
     /**
      * \brief Fetch device-written data into CPU view.
@@ -197,10 +212,20 @@ public:
      * \param address Start of range to fetch (must be within slab)
      * \param length Length in bytes
      */
-    void FetchRange(const void* address, size_t length) const noexcept;
+    void FetchRange(const std::byte* address, size_t length) const noexcept;
+
+    template <typename T>
+    void FetchRange(const T* address, size_t length) const noexcept {
+        FetchRange(reinterpret_cast<const std::byte*>(address), length);
+    }
 
     /// Diagnostic: Dump 64-byte cache-line-aligned region for visibility testing
-    void HexDump64(const void* address, const char* tag) const noexcept;
+    void HexDump64(const std::byte* address, const char* tag) const noexcept;
+
+    template <typename T>
+    void HexDump64(const T* address, const char* tag) const noexcept {
+        HexDump64(reinterpret_cast<const std::byte*>(address), tag);
+    }
 
     /// Total slab size in bytes (16-byte aligned)
     [[nodiscard]] size_t TotalSize() const noexcept { return slabSize_; }
@@ -224,7 +249,7 @@ private:
     }
 
     /// Check if pointer is within slab bounds
-    [[nodiscard]] bool IsInSlabRange(const void* ptr) const noexcept;
+    [[nodiscard]] bool IsInSlabRange(const std::byte* ptr) const noexcept;
 
     /// Check if physical address is within slab bounds
     [[nodiscard]] bool IsInSlabRange(uint64_t iova) const noexcept;
@@ -233,7 +258,7 @@ private:
     void ZeroSlab(size_t length) noexcept;
 
     void TraceHexPreview(const char* tag,
-                         const void* address,
+                         const std::byte* address,
                          size_t length) const noexcept;
 
     /// DMA buffer (DriverKit-managed memory)

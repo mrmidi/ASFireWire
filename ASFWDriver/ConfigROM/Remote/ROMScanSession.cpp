@@ -372,17 +372,6 @@ void ROMScanSession::ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint
         return;
     }
 
-    if (node.ROM().bib.crcLength <= node.ROM().bib.busInfoLength) {
-        if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete,
-                                 "BIB minimal ROM complete")) {
-            Pump();
-            return;
-        }
-        completedROMs_.push_back(std::move(node.MutableROM()));
-        Pump();
-        return;
-    }
-
     StartRootDirRead(node);
 }
 
@@ -399,6 +388,9 @@ void ROMScanSession::StartRootDirRead(ROMScanNodeStateMachine& node) {
     ++inflight_;
 
     const uint32_t offsetBytes = ASFW::ConfigROM::RootDirStartBytes(node.ROM().bib);
+    ASFW_LOG_V2(ConfigROM,
+                "ROMScanSession: Node %u reading root directory at q%u (offset=0x%x)",
+                nodeId, ASFW::ConfigROM::RootDirStartQuadlet(node.ROM().bib), offsetBytes);
     auto weakSelf = weak_from_this();
     reader_->ReadRootDirQuadlets(
         nodeId, gen_, node.CurrentSpeed(), offsetBytes, 0,
@@ -433,7 +425,10 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
     auto& node = *nodePtr;
 
     if (!result.success || result.quadletsBE.empty()) {
-        ASFW_LOG(ConfigROM, "ROMScanSession: Node %u RootDir read failed - marking failed", nodeId);
+        ASFW_LOG(ConfigROM,
+                 "ROMScanSession: Node %u root directory read failed status=%{public}s "
+                 "quadlets=%zu - marking failed",
+                 nodeId, Async::ToString(result.status), result.quadletsBE.size());
         (void)TransitionNodeState(node, ROMScanNodeStateMachine::State::Failed,
                                   "RootDir read failed");
         Pump();
@@ -441,10 +436,23 @@ void ROMScanSession::HandleRootDirComplete(uint8_t nodeId, ROMReader::ReadResult
     }
 
     const uint32_t quadletCount = static_cast<uint32_t>(result.quadletsBE.size());
+    ASFW_LOG_V2(ConfigROM, "ROMScanSession: Node %u root directory read returned %u quadlets",
+                nodeId, quadletCount);
     auto rootDir = ConfigROMParser::ParseRootDirectory(result.QuadletsBE(), quadletCount);
     if (rootDir) {
         node.MutableROM().rootDirMinimal = std::move(*rootDir);
+        if (node.MutableROM().rootDirMinimal.empty() && quadletCount > 1) {
+            ASFW_LOG_V1(ConfigROM,
+                        "ROMScanSession: Node %u root directory contained no recognized entries",
+                        nodeId);
+        }
     } else {
+        const auto error = rootDir.error();
+        ASFW_LOG(ConfigROM,
+                 "ROMScanSession: Node %u root directory parse failed code=%u offset=q%u "
+                 "quadlets=%u status=%{public}s",
+                 nodeId, static_cast<uint8_t>(error.code), error.offsetQuadlets, quadletCount,
+                 Async::ToString(result.status));
         node.MutableROM().rootDirMinimal.clear();
     }
 

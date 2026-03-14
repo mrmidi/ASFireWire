@@ -6,9 +6,53 @@
 #include "DICETransaction.hpp"
 #include "../../../../Common/CallbackUtils.hpp"
 #include "../../../../Logging/Logging.hpp"
+#include <array>
+#include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace ASFW::Audio::DICE {
+
+namespace {
+
+constexpr size_t kCapabilityHexPreviewBytes = 64;
+
+std::string HexPreview(const uint8_t* data, size_t size, size_t maxBytes = kCapabilityHexPreviewBytes) {
+    if (data == nullptr || size == 0) {
+        return "<empty>";
+    }
+
+    const size_t previewBytes = (size < maxBytes) ? size : maxBytes;
+    std::string text;
+    text.reserve(previewBytes * 3 + 16);
+
+    for (size_t i = 0; i < previewBytes; ++i) {
+        char chunk[4];
+        std::snprintf(chunk, sizeof(chunk), "%02x", data[i]);
+        if (i != 0) {
+            text.push_back(' ');
+        }
+        text.append(chunk);
+    }
+
+    if (previewBytes < size) {
+        char suffix[32];
+        std::snprintf(suffix, sizeof(suffix), " ... (%zu bytes)", size);
+        text.append(suffix);
+    }
+
+    return text;
+}
+
+void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
+    ASFW_LOG(DICE,
+             "%{public}s raw[%zu]=%{public}s",
+             label,
+             size,
+             HexPreview(data, size).c_str());
+}
+
+} // anonymous namespace
 
 DICETransaction::DICETransaction(Protocols::Ports::FireWireBusOps& busOps,
                                  Protocols::Ports::FireWireBusInfo& busInfo,
@@ -160,6 +204,7 @@ void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSe
         }
         
         GeneralSections sections = GeneralSections::FromWire(data);
+        LogSectionPreview("ReadGeneralSections", data, size);
         
         ASFW_LOG(DICE, "ReadGeneralSections: global=%u/%u tx=%u/%u rx=%u/%u",
                  sections.global.offset, sections.global.size,
@@ -168,6 +213,33 @@ void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSe
         
         Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, sections);
     });
+}
+
+void DICETransaction::ReadExtensionSections(std::function<void(IOReturn, ExtensionSections)> callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
+    ReadBlock(kDICEExtensionOffset,
+              ExtensionSections::kWireSize,
+              [callbackState](IOReturn status, const uint8_t* data, size_t size) {
+                  if (status != kIOReturnSuccess || size < ExtensionSections::kWireSize) {
+                      Common::InvokeSharedCallback(callbackState, status, ExtensionSections{});
+                      return;
+                  }
+
+                  ExtensionSections sections = ExtensionSections::FromWire(data);
+                  LogSectionPreview("ReadExtensionSections", data, size);
+                  ASFW_LOG(DICE,
+                           "ReadExtensionSections: cmd=%u/%u router=%u/%u current=%u/%u app=%u/%u",
+                           sections.command.offset,
+                           sections.command.size,
+                           sections.router.offset,
+                           sections.router.size,
+                           sections.currentConfig.offset,
+                           sections.currentConfig.size,
+                           sections.application.offset,
+                           sections.application.size);
+
+                  Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, sections);
+              });
 }
 
 // ============================================================================
@@ -188,6 +260,7 @@ void DICETransaction::ReadGlobalState(const GeneralSections& sections,
         }
         
         GlobalState state;
+        LogSectionPreview("ReadGlobalState", data, size);
         
         if (size >= 8) {
             state.owner = (static_cast<uint64_t>(QuadletFromWire(data)) << 32) |
@@ -425,6 +498,7 @@ void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
             return;
         }
         
+        LogSectionPreview("ReadRxStreamConfig", data, size);
         StreamConfig config = ParseStreamConfig(data, size, true);
         LogStreamConfigDetails("RX", config);
         
@@ -449,6 +523,7 @@ void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
                       return;
                   }
 
+                  LogSectionPreview("ReadTxStreamConfig", data, size);
                   StreamConfig config = ParseStreamConfig(data, size, false);
                   LogStreamConfigDetails("TX", config);
 
@@ -522,6 +597,39 @@ void DICETransaction::ReadCapabilities(std::function<void(IOReturn, DICECapabili
             });
         });
     });
+}
+
+void DICETransaction::CompareSwapOctlet(uint32_t offset,
+                                        uint64_t expected,
+                                        uint64_t desired,
+                                        DICEOctletCallback callback) {
+    auto callbackState = Common::ShareCallback(std::move(callback));
+    const auto gen = busInfo_.GetGeneration();
+    const auto addr = MakeAddress(offset);
+
+    std::array<uint8_t, 16> operand{};
+    OctletToWire(expected, operand.data());
+    OctletToWire(desired, operand.data() + 8);
+
+    busOps_.Lock(gen,
+                 nodeId_,
+                 addr,
+                 FW::LockOp::kCompareSwap,
+                 std::span<const uint8_t>{operand},
+                 8,
+                 FW::FwSpeed::S100,
+                 [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+                     if (status != Async::AsyncStatus::kSuccess || payload.size() < 8) {
+                         const IOReturn ret =
+                             (status == Async::AsyncStatus::kSuccess) ? kIOReturnUnderrun : kIOReturnError;
+                         Common::InvokeSharedCallback(callbackState, ret, uint64_t{0});
+                         return;
+                     }
+
+                     Common::InvokeSharedCallback(callbackState,
+                                                  kIOReturnSuccess,
+                                                  OctletFromWire(payload.data()));
+                 });
 }
 
 // Helper for GlobalState

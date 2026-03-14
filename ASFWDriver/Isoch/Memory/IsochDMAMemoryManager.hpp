@@ -24,6 +24,10 @@ struct IsochMemoryConfig {
 //  - payload slab: large, with cursor aligned so buffers start at payloadPageAlignment IOVA boundary
 class IsochDMAMemoryManager final : public IIsochDMAMemory {
 public:
+    using IIsochDMAMemory::FetchFromDevice;
+    using IIsochDMAMemory::PublishToDevice;
+    using IIsochDMAMemory::VirtToIOVA;
+
     static std::shared_ptr<IsochDMAMemoryManager> Create(const IsochMemoryConfig& cfg);
 
     ~IsochDMAMemoryManager() override;
@@ -38,11 +42,11 @@ public:
     // IDMAMemory Implementation
     std::optional<ASFW::Shared::DMARegion> AllocateRegion(size_t size, size_t alignment = 16) override;
 
-    uint64_t VirtToIOVA(const void* virt) const noexcept override;
-    void* IOVAToVirt(uint64_t iova) const noexcept override;
+    uint64_t VirtToIOVA(const std::byte* virt) const noexcept override;
+    std::byte* IOVAToVirt(uint64_t iova) const noexcept override;
 
-    void PublishToDevice(const void* address, size_t length) const noexcept override;
-    void FetchFromDevice(const void* address, size_t length) const noexcept override;
+    void PublishToDevice(const std::byte* address, size_t length) const noexcept override;
+    void FetchFromDevice(const std::byte* address, size_t length) const noexcept override;
 
     size_t TotalSize() const noexcept override;
     size_t AvailableSize() const noexcept override;

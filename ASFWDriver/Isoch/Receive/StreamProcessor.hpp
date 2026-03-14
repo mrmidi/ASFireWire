@@ -43,188 +43,29 @@ public:
     ///   [8+]   CIP Header + AM824 payload
     [[nodiscard]] RxCipSummary ProcessPacket(const uint8_t* payload, size_t length) noexcept {
         RxCipSummary summary{};
-        // Need at least isoch header (8) + CIP header (8)
         if (length < kIsochHeaderSize + 8) {
-            // ASFW_LOG(Isoch, "Short packet: %zu bytes", length);
             errorCount_++;
             return summary;
         }
 
-        // Skip isoch header prefix to get to CIP header
-        const uint8_t* cipStart = payload + kIsochHeaderSize;
-        size_t cipLength = length - kIsochHeaderSize;
-
-        // Read CIP Header (first 2 quadlets after isoch header)
-        const uint32_t* quadlets = reinterpret_cast<const uint32_t*>(cipStart);
-        
-        auto header = CIPHeader::Decode(quadlets[0], quadlets[1]);
+        const auto header = DecodePacketHeader(payload);
         if (!header) {
-            // ASFW_LOG(Isoch, "Invalid CIP header");
             errorCount_++;
             return summary;
         }
 
         packetCount_++;
+        PopulateSummary(*header, summary);
+        RecordContinuity(*header);
+        RecordCipState(*header);
 
-        summary.hasValidCip = true;
-        summary.syt = header->syt;
-        summary.fdf = header->fdf;
-        summary.dbs = header->dataBlockSize;
-        
-        // Continuity Check
-        uint8_t expectedDBC = (lastDBC_ + lastDataBlockCount_) & 0xFF;
-        // Skip check for first packet
-        if (packetCount_ > 1) {
-            if (header->dataBlockCounter != expectedDBC) {
-                 // Discontinuity!
-                 // ASFW_LOG(Isoch, "DBC Jump: Expected 0x%02X, Got 0x%02X", expectedDBC, header->dataBlockCounter);
-                 discontinuityCount_++;
-            }
-        }
-        
-        lastDBC_ = header->dataBlockCounter;
-        lastSYT_ = header->syt;
-        
-        // Cache last CIP for periodic logging
-        lastCIP_DBS_ = header->dataBlockSize;
-        lastCIP_FDF_ = header->fdf;
-        lastCIP_SID_ = header->sourceNodeId;
-        
-        // Payload Calculation (cipLength = total minus isoch header, payloadBytes = minus CIP header)
-        size_t payloadBytes = cipLength - 8;  // Subtract 8 bytes for CIP header
-        size_t dbsBytes = static_cast<size_t>(header->dataBlockSize) * 4u;
-        
-        if (dbsBytes == 0) {
-            // Should not happen for AM824
-             errorCount_++;
-             return summary;
-        }
-        
-        size_t eventCount = payloadBytes / dbsBytes;
-        lastDataBlockCount_ = static_cast<uint8_t>(eventCount);
-        
-        if (payloadBytes % dbsBytes != 0) {
-             // Alignment error
-             errorCount_++;
+        const auto layout = BuildPayloadLayout(payload, length, *header);
+        if (!layout) {
+            return summary;
         }
 
-        // AM824 payload starts after the 2 CIP header quadlets.
-        const uint32_t* dataPtr = &quadlets[2];
-
-        // Diagnostic correlation: compare observed CIP DBS (wire slots) to the
-        // shared queue channel count (host-facing PCM). For devices that carry
-        // extra AM824 slots (e.g. MIDI), CIP.DBS can exceed queueChannels.
-        const uint32_t cipDbs = header->dataBlockSize;
-        const uint32_t queueChannels = sharedRxQueue_ ? sharedRxQueue_->Channels() : 0;
-        const bool interestingDbs =
-            (cipDbs > Config::kMaxAmdtpDbs) ||
-            (queueChannels > 0 && cipDbs > queueChannels);
-        if (interestingDbs) {
-            const bool stateChanged =
-                (lastDbsDiagCipDbs_ != cipDbs) ||
-                (lastDbsDiagQueueChannels_ != queueChannels);
-            ++dbsDiagHitCount_;
-            if (stateChanged) {
-                lastDbsDiagCipDbs_ = cipDbs;
-                lastDbsDiagQueueChannels_ = queueChannels;
-                ASFW_LOG(Isoch,
-                         "IR RX: len=%zu payload=%zu cipDbs=%u events=%zu queueCh=%u%{public}s",
-                         length,
-                         payloadBytes,
-                         cipDbs,
-                         eventCount,
-                         queueChannels,
-                         (queueChannels > 0 && cipDbs > queueChannels)
-                             ? " likely extra AM824 slot(s), possibly MIDI"
-                             : "");
-
-                // Optional clue: inspect the first likely non-PCM AM824 slot label.
-                uint32_t extraSlotIndex = UINT32_MAX;
-                if (eventCount > 0) {
-                    if (queueChannels > 0 && cipDbs > queueChannels) {
-                        extraSlotIndex = queueChannels;
-                    } else if (cipDbs > Config::kMaxPcmChannels) {
-                        extraSlotIndex = Config::kMaxPcmChannels;
-                    }
-                }
-                if (extraSlotIndex != UINT32_MAX && extraSlotIndex < header->dataBlockSize) {
-                        const uint32_t q = SwapBigToHost(dataPtr[extraSlotIndex]);
-                        const uint8_t label = static_cast<uint8_t>((q >> 24) & 0xFF);
-                        ASFW_LOG(Isoch,
-                                 "IR RX DICE diag: first extra slot[%u] label=0x%02x (%{public}s)",
-                                 extraSlotIndex,
-                                 label,
-                                 (label >= 0x80 && label <= 0x83) ? "MIDI-likely" : "non-MIDI/unknown");
-                }
-            }
-        }
-
-             if (eventCount > 0) {
-             samplePacketCount_++;
-             
-             // Update Min/Max Stats
-             if (eventCount < minEvents_) minEvents_ = eventCount;
-             if (eventCount > maxEvents_) maxEvents_ = eventCount;
-             
-             // Extract Samples (Just verify decodability for now)
-             constexpr size_t kEventSampleCapacity = Config::kMaxPcmChannels;
-             const size_t wireSlotsPerEvent = header->dataBlockSize;
-             if (wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
-                 // We can parse CIP/DBC continuity, but not safely/meaningfully decode this payload.
-                 errorCount_++;
-                 if (lastUnsupportedWireDbs_ != header->dataBlockSize) {
-                     lastUnsupportedWireDbs_ = header->dataBlockSize;
-                     ASFW_LOG(Isoch,
-                              "IR RX: Unsupported wire DBS=%u (max AM824 slots=%zu, queueCh=%u) - skipping decode",
-                              header->dataBlockSize,
-                              static_cast<size_t>(Config::kMaxAmdtpDbs),
-                              queueChannels);
-                 }
-                 return summary;
-             }
-             size_t decodeSlotsPerEvent = std::min<size_t>(wireSlotsPerEvent, kEventSampleCapacity);
-             if (queueChannels > 0) {
-                 decodeSlotsPerEvent = std::min<size_t>(decodeSlotsPerEvent, queueChannels);
-             }
-             const bool queueWriteSafe = (!sharedRxQueue_) || (queueChannels <= kEventSampleCapacity);
-             
-             // Iterate events
-             for (size_t i = 0; i < eventCount; ++i) {
-                 // Clear temp frame so omitted/unsupported slots don't leak stale values.
-                 for (size_t ch = 0; ch < kEventSampleCapacity; ++ch) {
-                     eventSamples_[ch] = 0;
-                 }
-
-                 // Decode only the supported subset. We still use the wire DBS for stride.
-                 for (size_t ch = 0; ch < decodeSlotsPerEvent; ++ch) {
-                     uint32_t sampleQuad = dataPtr[(i * wireSlotsPerEvent) + ch];
-                     
-                     // Decode AM824 sample
-                     auto sample = AM824Decoder::DecodeSample(sampleQuad);
-                     if (sample) {
-                         // Store in temp buffer for this event
-                         eventSamples_[ch] = *sample;
-                     } else if (AM824Decoder::IsMIDI(sampleQuad)) {
-                         // MIDI: ignore for now, could route elsewhere
-                         eventSamples_[ch] = 0;
-                     } else {
-                         // Unknown or Empty
-                         eventSamples_[ch] = 0;
-                     }
-                 }
-                 
-                 // Write this event (1 frame of all channels) to shared RX queue
-                 if (sharedRxQueue_ && queueWriteSafe) {
-                     sharedRxQueue_->Write(eventSamples_, 1);
-                 } else if (sharedRxQueue_ && !queueWriteSafe) {
-                     // Queue requests more channels than this processor can safely stage.
-                     errorCount_++;
-                 }
-             }
-             
-        } else {
-             emptyPacketCount_++;
-        }
+        LogInterestingDbs(*header, *layout, length);
+        ProcessDecodedPayload(*header, *layout);
 
         return summary;
     }
@@ -314,6 +155,191 @@ public:
     }
 
 private:
+    struct PayloadLayout {
+        const uint32_t* dataPtr{nullptr};
+        size_t payloadBytes{0};
+        size_t eventCount{0};
+        size_t wireSlotsPerEvent{0};
+        size_t decodeSlotsPerEvent{0};
+        uint32_t queueChannels{0};
+        bool queueWriteSafe{true};
+    };
+
+    [[nodiscard]] std::optional<CIPHeader> DecodePacketHeader(const uint8_t* payload) const noexcept {
+        const uint8_t* cipStart = payload + kIsochHeaderSize;
+        const auto* quadlets = reinterpret_cast<const uint32_t*>(cipStart);
+        return CIPHeader::Decode(quadlets[0], quadlets[1]);
+    }
+
+    void PopulateSummary(const CIPHeader& header, RxCipSummary& summary) const noexcept {
+        summary.hasValidCip = true;
+        summary.syt = header.syt;
+        summary.fdf = header.fdf;
+        summary.dbs = header.dataBlockSize;
+    }
+
+    void RecordContinuity(const CIPHeader& header) noexcept {
+        const uint8_t expectedDBC =
+            static_cast<uint8_t>((lastDBC_.load(std::memory_order_relaxed) +
+                                  lastDataBlockCount_.load(std::memory_order_relaxed)) &
+                                 0xFF);
+        if (packetCount_.load(std::memory_order_relaxed) > 1 &&
+            header.dataBlockCounter != expectedDBC) {
+            discontinuityCount_++;
+        }
+    }
+
+    void RecordCipState(const CIPHeader& header) noexcept {
+        lastDBC_ = header.dataBlockCounter;
+        lastSYT_ = header.syt;
+        lastCIP_DBS_ = header.dataBlockSize;
+        lastCIP_FDF_ = header.fdf;
+        lastCIP_SID_ = header.sourceNodeId;
+    }
+
+    [[nodiscard]] std::optional<PayloadLayout> BuildPayloadLayout(
+        const uint8_t* payload,
+        size_t length,
+        const CIPHeader& header) noexcept {
+        const uint8_t* cipStart = payload + kIsochHeaderSize;
+        const auto* quadlets = reinterpret_cast<const uint32_t*>(cipStart);
+        const size_t cipLength = length - kIsochHeaderSize;
+        const size_t payloadBytes = cipLength - 8;
+        const size_t dbsBytes = static_cast<size_t>(header.dataBlockSize) * 4u;
+
+        if (dbsBytes == 0) {
+            errorCount_++;
+            return std::nullopt;
+        }
+
+        const size_t eventCount = payloadBytes / dbsBytes;
+        lastDataBlockCount_ = static_cast<uint8_t>(eventCount);
+        if (payloadBytes % dbsBytes != 0) {
+            errorCount_++;
+        }
+
+        const uint32_t queueChannels = sharedRxQueue_ ? sharedRxQueue_->Channels() : 0;
+        size_t decodeSlotsPerEvent =
+            std::min<size_t>(header.dataBlockSize, static_cast<size_t>(Config::kMaxPcmChannels));
+        if (queueChannels > 0) {
+            decodeSlotsPerEvent = std::min<size_t>(decodeSlotsPerEvent, queueChannels);
+        }
+
+        return PayloadLayout{
+            .dataPtr = &quadlets[2],
+            .payloadBytes = payloadBytes,
+            .eventCount = eventCount,
+            .wireSlotsPerEvent = header.dataBlockSize,
+            .decodeSlotsPerEvent = decodeSlotsPerEvent,
+            .queueChannels = queueChannels,
+            .queueWriteSafe = (!sharedRxQueue_) || (queueChannels <= Config::kMaxPcmChannels),
+        };
+    }
+
+    void LogInterestingDbs(const CIPHeader& header,
+                           const PayloadLayout& layout,
+                           size_t length) noexcept {
+        const uint32_t cipDbs = header.dataBlockSize;
+        const bool interestingDbs =
+            (cipDbs > Config::kMaxAmdtpDbs) ||
+            (layout.queueChannels > 0 && cipDbs > layout.queueChannels);
+        if (!interestingDbs) {
+            return;
+        }
+
+        const bool stateChanged =
+            (lastDbsDiagCipDbs_ != cipDbs) ||
+            (lastDbsDiagQueueChannels_ != layout.queueChannels);
+        ++dbsDiagHitCount_;
+        if (!stateChanged) {
+            return;
+        }
+
+        lastDbsDiagCipDbs_ = cipDbs;
+        lastDbsDiagQueueChannels_ = layout.queueChannels;
+        ASFW_LOG(Isoch,
+                 "IR RX: len=%zu payload=%zu cipDbs=%u events=%zu queueCh=%u%{public}s",
+                 length,
+                 layout.payloadBytes,
+                 cipDbs,
+                 layout.eventCount,
+                 layout.queueChannels,
+                 (layout.queueChannels > 0 && cipDbs > layout.queueChannels)
+                     ? " likely extra AM824 slot(s), possibly MIDI"
+                     : "");
+
+        uint32_t extraSlotIndex = UINT32_MAX;
+        if (layout.eventCount > 0) {
+            if (layout.queueChannels > 0 && cipDbs > layout.queueChannels) {
+                extraSlotIndex = layout.queueChannels;
+            } else if (cipDbs > Config::kMaxPcmChannels) {
+                extraSlotIndex = Config::kMaxPcmChannels;
+            }
+        }
+
+        if (extraSlotIndex == UINT32_MAX || extraSlotIndex >= header.dataBlockSize) {
+            return;
+        }
+
+        const uint32_t q = SwapBigToHost(layout.dataPtr[extraSlotIndex]);
+        const uint8_t label = static_cast<uint8_t>((q >> 24) & 0xFF);
+        ASFW_LOG(Isoch,
+                 "IR RX DICE diag: first extra slot[%u] label=0x%02x (%{public}s)",
+                 extraSlotIndex,
+                 label,
+                 (label >= 0x80 && label <= 0x83) ? "MIDI-likely" : "non-MIDI/unknown");
+    }
+
+    void ProcessDecodedPayload(const CIPHeader& header, const PayloadLayout& layout) noexcept {
+        if (layout.eventCount == 0) {
+            emptyPacketCount_++;
+            return;
+        }
+
+        samplePacketCount_++;
+        if (layout.eventCount < minEvents_) {
+            minEvents_ = layout.eventCount;
+        }
+        if (layout.eventCount > maxEvents_) {
+            maxEvents_ = layout.eventCount;
+        }
+
+        if (layout.wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
+            errorCount_++;
+            if (lastUnsupportedWireDbs_ != header.dataBlockSize) {
+                lastUnsupportedWireDbs_ = header.dataBlockSize;
+                ASFW_LOG(Isoch,
+                         "IR RX: Unsupported wire DBS=%u (max AM824 slots=%zu, queueCh=%u) - skipping decode",
+                         header.dataBlockSize,
+                         static_cast<size_t>(Config::kMaxAmdtpDbs),
+                         layout.queueChannels);
+            }
+            return;
+        }
+
+        for (size_t i = 0; i < layout.eventCount; ++i) {
+            std::fill(std::begin(eventSamples_), std::end(eventSamples_), 0);
+
+            for (size_t ch = 0; ch < layout.decodeSlotsPerEvent; ++ch) {
+                const uint32_t sampleQuad =
+                    layout.dataPtr[(i * layout.wireSlotsPerEvent) + ch];
+                if (auto sample = AM824Decoder::DecodeSample(sampleQuad)) {
+                    eventSamples_[ch] = *sample;
+                } else if (AM824Decoder::IsMIDI(sampleQuad)) {
+                    eventSamples_[ch] = 0;
+                } else {
+                    eventSamples_[ch] = 0;
+                }
+            }
+
+            if (sharedRxQueue_ && layout.queueWriteSafe) {
+                sharedRxQueue_->Write(eventSamples_, 1);
+            } else if (sharedRxQueue_ && !layout.queueWriteSafe) {
+                errorCount_++;
+            }
+        }
+    }
+
     std::atomic<uint64_t> packetCount_{0};
     std::atomic<uint64_t> samplePacketCount_{0};
     std::atomic<uint64_t> emptyPacketCount_{0};

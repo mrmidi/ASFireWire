@@ -45,7 +45,10 @@ std::unique_ptr<PayloadContext> WriteCommand::PreparePayload(
     
     // Block write: allocate DMA buffer for payload
     constexpr uint64_t kWritePayloadDirection = kIOMemoryDirectionInOut;  // host writes, controller reads
-    return PayloadContext::Create(hw, params_.payload, params_.length, kWritePayloadDirection);
+    return PayloadContext::Create(hw,
+                                  reinterpret_cast<const uint8_t*>(params_.payload),
+                                  params_.length,
+                                  kWritePayloadDirection);
 }
 
 } // namespace ASFW::Async

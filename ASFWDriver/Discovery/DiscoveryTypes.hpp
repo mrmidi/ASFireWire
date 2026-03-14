@@ -21,6 +21,15 @@ namespace ASFW::Discovery {
 
 using Generation = ASFW::FW::Generation;
 using Guid64 = uint64_t;
+inline constexpr uint16_t kInvalidNodeId = 0xFFFFu;
+
+[[nodiscard]] inline constexpr std::optional<uint8_t>
+TryOperationalNodeId(uint16_t nodeId) noexcept {
+    if (nodeId > 0xFFu) {
+        return std::nullopt;
+    }
+    return static_cast<uint8_t>(nodeId);
+}
 
 struct FwAddress {
     struct BusNodeParts {
@@ -121,7 +130,7 @@ enum class ROMState : uint8_t {
 // NOTE: rawQuadlets is stored in BIG-ENDIAN wire order (byte-exact for GUI export).
 struct ConfigROM {
     Generation gen{0};
-    uint16_t nodeId{0xFFFF};
+    uint16_t nodeId{kInvalidNodeId};
     BusInfoBlock bib{};
 
     // Bounded slice of Root Directory (first N entries, typically 8-16)
@@ -178,7 +187,7 @@ struct DeviceRecord {
 
     // ---- Live mapping (current generation) ----
     Generation gen{0};
-    uint16_t nodeId{0xFFFF};        // 0xFFFF when not present this gen
+    uint16_t nodeId{kInvalidNodeId}; // 0xFFFF when not present this gen
     LinkPolicy link{};
     LifeState state{LifeState::Discovered};
 

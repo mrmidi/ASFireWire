@@ -80,6 +80,17 @@ private:
     void NotifyUnitResumed(std::shared_ptr<FWUnit> unit);
     void NotifyUnitTerminated(std::shared_ptr<FWUnit> unit);
 
+    void UpdateOperationalIndex(Guid64 guid,
+                                Generation gen,
+                                uint16_t nodeId,
+                                const char* action);
+    void NotifyPublishedUnits(const std::shared_ptr<FWDevice>& device);
+    void NotifyResumedUnits(const std::shared_ptr<FWDevice>& device);
+    std::shared_ptr<FWDevice> ResumeExistingDevice(const std::shared_ptr<FWDevice>& device,
+                                                   const DeviceRecord& record);
+    std::shared_ptr<FWDevice> CreateAndRegisterDevice(const DeviceRecord& record,
+                                                      const ConfigROM& rom);
+
     bool UnitMatchesCallback(
         const std::shared_ptr<FWUnit>& unit,
         uint32_t specId,

@@ -265,64 +265,16 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
     const ConfigROM& rom)
 {
     IOLockLock(mutex_);
-    Guid64 guid = record.guid;
-    auto it = devicesByGuid_.find(guid);
+    const Guid64 guid = record.guid;
 
-    if (it != devicesByGuid_.end()) {
-        // Device exists - resume it
-        auto device = it->second;
-        if (device) {
-            if (device->IsSuspended()) {
-                // Resume existing device with new generation info
-                device->Resume(record.gen, record.nodeId, record.link);
-
-                // Update secondary index
-                GenNodeKey key = MakeKey(record.gen, record.nodeId);
-                genNodeToGuid_[key] = guid;
-
-                // Notify observers
-                NotifyDeviceResumed(device);
-
-                // Notify unit observers for resumed units
-                for (const auto& unit : device->GetUnits()) {
-                    if (unit && unit->IsReady()) {
-                        NotifyUnitResumed(unit);
-                    }
-                }
-            }
-            // If already Ready, this is redundant discovery - ignore
+    if (auto it = devicesByGuid_.find(guid); it != devicesByGuid_.end()) {
+        if (auto device = ResumeExistingDevice(it->second, record)) {
             IOLockUnlock(mutex_);
             return device;
         }
     }
 
-    // New device - create it
-    auto device = FWDevice::Create(record, rom);
-    if (!device) {
-        IOLockUnlock(mutex_);
-        return nullptr;
-    }
-
-    // Store in primary map
-    devicesByGuid_[guid] = device;
-
-    // Store in secondary index
-    GenNodeKey key = MakeKey(record.gen, record.nodeId);
-    genNodeToGuid_[key] = guid;
-
-    // Publish device and units
-    device->Publish();
-
-    // Notify observers
-    NotifyDeviceAdded(device);
-
-    // Notify unit observers for published units
-    for (const auto& unit : device->GetUnits()) {
-        if (unit && unit->IsReady()) {
-            NotifyUnitPublished(unit);
-        }
-    }
-
+    auto device = CreateAndRegisterDevice(record, rom);
     IOLockUnlock(mutex_);
     return device;
 }
@@ -450,6 +402,81 @@ void DeviceManager::NotifyUnitTerminated(std::shared_ptr<FWUnit> unit)
     for (auto* observer : unitObservers_) {
         observer->OnUnitTerminated(unit);
     }
+}
+
+void DeviceManager::UpdateOperationalIndex(Guid64 guid,
+                                           Generation gen,
+                                           uint16_t nodeId,
+                                           const char* action)
+{
+    if (const auto operationalNodeId = TryOperationalNodeId(nodeId); operationalNodeId.has_value()) {
+        const GenNodeKey key = MakeKey(gen, *operationalNodeId);
+        genNodeToGuid_[key] = guid;
+        return;
+    }
+
+    ASFW_LOG(Discovery, "Skipping device index %s for GUID=0x%016llx with invalid nodeId=%u",
+             action, guid, nodeId);
+}
+
+void DeviceManager::NotifyPublishedUnits(const std::shared_ptr<FWDevice>& device)
+{
+    if (!device) {
+        return;
+    }
+
+    for (const auto& unit : device->GetUnits()) {
+        if (unit && unit->IsReady()) {
+            NotifyUnitPublished(unit);
+        }
+    }
+}
+
+void DeviceManager::NotifyResumedUnits(const std::shared_ptr<FWDevice>& device)
+{
+    if (!device) {
+        return;
+    }
+
+    for (const auto& unit : device->GetUnits()) {
+        if (unit && unit->IsReady()) {
+            NotifyUnitResumed(unit);
+        }
+    }
+}
+
+std::shared_ptr<FWDevice> DeviceManager::ResumeExistingDevice(const std::shared_ptr<FWDevice>& device,
+                                                              const DeviceRecord& record)
+{
+    if (!device) {
+        return nullptr;
+    }
+
+    if (device->IsSuspended()) {
+        device->Resume(record.gen, record.nodeId, record.link);
+        UpdateOperationalIndex(record.guid, record.gen, record.nodeId, "update");
+        NotifyDeviceResumed(device);
+        NotifyResumedUnits(device);
+    }
+
+    // If already Ready, this is redundant discovery - ignore.
+    return device;
+}
+
+std::shared_ptr<FWDevice> DeviceManager::CreateAndRegisterDevice(const DeviceRecord& record,
+                                                                 const ConfigROM& rom)
+{
+    auto device = FWDevice::Create(record, rom);
+    if (!device) {
+        return nullptr;
+    }
+
+    devicesByGuid_[record.guid] = device;
+    UpdateOperationalIndex(record.guid, record.gen, record.nodeId, "insert");
+    device->Publish();
+    NotifyDeviceAdded(device);
+    NotifyPublishedUnits(device);
+    return device;
 }
 
 bool DeviceManager::UnitMatchesCallback(

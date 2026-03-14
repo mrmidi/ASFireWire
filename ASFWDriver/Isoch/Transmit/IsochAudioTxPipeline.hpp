@@ -44,18 +44,20 @@ public:
     IsochAudioTxPipeline() noexcept = default;
 
     // Public-ish facade methods (delegated by IsochTransmitContext)
-    void SetSharedTxQueue(void* base, uint64_t bytes) noexcept;
+    void SetSharedTxQueue(uint8_t* base, uint64_t bytes) noexcept;
     [[nodiscard]] uint32_t SharedTxFillLevelFrames() const noexcept;
     [[nodiscard]] uint32_t SharedTxCapacityFrames() const noexcept;
     [[nodiscard]] bool SharedTxQueueValid() const noexcept { return sharedTxQueue_.IsValid(); }
 
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
 
-    void SetZeroCopyOutputBuffer(void* base, uint64_t bytes, uint32_t frameCapacity) noexcept;
+    void SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes,
+                                 uint32_t frameCapacity) noexcept;
     [[nodiscard]] bool IsZeroCopyEnabled() const noexcept { return zeroCopyEnabled_; }
 
     [[nodiscard]] Encoding::StreamMode RequestedStreamMode() const noexcept { return requestedStreamMode_; }
     [[nodiscard]] Encoding::StreamMode EffectiveStreamMode() const noexcept { return effectiveStreamMode_; }
+    [[nodiscard]] Encoding::AudioWireFormat WireFormat() const noexcept { return assembler_.audioWireFormat(); }
 
     [[nodiscard]] Encoding::AudioRingBuffer<>& RingBuffer() noexcept { return assembler_.ringBuffer(); }
     [[nodiscard]] uint64_t UnderrunCount() const noexcept { return assembler_.underrunCount(); }
@@ -73,7 +75,8 @@ public:
     [[nodiscard]] kern_return_t Configure(uint8_t sid,
                                           uint32_t streamModeRaw,
                                           uint32_t requestedChannels,
-                                          uint32_t requestedAm824Slots) noexcept;
+                                          uint32_t requestedAm824Slots,
+                                          Encoding::AudioWireFormat wireFormat) noexcept;
 
     // Start-time pre-prime: move some frames from shared queue into assembler ring.
     void PrePrimeFromSharedQueue() noexcept;
@@ -99,8 +102,51 @@ public:
     void InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescriptorSlab& slab) noexcept override;
 
 private:
+    struct LegacyPumpResult {
+        uint32_t pumpedFrames{0};
+        bool skipped{true};
+    };
+
+    struct ExternalSyncState {
+        bool enabled{false};
+        uint16_t rxSyt{Core::ExternalSyncBridge::kNoInfoSyt};
+    };
+
+    struct AudioInjectionPlan {
+        bool zeroCopySync{false};
+        uint32_t audioTarget{0};
+        uint32_t packetsToInject{0};
+        uint32_t framesPerPacket{0};
+        uint32_t pcmChannels{0};
+        uint32_t am824Slots{0};
+    };
+
+    struct PacketReadResult {
+        uint32_t framesRead{0};
+        bool leaveSilence{false};
+    };
+
+    void ApplyPendingSharedQueueResync() noexcept;
+    [[nodiscard]] LegacyPumpResult PumpLegacyAssemblerRing(uint32_t targetRbFillFrames) noexcept;
+    void RecordLegacyPumpResult(const LegacyPumpResult& result) noexcept;
+    void UpdateLegacyFillLevelAlerts() noexcept;
+    void AdvanceAdaptiveFillWindow() noexcept;
+    void ApplyAdaptiveFillPolicy() noexcept;
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
+    [[nodiscard]] ExternalSyncState ReadExternalSyncState() noexcept;
+    [[nodiscard]] bool HasFreshExternalSyncUpdate(const Core::ExternalSyncBridge& bridge) noexcept;
     void MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
+    [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
+    [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;
+    [[nodiscard]] PacketReadResult ReadPacketSamples(const AudioInjectionPlan& plan, int32_t* samples) noexcept;
+    [[nodiscard]] PacketReadResult ReadZeroCopyPacketSamples(const AudioInjectionPlan& plan,
+                                                             int32_t* samples) noexcept;
+    void CopyZeroCopyFrames(const AudioInjectionPlan& plan, int32_t* samples) noexcept;
+    void PadPacketSamples(const AudioInjectionPlan& plan, uint32_t framesRead, int32_t* samples) noexcept;
+    void EncodeInjectedPacket(uint32_t packetIndex,
+                              Tx::IsochTxDescriptorSlab& slab,
+                              const AudioInjectionPlan& plan,
+                              const int32_t* samples) noexcept;
 
     // Fill-level alerts (with hysteresis)
     struct FillLevelAlert {
@@ -124,7 +170,7 @@ private:
     Shared::TxSharedQueueSPSC sharedTxQueue_{};
 
     // ZERO-COPY: Direct pointer to CoreAudio output buffer
-    void* zeroCopyAudioBase_{nullptr};
+    const int32_t* zeroCopyAudioBase_{nullptr};
     uint64_t zeroCopyAudioBytes_{0};
     uint32_t zeroCopyFrameCapacity_{0};
     bool zeroCopyEnabled_{false};

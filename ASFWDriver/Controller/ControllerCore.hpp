@@ -141,6 +141,15 @@ class ControllerCore {
     kern_return_t InitialiseHardware(IOService* provider);
     kern_return_t EnableInterruptsAndStartBus();
     kern_return_t StageConfigROM(uint32_t busOptions, uint32_t guidHi, uint32_t guidLo) const;
+    void LogInterruptContext(const InterruptSnapshot& snapshot,
+                             uint32_t rawEvents,
+                             uint32_t currentMask,
+                             uint32_t events) const;
+    void HandleFaultInterrupts(uint32_t events);
+    void NotifyBusResetCoordinator(uint32_t events, uint64_t timestamp) const;
+    void DispatchAsyncInterrupts(uint32_t events) const;
+    void LogBusResetCompletionEvents(uint32_t events, uint64_t timestamp) const;
+    [[nodiscard]] static uint32_t FaultAckMask(uint32_t events) noexcept;
     void DiagnoseUnrecoverableError() const;
     void HandleCycle64Seconds(); // Called on cycle64Seconds interrupt to extend 7-bit seconds
 
