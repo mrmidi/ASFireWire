@@ -351,10 +351,9 @@ private:
     kern_return_t AllocateBacking(AddressRange& range) {
         const std::size_t size = static_cast<std::size_t>(range.meta.length);
 
-        const uint64_t options =
-            static_cast<uint64_t>(kIOMemoryDirectionOut) |
-            static_cast<uint64_t>(kIOMemoryDirectionIn) |
-            static_cast<uint64_t>(kIOMemoryMapCacheModeInhibit);
+        // IOBufferMemoryDescriptor::Create expects memory-direction options only.
+        // Cache policy is set at CreateMapping time, not in allocation options.
+        const uint64_t options = static_cast<uint64_t>(kIOMemoryDirectionInOut);
 
         std::optional<ASFW::Driver::HardwareInterface::DMABuffer> dma;
         if (hardware_) {
@@ -375,7 +374,7 @@ private:
 
         IOMemoryMap* mapping = nullptr;
         const kern_return_t kr = dma->descriptor->CreateMapping(
-            0,
+            kIOMemoryMapCacheModeInhibit,
             0,
             0,
             size,
