@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 
 #include <DriverKit/IOLib.h>
 
@@ -180,6 +181,16 @@ public:
      * to notify hardware that descriptors are available."
      */
     [[nodiscard]] kern_return_t Recycle(size_t index) noexcept;
+
+    /**
+     * \brief Commit how many total bytes in the current buffer were actually consumed.
+     *
+     * This lets callers keep an unparsed tail in the current AR buffer so the next
+     * interrupt can retry parsing once more DMA data has arrived.
+     */
+    [[nodiscard]] kern_return_t CommitConsumed(size_t index, size_t consumedBytes) noexcept;
+    [[nodiscard]] size_t CopyReadableBytes(std::span<uint8_t> destination) noexcept;
+    [[nodiscard]] kern_return_t ConsumeReadableBytes(size_t consumedBytes) noexcept;
 
     /**
      * \brief Get reference to underlying buffer ring.
@@ -396,6 +407,46 @@ kern_return_t ARContextBase<Derived, Tag>::Recycle(size_t index) noexcept {
 
     IOLockUnlock(lock_);
 
+    return result;
+}
+
+template<typename Derived, ContextRole Tag>
+kern_return_t ARContextBase<Derived, Tag>::CommitConsumed(size_t index, size_t consumedBytes) noexcept {
+    if (!bufferRing_ || !lock_) {
+        return kIOReturnNotReady;
+    }
+
+    IOLockLock(lock_);
+    const kern_return_t result = bufferRing_->CommitConsumed(index, consumedBytes);
+    IOLockUnlock(lock_);
+    return result;
+}
+
+template<typename Derived, ContextRole Tag>
+size_t ARContextBase<Derived, Tag>::CopyReadableBytes(std::span<uint8_t> destination) noexcept {
+    if (!bufferRing_ || !lock_) {
+        return 0;
+    }
+
+    IOLockLock(lock_);
+    const size_t copied = bufferRing_->CopyReadableBytes(destination);
+    IOLockUnlock(lock_);
+    return copied;
+}
+
+template<typename Derived, ContextRole Tag>
+kern_return_t ARContextBase<Derived, Tag>::ConsumeReadableBytes(size_t consumedBytes) noexcept {
+    if (!bufferRing_ || !lock_ || !this->hw_) {
+        return kIOReturnNotReady;
+    }
+
+    IOLockLock(lock_);
+    const kern_return_t result = bufferRing_->ConsumeReadableBytes(consumedBytes);
+    if (result == kIOReturnSuccess) {
+        Driver::WriteBarrier();
+        this->WriteControlSet(kContextControlWakeBit);
+    }
+    IOLockUnlock(lock_);
     return result;
 }
 
