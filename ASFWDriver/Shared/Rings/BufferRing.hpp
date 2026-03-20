@@ -28,6 +28,9 @@ public:
     [[nodiscard]] bool Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span<uint8_t> buffers, size_t bufferCount, size_t bufferSize) noexcept;
     [[nodiscard]] bool Finalize(uint64_t descriptorsPhysBase, uint64_t buffersPhysBase) noexcept;
     [[nodiscard]] std::optional<FilledBufferInfo> Dequeue() noexcept;
+    [[nodiscard]] kern_return_t CommitConsumed(size_t index, size_t consumedBytes) noexcept;
+    [[nodiscard]] size_t CopyReadableBytes(std::span<uint8_t> destination) noexcept;
+    [[nodiscard]] kern_return_t ConsumeReadableBytes(size_t consumedBytes) noexcept;
     [[nodiscard]] kern_return_t Recycle(size_t index) noexcept;
     [[nodiscard]] uint8_t* GetBufferAddress(size_t index) const noexcept;
     [[nodiscard]] size_t Head() const noexcept { return head_; }
@@ -71,6 +74,7 @@ private:
     size_t bufferSize_{0};
     size_t head_{0};
     size_t last_dequeued_bytes_{0};
+    size_t last_observed_total_bytes_{0};
     uint32_t descIOVABase_{0};
     uint32_t bufIOVABase_{0};
     IDMAMemory* dma_{nullptr};

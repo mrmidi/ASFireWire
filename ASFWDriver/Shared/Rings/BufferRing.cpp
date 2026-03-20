@@ -1,14 +1,27 @@
 #include "BufferRing.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 
 #include "../../Common/BarrierUtils.hpp"
+#include "../../Common/DMASafeCopy.hpp"
 #include "../Memory/DMAMemoryManager.hpp"
 #include "../Memory/IDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 
 namespace ASFW::Shared {
+
+namespace {
+
+size_t DescriptorBytesFilled(const HW::OHCIDescriptor& desc) noexcept {
+    const uint16_t resCount = HW::AR_resCount(desc);
+    const uint16_t reqCount = static_cast<uint16_t>(desc.control & 0xFFFF);
+    return (resCount <= reqCount) ? (reqCount - resCount) : 0;
+}
+
+} // namespace
 
 bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span<uint8_t> buffers, size_t bufferCount, size_t bufferSize) noexcept {
     if (descriptors.empty() || buffers.empty()) {
@@ -32,6 +45,8 @@ bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span
     bufferCount_ = bufferCount;
     bufferSize_ = bufferSize;
     head_ = 0;
+    last_dequeued_bytes_ = 0;
+    last_observed_total_bytes_ = 0;
     for (size_t i = 0; i < bufferCount; ++i) {
         auto& desc = descriptors_[i];
         desc = HW::OHCIDescriptor{};
@@ -88,51 +103,6 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     }
 
     size_t index = head_;
-
-    // CRITICAL: Auto-recycling logic for AR DMA stream semantics
-    // Per OHCI §3.3, §8.4.2 bufferFill mode: hardware fills current buffer until exhausted,
-    // then advances to next. We detect this and recycle automatically.
-
-    // Check if next descriptor has data (hardware advanced)
-    const size_t next_index = (index + 1) % bufferCount_;
-    auto& next_desc = descriptors_[next_index];
-
-    if (dma_) {
-        dma_->FetchFromDevice(&next_desc, sizeof(next_desc));
-    }
-
-    const uint16_t next_resCount = HW::AR_resCount(next_desc);
-    const uint16_t next_reqCount = static_cast<uint16_t>(next_desc.control & 0xFFFF);
-
-    // If next buffer has data, hardware has moved to it
-    if (next_resCount != next_reqCount) {
-        // Hardware advanced to next buffer! Recycle current buffer.
-        ASFW_LOG_V4(Async,
-                    "🔄 BufferRing::Dequeue: Hardware advanced to buffer[%zu] (resCount=%u/%u). "
-                    "Auto-recycling buffer[%zu]...",
-                    next_index, next_resCount, next_reqCount, index);
-
-        // Recycle current buffer (resets resCount=reqCount)
-        auto& desc_to_recycle = descriptors_[index];
-        const uint16_t reqCount_recycle = static_cast<uint16_t>(desc_to_recycle.control & 0xFFFF);
-        HW::AR_init_status(desc_to_recycle, reqCount_recycle);
-
-        if (dma_) {
-            dma_->PublishToDevice(&desc_to_recycle, sizeof(desc_to_recycle));
-        }
-        Driver::WriteBarrier();
-
-        // Advance to next buffer
-        head_ = next_index;
-        last_dequeued_bytes_ = 0;  // Reset tracking for new buffer
-        index = next_index;  // Process the new buffer now
-
-        ASFW_LOG_V4(Async,
-                    "✅ BufferRing: Auto-recycled buffer, advanced head_ →%zu",
-                    index);
-    }
-
-    // Now process current buffer (either same as before, or newly advanced)
     auto& desc = descriptors_[index];
 
     // CRITICAL FIX: Invalidate CPU cache before reading descriptor status
@@ -163,9 +133,83 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
     // Hardware ACCUMULATES multiple packets in the SAME buffer, raising an interrupt
     // after EACH packet. We must return only the NEW bytes since last Dequeue().
     
-    // Check if there are NEW bytes beyond what we've already returned
+    // Check if there are NEW bytes beyond what we've already consumed.
     if (total_bytes_in_buffer <= last_dequeued_bytes_) {
-        // No new data since last call
+        // Current head buffer is fully drained. Only now is it safe to auto-advance
+        // if hardware has already moved on to the next descriptor.
+        const size_t next_index = (index + 1) % bufferCount_;
+        auto& next_desc = descriptors_[next_index];
+
+        if (dma_) {
+            dma_->FetchFromDevice(&next_desc, sizeof(next_desc));
+        }
+
+        const uint16_t next_resCount = HW::AR_resCount(next_desc);
+        const uint16_t next_reqCount = static_cast<uint16_t>(next_desc.control & 0xFFFF);
+        if (next_resCount == next_reqCount) {
+            return std::nullopt;
+        }
+
+        ASFW_LOG_V4(Async,
+                    "🔄 BufferRing::Dequeue: Current buffer[%zu] drained (%zu bytes); "
+                    "hardware advanced to buffer[%zu] (resCount=%u/%u). Auto-recycling...",
+                    index,
+                    total_bytes_in_buffer,
+                    next_index,
+                    next_resCount,
+                    next_reqCount);
+
+        auto& desc_to_recycle = descriptors_[index];
+        const uint16_t reqCount_recycle = static_cast<uint16_t>(desc_to_recycle.control & 0xFFFF);
+        HW::AR_init_status(desc_to_recycle, reqCount_recycle);
+
+        if (dma_) {
+            dma_->PublishToDevice(&desc_to_recycle, sizeof(desc_to_recycle));
+        }
+        Driver::WriteBarrier();
+
+        head_ = next_index;
+        last_dequeued_bytes_ = 0;
+        last_observed_total_bytes_ = 0;
+        index = next_index;
+
+        auto& advancedDesc = descriptors_[index];
+        if (dma_) {
+            dma_->FetchFromDevice(&advancedDesc, sizeof(advancedDesc));
+        }
+
+        const uint16_t advancedResCount = HW::AR_resCount(advancedDesc);
+        const uint16_t advancedReqCount = static_cast<uint16_t>(advancedDesc.control & 0xFFFF);
+        const size_t advancedTotalBytes =
+            (advancedResCount <= advancedReqCount) ? (advancedReqCount - advancedResCount) : 0;
+
+        if (advancedTotalBytes == 0) {
+            return std::nullopt;
+        }
+
+        const uint8_t* bufferAddr = GetBufferAddress(index);
+        if (!bufferAddr) {
+            ASFW_LOG(Async, "BufferRing::Dequeue: invalid buffer address at advanced index %zu", index);
+            return std::nullopt;
+        }
+
+        if (dma_) {
+            dma_->FetchFromDevice(bufferAddr, advancedTotalBytes);
+        }
+
+        return FilledBufferInfo{
+            .virtualAddress = const_cast<uint8_t*>(bufferAddr),
+            .startOffset = 0,
+            .bytesFilled = advancedTotalBytes,
+            .descriptorIndex = index
+        };
+    }
+
+    // Preserve unread tails, but do not hand back the exact same tail again
+    // until hardware appends more bytes. This keeps incomplete packets available
+    // for the next interrupt without letting the receive path hot-spin on a
+    // parser stall inside the same buffer.
+    if (total_bytes_in_buffer <= last_observed_total_bytes_) {
         return std::nullopt;
     }
 
@@ -202,8 +246,7 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
         dma_->FetchFromDevice(bufferAddr + start_offset, new_bytes);
     }
 
-    // Update tracking: remember how many total bytes we've now returned
-    last_dequeued_bytes_ = total_bytes_in_buffer;
+    last_observed_total_bytes_ = total_bytes_in_buffer;
 
     return FilledBufferInfo{
         .virtualAddress = bufferAddr,
@@ -211,6 +254,208 @@ std::optional<FilledBufferInfo> BufferRing::Dequeue() noexcept {
         .bytesFilled = total_bytes_in_buffer,  // Total bytes (caller parses [startOffset, bytesFilled))
         .descriptorIndex = index
     };
+}
+
+kern_return_t BufferRing::CommitConsumed(size_t index, size_t consumedBytes) noexcept {
+    if (index != head_) {
+        ASFW_LOG(Async, "BufferRing::CommitConsumed: index %zu != head %zu", index, head_);
+        return kIOReturnBadArgument;
+    }
+
+    if (index >= bufferCount_) {
+        ASFW_LOG(Async, "BufferRing::CommitConsumed: index %zu out of bounds", index);
+        return kIOReturnBadArgument;
+    }
+
+    auto& desc = descriptors_[index];
+    if (dma_) {
+        dma_->FetchFromDevice(&desc, sizeof(desc));
+    }
+
+    const uint16_t resCount = HW::AR_resCount(desc);
+    const uint16_t reqCount = static_cast<uint16_t>(desc.control & 0xFFFF);
+    const size_t totalBytesInBuffer = (resCount <= reqCount) ? (reqCount - resCount) : 0;
+
+    if (consumedBytes > totalBytesInBuffer) {
+        ASFW_LOG(Async,
+                 "BufferRing::CommitConsumed: consumed=%zu exceeds filled=%zu at index %zu",
+                 consumedBytes,
+                 totalBytesInBuffer,
+                 index);
+        return kIOReturnBadArgument;
+    }
+
+    if (consumedBytes < last_dequeued_bytes_) {
+        ASFW_LOG(Async,
+                 "BufferRing::CommitConsumed: consumed=%zu moves backwards from %zu at index %zu",
+                 consumedBytes,
+                 last_dequeued_bytes_,
+                 index);
+        return kIOReturnBadArgument;
+    }
+
+    last_dequeued_bytes_ = consumedBytes;
+    if (last_observed_total_bytes_ < last_dequeued_bytes_) {
+        last_observed_total_bytes_ = last_dequeued_bytes_;
+    }
+
+    ASFW_LOG_V4(Async,
+                "🧭 BufferRing::CommitConsumed[%zu]: last_dequeued_bytes_=%zu/%zu",
+                index,
+                last_dequeued_bytes_,
+                totalBytesInBuffer);
+
+    return kIOReturnSuccess;
+}
+
+size_t BufferRing::CopyReadableBytes(std::span<uint8_t> destination) noexcept {
+    if (destination.empty() || descriptors_.empty() || bufferCount_ == 0) {
+        return 0;
+    }
+
+    size_t copied = 0;
+    size_t index = head_;
+    size_t startOffset = last_dequeued_bytes_;
+
+    for (size_t visited = 0; visited < bufferCount_ && copied < destination.size(); ++visited) {
+        auto& desc = descriptors_[index];
+        if (dma_) {
+            dma_->FetchFromDevice(&desc, sizeof(desc));
+        }
+
+        const size_t totalBytesInBuffer = DescriptorBytesFilled(desc);
+        if (totalBytesInBuffer < startOffset) {
+            ASFW_LOG(Async,
+                     "BufferRing::CopyReadableBytes: startOffset=%zu exceeds filled=%zu at index %zu",
+                     startOffset,
+                     totalBytesInBuffer,
+                     index);
+            break;
+        }
+
+        const size_t readableBytes = totalBytesInBuffer - startOffset;
+        if (readableBytes == 0) {
+            break;
+        }
+
+        uint8_t* bufferAddr = GetBufferAddress(index);
+        if (!bufferAddr) {
+            ASFW_LOG(Async, "BufferRing::CopyReadableBytes: invalid buffer address at index %zu", index);
+            break;
+        }
+
+        const size_t bytesToCopy = std::min(readableBytes, destination.size() - copied);
+        if (dma_) {
+            dma_->FetchFromDevice(bufferAddr + startOffset, bytesToCopy);
+        }
+        Common::CopyFromQuadletAlignedDeviceMemory(
+            destination.subspan(copied, bytesToCopy),
+            bufferAddr + startOffset);
+        copied += bytesToCopy;
+
+        if (bytesToCopy < readableBytes) {
+            break;
+        }
+
+        index = (index + 1) % bufferCount_;
+        startOffset = 0;
+    }
+
+    return copied;
+}
+
+kern_return_t BufferRing::ConsumeReadableBytes(size_t consumedBytes) noexcept {
+    if (descriptors_.empty() || bufferCount_ == 0) {
+        return kIOReturnNotReady;
+    }
+
+    if (consumedBytes == 0) {
+        return kIOReturnSuccess;
+    }
+
+    size_t availableBytes = 0;
+    size_t index = head_;
+    size_t startOffset = last_dequeued_bytes_;
+    for (size_t visited = 0; visited < bufferCount_ && availableBytes < consumedBytes; ++visited) {
+        auto& desc = descriptors_[index];
+        if (dma_) {
+            dma_->FetchFromDevice(&desc, sizeof(desc));
+        }
+
+        const size_t totalBytesInBuffer = DescriptorBytesFilled(desc);
+        if (totalBytesInBuffer < startOffset) {
+            ASFW_LOG(Async,
+                     "BufferRing::ConsumeReadableBytes: startOffset=%zu exceeds filled=%zu at index %zu",
+                     startOffset,
+                     totalBytesInBuffer,
+                     index);
+            return kIOReturnBadArgument;
+        }
+
+        const size_t readableBytes = totalBytesInBuffer - startOffset;
+        if (readableBytes == 0) {
+            break;
+        }
+
+        availableBytes += readableBytes;
+        index = (index + 1) % bufferCount_;
+        startOffset = 0;
+    }
+
+    if (consumedBytes > availableBytes) {
+        ASFW_LOG(Async,
+                 "BufferRing::ConsumeReadableBytes: requested=%zu exceeds available=%zu",
+                 consumedBytes,
+                 availableBytes);
+        return kIOReturnUnderrun;
+    }
+
+    size_t remaining = consumedBytes;
+    while (remaining > 0) {
+        auto& desc = descriptors_[head_];
+        if (dma_) {
+            dma_->FetchFromDevice(&desc, sizeof(desc));
+        }
+
+        const size_t totalBytesInBuffer = DescriptorBytesFilled(desc);
+        if (totalBytesInBuffer < last_dequeued_bytes_) {
+            ASFW_LOG(Async,
+                     "BufferRing::ConsumeReadableBytes: head startOffset=%zu exceeds filled=%zu at index %zu",
+                     last_dequeued_bytes_,
+                     totalBytesInBuffer,
+                     head_);
+            return kIOReturnBadArgument;
+        }
+
+        const size_t readableBytes = totalBytesInBuffer - last_dequeued_bytes_;
+        if (readableBytes == 0) {
+            return kIOReturnUnderrun;
+        }
+
+        if (remaining < readableBytes) {
+            last_dequeued_bytes_ += remaining;
+            last_observed_total_bytes_ = last_dequeued_bytes_;
+            return kIOReturnSuccess;
+        }
+
+        if (remaining == readableBytes) {
+            last_dequeued_bytes_ = totalBytesInBuffer;
+            last_observed_total_bytes_ = totalBytesInBuffer;
+            return kIOReturnSuccess;
+        }
+
+        remaining -= readableBytes;
+        last_dequeued_bytes_ = totalBytesInBuffer;
+        last_observed_total_bytes_ = totalBytesInBuffer;
+
+        const size_t descriptorIndex = head_;
+        const kern_return_t recycleKr = Recycle(descriptorIndex);
+        if (recycleKr != kIOReturnSuccess) {
+            return recycleKr;
+        }
+    }
+
+    return kIOReturnSuccess;
 }
 
 kern_return_t BufferRing::Recycle(size_t index) noexcept {
@@ -281,9 +526,10 @@ kern_return_t BufferRing::Recycle(size_t index) noexcept {
 
     // CRITICAL: Reset stream tracking for new buffer
     last_dequeued_bytes_ = 0;
+    last_observed_total_bytes_ = 0;
 
     ASFW_LOG_V4(Async,
-                "♻️  BufferRing::Recycle[%zu]: Advanced to next buffer, reset last_dequeued_bytes_=0",
+                "♻️  BufferRing::Recycle[%zu]: Advanced to next buffer, reset dequeue tracking",
                 index);
 
     return kIOReturnSuccess;

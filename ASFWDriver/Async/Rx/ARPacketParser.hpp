@@ -25,6 +25,9 @@ namespace ASFW::Async {
 
 class ARPacketParser {
 public:
+    static constexpr size_t kMaxAsyncPayloadBytes = 4096;
+    static constexpr size_t kMaxPacketBytes = 16 + kMaxAsyncPayloadBytes + 4;
+
     struct PacketInfo {
         const uint8_t* packetStart;  // Points to first byte of packet header
         size_t headerLength;         // Header size in bytes
