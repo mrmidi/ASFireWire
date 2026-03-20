@@ -10,8 +10,10 @@
 
 namespace ASFW::Audio::DICE::NotificationMailbox {
 
-/// Arbitrary local-node write target reserved for DICE notification quadlets.
-constexpr uint64_t kHandlerOffset = 0x00FF0000D1CCULL;
+/// Reference saffire.kext uses the local FW notification address for DICE notify quadlets.
+constexpr uint64_t kHandlerOffset = 0x000100000000ULL;
+/// Legacy ASFW software-latch address kept for diagnostics/backward compatibility.
+constexpr uint64_t kLegacyHandlerOffset = 0x00FF0000D1CCULL;
 
 inline std::atomic<uint32_t> gLatchedBits{0};
 
@@ -23,6 +25,10 @@ inline void Reset() noexcept {
 /// Latch notification bits observed from device writes.
 inline void Publish(uint32_t bits) noexcept {
     gLatchedBits.fetch_or(bits, std::memory_order_acq_rel);
+}
+
+[[nodiscard]] inline bool MatchesDestOffset(uint64_t destOffset) noexcept {
+    return destOffset == kHandlerOffset || destOffset == kLegacyHandlerOffset;
 }
 
 [[nodiscard]] inline uint32_t DecodeWireQuadlet(const uint8_t* data) noexcept {
