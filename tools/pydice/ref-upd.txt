@@ -1,0 +1,663 @@
+Apple FireBug 2.3 05.04.01
+
+032:0521:0298  BUS RESET ---------------------------------------------------------------------------
+032:0521:0298  Self-ID  803fc464  Node=0  Link=0  gap=3f  spd=1394b  C=0  pwr=4: use <3W   
+032:0521:0516  Self-ID  813f84e6  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W  *IR*
+032:0521:0735  Self-ID  827f8fc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=7: use <10W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <10W,  ID=827f8fc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e6]  ## FireBug ##
+   |  
+   [node 0:  1394b,  use <3W,  ID=803fc464]
+032:0521:2665  CycleStart from ffc2, value ec809028 = 118:2057:0040 (First one after Bus Reset)
+036:0932:1052  BUS RESET ---------------------------------------------------------------------------
+036:0932:1052  Self-ID  807fc066  Node=0  Link=1  gap=3f  spd=1394b  C=0  pwr=0: No power  *IR*
+036:0932:1265  Self-ID  813f84e4  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W   
+036:0932:1478  Self-ID  827f8fc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=7: use <10W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <10W,  ID=827f8fc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e4]  ## FireBug ##
+   |  
+   [node 0:  1394b,  No power,  ID=807fc066]
+036:0932:1692  CycleStart from ffc2, value f49a390e = 122:2467:2318 (First one after Bus Reset)
+036:0967:1688  PHY Global Resume from node 0 [003c0000]
+036:0975:2946  Qread from ffc2 to ffc0.ffff.f000.0400, tLabel 14 [no ack] s400
+036:1229:2010  PHY Global Resume from node 0 [003c0000]
+036:1232:0170  BUS RESET ---------------------------------------------------------------------------
+036:1232:0170  Self-ID  807fc866  Node=0  Link=1  gap=3f  spd=1394b  C=1  pwr=0: No power  *IR*
+036:1232:0383  Self-ID  813f84e4  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W   
+036:1232:0597  Self-ID  827f8fc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=7: use <10W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <10W,  ID=827f8fc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e4]  ## FireBug ##
+   |  
+   [node 0:  1394b,  No power,  ID=807fc866]
+036:1232:0810  CycleStart from ffc2, value f4acf59c = 122:2767:1436 (First one after Bus Reset)
+036:1280:2913  Qread from ffc2 to ffc0.ffff.f000.0400, tLabel 15 [ack 2] s400
+036:1281:0055  QRresp from ffc0 to ffc2, tLabel 15, value 04041bf6 [ack 1] s400
+036:1295:1142  Qread from ffc2 to ffc0.ffff.f000.0404, tLabel 16 [ack 2] s400
+036:1295:1355  QRresp from ffc0 to ffc2, tLabel 16, value 31333934 [ack 1] s400
+036:1309:2910  Qread from ffc2 to ffc0.ffff.f000.0408, tLabel 17 [ack 2] s400
+036:1310:0051  QRresp from ffc0 to ffc2, tLabel 17, value e000b023 [ack 1] s400
+036:1322:0719  Qread from ffc2 to ffc0.ffff.f000.040c, tLabel 18 [ack 2] s400
+036:1322:0931  QRresp from ffc0 to ffc2, tLabel 18, value 000a2702 [ack 1] s400
+036:1344:1823  Qread from ffc2 to ffc0.ffff.f000.0410, tLabel 19 [ack 2] s400
+036:1344:2040  QRresp from ffc0 to ffc2, tLabel 19, value 00752966 [ack 1] s400
+036:2052:1459  PHY Global Resume from node 0 [003c0000]
+036:2053:0602  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 1 [no ack] s400
+036:2053:1074  Qread from ffc0 to ffc2.ffff.f000.0400, tLabel 2 [ack 2] s400
+036:2063:1552  QRresp from ffc2 to ffc0, tLabel 2, value 04040b5d [ack 1] s400
+036:2073:2156  Qread from ffc0 to ffc2.ffff.f000.0408, tLabel 3 [ack 2] s100
+036:2085:2200  QRresp from ffc2 to ffc0, tLabel 3, value e0ff8112 [ack 1] s100
+036:2086:0446  Qread from ffc0 to ffc2.ffff.f000.040c, tLabel 4 [ack 2] s100
+036:2101:1122  QRresp from ffc2 to ffc0, tLabel 4, value 00130e04 [ack 1] s100
+036:2102:0013  Qread from ffc0 to ffc2.ffff.f000.0410, tLabel 5 [ack 2] s100
+036:2116:2985  QRresp from ffc2 to ffc0, tLabel 5, value 02004713 [ack 1] s100
+036:2117:1486  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 6 [ack 2] s100
+036:2140:2983  QRresp from ffc2 to ffc0, tLabel 6, value ffffffff [ack 1] s100
+036:2141:1700  LockRq from ffc0 to ffc2.ffff.f000.0228, size 8, tLabel 7 [ack 2] s100
+               0000   ffffffff ffffffff                     ........
+    IRM: Simultaneous allocate and release (wow!)
+036:2157:0096  LockResp from ffc2 to ffc0, size 4, tLabel 7 [ack 1] s100
+               0000   ffffffff                              ....
+036:2158:0864  Qread from ffc0 to ffc2.ffff.f000.0414, tLabel 8 [ack 2] s100
+036:2172:2954  QRresp from ffc2 to ffc0, tLabel 8, value 0006d223 [ack 1] s100
+036:2173:1814  Qread from ffc0 to ffc2.ffff.f000.0418, tLabel 9 [ack 2] s100
+036:2188:2017  QRresp from ffc2 to ffc0, tLabel 9, value 0300130e [ack 1] s100
+036:2189:0375  Qread from ffc0 to ffc2.ffff.f000.041c, tLabel 10 [ack 2] s100
+036:2202:0443  QRresp from ffc2 to ffc0, tLabel 10, value 8100000a [ack 1] s100
+036:2202:1857  Qread from ffc0 to ffc2.ffff.f000.0420, tLabel 11 [ack 2] s100
+036:2221:2684  QRresp from ffc2 to ffc0, tLabel 11, value 17000008 [ack 1] s100
+036:2222:0927  Qread from ffc0 to ffc2.ffff.f000.0424, tLabel 12 [ack 2] s100
+036:2237:1164  QRresp from ffc2 to ffc0, tLabel 12, value 8100000e [ack 1] s100
+036:2237:2955  Qread from ffc0 to ffc2.ffff.f000.0428, tLabel 13 [ack 2] s100
+036:2252:3027  QRresp from ffc2 to ffc0, tLabel 13, value 0c0087c0 [ack 1] s100
+036:2253:1221  Qread from ffc0 to ffc2.ffff.f000.042c, tLabel 14 [ack 2] s100
+036:2266:1552  QRresp from ffc2 to ffc0, tLabel 14, value d1000001 [ack 1] s100
+036:2267:0847  Qread from ffc0 to ffc2.ffff.f000.0430, tLabel 15 [ack 2] s100
+036:2281:2947  QRresp from ffc2 to ffc0, tLabel 15, value 0004d708 [ack 1] s100
+036:2282:1105  Qread from ffc0 to ffc2.ffff.f000.0434, tLabel 16 [ack 2] s100
+036:2304:0788  QRresp from ffc2 to ffc0, tLabel 16, value 1200130e [ack 1] s100
+036:2304:2267  Qread from ffc0 to ffc2.ffff.f000.0438, tLabel 17 [ack 2] s100
+036:2319:2946  QRresp from ffc2 to ffc0, tLabel 17, value 13000001 [ack 1] s100
+036:2320:1745  Qread from ffc0 to ffc2.ffff.f000.043c, tLabel 18 [ack 2] s100
+036:2335:1533  QRresp from ffc2 to ffc0, tLabel 18, value 17000008 [ack 1] s100
+036:2336:0282  Qread from ffc0 to ffc2.ffff.f000.0440, tLabel 19 [ack 2] s100
+036:2351:0102  QRresp from ffc2 to ffc0, tLabel 19, value 8100000f [ack 1] s100
+036:2351:1332  Qread from ffc0 to ffc2.ffff.f000.0444, tLabel 20 [ack 2] s100
+036:2366:1891  QRresp from ffc2 to ffc0, tLabel 20, value 00056f3b [ack 1] s100
+036:2367:1277  Qread from ffc0 to ffc2.ffff.f000.0448, tLabel 21 [ack 2] s100
+036:2384:1705  QRresp from ffc2 to ffc0, tLabel 21, value 00000000 [ack 1] s100
+036:2385:0131  Qread from ffc0 to ffc2.ffff.f000.044c, tLabel 22 [ack 2] s100
+036:2400:0467  QRresp from ffc2 to ffc0, tLabel 22, value 00000000 [ack 1] s100
+036:2401:1529  Qread from ffc0 to ffc2.ffff.f000.0450, tLabel 23 [ack 2] s100
+036:2415:2959  QRresp from ffc2 to ffc0, tLabel 23, value 466f6375 [ack 1] s100
+036:2416:1910  Qread from ffc0 to ffc2.ffff.f000.0454, tLabel 24 [ack 2] s100
+036:2431:1942  QRresp from ffc2 to ffc0, tLabel 24, value 73726974 [ack 1] s100
+036:2432:0423  Qread from ffc0 to ffc2.ffff.f000.0458, tLabel 25 [ack 2] s100
+036:2447:0831  QRresp from ffc2 to ffc0, tLabel 25, value 65000000 [ack 1] s100
+036:2447:2950  Qread from ffc0 to ffc2.ffff.f000.045c, tLabel 26 [ack 2] s100
+036:2470:1009  QRresp from ffc2 to ffc0, tLabel 26, value 000712e5 [ack 1] s100
+036:2470:2696  Qread from ffc0 to ffc2.ffff.f000.0460, tLabel 27 [ack 2] s100
+036:2485:2939  QRresp from ffc2 to ffc0, tLabel 27, value 00000000 [ack 1] s100
+036:2486:1146  Qread from ffc0 to ffc2.ffff.f000.0464, tLabel 28 [ack 2] s100
+036:2501:1335  QRresp from ffc2 to ffc0, tLabel 28, value 00000000 [ack 1] s100
+036:2501:3069  Qread from ffc0 to ffc2.ffff.f000.0468, tLabel 29 [ack 2] s100
+036:2517:0087  QRresp from ffc2 to ffc0, tLabel 29, value 53414646 [ack 1] s100
+036:2517:1397  Qread from ffc0 to ffc2.ffff.f000.046c, tLabel 30 [ack 2] s100
+036:2534:2940  QRresp from ffc2 to ffc0, tLabel 30, value 4952455f [ack 1] s100
+036:2535:1122  Qread from ffc0 to ffc2.ffff.f000.0470, tLabel 31 [ack 2] s100
+036:2550:1076  QRresp from ffc2 to ffc0, tLabel 31, value 50524f5f [ack 1] s100
+036:2550:2270  Qread from ffc0 to ffc2.ffff.f000.0474, tLabel 32 [ack 2] s100
+036:2565:1874  QRresp from ffc2 to ffc0, tLabel 32, value 32344453 [ack 1] s100
+036:2566:0725  Qread from ffc0 to ffc2.ffff.f000.0478, tLabel 33 [ack 2] s100
+036:2581:0751  QRresp from ffc2 to ffc0, tLabel 33, value 50000000 [ack 1] s100
+036:2581:2689  Qread from ffc0 to ffc2.ffff.f000.047c, tLabel 34 [ack 2] s100
+036:2596:2688  QRresp from ffc2 to ffc0, tLabel 34, value 000712e5 [ack 1] s100
+036:2597:1414  Qread from ffc0 to ffc2.ffff.f000.0480, tLabel 35 [ack 2] s100
+036:2617:0864  QRresp from ffc2 to ffc0, tLabel 35, value 00000000 [ack 1] s100
+036:2617:2118  Qread from ffc0 to ffc2.ffff.f000.0484, tLabel 36 [ack 2] s100
+036:2632:2194  QRresp from ffc2 to ffc0, tLabel 36, value 00000000 [ack 1] s100
+036:2633:1090  Qread from ffc0 to ffc2.ffff.f000.0488, tLabel 37 [ack 2] s100
+036:2648:0487  QRresp from ffc2 to ffc0, tLabel 37, value 53414646 [ack 1] s100
+036:2648:2264  Qread from ffc0 to ffc2.ffff.f000.048c, tLabel 38 [ack 2] s100
+036:2663:2677  QRresp from ffc2 to ffc0, tLabel 38, value 4952455f [ack 1] s100
+036:2664:1525  Qread from ffc0 to ffc2.ffff.f000.0490, tLabel 39 [ack 2] s100
+036:2679:1589  QRresp from ffc2 to ffc0, tLabel 39, value 50524f5f [ack 1] s100
+036:2679:2993  Qread from ffc0 to ffc2.ffff.f000.0494, tLabel 40 [ack 2] s100
+036:2697:1029  QRresp from ffc2 to ffc0, tLabel 40, value 32344453 [ack 1] s100
+036:2698:1360  Qread from ffc0 to ffc2.ffff.f000.0498, tLabel 41 [ack 2] s100
+036:2712:2947  QRresp from ffc2 to ffc0, tLabel 41, value 50000000 [ack 1] s100
+036:3053:1154  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 42 [no ack] s400
+036:4057:0187  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 43 [no ack] s400
+036:5065:0647  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+036:5065:1305  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 44 [no ack] s400
+036:6073:1652  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 45 [no ack] s200
+036:7074:0170  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 46 [no ack] s200
+037:0080:2879  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+037:0081:0424  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 47 [no ack] s200
+037:1081:2007  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+037:1081:3025  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 48 [no ack] s200
+037:2090:0075  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 49 [no ack] s100
+037:2726:2028  Bread from ffc0 to ffc2.ffff.e040.0000, size 48, tLabel 50 [ack 2] s400
+037:2943:0673  BRresp from ffc2 to ffc0, tLabel 50, size 0 [actual 0] [ack 1] s400
+   LENGTH ERROR - Snooped 20 bytes (plus snoop quad), raw quads follow:
+     ffc0c870 ffc27000 00000000 00000000 23cc1fee 00000001 
+   Previous packet had rCode 7 [resp_address_error]
+037:3090:0276  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 51 [no ack] s100
+037:4091:0053  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+037:4091:0700  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 52 [no ack] s100
+037:5093:2201  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+037:5094:0165  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 53 [no ack] s100
+037:7763:1486  Bread from ffc0 to ffc2.ffff.e000.0000, size 40, tLabel 54 [ack 2] s400
+037:7774:1977  BRresp from ffc2 to ffc0, tLabel 54, size 40 [actual 40] [ack 1] s400
+               0000   0000000a 0000005f 00000069 0000008e   ......._...i....
+               0010   000000f7 0000011a 00000211 00000004   ................
+               0020   00000000 00000000                     ........
+037:7776:0870  Bread from ffc0 to ffc2.ffff.e000.0028, size 380, tLabel 55 [ack 2] s400
+037:7790:2684  BRresp from ffc2 to ffc0, tLabel 55, size 380 [actual 380] [ack 1] s400
+               0000   ffff0000 00000000 00000010 326f7250   ............2orP
+               0010   50534434 3430302d 00333137 00000000   PSD4400-.317....
+               0020   00000000 00000000 00000000 00000000   ................
+               0030   00000000 00000000 00000000 00000000   ................
+               0040   00000000 00000000 00000000 0000020c   ................
+               0050   00000000 00000201 00000000 0000bb80   ................
+               0060   01000c00 112c001e 31534541 5345415c   .....,..1SEASEA\
+               0070   50535c32 2d464944 5c54504f 49445053   PS\2-FID\TPOIDPS
+               0080   45415c46 4e415f53 44415c59 415c5441   EA\FNA_SDA\YA\TA
+               0090   5f544144 5c585541 64726f57 6f6c4320   _TAD\XUAdroWolC 
+               00a0   555c6b63 6573756e 6e555c64 64657375   U\kcesunnU\ddesu
+               00b0   756e555c 5c646573 73756e55 495c6465   unU\\dessunUI\de
+               00c0   7265746e 5c6c616e 0000005c 00000000   retn\lan...\....
+               00d0   00000000 00000000 00000000 00000000   ................
+               00e0   00000000 00000000 00000000 00000000   ................
+               00f0   00000000 00000000 00000000 00000000   ................
+               0100   00000000 00000000 00000000 00000000   ................
+               0110   00000000 00000000 00000000 00000000   ................
+               0120   00000000 00000000 00000000 00000000   ................
+               0130   00000000 00000000 00000000 00000000   ................
+               0140   00000000 00000000 00000000 00000000   ................
+               0150   00000000 00000000 00000000 00000000   ................
+               0160   00000000 00000000 00000007 00000002   ................
+               0170   00000000 00000000 00000000            ............
+037:7792:1561  Bread from ffc0 to ffc2.ffff.e000.0028, size 8, tLabel 56 [ack 2] s400
+037:7805:0398  BRresp from ffc2 to ffc0, tLabel 56, size 8 [actual 8] [ack 1] s400
+               0000   ffff0000 00000000                     ........
+037:7806:2523  LockRq from ffc0 to ffc2.ffff.e000.0028, size 16, tLabel 57 [ack 2] s400
+               0000   ffff0000 00000000 ffc00001 00000000   ................
+037:7830:0174  LockResp from ffc2 to ffc0, size 8, tLabel 57 [ack 1] s400
+               0000   ffff0000 00000000                     ........
+037:7832:0943  Bread from ffc0 to ffc2.ffff.e000.0028, size 8, tLabel 58 [ack 2] s400
+037:7842:1390  BRresp from ffc2 to ffc0, tLabel 58, size 8 [actual 8] [ack 1] s400
+               0000   ffc00001 00000000                     ........
+037:7843:2509  Qwrite from ffc0 to ffc2.ffff.e000.0074, value 0000020c, tLabel 59 [ack 2] s400
+037:7856:1488  WrResp from ffc2 to ffc0, tLabel 59, rCode 0 [ack 1] s400
+038:0636:2852  Qwrite from ffc2 to ffc0.0001.0000.0000, value 00000020, tLabel 20 [ack 1] s400
+038:0644:1729  Bread from ffc0 to ffc2.ffff.e000.0028, size 380, tLabel 60 [ack 2] s400
+038:0656:0853  BRresp from ffc2 to ffc0, tLabel 60, size 380 [actual 380] [ack 1] s400
+               0000   ffc00001 00000000 00000020 326f7250   ........... 2orP
+               0010   50534434 3430302d 00333137 00000000   PSD4400-.317....
+               0020   00000000 00000000 00000000 00000000   ................
+               0030   00000000 00000000 00000000 00000000   ................
+               0040   00000000 00000000 00000000 0000020c   ................
+               0050   00000000 00000201 00000000 0000bb80   ................
+               0060   01000c00 112c001e 31534541 5345415c   .....,..1SEASEA\
+               0070   50535c32 2d464944 5c54504f 49445053   PS\2-FID\TPOIDPS
+               0080   45415c46 4e415f53 44415C59 415C5441   EA\FNA_SDA\YA\TA
+               0090   5F544144 5C585541 64726F57 6F6C4320   _TAD\XUAdroWolC 
+               00A0   555C6B63 6573756E 6E555C64 64657375   U\kcesunnU\ddesu
+               00B0   756E555C 5C646573 73756E55 495C6465   unU\\dessunUI\de
+               00C0   7265746E 5C6C616E 0000005C 00000000   retn\lan...\....
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+               0100   00000000 00000000 00000000 00000000   ................
+               0110   00000000 00000000 00000000 00000000   ................
+               0120   00000000 00000000 00000000 00000000   ................
+               0130   00000000 00000000 00000000 00000000   ................
+               0140   00000000 00000000 00000000 00000000   ................
+               0150   00000000 00000000 00000000 00000000   ................
+               0160   00000000 00000000 00000007 00000002   ................
+               0170   00000000 00000000 00000000            ............
+038:0657:2724  Qread from ffc0 to ffc2.ffff.e000.01a4, tLabel 61 [ack 2] s400
+038:0670:1368  QRresp from ffc2 to ffc0, tLabel 61, value 00000001 [ack 1] s400
+038:0671:2804  Qread from ffc0 to ffc2.ffff.e000.03dc, tLabel 62 [ack 2] s400
+038:0682:1784  QRresp from ffc2 to ffc0, tLabel 62, value 00000001 [ack 1] s400
+038:0684:0353  Qread from ffc0 to ffc2.ffff.e000.01a8, tLabel 63 [ack 2] s400
+038:0704:0263  QRresp from ffc2 to ffc0, tLabel 63, value 00000046 [ack 1] s400
+038:0705:1602  Qread from ffc0 to ffc2.ffff.e000.01ac, tLabel 1 [ack 2] s400
+038:0718:0549  QRresp from ffc2 to ffc0, tLabel 1, value 00000001 [ack 1] s400
+038:0719:1866  Qread from ffc0 to ffc2.ffff.e000.01b0, tLabel 2 [ack 2] s400
+038:0730:1014  QRresp from ffc2 to ffc0, tLabel 2, value 00000010 [ack 1] s400
+038:0731:2546  Qread from ffc0 to ffc2.ffff.e000.01b4, tLabel 3 [ack 2] s400
+038:0744:0332  QRresp from ffc2 to ffc0, tLabel 3, value 00000001 [ack 1] s400
+038:0745:1667  Qread from ffc0 to ffc2.ffff.e000.01b8, tLabel 4 [ack 2] s400
+038:0758:0621  QRresp from ffc2 to ffc0, tLabel 4, value 00000002 [ack 1] s400
+038:0759:2029  Bread from ffc0 to ffc2.ffff.e000.01bc, size 256, tLabel 5 [ack 2] s400
+038:0776:0312  BRresp from ffc2 to ffc0, tLabel 5, size 256 [actual 256] [ack 1] s400
+               0000   31205049 2050495C 50495C32 495C3320   1 PI PI\PI\2I\3 
+               0010   5C342050 49445053 5C4C2046 49445053   \4 PIDPS\L FIDPS
+               0020   5C522046 54414441 415C3120 20544144   \R FTADAA\1  TAD
+               0030   44415C32 33205441 4144415C 5C342054   DA\23 TAADA\\4 T
+               0040   54414441 415C3520 20544144 44415C36   TADAA\5  TADDA\6
+               0050   37205441 4144415C 5C382054 706F6F4C   7 TAADA\\8 TpooL
+               0060   4C5C3120 20706F6F 005C5C32 00000000   L\1  poo.\\2....
+               0070   00000000 00000000 00000000 00000000   ................
+               0080   00000000 00000000 00000000 00000000   ................
+               0090   00000000 00000000 00000000 00000000   ................
+               00A0   00000000 00000000 00000000 00000000   ................
+               00B0   00000000 00000000 00000000 00000000   ................
+               00C0   00000000 00000000 00000000 00000000   ................
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+038:0777:2537  Qread from ffc0 to ffc2.ffff.e000.03e0, tLabel 6 [ack 2] s400
+038:0790:0763  QRresp from ffc2 to ffc0, tLabel 6, value 00000046 [ack 1] s400
+038:0791:2546  Qread from ffc0 to ffc2.ffff.e000.03e4, tLabel 7 [ack 2] s400
+038:0802:1291  QRresp from ffc2 to ffc0, tLabel 7, value 00000000 [ack 1] s400
+038:0803:2540  Qread from ffc0 to ffc2.ffff.e000.03f0, tLabel 8 [ack 2] s400
+038:0816:0560  QRresp from ffc2 to ffc0, tLabel 8, value 00000001 [ack 1] s400
+038:0816:3027  Qread from ffc0 to ffc2.ffff.e000.03e8, tLabel 9 [ack 2] s400
+038:0830:0819  QRresp from ffc2 to ffc0, tLabel 9, value 00000000 [ack 1] s400
+038:0831:1643  Qread from ffc0 to ffc2.ffff.e000.03ec, tLabel 10 [ack 2] s400
+038:0842:1197  QRresp from ffc2 to ffc0, tLabel 10, value 00000008 [ack 1] s400
+038:0843:2799  Bread from ffc0 to ffc2.ffff.e000.03f4, size 256, tLabel 11 [ack 2] s400
+038:0864:1293  BRresp from ffc2 to ffc0, tLabel 11, size 256 [actual 256] [ack 1] s400
+               0000   206E6F4D 6F4D5C31 5C32206E 656E694C    noMoM\1\2 neniL
+               0010   4C5C3320 20656E69 694C5C34 3520656E   L\3  eniiL\45 en
+               0020   6E694C5C 5C362065 49445053 5C4C2046   niL\\6 eIDPS\L F
+               0030   49445053 5C522046 0000005C 00000000   IDPS\R F...\....
+               0040   00000000 00000000 00000000 00000000   ................
+               0050   00000000 00000000 00000000 00000000   ................
+               0060   00000000 00000000 00000000 00000000   ................
+               0070   00000000 00000000 00000000 00000000   ................
+               0080   00000000 00000000 00000000 00000000   ................
+               0090   00000000 00000000 00000000 00000000   ................
+               00A0   00000000 00000000 00000000 00000000   ................
+               00B0   00000000 00000000 00000000 00000000   ................
+               00C0   00000000 00000000 00000000 00000000   ................
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+038:0889:2544  Qread from ffc0 to ffc2.ffff.f000.0220, tLabel 12 [ack 2] s100
+038:0902:0481  QRresp from ffc2 to ffc0, tLabel 12, value 00001333 [ack 1] s100
+038:0903:0653  Qread from ffc0 to ffc2.ffff.f000.0224, tLabel 13 [ack 2] s100
+038:0918:1332  QRresp from ffc2 to ffc0, tLabel 13, value fffffffe [ack 1] s100
+038:0919:1463  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 14 [ack 2] s100
+038:0937:0555  QRresp from ffc2 to ffc0, tLabel 14, value ffffffff [ack 1] s100
+038:0937:2971  LockRq from ffc0 to ffc2.ffff.f000.0220, size 8, tLabel 15 [ack 2] s100
+               0000   00001333 000011f3                     ...3....
+    IRM: Allocate 0x140 (320) BANDWIDTH units
+038:0953:0811  LockResp from ffc2 to ffc0, size 4, tLabel 15 [ack 1] s100
+               0000   00001333                              ...3
+038:0954:2562  LockRq from ffc0 to ffc2.ffff.f000.0224, size 8, tLabel 16 [ack 2] s100
+               0000   fffffffe 7ffffffe                     .......
+    IRM: Allocate channel 0x0 (0)
+038:0969:1602  LockResp from ffc2 to ffc0, size 4, tLabel 16 [ack 1] s100
+               0000   fffffffe                              ....
+038:0971:0858  Qread from ffc0 to ffc2.ffff.e000.03e0, tLabel 17 [ack 2] s400
+038:0985:2748  QRresp from ffc2 to ffc0, tLabel 17, value 00000046 [ack 1] s400
+038:0986:1756  Qwrite from ffc0 to ffc2.ffff.e000.03e4, value 00000000, tLabel 18 [ack 2] s400
+038:0999:2486  WrResp from ffc2 to ffc0, tLabel 18, rCode 0 [ack 1] s400
+038:1001:0676  Qwrite from ffc0 to ffc2.ffff.e000.03e8, value 00000000, tLabel 19 [ack 2] s400
+038:1021:2737  WrResp from ffc2 to ffc0, tLabel 19, rCode 0 [ack 1] s400
+038:1056:1548  Qread from ffc0 to ffc2.ffff.f000.0220, tLabel 20 [ack 2] s100
+038:1069:0334  QRresp from ffc2 to ffc0, tLabel 20, value 000011f3 [ack 1] s100
+038:1070:0695  Qread from ffc0 to ffc2.ffff.f000.0224, tLabel 21 [ack 2] s100
+038:1085:1085  QRresp from ffc2 to ffc0, tLabel 21, value 7ffffffe [ack 1] s100
+038:1086:1612  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 22 [ack 2] s100
+038:1104:0572  QRresp from ffc2 to ffc0, tLabel 22, value ffffffff [ack 1] s100
+038:1105:1891  LockRq from ffc0 to ffc2.ffff.f000.0220, size 8, tLabel 23 [ack 2] s100
+               0000   000011f3 00000fb3                     ........
+    IRM: Allocate 0x240 (576) BANDWIDTH units
+038:1120:1951  LockResp from ffc2 to ffc0, size 4, tLabel 23 [ack 1] s100
+               0000   000011f3                              ....
+038:1122:0103  LockRq from ffc0 to ffc2.ffff.f000.0224, size 8, tLabel 24 [ack 2] s100
+               0000   7ffffffe 3ffffffe                     ...?...
+    IRM: Allocate channel 0x1 (1)
+038:1136:2792  LockResp from ffc2 to ffc0, size 4, tLabel 24 [ack 1] s100
+               0000   7ffffffe                              ...
+038:1143:0139  Qread from ffc0 to ffc2.ffff.e000.01a8, tLabel 25 [ack 2] s400
+038:1153:1858  QRresp from ffc2 to ffc0, tLabel 25, value 00000046 [ack 1] s400
+038:1154:1744  Qwrite from ffc0 to ffc2.ffff.e000.01ac, value 00000001, tLabel 26 [ack 2] s400
+038:1167:1840  WrResp from ffc2 to ffc0, tLabel 26, rCode 0 [ack 1] s400
+038:1169:0177  Qwrite from ffc0 to ffc2.ffff.e000.01b8, value 00000002, tLabel 27 [ack 2] s400
+038:1191:0838  WrResp from ffc2 to ffc0, tLabel 27, rCode 0 [ack 1] s400
+038:1195:1724  Qwrite from ffc0 to ffc2.ffff.e000.0078, value 00000001, tLabel 28 [ack 2] s400
+038:1206:1865  WrResp from ffc2 to ffc0, tLabel 28, rCode 0 [ack 1] s400
+  [1 packet not shown]
+  Isoch channel 1 ACTIVE at 038:1217:2401 (CT 124:2753), speed s400
+038:1217:2401  Isoch channel 1, tag 1, sy 0, size 8 [actual 8] s400
+               0000   02110000 9002ffff                     ........
+  [11 packets not shown]
+  Isoch channel 0 ACTIVE at 038:1227:2732 (CT 124:2763), speed s400
+038:1227:2732  Isoch channel 0, tag 1, sy 0, size 296 [actual 296] s400
+               0000   00090000 9002ffff 00000000 00000000   ................
+               0010   00000000 00000000 00000000 00000000   ................
+               0020   00000000 00000000 00000000 00000000   ................
+               0030   00000000 00000000 00000000 00000000   ................
+               0040   00000000 00000000 00000000 00000000   ................
+               0050   00000000 00000000 00000000 00000000   ................
+               0060   00000000 00000000 00000000 00000000   ................
+               0070   00000000 00000000 00000000 00000000   ................
+               0080   00000000 00000000 00000000 00000000   ................
+               0090   00000000 00000000 00000000 00000000   ................
+               00A0   00000000 00000000 00000000 00000000   ................
+               00B0   00000000 00000000 00000000 00000000   ................
+               00C0   00000000 00000000 00000000 00000000   ................
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+               0100   00000000 00000000 00000000 00000000   ................
+               0110   00000000 00000000 00000000 00000000   ................
+               0120   00000000 00000000                     ........
+  [46 packets not shown]
+038:1251:0756  BUS RESET ---------------------------------------------------------------------------
+038:1251:0756  Self-ID  807fc866  Node=0  Link=1  gap=3f  spd=1394b  C=1  pwr=0: No power  *IR*
+038:1251:0969  Self-ID  813f84e4  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W   
+038:1251:1180  Self-ID  827f8fc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=7: use <10W   
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <10W,  ID=827f8fc0]
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e4]  ## FireBug ##
+   |  
+   [node 0:  1394b,  No power,  ID=807fc866]
+038:1251:2108  CycleStart from ffc2, value f8ae3028 = 124:2787:0040 (First one after Bus Reset)
+  [69 packets not shown]
+038:1358:0535  Qread from ffc2 to ffc0.ffff.f000.0400, tLabel 21 [ack 2] s400
+038:1358:0765  QRresp from ffc0 to ffc2, tLabel 21, value 0404e3d3 [ack 1] s400
+038:1370:1817  Qread from ffc2 to ffc0.ffff.f000.0404, tLabel 22 [ack 2] s400
+038:1370:2042  QRresp from ffc0 to ffc2, tLabel 22, value 31333934 [ack 1] s400
+038:1384:2948  Qread from ffc2 to ffc0.ffff.f000.0408, tLabel 23 [ack 2] s400
+038:1385:0090  QRresp from ffc0 to ffc2, tLabel 23, value e000b043 [ack 1] s400
+038:1399:1135  Qread from ffc2 to ffc0.ffff.f000.040c, tLabel 24 [ack 2] s400
+038:1399:1347  QRresp from ffc0 to ffc2, tLabel 24, value 000a2702 [ack 1] s400
+038:1416:0561  Qread from ffc2 to ffc0.ffff.f000.0410, tLabel 25 [ack 2] s400
+038:1416:0778  QRresp from ffc0 to ffc2, tLabel 25, value 00752966 [ack 1] s400
+  Isoch channel 0 STOPPED at 038:1253:2677 (CT 124:2789);  Active time 0d 0h 0m 0s + 27 cycles
+     Packets: 26  Cycles: 27 (1 silent)  Short packets: 0
+     Smallest: 8  Largest: 296
+  Isoch channel 1 STOPPED at 038:1317:2337 (CT 124:2853);  Active time 0d 0h 0m 0s + 101 cycles
+     Packets: 101  Cycles: 101 (0 silent)  Short packets: 0
+     Smallest: 8  Largest: 552
+038:2100:0150  PHY Global Resume from node 0 [003c0000]
+038:2101:1249  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 29 [no ack] s400
+038:2101:2743  Qread from ffc0 to ffc2.ffff.f000.0400, tLabel 30 [ack 2] s400
+038:2112:0040  QRresp from ffc2 to ffc0, tLabel 30, value 04040b5d [ack 1] s400
+038:2121:2789  Qread from ffc0 to ffc2.ffff.f000.0408, tLabel 31 [ack 2] s100
+038:2142:0277  QRresp from ffc2 to ffc0, tLabel 31, value e0ff8112 [ack 1] s100
+038:2142:2527  Qread from ffc0 to ffc2.ffff.f000.040c, tLabel 32 [ack 2] s100
+038:2157:2510  QRresp from ffc2 to ffc0, tLabel 32, value 00130e04 [ack 1] s100
+038:2158:1807  Qread from ffc0 to ffc2.ffff.f000.0410, tLabel 33 [ack 2] s100
+038:2173:1564  QRresp from ffc2 to ffc0, tLabel 33, value 02004713 [ack 1] s100
+038:2174:1784  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 34 [ack 2] s100
+038:2189:2510  QRresp from ffc2 to ffc0, tLabel 34, value ffffffff [ack 1] s100
+038:2191:0523  LockRq from ffc0 to ffc2.ffff.f000.0228, size 8, tLabel 35 [ack 2] s100
+               0000   ffffffff ffffffff                     ........
+    IRM: Simultaneous allocate and release (wow!)
+038:2206:0266  LockResp from ffc2 to ffc0, size 4, tLabel 35 [ack 1] s100
+               0000   ffffffff                              ....
+038:3109:2042  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 36 [no ack] s400
+038:4117:2705  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 37 [no ack] s400
+038:5120:0078  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+038:5120:0691  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 38 [no ack] s400
+038:6047:0134  Bread from ffc0 to ffc2.ffff.e000.0000, size 40, tLabel 39 [ack 2] s400
+038:6061:2448  BRresp from ffc2 to ffc0, tLabel 39, size 40 [actual 40] [ack 1] s400
+               0000   0000000A 0000005F 00000069 0000008E   ......._...i....
+               0010   000000F7 0000011A 00000211 00000004   ................
+               0020   00000000 00000000                     ........
+038:6063:0228  Bread from ffc0 to ffc2.ffff.e000.0028, size 380, tLabel 40 [ack 2] s400
+038:6077:2870  BRresp from ffc2 to ffc0, tLabel 40, size 380 [actual 380] [ack 1] s400
+               0000   FFFF0000 00000000 00000020 326F7250   ........... 2orP
+               0010   50534434 3430302D 00333137 00000000   PSD4400-.317....
+               0020   00000000 00000000 00000000 00000000   ................
+               0030   00000000 00000000 00000000 00000000   ................
+               0040   00000000 00000000 00000000 0000020C   ................
+               0050   00000000 00000201 00000000 0000BB80   ................
+               0060   01000C00 112C001E 31534541 5345415C   .....,..1SEASEA\
+               0070   50535C32 2D464944 5C54504F 49445053   PS\2-FID\TPOIDPS
+               0080   45415C46 4E415F53 44415C59 415C5441   EA\FNA_SDA\YA\TA
+               0090   5F544144 5C585541 64726F57 6F6C4320   _TAD\XUAdroWolC 
+               00A0   555C6B63 6573756E 6E555C64 64657375   U\kcesunnU\ddesu
+               00B0   756E555C 5C646573 73756E55 495C6465   unU\\dessunUI\de
+               00C0   7265746E 5C6C616E 0000005C 00000000   retn\lan...\....
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+               0100   00000000 00000000 00000000 00000000   ................
+               0110   00000000 00000000 00000000 00000000   ................
+               0120   00000000 00000000 00000000 00000000   ................
+               0130   00000000 00000000 00000000 00000000   ................
+               0140   00000000 00000000 00000000 00000000   ................
+               0150   00000000 00000000 00000000 00000000   ................
+               0160   00000000 00000000 00000007 00000002   ................
+               0170   00000000 00000000 00000000            ............
+038:6079:1957  Bread from ffc0 to ffc2.ffff.e000.0028, size 8, tLabel 41 [ack 2] s400
+038:6090:0466  BRresp from ffc2 to ffc0, tLabel 41, size 8 [actual 8] [ack 1] s400
+               0000   FFFF0000 00000000                     ........
+038:6091:2858  LockRq from ffc0 to ffc2.ffff.e000.0028, size 16, tLabel 42 [ack 2] s400
+               0000   FFFF0000 00000000 FFC00001 00000000   ................
+038:6111:1831  LockResp from ffc2 to ffc0, size 8, tLabel 42 [ack 1] s400
+               0000   FFFF0000 00000000                     ........
+038:6113:1028  Bread from ffc0 to ffc2.ffff.e000.0028, size 8, tLabel 43 [ack 2] s400
+038:6125:2721  BRresp from ffc2 to ffc0, tLabel 43, size 8 [actual 8] [ack 1] s400
+               0000   FFC00001 00000000                     ........
+038:6127:0573  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 44 [no ack] s200
+038:6127:2482  Qwrite from ffc0 to ffc2.ffff.e000.0074, value 0000020c, tLabel 45 [ack 2] s400
+038:6145:1939  WrResp from ffc2 to ffc0, tLabel 45, rCode 0 [ack 1] s400
+038:6874:2681  Qwrite from ffc2 to ffc0.0001.0000.0000, value 00000020, tLabel 26 [ack 1] s400
+038:6881:2037  Bread from ffc0 to ffc2.ffff.e000.0028, size 380, tLabel 46 [ack 2] s400
+038:6895:0503  BRresp from ffc2 to ffc0, tLabel 46, size 380 [actual 380] [ack 1] s400
+               0000   FFC00001 00000000 00000020 326F7250   ........... 2orP
+               0010   50534434 3430302D 00333137 00000000   PSD4400-.317....
+               0020   00000000 00000000 00000000 00000000   ................
+               0030   00000000 00000000 00000000 00000000   ................
+               0040   00000000 00000000 00000000 0000020C   ................
+               0050   00000000 00000201 00000000 0000BB80   ................
+               0060   01000C00 112C001E 31534541 5345415C   .....,..1SEASEA\
+               0070   50535C32 2D464944 5C54504F 49445053   PS\2-FID\TPOIDPS
+               0080   45415C46 4E415F53 44415C59 415C5441   EA\FNA_SDA\YA\TA
+               0090   5F544144 5C585541 64726F57 6F6C4320   _TAD\XUAdroWolC 
+               00A0   555C6B63 6573756E 6E555C64 64657375   U\kcesunnU\ddesu
+               00B0   756E555C 5C646573 73756E55 495C6465   unU\\dessunUI\de
+               00C0   7265746E 5C6C616E 0000005C 00000000   retn\lan...\....
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+               0100   00000000 00000000 00000000 00000000   ................
+               0110   00000000 00000000 00000000 00000000   ................
+               0120   00000000 00000000 00000000 00000000   ................
+               0130   00000000 00000000 00000000 00000000   ................
+               0140   00000000 00000000 00000000 00000000   ................
+               0150   00000000 00000000 00000000 00000000   ................
+               0160   00000000 00000000 00000007 00000002   ................
+               0170   00000000 00000000 00000000            ............
+038:6896:2437  Qread from ffc0 to ffc2.ffff.e000.01a4, tLabel 47 [ack 2] s400
+038:6909:1224  QRresp from ffc2 to ffc0, tLabel 47, value 00000001 [ack 1] s400
+038:6910:2688  Qread from ffc0 to ffc2.ffff.e000.03dc, tLabel 48 [ack 2] s400
+038:6921:1655  QRresp from ffc2 to ffc0, tLabel 48, value 00000001 [ack 1] s400
+038:6922:3027  Qread from ffc0 to ffc2.ffff.e000.01a8, tLabel 49 [ack 2] s400
+038:6942:1338  QRresp from ffc2 to ffc0, tLabel 49, value 00000046 [ack 1] s400
+038:6943:2688  Qread from ffc0 to ffc2.ffff.e000.01ac, tLabel 50 [ack 2] s400
+038:6954:1742  QRresp from ffc2 to ffc0, tLabel 50, value 00000001 [ack 1] s400
+038:6956:0110  Qread from ffc0 to ffc2.ffff.e000.01b0, tLabel 51 [ack 2] s400
+038:6968:1108  QRresp from ffc2 to ffc0, tLabel 51, value 00000010 [ack 1] s400
+038:6969:2690  Qread from ffc0 to ffc2.ffff.e000.01b4, tLabel 52 [ack 2] s400
+038:6982:1361  QRresp from ffc2 to ffc0, tLabel 52, value 00000001 [ack 1] s400
+038:6983:2788  Qread from ffc0 to ffc2.ffff.e000.01b8, tLabel 53 [ack 2] s400
+038:6994:1781  QRresp from ffc2 to ffc0, tLabel 53, value 00000002 [ack 1] s400
+038:6996:0164  Bread from ffc0 to ffc2.ffff.e000.01bc, size 256, tLabel 54 [ack 2] s400
+038:7013:0749  BRresp from ffc2 to ffc0, tLabel 54, size 256 [actual 256] [ack 1] s400
+               0000   31205049 2050495C 50495C32 495C3320   1 PI PI\PI\2I\3 
+               0010   5C342050 49445053 5C4C2046 49445053   \4 PIDPS\L FIDPS
+               0020   5C522046 54414441 415C3120 20544144   \R FTADAA\1  TAD
+               0030   44415C32 33205441 4144415C 5C342054   DA\23 TAADA\\4 T
+               0040   54414441 415C3520 20544144 44415C36   TADAA\5  TADDA\6
+               0050   37205441 4144415C 5C382054 706F6F4C   7 TAADA\\8 TpooL
+               0060   4C5C3120 20706F6F 005C5C32 00000000   L\1  poo.\\2....
+               0070   00000000 00000000 00000000 00000000   ................
+               0080   00000000 00000000 00000000 00000000   ................
+               0090   00000000 00000000 00000000 00000000   ................
+               00A0   00000000 00000000 00000000 00000000   ................
+               00B0   00000000 00000000 00000000 00000000   ................
+               00C0   00000000 00000000 00000000 00000000   ................
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+038:7014:2430  Qread from ffc0 to ffc2.ffff.e000.03e0, tLabel 55 [ack 2] s400
+038:7026:0799  QRresp from ffc2 to ffc0, tLabel 55, value 00000046 [ack 1] s400
+038:7027:2432  Qread from ffc0 to ffc2.ffff.e000.03e4, tLabel 56 [ack 2] s400
+038:7040:0205  QRresp from ffc2 to ffc0, tLabel 56, value 00000000 [ack 1] s400
+038:7041:1651  Qread from ffc0 to ffc2.ffff.e000.03f0, tLabel 57 [ack 2] s400
+038:7054:1110  QRresp from ffc2 to ffc0, tLabel 57, value 00000001 [ack 1] s400
+038:7055:2733  Qread from ffc0 to ffc2.ffff.e000.03e8, tLabel 58 [ack 2] s400
+038:7066:1540  QRresp from ffc2 to ffc0, tLabel 58, value 00000000 [ack 1] s400
+038:7067:2957  Qread from ffc0 to ffc2.ffff.e000.03ec, tLabel 59 [ack 2] s400
+038:7080:0769  QRresp from ffc2 to ffc0, tLabel 59, value 00000008 [ack 1] s400
+038:7081:2468  Bread from ffc0 to ffc2.ffff.e000.03f4, size 256, tLabel 60 [ack 2] s400
+038:7103:0785  BRresp from ffc2 to ffc0, tLabel 60, size 256 [actual 256] [ack 1] s400
+               0000   206E6F4D 6F4D5C31 5C32206E 656E694C    noMoM\1\2 neniL
+               0010   4C5C3320 20656E69 694C5C34 3520656E   L\3  eniiL\45 en
+               0020   6E694C5C 5C362065 49445053 5C4C2046   niL\\6 eIDPS\L F
+               0030   49445053 5C522046 0000005C 00000000   IDPS\R F...\....
+               0040   00000000 00000000 00000000 00000000   ................
+               0050   00000000 00000000 00000000 00000000   ................
+               0060   00000000 00000000 00000000 00000000   ................
+               0070   00000000 00000000 00000000 00000000   ................
+               0080   00000000 00000000 00000000 00000000   ................
+               0090   00000000 00000000 00000000 00000000   ................
+               00A0   00000000 00000000 00000000 00000000   ................
+               00B0   00000000 00000000 00000000 00000000   ................
+               00C0   00000000 00000000 00000000 00000000   ................
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+038:7144:3016  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 61 [no ack] s200
+039:0150:0890  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+039:0150:1515  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 62 [no ack] s200
+039:1158:0829  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+039:1158:1464  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 63 [no ack] s200
+039:1256:2436  Qread from ffc0 to ffc2.ffff.f000.0220, tLabel 1 [ack 2] s100
+039:1269:1190  QRresp from ffc2 to ffc0, tLabel 1, value 00001333 [ack 1] s100
+039:1270:0541  Qread from ffc0 to ffc2.ffff.f000.0224, tLabel 2 [ack 2] s100
+039:1285:1415  QRresp from ffc2 to ffc0, tLabel 2, value fffffffe [ack 1] s100
+039:1286:1799  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 3 [ack 2] s100
+039:1301:2424  QRresp from ffc2 to ffc0, tLabel 3, value ffffffff [ack 1] s100
+039:1303:0764  LockRq from ffc0 to ffc2.ffff.f000.0220, size 8, tLabel 4 [ack 2] s100
+               0000   00001333 000011f3                     ...3....
+    IRM: Allocate 0x140 (320) BANDWIDTH units
+039:1318:0303  LockResp from ffc2 to ffc0, size 4, tLabel 4 [ack 1] s100
+               0000   00001333                              ...3
+039:1319:1621  LockRq from ffc0 to ffc2.ffff.f000.0224, size 8, tLabel 5 [ack 2] s100
+               0000   fffffffe 7ffffffe                     .......
+    IRM: Allocate channel 0x0 (0)
+039:1342:0763  LockResp from ffc2 to ffc0, size 4, tLabel 5 [ack 1] s100
+               0000   fffffffe                              ....
+039:1343:2398  Qread from ffc0 to ffc2.ffff.e000.03e0, tLabel 6 [ack 2] s400
+039:1358:2738  QRresp from ffc2 to ffc0, tLabel 6, value 00000046 [ack 1] s400
+039:1360:1180  Qwrite from ffc0 to ffc2.ffff.e000.03e4, value 00000000, tLabel 7 [ack 2] s400
+039:1373:0592  WrResp from ffc2 to ffc0, tLabel 7, rCode 0 [ack 1] s400
+039:1374:1764  Qwrite from ffc0 to ffc2.ffff.e000.03e8, value 00000000, tLabel 8 [ack 2] s400
+039:1385:1276  WrResp from ffc2 to ffc0, tLabel 8, rCode 0 [ack 1] s400
+039:1428:2958  Qread from ffc0 to ffc2.ffff.f000.0220, tLabel 9 [ack 2] s100
+039:1439:1317  QRresp from ffc2 to ffc0, tLabel 9, value 000011f3 [ack 1] s100
+039:1440:1489  Qread from ffc0 to ffc2.ffff.f000.0224, tLabel 10 [ack 2] s100
+039:1455:1877  QRresp from ffc2 to ffc0, tLabel 10, value 7ffffffe [ack 1] s100
+039:1456:2031  Qread from ffc0 to ffc2.ffff.f000.0228, tLabel 11 [ack 2] s100
+039:1471:2423  QRresp from ffc2 to ffc0, tLabel 11, value ffffffff [ack 1] s100
+039:1473:0641  LockRq from ffc0 to ffc2.ffff.f000.0220, size 8, tLabel 12 [ack 2] s100
+               0000   000011f3 00000fb3                     ........
+    IRM: Allocate 0x240 (576) BANDWIDTH units
+039:1490:0843  LockResp from ffc2 to ffc0, size 4, tLabel 12 [ack 1] s100
+               0000   000011f3                              ....
+039:1491:2466  LockRq from ffc0 to ffc2.ffff.f000.0224, size 8, tLabel 13 [ack 2] s100
+               0000   7ffffffe 3ffffffe                     ...?...
+    IRM: Allocate channel 0x1 (1)
+039:1511:1813  LockResp from ffc2 to ffc0, size 4, tLabel 13 [ack 1] s100
+               0000   7ffffffe                              ...
+039:1516:2406  Qread from ffc0 to ffc2.ffff.e000.01a8, tLabel 14 [ack 2] s400
+039:1528:0409  QRresp from ffc2 to ffc0, tLabel 14, value 00000046 [ack 1] s400
+039:1529:1698  Qwrite from ffc0 to ffc2.ffff.e000.01ac, value 00000001, tLabel 15 [ack 2] s400
+039:1542:1510  WrResp from ffc2 to ffc0, tLabel 15, rCode 0 [ack 1] s400
+039:1543:2748  Qwrite from ffc0 to ffc2.ffff.e000.01b8, value 00000002, tLabel 16 [ack 2] s400
+039:1554:2389  WrResp from ffc2 to ffc0, tLabel 16, rCode 0 [ack 1] s400
+039:1559:0820  Qwrite from ffc0 to ffc2.ffff.e000.0078, value 00000001, tLabel 17 [ack 2] s400
+039:1573:0128  WrResp from ffc2 to ffc0, tLabel 17, rCode 0 [ack 1] s400
+  [1 packet not shown]
+  Isoch channel 1 ACTIVE at 039:1583:2238 (CT 125:3119), speed s400
+039:1583:2238  Isoch channel 1, tag 1, sy 0, size 8 [actual 8] s400
+               0000   02110000 9002ffff                     ........
+  [12 packets not shown]
+  Isoch channel 0 ACTIVE at 039:1594:2665 (CT 125:3130), speed s400
+039:1594:2665  Isoch channel 0, tag 1, sy 0, size 296 [actual 296] s400
+               0000   00090000 9002ffff 00000000 00000000   ................
+               0010   00000000 00000000 00000000 00000000   ................
+               0020   00000000 00000000 00000000 00000000   ................
+               0030   00000000 00000000 00000000 00000000   ................
+               0040   00000000 00000000 00000000 00000000   ................
+               0050   00000000 00000000 00000000 00000000   ................
+               0060   00000000 00000000 00000000 00000000   ................
+               0070   00000000 00000000 00000000 00000000   ................
+               0080   00000000 00000000 00000000 00000000   ................
+               0090   00000000 00000000 00000000 00000000   ................
+               00A0   00000000 00000000 00000000 00000000   ................
+               00B0   00000000 00000000 00000000 00000000   ................
+               00C0   00000000 00000000 00000000 00000000   ................
+               00D0   00000000 00000000 00000000 00000000   ................
+               00E0   00000000 00000000 00000000 00000000   ................
+               00F0   00000000 00000000 00000000 00000000   ................
+               0100   00000000 00000000 00000000 00000000   ................
+               0110   00000000 00000000 00000000 00000000   ................
+               0120   00000000 00000000                     ........
+  [1128 packets not shown]
+039:2159:0480  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 18 [no ack] s100
+  [2002 packets not shown]
+039:3160:0717  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 19 [no ack] s100
+  [2012 packets not shown]
+039:4166:1153  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+039:4166:1792  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 20 [no ack] s100
+  [110 packets not shown]
+039:4221:1909  Qwrite from ffc2 to ffc0.0001.0000.0000, value 00000040, tLabel 27 [ack 1] s400
+  [1892 packets not shown]
+039:5167:1011  Qread from ffc0 to ffc1.ffff.f000.040c, tLabel 0 [no ack] s100
+039:5167:1657  Qread from ffc0 to ffc1.ffff.f000.0400, tLabel 21 [no ack] s100
+  [no activity logged for 0d 0h 0m 11s    Date/Time: 2026.03.20 21:26:03]
+  
+ 
+  Isoch channel 0 RUNNING;  Active time so far 0d 0h 0m 8s + 2114 cycles
+     Packets: 66114  Cycles: 66114 (0 silent)  Short packets: 0
+     Smallest: 8  Largest: 296
+ 
+  Isoch channel 1 RUNNING;  Active time so far 0d 0h 0m 8s + 2125 cycles
+     Packets: 66125  Cycles: 66125 (0 silent)  Short packets: 0
+     Smallest: 8  Largest: 552
+ 
+Replay of most recent self IDs:
+  Self-ID  807fc866  Node=0  Link=1  gap=3f  spd=1394b  C=1  pwr=0: No power  *IR*
+  Self-ID  813f84e4  Node=1  Link=0  gap=3f  spd=s400  C=0  pwr=4: use <3W   
+  Self-ID  827f8fc0  Node=2  Link=1  gap=3f  spd=s400  C=1  pwr=7: use <10W   
+ 
+   Bus Topology:
+   [node 2:  Root,  IRM,  s400,  use <10W,  ID=827f8fc0]  GUID 00130e04 02004713
+   |  
+   [node 1:  s400,  use <3W,  ID=813f84e4]  ## FireBug ##
+   |  
+   [node 0:  1394b,  No power,  ID=807fc866]  GUID 000a2702 00752966
+ 
+  [no activity logged for 0d 0h 0m 0s    Date/Time: 2026.03.20 21:26:03]
+*** Saving log file 'ref-upd.txt'
+
+
+CycleTimer: 005:5243:0040    NodeID: 01   Root: 0   CPS: 1   Packets: 15731/024965162  Lost: 000000000
+ tCode  sec  total |  tCode  sec  total |    PHY  sec  total |    ACK  sec  total |  rCode  sec  total
+wrQuad    0     57 | cycSt  5243 999999 | Config    0     12 | (none)    0     37 | complt    0    521
+wrBloc    0      0 | lockRq    0     42 | LinkOn    0      0 | complt    0    533 | cnflct    0      0
+wrResp    0     51 | isoch 10488 999999 | SelfID    0     70 | pendng    0    518 | datErr    0      0
+(3rsv)    0      0 | lkResp    0     42 |--------------------| busy_X    0      0 | typErr    0      0
+rdQuad    0    416 | (Crsv)    0      0 | s100   5243 999999 | busy_A    0      0 | addErr    0      1
+rdBloc    0     51 | (Drsv)    0      0 | s200      0      8 | busy_B    0      0 |-------------------
+rdQRes    0    378 | (Ersv)    0      0 | s400  10488 999999 | datErr    0      0 | badCRC    0      0
+rdBRes    0     51 | (Frsv)    0      0 | RESET     0     27 | typErr    0      0 | badDMA    0      0
