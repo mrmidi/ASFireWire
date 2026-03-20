@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "../../../../Async/AsyncTypes.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
@@ -21,6 +23,18 @@ constexpr uint64_t kDICEBaseAddress = 0xFFFFE0000000ULL;
 /// Base offset for the TCAT extension space relative to DICE CSR space.
 constexpr uint32_t kDICEExtensionOffset = 0x00200000U;
 
+[[nodiscard]] constexpr uint64_t DICEAbsoluteAddress(uint32_t offset) noexcept {
+    return kDICEBaseAddress + offset;
+}
+
+[[nodiscard]] inline ::ASFW::Async::FWAddress MakeDICEAddress(uint32_t offset) noexcept {
+    const uint64_t address = DICEAbsoluteAddress(offset);
+    return ::ASFW::Async::FWAddress{::ASFW::Async::FWAddress::AddressParts{
+        .addressHi = static_cast<uint16_t>((address >> 32U) & 0xFFFFU),
+        .addressLo = static_cast<uint32_t>(address & 0xFFFFFFFFU),
+    }};
+}
+
 // ============================================================================
 // Section Definition
 // ============================================================================
@@ -35,12 +49,16 @@ struct Section {
     static constexpr size_t kWireSize = 8;
     
     /// Parse section from big-endian wire format
-    static Section FromWire(const uint8_t* data) {
+    static Section Deserialize(const uint8_t* data) {
         Section s;
         // Offset and size are stored as quadlet counts, multiply by 4
         s.offset = ((data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]) * 4;
         s.size   = ((data[4] << 24) | (data[5] << 16) | (data[6] << 8) | data[7]) * 4;
         return s;
+    }
+
+    static Section FromWire(const uint8_t* data) {
+        return Deserialize(data);
     }
 };
 
@@ -60,14 +78,18 @@ struct GeneralSections {
     static constexpr size_t kWireSize = 5 * Section::kWireSize;
     
     /// Parse all sections from big-endian wire data
-    static GeneralSections FromWire(const uint8_t* data) {
+    static GeneralSections Deserialize(const uint8_t* data) {
         GeneralSections s;
-        s.global         = Section::FromWire(data);
-        s.txStreamFormat = Section::FromWire(data + 8);
-        s.rxStreamFormat = Section::FromWire(data + 16);
-        s.extSync        = Section::FromWire(data + 24);
-        s.reserved       = Section::FromWire(data + 32);
+        s.global         = Section::Deserialize(data);
+        s.txStreamFormat = Section::Deserialize(data + 8);
+        s.rxStreamFormat = Section::Deserialize(data + 16);
+        s.extSync        = Section::Deserialize(data + 24);
+        s.reserved       = Section::Deserialize(data + 32);
         return s;
+    }
+
+    static GeneralSections FromWire(const uint8_t* data) {
+        return Deserialize(data);
     }
 };
 
@@ -89,20 +111,29 @@ struct ExtensionSections {
 
     static constexpr size_t kWireSize = 9 * Section::kWireSize;
 
-    static ExtensionSections FromWire(const uint8_t* data) {
+    static ExtensionSections Deserialize(const uint8_t* data) {
         ExtensionSections s;
-        s.caps          = Section::FromWire(data);
-        s.command       = Section::FromWire(data + 8);
-        s.mixer         = Section::FromWire(data + 16);
-        s.peak          = Section::FromWire(data + 24);
-        s.router        = Section::FromWire(data + 32);
-        s.streamFormat  = Section::FromWire(data + 40);
-        s.currentConfig = Section::FromWire(data + 48);
-        s.standalone    = Section::FromWire(data + 56);
-        s.application   = Section::FromWire(data + 64);
+        s.caps          = Section::Deserialize(data);
+        s.command       = Section::Deserialize(data + 8);
+        s.mixer         = Section::Deserialize(data + 16);
+        s.peak          = Section::Deserialize(data + 24);
+        s.router        = Section::Deserialize(data + 32);
+        s.streamFormat  = Section::Deserialize(data + 40);
+        s.currentConfig = Section::Deserialize(data + 48);
+        s.standalone    = Section::Deserialize(data + 56);
+        s.application   = Section::Deserialize(data + 64);
         return s;
     }
+
+    static ExtensionSections FromWire(const uint8_t* data) {
+        return Deserialize(data);
+    }
 };
+
+[[nodiscard]] constexpr uint32_t ExtensionAbsoluteOffset(const Section& section,
+                                                         uint32_t offset = 0) noexcept {
+    return kDICEExtensionOffset + section.offset + offset;
+}
 
 // ============================================================================
 // Clock Source

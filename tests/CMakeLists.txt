@@ -1252,6 +1252,7 @@ gtest_discover_tests(DeviceProtocolFactoryTests)
 add_executable(DiceFocusriteSerializationTests
     "${ASFW_TESTS_DIR}/DiceFocusriteSerializationTests.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Focusrite/SPro24DspTypes.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
