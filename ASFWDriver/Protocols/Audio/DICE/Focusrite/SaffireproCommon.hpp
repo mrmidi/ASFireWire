@@ -102,10 +102,18 @@ struct InputParams {
     std::array<LineInputLevel, 2> lineLevels{};
     
     /// Parse from big-endian wire format (8 bytes)
-    static InputParams FromWire(const uint8_t* data);
-    
+    static InputParams Deserialize(const uint8_t* data);
+
+    static InputParams FromWire(const uint8_t* data) {
+        return Deserialize(data);
+    }
+
     /// Serialize to big-endian wire format (8 bytes)
-    void ToWire(uint8_t* data) const;
+    void Serialize(uint8_t* data) const;
+
+    void ToWire(uint8_t* data) const {
+        Serialize(data);
+    }
 };
 
 // ============================================================================
@@ -128,10 +136,18 @@ struct OutputGroupState {
     static constexpr int8_t kVolMax = 127;
     
     /// Parse from big-endian wire format (0x50 bytes)
-    static OutputGroupState FromWire(const uint8_t* data);
-    
+    static OutputGroupState Deserialize(const uint8_t* data);
+
+    static OutputGroupState FromWire(const uint8_t* data) {
+        return Deserialize(data);
+    }
+
     /// Serialize to big-endian wire format (0x50 bytes)
-    void ToWire(uint8_t* data) const;
+    void Serialize(uint8_t* data) const;
+
+    void ToWire(uint8_t* data) const {
+        Serialize(data);
+    }
 };
 
 // ============================================================================
