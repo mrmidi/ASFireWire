@@ -82,6 +82,10 @@ void LabelAllocator::ClearBitmap() {
     ASFW_LOG(Async, "LabelAllocator::ClearBitmap: bitmap=0x%016llx→0x0000000000000000", before);
 }
 
+bool LabelAllocator::HasAnyLabelsInUse() const noexcept {
+    return bitmap_.load(std::memory_order_acquire) != 0;
+}
+
 void LabelAllocator::BumpGeneration() {
     uint16_t current = generation_.load(std::memory_order_relaxed);
     while (!generation_.compare_exchange_weak(current,

@@ -104,11 +104,11 @@ public:
 
         ::IOLockLock(lock_);
 
-        // If no transactions are in flight but the bitmap isn't empty, reset it
-        // to avoid stale bits pinning allocation (observed stuck tLabel).
-        if (txnMgr_->Count() == 0 && labelAllocator_->IsLabelInUse(0 /*ignored, uses bitmap*/)) {
-            ASFW_LOG(Async, "Label bitmap non-empty with zero transactions; resetting allocator");
-            labelAllocator_->Reset();
+        // If no transactions are in flight but the bitmap isn't empty, clear just the
+        // allocation bits. Preserving generation avoids desynchronizing the AR matcher.
+        if (txnMgr_->Count() == 0 && labelAllocator_->HasAnyLabelsInUse()) {
+            ASFW_LOG(Async, "Label bitmap non-empty with zero transactions; clearing stale label bitmap");
+            labelAllocator_->ClearBitmap();
         }
 
         // Allocate a free label from the bitmap allocator to avoid collisions

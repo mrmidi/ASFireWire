@@ -6,6 +6,7 @@
 #include "ASFWDriver/Async/AsyncSubsystem.hpp"
 #include "ASFWDriver/Async/FireWireBusImpl.hpp"
 #include "ASFWDriver/Async/Track/Tracking.hpp"
+#include "ASFWDriver/Bus/GenerationTracker.hpp"
 #include "ASFWDriver/Bus/TopologyManager.hpp"
 
 namespace {
@@ -133,4 +134,93 @@ TEST(AsyncBusContract, GenerationMismatch_AdapterCompletesStaleGeneration_AsyncN
 
     EXPECT_TRUE(called);
     EXPECT_EQ(ASFW::Async::AsyncStatus::kStaleGeneration, status);
+}
+
+TEST(AsyncBusContract, ReentrantARCompletionFreesLabelBeforeCallback) {
+    DummyCompletionQueue dummyQueue;
+
+    LabelAllocator allocator;
+    allocator.Reset();
+
+    TransactionManager txnMgr;
+    auto initRes = txnMgr.Initialize();
+    ASSERT_TRUE(initRes) << "TransactionManager::Initialize failed";
+
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &txnMgr, dummyQueue);
+
+    std::optional<AsyncHandle> nestedHandle;
+
+    TxMetadata nestedMeta{};
+    nestedMeta.generation = 9;
+    nestedMeta.destinationNodeID = 0x0001;
+    nestedMeta.tCode = 0x4;
+    nestedMeta.expectedLength = 4;
+    nestedMeta.completionStrategy = CompletionStrategy::CompleteOnAR;
+    nestedMeta.callback = [](AsyncHandle, AsyncStatus, uint8_t, std::span<const uint8_t>) {};
+
+    TxMetadata meta{};
+    meta.generation = 9;
+    meta.destinationNodeID = 0x0001;
+    meta.tCode = 0x4;
+    meta.expectedLength = 4;
+    meta.completionStrategy = CompletionStrategy::CompleteOnAR;
+    meta.callback = [&](AsyncHandle, AsyncStatus status, uint8_t, std::span<const uint8_t>) {
+        EXPECT_EQ(AsyncStatus::kSuccess, status);
+        nestedHandle = tracking.RegisterTx(nestedMeta);
+    };
+
+    const AsyncHandle handle = tracking.RegisterTx(meta);
+    ASSERT_TRUE(handle);
+    tracking.OnTxPosted(handle, /*nowUsec=*/1000, /*timeoutUsec=*/500000);
+
+    tracking.OnRxResponse(RxResponse{
+        .generation = 9,
+        .sourceNodeID = 0x0001,
+        .destinationNodeID = 0xffc0,
+        .tLabel = static_cast<uint8_t>(handle.value - 1),
+        .tCode = 0x6,
+        .rCode = 0x0,
+        .payload = {},
+    });
+
+    ASSERT_TRUE(nestedHandle.has_value());
+    EXPECT_EQ(2u, nestedHandle->value) << "next request should advance to the next tLabel";
+}
+
+TEST(AsyncBusContract, StaleBitmapRecoveryPreservesGeneration) {
+    DummyCompletionQueue dummyQueue;
+
+    LabelAllocator allocator;
+    allocator.Reset();
+    ASFW::Async::Bus::GenerationTracker tracker{allocator};
+    tracker.Reset();
+    tracker.OnSyntheticBusReset(10);
+
+    TransactionManager txnMgr;
+    auto initRes = txnMgr.Initialize();
+    ASSERT_TRUE(initRes) << "TransactionManager::Initialize failed";
+
+    Track_Tracking<DummyCompletionQueue> tracking(&allocator, &txnMgr, dummyQueue);
+
+    TxMetadata meta{};
+    meta.generation = tracker.GetCurrentState().generation8;
+    meta.destinationNodeID = 0x0001;
+    meta.tCode = 0x4;
+    meta.expectedLength = 4;
+    meta.completionStrategy = CompletionStrategy::CompleteOnAR;
+    meta.callback = [](AsyncHandle, AsyncStatus, uint8_t, std::span<const uint8_t>) {};
+
+    const AsyncHandle first = tracking.RegisterTx(meta);
+    ASSERT_TRUE(first);
+    auto firstTxn = txnMgr.Extract(TLabel{static_cast<uint8_t>(first.value - 1)});
+    ASSERT_NE(firstTxn, nullptr);
+
+    EXPECT_EQ(10u, tracker.GetCurrentState().generation8);
+    EXPECT_EQ(10u, tracker.GetCurrentState().generation16);
+
+    const AsyncHandle second = tracking.RegisterTx(meta);
+    ASSERT_TRUE(second);
+
+    EXPECT_EQ(10u, tracker.GetCurrentState().generation8);
+    EXPECT_EQ(10u, tracker.GetCurrentState().generation16);
 }

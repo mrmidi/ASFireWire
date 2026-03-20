@@ -203,8 +203,23 @@ public:
 
         txnPtr->TransitionTo(TransactionState::ARReceived, "OnARResponse");
 
+        // Free the label before invoking the callback so re-entrant submits from the
+        // callback do not inherit stale bitmap state from the just-completed transaction.
+        if (labelAllocator_) {
+            labelAllocator_->Free(key.label.value);
+        }
+
         // Convert rcode to kern_return_t
         kern_return_t kr = (rcode == 0) ? kIOReturnSuccess : kIOReturnError;
+
+        ASFW_LOG(Async,
+                 "OnARResponse: completing tLabel=%u gen=%u node=0x%04X rcode=0x%X kr=0x%08x len=%zu",
+                 key.label.value,
+                 key.generation.value,
+                 key.node.value,
+                 rcode,
+                 kr,
+                 data.size());
 
         // Complete transaction
         ASFW_LOG_V2(Async, "  → Completed (rcode=0x%X, kr=0x%08X)", rcode, kr);
@@ -218,11 +233,6 @@ public:
 
         // Invoke callback
         txnPtr->InvokeResponseHandler(kr, rcode, data);
-
-        // Free label (allocator is thread-safe)
-        if (labelAllocator_) {
-            labelAllocator_->Free(key.label.value);
-        }
     }
 
     /**
@@ -266,14 +276,15 @@ public:
         auto txnPtr = txnMgr_->Extract(label);
         if (txnPtr) {
             txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
-            
-            // Invoke callback
-            txnPtr->InvokeResponseHandler(kIOReturnTimeout, 0xFF, {});
-            
-            // Free label
+
+            // Free the label before invoking the callback so retries started from the
+            // callback do not trip stale-bitmap recovery.
             if (labelAllocator_) {
                 labelAllocator_->Free(label.value);
             }
+
+            // Invoke callback
+            txnPtr->InvokeResponseHandler(kIOReturnTimeout, 0xFF, {});
         }
         }
 
@@ -415,7 +426,6 @@ private:
                                      postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
                 txnPtr->TransitionTo(TransactionState::Completed,
                                      postResult.transitionTag2 ? postResult.transitionTag2 : "OnATCompletion");
-                txnPtr->InvokeResponseHandler(postResult.postKr, 0xFF, {});
                 break;
             case ATPostAction::kCompleteError:
             case ATPostAction::kCompleteTimeout:
@@ -423,12 +433,10 @@ private:
                                      postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
                 txnPtr->TransitionTo(TransactionState::Failed,
                                      postResult.transitionTag2 ? postResult.transitionTag2 : "OnATCompletion");
-                txnPtr->InvokeResponseHandler(postResult.postKr, 0xFF, {});
                 break;
             case ATPostAction::kCompleteCancelled:
                 txnPtr->TransitionTo(TransactionState::Cancelled,
                                      postResult.transitionTag1 ? postResult.transitionTag1 : "OnATCompletion");
-                txnPtr->InvokeResponseHandler(postResult.postKr, 0xFF, {});
                 break;
             case ATPostAction::kNone:
                 break;
@@ -436,6 +444,18 @@ private:
 
         if (labelAllocator_) {
             labelAllocator_->Free(label.value);
+        }
+
+        switch (postResult.action) {
+            case ATPostAction::kCompleteSuccess:
+            case ATPostAction::kCompletePhySuccess:
+            case ATPostAction::kCompleteError:
+            case ATPostAction::kCompleteTimeout:
+            case ATPostAction::kCompleteCancelled:
+                txnPtr->InvokeResponseHandler(postResult.postKr, 0xFF, {});
+                break;
+            case ATPostAction::kNone:
+                break;
         }
     }
 

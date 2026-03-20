@@ -145,6 +145,55 @@ TEST(CompletionRefactorPlan, ReadRequiresAR_EvenIfAckComplete) {
     EXPECT_EQ(h.mgr.Find(TLabel{4}), nullptr);
 }
 
+TEST(CompletionRefactorPlan, ARResponseMatchesWhenOnlyBusBitsDiffer) {
+    Harness h;
+    ASSERT_TRUE(h.initOk);
+    CallbackRecorder cb;
+    auto* txn = h.AllocateTxn(/*label=*/6, /*gen=*/6, /*node=*/0xffc2,
+                              /*tcode=*/0x9, CompletionStrategy::CompleteOnAR, cb);
+    ASSERT_NE(txn, nullptr);
+    txn->SetSkipATCompletion(true);  // mimic RegisterTx behavior for lock/read operations
+    txn->TransitionTo(TransactionState::ATCompleted, "test");
+    txn->TransitionTo(TransactionState::AwaitingAR, "test");
+
+    MatchKey wireKey{
+        .node = NodeID{0x0002},
+        .generation = BusGeneration{6},
+        .label = TLabel{6},
+    };
+    const uint8_t previousOwner[8] = {0xff, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00};
+    h.handler.OnARResponse(wireKey, /*rcode=*/0x0, std::span<const uint8_t>{previousOwner, sizeof(previousOwner)});
+
+    EXPECT_EQ(cb.called, 1);
+    EXPECT_EQ(cb.lastKr, kIOReturnSuccess);
+    ASSERT_EQ(cb.lastData.size(), sizeof(previousOwner));
+    EXPECT_EQ(h.mgr.Find(TLabel{6}), nullptr);
+}
+
+TEST(CompletionRefactorPlan, ARResponseRejectsDifferentNodeNumber) {
+    Harness h;
+    ASSERT_TRUE(h.initOk);
+    CallbackRecorder cb;
+    auto* txn = h.AllocateTxn(/*label=*/7, /*gen=*/7, /*node=*/0xffc2,
+                              /*tcode=*/0x9, CompletionStrategy::CompleteOnAR, cb);
+    ASSERT_NE(txn, nullptr);
+    txn->SetSkipATCompletion(true);
+    txn->TransitionTo(TransactionState::ATCompleted, "test");
+    txn->TransitionTo(TransactionState::AwaitingAR, "test");
+
+    MatchKey wrongNodeKey{
+        .node = NodeID{0x0003},
+        .generation = BusGeneration{7},
+        .label = TLabel{7},
+    };
+    h.handler.OnARResponse(wrongNodeKey, /*rcode=*/0x0, {});
+
+    EXPECT_EQ(cb.called, 0);
+    Transaction* live = h.mgr.Find(TLabel{7});
+    ASSERT_NE(live, nullptr);
+    EXPECT_EQ(live->state(), TransactionState::AwaitingAR);
+}
+
 TEST(CompletionRefactorPlan, BusyAckExtendsDeadlineNoCompletion) {
     Harness h;
     ASSERT_TRUE(h.initOk);

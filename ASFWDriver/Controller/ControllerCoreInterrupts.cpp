@@ -152,13 +152,15 @@ void ControllerCore::DispatchAsyncInterrupts(uint32_t events) const {
         deps_.asyncController->OnTxInterrupt();
     }
 
-    if ((events & IntEventBits::kRQPkt) != 0U) {
-        ASFW_LOG_V3(Controller, "AR Request interrupt (RQPkt: async receive packet available)");
+    if ((events & (IntEventBits::kARRQ | IntEventBits::kRQPkt)) != 0U) {
+        ASFW_LOG_V3(Controller,
+                    "AR Request interrupt (ARRQ/RQPkt: async request DMA/packet available)");
         deps_.asyncController->OnRxRequestInterrupt();
     }
 
-    if ((events & IntEventBits::kRSPkt) != 0U) {
-        ASFW_LOG_V3(Controller, "AR Response interrupt (RSPkt: async receive packet available)");
+    if ((events & (IntEventBits::kARRS | IntEventBits::kRSPkt)) != 0U) {
+        ASFW_LOG_V3(Controller,
+                    "AR Response interrupt (ARRS/RSPkt: async response DMA/packet available)");
         deps_.asyncController->OnRxResponseInterrupt();
     }
 }

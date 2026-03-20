@@ -152,7 +152,7 @@ ASFW::Async::ResponseCode RouteFcpBlockWrite(
 ASFW::Async::ResponseCode RouteDiceNotificationQuadletWrite(
     const ASFW::Async::ARPacketView& packet) {
     const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-    if (destOffset != ASFW::Audio::DICE::NotificationMailbox::kHandlerOffset) {
+    if (!ASFW::Audio::DICE::NotificationMailbox::MatchesDestOffset(destOffset)) {
         return ASFW::Async::ResponseCode::AddressError;
     }
 
@@ -162,7 +162,10 @@ ASFW::Async::ResponseCode RouteDiceNotificationQuadletWrite(
 
     const uint32_t bits =
         ASFW::Audio::DICE::NotificationMailbox::PublishWireQuadlet(packet.header.data() + 12);
-    ASFW_LOG(DICE, "DICE notification quadlet received: bits=0x%08x", bits);
+    ASFW_LOG(DICE,
+             "DICE notification quadlet received: dest=0x%010llx bits=0x%08x",
+             destOffset,
+             bits);
     return ASFW::Async::ResponseCode::Complete;
 }
 
