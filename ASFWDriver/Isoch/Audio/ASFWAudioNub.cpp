@@ -85,6 +85,58 @@ static uint32_t FallbackOutputChannels(const ASFWAudioNub_IVars* iv) {
     return ClampAudioChannels(iv->outputChannelCount ? iv->outputChannelCount : iv->channelCount);
 }
 
+static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_IVars* iv) {
+    if (!self || !iv) {
+        return;
+    }
+
+    OSDictionary* propsRaw = nullptr;
+    if (self->CopyProperties(&propsRaw) != kIOReturnSuccess || !propsRaw) {
+        return;
+    }
+
+    OSSharedPtr<OSDictionary> props(propsRaw, OSNoRetain);
+    uint32_t aggregate = iv->channelCount;
+    uint32_t input = iv->inputChannelCount;
+    uint32_t output = iv->outputChannelCount;
+
+    if (auto* count = OSDynamicCast(OSNumber, props->getObject("ASFWChannelCount"))) {
+        aggregate = ClampAudioChannels(count->unsigned32BitValue());
+    }
+    if (auto* inputCount = OSDynamicCast(OSNumber, props->getObject("ASFWInputChannelCount"))) {
+        input = ClampAudioChannels(inputCount->unsigned32BitValue());
+    }
+    if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject("ASFWOutputChannelCount"))) {
+        output = ClampAudioChannels(outputCount->unsigned32BitValue());
+    }
+
+    if (input == 0) {
+        input = aggregate;
+    }
+    if (output == 0) {
+        output = aggregate;
+    }
+    aggregate = std::max(input, output);
+
+    if (aggregate == 0 || input == 0 || output == 0) {
+        return;
+    }
+
+    if (iv->channelCount != aggregate ||
+        iv->inputChannelCount != input ||
+        iv->outputChannelCount != output) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: Refreshed channel counts from properties agg=%u in=%u out=%u",
+                 aggregate,
+                 input,
+                 output);
+    }
+
+    iv->channelCount = aggregate;
+    iv->inputChannelCount = input;
+    iv->outputChannelCount = output;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 static bool TryResolveRuntimeAudioChannels(ASFWAudioNub_IVars* iv,
                                            uint32_t& outInputChannels, // NOLINT(bugprone-easily-swappable-parameters)
@@ -173,7 +225,7 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
 // Stream start/stop is now orchestrated by AudioCoordinator backends.
 
 // Helper to create and initialize the TX queue
-static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
+static kern_return_t CreateTxQueue(ASFWAudioNub* self, ASFWAudioNub_IVars* iv)
 {
     if (!iv) return kIOReturnBadArgument;
 
@@ -181,6 +233,8 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     if (iv->txQueueMem && iv->txQueueMap) {
         return kIOReturnSuccess;
     }
+
+    RefreshChannelCountsFromProperties(self, iv);
 
     uint32_t inputChUnused = 0;
     uint32_t txChannels = FallbackOutputChannels(iv);
@@ -255,7 +309,7 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
 }
 
 // Helper to create and initialize the RX queue (mirrors CreateTxQueue)
-static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
+static kern_return_t CreateRxQueue(ASFWAudioNub* self, ASFWAudioNub_IVars* iv)
 {
     if (!iv) return kIOReturnBadArgument;
 
@@ -263,6 +317,8 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     if (iv->rxQueueMem && iv->rxQueueMap) {
         return kIOReturnSuccess;
     }
+
+    RefreshChannelCountsFromProperties(self, iv);
 
     uint32_t rxChannels = FallbackInputChannels(iv);
     uint32_t outputChUnused = 0;
@@ -420,26 +476,7 @@ kern_return_t IMPL(ASFWAudioNub, Start)
 
     // Seed channel counts from properties (if available). Queue sizing may later
     // be refined from runtime protocol caps at first queue creation.
-    OSDictionary* propsRaw = nullptr;
-    if (CopyProperties(&propsRaw) == kIOReturnSuccess && propsRaw) {
-        OSSharedPtr<OSDictionary> props(propsRaw, OSNoRetain);
-        if (auto* count = OSDynamicCast(OSNumber, props->getObject("ASFWChannelCount"))) {
-            ivars->channelCount = ClampAudioChannels(count->unsigned32BitValue());
-        }
-        if (auto* inputCount = OSDynamicCast(OSNumber, props->getObject("ASFWInputChannelCount"))) {
-            ivars->inputChannelCount = ClampAudioChannels(inputCount->unsigned32BitValue());
-        }
-        if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject("ASFWOutputChannelCount"))) {
-            ivars->outputChannelCount = ClampAudioChannels(outputCount->unsigned32BitValue());
-        }
-        if (ivars->inputChannelCount == 0) {
-            ivars->inputChannelCount = ivars->channelCount;
-        }
-        if (ivars->outputChannelCount == 0) {
-            ivars->outputChannelCount = ivars->channelCount;
-        }
-        ivars->channelCount = std::max(ivars->inputChannelCount, ivars->outputChannelCount);
-    }
+    RefreshChannelCountsFromProperties(this, ivars);
 
     // TX/RX queues and audio buffer are created lazily on first RPC access.
 
@@ -481,7 +518,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyTransmitQueueMemory)
     }
 
     // Ensure TX queue exists
-    if (const kern_return_t kr = CreateTxQueue(ivars); kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateTxQueue(this, ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: CopyTransmitQueueMemory: CreateTxQueue failed: 0x%x", kr);
         return kr;
     }
@@ -650,8 +687,8 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
     }
 
     // Ensure queues exist before starting isoch.
-    (void)CreateRxQueue(ivars);
-    (void)CreateTxQueue(ivars);
+    (void)CreateRxQueue(this, ivars);
+    (void)CreateTxQueue(this, ivars);
 
     const IOReturn kr = coordinator->StartStreaming(ivars->guid);
     if (kr != kIOReturnSuccess) {
@@ -777,7 +814,7 @@ uint32_t ASFWAudioNub::GetStreamMode() const
 void ASFWAudioNub::EnsureRxQueueCreated()
 {
     if (!ivars) return;
-    if (const kern_return_t kr = CreateRxQueue(ivars); kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateRxQueue(this, ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: EnsureRxQueueCreated failed: 0x%x", kr);
     }
 }
@@ -798,7 +835,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyRxQueueMemory)
     }
 
     // Ensure RX queue exists (lazy creation)
-    if (const kern_return_t kr = CreateRxQueue(ivars); kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateRxQueue(this, ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: CopyRxQueueMemory: CreateRxQueue failed: 0x%x", kr);
         return kr;
     }
