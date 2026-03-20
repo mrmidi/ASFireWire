@@ -106,7 +106,9 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
 
     if (deps_.irmClient) {
         const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
-        deps_.irmClient->SetIRMNode(irmNodeId, Discovery::Generation{snap.generation});
+        deps_.irmClient->SetIRMNode(irmNodeId,
+                                    Discovery::Generation{snap.generation},
+                                    snap.capturedAt);
         ASFW_LOG(Discovery, "IRMClient updated: IRM node=%u, generation=%u", irmNodeId,
                  snap.generation);
     }
@@ -172,7 +174,8 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         auto& bus = this->Bus();
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(
             rom, policy, static_cast<Async::IFireWireBusOps*>(&bus),
-            static_cast<Async::IFireWireBusInfo*>(&bus));
+            static_cast<Async::IFireWireBusInfo*>(&bus),
+            deps_.irmClient.get());
         discoveredGuids.insert(deviceRecord.guid);
 
         if (deps_.deviceManager) {

@@ -12,6 +12,10 @@ namespace ASFW::Async {
     class IFireWireBusInfo;
 }
 
+namespace ASFW::IRM {
+    class IRMClient;
+}
+
 namespace ASFW::Discovery {
 
 // Stable GUID-keyed device registry with per-generation live mapping.
@@ -27,7 +31,8 @@ public:
     // @param busInfo Optional - paired with busOps (generation/speed queries)
     DeviceRecord& UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
                                  Async::IFireWireBusOps* busOps = nullptr,
-                                 Async::IFireWireBusInfo* busInfo = nullptr);
+                                 Async::IFireWireBusInfo* busInfo = nullptr,
+                                 IRM::IRMClient* irmClient = nullptr);
 
     // Mark device as discovered (seen in Self-ID, before ROM fetch)
     void MarkDiscovered(Generation gen, uint8_t nodeId);

@@ -17,6 +17,10 @@
 #include "../Audio/Model/ASFWAudioDevice.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 
+namespace ASFW::IRM {
+class IRMClient;
+}
+
 namespace ASFW::Driver {
 
 class HardwareInterface;
@@ -77,11 +81,19 @@ public:
     kern_return_t StopTransmit();
 
     kern_return_t BeginSplitDuplex(uint64_t guid);
+    kern_return_t ReservePlaybackResources(uint64_t guid,
+                                           IRM::IRMClient& irmClient,
+                                           uint8_t channel,
+                                           uint32_t bandwidthUnits);
+    kern_return_t ReserveCaptureResources(uint64_t guid,
+                                          IRM::IRMClient& irmClient,
+                                          uint8_t channel,
+                                          uint32_t bandwidthUnits);
 
     kern_return_t StartDuplex(const IsochDuplexStartParams& params,
                               HardwareInterface& hardware);
 
-    kern_return_t StopDuplex(uint64_t guid);
+    kern_return_t StopDuplex(uint64_t guid, IRM::IRMClient* irmClient = nullptr);
 
     void StopAll();
 
@@ -115,6 +127,24 @@ private:
     SharedQueueMapping txQueue_{};
 
     uint64_t activeGuid_{0};
+
+    struct ReservedDuplexResources {
+        bool playbackActive{false};
+        uint8_t playbackChannel{0xFF};
+        uint32_t playbackBandwidthUnits{0};
+        bool captureActive{false};
+        uint8_t captureChannel{0xFF};
+        uint32_t captureBandwidthUnits{0};
+
+        void Reset() noexcept {
+            playbackActive = false;
+            playbackChannel = 0xFF;
+            playbackBandwidthUnits = 0;
+            captureActive = false;
+            captureChannel = 0xFF;
+            captureBandwidthUnits = 0;
+        }
+    } reserved_{};
 };
 
 } // namespace ASFW::Driver
