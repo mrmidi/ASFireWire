@@ -9,11 +9,65 @@
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/AudioTxProfiles.hpp"
 #include "Encoding/TimingUtils.hpp"
+#include "../IRM/IRMClient.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Logging/Logging.hpp"
 
 namespace ASFW::Driver {
+
+namespace {
+
+struct SyncAllocationState {
+    std::atomic<bool> done{false};
+    std::atomic<ASFW::IRM::AllocationStatus> status{ASFW::IRM::AllocationStatus::Timeout};
+};
+
+constexpr uint32_t kIRMWaitTimeoutMs = 5000;
+constexpr uint32_t kIRMWaitPollMs = 10;
+
+[[nodiscard]] kern_return_t AllocationStatusToIOReturn(const ASFW::IRM::AllocationStatus status) noexcept {
+    using ASFW::IRM::AllocationStatus;
+
+    switch (status) {
+    case AllocationStatus::Success:
+        return kIOReturnSuccess;
+    case AllocationStatus::NoResources:
+        return kIOReturnNoResources;
+    case AllocationStatus::GenerationMismatch:
+        return kIOReturnOffline;
+    case AllocationStatus::Timeout:
+        return kIOReturnTimeout;
+    case AllocationStatus::NotFound:
+        return kIOReturnNotFound;
+    case AllocationStatus::Failed:
+        return kIOReturnError;
+    }
+
+    return kIOReturnError;
+}
+
+template <typename StartFn>
+kern_return_t WaitForAllocation(StartFn&& fn) {
+    auto state = std::make_shared<SyncAllocationState>();
+    fn([state](ASFW::IRM::AllocationStatus status) {
+        state->status.store(status, std::memory_order_relaxed);
+        state->done.store(true, std::memory_order_release);
+    });
+
+    for (uint32_t waited = 0; waited < kIRMWaitTimeoutMs; waited += kIRMWaitPollMs) {
+        if (state->done.load(std::memory_order_acquire)) {
+            return AllocationStatusToIOReturn(state->status.load(std::memory_order_relaxed));
+        }
+        IOSleep(kIRMWaitPollMs);
+    }
+
+    return state->done.load(std::memory_order_acquire)
+        ? AllocationStatusToIOReturn(state->status.load(std::memory_order_relaxed))
+        : kIOReturnTimeout;
+}
+
+} // namespace
 
 kern_return_t IsochService::StartReceive(uint8_t channel,
                                          HardwareInterface& hardware,
@@ -343,6 +397,76 @@ kern_return_t IsochService::BeginSplitDuplex(uint64_t guid) {
     return ClaimDuplexGuid(guid);
 }
 
+kern_return_t IsochService::ReservePlaybackResources(uint64_t guid,
+                                                     IRM::IRMClient& irmClient,
+                                                     const uint8_t channel,
+                                                     const uint32_t bandwidthUnits) {
+    const kern_return_t claimStatus = ClaimDuplexGuid(guid);
+    if (claimStatus != kIOReturnSuccess) {
+        return claimStatus;
+    }
+
+    if (channel >= 64) {
+        return kIOReturnBadArgument;
+    }
+
+    if (reserved_.playbackActive) {
+        const bool sameReservation =
+            reserved_.playbackChannel == channel &&
+            reserved_.playbackBandwidthUnits == bandwidthUnits;
+        return sameReservation ? kIOReturnSuccess : kIOReturnBusy;
+    }
+
+    const kern_return_t reserveStatus = WaitForAllocation([&](auto cb) {
+        irmClient.AllocateResources(channel,
+                                    bandwidthUnits,
+                                    std::move(cb));
+    });
+    if (reserveStatus != kIOReturnSuccess) {
+        return reserveStatus;
+    }
+
+    reserved_.playbackActive = true;
+    reserved_.playbackChannel = channel;
+    reserved_.playbackBandwidthUnits = bandwidthUnits;
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochService::ReserveCaptureResources(uint64_t guid,
+                                                    IRM::IRMClient& irmClient,
+                                                    const uint8_t channel,
+                                                    const uint32_t bandwidthUnits) {
+    const kern_return_t claimStatus = ClaimDuplexGuid(guid);
+    if (claimStatus != kIOReturnSuccess) {
+        return claimStatus;
+    }
+
+    if (channel >= 64) {
+        return kIOReturnBadArgument;
+    }
+
+    if (reserved_.captureActive) {
+        const bool sameReservation =
+            reserved_.captureChannel == channel &&
+            reserved_.captureBandwidthUnits == bandwidthUnits;
+        return sameReservation ? kIOReturnSuccess : kIOReturnBusy;
+    }
+
+    const kern_return_t reserveStatus = WaitForAllocation([&](auto cb) {
+        irmClient.AllocateResources(channel,
+                                    bandwidthUnits,
+                                    std::move(cb));
+    });
+    if (reserveStatus != kIOReturnSuccess) {
+        return reserveStatus;
+    }
+
+    reserved_.captureActive = true;
+    reserved_.captureChannel = channel;
+    reserved_.captureBandwidthUnits = bandwidthUnits;
+    return kIOReturnSuccess;
+}
+
 kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                        HardwareInterface& hardware) {
     const kern_return_t claimStatus = ClaimDuplexGuid(params.guid);
@@ -380,7 +504,7 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
     return kIOReturnSuccess;
 }
 
-kern_return_t IsochService::StopDuplex(uint64_t guid) {
+kern_return_t IsochService::StopDuplex(uint64_t guid, IRM::IRMClient* irmClient) {
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
@@ -393,8 +517,29 @@ kern_return_t IsochService::StopDuplex(uint64_t guid) {
     (void)StopReceive();
     externalSyncBridge_.Reset();
 
+    kern_return_t releaseStatus = kIOReturnSuccess;
+    if (irmClient != nullptr && reserved_.captureActive) {
+        releaseStatus = WaitForAllocation([&](auto cb) {
+            irmClient->ReleaseResources(reserved_.captureChannel,
+                                        reserved_.captureBandwidthUnits,
+                                        std::move(cb));
+        });
+    }
+
+    if (irmClient != nullptr && reserved_.playbackActive) {
+        const kern_return_t playbackReleaseStatus = WaitForAllocation([&](auto cb) {
+            irmClient->ReleaseResources(reserved_.playbackChannel,
+                                        reserved_.playbackBandwidthUnits,
+                                        std::move(cb));
+        });
+        if (releaseStatus == kIOReturnSuccess) {
+            releaseStatus = playbackReleaseStatus;
+        }
+    }
+    reserved_.Reset();
+
     activeGuid_ = 0;
-    return kIOReturnSuccess;
+    return releaseStatus;
 }
 
 void IsochService::StopAll() {
@@ -412,6 +557,7 @@ void IsochService::StopAll() {
     }
     txQueue_.Reset();
     externalSyncBridge_.Reset();
+    reserved_.Reset();
     activeGuid_ = 0;
 }
 

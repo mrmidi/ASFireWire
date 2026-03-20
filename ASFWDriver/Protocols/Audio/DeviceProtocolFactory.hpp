@@ -11,6 +11,10 @@
 #include <memory>
 #include <optional>
 
+namespace ASFW::IRM {
+class IRMClient;
+}
+
 namespace ASFW::Audio {
 
 /// Integration mode for a recognized device profile.
@@ -106,7 +110,8 @@ public:
         uint32_t modelId,
         Protocols::Ports::FireWireBusOps& busOps,
         Protocols::Ports::FireWireBusInfo& busInfo,
-        uint16_t nodeId
+        uint16_t nodeId,
+        ::ASFW::IRM::IRMClient* irmClient = nullptr
     );
 };
 

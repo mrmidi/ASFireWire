@@ -7,14 +7,17 @@
 #pragma once
 
 #include "SaffireproCommon.hpp"
-#include "../Core/DICETransaction.hpp"
+#include "SPro24DspTypes.hpp"
 #include "../Core/DICETypes.hpp"
+#include "../TCAT/DICETcatProtocol.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include <array>
-#include <atomic>
-#include <vector>
 #include <cstdint>
 #include <memory>
+
+namespace ASFW::IRM {
+class IRMClient;
+}
 
 namespace ASFW::Audio::DICE::Focusrite {
 
@@ -27,69 +30,6 @@ constexpr uint32_t kFocusriteVendorId = 0x00130e;
 
 /// Saffire Pro 24 DSP model ID
 constexpr uint32_t kSPro24DspModelId = 0x000008;
-
-// ============================================================================
-// DSP Coefficient Layout
-// ============================================================================
-
-/// Size of one DSP coefficient block (in bytes)
-constexpr size_t kCoefBlockSize = 0x88;
-
-/// Number of coefficient blocks
-constexpr size_t kCoefBlockCount = 8;
-
-/// Block indices for DSP effects
-namespace CoefBlock {
-    constexpr size_t kCompressor = 2;
-    constexpr size_t kEqualizer  = 2;
-    constexpr size_t kReverb     = 3;
-}
-
-// ============================================================================
-// DSP Effect States
-// ============================================================================
-
-/// Compressor state (2-channel)
-struct CompressorState {
-    std::array<float, 2> output{};     ///< Output volume (0.0 to 64.0)
-    std::array<float, 2> threshold{};  ///< Threshold (-1.25 to 0.0)
-    std::array<float, 2> ratio{};      ///< Ratio (0.03125 to 0.5)
-    std::array<float, 2> attack{};     ///< Attack (-0.9375 to -1.0)
-    std::array<float, 2> release{};    ///< Release (0.9375 to 1.0)
-    
-    /// Parse from wire format (2 × kCoefBlockSize bytes)
-    static CompressorState FromWire(const uint8_t* data);
-    
-    /// Serialize to wire format
-    void ToWire(uint8_t* data) const;
-};
-
-/// Reverb state
-struct ReverbState {
-    float size{0.0f};       ///< Room size (0.0 to 1.0)
-    float air{0.0f};        ///< Air/damping (0.0 to 1.0)
-    bool enabled{false};    ///< Reverb enabled
-    float preFilter{0.0f};  ///< Pre-filter value (-1.0 to 1.0)
-    
-    /// Parse from wire format (kCoefBlockSize bytes)
-    static ReverbState FromWire(const uint8_t* data);
-    
-    /// Serialize to wire format
-    void ToWire(uint8_t* data) const;
-};
-
-/// Channel strip general parameters
-struct EffectGeneralParams {
-    std::array<bool, 2> eqAfterComp{};   ///< EQ after compressor
-    std::array<bool, 2> compEnable{};    ///< Compressor enabled
-    std::array<bool, 2> eqEnable{};      ///< Equalizer enabled
-    
-    /// Parse from wire format (4 bytes)
-    static EffectGeneralParams FromWire(const uint8_t* data);
-    
-    /// Serialize to wire format
-    void ToWire(uint8_t* data) const;
-};
 
 // ============================================================================
 // SPro24DspProtocol
@@ -112,10 +52,10 @@ public:
     /// @param nodeId     Target device node ID
     SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
                       Protocols::Ports::FireWireBusInfo& busInfo,
-                      uint16_t nodeId);
+                      uint16_t nodeId,
+                      ::ASFW::IRM::IRMClient* irmClient = nullptr);
     
-    /// Initialize protocol (reads sections, caches state)
-    /// Note: This starts async operations. Use InitializeAsync for callback-based init.
+    /// Initialize protocol (generic DICE init is delegated to the TCAT core)
     IOReturn Initialize() override;
     
     /// Shutdown protocol
@@ -130,10 +70,14 @@ public:
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     
     /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
-    IOReturn StartDuplex48k(const AudioDuplexChannels& channels) override;
-    IOReturn ArmDuplex48kAfterReceiveStart() override;
-    IOReturn CompleteDuplex48kStart() override;
+    void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;
+    void ProgramRxForDuplex48k(VoidCallback callback) override;
+    void ProgramTxAndEnableDuplex48k(VoidCallback callback) override;
+    void ConfirmDuplex48kStart(VoidCallback callback) override;
     IOReturn StopDuplex() override;
+    ::ASFW::IRM::IRMClient* GetIRMClient() const override { return tcat_.GetIRMClient(); }
+    void UpdateRuntimeContext(uint16_t nodeId,
+                              Protocols::AVC::FCPTransport* transport) override;
     
     // ========================================================================
     // Async Initialization
@@ -192,50 +136,29 @@ public:
     void StartStreamTest(VoidCallback callback);
 
 private:
-    Protocols::Ports::FireWireBusInfo& busInfo_;
-    DICETransaction tx_;
-    GeneralSections sections_{};
+    TCAT::DICETcatProtocol tcat_;
     ExtensionSections extensionSections_{};
     uint32_t appSectionBase_{0};
     uint32_t commandSectionBase_{0};
     uint32_t routerSectionBase_{0};
     uint32_t currentConfigBase_{0};
-    bool initialized_{false};
-    bool ownerClaimed_{false};
-    bool duplexPrepared_{false};
-    bool duplexArmed_{false};
-    bool duplexRunning_{false};
-
-    // Runtime-discovered DICE stream caps (authoritative after async capability discovery).
-    std::atomic<uint32_t> runtimeSampleRateHz_{0};
-    std::atomic<uint32_t> hostInputPcmChannels_{0};    // DICE TX stream 0 PCM
-    std::atomic<uint32_t> hostOutputPcmChannels_{0};   // DICE RX stream 0 PCM
-    std::atomic<uint32_t> deviceToHostAm824Slots_{0};  // DICE TX stream 0 slots
-    std::atomic<uint32_t> hostToDeviceAm824Slots_{0};  // DICE RX stream 0 slots
-    std::atomic<bool> runtimeCapsValid_{false};
+    bool extensionsLoaded_{false};
     
     /// Send software notice to commit changes
     void SendSwNotice(SwNotice notice, VoidCallback callback);
+    void EnsureExtensionsLoaded(VoidCallback callback);
+    void ReadAppQuad(uint32_t offset, std::function<void(IOReturn, uint32_t)> callback);
+    void WriteAppQuad(uint32_t offset, uint32_t value, VoidCallback callback);
 
-    void HandleCapabilityDiscovery(IOReturn status, DICECapabilities caps, InitCallback callback);
-    void HandleGeneralSectionsRead(IOReturn status,
-                                   DICECapabilities caps,
-                                   GeneralSections sections,
-                                   InitCallback callback);
     void HandleExtensionSectionsRead(IOReturn status,
-                                     DICECapabilities caps,
                                      ExtensionSections sections,
                                      InitCallback callback);
-    void CacheRuntimeCaps(const DICECapabilities& caps) noexcept;
-    void LogInitializationSummary(const DICECapabilities& caps) const;
     
     /// Read from application section
     void ReadAppSection(uint32_t offset, size_t size, DICEReadCallback callback);
     
     /// Write to application section
     void WriteAppSection(uint32_t offset, const uint8_t* data, size_t size, DICEWriteCallback callback);
-
-    [[nodiscard]] uint32_t ExtensionAbsoluteOffset(const Section& section, uint32_t offset = 0) const noexcept;
 };
 
 } // namespace ASFW::Audio::DICE::Focusrite

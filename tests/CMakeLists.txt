@@ -1270,6 +1270,74 @@ target_include_directories(DiceFocusriteSerializationTests PRIVATE ${ASFW_COMMON
 
 gtest_discover_tests(DiceFocusriteSerializationTests)
 
+# DICE duplex parity tests
+add_executable(DICEDuplexBringupControllerTests
+    "${ASFW_TESTS_DIR}/DICEDuplexBringupControllerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Core/DICEDuplexBringupController.cpp"
+    "${ASFW_DRIVER_DIR}/IRM/IRMClient.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(DICEDuplexBringupControllerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DICEDuplexBringupControllerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DICEDuplexBringupControllerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DICEDuplexBringupControllerTests)
+
+# Generic DICE / TCAT protocol split tests
+add_executable(DICETcatProtocolTests
+    "${ASFW_TESTS_DIR}/DICETcatProtocolTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Core/DICETransaction.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Core/DICEDuplexBringupController.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/TCAT/DICETcatProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Focusrite/SPro24DspProtocol.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Focusrite/SPro24DspTypes.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Focusrite/SaffireproCommon.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(DICETcatProtocolTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DICETcatProtocolTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DICETcatProtocolTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DICETcatProtocolTests)
+
+# DICE bring-up sequencing tests
+add_executable(DiceBringupSequenceTests
+    "${ASFW_TESTS_DIR}/DiceBringupSequenceTests.cpp"
+)
+
+target_link_libraries(DiceBringupSequenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiceBringupSequenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiceBringupSequenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DiceBringupSequenceTests)
+
 # Apogee protocol boolean control mapping tests
 add_executable(ApogeeBooleanControlMappingTests
     "${ASFW_TESTS_DIR}/ApogeeBooleanControlMappingTests.cpp"

@@ -7,9 +7,14 @@
 
 #include <DriverKit/IOReturn.h>
 #include <cstdint>
+#include <functional>
 
 namespace ASFW::Protocols::AVC {
     class FCPTransport;
+}
+
+namespace ASFW::IRM {
+    class IRMClient;
 }
 
 namespace ASFW::Audio {
@@ -64,29 +69,40 @@ public:
         return false;
     }
 
-    /// Optional bring-up hook to configure device-side duplex streaming at 48kHz.
-    /// Drivers can call this before starting host IR/IT contexts.
-    /// Implementations should be idempotent and return quickly.
-    virtual IOReturn StartDuplex48k(const AudioDuplexChannels& channels) {
+    using VoidCallback = std::function<void(IOReturn)>;
+
+    /// Optional bring-up hook to prepare device-side duplex state at 48kHz.
+    /// Drivers can call this before any IRM reservation or host IR/IT startup.
+    /// Implementations should be idempotent.
+    virtual void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
         (void)channels;
-        return kIOReturnUnsupported;
+        callback(kIOReturnUnsupported);
     }
 
-    /// Optional hook after host IR is already running, but before host IT starts.
-    /// DICE devices can use this to arm device-side transmit so IR can establish SYT.
-    virtual IOReturn ArmDuplex48kAfterReceiveStart() {
-        return kIOReturnUnsupported;
+    /// Optional hook to program the device-side RX leg after playback IRM allocation.
+    virtual void ProgramRxForDuplex48k(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
+    }
+
+    /// Optional hook to program the device-side TX leg and enable duplex streaming.
+    virtual void ProgramTxAndEnableDuplex48k(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
     }
 
     /// Optional completion hook after host IR/IT contexts are running.
     /// DICE devices can use this to verify stream lock/state.
-    virtual IOReturn CompleteDuplex48kStart() {
-        return kIOReturnUnsupported;
+    virtual void ConfirmDuplex48kStart(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
     }
 
     /// Optional teardown hook to stop device-side duplex state.
     virtual IOReturn StopDuplex() {
         return kIOReturnUnsupported;
+    }
+
+    /// Optional internal hook for backends that need the protocol's IRM client.
+    virtual ::ASFW::IRM::IRMClient* GetIRMClient() const {
+        return nullptr;
     }
 
     /// Update volatile runtime context that can change across bus resets.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (c) 2024 ASFireWire Project
 //
-// DICETransaction.cpp - DICE async transaction implementation
+// DICETransaction.cpp - DICE section/capability reader
 
 #include "DICETransaction.hpp"
 #include "../../../../Common/CallbackUtils.hpp"
@@ -13,9 +13,18 @@
 
 namespace ASFW::Audio::DICE {
 
+using ASFW::FW::ReadBE32;
+using ASFW::FW::WriteBE32;
+using ASFW::FW::ReadBE64;
+using ASFW::FW::WriteBE64;
+
 namespace {
 
 constexpr size_t kCapabilityHexPreviewBytes = 64;
+
+[[nodiscard]] IOReturn MapReadStatus(ASFW::Async::AsyncStatus status) noexcept {
+    return Protocols::Ports::MapAsyncStatusToIOReturn(status);
+}
 
 std::string HexPreview(const uint8_t* data, size_t size, size_t maxBytes = kCapabilityHexPreviewBytes) {
     if (data == nullptr || size == 0) {
@@ -54,157 +63,21 @@ void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
 
 } // anonymous namespace
 
-DICETransaction::DICETransaction(Protocols::Ports::FireWireBusOps& busOps,
-                                 Protocols::Ports::FireWireBusInfo& busInfo,
-                                 uint16_t nodeId)
-    : busOps_(busOps),
-      busInfo_(busInfo),
-      nodeId_(FW::NodeId{static_cast<uint8_t>(nodeId & 0x3Fu)}) {}
-
-Async::FWAddress DICETransaction::MakeAddress(uint32_t offset) const {
-    const uint64_t addr = kDICEBaseAddress + offset;
-    return Async::FWAddress{Async::FWAddress::AddressParts{
-        .addressHi = static_cast<uint16_t>((addr >> 32U) & 0xFFFFU),
-        .addressLo = static_cast<uint32_t>(addr & 0xFFFFFFFFU),
-    }};
-}
-
-void DICETransaction::ReadQuadlet(uint32_t offset,
-                                  std::function<void(IOReturn, uint32_t)> callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    const auto gen = busInfo_.GetGeneration();
-    const auto addr = MakeAddress(offset);
-
-    busOps_.ReadBlock(gen,
-                      nodeId_,
-                      addr,
-                      4,
-                      FW::FwSpeed::S100,
-                      [callbackState](Async::AsyncStatus status,
-                                                       std::span<const uint8_t> payload) {
-        if (status != Async::AsyncStatus::kSuccess || payload.size() < 4) {
-            IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnUnderrun : kIOReturnError;
-            Common::InvokeSharedCallback(callbackState, ret, 0u);
-            return;
-        }
-        
-        uint32_t value = QuadletFromWire(payload.data());
-        Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, value);
-    });
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void DICETransaction::WriteQuadlet(uint32_t offset,
-                                   uint32_t value,
-                                   DICEWriteCallback callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    // Use instance buffer instead of thread_local (not supported in DriverKit)
-    QuadletToWire(value, writeQuadletBuffer_);
-
-    const auto gen = busInfo_.GetGeneration();
-    const auto addr = MakeAddress(offset);
-    const std::span<const uint8_t> data{writeQuadletBuffer_, sizeof(writeQuadletBuffer_)};
-
-    busOps_.WriteBlock(gen,
-                       nodeId_,
-                       addr,
-                       data,
-                       FW::FwSpeed::S100,
-                       [callbackState](Async::AsyncStatus status,
-                                                        std::span<const uint8_t>) {
-        IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnSuccess : kIOReturnError;
-        Common::InvokeSharedCallback(callbackState, ret);
-    });
-}
-
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void DICETransaction::ReadBlock(uint32_t offset, size_t byteCount, DICEReadCallback callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    // Validate alignment
-    if (byteCount % 4 != 0) {
-        ASFW_LOG(DICE, "ReadBlock: byteCount %zu not quadlet-aligned", byteCount);
-        Common::InvokeSharedCallback(callbackState, kIOReturnBadArgument, nullptr, static_cast<size_t>(0));
-        return;
-    }
-    
-    // For large reads, we'd need to chunk - for now assume single read
-    if (byteCount > kMaxFrameSize) {
-        ASFW_LOG(DICE, "ReadBlock: byteCount %zu exceeds max frame size, chunking not yet implemented", byteCount);
-        Common::InvokeSharedCallback(callbackState, kIOReturnOverrun, nullptr, static_cast<size_t>(0));
-        return;
-    }
-    
-    const auto gen = busInfo_.GetGeneration();
-    const auto addr = MakeAddress(offset);
-    const uint32_t length = static_cast<uint32_t>(byteCount);
-
-    busOps_.ReadBlock(gen,
-                      nodeId_,
-                      addr,
-                      length,
-                      FW::FwSpeed::S100,
-                      [callbackState, byteCount](Async::AsyncStatus status,
-                                                                  std::span<const uint8_t> payload) {
-        if (status != Async::AsyncStatus::kSuccess) {
-            Common::InvokeSharedCallback(callbackState, kIOReturnError, nullptr, static_cast<size_t>(0));
-            return;
-        }
-        
-        if (payload.size() < byteCount) {
-            ASFW_LOG(DICE, "ReadBlock: short read %zu < %zu", payload.size(), byteCount);
-            Common::InvokeSharedCallback(callbackState, kIOReturnUnderrun, payload.data(), payload.size());
-            return;
-        }
-        
-        Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, payload.data(), payload.size());
-    });
-}
-
-void DICETransaction::WriteBlock(uint32_t offset,
-                                 const uint8_t* buffer,
-                                 size_t byteCount,
-                                 DICEWriteCallback callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    // Validate alignment
-    if (byteCount % 4 != 0) {
-        ASFW_LOG(DICE, "WriteBlock: byteCount %zu not quadlet-aligned", byteCount);
-        Common::InvokeSharedCallback(callbackState, kIOReturnBadArgument);
-        return;
-    }
-    
-    if (byteCount > kMaxFrameSize) {
-        ASFW_LOG(DICE, "WriteBlock: byteCount %zu exceeds max frame size, chunking not yet implemented", byteCount);
-        Common::InvokeSharedCallback(callbackState, kIOReturnOverrun);
-        return;
-    }
-    
-    const auto gen = busInfo_.GetGeneration();
-    const auto addr = MakeAddress(offset);
-    const std::span<const uint8_t> data{buffer, byteCount};
-
-    busOps_.WriteBlock(gen,
-                       nodeId_,
-                       addr,
-                       data,
-                       FW::FwSpeed::S100,
-                       [callbackState](Async::AsyncStatus status,
-                                                        std::span<const uint8_t>) {
-        IOReturn ret = (status == Async::AsyncStatus::kSuccess) ? kIOReturnSuccess : kIOReturnError;
-        Common::InvokeSharedCallback(callbackState, ret);
-    });
-}
+DICETransaction::DICETransaction(Protocols::Ports::ProtocolRegisterIO& io)
+    : io_(io) {}
 
 void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSections)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    ReadBlock(0, GeneralSections::kWireSize,
-              [callbackState](IOReturn status, const uint8_t* data, size_t size) {
-        if (status != kIOReturnSuccess || size < GeneralSections::kWireSize) {
-            Common::InvokeSharedCallback(callbackState, status, GeneralSections{});
+    io_.ReadBlock(MakeDICEAddress(0),
+                  static_cast<uint32_t>(GeneralSections::kWireSize),
+                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        if (status != Async::AsyncStatus::kSuccess || payload.size() < GeneralSections::kWireSize) {
+            Common::InvokeSharedCallback(callbackState, MapReadStatus(status), GeneralSections{});
             return;
         }
-        
-        GeneralSections sections = GeneralSections::FromWire(data);
-        LogSectionPreview("ReadGeneralSections", data, size);
+
+        GeneralSections sections = GeneralSections::Deserialize(payload.data());
+        LogSectionPreview("ReadGeneralSections", payload.data(), payload.size());
         
         ASFW_LOG(DICE, "ReadGeneralSections: global=%u/%u tx=%u/%u rx=%u/%u",
                  sections.global.offset, sections.global.size,
@@ -217,16 +90,17 @@ void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSe
 
 void DICETransaction::ReadExtensionSections(std::function<void(IOReturn, ExtensionSections)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    ReadBlock(kDICEExtensionOffset,
-              ExtensionSections::kWireSize,
-              [callbackState](IOReturn status, const uint8_t* data, size_t size) {
-                  if (status != kIOReturnSuccess || size < ExtensionSections::kWireSize) {
-                      Common::InvokeSharedCallback(callbackState, status, ExtensionSections{});
+    io_.ReadBlock(MakeDICEAddress(kDICEExtensionOffset),
+                  static_cast<uint32_t>(ExtensionSections::kWireSize),
+                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+                  if (status != Async::AsyncStatus::kSuccess ||
+                      payload.size() < ExtensionSections::kWireSize) {
+                      Common::InvokeSharedCallback(callbackState, MapReadStatus(status), ExtensionSections{});
                       return;
                   }
 
-                  ExtensionSections sections = ExtensionSections::FromWire(data);
-                  LogSectionPreview("ReadExtensionSections", data, size);
+                  ExtensionSections sections = ExtensionSections::Deserialize(payload.data());
+                  LogSectionPreview("ReadExtensionSections", payload.data(), payload.size());
                   ASFW_LOG(DICE,
                            "ReadExtensionSections: cmd=%u/%u router=%u/%u current=%u/%u app=%u/%u",
                            sections.command.offset,
@@ -246,28 +120,29 @@ void DICETransaction::ReadExtensionSections(std::function<void(IOReturn, Extensi
 // Capability Discovery
 // ============================================================================
 
-void DICETransaction::ReadGlobalState(const GeneralSections& sections,
-                                      std::function<void(IOReturn, GlobalState)> callback) {
+void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
+                                           size_t readSize,
+                                           std::function<void(IOReturn, GlobalState)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    // Read enough of global section for capabilities (0x68 bytes minimum)
-    const size_t readSize = (sections.global.size >= 0x68) ? 0x68 : sections.global.size;
-    
-    ReadBlock(sections.global.offset, readSize,
-              [callbackState](IOReturn status, const uint8_t* data, size_t size) {
-        if (status != kIOReturnSuccess) {
-            Common::InvokeSharedCallback(callbackState, status, GlobalState{});
+    io_.ReadBlock(MakeDICEAddress(sections.global.offset),
+                  static_cast<uint32_t>(readSize),
+                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        if (status != Async::AsyncStatus::kSuccess) {
+            Common::InvokeSharedCallback(callbackState, MapReadStatus(status), GlobalState{});
             return;
         }
-        
+
+        const uint8_t* data = payload.data();
+        const size_t size = payload.size();
         GlobalState state;
         LogSectionPreview("ReadGlobalState", data, size);
         
         if (size >= 8) {
-            state.owner = (static_cast<uint64_t>(QuadletFromWire(data)) << 32) |
-                          QuadletFromWire(data + 4);
+            state.owner = (static_cast<uint64_t>(ReadBE32(data)) << 32) |
+                          ReadBE32(data + 4);
         }
         if (size >= 12) {
-            state.notification = QuadletFromWire(data + GlobalOffset::kNotification);
+            state.notification = ReadBE32(data + GlobalOffset::kNotification);
         }
         if (size >= 0x4C) {
             // Extract nickname (64 bytes = 16 quadlets starting at offset 0x0C)
@@ -278,7 +153,7 @@ void DICETransaction::ReadGlobalState(const GeneralSections& sections,
                 size_t qOffset = 0x0C + q * 4;
                 if (qOffset + 4 > size) break;
                 
-                uint32_t quadlet = QuadletFromWire(data + qOffset);
+                uint32_t quadlet = ReadBE32(data + qOffset);
                 
                 // Extract chars from quadlet (MSB first = big-endian string order)
                 char c0 = (quadlet >> 24) & 0xFF;
@@ -298,25 +173,25 @@ void DICETransaction::ReadGlobalState(const GeneralSections& sections,
             state.nickname[nickIdx] = '\0';
         }
         if (size >= 0x50) {
-            state.clockSelect = QuadletFromWire(data + GlobalOffset::kClockSelect);
+            state.clockSelect = ReadBE32(data + GlobalOffset::kClockSelect);
         }
         if (size >= 0x54) {
-            state.enabled = (QuadletFromWire(data + GlobalOffset::kEnable) != 0);
+            state.enabled = (ReadBE32(data + GlobalOffset::kEnable) != 0);
         }
         if (size >= 0x58) {
-            state.status = QuadletFromWire(data + GlobalOffset::kStatus);
+            state.status = ReadBE32(data + GlobalOffset::kStatus);
         }
         if (size >= 0x5C) {
-            state.extStatus = QuadletFromWire(data + GlobalOffset::kExtStatus);
+            state.extStatus = ReadBE32(data + GlobalOffset::kExtStatus);
         }
         if (size >= 0x60) {
-            state.sampleRate = QuadletFromWire(data + GlobalOffset::kSampleRate);
+            state.sampleRate = ReadBE32(data + GlobalOffset::kSampleRate);
         }
         if (size >= 0x64) {
-            state.version = QuadletFromWire(data + GlobalOffset::kVersion);
+            state.version = ReadBE32(data + GlobalOffset::kVersion);
         }
         if (size >= 0x68) {
-            state.clockCaps = QuadletFromWire(data + GlobalOffset::kClockCaps);
+            state.clockCaps = ReadBE32(data + GlobalOffset::kClockCaps);
         }
         
         ASFW_LOG(DICE, "Global: rate=%uHz caps=0x%08x version=0x%08x nickname='%{public}s'",
@@ -324,6 +199,17 @@ void DICETransaction::ReadGlobalState(const GeneralSections& sections,
         
         Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, state);
     });
+}
+
+void DICETransaction::ReadGlobalState(const GeneralSections& sections,
+                                      std::function<void(IOReturn, GlobalState)> callback) {
+    const size_t readSize = (sections.global.size >= 0x68) ? 0x68 : sections.global.size;
+    ReadGlobalStateSized(sections, readSize, std::move(callback));
+}
+
+void DICETransaction::ReadGlobalStateFull(const GeneralSections& sections,
+                                          std::function<void(IOReturn, GlobalState)> callback) {
+    ReadGlobalStateSized(sections, sections.global.size, std::move(callback));
 }
 
 namespace {
@@ -334,7 +220,7 @@ constexpr size_t kStreamEntryMinCoreBytes = 16;
 constexpr size_t kStreamEntryMinWithLabelsBytes = kStreamLabelsOffset + kStreamLabelsBytes;
 
 int32_t ReadSignedQuadlet(const uint8_t* data) noexcept {
-    return static_cast<int32_t>(DICETransaction::QuadletFromWire(data));
+    return static_cast<int32_t>(ReadBE32(data));
 }
 
 void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) noexcept {
@@ -350,7 +236,7 @@ void CopyLabelBlob(char (&dst)[256], const uint8_t* src, size_t bytesAvailable) 
     // host-order bytes instead of using memcpy; this avoids alignment-sensitive
     // vectorized memmove paths on DriverKit RX payload buffers.
     while (out + 4 <= copyBytes) {
-        const uint32_t q = DICETransaction::QuadletFromWire(src + out);
+        const uint32_t q = ReadBE32(src + out);
         dst[out + 0] = static_cast<char>((q >> 24) & 0xFF);
         dst[out + 1] = static_cast<char>((q >> 16) & 0xFF);
         dst[out + 2] = static_cast<char>((q >>  8) & 0xFF);
@@ -379,8 +265,8 @@ StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout
         return config;
     }
 
-    const uint32_t reportedStreams = DICETransaction::QuadletFromWire(data);
-    const uint32_t entryQuadlets = DICETransaction::QuadletFromWire(data + 4);
+    const uint32_t reportedStreams = ReadBE32(data);
+    const uint32_t entryQuadlets = ReadBE32(data + 4);
     config.numStreams = ClampStreamCount(reportedStreams);
     config.entrySizeBytes = entryQuadlets * 4u;
     config.parsedEntrySizeBytes = config.entrySizeBytes;
@@ -404,17 +290,17 @@ StreamConfig ParseStreamConfig(const uint8_t* data, size_t size, bool isRxLayout
         if (isRxLayout) {
             entry.hasSeqStart = true;
             entry.hasSpeed = false;
-            entry.seqStart = DICETransaction::QuadletFromWire(data + entryBase + 0x04);
-            entry.pcmChannels = DICETransaction::QuadletFromWire(data + entryBase + 0x08);
-            entry.midiPorts = DICETransaction::QuadletFromWire(data + entryBase + 0x0C);
+            entry.seqStart = ReadBE32(data + entryBase + 0x04);
+            entry.pcmChannels = ReadBE32(data + entryBase + 0x08);
+            entry.midiPorts = ReadBE32(data + entryBase + 0x0C);
             entry.speed = 0;
         } else {
             entry.hasSeqStart = false;
             entry.hasSpeed = true;
             entry.seqStart = 0;
-            entry.pcmChannels = DICETransaction::QuadletFromWire(data + entryBase + 0x04);
-            entry.midiPorts = DICETransaction::QuadletFromWire(data + entryBase + 0x08);
-            entry.speed = DICETransaction::QuadletFromWire(data + entryBase + 0x0C);
+            entry.pcmChannels = ReadBE32(data + entryBase + 0x04);
+            entry.midiPorts = ReadBE32(data + entryBase + 0x08);
+            entry.speed = ReadBE32(data + entryBase + 0x0C);
         }
 
         if (config.entrySizeBytes >= kStreamEntryMinWithLabelsBytes &&
@@ -491,13 +377,16 @@ void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
                  sections.rxStreamFormat.size, readSize);
     }
     
-    ReadBlock(sections.rxStreamFormat.offset, readSize,
-              [callbackState](IOReturn status, const uint8_t* data, size_t size) {
-        if (status != kIOReturnSuccess) {
-            Common::InvokeSharedCallback(callbackState, status, StreamConfig{});
+    io_.ReadBlock(MakeDICEAddress(sections.rxStreamFormat.offset),
+                  static_cast<uint32_t>(readSize),
+                  [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        if (status != Async::AsyncStatus::kSuccess) {
+            Common::InvokeSharedCallback(callbackState, MapReadStatus(status), StreamConfig{});
             return;
         }
-        
+
+        const uint8_t* data = payload.data();
+        const size_t size = payload.size();
         LogSectionPreview("ReadRxStreamConfig", data, size);
         StreamConfig config = ParseStreamConfig(data, size, true);
         LogStreamConfigDetails("RX", config);
@@ -515,14 +404,16 @@ void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
                  sections.txStreamFormat.size, readSize);
     }
 
-    ReadBlock(sections.txStreamFormat.offset,
-              readSize,
-              [callbackState](IOReturn status, const uint8_t* data, size_t size) {
-                  if (status != kIOReturnSuccess) {
-                      Common::InvokeSharedCallback(callbackState, status, StreamConfig{});
+    io_.ReadBlock(MakeDICEAddress(sections.txStreamFormat.offset),
+              static_cast<uint32_t>(readSize),
+              [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+                  if (status != Async::AsyncStatus::kSuccess) {
+                      Common::InvokeSharedCallback(callbackState, MapReadStatus(status), StreamConfig{});
                       return;
                   }
 
+                  const uint8_t* data = payload.data();
+                  const size_t size = payload.size();
                   LogSectionPreview("ReadTxStreamConfig", data, size);
                   StreamConfig config = ParseStreamConfig(data, size, false);
                   LogStreamConfigDetails("TX", config);
@@ -597,39 +488,6 @@ void DICETransaction::ReadCapabilities(std::function<void(IOReturn, DICECapabili
             });
         });
     });
-}
-
-void DICETransaction::CompareSwapOctlet(uint32_t offset,
-                                        uint64_t expected,
-                                        uint64_t desired,
-                                        DICEOctletCallback callback) {
-    auto callbackState = Common::ShareCallback(std::move(callback));
-    const auto gen = busInfo_.GetGeneration();
-    const auto addr = MakeAddress(offset);
-
-    std::array<uint8_t, 16> operand{};
-    OctletToWire(expected, operand.data());
-    OctletToWire(desired, operand.data() + 8);
-
-    busOps_.Lock(gen,
-                 nodeId_,
-                 addr,
-                 FW::LockOp::kCompareSwap,
-                 std::span<const uint8_t>{operand},
-                 8,
-                 FW::FwSpeed::S100,
-                 [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
-                     if (status != Async::AsyncStatus::kSuccess || payload.size() < 8) {
-                         const IOReturn ret =
-                             (status == Async::AsyncStatus::kSuccess) ? kIOReturnUnderrun : kIOReturnError;
-                         Common::InvokeSharedCallback(callbackState, ret, uint64_t{0});
-                         return;
-                     }
-
-                     Common::InvokeSharedCallback(callbackState,
-                                                  kIOReturnSuccess,
-                                                  OctletFromWire(payload.data()));
-                 });
 }
 
 // Helper for GlobalState

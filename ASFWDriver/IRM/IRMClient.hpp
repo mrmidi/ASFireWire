@@ -1,11 +1,9 @@
 #pragma once
 
 #include "IRMTypes.hpp"
-#include "../Async/Interfaces/IFireWireBusOps.hpp"
+#include "../Async/Interfaces/IFireWireBus.hpp"
 #include <functional>
 #include <memory>
-#include <array>
-// #include <libkern/OSByteOrder.h>
 
 namespace ASFW::IRM {
 
@@ -16,13 +14,22 @@ namespace ASFW::IRM {
  * @param status Result of allocation operation
  */
 using AllocationCallback = std::function<void(AllocationStatus status)>;
+using CompareSwapCallback = std::function<void(AllocationStatus status, uint32_t oldValue)>;
+
+struct ResourceSnapshot {
+    uint32_t bandwidthAvailable{0};
+    uint32_t channelsAvailable31_0{0};
+    uint32_t channelsAvailable63_32{0};
+};
+
+using ResourceSnapshotCallback = std::function<void(AllocationStatus status, ResourceSnapshot snapshot)>;
 
 class IRMClient {
 public:
-    explicit IRMClient(Async::IFireWireBusOps& busOps);
+    explicit IRMClient(Async::IFireWireBus& bus);
     ~IRMClient();
 
-    void SetIRMNode(uint8_t irmNodeId, Generation generation);
+    void SetIRMNode(uint8_t irmNodeId, Generation generation, uint64_t lastBusResetNs = 0);
 
     void AllocateChannel(uint8_t channel,
                         AllocationCallback callback,
@@ -50,6 +57,17 @@ public:
                          AllocationCallback callback,
                          const RetryPolicy& retryPolicy = RetryPolicy::Default());
 
+    void ReadResourcesSnapshot(ResourceSnapshotCallback callback);
+
+    void CompareSwapBandwidth(uint32_t expected,
+                              uint32_t desired,
+                              CompareSwapCallback callback);
+
+    void CompareSwapChannel(uint8_t channel,
+                            uint32_t expected,
+                            uint32_t desired,
+                            CompareSwapCallback callback);
+
     [[nodiscard]] uint8_t GetIRMNodeID() const { return irmNodeId_; }
 
     [[nodiscard]] Generation GetGeneration() const { return generation_; }
@@ -58,20 +76,27 @@ private:
     struct ChannelLockState;
     struct BandwidthLockState;
 
-    Async::IFireWireBusOps& busOps_;
+    Async::IFireWireBus& bus_;
 
     uint8_t irmNodeId_{0xFF};
     Generation generation_{0};
+    uint64_t lastBusResetNs_{0};
 
     void ReadIRMQuadlet(
         uint32_t addressLo,
-        std::function<void(bool success, uint32_t value)> callback);
+        std::function<void(AllocationStatus status, uint32_t value)> callback);
 
     void CompareSwapIRMQuadlet(
         uint32_t addressLo,
         uint32_t expected,
         uint32_t desired,
-        std::function<void(bool success, uint32_t oldValue)> callback);
+        std::function<void(AllocationStatus status, uint32_t oldValue)> callback);
+
+    void ReadIRMWindow(ResourceSnapshotCallback callback);
+    void DelayForPostResetQuietPeriod() const;
+
+    [[nodiscard]] static AllocationStatus MapAsyncStatus(Async::AsyncStatus status) noexcept;
+    [[nodiscard]] static uint64_t CurrentMonotonicNowNs() noexcept;
 
     void PerformChannelLock(uint8_t channel, bool allocate,
                            AllocationCallback callback,

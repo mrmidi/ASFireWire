@@ -79,7 +79,8 @@ void MaybeCreateKnownProtocol(DeviceRecord& device,
                               uint16_t romNodeId,
                               std::optional<uint8_t> operationalNodeId,
                               Async::IFireWireBusOps* busOps,
-                              Async::IFireWireBusInfo* busInfo) {
+                              Async::IFireWireBusInfo* busInfo,
+                              IRM::IRMClient* irmClient) {
 #if !defined(ASFW_HOST_TEST)
     if (device.protocol || !busOps || !busInfo || !operationalNodeId.has_value()) {
         if (!device.protocol && (!busOps || !busInfo || !operationalNodeId.has_value())) {
@@ -94,7 +95,7 @@ void MaybeCreateKnownProtocol(DeviceRecord& device,
     ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
              guid, romNodeId);
     device.protocol = Audio::DeviceProtocolFactory::Create(
-        device.vendorId, device.modelId, *busOps, *busInfo, *operationalNodeId);
+        device.vendorId, device.modelId, *busOps, *busInfo, *operationalNodeId, irmClient);
 
     if (device.protocol) {
         ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
@@ -155,7 +156,8 @@ DeviceRegistry::DeviceRegistry() = default;
 
 DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
                                              Async::IFireWireBusOps* busOps,
-                                             Async::IFireWireBusInfo* busInfo) {
+                                             Async::IFireWireBusInfo* busInfo,
+                                             IRM::IRMClient* irmClient) {
     const Guid64 guid = rom.bib.guid;
     const auto operationalNodeId = TryOperationalNodeId(rom.nodeId);
     
@@ -182,7 +184,7 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             device.kind = ClassifyDevice(rom);
             device.isAudioCandidate = IsAudioCandidate(rom);
         }
-        MaybeCreateKnownProtocol(device, guid, rom.nodeId, operationalNodeId, busOps, busInfo);
+        MaybeCreateKnownProtocol(device, guid, rom.nodeId, operationalNodeId, busOps, busInfo, irmClient);
     } else {
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);
