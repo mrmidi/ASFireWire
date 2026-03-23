@@ -21,8 +21,9 @@ namespace ASFW::Audio::DICE {
 
 namespace {
 
-constexpr uint32_t kAsyncTimeoutMs = 5000;
+constexpr uint32_t kAsyncTimeoutMs = 2000;
 constexpr uint32_t kPollIntervalMs = 10;
+constexpr uint32_t kActiveStatusPollIntervalMs = 200;
 constexpr uint32_t kReadyTimeoutMs = 200;
 constexpr uint32_t kStopSyncTimeoutMs = 5000;
 constexpr uint32_t kStopSyncPollMs = 10;
@@ -310,8 +311,68 @@ void DICEDuplexBringupController::DoWriteClockSelect(
                              DoRollback(status, std::move(cb));
                              return;
                          }
-                         DoWaitClockAccepted(channels, 0, std::move(cb));
+                         // Check mailbox immediately — notification may have arrived during write
+                         const uint32_t earlyBits = NotificationMailbox::Consume();
+                         if ((earlyBits & Notify::kClockAccepted) != 0) {
+                             ASFW_LOG(DICE,
+                                      "PrepareDuplex48k: CLOCK_ACCEPTED arrived during write, bits=0x%08x",
+                                      earlyBits);
+                             DoReadGlobalAfterClockAccepted(
+                                 channels, earlyBits, kIOReturnNotReady, std::move(cb));
+                             return;
+                         }
+                         // Active poll: read global status to short-circuit if already locked
+                         DoActiveClockCheck(channels, earlyBits, std::move(cb));
                      });
+}
+
+void DICEDuplexBringupController::DoActiveClockCheck(
+    AudioDuplexChannels channels,
+    uint32_t accumulatedNotify,
+    VoidCallback cb) {
+    if (!EnsureGenerationCurrent()) {
+        DoRollback(kIOReturnOffline, std::move(cb));
+        return;
+    }
+
+    diceReader_.ReadGlobalStateFull(sections_,
+                                    [this, channels, accumulatedNotify,
+                                     cb = std::move(cb)](IOReturn status, GlobalState state) mutable {
+                                if (status != kIOReturnSuccess) {
+                                    // Read failed — fall through to mailbox polling
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: active clock check read failed (0x%08x), falling back to mailbox poll",
+                                             status);
+                                    DoWaitClockAccepted(channels, 0, std::move(cb));
+                                    return;
+                                }
+
+                                // Accumulate any mailbox bits that arrived during the read
+                                const uint32_t combinedNotify = accumulatedNotify | NotificationMailbox::Consume();
+
+                                const bool clockAccepted =
+                                    (combinedNotify & Notify::kClockAccepted) != 0;
+                                const bool sourceLocked48k =
+                                    IsSourceLocked(state.status) &&
+                                    NominalRateHz(state.status) == 48000U;
+                                const bool sampleRate48k = state.sampleRate == 48000U;
+
+                                if (clockAccepted || (sourceLocked48k && sampleRate48k)) {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: clock confirmed via active check "
+                                             "(notify=0x%08x status=0x%08x rate=%u locked=%u)",
+                                             combinedNotify, state.status, state.sampleRate,
+                                             sourceLocked48k ? 1U : 0U);
+                                    DoDiscoverStreams(channels, 0, std::move(cb));
+                                    return;
+                                }
+
+                                ASFW_LOG(DICE,
+                                         "PrepareDuplex48k: active check not yet locked "
+                                         "(notify=0x%08x status=0x%08x rate=%u), entering mailbox poll",
+                                         combinedNotify, state.status, state.sampleRate);
+                                DoWaitClockAccepted(channels, 0, std::move(cb));
+                            });
 }
 
 void DICEDuplexBringupController::DoWaitClockAccepted(
@@ -338,6 +399,16 @@ void DICEDuplexBringupController::DoWaitClockAccepted(
                  "PrepareDuplex48k: CLOCK_ACCEPTED wait reached %u ms; performing final confirmation",
                  kAsyncTimeoutMs);
         DoConfirmClockAccepted(channels, mailboxBits, std::move(cb));
+        return;
+    }
+
+    // Periodically do an active global status read instead of only checking the mailbox
+    const uint32_t elapsedMs = attempt * kPollIntervalMs;
+    if (elapsedMs > 0 && (elapsedMs % kActiveStatusPollIntervalMs) == 0) {
+        ASFW_LOG(DICE,
+                 "PrepareDuplex48k: active status poll at %u ms",
+                 elapsedMs);
+        DoActiveClockCheck(channels, mailboxBits, std::move(cb));
         return;
     }
 

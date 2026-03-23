@@ -4,6 +4,14 @@
 
 namespace ASFW::Isoch::Core {
 
+/// Per-packet TX-RX phase discipline modelled on Saffire.kext's adjustOutputPhase.
+///
+/// Called on every TX DATA packet.  Two regimes:
+///   - **First-pass**: snaps TX SYT to RX SYT immediately (full error correction)
+///   - **Tracking**: deadband-based full-error correction on every packet (no cooldown)
+///
+/// Phase detector wraps in the packet-interval domain (4096 ticks @ 48k/8-sample)
+/// so whole-packet sampling latency jitter is invisible.
 class ExternalSyncDiscipline48k {
 public:
     static constexpr int32_t kTickDomain = 16 * 3072;  // 49152
@@ -11,10 +19,14 @@ public:
     static constexpr int32_t kTicksPerSample = 512;  // 24.576MHz / 48kHz
     static constexpr int32_t kSamplesPerDataPacket = 8;  // IEC 61883-6 blocking @ 48kHz
     static constexpr int32_t kPacketIntervalTicks = kTicksPerSample * kSamplesPerDataPacket;  // 4096
-    static constexpr int32_t kDeadbandTicks = 32;
-    static constexpr int32_t kStepTicks = 1;
-    static constexpr uint32_t kBaselineWindow = 8;
-    static constexpr uint32_t kCorrectionCooldownPackets = 32;  // ~5.3ms @ 48k/8-sample packets
+
+    /// Deadband: ignore phase errors smaller than this (steady-state jitter tolerance).
+    /// ~1/8 of a packet interval — matches Saffire's tolerance band.
+    static constexpr int32_t kDeadbandTicks = 512;
+
+    /// Safety limit: if corrected offset exceeds this, emit SYT=0xFFFF.
+    /// ~4 cycles worth of ticks, matching Saffire's 12287-tick safety valve.
+    static constexpr int32_t kSafetyLimitTicks = 12287;
 
     struct Result {
         bool active{false};
@@ -22,101 +34,98 @@ public:
         int32_t phaseErrorTicks{0};
         int32_t correctionTicks{0};
         bool staleOrUnlockEvent{false};
+        bool firstPassSnap{false};    // true on the single first-pass correction
+        bool safetyGateOpen{false};   // true when offset is within safety limit
     };
 
     void Reset() noexcept {
         active_ = false;
-        baselineLocked_ = false;
-        baselineCount_ = 0;
-        baselineAccum_ = 0;
-        baselinePhaseTicks_ = 0;
+        firstPass_ = true;
         lastPhaseErrorTicks_ = 0;
-        correctionCooldown_ = 0;
         correctionCount_ = 0;
         staleOrUnlockCount_ = 0;
+        minPhaseError_ = 0;
+        maxPhaseError_ = 0;
     }
 
     [[nodiscard]] Result Update(bool enabled, uint16_t txSyt, uint16_t rxSyt) noexcept {
         Result result{};
         if (!enabled) {
-            if (active_ || baselineLocked_ || baselineCount_ != 0) {
+            if (active_) {
                 ++staleOrUnlockCount_;
                 result.staleOrUnlockEvent = true;
             }
             active_ = false;
-            baselineLocked_ = false;
-            baselineCount_ = 0;
-            baselineAccum_ = 0;
-            baselinePhaseTicks_ = 0;
+            firstPass_ = true;
             lastPhaseErrorTicks_ = 0;
-            correctionCooldown_ = 0;
             result.active = false;
             result.locked = false;
-            result.phaseErrorTicks = 0;
-            result.correctionTicks = 0;
+            result.safetyGateOpen = true;
             return result;
         }
 
         active_ = true;
-        // NOTE: rxSyt and txSyt are sampled at different times (IR vs IT pipeline).
-        // That makes the "absolute" 16-cycle tick difference ambiguous by whole
-        // DATA-packet intervals (4096 ticks @ 48k/8-sample blocking).
-        //
-        // For clock discipline we only care about the fractional phase within a
-        // packet interval, so wrap the detector to that domain to avoid 4096-tick
-        // jumps when sampling latency shifts by +/-1 packet.
-        const int32_t rawPhase = WrapSignedIntervalTicks(SytToTickIndex(rxSyt) - SytToTickIndex(txSyt));
 
-        if (!baselineLocked_) {
-            baselineAccum_ += rawPhase;
-            ++baselineCount_;
-            if (baselineCount_ >= kBaselineWindow) {
-                baselinePhaseTicks_ = static_cast<int32_t>(baselineAccum_ / static_cast<int64_t>(baselineCount_));
-                baselineLocked_ = true;
-                baselineCount_ = 0;
-                baselineAccum_ = 0;
-            }
-            lastPhaseErrorTicks_ = 0;
-            result.active = active_;
-            result.locked = baselineLocked_;
-            result.phaseErrorTicks = 0;
-            result.correctionTicks = 0;
-            return result;
-        }
-
-        const int32_t phaseError = WrapSignedIntervalTicks(rawPhase - baselinePhaseTicks_);
-        lastPhaseErrorTicks_ = phaseError;
+        const int32_t rawDiff = SytToTickIndex(rxSyt) - SytToTickIndex(txSyt);
 
         int32_t correction = 0;
-        const int32_t absError = phaseError >= 0 ? phaseError : -phaseError;
-        if (correctionCooldown_ > 0) {
-            --correctionCooldown_;
-        } else if (absError > kDeadbandTicks) {
-            correction = (phaseError > 0) ? kStepTicks : -kStepTicks;
-            correctionCooldown_ = kCorrectionCooldownPackets;
+
+        if (firstPass_) {
+            // First-pass: use FULL 49152-tick domain to see and correct multi-packet
+            // offsets (e.g. the 12288-tick / 3-packet lag seen in FireBug captures).
+            // Saffire's adjustOutputPhase does this via the first-pass flag at streamCtx+404.
+            const int32_t fullPhase = WrapSignedTicks(rawDiff);
+            correction = fullPhase;
+            firstPass_ = false;
             ++correctionCount_;
+            result.firstPassSnap = true;
+            lastPhaseErrorTicks_ = fullPhase;
+        } else {
+            // Steady-state: use PACKET-INTERVAL domain [-2048..+2047] to track only
+            // fractional drift. The bridge RX SYT naturally lags TX by ~1 packet due
+            // to sampling latency — this offset is benign and must NOT be corrected.
+            // Only crystal drift (sub-packet-interval) matters here.
+            const int32_t intervalPhase = WrapSignedIntervalTicks(rawDiff);
+            const int32_t absError = intervalPhase >= 0 ? intervalPhase : -intervalPhase;
+            if (absError > kDeadbandTicks) {
+                correction = intervalPhase;
+                ++correctionCount_;
+            }
+            lastPhaseErrorTicks_ = intervalPhase;
         }
 
-        result.active = active_;
-        result.locked = baselineLocked_;
-        result.phaseErrorTicks = phaseError;
+        // Track min/max for diagnostics (like Saffire's streamCtx+396/400)
+        if (lastPhaseErrorTicks_ < minPhaseError_) {
+            minPhaseError_ = lastPhaseErrorTicks_;
+        }
+        if (lastPhaseErrorTicks_ > maxPhaseError_) {
+            maxPhaseError_ = lastPhaseErrorTicks_;
+        }
+
+        // Safety gate: is the resulting offset within bounds?
+        // Caller should emit SYT=0xFFFF if gate is closed.
+        const int32_t residual = lastPhaseErrorTicks_ - correction;
+        const int32_t absResidual = residual >= 0 ? residual : -residual;
+        result.safetyGateOpen = (absResidual <= kSafetyLimitTicks);
+
+        result.active = true;
+        result.locked = !firstPass_;  // locked after first pass completes
+        result.phaseErrorTicks = lastPhaseErrorTicks_;
         result.correctionTicks = correction;
         return result;
     }
 
     [[nodiscard]] bool active() const noexcept { return active_; }
-    [[nodiscard]] bool locked() const noexcept { return baselineLocked_; }
+    [[nodiscard]] bool locked() const noexcept { return !firstPass_ && active_; }
     [[nodiscard]] int32_t lastPhaseErrorTicks() const noexcept { return lastPhaseErrorTicks_; }
+    [[nodiscard]] int32_t minPhaseError() const noexcept { return minPhaseError_; }
+    [[nodiscard]] int32_t maxPhaseError() const noexcept { return maxPhaseError_; }
     [[nodiscard]] uint64_t correctionCount() const noexcept { return correctionCount_; }
     [[nodiscard]] uint64_t staleOrUnlockCount() const noexcept { return staleOrUnlockCount_; }
 
     [[nodiscard]] static int32_t SytToTickIndex(uint16_t syt) noexcept {
         const int32_t cycle4 = static_cast<int32_t>((syt >> 12) & 0x0F);
         const int32_t ticks12 = static_cast<int32_t>(syt & 0x0FFF);
-        // SYT encodes a 4-bit cycle index (lower 4 bits of cycle count) and a
-        // 12-bit tick offset within a 125us cycle (24.576MHz -> 3072 ticks).
-        //
-        // Convert to a monotonic tick index in the 16-cycle domain [0..49151].
         return (cycle4 * kTicksPerCycle) + (ticks12 % kTicksPerCycle);
     }
 
@@ -144,12 +153,10 @@ public:
 
 private:
     bool active_{false};
-    bool baselineLocked_{false};
-    uint32_t baselineCount_{0};
-    int64_t baselineAccum_{0};
-    int32_t baselinePhaseTicks_{0};
+    bool firstPass_{true};
     int32_t lastPhaseErrorTicks_{0};
-    uint32_t correctionCooldown_{0};
+    int32_t minPhaseError_{0};
+    int32_t maxPhaseError_{0};
     uint64_t correctionCount_{0};
     uint64_t staleOrUnlockCount_{0};
 };
