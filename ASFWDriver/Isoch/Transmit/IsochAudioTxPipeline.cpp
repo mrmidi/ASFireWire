@@ -497,7 +497,10 @@ uint16_t IsochAudioTxPipeline::ComputeDataSyt(uint32_t transmitCycle) noexcept {
     }
 
     const uint16_t txSyt = sytGenerator_.computeDataSYT(transmitCycle, assembler_.samplesPerDataPacket());
-    MaybeApplyExternalSyncDiscipline(txSyt);
+    const bool safetyOk = MaybeApplyExternalSyncDiscipline(txSyt);
+    if (!safetyOk) {
+        return Encoding::SYTGenerator::kNoInfo;
+    }
     return txSyt;
 }
 
@@ -535,9 +538,19 @@ bool IsochAudioTxPipeline::HasFreshExternalSyncUpdate(const Core::ExternalSyncBr
         (nowTicks - lastUpdateTicks) <= staleThresholdTicks;
 }
 
-void IsochAudioTxPipeline::MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept {
+bool IsochAudioTxPipeline::MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept {
     const auto syncState = ReadExternalSyncState();
-    (void)externalSyncDiscipline_.Update(syncState.enabled, txSyt, syncState.rxSyt);
+    const auto result = externalSyncDiscipline_.Update(syncState.enabled, txSyt, syncState.rxSyt);
+
+    if (result.correctionTicks != 0) {
+        sytGenerator_.nudgeOffsetTicks(result.correctionTicks);
+        if (result.firstPassSnap) {
+            ASFW_LOG(Isoch, "IT: SYT discipline first-pass snap: error=%d correction=%d ticks",
+                     result.phaseErrorTicks, result.correctionTicks);
+        }
+    }
+
+    return result.safetyGateOpen;
 }
 
 Tx::IsochTxPacket IsochAudioTxPipeline::NextSilentPacket(uint32_t transmitCycle) noexcept {

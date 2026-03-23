@@ -51,6 +51,10 @@ public:
     /// Get DATA packet counter for diagnostics
     [[nodiscard]] uint64_t dataPacketCount() const noexcept { return dataPacketCount_; }
 
+    /// Current tick index in the 16-cycle SYT domain [0..49151].
+    /// Used by the discipline loop to compare TX phase against RX.
+    [[nodiscard]] uint32_t currentSytTickIndex() const noexcept { return currentSytTickIndex_; }
+
 private:
     // =========================================================================
     // Timing constants

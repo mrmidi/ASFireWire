@@ -136,7 +136,7 @@ private:
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState() noexcept;
     [[nodiscard]] bool HasFreshExternalSyncUpdate(const Core::ExternalSyncBridge& bridge) noexcept;
-    void MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
+    [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
     [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
     [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;
     [[nodiscard]] PacketReadResult ReadPacketSamples(const AudioInjectionPlan& plan, int32_t* samples) noexcept;

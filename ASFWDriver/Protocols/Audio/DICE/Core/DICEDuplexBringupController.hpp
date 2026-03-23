@@ -59,6 +59,7 @@ private:
     void DoClaimOwner(AudioDuplexChannels channels, VoidCallback cb);
     void DoReadOwnerAfterClaim(AudioDuplexChannels channels, VoidCallback cb);
     void DoWriteClockSelect(AudioDuplexChannels channels, VoidCallback cb);
+    void DoActiveClockCheck(AudioDuplexChannels channels, uint32_t accumulatedNotify, VoidCallback cb);
     void DoWaitClockAccepted(AudioDuplexChannels channels, uint32_t attempt, VoidCallback cb);
     void DoConfirmClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, VoidCallback cb);
     void DoReadGlobalAfterClockAccepted(AudioDuplexChannels channels, uint32_t observedNotify, IOReturn failureStatus, VoidCallback cb);
