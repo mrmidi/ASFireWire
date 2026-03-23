@@ -9,11 +9,46 @@ namespace {
 using ASFW::Audio::DeviceIntegrationMode;
 using ASFW::Audio::DeviceProtocolFactory;
 
+constexpr uint64_t MakeFocusriteGuidWithModelField(uint32_t modelField) {
+    return (static_cast<uint64_t>(DeviceProtocolFactory::kFocusriteVendorId) << 40U) |
+           (static_cast<uint64_t>(modelField & 0x3FU) << 22U);
+}
+
 TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kFocusriteVendorId,
+                  DeviceProtocolFactory::kSPro14ModelId),
+              DeviceIntegrationMode::kHardcodedNub);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kFocusriteVendorId,
+                  DeviceProtocolFactory::kSPro24ModelId),
+              DeviceIntegrationMode::kHardcodedNub);
+
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
                   DeviceProtocolFactory::kFocusriteVendorId,
                   DeviceProtocolFactory::kSPro24DspModelId),
               DeviceIntegrationMode::kHardcodedNub);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kFocusriteVendorId,
+                  DeviceProtocolFactory::kSPro40ModelId),
+              DeviceIntegrationMode::kNone);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kFocusriteVendorId,
+                  DeviceProtocolFactory::kLiquidS56ModelId),
+              DeviceIntegrationMode::kNone);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kFocusriteVendorId,
+                  DeviceProtocolFactory::kSPro26ModelId),
+              DeviceIntegrationMode::kNone);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kFocusriteVendorId,
+                  DeviceProtocolFactory::kSPro40Tcd3070ModelId),
+              DeviceIntegrationMode::kNone);
 
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
                   DeviceProtocolFactory::kApogeeVendorId,
@@ -30,7 +65,31 @@ TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
 TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kFocusriteVendorId,
+        DeviceProtocolFactory::kSPro14ModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kFocusriteVendorId,
+        DeviceProtocolFactory::kSPro24ModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kFocusriteVendorId,
         DeviceProtocolFactory::kSPro24DspModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kFocusriteVendorId,
+        DeviceProtocolFactory::kSPro40ModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kFocusriteVendorId,
+        DeviceProtocolFactory::kLiquidS56ModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kFocusriteVendorId,
+        DeviceProtocolFactory::kSPro26ModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kFocusriteVendorId,
+        DeviceProtocolFactory::kSPro40Tcd3070ModelId));
 
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kApogeeVendorId,
@@ -38,13 +97,46 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
 }
 
 TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
-    constexpr uint64_t guid = 0x00130e0402004713ULL;
+    constexpr uint64_t guid =
+        MakeFocusriteGuidWithModelField(DeviceProtocolFactory::kSPro24DspModelId);
 
     const auto known = DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
     ASSERT_TRUE(known.has_value());
     EXPECT_EQ(known->vendorId, DeviceProtocolFactory::kFocusriteVendorId);
     EXPECT_EQ(known->modelId, DeviceProtocolFactory::kSPro24DspModelId);
     EXPECT_EQ(known->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+}
+
+TEST(DeviceProtocolFactoryTests, MapsFocusritePro40Tcd3070GuidQuirk) {
+    constexpr uint64_t guid = MakeFocusriteGuidWithModelField(
+        DeviceProtocolFactory::kFocusriteGuidModelSPro40Tcd3070);
+
+    const auto known = DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
+    ASSERT_TRUE(known.has_value());
+    EXPECT_EQ(known->vendorId, DeviceProtocolFactory::kFocusriteVendorId);
+    EXPECT_EQ(known->modelId, DeviceProtocolFactory::kSPro40Tcd3070ModelId);
+    EXPECT_EQ(known->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(known->modelName, DeviceProtocolFactory::kSPro40Tcd3070ModelName);
+}
+
+TEST(DeviceProtocolFactoryTests, KeepsDeferredMultistreamFocusriteModelsRecognizedButDisabled) {
+    const auto spro40 = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kSPro40ModelId);
+    ASSERT_TRUE(spro40.has_value());
+    EXPECT_EQ(spro40->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(spro40->modelName, DeviceProtocolFactory::kSPro40ModelName);
+
+    const auto liquid56 = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kLiquidS56ModelId);
+    ASSERT_TRUE(liquid56.has_value());
+    EXPECT_EQ(liquid56->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(liquid56->modelName, DeviceProtocolFactory::kLiquidS56ModelName);
+
+    const auto spro26 = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kFocusriteVendorId, DeviceProtocolFactory::kSPro26ModelId);
+    ASSERT_TRUE(spro26.has_value());
+    EXPECT_EQ(spro26->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(spro26->modelName, DeviceProtocolFactory::kSPro26ModelName);
 }
 
 } // namespace

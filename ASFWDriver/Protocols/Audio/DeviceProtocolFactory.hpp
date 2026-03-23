@@ -31,11 +31,24 @@ enum class DeviceIntegrationMode : uint8_t {
 class DeviceProtocolFactory {
 public:
     static constexpr uint32_t kFocusriteVendorId = 0x00130e;
+    static constexpr uint32_t kSPro40ModelId = 0x000005;
+    static constexpr uint32_t kLiquidS56ModelId = 0x000006;
+    static constexpr uint32_t kSPro24ModelId = 0x000007;
     static constexpr uint32_t kSPro24DspModelId = 0x000008;
+    static constexpr uint32_t kSPro14ModelId = 0x000009;
+    static constexpr uint32_t kSPro26ModelId = 0x000012;
+    static constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
     static constexpr uint32_t kApogeeVendorId = 0x0003db;
     static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
+    static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
     static constexpr const char* kFocusriteVendorName = "Focusrite";
+    static constexpr const char* kSPro40ModelName = "Saffire Pro 40";
+    static constexpr const char* kLiquidS56ModelName = "Liquid Saffire 56";
+    static constexpr const char* kSPro24ModelName = "Saffire Pro 24";
     static constexpr const char* kSPro24DspModelName = "Saffire Pro 24 DSP";
+    static constexpr const char* kSPro14ModelName = "Saffire Pro 14";
+    static constexpr const char* kSPro26ModelName = "Saffire Pro 26";
+    static constexpr const char* kSPro40Tcd3070ModelName = "Saffire Pro 40 (TCD3070)";
     static constexpr const char* kApogeeVendorName = "Apogee";
     static constexpr const char* kApogeeDuetModelName = "Duet";
 
@@ -47,17 +60,48 @@ public:
         const char* modelName{nullptr};
     };
 
+    static constexpr KnownIdentity MakeKnownIdentity(uint32_t vendorId,
+                                                     uint32_t modelId,
+                                                     DeviceIntegrationMode integrationMode,
+                                                     const char* vendorName,
+                                                     const char* modelName) noexcept {
+        return KnownIdentity{vendorId, modelId, integrationMode, vendorName, modelName};
+    }
+
     static constexpr std::optional<KnownIdentity> LookupKnownIdentity(
         uint32_t vendorId,
         uint32_t modelId
     ) noexcept {
-        if (vendorId == kFocusriteVendorId && modelId == kSPro24DspModelId) {
-            return KnownIdentity{vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                 kFocusriteVendorName, kSPro24DspModelName};
+        if (vendorId == kFocusriteVendorId) {
+            switch (modelId) {
+                case kSPro14ModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
+                                             kFocusriteVendorName, kSPro14ModelName);
+                case kSPro24ModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
+                                             kFocusriteVendorName, kSPro24ModelName);
+                case kSPro24DspModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
+                                             kFocusriteVendorName, kSPro24DspModelName);
+                case kSPro40ModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
+                                             kFocusriteVendorName, kSPro40ModelName);
+                case kLiquidS56ModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
+                                             kFocusriteVendorName, kLiquidS56ModelName);
+                case kSPro26ModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
+                                             kFocusriteVendorName, kSPro26ModelName);
+                case kSPro40Tcd3070ModelId:
+                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
+                                             kFocusriteVendorName, kSPro40Tcd3070ModelName);
+                default:
+                    break;
+            }
         }
         if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
-            return KnownIdentity{vendorId, modelId, DeviceIntegrationMode::kAVCDriven,
-                                 kApogeeVendorName, kApogeeDuetModelName};
+            return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kAVCDriven,
+                                     kApogeeVendorName, kApogeeDuetModelName);
         }
         return std::nullopt;
     }
@@ -74,8 +118,11 @@ public:
 
         const auto vendorId = static_cast<uint32_t>((guid >> kOuiShift) & kOuiMask);
         if (vendorId == kFocusriteVendorId) {
-            const auto modelId =
+            auto modelId =
                 static_cast<uint32_t>((guid >> kFocusriteModelShift) & kFocusriteModelMask);
+            if (modelId == kFocusriteGuidModelSPro40Tcd3070) {
+                modelId = kSPro40Tcd3070ModelId;
+            }
             return LookupKnownIdentity(vendorId, modelId);
         }
 
@@ -93,9 +140,9 @@ public:
         return DeviceIntegrationMode::kNone;
     }
 
-    /// Check if a device is recognized by the factory.
+    /// Check if a device identity is recognized by the factory.
     static constexpr bool IsKnownDevice(uint32_t vendorId, uint32_t modelId) noexcept {
-        return LookupIntegrationMode(vendorId, modelId) != DeviceIntegrationMode::kNone;
+        return LookupKnownIdentity(vendorId, modelId).has_value();
     }
 
     /// Create a protocol handler for the given vendor/model

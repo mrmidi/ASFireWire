@@ -14,6 +14,20 @@
 #include <span>
 #include <vector>
 
+namespace ASFW::Audio::DICE::TCAT {
+
+class DICETcatProtocolTestPeer {
+public:
+    static void CacheRuntimeCaps(DICETcatProtocol& protocol,
+                                 const GlobalState& global,
+                                 const StreamConfig& tx,
+                                 const StreamConfig& rx) {
+        protocol.CacheRuntimeCaps(global, tx, rx);
+    }
+};
+
+} // namespace ASFW::Audio::DICE::TCAT
+
 namespace {
 
 using ASFW::Async::AsyncHandle;
@@ -179,6 +193,36 @@ TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     EXPECT_EQ(bus.lockCount, 0);
 }
 
+TEST(DICETcatProtocolTests, RuntimeCapsAggregateAllConfiguredStreams) {
+    CountingFireWireBus bus;
+    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+
+    ASFW::Audio::DICE::GlobalState global{};
+    global.sampleRate = 48000;
+
+    ASFW::Audio::DICE::StreamConfig tx{};
+    tx.numStreams = 2;
+    tx.streams[0].pcmChannels = 10;
+    tx.streams[0].midiPorts = 1;
+    tx.streams[1].pcmChannels = 6;
+
+    ASFW::Audio::DICE::StreamConfig rx{};
+    rx.numStreams = 2;
+    rx.streams[0].pcmChannels = 8;
+    rx.streams[0].midiPorts = 1;
+    rx.streams[1].pcmChannels = 4;
+
+    ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.sampleRateHz, 48000U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 12U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
+}
+
 TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     CountingFireWireBus bus;
     SPro24DspProtocol protocol(bus, bus, 2, nullptr);
@@ -196,8 +240,24 @@ TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     EXPECT_EQ(bus.appQuadReadCount, 1);
 }
 
-TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfile) {
+TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     AudioStreamRuntimeCaps caps{};
+    EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000009U, caps));
+    EXPECT_EQ(caps.sampleRateHz, 48000U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 8U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 12U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 9U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
+
+    caps = {};
+    EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000007U, caps));
+    EXPECT_EQ(caps.sampleRateHz, 48000U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+
+    caps = {};
     EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000008U, caps));
     EXPECT_EQ(caps.sampleRateHz, 48000U);
     EXPECT_EQ(caps.hostInputPcmChannels, 16U);

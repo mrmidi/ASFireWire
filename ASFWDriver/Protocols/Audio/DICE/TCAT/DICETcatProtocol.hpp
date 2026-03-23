@@ -49,6 +49,8 @@ public:
     [[nodiscard]] DICETransaction& Transaction() noexcept { return diceReader_; }
 
 private:
+    friend class DICETcatProtocolTestPeer;
+
     void EnsureSectionsLoaded(VoidCallback callback);
     void EnsureRuntimeCapsLoaded(VoidCallback callback);
     void CacheRuntimeCaps(const GlobalState& global,
