@@ -5,6 +5,7 @@
 
 #include "DeviceProtocolFactory.hpp"
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
+#include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -18,11 +19,23 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
     uint16_t nodeId,
     IRM::IRMClient* irmClient
 ) {
-    // Check for Focusrite Saffire Pro 24 DSP
-    if (vendorId == kFocusriteVendorId && modelId == kSPro24DspModelId) {
-        ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
-                 vendorId, modelId, nodeId);
-        return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, nodeId, irmClient);
+    if (vendorId == kFocusriteVendorId) {
+        if (modelId == kSPro24DspModelId) {
+            ASFW_LOG(DICE, "Creating SPro24DspProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
+                     vendorId, modelId, nodeId);
+            return std::make_unique<DICE::Focusrite::SPro24DspProtocol>(busOps, busInfo, nodeId, irmClient);
+        }
+
+        if (modelId == kSPro14ModelId || modelId == kSPro24ModelId) {
+            const auto known = LookupKnownIdentity(vendorId, modelId);
+            ASFW_LOG(DICE,
+                     "Creating generic DICETcatProtocol for %{public}s vendor=0x%06x model=0x%06x node=0x%04x",
+                     (known.has_value() && known->modelName) ? known->modelName : "Focusrite DICE",
+                     vendorId,
+                     modelId,
+                     nodeId);
+            return std::make_unique<DICE::TCAT::DICETcatProtocol>(busOps, busInfo, nodeId, irmClient);
+        }
     }
 
     // Check for Apogee Duet FireWire (AV/C + vendor-dependent commands).

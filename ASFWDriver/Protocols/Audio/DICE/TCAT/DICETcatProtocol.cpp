@@ -206,23 +206,10 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
 void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
                                         const StreamConfig& tx,
                                         const StreamConfig& rx) noexcept {
-    if (tx.numStreams > 0) {
-        const auto& tx0 = tx.streams[0];
-        hostInputPcmChannels_.store(tx0.pcmChannels, std::memory_order_relaxed);
-        deviceToHostAm824Slots_.store(tx0.Am824Slots(), std::memory_order_relaxed);
-    } else {
-        hostInputPcmChannels_.store(0, std::memory_order_relaxed);
-        deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);
-    }
-
-    if (rx.numStreams > 0) {
-        const auto& rx0 = rx.streams[0];
-        hostOutputPcmChannels_.store(rx0.pcmChannels, std::memory_order_relaxed);
-        hostToDeviceAm824Slots_.store(rx0.Am824Slots(), std::memory_order_relaxed);
-    } else {
-        hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
-        hostToDeviceAm824Slots_.store(0, std::memory_order_relaxed);
-    }
+    hostInputPcmChannels_.store(tx.TotalPcmChannels(), std::memory_order_relaxed);
+    deviceToHostAm824Slots_.store(tx.TotalAm824Slots(), std::memory_order_relaxed);
+    hostOutputPcmChannels_.store(rx.TotalPcmChannels(), std::memory_order_relaxed);
+    hostToDeviceAm824Slots_.store(rx.TotalAm824Slots(), std::memory_order_relaxed);
 
     runtimeSampleRateHz_.store(global.sampleRate, std::memory_order_relaxed);
     runtimeCapsValid_.store(true, std::memory_order_release);
