@@ -1,4 +1,4 @@
-# ASFW project
+# ASFireWire
 
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mrmidi_ASFW&metric=alert_status&token=3ca1b3d10414117bb3e75b1779090b4ea47f1585)](https://sonarcloud.io/summary/new_code?id=mrmidi_ASFW) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mrmidi/ASFireWire)
 
@@ -6,6 +6,9 @@
 
 - [Preamble](#preamble)
 - [Overview](#overview)
+- [Current status](#current-status)
+- [Call for testing](#call-for-testing)
+- [Collecting logs](#collecting-logs)
 - [Hardware compatibility](#hardware-compatibility)
 - [FireWire protocol brief overview](#firewire-protocol-brief-overview)
 - [What is OHCI?](#what-is-ohci)
@@ -23,25 +26,130 @@
 
 ## Preamble
 
-TL;DR — Since macOS Tahoe (26) Apple completely removed the FireWire stack from macOS. This driver aims to restore FireWire functionality on modern macOS versions. The goal is to make the project public for historical and educational purposes, and to help people with legacy FireWire devices. [Youtube demo video](https://youtu.be/Q1TbehOGnW0)
+TL;DR: Apple removed the built-in FireWire stack in macOS Tahoe (26). ASFireWire is an attempt to rebuild enough of it in DriverKit to keep legacy FireWire hardware usable on modern macOS again. The project is public for historical, educational, and practical reasons, and to help people keep older audio interfaces alive. [YouTube demo video](https://youtu.be/Q1TbehOGnW0)
 
-> WARNING: This project is in active development. Core async stack and isochronous transmit DMA are working on the test rig, but the driver is not production-ready. Expect instability and missing features.
+> WARNING: This project is still experimental. The driver can enumerate hardware, move async traffic, and bring up selected audio paths, but it is not production-ready. Expect instability, missing controls, and regressions during longer playback/capture runs.
 
 ## Overview
 
-ASFW is a macOS driver extension (dext) that restores FireWire (IEEE 1394) functionality on modern macOS versions where native support has been removed. It uses DriverKit and PCIDriverKit frameworks to implement the driver in user space — the modern approach to writing drivers on macOS instead of traditional kernel extensions.
+ASFireWire is a macOS driver extension project that restores FireWire (IEEE 1394) functionality on modern macOS versions where native support has been removed. It uses DriverKit and PCIDriverKit to implement the stack in user space instead of relying on the old kernel-extension model.
+
+The codebase currently covers OHCI controller bring-up, topology and Config ROM handling, async transactions, AV/C plumbing, and an in-progress audio stack for both AV/C and DICE-based devices.
+
+## Current status
+
+What is real today:
+
+- OHCI controller bring-up, bus resets, Self-ID decoding, and topology tracking are implemented.
+- Async FireWire transactions are in place and used by discovery and protocol code.
+- AV/C FCP and CMP plumbing exists and is working on the main test rig.
+- Audio publication and experimental streaming paths exist in-tree.
+- Personally tested audio hardware now includes the Apogee Duet FireWire path and Focusrite Saffire Pro 24 DSP.
+- Experimental DICE support is now enabled in-tree for Focusrite Saffire Pro 14, Saffire Pro 24, and Saffire Pro 24 DSP.
+- Focusrite Saffire Pro 26, Saffire Pro 40, Saffire Pro 40 TCD3070, and Liquid Saffire 56 are recognized but intentionally not enabled yet because the current generic DICE backend is still effectively single-stream.
+- The project is still not stable enough to recommend as a drop-in replacement for Apple's old FireWire stack.
+
+## Call for testing
+
+If you own a supported Focusrite Saffire card, testing would help a lot right now. Saffire Pro 24 DSP is already personally tested here, but broader validation is still welcome.
+
+Please test these currently enabled DICE devices:
+
+- Focusrite Saffire Pro 14
+- Focusrite Saffire Pro 24
+- Focusrite Saffire Pro 24 DSP
+
+If you try ASFireWire on one of them, please open a GitHub issue or reach out with:
+
+- exact device model
+- Mac model and macOS version
+- Thunderbolt/adapter chain or PCIe FireWire hardware used
+- whether the device enumerates, publishes an audio device, and starts playback/capture
+- logs from the ASFW app, Console, or any crash report
+
+Even a failed test report is valuable. "It does not enumerate at all" is still useful data.
+
+## Collecting logs
+
+If you are reporting a bug, driver logs from the moment the device appears, publishes an audio device, or fails to start are extremely helpful.
+
+Important detail: DriverKit does not expose `os_log_create()` to this project, so ASFW driver logs do not show up as nice unified-log categories. Instead, they are easiest to find by process/bundle name and by message prefixes such as `[DICE]`, `[Audio]`, `[Async]`, `[AVC]`, `[Discovery]`, and `[Isoch]`.
+
+### From Terminal
+
+To watch logs live while reproducing the problem:
+
+```sh
+log stream --style compact \
+  --predicate 'processImagePath CONTAINS[c] "ASFWDriver" OR eventMessage CONTAINS[c] "[DICE]" OR eventMessage CONTAINS[c] "[Audio]" OR eventMessage CONTAINS[c] "[Async]" OR eventMessage CONTAINS[c] "[AVC]" OR eventMessage CONTAINS[c] "[Discovery]" OR eventMessage CONTAINS[c] "[Isoch]"'
+```
+
+To save the last 10 minutes of likely ASFW driver logs to a file:
+
+```sh
+log show --last 10m --style compact \
+  --predicate 'processImagePath CONTAINS[c] "ASFWDriver" OR eventMessage CONTAINS[c] "[DICE]" OR eventMessage CONTAINS[c] "[Audio]" OR eventMessage CONTAINS[c] "[Async]" OR eventMessage CONTAINS[c] "[AVC]" OR eventMessage CONTAINS[c] "[Discovery]" OR eventMessage CONTAINS[c] "[Isoch]"' \
+  > ~/Desktop/asfw-driver.log
+```
+
+If you want a broader capture for a difficult issue, collect a full log archive right after reproducing it:
+
+```sh
+sudo log collect --last 10m --output ~/Desktop/asfw-driver.logarchive
+```
+
+### From Console.app
+
+1. Open `Console.app`.
+2. Select your Mac in the sidebar.
+3. In the search field, try one of these filters:
+   - `ASFWDriver`
+   - `net.mrmidi.ASFW.ASFWDriver`
+   - `[DICE]`
+   - `[Audio]`
+4. Reproduce the issue.
+5. Save or export the matching lines, or copy the relevant window around the failure.
+
+### What to include in a bug report
+
+- the exact time the issue happened
+- whether this was during enumeration, playback start, capture start, or after some minutes of streaming
+- the shell log snippet or `.logarchive`
+- whether the failure is repeatable
+
+If the logs are too sparse, mention that too. The driver has runtime verbosity knobs in `ASFWDriver/Info.plist`, and those can be turned up for a follow-up repro.
 
 ## Hardware compatibility
 
-Currently I am developing and testing the driver on the following hardware:
+Current development and packet-analyzer hardware:
 
 - Apple MacBook Air 2020 (M1, 13-inch)
 - Thunderbolt 3 to Thunderbolt 2 adapter
 - Thunderbolt 2 to FireWire 800 adapter
 - Apogee Duet 2 FireWire audio interface
+- Focusrite Saffire Pro 24 DSP audio interface
 - PowerMac G3 (Blue and White) with built-in FireWire 400 ports used as a packet analyzer
 
-In theory, the driver could be extended to support other FireWire OHCI controllers (for example, via a TB3-to-PCIe chassis with a PCIe FireWire card), but I cannot test that right now. Device matching is currently hardcoded to my vendor/device ID, but it can be extended. See [ASFWDriver/Info.plist](ASFWDriver/Info.plist) for details on device probing/matching.
+Audio-device support in tree today:
+
+- Apogee Duet FireWire
+- Focusrite Saffire Pro 14
+- Focusrite Saffire Pro 24
+- Focusrite Saffire Pro 24 DSP
+
+Personally tested with working audio:
+
+- Apogee Duet FireWire
+- Focusrite Saffire Pro 24 DSP
+
+Recognized but not enabled yet:
+
+- Focusrite Saffire Pro 26
+- Focusrite Saffire Pro 40
+- Focusrite Saffire Pro 40 TCD3070
+- Focusrite Liquid Saffire 56
+
+In theory the driver can be extended to other OHCI controllers and many more FireWire devices, but hardware access is still the limiting factor. Host-controller matching and audio-device enablement are intentionally conservative until more real machines are tested.
 
 ## FireWire protocol brief overview
 
@@ -93,6 +201,7 @@ This project is in active development. The following features are implemented:
 
 - OHCI controller initialization and configuration
 - PCIe device probing and matching
+- Config ROM staging, scanning, and device discovery
 - DMA buffer allocation and management
 - Interrupt handling
 - Bus reset and Self-ID processing
@@ -100,6 +209,8 @@ This project is in active development. The following features are implemented:
 - Isochronous transmit DMA (OUTPUT_MORE-Immediate + OUTPUT_LAST) with interrupt-driven ring refill
 - AV/C FCP request/response and CMP plug connection
 - IRM (Isochronous Resource Manager)
+- AudioDriverKit publication for supported devices
+- Experimental DICE audio bring-up and runtime capability discovery for selected Focusrite Saffire models
 
 ## Driver initialization (high level)
 
@@ -118,13 +229,15 @@ See runtime logs for example traces (DMA allocation, Config ROM staging, Self-ID
 
 ## What is planned
 
-Next steps focus on completing the isochronous receive path, bus reset recovery, and timing robustness, then hardening for broader hardware.
+Current priorities are less about "first light" and more about hardening, timing, and hardware coverage.
 
 Planned work:
 
-1. Adopt other async commands from IOFireWireFamily: block read/write, lock, PHY, etc. These are straightforward based on existing async APIs. DONE.
-2. Complete AV/C discovery and stream format negotiation (stream format commands, plug parsing, connection management). DONE.
-3. Complete the isochronous stack: receive contexts, bus reset recovery, and timing robustness. IN PROGRESS.
+1. Stabilize the audio path for longer playback/capture runs, especially timing and timestamp monotonicity.
+2. Finish the remaining isochronous receive and bus-reset recovery work.
+3. Broaden DICE support beyond the current single-stream Focusrite Saffire set.
+4. Improve hardware coverage with more community-tested hosts, adapters, and interfaces.
+5. Continue filling out device-specific controls where generic FireWire or generic DICE handling is not enough.
 
 ## Code guidelines
 
@@ -174,7 +287,7 @@ Contributions are VERY welcome! If you want to contribute to the project, please
 4. Push your changes to your forked repository
 5. Open a pull request on the original repository, describing your changes and why they should be merged
 
-Literally any help is appreciated, from fixing typos in documentation to implementing new features or fixing bugs. Writing tests, improving code quality, testing on hardware and reporting any bugs. If you have any experience with FireWire protocol - just opening an issue or emailing me is invaluable! If you have any experience with Swift - ASFW app could use some love too.
+Literally any help is appreciated, from fixing typos in documentation to implementing new features or fixing bugs. Writing tests, improving code quality, testing on hardware, and reporting regressions are all valuable. Hardware reports for supported Saffire devices are especially useful right now. If you have any experience with FireWire protocol, just opening an issue or emailing me is invaluable. If you have any experience with Swift, the ASFW app could use some love too.
 
 ## Contacts
 
