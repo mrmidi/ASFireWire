@@ -4,6 +4,7 @@
 
 namespace {
 constexpr int32_t kTickDomain = 16 * 3072;
+constexpr uint16_t kSeedSyt = 0xD8B0;
 
 int32_t TickIndex(uint16_t syt) {
     constexpr int32_t kTicksPerCycle = 3072;
@@ -23,38 +24,59 @@ int32_t WrapSigned(int32_t ticks) {
 }
 } // namespace
 
+TEST(SYTGenerator, FirstDataPacketUsesSeededRxSytExactly) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+    gen.seedFromRxSyt(kSeedSyt);
+
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/481, /*samplesInPacket=*/8), kSeedSyt);
+}
+
+TEST(SYTGenerator, AdvancesBy4096PerDataPacketIndependentOfBusCycleGaps) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+    gen.seedFromRxSyt(kSeedSyt);
+
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5151, /*samplesInPacket=*/8), 0xD8B0);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5152, /*samplesInPacket=*/8), 0xF0B0);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5154, /*samplesInPacket=*/8), 0x04B0);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5155, /*samplesInPacket=*/8), 0x18B0);
+}
+
+TEST(SYTGenerator, ReturnsNoInfoUntilSeeded) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/0, /*samplesInPacket=*/8),
+              ASFW::Encoding::SYTGenerator::kNoInfo);
+}
+
 TEST(SYTGenerator, NudgePositiveAndNegativeTicks) {
     ASFW::Encoding::SYTGenerator gen;
     gen.initialize(48000.0);
 
     gen.reset();
+    gen.seedFromRxSyt(kSeedSyt);
     const int32_t base = TickIndex(gen.computeDataSYT(0, 8));
 
     gen.reset();
+    gen.seedFromRxSyt(kSeedSyt);
     gen.nudgeOffsetTicks(+1);
     const int32_t plusOne = TickIndex(gen.computeDataSYT(0, 8));
     EXPECT_EQ(WrapSigned(plusOne - base), +1);
 
     gen.reset();
+    gen.seedFromRxSyt(kSeedSyt);
     gen.nudgeOffsetTicks(-1);
     const int32_t minusOne = TickIndex(gen.computeDataSYT(0, 8));
     EXPECT_EQ(WrapSigned(minusOne - base), -1);
 }
 
-TEST(SYTGenerator, NudgeWrapBehaviorAcrossDomain) {
+TEST(SYTGenerator, WrapsAcrossSixteenCycleDomainByPacketStep) {
     ASFW::Encoding::SYTGenerator gen;
     gen.initialize(48000.0);
+    gen.seedFromRxSyt(0xFB00);
 
-    gen.reset();
-    const int32_t base = TickIndex(gen.computeDataSYT(0, 8));
-
-    gen.reset();
-    gen.nudgeOffsetTicks(kTickDomain + 3);
-    const int32_t plusWrapped = TickIndex(gen.computeDataSYT(0, 8));
-    EXPECT_EQ(WrapSigned(plusWrapped - base), +3);
-
-    gen.reset();
-    gen.nudgeOffsetTicks(-(kTickDomain + 5));
-    const int32_t minusWrapped = TickIndex(gen.computeDataSYT(0, 8));
-    EXPECT_EQ(WrapSigned(minusWrapped - base), -5);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/0, /*samplesInPacket=*/8), 0xFB00);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/7, /*samplesInPacket=*/8), 0x1300);
 }

@@ -70,6 +70,7 @@ public:
 
     void ResetForStart() noexcept;
     void SetCycleTrackingValid(bool v) noexcept { cycleTrackingValid_ = v; }
+    [[nodiscard]] bool PrimeSyncFromExternalBridge() noexcept;
 
     // Configure audio packetization from shared queue metadata.
     [[nodiscard]] kern_return_t Configure(uint8_t sid,

@@ -387,8 +387,8 @@ gtest_discover_tests(DescriptorRingDMATests)
 # =============================================================================
 add_executable(BufferRingDMATests
     "${ASFW_TESTS_DIR}/BufferRingDMATests.cpp"
-    "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
