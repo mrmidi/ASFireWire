@@ -256,10 +256,22 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     dbcTracker_.firstPacket = true;
     dbcTracker_.discontinuityCount.store(0, std::memory_order_relaxed);
 
-    // SYT generator (cycle-based, Linux approach). TODO: derive rate from stream formats.
+    // 48 kHz milestone: RX-seeded sample timeline for DATA-packet SYT emission.
     sytGenerator_.initialize(48000.0);
     sytGenerator_.reset();
     cycleTrackingValid_ = false;
+}
+
+bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
+    const auto syncState = ReadExternalSyncState();
+    if (!syncState.enabled) {
+        ASFW_LOG(Isoch, "IT: SYT seed unavailable - missing fresh established RX SYT");
+        return false;
+    }
+
+    sytGenerator_.seedFromRxSyt(syncState.rxSyt);
+    ASFW_LOG(Isoch, "IT: SYT seeded from RX bridge syt=0x%04x", syncState.rxSyt);
+    return true;
 }
 
 void IsochAudioTxPipeline::PrePrimeFromSharedQueue() noexcept {
@@ -525,11 +537,7 @@ bool IsochAudioTxPipeline::HasFreshExternalSyncUpdate(const Core::ExternalSyncBr
 
 void IsochAudioTxPipeline::MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept {
     const auto syncState = ReadExternalSyncState();
-    const auto disciplineResult =
-        externalSyncDiscipline_.Update(syncState.enabled, txSyt, syncState.rxSyt);
-    if (syncState.enabled && disciplineResult.correctionTicks != 0) {
-        sytGenerator_.nudgeOffsetTicks(disciplineResult.correctionTicks);
-    }
+    (void)externalSyncDiscipline_.Update(syncState.enabled, txSyt, syncState.rxSyt);
 }
 
 Tx::IsochTxPacket IsochAudioTxPipeline::NextSilentPacket(uint32_t transmitCycle) noexcept {

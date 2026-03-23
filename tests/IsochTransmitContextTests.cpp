@@ -9,14 +9,37 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstdint>
 #include <vector>
 
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
+#include "../ASFWDriver/Isoch/Core/ExternalSyncBridge.hpp"
 #include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
 #include "../ASFWDriver/Shared/TxSharedQueue.hpp"
 
 using namespace ASFW::Isoch;
 using namespace ASFW::Encoding;
+
+namespace {
+
+[[nodiscard]] uint32_t ReadWireQuadlet(const uint8_t* bytes) noexcept {
+    return (static_cast<uint32_t>(bytes[0]) << 24) |
+           (static_cast<uint32_t>(bytes[1]) << 16) |
+           (static_cast<uint32_t>(bytes[2]) << 8) |
+           static_cast<uint32_t>(bytes[3]);
+}
+
+[[nodiscard]] uint16_t ReadPacketSyt(const Tx::IsochTxPacket& pkt) noexcept {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(pkt.words);
+    return static_cast<uint16_t>(ReadWireQuadlet(bytes + 4) & 0xFFFFu);
+}
+
+[[nodiscard]] uint8_t ReadPacketFdf(const Tx::IsochTxPacket& pkt) noexcept {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(pkt.words);
+    return static_cast<uint8_t>((ReadWireQuadlet(bytes + 4) >> 16) & 0xFFu);
+}
+
+} // namespace
 
 TEST(IsochTransmitContext, InitialStateIsUnconfigured) {
     IsochTransmitContext ctx;
@@ -192,4 +215,85 @@ TEST(IsochTransmitContext, NoUnderrunsWithPrefilledBuffer) {
     // 8 packets in blocking mode => 6 DATA packets => 6 * 8 = 48 frames consumed.
     EXPECT_EQ(assembler.underrunCount(), 0);
     EXPECT_EQ(assembler.bufferFillLevel(), 512 - 48);
+}
+
+TEST(IsochTransmitContext, TxPipelineMatchesFocusritePlaybackSytSequence) {
+    constexpr uint32_t kQueueChannels = 8;
+    constexpr uint32_t kAm824Slots = 9;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochAudioTxPipeline pipeline;
+    pipeline.SetSharedTxQueue(storage.data(), bytes);
+    ASSERT_EQ(pipeline.Configure(/*sid=*/0x00,
+                                 /*streamModeRaw=*/1u,
+                                 /*requestedChannels=*/kQueueChannels,
+                                 /*requestedAm824Slots=*/kAm824Slots,
+                                 AudioWireFormat::kAM824),
+              kIOReturnSuccess);
+
+    Core::ExternalSyncBridge bridge;
+    bridge.active.store(true, std::memory_order_release);
+    bridge.clockEstablished.store(true, std::memory_order_release);
+    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     Core::ExternalSyncBridge::kFdf48k,
+                                                                     static_cast<uint8_t>(kAm824Slots)),
+                              std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
+
+    pipeline.SetExternalSyncBridge(&bridge);
+    pipeline.ResetForStart();
+    pipeline.SetCycleTrackingValid(true);
+    ASSERT_TRUE(pipeline.PrimeSyncFromExternalBridge());
+
+    const auto pkt0 = pipeline.NextSilentPacket(/*transmitCycle=*/5150);
+    const bool pkt0IsData = pkt0.isData;
+    const uint16_t pkt0Syt = ReadPacketSyt(pkt0);
+    const uint8_t pkt0Dbc = pkt0.dbc;
+
+    const auto pkt1 = pipeline.NextSilentPacket(/*transmitCycle=*/5151);
+    const bool pkt1IsData = pkt1.isData;
+    const uint16_t pkt1Syt = ReadPacketSyt(pkt1);
+    const uint8_t pkt1Dbc = pkt1.dbc;
+    const uint8_t pkt1Fdf = ReadPacketFdf(pkt1);
+
+    const auto pkt2 = pipeline.NextSilentPacket(/*transmitCycle=*/5152);
+    const bool pkt2IsData = pkt2.isData;
+    const uint16_t pkt2Syt = ReadPacketSyt(pkt2);
+    const uint8_t pkt2Dbc = pkt2.dbc;
+
+    const auto pkt3 = pipeline.NextSilentPacket(/*transmitCycle=*/5153);
+    const bool pkt3IsData = pkt3.isData;
+    const uint16_t pkt3Syt = ReadPacketSyt(pkt3);
+    const uint8_t pkt3Dbc = pkt3.dbc;
+
+    const auto pkt4 = pipeline.NextSilentPacket(/*transmitCycle=*/5154);
+    const bool pkt4IsData = pkt4.isData;
+    const uint16_t pkt4Syt = ReadPacketSyt(pkt4);
+    const uint8_t pkt4Dbc = pkt4.dbc;
+
+    EXPECT_FALSE(pkt0IsData);
+    EXPECT_TRUE(pkt1IsData);
+    EXPECT_TRUE(pkt2IsData);
+    EXPECT_TRUE(pkt3IsData);
+    EXPECT_FALSE(pkt4IsData);
+
+    EXPECT_EQ(pkt0Syt, 0xFFFF);
+    EXPECT_EQ(pkt1Syt, 0xD8B0);
+    EXPECT_EQ(pkt2Syt, 0xF0B0);
+    EXPECT_EQ(pkt3Syt, 0x04B0);
+    EXPECT_EQ(pkt4Syt, 0xFFFF);
+
+    EXPECT_EQ(pkt1Fdf, kSFC_48kHz);
+    EXPECT_EQ(pkt0Dbc, 0x00);
+    EXPECT_EQ(pkt1Dbc, 0x00);
+    EXPECT_EQ(pkt2Dbc, 0x08);
+    EXPECT_EQ(pkt3Dbc, 0x10);
+    EXPECT_EQ(pkt4Dbc, 0x18);
 }

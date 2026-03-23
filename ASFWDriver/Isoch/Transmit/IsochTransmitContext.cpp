@@ -138,6 +138,11 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ring_.SeedCycleTracking(*hardware_);
     audio_.SetCycleTrackingValid(true);
 
+    if (!audio_.PrimeSyncFromExternalBridge()) {
+        ASFW_LOG(Isoch, "IT: Cannot start - missing fresh RX SYT seed before prime");
+        return kIOReturnNotReady;
+    }
+
     if (audio_.SharedTxQueueValid() && !audio_.IsZeroCopyEnabled()) {
         audio_.PrePrimeFromSharedQueue();
     }

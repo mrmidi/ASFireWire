@@ -32,6 +32,9 @@ diff.txt
 # Other
 compile_commands.json
 
+# Sonar run with token
+sonar.sh
+
 # PVS studio
 .PVS-Studio*
 
