@@ -180,7 +180,7 @@ Literally any help is appreciated, from fixing typos in documentation to impleme
 
 You can reach me via:
 
-- Discord server: https://discord.gg/jAdXhrr2
+- Discord server: https://discord.gg/c82rmSEEPY
 - Email: me [at] mrmidi.net
 - LinkedIn: https://www.linkedin.com/in/mrmidi/
 
