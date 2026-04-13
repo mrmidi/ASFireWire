@@ -5,6 +5,9 @@
 
 namespace ASFW::Isoch::Core {
 
+inline constexpr uint64_t kExternalSyncLiveStaleNanos = 100'000'000ULL;
+inline constexpr uint64_t kExternalSyncStartupSeedGraceNanos = 250'000'000ULL;
+
 struct ExternalSyncBridge {
     static constexpr uint8_t kFdf48k = 0x02;
     static constexpr uint16_t kNoInfoSyt = 0xFFFF;
@@ -12,6 +15,7 @@ struct ExternalSyncBridge {
     // Shared state between IR producer and IT consumer.
     std::atomic<bool> active{false};
     std::atomic<bool> clockEstablished{false};
+    std::atomic<bool> startupQualified{false};
     std::atomic<uint32_t> updateSeq{0};
     std::atomic<uint32_t> lastPackedRx{0};      // [SYT:16][FDF:8][DBS:8]
     std::atomic<uint64_t> lastUpdateHostTicks{0};
@@ -37,6 +41,7 @@ struct ExternalSyncBridge {
     void Reset() noexcept {
         active.store(false, std::memory_order_release);
         clockEstablished.store(false, std::memory_order_release);
+        startupQualified.store(false, std::memory_order_release);
         updateSeq.store(0, std::memory_order_release);
         lastPackedRx.store(0, std::memory_order_release);
         lastUpdateHostTicks.store(0, std::memory_order_release);

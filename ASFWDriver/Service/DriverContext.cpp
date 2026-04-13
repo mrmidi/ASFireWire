@@ -23,6 +23,18 @@
 #include "../Logging/Logging.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
+void ServiceContext::DisarmProviderNotifications() {
+#ifndef ASFW_HOST_TEST
+    if (providerNotifications) {
+        (void)providerNotifications->SetEnableWithCompletion(false, nullptr);
+        // Do not call Cancel(nullptr) here. DriverKit dispatches cancel asynchronously,
+        // and releasing the source before that block runs can crash in Cancel_Impl.
+    }
+    providerNotifications.reset();
+    providerNotificationAction.reset();
+#endif
+}
+
 void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
     controller.reset();
@@ -43,16 +55,10 @@ void ServiceContext::Reset() {
     deps.irmClient.reset();         // Clean up IRM client
     deps.asyncController.reset();
     deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    deps.cycleInconsistentCallback = {};
     statusPublisher.Reset();
     watchdog.Reset();
-#ifndef ASFW_HOST_TEST
-    if (providerNotifications) {
-        providerNotifications->SetEnableWithCompletion(false, nullptr);
-        providerNotifications->Cancel(nullptr);
-    }
-    providerNotifications.reset();
-    providerNotificationAction.reset();
-#endif
+    DisarmProviderNotifications();
     workQueue.reset();
     interruptAction.reset();
     isoch.StopAll();
@@ -121,6 +127,17 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
             driver, *d.deviceManager, *d.deviceRegistry, ctx.isoch, *d.hardware);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
+    }
+
+    if (ctx.audioCoordinator) {
+        std::weak_ptr<ASFW::Audio::AudioCoordinator> weakAudio = ctx.audioCoordinator;
+        d.cycleInconsistentCallback = [weakAudio] {
+            if (auto audio = weakAudio.lock()) {
+                audio->HandleCycleInconsistent();
+            }
+        };
+    } else {
+        d.cycleInconsistentCallback = {};
     }
 
     // AV/C discovery wiring is done after ControllerCore is created so it can
@@ -206,14 +223,7 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.deps.hardware->Detach();
     ctx.interruptAction.reset();
     ctx.watchdog.Reset();
-#ifndef ASFW_HOST_TEST
-    if (ctx.providerNotifications) {
-        ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
-        ctx.providerNotifications->Cancel(nullptr);
-    }
-    ctx.providerNotifications.reset();
-    ctx.providerNotificationAction.reset();
-#endif
+    ctx.DisarmProviderNotifications();
     ctx.workQueue.reset();
     ctx.statusPublisher.Reset();
 }

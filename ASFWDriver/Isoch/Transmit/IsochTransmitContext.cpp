@@ -18,6 +18,24 @@ namespace ASFW::Isoch {
 
 using namespace ASFW::Driver;
 
+namespace {
+
+const char* TxStateName(ITState state) noexcept {
+    switch (state) {
+    case ITState::Unconfigured:
+        return "unconfigured";
+    case ITState::Configured:
+        return "configured";
+    case ITState::Running:
+        return "running";
+    case ITState::Stopped:
+        return "stopped";
+    }
+    return "unknown";
+}
+
+} // namespace
+
 std::unique_ptr<IsochTransmitContext> IsochTransmitContext::Create(
     Driver::HardwareInterface* hw,
     std::shared_ptr<Memory::IIsochDMAMemory> dmaMemory) noexcept {
@@ -45,6 +63,10 @@ void IsochTransmitContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridg
     audio_.SetExternalSyncBridge(bridge);
 }
 
+void IsochTransmitContext::SetRecoveryCallback(RecoveryCallback callback) noexcept {
+    recoveryCallback_ = std::move(callback);
+}
+
 uint32_t IsochTransmitContext::SharedTxFillLevelFrames() const noexcept {
     return audio_.SharedTxFillLevelFrames();
 }
@@ -65,6 +87,7 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
                                               uint32_t requestedAm824Slots,
                                               Encoding::AudioWireFormat wireFormat) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch, "IT: Configure rejected - state=%s", TxStateName(state_));
         return kIOReturnBusy;
     }
 
@@ -99,6 +122,7 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
 
 kern_return_t IsochTransmitContext::Start() noexcept {
     if (state_ != State::Configured && state_ != State::Stopped) {
+        ASFW_LOG(Isoch, "IT: Start rejected - state=%s", TxStateName(state_));
         return kIOReturnNotReady;
     }
 
@@ -232,6 +256,12 @@ void IsochTransmitContext::Stop() noexcept {
                  interruptCount_.load(std::memory_order_relaxed));
     }
 
+    if (state_ == State::Configured) {
+        state_ = State::Stopped;
+        refillInProgress_.clear(std::memory_order_release);
+        ASFW_LOG(Isoch, "IT: Stopped from configured state before hardware run");
+    }
+
     verifier_.Shutdown();
 }
 
@@ -317,11 +347,22 @@ void IsochTransmitContext::Poll() noexcept {
         if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
             const auto& ringC = ring_.RTCounters();
             const auto& audioC = audio_.RTCounters();
-            ASFW_LOG(Isoch, "IT: Poll tick=%llu zeroCopy=%{public}s rbFill=%u txFill=%u | ring(calls=%llu refills=%llu pkts=%llu dead=%llu dec=%llu oob=%llu gapCrit=%llu) audio(resync=%llu drop=%llu injectReset=%llu injectMiss=%llu zeroExit=%llu silenced=%llu)",
+            ASFW_LOG(Isoch, "IT: Poll tick=%llu zeroCopy=%{public}s rbFill=%u txFill=%u target=%u base=%u max=%u peakRb=%u peakTx=%u prePrime(txBefore=%u moved=%u asmAfter=%u txAfter=%u limit=%u hit=%u) | ring(calls=%llu refills=%llu pkts=%llu dead=%llu dec=%llu oob=%llu gapCrit=%llu) audio(resync=%llu drop=%llu pumpMoved=%llu pumpSkip=%llu injectReset=%llu injectMiss=%llu zeroExit=%llu silenced=%llu)",
                      tickCount_,
                      audio_.IsZeroCopyEnabled() ? "YES" : "NO",
                      rbFill,
                      txFill,
+                     audio_.CurrentFillTarget(),
+                     audio_.BaseFillTarget(),
+                     audio_.MaxFillTarget(),
+                     audioC.peakAssemblerFill.load(std::memory_order_relaxed),
+                     audioC.peakSharedTxFill.load(std::memory_order_relaxed),
+                     audioC.prePrimeFillBefore.load(std::memory_order_relaxed),
+                     audioC.prePrimeTransferred.load(std::memory_order_relaxed),
+                     audioC.prePrimeAssemblerFillAfter.load(std::memory_order_relaxed),
+                     audioC.prePrimeQueueFillAfter.load(std::memory_order_relaxed),
+                     audioC.prePrimeLimitFrames.load(std::memory_order_relaxed),
+                     audioC.prePrimeLimitHit.load(std::memory_order_relaxed),
                      ringC.calls.load(std::memory_order_relaxed),
                      ringC.refills.load(std::memory_order_relaxed),
                      ringC.packetsRefilled.load(std::memory_order_relaxed),
@@ -331,6 +372,8 @@ void IsochTransmitContext::Poll() noexcept {
                      ringC.criticalGapEvents.load(std::memory_order_relaxed),
                      audioC.resyncApplied.load(std::memory_order_relaxed),
                      audioC.staleFramesDropped.load(std::memory_order_relaxed),
+                     audioC.legacyPumpMovedFrames.load(std::memory_order_relaxed),
+                     audioC.legacyPumpSkipped.load(std::memory_order_relaxed),
                      audioC.audioInjectCursorResets.load(std::memory_order_relaxed),
                      audioC.audioInjectMissedPackets.load(std::memory_order_relaxed),
                      audioC.exitZeroRefill.load(std::memory_order_relaxed),
@@ -419,6 +462,19 @@ void IsochTransmitContext::ServiceTxRecovery() noexcept {
                 (reasons & IsochTxRecoveryController::kReasonDbcDiscontinuity) != 0,
                 (reasons & IsochTxRecoveryController::kReasonUncompletedOverwrite) != 0,
                 (reasons & IsochTxRecoveryController::kReasonInjectMiss) != 0);
+
+    if (recoveryCallback_) {
+        if (recoveryCallback_(reasons)) {
+            ASFW_LOG_V0(Isoch, "IT TX RECOVER: delegated to upper-layer recovery coordinator");
+            recovery_.Complete(nowNs, reasons, true);
+            return;
+        }
+
+        ASFW_LOG_V1(Isoch,
+                    "IT TX RECOVER: upper-layer recovery delegate rejected request, will retry later");
+        recovery_.Complete(nowNs, reasons, false);
+        return;
+    }
 
     Stop();
     const kern_return_t kr = Start();

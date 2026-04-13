@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #ifdef ASFW_HOST_TEST
@@ -47,6 +48,7 @@ enum class ITState {
 class IsochTransmitContext {
 public:
     using State = ITState;
+    using RecoveryCallback = std::function<bool(uint32_t reasonBits)>;
 
     // ==========================================================================
     // Linux-style OHCI page padding constants (public API)
@@ -95,6 +97,7 @@ public:
     void HandleInterrupt() noexcept;
     void KickTxVerifier() noexcept;
     void ServiceTxRecovery() noexcept;
+    void SetRecoveryCallback(RecoveryCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
     Encoding::AudioRingBuffer<>& RingBuffer() noexcept { return audio_.RingBuffer(); }
@@ -162,6 +165,8 @@ private:
 
     // 1A: Last underrun count seen (for delta logging in Poll)
     uint64_t lastUnderrunCount_{0};
+
+    RecoveryCallback recoveryCallback_{};
 };
 
 } // namespace Isoch

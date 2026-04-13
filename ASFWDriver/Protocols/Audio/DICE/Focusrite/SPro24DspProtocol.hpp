@@ -63,6 +63,8 @@ public:
     
     /// Get device name
     const char* GetName() const override { return "Focusrite Saffire Pro 24 DSP"; }
+    Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept override { return tcat_.AsDiceDuplexProtocol(); }
+    const Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept override { return tcat_.AsDiceDuplexProtocol(); }
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }

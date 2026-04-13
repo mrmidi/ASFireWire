@@ -1,6 +1,7 @@
 #pragma once
 
 #include <DriverKit/IOReturn.h>
+#include <functional>
 #include <memory>
 #include <string_view>
 
@@ -95,6 +96,7 @@ class ControllerCore {
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
 
         std::shared_ptr<ASFW::CMP::CMPClient> cmpClient;
+        std::function<void()> cycleInconsistentCallback;
     };
 
     ControllerCore(ControllerConfig config, Dependencies deps);

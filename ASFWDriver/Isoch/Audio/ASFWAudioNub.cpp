@@ -28,6 +28,7 @@
 #include <DriverKit/OSSharedPtr.h>
 
 #include <algorithm>
+#include <cstring>
 
 // TX queue capacity: Config::kTxQueueCapacityFrames frames = ~85ms @ 48kHz.
 // ZERO-COPY: Output audio buffer size matches Config::kAudioIoPeriodFrames.
@@ -61,6 +62,12 @@ struct ProtocolRuntimeBinding {
 
 static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
                                                    ProtocolRuntimeBinding& outBinding);
+
+struct OutputAudioBufferGeometry {
+    uint32_t outputChannels{0};
+    uint32_t bytesPerFrame{0};
+    uint64_t bufferBytes{0};
+};
 
 static uint32_t ClampAudioChannels(uint32_t channels) {
     if (channels == 0) {
@@ -220,6 +227,49 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
     outBinding.protocol = device->protocol.get();
     outBinding.avcDiscovery = avcDiscovery;
     return kIOReturnSuccess;
+}
+
+static bool ResolveOutputAudioBufferGeometry(ASFWAudioNub* self,
+                                             ASFWAudioNub_IVars* iv,
+                                             OutputAudioBufferGeometry& outGeometry) {
+    if (!self || !iv) {
+        return false;
+    }
+
+    RefreshChannelCountsFromProperties(self, iv);
+
+    uint32_t inputChUnused = 0;
+    uint32_t outputChannels = FallbackOutputChannels(iv);
+    (void)TryResolveRuntimeAudioChannels(iv, inputChUnused, outputChannels);
+
+    if (outputChannels == 0 || outputChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+        return false;
+    }
+
+    outGeometry.outputChannels = outputChannels;
+    outGeometry.bytesPerFrame = outputChannels * sizeof(int32_t);
+    outGeometry.bufferBytes =
+        uint64_t(ASFW::Isoch::Config::kAudioIoPeriodFrames) * outGeometry.bytesPerFrame;
+    return outGeometry.bytesPerFrame != 0 && outGeometry.bufferBytes != 0;
+}
+
+static void ReleaseOutputAudioBuffer(ASFWAudioNub_IVars* iv) {
+    if (!iv) {
+        return;
+    }
+
+    if (iv->outputAudioMap) {
+        iv->outputAudioMap->release();
+        iv->outputAudioMap = nullptr;
+    }
+    if (iv->outputAudioMem) {
+        iv->outputAudioMem->release();
+        iv->outputAudioMem = nullptr;
+    }
+
+    iv->outputAudioBytes = 0;
+    iv->outputAudioFrameCapacity = 0;
+    iv->outputAudioWriteFrame.store(0, std::memory_order_release);
 }
 
 // Stream start/stop is now orchestrated by AudioCoordinator backends.
@@ -560,33 +610,42 @@ uint64_t ASFWAudioNub::GetTxQueueBytes() const
 // ============================================================================
 
 // Helper to create the shared output audio buffer
-static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
+static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub* self, ASFWAudioNub_IVars* iv)
 {
-    if (!iv) return kIOReturnBadArgument;
+    if (!self || !iv) return kIOReturnBadArgument;
 
-    // Already created?
-    if (iv->outputAudioMem && iv->outputAudioMap) {
-        return kIOReturnSuccess;
-    }
-
-    uint32_t inputChUnused = 0;
-    uint32_t outputChannels = FallbackOutputChannels(iv);
-    (void)TryResolveRuntimeAudioChannels(iv, inputChUnused, outputChannels);
-
-    if (outputChannels == 0 || outputChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+    OutputAudioBufferGeometry geometry{};
+    if (!ResolveOutputAudioBufferGeometry(self, iv, geometry)) {
         ASFW_LOG(Audio, "ASFWAudioNub: CreateOutputAudioBuffer: invalid outputChannelCount=%u",
-                 outputChannels);
+                 FallbackOutputChannels(iv));
         return kIOReturnNotReady;
     }
 
-    const uint32_t bytesPerFrame = outputChannels * sizeof(int32_t);
-    const uint64_t bufferBytes = uint64_t(ASFW::Isoch::Config::kAudioIoPeriodFrames) * bytesPerFrame;
+    const bool hasExistingBuffer = (iv->outputAudioMem != nullptr || iv->outputAudioMap != nullptr);
+    const bool geometryMatchesExisting =
+        iv->outputAudioMem != nullptr &&
+        iv->outputAudioMap != nullptr &&
+        iv->outputAudioBytes == geometry.bufferBytes &&
+        iv->outputAudioFrameCapacity == ASFW::Isoch::Config::kAudioIoPeriodFrames;
+
+    if (geometryMatchesExisting) {
+        return kIOReturnSuccess;
+    }
+
+    if (hasExistingBuffer) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: Rebuilding ZERO-COPY output audio buffer for refreshed geometry bytes=%llu->%llu out=%u",
+                 iv->outputAudioBytes,
+                 geometry.bufferBytes,
+                 geometry.outputChannels);
+        ReleaseOutputAudioBuffer(iv);
+    }
 
     // Create IOBufferMemoryDescriptor for shared audio buffer
     IOBufferMemoryDescriptor* mem = nullptr;
     kern_return_t kr = IOBufferMemoryDescriptor::Create(
         kIOMemoryDirectionInOut,  // CoreAudio writes, IT DMA reads
-        bufferBytes,
+        geometry.bufferBytes,
         64,  // 64-byte alignment for cache coherency
         &mem);
 
@@ -595,7 +654,7 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
         return kr ? kr : kIOReturnNoMemory;
     }
 
-    kr = mem->SetLength(bufferBytes);
+    kr = mem->SetLength(geometry.bufferBytes);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: Output audio SetLength failed: 0x%x", kr);
         mem->release();
@@ -620,15 +679,18 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
 
     // Zero the buffer initially
     auto* base = reinterpret_cast<uint8_t*>(map->GetAddress());
-    memset(base, 0, bufferBytes);
+    memset(base, 0, geometry.bufferBytes);
 
     iv->outputAudioMem = mem;    // retained
     iv->outputAudioMap = map;    // retained
-    iv->outputAudioBytes = bufferBytes;
+    iv->outputAudioBytes = geometry.bufferBytes;
     iv->outputAudioFrameCapacity = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+    iv->outputAudioWriteFrame.store(0, std::memory_order_release);
 
     ASFW_LOG(Audio, "ASFWAudioNub: ZERO-COPY output audio buffer created: %llu bytes, %u frames (%u ch), base=%p",
-             bufferBytes, ASFW::Isoch::Config::kAudioIoPeriodFrames, outputChannels,
+             geometry.bufferBytes,
+             ASFW::Isoch::Config::kAudioIoPeriodFrames,
+             geometry.outputChannels,
              static_cast<const void*>(base));
 
     return kIOReturnSuccess;
@@ -650,7 +712,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyOutputAudioMemory)
     }
 
     // Ensure output audio buffer exists
-    if (const kern_return_t kr = CreateOutputAudioBuffer(ivars); kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateOutputAudioBuffer(this, ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: CopyOutputAudioMemory: CreateOutputAudioBuffer failed: 0x%x", kr);
         return kr;
     }

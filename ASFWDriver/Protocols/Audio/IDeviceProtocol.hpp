@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "AudioTypes.hpp"
+
 #include <DriverKit/IOReturn.h>
 #include <cstdint>
 #include <functional>
@@ -17,24 +19,11 @@ namespace ASFW::IRM {
     class IRMClient;
 }
 
+namespace ASFW::Audio::DICE {
+    class IDICEDuplexProtocol;
+}
+
 namespace ASFW::Audio {
-
-struct AudioStreamRuntimeCaps {
-    // Host-facing channel counts (PCM only).
-    uint32_t hostInputPcmChannels{0};   // Device -> host capture channels
-    uint32_t hostOutputPcmChannels{0};  // Host -> device playback channels
-
-    // Wire-slot counts (AM824 data block slots) when known.
-    uint32_t deviceToHostAm824Slots{0}; // DICE TX stream slots (capture wire format)
-    uint32_t hostToDeviceAm824Slots{0}; // DICE RX stream slots (playback wire format)
-
-    uint32_t sampleRateHz{0};
-};
-
-struct AudioDuplexChannels {
-    uint8_t deviceToHostIsoChannel{0};  // DICE TX / host IR
-    uint8_t hostToDeviceIsoChannel{1};  // DICE RX / host IT
-};
 
 /// Interface for device-specific protocol handlers
 ///
@@ -102,6 +91,15 @@ public:
 
     /// Optional internal hook for backends that need the protocol's IRM client.
     virtual ::ASFW::IRM::IRMClient* GetIRMClient() const {
+        return nullptr;
+    }
+
+    /// Optional typed DICE duplex control interface used by the restart coordinator.
+    virtual DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() noexcept {
+        return nullptr;
+    }
+
+    virtual const DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept {
         return nullptr;
     }
 

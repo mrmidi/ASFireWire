@@ -7,7 +7,7 @@ namespace ASFW::Isoch::Core {
 /// Per-packet TX-RX phase discipline modelled on Saffire.kext's adjustOutputPhase.
 ///
 /// Called on every TX DATA packet.  Two regimes:
-///   - **First-pass**: snaps TX SYT to RX SYT immediately (full error correction)
+///   - **First-pass**: locks to the RX-seeded domain without correcting whole-packet offsets
 ///   - **Tracking**: deadband-based full-error correction on every packet (no cooldown)
 ///
 /// Phase detector wraps in the packet-interval domain (4096 ticks @ 48k/8-sample)
@@ -34,7 +34,7 @@ public:
         int32_t phaseErrorTicks{0};
         int32_t correctionTicks{0};
         bool staleOrUnlockEvent{false};
-        bool firstPassSnap{false};    // true on the single first-pass correction
+        bool firstPassSnap{false};    // true on the single first-pass evaluation
         bool safetyGateOpen{false};   // true when offset is within safety limit
     };
 
@@ -71,15 +71,22 @@ public:
         int32_t correction = 0;
 
         if (firstPass_) {
-            // First-pass: use FULL 49152-tick domain to see and correct multi-packet
-            // offsets (e.g. the 12288-tick / 3-packet lag seen in FireBug captures).
-            // Saffire's adjustOutputPhase does this via the first-pass flag at streamCtx+404.
-            const int32_t fullPhase = WrapSignedTicks(rawDiff);
-            correction = fullPhase;
+            // The TX generator is already seeded from the latest valid RX SYT before
+            // the ring is primed. The first discipline pass must therefore ignore any
+            // whole-packet offset between that seed and a newer bridge sample, otherwise
+            // we can re-phase the entire primed ring by multiple DATA packets.
+            //
+            // Use the packet-interval domain immediately so only sub-packet error is
+            // corrected here; whole-packet offsets collapse to zero just like steady-state.
+            const int32_t intervalPhase = WrapSignedIntervalTicks(rawDiff);
+            const int32_t absError = intervalPhase >= 0 ? intervalPhase : -intervalPhase;
+            if (absError > kDeadbandTicks) {
+                correction = intervalPhase;
+                ++correctionCount_;
+            }
             firstPass_ = false;
-            ++correctionCount_;
             result.firstPassSnap = true;
-            lastPhaseErrorTicks_ = fullPhase;
+            lastPhaseErrorTicks_ = intervalPhase;
         } else {
             // Steady-state: use PACKET-INTERVAL domain [-2048..+2047] to track only
             // fractional drift. The bridge RX SYT naturally lags TX by ~1 packet due

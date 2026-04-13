@@ -74,12 +74,24 @@ inline void UpdateLowWaterAlert(bool& lowAlert,
     }
 }
 
-inline uint64_t ExternalSyncStaleThresholdTicks() noexcept {
-    uint64_t staleThresholdTicks = ASFW::Timing::nanosToHostTicks(100'000'000ULL);
+inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualifiedOnly) noexcept {
+    const uint64_t staleThresholdNanos = allowStartupQualifiedOnly
+        ? ASFW::Isoch::Core::kExternalSyncStartupSeedGraceNanos
+        : ASFW::Isoch::Core::kExternalSyncLiveStaleNanos;
+    uint64_t staleThresholdTicks = ASFW::Timing::nanosToHostTicks(staleThresholdNanos);
     if (staleThresholdTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
-        staleThresholdTicks = ASFW::Timing::nanosToHostTicks(100'000'000ULL);
+        staleThresholdTicks = ASFW::Timing::nanosToHostTicks(staleThresholdNanos);
     }
     return staleThresholdTicks;
+}
+
+inline void UpdatePeak(std::atomic<uint32_t>& peak, uint32_t value) noexcept {
+    uint32_t current = peak.load(std::memory_order_relaxed);
+    while (value > current &&
+           !peak.compare_exchange_weak(current,
+                                       value,
+                                       std::memory_order_relaxed,
+                                       std::memory_order_relaxed)) {}
 }
 
 } // namespace
@@ -238,6 +250,14 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     counters_.audioInjectMissedPackets.store(0, std::memory_order_relaxed);
     counters_.rbLowEvents.store(0, std::memory_order_relaxed);
     counters_.txqLowEvents.store(0, std::memory_order_relaxed);
+    counters_.prePrimeFillBefore.store(0, std::memory_order_relaxed);
+    counters_.prePrimeTransferred.store(0, std::memory_order_relaxed);
+    counters_.prePrimeAssemblerFillAfter.store(0, std::memory_order_relaxed);
+    counters_.prePrimeQueueFillAfter.store(0, std::memory_order_relaxed);
+    counters_.prePrimeLimitFrames.store(0, std::memory_order_relaxed);
+    counters_.prePrimeLimitHit.store(0, std::memory_order_relaxed);
+    counters_.peakAssemblerFill.store(0, std::memory_order_relaxed);
+    counters_.peakSharedTxFill.store(0, std::memory_order_relaxed);
 
     fillLevelAlert_ = {};
 
@@ -263,9 +283,43 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
 }
 
 bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
-    const auto syncState = ReadExternalSyncState();
+    const auto syncState = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/true);
     if (!syncState.enabled) {
-        ASFW_LOG(Isoch, "IT: SYT seed unavailable - missing fresh established RX SYT");
+        const auto statusName = [&syncState]() noexcept -> const char* {
+            switch (syncState.status) {
+            case ExternalSyncState::SeedStatus::Ok:
+                return "ok";
+            case ExternalSyncState::SeedStatus::NoBridge:
+                return "no-bridge";
+            case ExternalSyncState::SeedStatus::Inactive:
+                return "bridge-inactive";
+            case ExternalSyncState::SeedStatus::NotEstablished:
+                return "clock-not-established";
+            case ExternalSyncState::SeedStatus::MissingTimestamp:
+                return "no-rx-timestamp";
+            case ExternalSyncState::SeedStatus::Stale:
+                return "stale-rx-syt";
+            case ExternalSyncState::SeedStatus::InvalidSyt:
+                return "rx-syt-noinfo";
+            case ExternalSyncState::SeedStatus::UnsupportedFdf:
+                return "unsupported-fdf";
+            }
+            return "unknown";
+        }();
+        ASFW_LOG(Isoch,
+                 "IT: SYT seed unavailable (%{public}s bridge=%d active=%d established=%d startupReady=%d seq=%u "
+                 "syt=0x%04x fdf=0x%02x dbs=%u ageUs=%llu staleUs=%llu)",
+                 statusName,
+                 syncState.bridgePresent,
+                 syncState.active,
+                 syncState.clockEstablished,
+                 syncState.startupQualified,
+                 syncState.updateSeq,
+                 syncState.rxSyt,
+                 syncState.rxFdf,
+                 syncState.rxDbs,
+                 syncState.ageUsec,
+                 syncState.staleThresholdUsec);
         return false;
     }
 
@@ -328,9 +382,22 @@ void IsochAudioTxPipeline::PrePrimeFromSharedQueue() noexcept {
         if (written < read) break;
     }
 
-    ASFW_LOG(Isoch, "IT: Pre-prime transferred %u frames to assembler (fill=%u limit=%u hit=%{public}s)",
+    const uint32_t fillAfter = sharedTxQueue_.FillLevelFrames();
+    const uint32_t assemblerFillAfter = assembler_.bufferFillLevel();
+    counters_.prePrimeFillBefore.store(fillBefore, std::memory_order_relaxed);
+    counters_.prePrimeTransferred.store(totalTransferred, std::memory_order_relaxed);
+    counters_.prePrimeAssemblerFillAfter.store(assemblerFillAfter, std::memory_order_relaxed);
+    counters_.prePrimeQueueFillAfter.store(fillAfter, std::memory_order_relaxed);
+    counters_.prePrimeLimitFrames.store(startupPrimeLimitFrames, std::memory_order_relaxed);
+    counters_.prePrimeLimitHit.store(primeLimitHit ? 1u : 0u, std::memory_order_relaxed);
+    UpdatePeak(counters_.peakAssemblerFill, assemblerFillAfter);
+    UpdatePeak(counters_.peakSharedTxFill, fillBefore);
+
+    ASFW_LOG(Isoch, "IT: Pre-prime transferred %u frames to assembler (asmBefore=0 asmAfter=%u txBefore=%u txAfter=%u limit=%u hit=%{public}s)",
              totalTransferred,
-             assembler_.bufferFillLevel(),
+             assemblerFillAfter,
+             fillBefore,
+             fillAfter,
              startupPrimeLimitFrames,
              primeLimitHit ? "YES" : "NO");
 }
@@ -481,6 +548,9 @@ void IsochAudioTxPipeline::OnPollTick1ms() noexcept {
         return;
     }
 
+    UpdatePeak(counters_.peakAssemblerFill, assembler_.bufferFillLevel());
+    UpdatePeak(counters_.peakSharedTxFill, sharedTxQueue_.FillLevelFrames());
+
     AdvanceAdaptiveFillWindow();
     if (adaptiveFill_.windowTickCount < 1000) {
         return;
@@ -505,41 +575,74 @@ uint16_t IsochAudioTxPipeline::ComputeDataSyt(uint32_t transmitCycle) noexcept {
 }
 
 IsochAudioTxPipeline::ExternalSyncState
-IsochAudioTxPipeline::ReadExternalSyncState() noexcept {
-    if (!externalSyncBridge_ || !HasFreshExternalSyncUpdate(*externalSyncBridge_)) {
-        return {};
+IsochAudioTxPipeline::ReadExternalSyncState(const bool allowStartupQualifiedOnly) noexcept {
+    ExternalSyncState state{};
+    state.bridgePresent = (externalSyncBridge_ != nullptr);
+    if (!externalSyncBridge_) {
+        state.status = ExternalSyncState::SeedStatus::NoBridge;
+        return state;
     }
 
     const uint32_t packed = externalSyncBridge_->lastPackedRx.load(std::memory_order_acquire);
-    const uint16_t candidateSyt = Core::ExternalSyncBridge::UnpackSYT(packed);
-    const uint8_t candidateFdf = Core::ExternalSyncBridge::UnpackFDF(packed);
-    if (candidateSyt == Core::ExternalSyncBridge::kNoInfoSyt ||
-        candidateFdf != Core::ExternalSyncBridge::kFdf48k) {
-        return {};
+    state.rxSyt = Core::ExternalSyncBridge::UnpackSYT(packed);
+    state.rxFdf = Core::ExternalSyncBridge::UnpackFDF(packed);
+    state.rxDbs = Core::ExternalSyncBridge::UnpackDBS(packed);
+    state.updateSeq = externalSyncBridge_->updateSeq.load(std::memory_order_acquire);
+    state.active = externalSyncBridge_->active.load(std::memory_order_acquire);
+    state.clockEstablished =
+        externalSyncBridge_->clockEstablished.load(std::memory_order_acquire);
+    state.startupQualified =
+        externalSyncBridge_->startupQualified.load(std::memory_order_acquire);
+
+    const uint64_t staleThresholdTicks = ExternalSyncStaleThresholdTicks(allowStartupQualifiedOnly);
+    if (staleThresholdTicks != 0) {
+        state.staleThresholdUsec =
+            ASFW::Timing::hostTicksToNanos(staleThresholdTicks) / 1'000ULL;
     }
 
-    return {.enabled = true, .rxSyt = candidateSyt};
-}
-
-bool IsochAudioTxPipeline::HasFreshExternalSyncUpdate(const Core::ExternalSyncBridge& bridge) noexcept {
-    if (!bridge.active.load(std::memory_order_acquire) ||
-        !bridge.clockEstablished.load(std::memory_order_acquire)) {
-        return false;
+    if (!state.active) {
+        state.status = ExternalSyncState::SeedStatus::Inactive;
+        return state;
+    }
+    if (!state.clockEstablished &&
+        !(allowStartupQualifiedOnly && state.startupQualified)) {
+        state.status = ExternalSyncState::SeedStatus::NotEstablished;
+        return state;
     }
 
-    const uint64_t staleThresholdTicks = ExternalSyncStaleThresholdTicks();
-    const uint64_t lastUpdateTicks = bridge.lastUpdateHostTicks.load(std::memory_order_acquire);
+    const uint64_t lastUpdateTicks =
+        externalSyncBridge_->lastUpdateHostTicks.load(std::memory_order_acquire);
     if (staleThresholdTicks == 0 || lastUpdateTicks == 0) {
-        return false;
+        state.status = ExternalSyncState::SeedStatus::MissingTimestamp;
+        return state;
     }
 
     const uint64_t nowTicks = mach_absolute_time();
-    return nowTicks >= lastUpdateTicks &&
-        (nowTicks - lastUpdateTicks) <= staleThresholdTicks;
+    if (nowTicks >= lastUpdateTicks) {
+        state.ageUsec = ASFW::Timing::hostTicksToNanos(nowTicks - lastUpdateTicks) / 1'000ULL;
+    }
+    if (nowTicks < lastUpdateTicks ||
+        (nowTicks - lastUpdateTicks) > staleThresholdTicks) {
+        state.status = ExternalSyncState::SeedStatus::Stale;
+        return state;
+    }
+
+    if (state.rxSyt == Core::ExternalSyncBridge::kNoInfoSyt) {
+        state.status = ExternalSyncState::SeedStatus::InvalidSyt;
+        return state;
+    }
+    if (state.rxFdf != Core::ExternalSyncBridge::kFdf48k) {
+        state.status = ExternalSyncState::SeedStatus::UnsupportedFdf;
+        return state;
+    }
+
+    state.enabled = true;
+    state.status = ExternalSyncState::SeedStatus::Ok;
+    return state;
 }
 
 bool IsochAudioTxPipeline::MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept {
-    const auto syncState = ReadExternalSyncState();
+    const auto syncState = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
     const auto result = externalSyncDiscipline_.Update(syncState.enabled, txSyt, syncState.rxSyt);
 
     if (result.correctionTicks != 0) {

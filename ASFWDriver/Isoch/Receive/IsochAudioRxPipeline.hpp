@@ -15,11 +15,14 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 namespace ASFW::Isoch::Rx {
 
 class IsochAudioRxPipeline final {
 public:
+    using TimingLossCallback = std::function<void()>;
+
     void ConfigureFor48k() noexcept;
 
     void OnStart() noexcept;
@@ -33,6 +36,7 @@ public:
 
     void SetSharedRxQueue(uint8_t* base, uint64_t bytes) noexcept;
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
+    void SetTimingLossCallback(TimingLossCallback callback) noexcept;
 
     [[nodiscard]] StreamProcessor& StreamProcessorRef() noexcept { return streamProcessor_; }
 
@@ -44,6 +48,7 @@ private:
 
     Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
     Core::ExternalSyncClockState externalSyncClockState_{};
+    TimingLossCallback timingLossCallback_{};
 
     struct CycleTimeCorrelation {
         uint32_t prevCycleTimer{0};

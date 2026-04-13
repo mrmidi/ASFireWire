@@ -2,87 +2,21 @@
 // Copyright (c) 2026 ASFireWire Project
 
 #include "DiceAudioBackend.hpp"
-#include "DiceBringupSequence.hpp"
 
-#include "../../Common/DriverKitOwnership.hpp"
-#include "../../IRM/IRMClient.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
 #include "../../Protocols/Audio/DICE/TCAT/DICEKnownProfiles.hpp"
 #include "../../Protocols/Audio/DeviceProtocolFactory.hpp"
 
 #include <DriverKit/IOLib.h>
-#include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/OSSharedPtr.h>
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include <atomic>
-#include <functional>
 #include <memory>
+#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 #include <string>
+#include <vector>
 
 namespace ASFW::Audio {
-
-namespace {
-
-// Sync bridge for async protocol calls. This is the ONE place IOSleep remains.
-struct SyncVoidState {
-    std::atomic<bool> done{false};
-    std::atomic<IOReturn> status{kIOReturnTimeout};
-};
-
-constexpr uint32_t kSyncBridgeTimeoutMs = 5000;
-constexpr uint32_t kSyncBridgePollMs = 10;
-// DICE raw-parity bring-up now includes a 5s CLOCK_ACCEPTED wait plus
-// several preflight transactions before the controller can report success.
-// Keep extra headroom here so the backend does not time out and force
-// rollback while the controller is still legitimately progressing.
-constexpr uint32_t kDicePrepareTimeoutMs = 12000;
-
-template <typename StartFn>
-IOReturn WaitForVoid(StartFn&& fn, uint32_t timeoutMs = kSyncBridgeTimeoutMs) {
-    auto state = std::make_shared<SyncVoidState>();
-    fn([state](IOReturn status) {
-        state->status.store(status, std::memory_order_relaxed);
-        state->done.store(true, std::memory_order_release);
-    });
-
-    for (uint32_t waited = 0; waited < timeoutMs; waited += kSyncBridgePollMs) {
-        if (state->done.load(std::memory_order_acquire)) {
-            return state->status.load(std::memory_order_relaxed);
-        }
-        IOSleep(kSyncBridgePollMs);
-    }
-
-    return state->done.load(std::memory_order_acquire)
-        ? state->status.load(std::memory_order_relaxed)
-        : kIOReturnTimeout;
-}
-
-// Match the clean original saffire.kext bring-up on SPro24DSP:
-// DICE RX (host->device playback) uses isoch channel 0 and
-// DICE TX (device->host capture) uses isoch channel 1.
-constexpr uint8_t kDefaultIrChannel = 1;
-constexpr uint8_t kDefaultItChannel = 0;
-constexpr uint32_t kPlaybackBandwidthUnits = 320;
-constexpr uint32_t kCaptureBandwidthUnits = 576;
-
-inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
-    // OHCI NodeID register: low 6 bits are node number.
-    return static_cast<uint8_t>(hw.ReadNodeID() & 0x3Fu);
-}
-
-[[nodiscard]] constexpr Encoding::AudioWireFormat ResolveDicePlaybackWireFormat(
-    const Discovery::DeviceRecord& record,
-    const AudioStreamRuntimeCaps& caps) noexcept {
-    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
-        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
-        caps.hostOutputPcmChannels == 8 &&
-        caps.hostToDeviceAm824Slots == 9) {
-        return Encoding::AudioWireFormat::kRawPcm24In32;
-    }
-    return Encoding::AudioWireFormat::kAM824;
-}
-
-} // namespace
 
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
@@ -90,8 +24,12 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
-    , isoch_(isoch)
-    , hardware_(hardware) {
+    , hardware_(hardware)
+    , hostTransport_(isoch)
+    , restartCoordinator_(registry,
+                          hostTransport_,
+                          hardware,
+                          [this](uint64_t guid) { return MakeQueueProvider(guid); }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -104,9 +42,25 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
     } else {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to create work queue (0x%x)", kr);
     }
+
+    DICE::NotificationMailbox::SetObserver(this, &DiceAudioBackend::NotificationObserverThunk);
+    hostTransport_.SetTimingLossCallback([this](uint64_t guid) {
+        HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
+    });
+    hostTransport_.SetTxRecoveryCallback([this](uint64_t guid, uint32_t reasonBits) {
+        ASFW_LOG_WARNING(Audio,
+                         "DiceAudioBackend: TX recovery requested GUID=%llx reasons=0x%08x",
+                         guid,
+                         reasonBits);
+        HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTxFault);
+        return true;
+    });
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
+    DICE::NotificationMailbox::ClearObserver(this);
+    hostTransport_.SetTimingLossCallback({});
+    hostTransport_.SetTxRecoveryCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;
@@ -122,13 +76,175 @@ void DiceAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
 
     (void)StopStreaming(guid);
     publisher_.TerminateNub(guid, "DICE-Removed");
+    restartCoordinator_.ClearSession(guid);
 
     if (lock_) {
         IOLockLock(lock_);
         attemptsByGuid_.erase(guid);
         retryOutstanding_.erase(guid);
+        activeStreamingGuids_.erase(guid);
+        recoveringGuids_.erase(guid);
         IOLockUnlock(lock_);
     }
+}
+
+void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReason reason) noexcept {
+    if (guid == 0) {
+        return;
+    }
+
+    if (!TryBeginRecovery(guid)) {
+        return;
+    }
+
+    auto recover = ^{
+        const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
+        if (status == kIOReturnSuccess) {
+            EnsureNubForGuid(guid);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: Recovery succeeded GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            FinishRecovery(guid);
+            return;
+        }
+
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: Recovery failed GUID=%llx reason=%u kr=0x%x",
+                       guid,
+                       static_cast<unsigned>(reason),
+                       status);
+        FinishRecovery(guid);
+    };
+
+    if (workQueue_) {
+        workQueue_->DispatchAsync(recover);
+        return;
+    }
+
+    recover();
+}
+
+void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
+    if ((bits & (DICE::Notify::kLockChange | DICE::Notify::kExtStatus)) == 0) {
+        return;
+    }
+
+    std::vector<uint64_t> guids;
+    if (lock_) {
+        IOLockLock(lock_);
+        guids.assign(activeStreamingGuids_.begin(), activeStreamingGuids_.end());
+        IOLockUnlock(lock_);
+    }
+
+    for (const uint64_t guid : guids) {
+        auto probe = ^{
+            ProbeDuplexHealth(guid, bits);
+        };
+
+        if (workQueue_) {
+            workQueue_->DispatchAsync(probe);
+        } else {
+            probe();
+        }
+    }
+}
+
+void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept {
+    const auto* record = registry_.FindByGuid(guid);
+    auto* diceProtocol = (record && record->protocol) ? record->protocol->AsDiceDuplexProtocol() : nullptr;
+    if (!diceProtocol) {
+        return;
+    }
+
+    struct WaitState {
+        std::atomic<bool> done{false};
+        IOReturn status{kIOReturnTimeout};
+        DICE::DiceDuplexHealthResult result{};
+    };
+
+    auto waitState = std::make_shared<WaitState>();
+    diceProtocol->ReadDuplexHealth([waitState](IOReturn status, DICE::DiceDuplexHealthResult result) {
+        waitState->status = status;
+        waitState->result = std::move(result);
+        waitState->done.store(true, std::memory_order_release);
+    });
+
+    for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
+        if (waitState->done.load(std::memory_order_acquire)) {
+            break;
+        }
+        IOSleep(kHealthBridgePollMs);
+    }
+
+    if (!waitState->done.load(std::memory_order_acquire)) {
+        ASFW_LOG_WARNING(Audio,
+                         "DiceAudioBackend: health probe timed out GUID=%llx bits=0x%08x",
+                         guid,
+                         notificationBits);
+        return;
+    }
+
+    if (waitState->status != kIOReturnSuccess) {
+        ASFW_LOG_WARNING(Audio,
+                         "DiceAudioBackend: health probe failed GUID=%llx bits=0x%08x kr=0x%x",
+                         guid,
+                         notificationBits,
+                         waitState->status);
+        return;
+    }
+
+    const bool sourceLocked = DICE::IsSourceLocked(waitState->result.status);
+    bool extClockHealthy = true;
+    const uint32_t clockSource = waitState->result.appliedClock.clockSelect & DICE::ClockSelect::kSourceMask;
+    if (clockSource == static_cast<uint32_t>(DICE::ClockSource::ARX1)) {
+        extClockHealthy =
+            DICE::IsArx1Locked(waitState->result.extStatus) &&
+            !DICE::HasArx1Slip(waitState->result.extStatus);
+    }
+
+    if (sourceLocked && extClockHealthy) {
+        return;
+    }
+
+    ASFW_LOG_WARNING(Audio,
+                     "DiceAudioBackend: lock health degraded GUID=%llx bits=0x%08x status=0x%08x ext=0x%08x sourceLocked=%u extHealthy=%u",
+                     guid,
+                     notificationBits,
+                     waitState->result.status,
+                     waitState->result.extStatus,
+                     sourceLocked ? 1U : 0U,
+                     extClockHealthy ? 1U : 0U);
+    HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterLockLoss);
+}
+
+bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
+    if (!lock_) {
+        return true;
+    }
+
+    IOLockLock(lock_);
+    const auto [_, inserted] = recoveringGuids_.insert(guid);
+    IOLockUnlock(lock_);
+    return inserted;
+}
+
+void DiceAudioBackend::FinishRecovery(uint64_t guid) noexcept {
+    if (!lock_) {
+        return;
+    }
+
+    IOLockLock(lock_);
+    recoveringGuids_.erase(guid);
+    IOLockUnlock(lock_);
+}
+
+void DiceAudioBackend::NotificationObserverThunk(void* context, uint32_t bits) noexcept {
+    auto* self = static_cast<DiceAudioBackend*>(context);
+    if (!self) {
+        return;
+    }
+    self->HandleDeviceNotification(bits);
 }
 
 void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
@@ -236,227 +352,59 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     }
 }
 
-IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-
-    auto* record = registry_.FindByGuid(guid);
-    if (!record || !record->protocol) {
-        return kIOReturnNotReady;
+std::unique_ptr<IDiceQueueMemoryProvider> DiceAudioBackend::MakeQueueProvider(uint64_t guid) noexcept {
+    auto* nub = publisher_.GetNub(guid);
+    if (!nub) {
+        return nullptr;
     }
+    return std::make_unique<DiceNubQueueMemoryProvider>(*nub);
+}
 
-    AudioStreamRuntimeCaps caps{};
-    if (!record->protocol->GetRuntimeAudioStreamCaps(caps) &&
-        !DICE::TCAT::TryGetKnownDICEProfile(record->vendorId, record->modelId, caps)) {
-        return kIOReturnNotReady;
+IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
+    if (guid == 0) {
+        return kIOReturnBadArgument;
     }
 
     auto* nub = publisher_.GetNub(guid);
     if (!nub) {
         EnsureNubForGuid(guid);
         nub = publisher_.GetNub(guid);
-        if (!nub) return kIOReturnNotReady;
-    }
-
-    // Ensure queues exist before wiring to isoch contexts.
-    nub->EnsureRxQueueCreated();
-    IOBufferMemoryDescriptor* rxMemRaw = nullptr;
-    uint64_t rxBytes = 0;
-    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMemRaw, &rxBytes);
-    auto rxMem = Common::AdoptRetained(rxMemRaw);
-    if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
-        return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
-    }
-
-    const AudioDuplexChannels channels{
-        .deviceToHostIsoChannel = kDefaultIrChannel,
-        .hostToDeviceIsoChannel = kDefaultItChannel,
-    };
-
-    auto* irmClient = record->protocol->GetIRMClient();
-    if (irmClient == nullptr) {
-        ASFW_LOG_ERROR(Audio, "DiceAudioBackend: protocol missing IRM client GUID=%llx", guid);
-        return kIOReturnNotReady;
-    }
-
-    const kern_return_t claimStatus = isoch_.BeginSplitDuplex(guid);
-    if (claimStatus != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Audio,
-                       "DiceAudioBackend: BeginSplitDuplex failed GUID=%llx kr=0x%x",
-                       guid,
-                       claimStatus);
-        return claimStatus;
-    }
-
-    const auto rollback = [this, record, guid, irmClient]() {
-        const kern_return_t stopKr = isoch_.StopDuplex(guid, irmClient);
-        if (stopKr != kIOReturnSuccess) {
-            ASFW_LOG_ERROR(Audio,
-                           "DiceAudioBackend: host duplex rollback failed GUID=%llx kr=0x%x",
-                           guid,
-                           stopKr);
+        if (!nub) {
+            return kIOReturnNotReady;
         }
-        const IOReturn stopStatus = record->protocol->StopDuplex();
-        if (stopStatus != kIOReturnSuccess && stopStatus != kIOReturnUnsupported) {
-            ASFW_LOG_ERROR(Audio,
-                           "DiceAudioBackend: StopDuplex rollback failed GUID=%llx status=0x%x",
-                           guid,
-                           stopStatus);
+    }
+
+    const IOReturn status = restartCoordinator_.StartStreaming(guid);
+    if (status == kIOReturnSuccess) {
+        EnsureNubForGuid(guid);
+        if (lock_) {
+            IOLockLock(lock_);
+            activeStreamingGuids_.insert(guid);
+            IOLockUnlock(lock_);
         }
-    };
-
-    return Detail::RunDiceBringupSequence(
-        [&]() -> IOReturn {
-            const IOReturn cfg = WaitForVoid([&](auto cb) {
-                record->protocol->PrepareDuplex48k(channels, std::move(cb));
-            }, kDicePrepareTimeoutMs);
-            if (cfg != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: PrepareDuplex48k failed GUID=%llx status=0x%x",
-                               guid,
-                               cfg);
-            }
-            return cfg;
-        },
-        [&]() -> IOReturn {
-            const kern_return_t reserveStatus =
-                isoch_.ReservePlaybackResources(guid,
-                                                *irmClient,
-                                                channels.hostToDeviceIsoChannel,
-                                                kPlaybackBandwidthUnits);
-            if (reserveStatus != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: ReservePlaybackResources failed GUID=%llx kr=0x%x",
-                               guid,
-                               reserveStatus);
-            }
-            return reserveStatus;
-        },
-        [&]() -> IOReturn {
-            const IOReturn programRxStatus = WaitForVoid([&](auto cb) {
-                record->protocol->ProgramRxForDuplex48k(std::move(cb));
-            });
-            if (programRxStatus != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: ProgramRxForDuplex48k failed GUID=%llx status=0x%x",
-                               guid,
-                               programRxStatus);
-            }
-            return programRxStatus;
-        },
-        [&]() -> IOReturn {
-            const kern_return_t reserveStatus =
-                isoch_.ReserveCaptureResources(guid,
-                                               *irmClient,
-                                               channels.deviceToHostIsoChannel,
-                                               kCaptureBandwidthUnits);
-            if (reserveStatus != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: ReserveCaptureResources failed GUID=%llx kr=0x%x",
-                               guid,
-                               reserveStatus);
-            }
-            return reserveStatus;
-        },
-        [&]() -> IOReturn {
-            const kern_return_t krRx = isoch_.StartReceive(channels.deviceToHostIsoChannel,
-                                                           hardware_,
-                                                           rxMem,
-                                                           rxBytes);
-            if (krRx != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: StartReceive failed GUID=%llx kr=0x%x",
-                               guid,
-                               krRx);
-            }
-            return krRx;
-        },
-        [&]() -> IOReturn {
-            const IOReturn txEnableStatus = WaitForVoid([&](auto cb) {
-                record->protocol->ProgramTxAndEnableDuplex48k(std::move(cb));
-            });
-            if (txEnableStatus != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: ProgramTxAndEnableDuplex48k failed GUID=%llx status=0x%x",
-                               guid,
-                               txEnableStatus);
-            }
-            return txEnableStatus;
-        },
-        [&]() -> IOReturn {
-            IOBufferMemoryDescriptor* txMemRaw = nullptr;
-            uint64_t txBytes = 0;
-            const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMemRaw, &txBytes);
-            auto txMem = Common::AdoptRetained(txMemRaw);
-            if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
-                return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
-            }
-
-            const uint8_t sid = ReadLocalSid(hardware_);
-            const uint32_t streamModeRaw = static_cast<uint32_t>(Model::StreamMode::kBlocking);
-            const Encoding::AudioWireFormat wireFormat =
-                ResolveDicePlaybackWireFormat(*record, caps);
-            const kern_return_t krTx =
-                isoch_.StartTransmit(channels.hostToDeviceIsoChannel,
-                                     hardware_,
-                                     sid,
-                                     streamModeRaw,
-                                     caps.hostOutputPcmChannels,
-                                     caps.hostToDeviceAm824Slots,
-                                     wireFormat,
-                                     txMem,
-                                     txBytes,
-                                     nullptr,
-                                     0,
-                                     0);
-            if (krTx != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: StartTransmit failed GUID=%llx kr=0x%x",
-                               guid,
-                               krTx);
-            }
-            return krTx;
-        },
-        [&]() -> IOReturn {
-            const IOReturn completion = WaitForVoid([&](auto cb) {
-                record->protocol->ConfirmDuplex48kStart(std::move(cb));
-            });
-            if (completion != kIOReturnSuccess) {
-                ASFW_LOG_ERROR(Audio,
-                               "DiceAudioBackend: ConfirmDuplex48kStart failed GUID=%llx status=0x%x",
-                               guid,
-                               completion);
-            } else {
-                EnsureNubForGuid(guid);
-            }
-            return completion;
-        },
-        rollback);
+    }
+    return status;
 }
 
 IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
-    if (guid == 0) return kIOReturnBadArgument;
-    auto* irmClient = [&]() -> ::ASFW::IRM::IRMClient* {
-        if (auto* record = registry_.FindByGuid(guid); record && record->protocol) {
-            return record->protocol->GetIRMClient();
-        }
-        return nullptr;
-    }();
-    const kern_return_t stopKr = isoch_.StopDuplex(guid, irmClient);
-
-    if (auto* record = registry_.FindByGuid(guid); record && record->protocol) {
-        const IOReturn protocolStop = record->protocol->StopDuplex();
-        if (protocolStop != kIOReturnSuccess && protocolStop != kIOReturnUnsupported) {
-            ASFW_LOG_ERROR(Audio,
-                           "DiceAudioBackend: StopDuplex failed GUID=%llx status=0x%x",
-                           guid,
-                           protocolStop);
-            if (stopKr == kIOReturnSuccess) {
-                return protocolStop;
-            }
-        }
+    const IOReturn status = restartCoordinator_.StopStreaming(guid);
+    if (status == kIOReturnSuccess && lock_) {
+        IOLockLock(lock_);
+        activeStreamingGuids_.erase(guid);
+        recoveringGuids_.erase(guid);
+        IOLockUnlock(lock_);
     }
+    return status;
+}
 
-    return stopKr;
+IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
+                                              const DICE::DiceDesiredClockConfig& desiredClock,
+                                              DICE::DiceRestartReason reason) noexcept {
+    const IOReturn status = restartCoordinator_.RequestClockConfig(guid, desiredClock, reason);
+    if (status == kIOReturnSuccess) {
+        EnsureNubForGuid(guid);
+    }
+    return status;
 }
 
 } // namespace ASFW::Audio

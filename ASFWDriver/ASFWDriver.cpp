@@ -398,12 +398,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         ctx.stopping.store(true, std::memory_order_release);
 
 #ifndef ASFW_HOST_TEST
-        if (ctx.providerNotifications) {
-            ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
-            ctx.providerNotifications->Cancel(nullptr);
-        }
-        ctx.providerNotifications.reset();
-        ctx.providerNotificationAction.reset();
+        ctx.DisarmProviderNotifications();
 #endif
 
         // Hot-unplug safety: Detach early so any late Stop() work can't issue MMIO.
@@ -663,10 +658,7 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
         ctx.deps.hardware->Detach();
     }
 
-    ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
-    ctx.providerNotifications->Cancel(nullptr);
-    ctx.providerNotifications.reset();
-    ctx.providerNotificationAction.reset();
+    ctx.DisarmProviderNotifications();
 #endif
 }
 

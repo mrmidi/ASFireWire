@@ -16,6 +16,9 @@ constexpr uint64_t kHandlerOffset = 0x000100000000ULL;
 constexpr uint64_t kLegacyHandlerOffset = 0x00FF0000D1CCULL;
 
 inline std::atomic<uint32_t> gLatchedBits{0};
+using ObserverFn = void(*)(void* context, uint32_t bits);
+inline std::atomic<void*> gObserverContext{nullptr};
+inline std::atomic<ObserverFn> gObserver{nullptr};
 
 /// Reset any latched notification bits.
 inline void Reset() noexcept {
@@ -25,6 +28,23 @@ inline void Reset() noexcept {
 /// Latch notification bits observed from device writes.
 inline void Publish(uint32_t bits) noexcept {
     gLatchedBits.fetch_or(bits, std::memory_order_acq_rel);
+    if (const auto observer = gObserver.load(std::memory_order_acquire)) {
+        observer(gObserverContext.load(std::memory_order_acquire), bits);
+    }
+}
+
+inline void SetObserver(void* context, ObserverFn observer) noexcept {
+    gObserverContext.store(context, std::memory_order_release);
+    gObserver.store(observer, std::memory_order_release);
+}
+
+inline void ClearObserver(void* context) noexcept {
+    if (gObserverContext.load(std::memory_order_acquire) != context) {
+        return;
+    }
+
+    gObserver.store(nullptr, std::memory_order_release);
+    gObserverContext.store(nullptr, std::memory_order_release);
 }
 
 [[nodiscard]] inline bool MatchesDestOffset(uint64_t destOffset) noexcept {

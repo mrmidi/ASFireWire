@@ -51,12 +51,16 @@ void BusResetPacketCapture::CapturePacket(const uint32_t* dmaQuadlets,
     snapshot.captureTimestamp = GetCurrentTimestamp();
     snapshot.generation = generation;
 
+    // dmaQuadlets may point into packed DMA memory and not be 32-bit aligned on ARM.
+    std::array<uint32_t, 4> rawQuadlets{};
+    std::memcpy(rawQuadlets.data(), dmaQuadlets, sizeof(snapshot.rawQuadlets));
+
     // Copy raw quadlets (little-endian from DMA)
-    std::memcpy(snapshot.rawQuadlets, dmaQuadlets, sizeof(snapshot.rawQuadlets));
+    std::memcpy(snapshot.rawQuadlets, rawQuadlets.data(), sizeof(snapshot.rawQuadlets));
 
     // Convert to wire format (big-endian)
     for (int i = 0; i < 4; ++i) {
-        snapshot.wireQuadlets[i] = LEtoBE(dmaQuadlets[i]);
+        snapshot.wireQuadlets[i] = LEtoBE(rawQuadlets[static_cast<size_t>(i)]);
     }
 
     // Extract tCode from wire format Q0[31:28]

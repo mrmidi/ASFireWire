@@ -244,20 +244,13 @@ void BusResetCoordinator::LogMetrics() {
 }
 
 void BusResetCoordinator::SendGlobalResumeIfNeeded() {
-    if ((hardware_ == nullptr) || !cycle_.acceptedTopology.has_value() ||
-        !cycle_.acceptedTopology->localNodeId.has_value()) {
-        return;
-    }
-
-    const uint32_t generation = cycle_.acceptedTopology->generation;
-    if (lastResumeGeneration_ == generation) {
-        return;
-    }
-
-    const uint8_t localNode = *cycle_.acceptedTopology->localNodeId;
-    if (hardware_->SendPhyGlobalResume(localNode)) {
-        lastResumeGeneration_ = generation;
-    }
+    // Do not send PHY Global Resume automatically on ordinary post-reset completion.
+    // On real hardware this eager wake signal can provoke a second bus reset while
+    // discovery is still enumerating the freshly accepted topology. Keep the helper
+    // available for future explicit wake/recovery flows, but leave normal reset
+    // stabilization undisturbed.
+    ASFW_LOG_V2(BusReset,
+                "Skipping automatic PHY global resume after reset; no explicit wake trigger");
 }
 
 void BusResetCoordinator::HandleStraySelfID() {

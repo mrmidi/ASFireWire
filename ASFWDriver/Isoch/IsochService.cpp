@@ -25,6 +25,80 @@ struct SyncAllocationState {
 
 constexpr uint32_t kIRMWaitTimeoutMs = 5000;
 constexpr uint32_t kIRMWaitPollMs = 10;
+constexpr uint64_t kExternalSyncSeedStaleNanos =
+    ASFW::Isoch::Core::kExternalSyncStartupSeedGraceNanos;
+
+struct ExternalSyncSeedGateState {
+    bool ready{false};
+    bool active{false};
+    bool clockEstablished{false};
+    bool startupQualified{false};
+    uint32_t updateSeq{0};
+    uint16_t lastSyt{ASFW::Isoch::Core::ExternalSyncBridge::kNoInfoSyt};
+    uint8_t lastFdf{0};
+    uint8_t lastDbs{0};
+    uint64_t ageMs{0};
+    const char* reason{"unknown"};
+};
+
+[[nodiscard]] uint64_t ExternalSyncSeedStaleThresholdTicks() noexcept {
+    uint64_t staleThresholdTicks = ASFW::Timing::nanosToHostTicks(kExternalSyncSeedStaleNanos);
+    if (staleThresholdTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
+        staleThresholdTicks = ASFW::Timing::nanosToHostTicks(kExternalSyncSeedStaleNanos);
+    }
+    return staleThresholdTicks;
+}
+
+[[nodiscard]] ExternalSyncSeedGateState ReadExternalSyncSeedGateState(
+    const ASFW::Isoch::Core::ExternalSyncBridge& bridge) noexcept {
+    ExternalSyncSeedGateState state{};
+
+    const uint32_t packed = bridge.lastPackedRx.load(std::memory_order_acquire);
+    state.active = bridge.active.load(std::memory_order_acquire);
+    state.clockEstablished = bridge.clockEstablished.load(std::memory_order_acquire);
+    state.startupQualified = bridge.startupQualified.load(std::memory_order_acquire);
+    state.updateSeq = bridge.updateSeq.load(std::memory_order_acquire);
+    state.lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
+    state.lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
+    state.lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
+
+    if (!state.active) {
+        state.reason = "bridge-inactive";
+        return state;
+    }
+    if (!state.startupQualified) {
+        state.reason = "startup-not-qualified";
+        return state;
+    }
+
+    const uint64_t staleThresholdTicks = ExternalSyncSeedStaleThresholdTicks();
+    const uint64_t lastTicks = bridge.lastUpdateHostTicks.load(std::memory_order_acquire);
+    if (staleThresholdTicks == 0 || lastTicks == 0) {
+        state.reason = "missing-rx-timestamp";
+        return state;
+    }
+
+    const uint64_t nowTicks = mach_absolute_time();
+    if (nowTicks >= lastTicks) {
+        state.ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
+    }
+    if (nowTicks < lastTicks || (nowTicks - lastTicks) > staleThresholdTicks) {
+        state.reason = "stale-rx-syt";
+        return state;
+    }
+    if (state.lastSyt == ASFW::Isoch::Core::ExternalSyncBridge::kNoInfoSyt) {
+        state.reason = "rx-syt-noinfo";
+        return state;
+    }
+    if (state.lastFdf != ASFW::Isoch::Core::ExternalSyncBridge::kFdf48k) {
+        state.reason = "unsupported-fdf";
+        return state;
+    }
+
+    state.ready = true;
+    state.reason = "ok";
+    return state;
+}
 
 [[nodiscard]] kern_return_t AllocationStatusToIOReturn(const ASFW::IRM::AllocationStatus status) noexcept {
     using ASFW::IRM::AllocationStatus;
@@ -126,6 +200,7 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
     }
 
     isochReceiveContext_->SetExternalSyncBridge(&externalSyncBridge_);
+    RefreshReceiveTimingLossCallback();
 
     auto result = isochReceiveContext_->Configure(channel, 0);
     if (result != kIOReturnSuccess) {
@@ -155,6 +230,7 @@ kern_return_t IsochService::StopReceive() {
     }
 
     isochReceiveContext_->Stop();
+    isochReceiveContext_->SetTimingLossCallback({});
     isochReceiveContext_->SetSharedRxQueue(nullptr, 0);
     rxQueue_.Reset();
     ASFW_LOG(Controller, "[Isoch] Stopped IR Context 0");
@@ -226,6 +302,8 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         ASFW_LOG(Controller, "[Isoch] ✅ provisioned IT Context with Dedicated Memory");
     }
 
+    RefreshTransmitRecoveryCallback();
+
     uint32_t startTargetFill = ASFW::Isoch::Config::kTxBufferProfile.startWaitTargetFrames;
     isochTransmitContext_->SetSharedTxQueue(txQueueBase, txQueueBase ? txQueueBytes : 0);
     if (txQueueBase && txQueueBytes > 0) {
@@ -263,46 +341,6 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         txQueue_.Reset();
         return kIOReturnNotReady;
-    }
-
-    constexpr uint32_t kSytGateTimeoutMs = 500;
-    constexpr uint32_t kSytGatePollMs = 5;
-    bool sytClockEstablished = false;
-    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
-        if (externalSyncBridge_.clockEstablished.load(std::memory_order_acquire)) {
-            sytClockEstablished = true;
-            break;
-        }
-        IOSleep(kSytGatePollMs);
-    }
-    if (!sytClockEstablished) {
-        const uint32_t seq = externalSyncBridge_.updateSeq.load(std::memory_order_acquire);
-        const uint32_t packed = externalSyncBridge_.lastPackedRx.load(std::memory_order_acquire);
-        const uint16_t lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
-        const uint8_t lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
-        const uint8_t lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
-        const uint64_t lastTicks = externalSyncBridge_.lastUpdateHostTicks.load(std::memory_order_acquire);
-        uint64_t ageMs = 0;
-        if (lastTicks != 0) {
-            const uint64_t nowTicks = mach_absolute_time();
-            if (nowTicks >= lastTicks) {
-                ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
-            }
-        }
-        ASFW_LOG(Controller,
-                 "[Isoch] ❌ StartTransmit timeout: missing established IR SYT clock (waited %ums seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d)",
-                 kSytGateTimeoutMs,
-                 seq,
-                 lastSyt,
-                 lastFdf,
-                 lastDbs,
-                 ageMs,
-                 externalSyncBridge_.active.load(std::memory_order_acquire),
-                 externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
-        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
-        txQueue_.Reset();
-        return kIOReturnTimeout;
     }
 
     isochTransmitContext_->SetExternalSyncBridge(&externalSyncBridge_);
@@ -352,6 +390,39 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         IOSleep(5);
     }
 
+    // Validate the RX-seeded SYT bridge immediately before IT::Start(). The shared-TX
+    // fill wait above can consume most of the freshness budget, so gating earlier can
+    // admit a seed that is stale by the time Start() primes the ring.
+    constexpr uint32_t kSytGateTimeoutMs = 500;
+    constexpr uint32_t kSytGatePollMs = 5;
+    bool sytSeedReady = false;
+    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
+        if (ReadExternalSyncSeedGateState(externalSyncBridge_).ready) {
+            sytSeedReady = true;
+            break;
+        }
+        IOSleep(kSytGatePollMs);
+    }
+    if (!sytSeedReady) {
+        const auto gateState = ReadExternalSyncSeedGateState(externalSyncBridge_);
+        ASFW_LOG(Controller,
+                 "[Isoch] ❌ StartTransmit timeout: missing usable IR SYT seed (waited %ums reason=%{public}s seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d startupReady=%d)",
+                 kSytGateTimeoutMs,
+                 gateState.reason,
+                 gateState.updateSeq,
+                 gateState.lastSyt,
+                 gateState.lastFdf,
+                 gateState.lastDbs,
+                 gateState.ageMs,
+                 gateState.active,
+                 gateState.clockEstablished,
+                 gateState.startupQualified);
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
+        return kIOReturnTimeout;
+    }
+
     result = isochTransmitContext_->Start();
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] Failed to Start IT Context: 0x%x", result);
@@ -372,6 +443,7 @@ kern_return_t IsochService::StopTransmit() {
     }
 
     isochTransmitContext_->Stop();
+    isochTransmitContext_->SetRecoveryCallback({});
     isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
     isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
     txQueue_.Reset();
@@ -391,6 +463,98 @@ kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
 
     activeGuid_ = guid;
     return kIOReturnSuccess;
+}
+
+void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
+    timingLossCallback_ = std::move(callback);
+    RefreshReceiveTimingLossCallback();
+}
+
+void IsochService::SetTxRecoveryCallback(TxRecoveryCallback callback) noexcept {
+    txRecoveryCallback_ = std::move(callback);
+    RefreshTransmitRecoveryCallback();
+}
+
+void IsochService::RefreshReceiveTimingLossCallback() noexcept {
+    if (!isochReceiveContext_) {
+        return;
+    }
+
+    if (!timingLossCallback_) {
+        isochReceiveContext_->SetTimingLossCallback({});
+        return;
+    }
+
+    isochReceiveContext_->SetTimingLossCallback([this] {
+        OnReceiveTimingLossDetected();
+    });
+}
+
+void IsochService::RefreshTransmitRecoveryCallback() noexcept {
+    if (!isochTransmitContext_) {
+        return;
+    }
+
+    if (!txRecoveryCallback_) {
+        isochTransmitContext_->SetRecoveryCallback({});
+        return;
+    }
+
+    isochTransmitContext_->SetRecoveryCallback([this](uint32_t reasonBits) {
+        return OnTransmitRecoveryRequested(reasonBits);
+    });
+}
+
+void IsochService::OnReceiveTimingLossDetected() noexcept {
+    const uint64_t guid = activeGuid_;
+    const bool receiveRunning =
+        static_cast<bool>(isochReceiveContext_) &&
+        isochReceiveContext_->GetState() == ASFW::Isoch::IRPolicy::State::Running;
+    const bool transmitRunning =
+        static_cast<bool>(isochTransmitContext_) &&
+        isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running;
+
+    if (guid == 0 || !receiveRunning || !transmitRunning || !timingLossCallback_) {
+        ASFW_LOG_V3(Controller,
+                    "[Isoch] Ignoring timing-loss transition guid=0x%016llx rx=%d tx=%d cb=%d",
+                    guid,
+                    receiveRunning,
+                    transmitRunning,
+                    timingLossCallback_ ? 1 : 0);
+        return;
+    }
+
+    ASFW_LOG_WARNING(Controller,
+                     "[Isoch] External sync timing loss detected for active GUID=0x%016llx",
+                     guid);
+    timingLossCallback_(guid);
+}
+
+bool IsochService::OnTransmitRecoveryRequested(uint32_t reasonBits) noexcept {
+    const uint64_t guid = activeGuid_;
+    const bool receiveRunning =
+        static_cast<bool>(isochReceiveContext_) &&
+        isochReceiveContext_->GetState() == ASFW::Isoch::IRPolicy::State::Running;
+    const bool transmitRunning =
+        static_cast<bool>(isochTransmitContext_) &&
+        isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running;
+
+    if (reasonBits == 0 || guid == 0 || !receiveRunning || !transmitRunning || !txRecoveryCallback_) {
+        ASFW_LOG_V3(Controller,
+                    "[Isoch] Ignoring TX recovery request guid=0x%016llx rx=%d tx=%d cb=%d reasons=0x%08x",
+                    guid,
+                    receiveRunning,
+                    transmitRunning,
+                    txRecoveryCallback_ ? 1 : 0,
+                    reasonBits);
+        return false;
+    }
+
+    ASFW_LOG_WARNING(Controller,
+                     "[Isoch] TX recovery requested for active GUID=0x%016llx reasons=0x%08x",
+                     guid,
+                     reasonBits);
+    return txRecoveryCallback_(guid, reasonBits);
 }
 
 kern_return_t IsochService::BeginSplitDuplex(uint64_t guid) {
@@ -545,12 +709,14 @@ kern_return_t IsochService::StopDuplex(uint64_t guid, IRM::IRMClient* irmClient)
 void IsochService::StopAll() {
     if (isochReceiveContext_) {
         isochReceiveContext_->Stop();
+        isochReceiveContext_->SetTimingLossCallback({});
         isochReceiveContext_->SetSharedRxQueue(nullptr, 0);
         isochReceiveContext_.reset();
     }
     rxQueue_.Reset();
     if (isochTransmitContext_) {
         isochTransmitContext_->Stop();
+        isochTransmitContext_->SetRecoveryCallback({});
         isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
         isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         isochTransmitContext_.reset();

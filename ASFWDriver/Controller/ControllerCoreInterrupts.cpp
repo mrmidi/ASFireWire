@@ -117,6 +117,31 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
                  "This indicates DMA descriptors or system latency causing timing violation");
     }
 
+    if ((events & IntEventBits::kCycleInconsistent) != 0U) {
+        const bool busResetActive =
+            deps_.busReset && deps_.busReset->GetState() != BusResetCoordinator::State::Idle;
+        const bool resetWindowEvent =
+            (events & (IntEventBits::kBusReset |
+                       IntEventBits::kSelfIDComplete |
+                       IntEventBits::kSelfIDComplete2)) != 0U;
+
+        if (!busTimeRunning_ || busResetActive || resetWindowEvent) {
+            ASFW_LOG_V2(
+                Controller,
+                "Ignoring cycleInconsistent during controller bring-up/reset (busTimeRunning=%d busResetActive=%d resetWindowEvent=%d)",
+                busTimeRunning_ ? 1 : 0,
+                busResetActive ? 1 : 0,
+                resetWindowEvent ? 1 : 0);
+        } else {
+            ASFW_LOG_WARNING(
+                Controller,
+                "⚠️ WARNING: cycleInconsistent - cycle timer lost consistency; scheduling duplex recovery");
+            if (deps_.cycleInconsistentCallback) {
+                deps_.cycleInconsistentCallback();
+            }
+        }
+    }
+
     if ((events & IntEventBits::kPostedWriteErr) != 0U) {
         ASFW_LOG(Controller,
                  "❌ CRITICAL: Posted write error - DMA posted write to host memory failed!");
