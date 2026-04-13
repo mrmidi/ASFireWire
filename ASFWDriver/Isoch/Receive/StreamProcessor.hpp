@@ -31,6 +31,7 @@ public:
         uint16_t syt{Core::ExternalSyncBridge::kNoInfoSyt};
         uint8_t fdf{0};
         uint8_t dbs{0};
+        uint32_t decodedFrames{0};
     };
 
     /// Process a single packet payload.
@@ -64,6 +65,9 @@ public:
             return summary;
         }
 
+        summary.decodedFrames = (layout->eventCount > UINT32_MAX)
+                                  ? UINT32_MAX
+                                  : static_cast<uint32_t>(layout->eventCount);
         LogInterestingDbs(*header, *layout, length);
         ProcessDecodedPayload(*header, *layout);
 
@@ -102,6 +106,7 @@ public:
     uint64_t EmptyPacketCount() const { return emptyPacketCount_.load(std::memory_order_relaxed); }
     uint64_t ErrorCount() const { return errorCount_.load(std::memory_order_relaxed); }
     uint64_t DiscontinuityCount() const { return discontinuityCount_.load(std::memory_order_relaxed); }
+    uint64_t DecodedFrameCount() const { return decodedFrameCount_.load(std::memory_order_relaxed); }
     
     uint8_t LastDBC() const { return lastDBC_.load(std::memory_order_relaxed); }
     uint16_t LastSYT() const { return lastSYT_.load(std::memory_order_relaxed); }
@@ -140,6 +145,7 @@ public:
         emptyPacketCount_ = 0;
         errorCount_ = 0;
         discontinuityCount_ = 0;
+        decodedFrameCount_ = 0;
         lastDBC_ = 0;
         lastSYT_ = 0xFFFF;
         lastDataBlockCount_ = 0; // Or assumes 0
@@ -297,6 +303,7 @@ private:
         }
 
         samplePacketCount_++;
+        decodedFrameCount_.fetch_add(layout.eventCount, std::memory_order_relaxed);
         if (layout.eventCount < minEvents_) {
             minEvents_ = layout.eventCount;
         }
@@ -345,6 +352,7 @@ private:
     std::atomic<uint64_t> emptyPacketCount_{0};
     std::atomic<uint64_t> errorCount_{0};
     std::atomic<uint64_t> discontinuityCount_{0};
+    std::atomic<uint64_t> decodedFrameCount_{0};
     
     // Non-atomic tracking for single-thread context (ProcessPacket is serialized per channel usually)
     // But safely atomic just case

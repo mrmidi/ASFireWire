@@ -28,6 +28,8 @@ void ResetClockSync(ClockSyncState& clockSync) {
     clockSync.wasSaturated = false;
     clockSync.driftDirection = 0;
     clockSync.monotoneDriftTicks = 0;
+    clockSync.transportEpochValid = false;
+    clockSync.transportSampleFrameOrigin = 0;
 }
 
 uint64_t RoundWithFraction(double& fractionalTicks, double currentTicksPerBuffer) {
@@ -46,6 +48,16 @@ uint64_t ApplyCycleTimeClock(AudioClockEngineState& state, uint32_t q8) {
     state.clockSync->currentTicksPerBuffer = hostTicksPerSample * state.ioBufferPeriodFrames;
     return RoundWithFraction(state.clockSync->fractionalTicks,
                              state.clockSync->currentTicksPerBuffer);
+}
+
+double HostTicksPerSampleFromQ8(uint32_t q8) {
+    if (q8 == 0) {
+        return 0.0;
+    }
+    const double nanosPerSample = q8 / 256.0;
+    struct mach_timebase_info tb;
+    mach_timebase_info(&tb);
+    return nanosPerSample * static_cast<double>(tb.denom) / static_cast<double>(tb.numer);
 }
 
 uint64_t ApplyZeroCopyPllClock(AudioClockEngineState& state) {
@@ -407,24 +419,90 @@ void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time) {
         rxPllReady = true;
     }
 
-    uint64_t currentSampleTime = 0;
-    uint64_t currentHostTime = 0;
-    state.audioDevice->GetCurrentZeroTimestamp(&currentSampleTime, &currentHostTime);
-
     const uint32_t q8 = state.rxQueueValid ? state.rxQueueReader->CorrHostNanosPerSampleQ8() : 0;
     const uint64_t hostTicksPerBuffer = detail::ComputeHostTicksPerBuffer(state, q8, rxPllReady);
+    uint64_t publishedSampleTime = 0;
+    uint64_t publishedHostTime = time;
+    const auto transportTiming = state.rxQueueValid
+                               ? state.rxQueueReader->ReadTransportTiming()
+                               : ASFW::Shared::TxSharedQueueSPSC::TransportTimingSnapshot{};
+    const uint32_t transportQ8 =
+        (transportTiming.hostNanosPerSampleQ8 != 0) ? transportTiming.hostNanosPerSampleQ8 : q8;
 
-    if (currentHostTime != 0) {
-        currentSampleTime += state.ioBufferPeriodFrames;
-        currentHostTime += hostTicksPerBuffer;
+    if (transportTiming.valid && transportTiming.anchorHostTicks != 0) {
+        uint64_t currentPublishedSampleTime = 0;
+        uint64_t currentPublishedHostTime = 0;
+        state.audioDevice->GetCurrentZeroTimestamp(&currentPublishedSampleTime, &currentPublishedHostTime);
+
+        if (!state.clockSync->transportEpochValid) {
+            if (transportTiming.anchorSampleFrame >= currentPublishedSampleTime) {
+                state.clockSync->transportSampleFrameOrigin =
+                    transportTiming.anchorSampleFrame - currentPublishedSampleTime;
+            } else {
+                state.clockSync->transportSampleFrameOrigin = 0;
+            }
+            state.clockSync->transportEpochValid = true;
+        }
+
+        uint64_t relativeAnchorSample = 0;
+        if (transportTiming.anchorSampleFrame >= state.clockSync->transportSampleFrameOrigin) {
+            relativeAnchorSample =
+                transportTiming.anchorSampleFrame - state.clockSync->transportSampleFrameOrigin;
+        }
+
+        publishedSampleTime = relativeAnchorSample;
+        publishedHostTime = transportTiming.anchorHostTicks;
+
+        const double hostTicksPerSample = detail::HostTicksPerSampleFromQ8(transportQ8);
+        uint64_t extrapolatedTicks = 0;
+        if (time > transportTiming.anchorHostTicks && hostTicksPerSample > 0.0) {
+            const uint64_t ageTicks = time - transportTiming.anchorHostTicks;
+            const uint64_t maxExtrapolationTicks = hostTicksPerBuffer * 2;
+            extrapolatedTicks = (ageTicks > maxExtrapolationTicks) ? maxExtrapolationTicks : ageTicks;
+            const auto extrapolatedSamples =
+                static_cast<uint64_t>(static_cast<double>(extrapolatedTicks) / hostTicksPerSample);
+            publishedSampleTime += extrapolatedSamples;
+            publishedHostTime += extrapolatedTicks;
+        }
+
+        ASFW_LOG_RL(Audio,
+                    "zts/src",
+                    1000,
+                    OS_LOG_TYPE_DEFAULT,
+                    "ZTS transport seq=%u sample=%llu host=%llu q8=%u extrapTicks=%llu",
+                    transportTiming.seq,
+                    publishedSampleTime,
+                    publishedHostTime,
+                    transportQ8,
+                    extrapolatedTicks);
     } else {
-        currentSampleTime = 0;
-        currentHostTime = time;
+        uint64_t currentSampleTime = 0;
+        uint64_t currentHostTime = 0;
+        state.audioDevice->GetCurrentZeroTimestamp(&currentSampleTime, &currentHostTime);
+
+        if (currentHostTime != 0) {
+            currentSampleTime += state.ioBufferPeriodFrames;
+            currentHostTime += hostTicksPerBuffer;
+        } else {
+            currentSampleTime = 0;
+            currentHostTime = time;
+        }
+
+        publishedSampleTime = currentSampleTime;
+        publishedHostTime = currentHostTime;
+        ASFW_LOG_RL(Audio,
+                    "zts/fallback",
+                    1000,
+                    OS_LOG_TYPE_DEFAULT,
+                    "ZTS fallback synthetic sample=%llu host=%llu q8=%u",
+                    publishedSampleTime,
+                    publishedHostTime,
+                    q8);
     }
 
-    state.audioDevice->UpdateCurrentZeroTimestamp(currentSampleTime, currentHostTime);
+    state.audioDevice->UpdateCurrentZeroTimestamp(publishedSampleTime, publishedHostTime);
     state.timestampTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
-                                     currentHostTime + hostTicksPerBuffer,
+                                     time + hostTicksPerBuffer,
                                      0);
 
     detail::LogPeriodicMetrics(state, time, localEncodingActive, rxFill, rxPllReady, q8);

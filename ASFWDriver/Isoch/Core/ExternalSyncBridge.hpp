@@ -12,6 +12,14 @@ struct ExternalSyncBridge {
     static constexpr uint8_t kFdf48k = 0x02;
     static constexpr uint16_t kNoInfoSyt = 0xFFFF;
 
+    struct TransportTimingSnapshot {
+        bool valid{false};
+        uint64_t anchorSampleFrame{0};
+        uint64_t anchorHostTicks{0};
+        uint32_t hostNanosPerSampleQ8{0};
+        uint32_t seq{0};
+    };
+
     // Shared state between IR producer and IT consumer.
     std::atomic<bool> active{false};
     std::atomic<bool> clockEstablished{false};
@@ -19,6 +27,11 @@ struct ExternalSyncBridge {
     std::atomic<uint32_t> updateSeq{0};
     std::atomic<uint32_t> lastPackedRx{0};      // [SYT:16][FDF:8][DBS:8]
     std::atomic<uint64_t> lastUpdateHostTicks{0};
+    std::atomic<bool> transportTimingValid{false};
+    std::atomic<uint32_t> transportTimingSeq{0};
+    std::atomic<uint64_t> transportAnchorSampleFrame{0};
+    std::atomic<uint64_t> transportAnchorHostTicks{0};
+    std::atomic<uint32_t> transportHostNanosPerSampleQ8{0};
 
     static constexpr uint32_t PackRxSample(uint16_t syt, uint8_t fdf, uint8_t dbs) noexcept {
         return (static_cast<uint32_t>(syt) << 16) |
@@ -38,6 +51,39 @@ struct ExternalSyncBridge {
         return static_cast<uint8_t>(packed & 0xFFu);
     }
 
+    void PublishTransportTiming(uint64_t sampleFrame,
+                                uint64_t hostTicks,
+                                uint32_t hostNanosPerSampleQ8) noexcept {
+        transportTimingSeq.fetch_add(1, std::memory_order_acq_rel); // odd = writer active
+        transportAnchorSampleFrame.store(sampleFrame, std::memory_order_release);
+        transportAnchorHostTicks.store(hostTicks, std::memory_order_release);
+        transportHostNanosPerSampleQ8.store(hostNanosPerSampleQ8, std::memory_order_release);
+        transportTimingValid.store(true, std::memory_order_release);
+        transportTimingSeq.fetch_add(1, std::memory_order_acq_rel); // even = stable snapshot
+    }
+
+    [[nodiscard]] TransportTimingSnapshot ReadTransportTiming() const noexcept {
+        for (;;) {
+            const uint32_t seqBefore = transportTimingSeq.load(std::memory_order_acquire);
+            if ((seqBefore & 1U) != 0) {
+                continue;
+            }
+
+            TransportTimingSnapshot snapshot{
+                .valid = transportTimingValid.load(std::memory_order_acquire),
+                .anchorSampleFrame = transportAnchorSampleFrame.load(std::memory_order_acquire),
+                .anchorHostTicks = transportAnchorHostTicks.load(std::memory_order_acquire),
+                .hostNanosPerSampleQ8 = transportHostNanosPerSampleQ8.load(std::memory_order_acquire),
+                .seq = seqBefore,
+            };
+
+            const uint32_t seqAfter = transportTimingSeq.load(std::memory_order_acquire);
+            if (seqBefore == seqAfter) {
+                return snapshot;
+            }
+        }
+    }
+
     void Reset() noexcept {
         active.store(false, std::memory_order_release);
         clockEstablished.store(false, std::memory_order_release);
@@ -45,6 +91,11 @@ struct ExternalSyncBridge {
         updateSeq.store(0, std::memory_order_release);
         lastPackedRx.store(0, std::memory_order_release);
         lastUpdateHostTicks.store(0, std::memory_order_release);
+        transportTimingValid.store(false, std::memory_order_release);
+        transportTimingSeq.store(0, std::memory_order_release);
+        transportAnchorSampleFrame.store(0, std::memory_order_release);
+        transportAnchorHostTicks.store(0, std::memory_order_release);
+        transportHostNanosPerSampleQ8.store(0, std::memory_order_release);
     }
 };
 

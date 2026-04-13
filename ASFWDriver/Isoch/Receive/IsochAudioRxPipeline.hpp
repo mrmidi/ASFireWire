@@ -43,6 +43,8 @@ public:
 private:
     static constexpr uint64_t kExternalSyncStaleNanos = 100'000'000ULL; // 100ms
 
+    void PublishTransportTimingAnchor(uint64_t hostTicks, bool fromCycleCorrelation) noexcept;
+
     StreamProcessor streamProcessor_{};
     Shared::TxSharedQueueSPSC rxSharedQueue_{};
 
@@ -57,6 +59,10 @@ private:
         uint32_t pollsSinceLastUpdate{0};
         double   sampleRate{48000.0};
     } cycleCorr_{};
+
+    uint64_t transportSampleFrame_{0};
+    uint32_t transportHostNanosPerSampleQ8_{0};
+    uint32_t transportTimingPublishCount_{0};
 };
 
 } // namespace ASFW::Isoch::Rx

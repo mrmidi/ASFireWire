@@ -23,7 +23,7 @@ namespace ASFW::Shared {
 
 // Magic number: 'ASFW'
 static constexpr uint32_t kTxQueueMagic = 0x41534657u;
-static constexpr uint16_t kTxQueueVersion = 1;
+static constexpr uint16_t kTxQueueVersion = 2;
 
 static constexpr uint64_t AlignUp(uint64_t v, uint64_t a) {
     return (v + (a - 1)) & ~(a - 1);
@@ -39,6 +39,12 @@ struct alignas(64) CachelineAtomicU32 {
     uint8_t pad[64 - sizeof(std::atomic<uint32_t>)];
 };
 static_assert(sizeof(CachelineAtomicU32) == 64, "CachelineAtomicU32 must be 64 bytes");
+
+struct alignas(64) CachelineAtomicU64 {
+    std::atomic<uint64_t> v;
+    uint8_t pad[64 - sizeof(std::atomic<uint64_t>)];
+};
+static_assert(sizeof(CachelineAtomicU64) == 64, "CachelineAtomicU64 must be 64 bytes");
 
 // Shared memory header layout
 // This structure is at the beginning of the shared IOBufferMemoryDescriptor
@@ -67,6 +73,15 @@ struct TxQueueHeader {
     // Written by IR Poll (controller process), read by audio driver process.
     // 0 = not yet computed. Example: 48kHz → 20833.33ns * 256 = 5,333,333
     CachelineAtomicU32 corrHostNanosPerSampleQ8;
+
+    // Transport-owned timing anchor for ZTS publication.
+    // transportTimingSeq:
+    //   seqlock-style counter; odd = writer active, even = stable snapshot.
+    // transportAnchorSampleFrame / transportAnchorHostTicks:
+    //   latest transport-derived timing anchor visible across processes.
+    CachelineAtomicU32 transportTimingSeq;
+    CachelineAtomicU64 transportAnchorSampleFrame;
+    CachelineAtomicU64 transportAnchorHostTicks;
 };
 static_assert((sizeof(TxQueueHeader) % 8) == 0, "Header alignment sanity");
 
@@ -75,6 +90,14 @@ static_assert((sizeof(TxQueueHeader) % 8) == 0, "Header alignment sanity");
 class TxSharedQueueSPSC {
 public:
     TxSharedQueueSPSC() = default;
+
+    struct TransportTimingSnapshot {
+        bool valid{false};
+        uint64_t anchorSampleFrame{0};
+        uint64_t anchorHostTicks{0};
+        uint32_t hostNanosPerSampleQ8{0};
+        uint32_t seq{0};
+    };
 
     // Calculate required memory size for given capacity
     static uint64_t RequiredBytes(uint32_t capacityFrames, uint32_t numChannels = 2) {
@@ -112,6 +135,9 @@ public:
         hdr->writeIndexFrames.v.store(0, std::memory_order_relaxed);
         hdr->readIndexFrames.v.store(0, std::memory_order_relaxed);
         hdr->corrHostNanosPerSampleQ8.v.store(0, std::memory_order_relaxed);
+        hdr->transportTimingSeq.v.store(0, std::memory_order_relaxed);
+        hdr->transportAnchorSampleFrame.v.store(0, std::memory_order_relaxed);
+        hdr->transportAnchorHostTicks.v.store(0, std::memory_order_relaxed);
 
         // Publish header initialization
         std::atomic_thread_fence(std::memory_order_release);
@@ -339,6 +365,52 @@ public:
     }
     uint32_t CorrHostNanosPerSampleQ8() const {
         return hdr_ ? hdr_->corrHostNanosPerSampleQ8.v.load(std::memory_order_acquire) : 0;
+    }
+
+    void ResetTransportTiming() {
+        if (!hdr_) return;
+        hdr_->transportTimingSeq.v.store(0, std::memory_order_release);
+        hdr_->transportAnchorSampleFrame.v.store(0, std::memory_order_release);
+        hdr_->transportAnchorHostTicks.v.store(0, std::memory_order_release);
+        hdr_->corrHostNanosPerSampleQ8.v.store(0, std::memory_order_release);
+    }
+
+    void SetTransportTiming(uint64_t sampleFrame, uint64_t hostTicks, uint32_t q8) {
+        if (!hdr_) return;
+        hdr_->transportTimingSeq.v.fetch_add(1, std::memory_order_acq_rel); // odd = writer active
+        hdr_->transportAnchorSampleFrame.v.store(sampleFrame, std::memory_order_release);
+        hdr_->transportAnchorHostTicks.v.store(hostTicks, std::memory_order_release);
+        hdr_->corrHostNanosPerSampleQ8.v.store(q8, std::memory_order_release);
+        hdr_->transportTimingSeq.v.fetch_add(1, std::memory_order_acq_rel); // even = stable snapshot
+    }
+
+    [[nodiscard]] TransportTimingSnapshot ReadTransportTiming() const {
+        if (!hdr_) {
+            return {};
+        }
+
+        for (;;) {
+            const uint32_t seqBefore = hdr_->transportTimingSeq.v.load(std::memory_order_acquire);
+            if ((seqBefore & 1U) != 0U) {
+                continue;
+            }
+
+            TransportTimingSnapshot snapshot{
+                .valid = seqBefore != 0U,
+                .anchorSampleFrame =
+                    hdr_->transportAnchorSampleFrame.v.load(std::memory_order_acquire),
+                .anchorHostTicks =
+                    hdr_->transportAnchorHostTicks.v.load(std::memory_order_acquire),
+                .hostNanosPerSampleQ8 =
+                    hdr_->corrHostNanosPerSampleQ8.v.load(std::memory_order_acquire),
+                .seq = seqBefore,
+            };
+
+            const uint32_t seqAfter = hdr_->transportTimingSeq.v.load(std::memory_order_acquire);
+            if (seqBefore == seqAfter) {
+                return snapshot;
+            }
+        }
     }
 
 private:

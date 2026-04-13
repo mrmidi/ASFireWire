@@ -51,6 +51,8 @@ struct ClockSyncState {
     bool wasSaturated{false};
     int32_t driftDirection{0};
     uint32_t monotoneDriftTicks{0};
+    bool transportEpochValid{false};
+    uint64_t transportSampleFrameOrigin{0};
 };
 
 struct AudioClockEngineState {

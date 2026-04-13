@@ -6,14 +6,46 @@
 
 namespace ASFW::Isoch::Rx {
 
+void IsochAudioRxPipeline::PublishTransportTimingAnchor(uint64_t hostTicks,
+                                                        bool fromCycleCorrelation) noexcept {
+    if (!externalSyncBridge_) {
+        return;
+    }
+
+    externalSyncBridge_->PublishTransportTiming(transportSampleFrame_,
+                                                hostTicks,
+                                                transportHostNanosPerSampleQ8_);
+    if (rxSharedQueue_.IsValid()) {
+        rxSharedQueue_.SetTransportTiming(transportSampleFrame_,
+                                          hostTicks,
+                                          transportHostNanosPerSampleQ8_);
+    }
+    if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3 &&
+        (++transportTimingPublishCount_ % 1000U) == 0U) {
+        ASFW_LOG(Isoch,
+                 "IR transport timing anchor sample=%llu host=%llu q8=%u source=%{public}s seq=%u",
+                 transportSampleFrame_,
+                 hostTicks,
+                 transportHostNanosPerSampleQ8_,
+                 fromCycleCorrelation ? "cycle" : "packet",
+                 externalSyncBridge_->ReadTransportTiming().seq);
+    }
+}
+
 void IsochAudioRxPipeline::ConfigureFor48k() noexcept {
     cycleCorr_ = {};
     cycleCorr_.sampleRate = 48000.0;
+    transportHostNanosPerSampleQ8_ = 0;
+    transportTimingPublishCount_ = 0;
     (void)ASFW::Timing::initializeHostTimebase();
 }
 
 void IsochAudioRxPipeline::OnStart() noexcept {
     streamProcessor_.Reset();
+    transportSampleFrame_ = 0;
+    transportHostNanosPerSampleQ8_ = 0;
+    transportTimingPublishCount_ = 0;
+    rxSharedQueue_.ResetTransportTiming();
 
     if (externalSyncBridge_) {
         externalSyncBridge_->Reset();
@@ -30,6 +62,7 @@ void IsochAudioRxPipeline::OnStop() noexcept {
     if (externalSyncBridge_) {
         externalSyncBridge_->Reset();
     }
+    rxSharedQueue_.ResetTransportTiming();
     externalSyncClockState_.Reset();
 }
 
@@ -42,6 +75,7 @@ void IsochAudioRxPipeline::OnPacket(const uint8_t* payload, size_t length) noexc
     }
 
     const auto summary = streamProcessor_.ProcessPacket(payload, length);
+    transportSampleFrame_ += summary.decodedFrames;
 
     if (!externalSyncBridge_) {
         return;
@@ -60,6 +94,7 @@ void IsochAudioRxPipeline::OnPacket(const uint8_t* payload, size_t length) noexc
                                                                           summary.fdf,
                                                                           summary.dbs,
                                                                           &updateSeq);
+    PublishTransportTimingAnchor(nowTicks, false);
     if (establishTransition) {
         ASFW_LOG(Isoch, "IR SYT CLOCK ESTABLISHED syt=0x%04x fdf=0x%02x dbs=%u seq=%u",
                  summary.syt, summary.fdf, summary.dbs, updateSeq);
@@ -93,7 +128,9 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
                 const double ratio = static_cast<double>(dHost) / static_cast<double>(dFW);
                 const double nanosPerSample = ratio * (1e9 / cycleCorr_.sampleRate);
                 const uint32_t q8 = static_cast<uint32_t>(nanosPerSample * 256.0 + 0.5);
+                transportHostNanosPerSampleQ8_ = q8;
                 rxSharedQueue_.SetCorrHostNanosPerSampleQ8(q8);
+                PublishTransportTimingAnchor(up, true);
                 ASFW_LOG_V3(Isoch, "CycleCorr: ratio=%.6f nanosPerSample=%.1f q8=%u",
                             ratio, nanosPerSample, q8);
             }
