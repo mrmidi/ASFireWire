@@ -17,6 +17,8 @@ namespace Encoding {
 
 /// AM824 label byte for MBLA (Multi-bit Linear Audio)
 constexpr uint8_t kAM824LabelMBLA = 0x40;
+/// AM824 label base for MIDI conformant data (IEC 61883-6)
+constexpr uint8_t kAM824LabelMIDIConformantBase = 0x80;
 
 /// Encodes 24-bit PCM audio samples to AM824 format.
 /// AM824 quadlet layout (big-endian on wire):
@@ -63,6 +65,12 @@ struct AM824Encoder {
     /// Returns 0x40000000 in wire order.
     static constexpr uint32_t encodeSilence() noexcept {
         return byteSwap32(static_cast<uint32_t>(kAM824LabelMBLA) << 24);
+    }
+
+    /// Encode an AM824 quadlet with only a label byte and zero payload.
+    /// Useful for placeholder/non-audio slots (e.g. empty MIDI conformant data).
+    static constexpr uint32_t encodeLabelOnly(uint8_t label) noexcept {
+        return byteSwap32(static_cast<uint32_t>(label) << 24);
     }
     
 private:

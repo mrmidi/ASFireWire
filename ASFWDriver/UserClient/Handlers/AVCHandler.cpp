@@ -152,12 +152,13 @@ kern_return_t AVCHandler::GetAVCUnits(IOUserClientMethodArguments* args) {
         if (device) {
             unitWire.guid = device->GetGUID();
             unitWire.nodeID = device->GetNodeID();
-            // TODO: Get Vendor/Model ID from ConfigROM or device
-            unitWire.vendorID = 0; 
-            unitWire.modelID = 0;
+            unitWire.vendorID = device->GetVendorID();
+            unitWire.modelID = device->GetModelID();
         } else {
             unitWire.guid = 0;
             unitWire.nodeID = 0xFFFF;
+            unitWire.vendorID = 0;
+            unitWire.modelID = 0;
         }
 
         const auto& subunits = avcUnit->GetSubunits();

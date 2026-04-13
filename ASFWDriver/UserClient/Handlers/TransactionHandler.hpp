@@ -36,6 +36,14 @@ public:
     kern_return_t AsyncWrite(IOUserClientMethodArguments* args,
                             ASFWDriverUserClient* userClient);
 
+    // Method 44: Initiate async block read transaction (forced block tCode)
+    kern_return_t AsyncBlockRead(IOUserClientMethodArguments* args,
+                                 ASFWDriverUserClient* userClient);
+
+    // Method 45: Initiate async block write transaction (forced block tCode)
+    kern_return_t AsyncBlockWrite(IOUserClientMethodArguments* args,
+                                  ASFWDriverUserClient* userClient);
+
     // Method 12: Retrieve completed transaction result
     kern_return_t GetTransactionResult(IOUserClientMethodArguments* args);
 
@@ -55,6 +63,7 @@ private:
     static void AsyncCompletionCallback(
         ASFW::Async::AsyncHandle handle,
         ASFW::Async::AsyncStatus status,
+        uint8_t responseCode,
         void* context,
         const void* responsePayload,
         uint32_t responseLength);

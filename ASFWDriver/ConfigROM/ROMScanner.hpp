@@ -1,9 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
-#include <functional>
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -14,8 +14,7 @@
 
 #include "../Controller/ControllerTypes.hpp"
 #include "../Discovery/DiscoveryTypes.hpp"
-#include "ROMReader.hpp"
-#include "SpeedPolicy.hpp"
+#include "../Discovery/SpeedPolicy.hpp"
 
 namespace ASFW::Async {
 class IFireWireBus;
@@ -27,103 +26,83 @@ class TopologyManager;
 
 namespace ASFW::Discovery {
 
-// Completion callback: called when scan becomes idle (all nodes processed)
-using ScanCompletionCallback = std::function<void(Generation)>;
+class ROMReader;
+class ROMScanSession;
 
-// FSM-driven ROM scanner with bounded concurrency and retry logic.
-// Orchestrates per-node BIB and root directory reads with speed fallback.
-// Also performs IRM capability verification (Phase 3).
+/**
+ * @brief Represents a request to scan configuration ROMs across nodes in the current topology
+ * generation.
+ */
+struct ROMScanRequest {
+    Generation gen{0};
+    Driver::TopologySnapshot topology;
+    uint8_t localNodeId{0xFF};
+
+    // If empty: scan all remote nodes (excluding local node, and skipping link-inactive nodes).
+    // If non-empty: scan only these node IDs (local node is always skipped).
+    std::vector<uint8_t> targetNodes;
+};
+
+using ScanCompletionCallback =
+    std::function<void(Generation gen, std::vector<ConfigROM> roms, bool hadBusyNodes)>;
+
+/**
+ * @class ROMScanner
+ * @brief Session-driven ROM scanner with bounded concurrency and retry logic.
+ *
+ * Coordinates the reading of IEEE 1212 Configuration ROMs across multiple
+ * remote nodes. Optionally validates IRM behavior by performing a Read + CompareSwap
+ * on `CHANNELS_AVAILABLE_63_32` at S100, to avoid treating a broken IRM as usable.
+ *
+ * Uses FSM states to track progress: Idle -> ReadingBIB -> VerifyingIRM ->
+ * ReadingRootDir -> Complete/Failed. Ensures single completion callback per Start().
+ */
 class ROMScanner {
-public:
-    explicit ROMScanner(Async::IFireWireBus& bus,
-                        SpeedPolicy& speedPolicy,
-                        ScanCompletionCallback onScanComplete = nullptr,
+  public:
+    /**
+     * @brief Constructs a new ROMScanner.
+     * @param bus Reference to the IFireWireBus interface for async reads.
+     * @param speedPolicy Defines initial speeds and fallback strategies for reading.
+     * @param params Limits for concurrency and retries.
+     * @param dispatchQueue Optional dispatch queue.
+     */
+    explicit ROMScanner(Async::IFireWireBus& bus, SpeedPolicy& speedPolicy,
+                        const ROMScannerParams& params,
                         OSSharedPtr<IODispatchQueue> dispatchQueue = nullptr);
     ~ROMScanner();
 
-    // Begin scanning nodes from topology for given generation
-    // Only scans remote nodes (excludes localNodeId)
-    void Begin(Generation gen,
-               const Driver::TopologySnapshot& topology,
-               uint8_t localNodeId);
+    /**
+     * @brief Starts a scan for a given generation request.
+     *
+     * The completion callback is fired exactly once for each successful Start().
+     * @param request Target generation and nodes.
+     * @param completion Completion callback.
+     * @return true if the scan started successfully.
+     */
+    [[nodiscard]] bool Start(const ROMScanRequest& request, ScanCompletionCallback completion);
 
-    // Check if scan is idle for given generation (all nodes processed)
-    bool IsIdleFor(Generation gen) const;
-
-    // Pull completed ROMs for given generation (moves ownership to caller)
-    std::vector<ConfigROM> DrainReady(Generation gen);
-
-    // Cancel scan for given generation (abort in-flight operations)
+    /**
+     * @brief Cancels the scan for the given generation.
+     * @param gen The generation to abort (must match the current active session).
+     */
     void Abort(Generation gen);
 
-    // Manually trigger ROM read for a specific node (for GUI debugging)
-    // Returns true if read was initiated, false if already in progress or invalid
-    // topology: Current topology snapshot (needed for busBase16 if scanner is idle)
-    bool TriggerManualRead(uint8_t nodeId, Generation gen, const Driver::TopologySnapshot& topology);
-
-    void SetCompletionCallback(ScanCompletionCallback callback);
-
+    /**
+     * @brief Sets the TopologyManager, used to update IRM node characteristics.
+     */
     void SetTopologyManager(Driver::TopologyManager* topologyManager);
 
-private:
-    enum class NodeState : uint8_t {
-        Idle,
-        ReadingBIB,
-        VerifyingIRM_Read,
-        VerifyingIRM_Lock,
-        ReadingRootDir,
-        Complete,
-        Failed
-    };
-
-    struct NodeScanState {
-        uint8_t nodeId{0xFF};
-        NodeState state{NodeState::Idle};
-        FwSpeed currentSpeed{FwSpeed::S100};
-        uint8_t retriesLeft{0};
-        ConfigROM partialROM{};
-
-        bool needsIRMCheck{false};
-        bool irmCheckReadDone{false};
-        bool irmCheckLockDone{false};
-        bool irmIsBad{false};
-        uint32_t irmBitBucket{0xFFFFFFFF};
-
-        bool bibInProgress{false};
-    };
-
-    void AdvanceFSM();
-
-    void OnBIBComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
-
-    void OnIRMReadComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
-
-    void OnIRMLockComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
-
-    void HandleIRMLockResult(NodeScanState& node, const ROMReader::ReadResult& result);
-
-    void OnRootDirComplete(uint8_t nodeId, const ROMReader::ReadResult& result);
-
-    void RetryWithFallback(NodeScanState& node);
-
-    bool HasCapacity() const;
-
-    void CheckAndNotifyCompletion();
+  private:
+    [[nodiscard]] bool IsBusyFor(Generation gen) const;
 
     Async::IFireWireBus& bus_;
     SpeedPolicy& speedPolicy_;
     ROMScannerParams params_;
-    std::unique_ptr<ROMReader> reader_;
-
-    Generation currentGen_{0};
-    Driver::TopologySnapshot currentTopology_;
-    std::vector<NodeScanState> nodeScans_;
-    std::vector<ConfigROM> completedROMs_;
-    uint16_t inflightCount_{0};
-
-    ScanCompletionCallback onScanComplete_;
-
+    OSSharedPtr<IODispatchQueue> dispatchQueue_;
     Driver::TopologyManager* topologyManager_{nullptr};
+
+    std::shared_ptr<ROMReader> reader_;
+    std::shared_ptr<ROMScanSession> session_;
 };
 
 } // namespace ASFW::Discovery

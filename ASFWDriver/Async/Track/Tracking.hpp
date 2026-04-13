@@ -81,7 +81,7 @@ public:
             ASFW_LOG(Async, "ERROR: Track_Tracking: IOLockAlloc failed!");
         }
 
-        if (!txnMgr_) {
+        if (!txnMgr_) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             ASFW_LOG(Async, "ERROR: Track_Tracking: TransactionManager required!");
         } else {
             ASFW_LOG(Async, "✅ Track_Tracking: Transaction-only mode (Phase 2.0)");
@@ -159,19 +159,25 @@ public:
 
         // Set response handler (wraps meta.callback)
         txn->SetResponseHandler([callback = meta.callback, label]
-                                (kern_return_t kr, std::span<const uint8_t> data) {
+                                (kern_return_t kr, uint8_t responseCode, std::span<const uint8_t> data) // NOLINT(bugprone-easily-swappable-parameters)
+                                {
             ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] ENTRY: tLabel=%u callback=%p valid=%d kr=0x%x",
                         label, &callback, callback ? 1 : 0, kr);
             if (callback) {
                 // Convert kern_return_t to AsyncStatus for Phase 2.3 callback
-                AsyncStatus status = (kr == kIOReturnSuccess) ? AsyncStatus::kSuccess :
-                                    (kr == kIOReturnTimeout) ? AsyncStatus::kTimeout :
-                                    AsyncStatus::kHardwareError;
+                AsyncStatus status = AsyncStatus::kHardwareError;
+                if (kr == kIOReturnSuccess) {
+                    status = AsyncStatus::kSuccess;
+                } else if (kr == kIOReturnTimeout) {
+                    status = AsyncStatus::kTimeout;
+                } else if (kr == kIOReturnAborted) {
+                    status = AsyncStatus::kAborted;
+                }
                 // Phase 2.3: CompletionCallback now takes (handle, status, span)
                 // Encode handle as (label + 1) to ensure handle is never 0
-                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u",
-                            static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status));
-                callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, data);
+                ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] About to invoke callback: handle=%u status=%u rCode=0x%02X",
+                            static_cast<uint32_t>(label) + 1, static_cast<uint32_t>(status), responseCode);
+                callback(AsyncHandle{static_cast<uint32_t>(label) + 1}, status, responseCode, data);
                 ASFW_LOG_V3(Async, "🔍 [Wrapper Lambda] Callback returned");
             } else {
                 ASFW_LOG(Async, "⚠️ [Wrapper Lambda] callback is NULL!");
@@ -352,7 +358,7 @@ public:
 
             if (!IsTerminalState(txnPtr->state())) {
                 txnPtr->TransitionTo(TransactionState::Cancelled, "CancelByGeneration");
-                txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+                txnPtr->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
             }
 
             // Free the label so subsequent transactions can rotate through all 0-63 slots.
@@ -384,7 +390,7 @@ public:
 
             if (!IsTerminalState(txnPtr->state())) {
                 txnPtr->TransitionTo(TransactionState::Cancelled, "CancelAll");
-                txnPtr->InvokeResponseHandler(kIOReturnAborted, {});
+                txnPtr->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
             }
 
             if (labelAllocator_) {

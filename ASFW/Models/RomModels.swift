@@ -10,19 +10,83 @@ import Foundation
 
 // MARK: - Core ROM Data Structures
 
+public enum RomDiagnosticSeverity: String, Codable, Sendable {
+    case info
+    case warning
+}
+
+public struct RomDiagnostic: Sendable, Codable, Identifiable {
+    public var id: UUID = UUID()
+    public var severity: RomDiagnosticSeverity
+    public var message: String
+
+    public init(severity: RomDiagnosticSeverity, message: String) {
+        self.severity = severity
+        self.message = message
+    }
+}
+
+public struct ConfigROMHeader: Sendable, Codable {
+    public var busInfoLength: UInt8
+    public var crcLength: UInt8
+    public var crc: UInt16
+    public var rawQuadlet: UInt32
+}
+
+public struct BusOptions: Sendable, Codable {
+    public var raw: UInt32
+    public var irmc: Bool
+    public var cmc: Bool
+    public var isc: Bool
+    public var bmc: Bool
+    public var pmc: Bool
+    public var cycClkAcc: UInt8
+    public var maxRec: UInt8
+    public var maxRom: UInt8
+    public var generation: UInt8
+    public var linkSpd: UInt8
+}
+
 public struct BusInfo: Sendable, Codable {
-    public var irmc: UInt32
-    public var cmc: UInt32
-    public var isc: UInt32
-    public var bmc: UInt32
-    public var cycClkAcc: UInt32
-    public var maxRec: UInt32
-    public var pmc: UInt32
-    public var gen: UInt32
-    public var linkSpd: UInt32
-    public var adj: UInt32
-    public var nodeVendorID: UInt32
-    public var chipID: UInt64
+    public var header: ConfigROMHeader
+    public var busName: UInt32
+    public var busOptions: BusOptions
+    public var guidHigh: UInt32
+    public var guidLow: UInt32
+
+    public init(header: ConfigROMHeader, busName: UInt32, busOptions: BusOptions, guidHigh: UInt32, guidLow: UInt32) {
+        self.header = header
+        self.busName = busName
+        self.busOptions = busOptions
+        self.guidHigh = guidHigh
+        self.guidLow = guidLow
+    }
+
+    // Legacy convenience accessors kept for older call sites / summaries.
+    public var irmc: UInt32 { busOptions.irmc ? 1 : 0 }
+    public var cmc: UInt32 { busOptions.cmc ? 1 : 0 }
+    public var isc: UInt32 { busOptions.isc ? 1 : 0 }
+    public var bmc: UInt32 { busOptions.bmc ? 1 : 0 }
+    public var pmc: UInt32 { busOptions.pmc ? 1 : 0 }
+    public var cycClkAcc: UInt32 { UInt32(busOptions.cycClkAcc) }
+    public var maxRec: UInt32 { UInt32(busOptions.maxRec) }
+    public var gen: UInt32 { UInt32(busOptions.generation) }
+    public var linkSpd: UInt32 { UInt32(busOptions.linkSpd) }
+    public var maxRom: UInt32 { UInt32(busOptions.maxRom) }
+    public var adj: UInt32 { 0 } // no longer decoded from this field; kept for compatibility
+
+    public var guid: UInt64 { (UInt64(guidHigh) << 32) | UInt64(guidLow) }
+    public var nodeVendorID: UInt32 { (guidHigh >> 8) & 0x00ff_ffff }
+    public var chipID: UInt64 { (UInt64(guidHigh & 0x0000_00ff) << 32) | UInt64(guidLow) }
+    public var busNameString: String {
+        let bytes: [UInt8] = [
+            UInt8((busName >> 24) & 0xff),
+            UInt8((busName >> 16) & 0xff),
+            UInt8((busName >> 8) & 0xff),
+            UInt8(busName & 0xff)
+        ]
+        return String(bytes: bytes, encoding: .ascii) ?? String(format: "0x%08X", busName)
+    }
 }
 
 public enum EntryType: UInt8, Codable, Sendable {
@@ -33,11 +97,34 @@ public enum EntryType: UInt8, Codable, Sendable {
 }
 
 public struct DirectoryEntry: Codable, Sendable, Identifiable {
-    public var id: String { "\(keyId)-\(type.rawValue)" }
+    public var id: String { pathId }
+    public var pathId: String
     public var keyId: UInt8
     public var type: EntryType
     public var value: RomValue
+    public var entryQuadletIndex: Int?
+    public var rawEntryWord: UInt32?
+    public var relativeOffset24: Int32?
+    public var targetQuadletIndex: Int?
     public var keyName: String { KeyType.name(for: keyId) }
+
+    public init(pathId: String = UUID().uuidString,
+                keyId: UInt8,
+                type: EntryType,
+                value: RomValue,
+                entryQuadletIndex: Int? = nil,
+                rawEntryWord: UInt32? = nil,
+                relativeOffset24: Int32? = nil,
+                targetQuadletIndex: Int? = nil) {
+        self.pathId = pathId
+        self.keyId = keyId
+        self.type = type
+        self.value = value
+        self.entryQuadletIndex = entryQuadletIndex
+        self.rawEntryWord = rawEntryWord
+        self.relativeOffset24 = relativeOffset24
+        self.targetQuadletIndex = targetQuadletIndex
+    }
 }
 
 public enum RomValue: Codable, Sendable {
@@ -51,9 +138,26 @@ public enum RomValue: Codable, Sendable {
 }
 
 public struct RomTree: Codable, Sendable {
+    public var rawROM: Data
     public var busInfoRaw: Data
     public var busInfo: BusInfo
+    public var rootDirectoryStartQ: Int
     public var rootDirectory: [DirectoryEntry]
+    public var diagnostics: [RomDiagnostic]
+
+    public init(rawROM: Data,
+                busInfoRaw: Data,
+                busInfo: BusInfo,
+                rootDirectoryStartQ: Int,
+                rootDirectory: [DirectoryEntry],
+                diagnostics: [RomDiagnostic] = []) {
+        self.rawROM = rawROM
+        self.busInfoRaw = busInfoRaw
+        self.busInfo = busInfo
+        self.rootDirectoryStartQ = rootDirectoryStartQ
+        self.rootDirectory = rootDirectory
+        self.diagnostics = diagnostics
+    }
 }
 
 public enum RomError: Error, CustomStringConvertible {
@@ -147,7 +251,7 @@ public struct RomDirectoryView {
     public let entries: [DirectoryEntry]
 
     public init(rom: RomTree, entries: [DirectoryEntry]? = nil) {
-        self.romRaw = rom.busInfoRaw
+        self.romRaw = rom.rawROM
         self.entries = entries ?? rom.rootDirectory
     }
 
@@ -214,7 +318,23 @@ public struct RomDirectoryView {
         let next = index + 1
         guard entries.indices.contains(next) else { return nil }
         let e = entries[next]
-        if KeyType(rawValue: e.keyId) == .descriptor, case .leafDescriptorText(let s, _) = e.value { return s }
+        guard KeyType(rawValue: e.keyId) == .descriptor else { return nil }
+        if case .leafDescriptorText(let s, _) = e.value { return s }
+        if case .directory(let d) = e.value {
+            return firstDescriptorText(in: d)
+        }
+        return nil
+    }
+
+    private func firstDescriptorText(in entries: [DirectoryEntry]) -> String? {
+        for e in entries {
+            if case .leafDescriptorText(let s, _) = e.value {
+                return s
+            }
+            if case .directory(let d) = e.value, let nested = firstDescriptorText(in: d) {
+                return nested
+            }
+        }
         return nil
     }
 }

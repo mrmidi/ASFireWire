@@ -19,6 +19,7 @@ final class ASFWDriverConnector: ObservableObject {
         case asyncRead = 8
         case asyncWrite = 9
         case registerStatusListener = 10
+        case getTransactionResult = 12
         case exportConfigROM = 14
         case triggerROMRead = 15
         case getDiscoveredDevices = 16
@@ -49,10 +50,15 @@ final class ASFWDriverConnector: ObservableObject {
         // AV/C raw FCP command (request/response)
         case sendRawFCPCommand = 38
         case getRawFCPCommandResult = 39
-        case allocateAddressRange = 40
-        case deallocateAddressRange = 41
-        case readIncomingData = 42
-        case writeLocalData = 43
+        case setIsochVerbosity = 40
+        case setIsochTxVerifier = 41
+        case asyncBlockRead = 44
+        case asyncBlockWrite = 45
+        // SBP2 address space management
+        case allocateAddressRange = 46
+        case deallocateAddressRange = 47
+        case readIncomingData = 48
+        case writeLocalData = 49
     }
 
     // MARK: - Re-exported Models
@@ -152,8 +158,6 @@ final class ASFWDriverConnector: ObservableObject {
         transport.callStructWithScalar(selector: selector.rawValue, input: input, initialCap: initialCap, scalarOutput: &scalarOutput)
     }
 
-
-
     // MARK: - Logging helpers
 
     func log(_ message: String, level: LogMessage.Level = .info) {
@@ -164,6 +168,7 @@ final class ASFWDriverConnector: ObservableObject {
         }
     }
 
+    
     func interpretIOReturn(_ kr: kern_return_t) -> String {
         let KERN_SUCCESS: kern_return_t = 0
         let KERN_PROTECTION_FAILURE: kern_return_t = -308
@@ -210,3 +215,4 @@ final class ASFWDriverConnector: ObservableObject {
     }
 
 }
+    

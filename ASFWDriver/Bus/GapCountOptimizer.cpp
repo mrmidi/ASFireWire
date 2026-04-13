@@ -66,8 +66,9 @@ bool GapCountOptimizer::HasInvalidGap(const std::vector<uint8_t>& gaps) {
     return !AreGapsConsistent(gaps);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool GapCountOptimizer::ShouldUpdate(const std::vector<uint8_t>& currentGaps,
-                                     uint8_t newGap,
+                                     uint8_t newGap, // NOLINT(bugprone-easily-swappable-parameters)
                                      uint8_t prevGap) {
     if (currentGaps.empty()) {
         return false;

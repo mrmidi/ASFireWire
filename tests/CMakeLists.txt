@@ -18,9 +18,11 @@ set(ASFW_COMMON_INCLUDES
     "${ASFW_DRIVER_DIR}/Async"
     "${ASFW_DRIVER_DIR}/Core"
     "${ASFW_DRIVER_DIR}/Bus"
+    "${ASFW_DRIVER_DIR}/Logging"
     "${ASFW_DRIVERKIT_DIR}"
     "${ASFW_DRIVER_DIR}/Hardware"
     "${ASFW_DRIVER_DIR}/Testing"
+    "${ASFW_DRIVER_DIR}/Discovery"
     "${ASFW_ROOT_DIR}/AppleHeaders"
 )
 
@@ -188,6 +190,116 @@ target_compile_definitions(TopologyGapExtractionTests
 
 target_include_directories(TopologyGapExtractionTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+add_executable(TopologyManagerTests
+    "${ASFW_TESTS_DIR}/TopologyManagerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(TopologyManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TopologyManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TopologyManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TopologyManagerTests)
+
+add_executable(SelfIDSequenceTests
+    "${ASFW_TESTS_DIR}/SelfIDSequenceTests.cpp"
+)
+
+target_link_libraries(SelfIDSequenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SelfIDSequenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SelfIDSequenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SelfIDSequenceTests)
+
+add_executable(SelfIDCaptureTests
+    "${ASFW_TESTS_DIR}/SelfIDCaptureTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SelfIDCaptureTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SelfIDCaptureTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SelfIDCaptureTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SelfIDCaptureTests)
+
+add_executable(BusManagerGapOptimizationTests
+    "${ASFW_TESTS_DIR}/BusManagerGapOptimizationTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(BusManagerGapOptimizationTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BusManagerGapOptimizationTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BusManagerGapOptimizationTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BusManagerGapOptimizationTests)
+
+add_executable(BusResetCoordinatorTests
+    "${ASFW_TESTS_DIR}/BusResetCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorFSM.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorActions.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorDiscoveryDelay.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_DRIVER_DIR}/Hardware/InterruptManager.cpp"
+    "${ASFW_TESTS_DIR}/BusResetCoordinatorDepsStubs.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(BusResetCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(BusResetCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(BusResetCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(BusResetCoordinatorTests)
+
 # PHY Packets Tests - Encoding/decoding validation, gap=0 bug regression
 add_executable(PhyPacketsTests
     "${ASFW_TESTS_DIR}/PhyPacketsTests.cpp"
@@ -204,6 +316,28 @@ target_compile_definitions(PhyPacketsTests
 )
 
 target_include_directories(PhyPacketsTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+# =============================================================================
+# FireWire IOReturn Tests - FireWire-family status encoding and boundary mapping
+# =============================================================================
+add_executable(FireWireIOReturnTests
+    "${ASFW_TESTS_DIR}/FireWireIOReturnTests.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(FireWireIOReturnTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(FireWireIOReturnTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(FireWireIOReturnTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(FireWireIOReturnTests)
 
 # =============================================================================
 # DMA Memory Tests - FakeDMAMemory unit tests
@@ -291,6 +425,34 @@ target_compile_definitions(LabelAllocatorTests
 
 target_include_directories(LabelAllocatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+# Async Bus Contract Tests - Interface contract for IFireWireBus adapter + cancellation mapping
+add_executable(AsyncBusContractTests
+    "${ASFW_TESTS_DIR}/AsyncBusContractTests.cpp"
+    "${ASFW_TESTS_DIR}/AsyncSubsystemContractStub.cpp"
+    "${ASFW_DRIVER_DIR}/Async/FireWireBusImpl.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/PayloadRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/Transaction.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Core/TransactionManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AsyncBusContractTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AsyncBusContractTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AsyncBusContractTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AsyncBusContractTests)
+
 # FCP Packet Parsing Tests - Destination offset extraction and FCP response routing
 add_executable(FCPPacketParsingTests
     "${ASFW_TESTS_DIR}/FCPPacketParsingTests.cpp"
@@ -342,8 +504,8 @@ add_executable(MusicSubunitIdentifierParserTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCUnit.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/AVC/AVCDiscovery.cpp" # Likely needed by AVCUnit
-    "${ASFW_DRIVER_DIR}/Protocols/Audio/DeviceStreamModeQuirks.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
@@ -504,6 +666,8 @@ add_executable(MusicSubunitTests
 
     # We need FCPTransport stub or similar if we link AVCUnit
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Audio/AudioSubunit.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Camera/CameraSubunit.cpp"
@@ -606,6 +770,8 @@ add_executable(AVCHandlerTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/Descriptors/AVCInfoBlock.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
@@ -642,6 +808,8 @@ add_executable(AVCCapabilitiesSerializerTests
     "${ASFW_DRIVER_DIR}/Protocols/AVC/StreamFormats/StreamFormatParser.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/AudioFunctionBlockCommand.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/AVC/FCPTransport.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
     "${ASFW_TESTS_DIR}/AsyncSubsystemStub.cpp"
@@ -684,7 +852,10 @@ gtest_discover_tests(AVCUnitPlugInfoCommandTests)
 # Isoch Receive Context Tests
 add_executable(IsochReceiveContextTests
     "${ASFW_TESTS_DIR}/IsochReceiveContextTests.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/IsochReceiveContext.cpp"
+    "${ASFW_TESTS_DIR}/IsochRxDmaRingTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochAudioRxPipeline.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
@@ -774,6 +945,25 @@ target_include_directories(CIPHeaderBuilderTests PRIVATE ${ASFW_COMMON_INCLUDES}
 
 gtest_discover_tests(CIPHeaderBuilderTests)
 
+# TX Verifier Decode Tests (dev-only verifier helpers)
+add_executable(TxVerifierDecodeTests
+    "${ASFW_TESTS_DIR}/TxVerifierDecodeTests.cpp"
+)
+
+target_link_libraries(TxVerifierDecodeTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TxVerifierDecodeTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TxVerifierDecodeTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TxVerifierDecodeTests)
+
 # Blocking Cadence Tests (48 kHz)
 add_executable(BlockingCadenceTests
     "${ASFW_TESTS_DIR}/BlockingCadenceTests.cpp"
@@ -850,6 +1040,26 @@ target_include_directories(AudioRingBufferTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(AudioRingBufferTests)
 
+# Audio Driver config policy tests (pure bring-up/config behavior)
+add_executable(AudioDriverConfigPolicyTests
+    "${ASFW_TESTS_DIR}/AudioDriverConfigPolicyTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Audio/AudioDriverConfigPolicy.cpp"
+)
+
+target_link_libraries(AudioDriverConfigPolicyTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioDriverConfigPolicyTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioDriverConfigPolicyTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioDriverConfigPolicyTests)
+
 # Packet Assembler Integration Tests
 add_executable(PacketAssemblerTests
     "${ASFW_TESTS_DIR}/PacketAssemblerTests.cpp"
@@ -869,9 +1079,40 @@ target_include_directories(PacketAssemblerTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(PacketAssemblerTests)
 
+# Audio IO path tests (host-side queue/ring behavior without ADK runtime)
+add_executable(AudioIOPathTests
+    "${ASFW_TESTS_DIR}/AudioIOPathTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Audio/AudioIOPath.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AudioIOPathTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioIOPathTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioIOPathTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioIOPathTests)
+
 # Isoch Transmit Context Tests
 add_executable(IsochTransmitContextTests
     "${ASFW_TESTS_DIR}/IsochTransmitContextTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochAudioTxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxVerifier.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxRecoveryController.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Encoding/SYTGenerator.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
 target_link_libraries(IsochTransmitContextTests
@@ -887,6 +1128,86 @@ target_compile_definitions(IsochTransmitContextTests
 target_include_directories(IsochTransmitContextTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(IsochTransmitContextTests)
+
+# Isoch TX Descriptor Slab Addressing Tests
+add_executable(IsochTxDescriptorSlabTests
+    "${ASFW_TESTS_DIR}/IsochTxDescriptorSlabTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(IsochTxDescriptorSlabTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(IsochTxDescriptorSlabTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IsochTxDescriptorSlabTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IsochTxDescriptorSlabTests)
+
+# SYT generator tests
+add_executable(SYTGeneratorTests
+    "${ASFW_TESTS_DIR}/SYTGeneratorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Encoding/SYTGenerator.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SYTGeneratorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SYTGeneratorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SYTGeneratorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SYTGeneratorTests)
+
+# External sync bridge state machine tests
+add_executable(ExternalSyncBridgeTests
+    "${ASFW_TESTS_DIR}/ExternalSyncBridgeTests.cpp"
+)
+
+target_link_libraries(ExternalSyncBridgeTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ExternalSyncBridgeTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ExternalSyncBridgeTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ExternalSyncBridgeTests)
+
+# External sync discipline (48k) tests
+add_executable(ExternalSyncDiscipline48kTests
+    "${ASFW_TESTS_DIR}/ExternalSyncDiscipline48kTests.cpp"
+)
+
+target_link_libraries(ExternalSyncDiscipline48kTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ExternalSyncDiscipline48kTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ExternalSyncDiscipline48kTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ExternalSyncDiscipline48kTests)
 
 # SimITEngine Tests (Hardware-grade offline testing)
 add_executable(SimITEngineTests
@@ -925,3 +1246,215 @@ target_compile_definitions(AddressSpaceManagerTests
 target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(AddressSpaceManagerTests)
+
+# Device protocol factory routing tests
+add_executable(DeviceProtocolFactoryTests
+    "${ASFW_TESTS_DIR}/DeviceProtocolFactoryTests.cpp"
+)
+
+target_link_libraries(DeviceProtocolFactoryTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DeviceProtocolFactoryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DeviceProtocolFactoryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DeviceProtocolFactoryTests)
+
+# Apogee protocol boolean control mapping tests
+add_executable(ApogeeBooleanControlMappingTests
+    "${ASFW_TESTS_DIR}/ApogeeBooleanControlMappingTests.cpp"
+)
+
+target_link_libraries(ApogeeBooleanControlMappingTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ApogeeBooleanControlMappingTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ApogeeBooleanControlMappingTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ApogeeBooleanControlMappingTests)
+
+# =============================================================================
+# Config ROM Tests (IEEE 1212 / TA 1999027)
+# =============================================================================
+
+add_library(asfw_configrom_host STATIC
+    "${ASFW_DRIVER_DIR}/ConfigROM/Local/ConfigROMBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Parse/ConfigROMParser.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMReader.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Store/ConfigROMStore.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_include_directories(asfw_configrom_host PUBLIC ${ASFW_COMMON_INCLUDES})
+target_compile_features(asfw_configrom_host PUBLIC cxx_std_23)
+target_compile_definitions(asfw_configrom_host PUBLIC ASFW_HOST_TEST)
+
+add_executable(ASFWConfigROMTests
+    "${ASFW_TESTS_DIR}/ConfigROMBuilderTests.cpp"
+    "${ASFW_TESTS_DIR}/ConfigROMBIBParseTests.cpp"
+    "${ASFW_TESTS_DIR}/ConfigROMStoreConcurrencyTests.cpp"
+    "${ASFW_TESTS_DIR}/TextDescriptorLeafParseTests.cpp"
+    "${ASFW_TESTS_DIR}/ROMReaderHeaderFirstTests.cpp"
+    "${ASFW_TESTS_DIR}/BusOptionsFieldsTests.cpp"
+)
+
+target_link_libraries(ASFWConfigROMTests
+    PRIVATE
+        asfw_configrom_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ASFWConfigROMTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ASFWConfigROMTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ASFWConfigROMTests)
+
+# =============================================================================
+# Discovery Subsystem Tests
+# =============================================================================
+
+add_library(asfw_discovery_host STATIC
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanner.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSession.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSessionDetails.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMScanSessionIRM.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Parse/ConfigROMParser.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Remote/ROMReader.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+    "${ASFW_DRIVER_DIR}/ConfigROM/Store/ConfigROMStore.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_include_directories(asfw_discovery_host PUBLIC ${ASFW_COMMON_INCLUDES})
+target_compile_features(asfw_discovery_host PUBLIC cxx_std_23)
+target_compile_definitions(asfw_discovery_host PUBLIC ASFW_HOST_TEST)
+
+add_executable(ROMScannerCompletionTests
+    "${ASFW_TESTS_DIR}/ROMScannerCompletionTests.cpp"
+)
+
+target_link_libraries(ROMScannerCompletionTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerCompletionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerCompletionTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerCompletionTests)
+
+add_executable(ROMScannerMultiNodeFSMTests
+    "${ASFW_TESTS_DIR}/ROMScannerMultiNodeFSMTests.cpp"
+)
+
+target_link_libraries(ROMScannerMultiNodeFSMTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerMultiNodeFSMTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerMultiNodeFSMTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerMultiNodeFSMTests)
+
+add_executable(ROMScannerIRMVerifyTests
+    "${ASFW_TESTS_DIR}/ROMScannerIRMVerifyTests.cpp"
+)
+
+target_link_libraries(ROMScannerIRMVerifyTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerIRMVerifyTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerIRMVerifyTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerIRMVerifyTests)
+
+add_executable(ROMScannerAbortTests
+    "${ASFW_TESTS_DIR}/ROMScannerAbortTests.cpp"
+)
+
+target_link_libraries(ROMScannerAbortTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerAbortTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerAbortTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerAbortTests)
+
+add_executable(ROMScannerDetailsDiscoveryTests
+    "${ASFW_TESTS_DIR}/ROMScannerDetailsDiscoveryTests.cpp"
+)
+
+target_link_libraries(ROMScannerDetailsDiscoveryTests
+    PRIVATE
+        asfw_discovery_host
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScannerDetailsDiscoveryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScannerDetailsDiscoveryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScannerDetailsDiscoveryTests)
+
+add_executable(ROMScanNodeStateMachineTests
+    "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"
+)
+
+target_link_libraries(ROMScanNodeStateMachineTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ROMScanNodeStateMachineTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ROMScanNodeStateMachineTests)

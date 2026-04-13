@@ -17,6 +17,8 @@
 #include <cstring>
 #include <algorithm>
 
+#include "../Isoch/Config/AudioConstants.hpp"
+
 namespace ASFW::Shared {
 
 // Magic number: 'ASFW'
@@ -43,7 +45,7 @@ static_assert(sizeof(CachelineAtomicU32) == 64, "CachelineAtomicU32 must be 64 b
 struct TxQueueHeader {
     uint32_t magic;             // 'ASFW' for validation
     uint16_t version;           // Protocol version
-    uint16_t channels;          // Number of audio channels (1..16)
+    uint16_t channels;          // Number of audio channels (1..ASFW::Isoch::Config::kMaxPcmChannels)
     uint32_t capacityFrames;    // Power of two
     uint32_t frameStrideBytes;  // channels * sizeof(int32_t)
     uint32_t dataOffsetBytes;   // Offset to sample data from base
@@ -82,11 +84,13 @@ public:
     }
 
     // Creator-side initialization (run once by ASFWAudioNub that owns the memory)
+    // Positional initialization arguments mirror the backing shared-memory layout.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     static bool InitializeInPlace(void* base, uint64_t bytes, uint32_t capacityFrames,
                                   uint32_t numChannels = 2) {
         if (!base) return false;
         if (!IsPowerOfTwo(capacityFrames)) return false;
-        if (numChannels == 0 || numChannels > 16) return false;
+        if (numChannels == 0 || numChannels > ASFW::Isoch::Config::kMaxPcmChannels) return false;
 
         const uint64_t need = RequiredBytes(capacityFrames, numChannels);
         if (bytes < need) return false;
@@ -129,7 +133,7 @@ public:
         std::atomic_thread_fence(std::memory_order_acquire);
 
         if (hdr->magic != kTxQueueMagic || hdr->version != kTxQueueVersion) return false;
-        if (hdr->channels == 0 || hdr->channels > 16) return false;
+        if (hdr->channels == 0 || hdr->channels > ASFW::Isoch::Config::kMaxPcmChannels) return false;
         if (!IsPowerOfTwo(hdr->capacityFrames)) return false;
 
         const uint64_t need = RequiredBytes(hdr->capacityFrames, hdr->channels);
@@ -148,6 +152,7 @@ public:
     bool IsValid() const { return hdr_ && data_ && capacity_; }
 
     uint32_t CapacityFrames() const { return capacity_; }
+    uint32_t Channels() const { return IsValid() ? hdr_->channels : 0; }
 
     uint32_t WriteIndexFrames() const {
         if (!IsValid()) return 0;
@@ -255,10 +260,12 @@ public:
         const uint32_t idx = w & mask_;
         const uint32_t first = std::min(n, capacity_ - idx);
         const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
 
-        std::memcpy(&data_[idx * ch], interleavedData, size_t(first) * ch * sizeof(int32_t));
+        std::memcpy(&data_[static_cast<size_t>(idx) * ch], interleavedData, firstSamples * sizeof(int32_t));
         if (second) {
-            std::memcpy(&data_[0], &interleavedData[first * ch], size_t(second) * ch * sizeof(int32_t));
+            std::memcpy(&data_[0], &interleavedData[firstSamples], secondSamples * sizeof(int32_t));
         }
 
         // Publish data then bump index
@@ -282,10 +289,12 @@ public:
         const uint32_t idx = r & mask_;
         const uint32_t first = std::min(n, capacity_ - idx);
         const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
 
-        std::memcpy(outInterleavedData, &data_[idx * ch], size_t(first) * ch * sizeof(int32_t));
+        std::memcpy(outInterleavedData, &data_[static_cast<size_t>(idx) * ch], firstSamples * sizeof(int32_t));
         if (second) {
-            std::memcpy(&outInterleavedData[first * ch], &data_[0], size_t(second) * ch * sizeof(int32_t));
+            std::memcpy(&outInterleavedData[firstSamples], &data_[0], secondSamples * sizeof(int32_t));
         }
 
         hdr_->readIndexFrames.v.store(r + n, std::memory_order_release);
@@ -307,10 +316,12 @@ public:
         const uint32_t idx = r & mask_;
         const uint32_t first = std::min(n, capacity_ - idx);
         const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
 
-        std::memcpy(outInterleavedData, &data_[idx * ch], size_t(first) * ch * sizeof(int32_t));
+        std::memcpy(outInterleavedData, &data_[static_cast<size_t>(idx) * ch], firstSamples * sizeof(int32_t));
         if (second) {
-            std::memcpy(&outInterleavedData[first * ch], &data_[0], size_t(second) * ch * sizeof(int32_t));
+            std::memcpy(&outInterleavedData[firstSamples], &data_[0], secondSamples * sizeof(int32_t));
         }
 
         return n;

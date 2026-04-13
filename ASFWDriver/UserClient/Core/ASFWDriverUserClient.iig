@@ -48,14 +48,21 @@ public:
         // Note: 23, 24, 25 defined in .cpp only (GetSubunitCapabilities, GetSubunitDescriptor, ReScanAVCUnits)
         kMethodSendRawFCPCommand       = 38,
         kMethodGetRawFCPCommandResult  = 39,
-        kMethodAllocateAddressRange    = 40,
-        kMethodDeallocateAddressRange  = 41,
-        kMethodReadIncomingData        = 42,
-        kMethodWriteLocalData          = 43,
-        // TODO: IRM test method - temporary for Phase 0.5 testing
+        kMethodSetIsochVerbosity       = 40,
+        kMethodSetIsochTxVerifier      = 41,
+        kMethodSetAudioAutoStart       = 42,
+        kMethodGetAudioAutoStart       = 43,
+        kMethodAsyncBlockRead          = 44,
+        kMethodAsyncBlockWrite         = 45,
+        // SBP2 address space management
+        kMethodAllocateAddressRange    = 46,
+        kMethodDeallocateAddressRange  = 47,
+        kMethodReadIncomingData        = 48,
+        kMethodWriteLocalData          = 49,
+        // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,
-        // TODO: CMP test methods - temporary for Phase 0.5 testing
+        // TODO(ASFW-CMP): Remove temporary CMP test methods after dedicated validation tooling exists.
         kMethodTestCMPConnectOPCR      = 28,
         kMethodTestCMPDisconnectOPCR   = 29,
         kMethodTestCMPConnectIPCR      = 30,
@@ -140,18 +147,7 @@ struct ASFWDriverUserClient_IVars {
     bool statusRegistered;
     OSAction* transactionAction;
     bool transactionListenerRegistered;
-    void* transactionStorage;  // TransactionStorage* (opaque)
+    void* runtimeState;  // ASFW::UserClient::UserClientRuntimeState* (opaque bridge)
     IOLock* actionLock;
     bool stopping;
-
-    // Handler instances
-    void* busResetHandler;     // BusResetHandler* (opaque)
-    void* topologyHandler;     // TopologyHandler* (opaque)
-    void* statusHandler;       // StatusHandler* (opaque)
-    void* transactionHandler;  // TransactionHandler* (opaque)
-    void* configROMHandler;    // ConfigROMHandler* (opaque)
-    void* deviceDiscoveryHandler;  // DeviceDiscoveryHandler* (opaque)
-    void* avcHandler;          // AVCHandler* (opaque)
-    void* isochHandler;        // IsochHandler* (opaque)
-    void* sbp2Handler;         // SBP2Handler* (opaque)
 };

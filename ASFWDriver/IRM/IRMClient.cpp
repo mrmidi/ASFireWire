@@ -1,4 +1,5 @@
 #include "IRMClient.hpp"
+#include "../Common/CallbackUtils.hpp"
 #include "../Logging/Logging.hpp"
 #include <DriverKit/IOLib.h>
 #include <os/log.h>
@@ -20,32 +21,41 @@ void IRMClient::ReadIRMQuadlet(
     uint32_t addressLo,
     std::function<void(bool success, uint32_t value)> callback)
 {
-    Async::FWAddress addr{IRMRegisters::kAddressHi, addressLo};
+    auto callbackState = Common::ShareCallback(std::move(callback));
+    Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = IRMRegisters::kAddressHi,
+        .addressLo = addressLo,
+    }};
 
     FW::FwSpeed speed{0};
     FW::NodeId node{irmNodeId_};
     FW::Generation gen{generation_};
 
     busOps_.ReadQuad(gen, node, addr, speed,
-        [callback](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
             if (status == Async::AsyncStatus::kSuccess && payload.size() == 4) {
                 uint32_t raw = 0;
                 std::memcpy(&raw, payload.data(), sizeof(raw));
                 uint32_t hostValue = OSSwapBigToHostInt32(raw);
-                callback(true, hostValue);
+                Common::InvokeSharedCallback(callbackState, true, hostValue);
             } else {
-                callback(false, 0);
+                Common::InvokeSharedCallback(callbackState, false, 0u);
             }
         });
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void IRMClient::CompareSwapIRMQuadlet(
-    uint32_t addressLo,
+    uint32_t addressLo, // NOLINT(bugprone-easily-swappable-parameters)
     uint32_t expected,
     uint32_t desired,
     std::function<void(bool success, uint32_t oldValue)> callback)
 {
-    Async::FWAddress addr{IRMRegisters::kAddressHi, addressLo};
+    auto callbackState = Common::ShareCallback(std::move(callback));
+    Async::FWAddress addr{Async::FWAddress::AddressParts{
+        .addressHi = IRMRegisters::kAddressHi,
+        .addressLo = addressLo,
+    }};
 
     FW::FwSpeed speed{0};
     FW::NodeId node{irmNodeId_};
@@ -59,16 +69,16 @@ void IRMClient::CompareSwapIRMQuadlet(
 
     busOps_.Lock(gen, node, addr, FW::LockOp::kCompareSwap,
         std::span{operand}, 4, speed,
-        [callback, expected](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+        [callbackState, expected](Async::AsyncStatus status, std::span<const uint8_t> payload) {
             if (status == Async::AsyncStatus::kSuccess && payload.size() == 4) {
                 uint32_t raw = 0;
                 std::memcpy(&raw, payload.data(), sizeof(raw));
                 uint32_t oldValue = OSSwapBigToHostInt32(raw);
 
                 bool succeeded = (oldValue == expected);
-                callback(succeeded, oldValue);
+                Common::InvokeSharedCallback(callbackState, succeeded, oldValue);
             } else {
-                callback(false, 0);
+                Common::InvokeSharedCallback(callbackState, false, 0u);
             }
         });
 }
@@ -78,7 +88,7 @@ void IRMClient::SetIRMNode(uint8_t irmNodeId, Generation generation) {
     generation_ = generation;
 
     ASFW_LOG(IRM, "IRMClient: Set IRM node=%u generation=%u",
-             irmNodeId, generation);
+             irmNodeId, generation.value);
 }
 
 void IRMClient::AllocateChannel(uint8_t channel,
@@ -199,10 +209,11 @@ void IRMClient::AllocateResources(uint8_t channel,
     }, retryPolicy);
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void IRMClient::ReleaseResources(uint8_t channel,
-                                  uint32_t bandwidthUnits,
-                                  AllocationCallback callback,
-                                  const RetryPolicy& retryPolicy)
+                                 uint32_t bandwidthUnits,
+                                 AllocationCallback callback,
+                                 const RetryPolicy& retryPolicy)
 {
     struct ReleaseContext {
         AllocationCallback userCallback;

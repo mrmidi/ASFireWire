@@ -8,6 +8,7 @@
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/OSAction.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <DriverKit/IOServiceNotificationDispatchSource.h>
 #endif
 
 #include "../Controller/ControllerConfig.hpp"
@@ -19,17 +20,26 @@
 
 class ASFWDriver;
 
+namespace ASFW::Audio {
+class AudioCoordinator;
+}
+
 struct ServiceContext {
     ASFW::Driver::ControllerCore::Dependencies deps;
     ASFW::Driver::ControllerConfig config{}; // placeholder config
     std::shared_ptr<ASFW::Driver::ControllerCore> controller;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<OSAction> interruptAction;
+#ifndef ASFW_HOST_TEST
+    OSSharedPtr<IOServiceNotificationDispatchSource> providerNotifications;
+    OSSharedPtr<OSAction> providerNotificationAction;
+#endif
     std::atomic<bool> stopping{false};
     ASFW::Driver::StatusPublisher statusPublisher;
     ASFW::Driver::WatchdogCoordinator watchdog;
     ASFW::Driver::IsochService isoch;
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
+    std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
 
     void Reset();
 };
@@ -39,6 +49,7 @@ namespace ASFW::Driver {
 class DriverWiring {
 public:
     static void EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx);
+    static void EnsureSbp2Deps(::ServiceContext& ctx);
     static kern_return_t PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx);
     static kern_return_t PrepareInterrupts(ASFWDriver& service, IOService* provider, ::ServiceContext& ctx);
     static kern_return_t PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx);

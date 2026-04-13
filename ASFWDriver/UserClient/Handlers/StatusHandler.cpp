@@ -6,15 +6,16 @@
 //
 
 #include "StatusHandler.hpp"
+#include "../../Controller/ControllerCore.hpp"         // ASFWDriver/Controller/ControllerCore.hpp
+#include "../../Controller/ControllerStateMachine.hpp" // ASFWDriver/Controller/ControllerStateMachine.hpp
+#include "../../Diagnostics/ControllerMetrics.hpp" // ASFWDriver/Diagnostics/ControllerMetrics.hpp
+#include "../../Diagnostics/MetricsSink.hpp"       // ASFWDriver/Diagnostics/MetricsSink.hpp
+#include "../../Logging/Logging.hpp"               // ASFWDriver/Logging/Logging.hpp
+#include "../WireFormats/StatusWireFormats.hpp" // ASFWDriver/UserClient/WireFormats/StatusWireFormats.hpp
 #include "ASFWDriver.h"
 #include "ASFWDriverUserClient.h"
-#include "../../Controller/ControllerCore.hpp" // ASFWDriver/Controller/ControllerCore.hpp
-#include "../../Diagnostics/ControllerMetrics.hpp" // ASFWDriver/Diagnostics/ControllerMetrics.hpp
-#include "../../Diagnostics/MetricsSink.hpp" // ASFWDriver/Diagnostics/MetricsSink.hpp
-#include "../../Controller/ControllerStateMachine.hpp" // ASFWDriver/Controller/ControllerStateMachine.hpp
-#include "../../Async/AsyncSubsystem.hpp" // ASFWDriver/Async/AsyncSubsystem.hpp
-#include "../WireFormats/StatusWireFormats.hpp" // ASFWDriver/UserClient/WireFormats/StatusWireFormats.hpp
-#include "../../Logging/Logging.hpp" // ASFWDriver/Logging/Logging.hpp
+#include "AsyncPortAccess.hpp"
+#include "ControllerCoreAccess.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSData.h>
@@ -23,9 +24,7 @@
 
 namespace ASFW::UserClient {
 
-StatusHandler::StatusHandler(ASFWDriver* driver)
-    : driver_(driver) {
-}
+StatusHandler::StatusHandler(ASFWDriver* driver) : driver_(driver) {}
 
 kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* args) {
     // Return comprehensive controller status
@@ -38,8 +37,7 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     Wire::ControllerStatusWire status{};
     status.version = Wire::kControllerStatusWireVersion;
     status.flags = 0;
-    std::strncpy(status.stateName, "NotReady", sizeof(status.stateName));
-    status.stateName[sizeof(status.stateName) - 1] = '\0';
+    strlcpy(status.stateName, "NotReady", sizeof(status.stateName));
     status.generation = 0;
     status.nodeCount = 0;
     status.localNodeID = 0xFFFFFFFFu;
@@ -49,17 +47,17 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
     status.lastBusResetTime = 0;
     status.uptimeNanoseconds = 0;
 
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (controller) {
         auto stateStr = std::string(ToString(controller->StateMachine().CurrentState()));
-        std::strncpy(status.stateName, stateStr.c_str(), sizeof(status.stateName) - 1);
-        status.stateName[sizeof(status.stateName) - 1] = '\0';
+        strlcpy(status.stateName, stateStr.c_str(), sizeof(status.stateName));
 
         const auto& busResetMetrics = controller->Metrics().BusReset();
         status.busResetCount = busResetMetrics.resetCount;
         status.lastBusResetTime = busResetMetrics.lastResetCompletion;
         if (busResetMetrics.lastResetCompletion >= busResetMetrics.lastResetStart) {
-            status.uptimeNanoseconds = busResetMetrics.lastResetCompletion - busResetMetrics.lastResetStart;
+            status.uptimeNanoseconds =
+                busResetMetrics.lastResetCompletion - busResetMetrics.lastResetStart;
         } else {
             status.uptimeNanoseconds = busResetMetrics.lastResetCompletion;
         }
@@ -68,14 +66,13 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
             status.generation = topo->generation;
             status.nodeCount = topo->nodeCount;
             status.localNodeID = topo->localNodeId.has_value()
-                ? static_cast<uint32_t>(*topo->localNodeId)
-                : 0xFFFFFFFFu;
+                                     ? static_cast<uint32_t>(*topo->localNodeId)
+                                     : 0xFFFFFFFFu;
             status.rootNodeID = topo->rootNodeId.has_value()
-                ? static_cast<uint32_t>(*topo->rootNodeId)
-                : 0xFFFFFFFFu;
-            status.irmNodeID = topo->irmNodeId.has_value()
-                ? static_cast<uint32_t>(*topo->irmNodeId)
-                : 0xFFFFFFFFu;
+                                    ? static_cast<uint32_t>(*topo->rootNodeId)
+                                    : 0xFFFFFFFFu;
+            status.irmNodeID =
+                topo->irmNodeId.has_value() ? static_cast<uint32_t>(*topo->irmNodeId) : 0xFFFFFFFFu;
 
             if (topo->irmNodeId.has_value() && topo->localNodeId.has_value() &&
                 topo->irmNodeId == topo->localNodeId) {
@@ -85,8 +82,8 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
         }
     }
 
-    if (auto* asyncSys = static_cast<ASFW::Async::AsyncSubsystem*>(driver_->GetAsyncSubsystem())) {
-        if (auto snapshotOpt = asyncSys->GetStatusSnapshot()) {
+    if (auto* asyncPort = GetAsyncSubsystemPort(driver_)) {
+        if (auto snapshotOpt = asyncPort->GetStatusSnapshot()) {
             const auto& snapshot = *snapshotOpt;
 
             status.async.atRequest.descriptorVirt = snapshot.atRequest.descriptorVirt;
@@ -96,31 +93,19 @@ kern_return_t StatusHandler::GetControllerStatus(IOUserClientMethodArguments* ar
             status.async.atRequest.commandPtr = snapshot.atRequest.commandPtr;
 
             status.async.atResponse = {
-                snapshot.atResponse.descriptorVirt,
-                snapshot.atResponse.descriptorIOVA,
-                snapshot.atResponse.descriptorCount,
-                snapshot.atResponse.descriptorStride,
-                snapshot.atResponse.commandPtr,
-                0
-            };
+                snapshot.atResponse.descriptorVirt,  snapshot.atResponse.descriptorIOVA,
+                snapshot.atResponse.descriptorCount, snapshot.atResponse.descriptorStride,
+                snapshot.atResponse.commandPtr,      0};
 
             status.async.arRequest = {
-                snapshot.arRequest.descriptorVirt,
-                snapshot.arRequest.descriptorIOVA,
-                snapshot.arRequest.descriptorCount,
-                snapshot.arRequest.descriptorStride,
-                snapshot.arRequest.commandPtr,
-                0
-            };
+                snapshot.arRequest.descriptorVirt,  snapshot.arRequest.descriptorIOVA,
+                snapshot.arRequest.descriptorCount, snapshot.arRequest.descriptorStride,
+                snapshot.arRequest.commandPtr,      0};
 
             status.async.arResponse = {
-                snapshot.arResponse.descriptorVirt,
-                snapshot.arResponse.descriptorIOVA,
-                snapshot.arResponse.descriptorCount,
-                snapshot.arResponse.descriptorStride,
-                snapshot.arResponse.commandPtr,
-                0
-            };
+                snapshot.arResponse.descriptorVirt,  snapshot.arResponse.descriptorIOVA,
+                snapshot.arResponse.descriptorCount, snapshot.arResponse.descriptorStride,
+                snapshot.arResponse.commandPtr,      0};
 
             status.async.arRequestBuffers.bufferVirt = snapshot.arRequestBuffers.bufferVirt;
             status.async.arRequestBuffers.bufferIOVA = snapshot.arRequestBuffers.bufferIOVA;
@@ -161,7 +146,7 @@ kern_return_t StatusHandler::Ping(IOUserClientMethodArguments* args) {
 
     using namespace ASFW::Driver;
 
-    auto* controller = static_cast<ControllerCore*>(driver_->GetControllerCore());
+    auto* controller = GetControllerCorePtr(driver_);
     if (!controller) {
         return kIOReturnNotReady;
     }
@@ -170,7 +155,8 @@ kern_return_t StatusHandler::Ping(IOUserClientMethodArguments* args) {
     const auto& busMetrics = controller->Metrics().BusReset();
 
     char message[64];
-    int written = std::snprintf(message, sizeof(message), "pong (resets=%u)", busMetrics.resetCount);
+    int written =
+        std::snprintf(message, sizeof(message), "pong (resets=%u)", busMetrics.resetCount);
     if (written < 0) {
         return kIOReturnError;
     }
@@ -187,7 +173,7 @@ kern_return_t StatusHandler::Ping(IOUserClientMethodArguments* args) {
 }
 
 kern_return_t StatusHandler::RegisterStatusListener(IOUserClientMethodArguments* args,
-                                                     ASFWDriverUserClient* userClient) {
+                                                    ASFWDriverUserClient* userClient) {
     if (!args || !args->completion) {
         return kIOReturnBadArgument;
     }

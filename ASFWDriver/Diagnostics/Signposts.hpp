@@ -20,7 +20,8 @@ inline uint64_t MachTicksToMicroseconds(uint64_t ticks) {
         mach_timebase_info(&timebase);
     }
     // ticks * numer / denom = nanoseconds; divide by 1000 for microseconds
-    return (ticks * timebase.numer) / (timebase.denom * 1000);
+    return (ticks * timebase.numer) /
+           (static_cast<uint64_t>(timebase.denom) * 1000u);
 }
 
 /// RAII timer for measuring code section latency

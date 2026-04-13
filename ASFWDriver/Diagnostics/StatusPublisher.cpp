@@ -2,10 +2,16 @@
 
 #include <string>
 
+#ifdef ASFW_HOST_TEST
+#include <mach/mach_time.h>
+#else
+#include <DriverKit/IOLib.h>
+#endif
+
+#include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Controller/ControllerStateMachine.hpp"
 #include "../Diagnostics/MetricsSink.hpp"
-#include "../Async/AsyncSubsystem.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h>
 
 namespace ASFW::Driver {
@@ -16,10 +22,8 @@ kern_return_t StatusPublisher::Prepare() {
     }
 
     IOBufferMemoryDescriptor* rawBuffer = nullptr;
-    auto kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut,
-                                               sizeof(SharedStatusBlock),
-                                               64,
-                                               &rawBuffer);
+    auto kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, sizeof(SharedStatusBlock),
+                                               64, &rawBuffer);
     if (kr != kIOReturnSuccess || rawBuffer == nullptr) {
         return (kr != kIOReturnSuccess) ? kr : kIOReturnNoMemory;
     }
@@ -64,9 +68,8 @@ void StatusPublisher::Reset() {
 }
 
 void StatusPublisher::Publish(ControllerCore* controller,
-                              const ASFW::Async::AsyncSubsystem* asyncSubsystem,
-                              SharedStatusReason reason,
-                              uint32_t detailMask) {
+                              const ASFW::Async::IAsyncSubsystemPort* asyncSubsystem,
+                              SharedStatusReason reason, uint32_t detailMask) {
     if (!statusBlock_) {
         return;
     }
@@ -83,9 +86,8 @@ void StatusPublisher::Publish(ControllerCore* controller,
         const auto state = controller->StateMachine().CurrentState();
         snapshot.controllerState = static_cast<uint32_t>(state);
         auto stateName = std::string(ToString(state));
-        std::strncpy(snapshot.controllerStateName,
-                     stateName.c_str(),
-                     sizeof(snapshot.controllerStateName) - 1);
+        strlcpy(snapshot.controllerStateName, stateName.c_str(),
+                sizeof(snapshot.controllerStateName));
 
         const auto& busMetrics = controller->Metrics().BusReset();
         snapshot.busResetCount = busMetrics.resetCount;
@@ -153,7 +155,8 @@ void StatusPublisher::UnbindListener(::ASFWDriverUserClient* client) {
     }
 }
 
-kern_return_t StatusPublisher::CopySharedMemory(uint64_t* options, IOMemoryDescriptor** memory) const {
+kern_return_t StatusPublisher::CopySharedMemory(uint64_t* options,
+                                                IOMemoryDescriptor** memory) const {
     if (!memory) {
         return kIOReturnBadArgument;
     }
@@ -174,8 +177,8 @@ void StatusPublisher::SetLastAsyncCompletion(uint64_t machTime) {
     lastAsyncCompletionMach_.store(machTime, std::memory_order_release);
 }
 
-void StatusPublisher::UpdateAsyncWatchdog(uint32_t asyncTimeoutCount,
-                                          uint64_t watchdogTickCount,
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void StatusPublisher::UpdateAsyncWatchdog(uint32_t asyncTimeoutCount, uint64_t watchdogTickCount,
                                           uint64_t watchdogLastTickUsec) {
     asyncTimeoutCount_.store(asyncTimeoutCount, std::memory_order_release);
     watchdogTickCount_.store(watchdogTickCount, std::memory_order_release);

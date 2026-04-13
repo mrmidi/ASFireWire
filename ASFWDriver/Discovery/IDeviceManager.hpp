@@ -5,6 +5,7 @@
 #include <vector>
 #include <optional>
 #include "DiscoveryTypes.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace ASFW::Discovery {
 
@@ -112,8 +113,9 @@ public:
                 mgr->RegisterDeviceObserver(observer);
             }
         } else if constexpr (std::is_same_v<ObserverType, IUnitObserver>) {
-            unregister_ = [&registry, observer]() {
-                registry.UnregisterUnitObserver(observer);
+            auto* reg = static_cast<IUnitRegistry*>(&registry);
+            unregister_ = [reg, observer]() {
+                reg->UnregisterUnitObserver(observer);
             };
             registry.RegisterUnitObserver(observer);
         }
@@ -121,7 +123,12 @@ public:
 
     ~ObserverGuard() noexcept {
         if (unregister_) {
-            unregister_();
+            try {
+                unregister_();
+            } catch (...) {
+                ASFW_LOG_ERROR(Discovery,
+                               "ObserverGuard: unregister callback threw during destruction");
+            }
         }
     }
 

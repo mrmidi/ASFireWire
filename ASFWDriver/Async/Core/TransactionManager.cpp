@@ -172,7 +172,7 @@ void TransactionManager::CancelAll() noexcept {
             txn->TransitionTo(TransactionState::Cancelled, "TransactionManager::CancelAll");
 
             // Invoke callback with cancellation error
-            txn->InvokeResponseHandler(kIOReturnAborted, {});
+            txn->InvokeResponseHandler(kIOReturnAborted, 0xFF, {});
         }
     }
 

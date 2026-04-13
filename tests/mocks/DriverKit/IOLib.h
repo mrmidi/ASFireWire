@@ -368,7 +368,7 @@ inline uint32_t crc32(uint32_t crc, const void *buf, size_t size) {
     for (size_t i = 0; i < size; ++i) {
         crc ^= p[i];
         for (int k = 0; k < 8; ++k) {
-            uint32_t mask = -(crc & 1u);
+            uint32_t mask = (crc & 1u) ? 0xFFFFFFFFu : 0u;
             crc = (crc >> 1) ^ (0xEDB88320u & mask);
         }
     }

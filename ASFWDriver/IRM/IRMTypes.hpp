@@ -57,15 +57,14 @@ constexpr uint32_t kMaxBandwidthUnitsS400 = 4915;
 constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels free
 
 /**
- * Calculate bandwidth units needed for given bitrate and speed.
+ * Inputs for CalculateBandwidthUnits().
  *
  * Formula (from IEEE 1394-1995 Annex C):
  *   units = (bits_per_second * overhead_factor) / speed_mbps * max_units
  *
- * @param bitsPerSecond Required bandwidth in bits per second
- * @param speedMbps Bus speed in Mbps (100, 200, 400, 800)
- * @param overheadPercent Overhead factor (default 10% for CIP headers, retries, etc.)
- * @return Number of bandwidth units to allocate
+ * bitsPerSecond: Required bandwidth in bits per second.
+ * speedMbps: Bus speed in Mbps (100, 200, 400, 800).
+ * overheadPercent: Overhead factor for CIP headers, retries, etc. Defaults to 10%.
  *
  * Example:
  *   Audio: 48kHz * 24-bit * 2ch = 2.304 Mbps
@@ -75,18 +74,27 @@ constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels fr
  * Reference: Apple IOFireWireController.cpp bandwidth allocation
  *            IEC 61883 overhead calculations
  */
-inline uint32_t CalculateBandwidthUnits(uint32_t bitsPerSecond,
-                                        uint32_t speedMbps,
-                                        uint32_t overheadPercent = 10)
+struct BandwidthUnitsRequest {
+    uint32_t bitsPerSecond{0};
+    uint32_t speedMbps{0};
+    uint32_t overheadPercent{10};
+};
+
+/**
+ * Calculate the number of bandwidth units to allocate for a stream request.
+ */
+inline uint32_t CalculateBandwidthUnits(const BandwidthUnitsRequest& request)
 {
     // Convert bits/sec to Mbits/sec (round up)
-    uint32_t mbitsPerSec = (bitsPerSecond + 999999) / 1000000;
+    uint32_t mbitsPerSec = (request.bitsPerSecond + 999999) / 1000000;
 
     // Add overhead
-    mbitsPerSec = (mbitsPerSec * (100 + overheadPercent)) / 100;
+    mbitsPerSec = static_cast<uint32_t>(
+        (static_cast<uint64_t>(mbitsPerSec) * (100ULL + request.overheadPercent)) / 100ULL);
 
     // Scale to S400 bandwidth units
-    uint32_t units = (mbitsPerSec * kMaxBandwidthUnitsS400) / speedMbps;
+    uint32_t units = static_cast<uint32_t>(
+        (static_cast<uint64_t>(mbitsPerSec) * kMaxBandwidthUnitsS400) / request.speedMbps);
 
     return units;
 }
@@ -162,6 +170,24 @@ enum class AllocationStatus : uint8_t {
     /// Generic failure (unexpected state, hardware error, etc.)
     Failed
 };
+
+[[nodiscard]] constexpr const char* ToString(AllocationStatus status) noexcept {
+    switch (status) {
+        case AllocationStatus::Success:
+            return "success";
+        case AllocationStatus::NoResources:
+            return "no_resources";
+        case AllocationStatus::GenerationMismatch:
+            return "generation_mismatch";
+        case AllocationStatus::Timeout:
+            return "timeout";
+        case AllocationStatus::NotFound:
+            return "not_found";
+        case AllocationStatus::Failed:
+            return "failed";
+    }
+    return "unknown";
+}
 
 /**
  * Result of channel allocation operation.

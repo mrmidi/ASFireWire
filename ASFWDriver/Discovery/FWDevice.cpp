@@ -81,8 +81,8 @@ std::vector<RomEntry> FWDevice::ExtractUnitDirectory(
     const ConfigROM& rom,
     uint32_t offsetQuadlets) const
 {
-    constexpr uint32_t kBIBQuadlets = 5;
-    const uint32_t absoluteROMOffset = kBIBQuadlets + offsetQuadlets;
+    const uint32_t rootDirStartQuadlets = 1u + static_cast<uint32_t>(rom.bib.busInfoLength);
+    const uint32_t absoluteROMOffset = rootDirStartQuadlets + offsetQuadlets;
 
     if (absoluteROMOffset >= rom.rawQuadlets.size()) {
         ASFW_LOG_V1(Discovery, "ExtractUnitDirectory: offset out of bounds");

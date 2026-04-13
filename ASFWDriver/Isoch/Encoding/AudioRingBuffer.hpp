@@ -15,17 +15,10 @@
 #include <atomic>
 #include <cstring>
 
-// Forward-declare kMaxSupportedChannels if not already available
-// (PacketAssembler.hpp defines the canonical constant)
-#ifndef ASFW_MAX_SUPPORTED_CHANNELS
-#define ASFW_MAX_SUPPORTED_CHANNELS 16
-#endif
+#include "../Config/AudioConstants.hpp"
 
 namespace ASFW {
 namespace Encoding {
-
-/// Default ring buffer size in frames (~85ms @ 48kHz)
-constexpr uint32_t kDefaultRingBufferFrames = 4096;
 
 /// Lock-free SPSC ring buffer for audio samples.
 ///
@@ -38,23 +31,25 @@ constexpr uint32_t kDefaultRingBufferFrames = 4096;
 ///   - Interleaved: [ch0][ch1]...[chN][ch0][ch1]...
 ///   - Each sample is int32_t (24-bit audio in 32-bit container)
 ///
-/// Channel count is runtime (1..kMaxSupportedChannels).
+/// Channel count is runtime (1..Isoch::Config::kMaxPcmChannels).
 /// FrameCount is compile-time (power of 2 for efficient modulo).
 ///
-template <uint32_t FrameCount = kDefaultRingBufferFrames>
-class AudioRingBuffer {
+// Cacheline separation here is intentional for the SPSC hot path.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
+template <uint32_t FrameCount = Isoch::Config::kAudioRingBufferFrames>
+class AudioRingBuffer { // NOLINT(clang-analyzer-optin.performance.Padding)
 public:
     static_assert((FrameCount & (FrameCount - 1)) == 0,
                   "FrameCount must be power of 2 for efficient modulo");
 
     /// Max buffer size in samples (compile-time, uses max channel count)
-    static constexpr uint32_t kMaxTotalSamples = FrameCount * ASFW_MAX_SUPPORTED_CHANNELS;
+    static constexpr uint32_t kMaxTotalSamples = FrameCount * Isoch::Config::kMaxPcmChannels;
 
     /// Mask for efficient modulo (works because FrameCount is power of 2)
     static constexpr uint32_t kFrameMask = FrameCount - 1;
 
     /// Construct with runtime channel count.
-    /// @param channels Number of audio channels (1..16, default 2)
+    /// @param channels Number of audio channels (1..Isoch::Config::kMaxPcmChannels, default 2)
     explicit AudioRingBuffer(uint32_t channels = 2) noexcept
         : channelCount_(channels) {
         std::memset(buffer_, 0, sizeof(buffer_));
@@ -126,7 +121,9 @@ public:
         if (toRead == 0) {
             underrunCount_.fetch_add(1, std::memory_order_relaxed);
             // Fill output with silence
-            std::memset(data, 0, frameCount * channelCount_ * sizeof(int32_t));
+            std::memset(data,
+                        0,
+                        static_cast<size_t>(frameCount) * channelCount_ * sizeof(int32_t));
             return 0;
         }
 
@@ -231,7 +228,7 @@ private:
 };
 
 /// Convenience alias for standard 4096-frame buffer (backward compat)
-using StereoAudioRingBuffer = AudioRingBuffer<4096>;
+using StereoAudioRingBuffer = AudioRingBuffer<Isoch::Config::kAudioRingBufferFrames>;
 
 } // namespace Encoding
 } // namespace ASFW

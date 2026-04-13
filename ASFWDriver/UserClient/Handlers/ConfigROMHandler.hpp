@@ -16,7 +16,7 @@ class ASFWDriver;
 namespace ASFW::UserClient {
 
 class ConfigROMHandler {
-public:
+  public:
     explicit ConfigROMHandler(ASFWDriver* driver);
     ~ConfigROMHandler() = default;
 
@@ -30,7 +30,7 @@ public:
     // Method 15: Manually trigger ROM read for a specific nodeId
     kern_return_t TriggerROMRead(IOUserClientMethodArguments* args);
 
-private:
+  private:
     ASFWDriver* driver_;
 };
 

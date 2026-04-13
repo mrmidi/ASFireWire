@@ -1,7 +1,6 @@
 #include "BufferRing.hpp"
 
 #include <atomic>
-#include <cstring>
 
 #include "../../Common/BarrierUtils.hpp"
 #include "../Memory/DMAMemoryManager.hpp"
@@ -35,7 +34,7 @@ bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span
     head_ = 0;
     for (size_t i = 0; i < bufferCount; ++i) {
         auto& desc = descriptors_[i];
-        std::memset(&desc, 0, sizeof(desc));
+        desc = HW::OHCIDescriptor{};
         constexpr uint32_t kCmdInputMore = HW::OHCIDescriptor::kCmdInputMore;
         constexpr uint32_t kKeyStandard = HW::OHCIDescriptor::kKeyStandard;
         constexpr uint32_t kS = 1u;  

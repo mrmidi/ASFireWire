@@ -12,9 +12,9 @@
 
 namespace ASFW {
 namespace Async {
-class AsyncSubsystem;
+class IAsyncSubsystemPort;
 }
-}
+} // namespace ASFW
 
 namespace ASFW::Driver {
 
@@ -24,17 +24,14 @@ class IsochService;
 class StatusPublisher;
 
 class InterruptDispatcher {
-public:
+  public:
     InterruptDispatcher() = default;
     ~InterruptDispatcher() = default;
 
-    void HandleSnapshot(const InterruptSnapshot& snap,
-                        ControllerCore& controller,
-                        HardwareInterface& hardware,
-                        IODispatchQueue& workQueue,
-                        IsochService& isoch,
-                        StatusPublisher& statusPublisher,
-                        ASFW::Async::AsyncSubsystem* asyncSubsystem);
+    void HandleSnapshot(const InterruptSnapshot& snap, ControllerCore& controller,
+                        HardwareInterface& hardware, IODispatchQueue& workQueue,
+                        IsochService& isoch, StatusPublisher& statusPublisher,
+                        ASFW::Async::IAsyncSubsystemPort* asyncSubsystem);
 };
 
 } // namespace ASFW::Driver

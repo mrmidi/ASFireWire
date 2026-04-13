@@ -1,5 +1,6 @@
 #include "DeviceRegistry.hpp"
 #include <algorithm>
+#include <limits>
 #include "../Logging/Logging.hpp"
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 
@@ -11,7 +12,8 @@ constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
 DeviceRegistry::DeviceRegistry() = default;
 
 DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
-                                             Async::AsyncSubsystem* asyncSubsystem) {
+                                             Async::IFireWireBusOps* busOps,
+                                             Async::IFireWireBusInfo* busInfo) {
     const Guid64 guid = rom.bib.guid;
     
     auto& device = devicesByGuid_[guid];
@@ -23,29 +25,55 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             device.vendorId = entry.value;
         } else if (entry.key == CfgKey::ModelId) {
             device.modelId = entry.value;
-        } else if (entry.key == CfgKey::Unit_Spec_Id) {
-            device.unitSpecId = static_cast<uint8_t>(entry.value & 0xFF);
-        } else if (entry.key == CfgKey::Unit_Sw_Version) {
-            device.unitSwVersion = static_cast<uint8_t>(entry.value & 0xFF);
+        }
+    }
+
+    // Prefer Unit_Directory-derived spec/version (24-bit) over any legacy root dir keys.
+    device.unitSpecId.reset();
+    device.unitSwVersion.reset();
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId != 0) {
+            device.unitSpecId = unit.unitSpecId;
+        }
+        if (unit.unitSwVersion != 0) {
+            device.unitSwVersion = unit.unitSwVersion;
+        }
+        if (device.unitSpecId.has_value() && device.unitSwVersion.has_value()) {
+            break;
         }
     }
 
     device.vendorName = rom.vendorName;
     device.modelName = rom.modelName;
     
-    // Check if we have a known device-specific protocol (e.g., DICE/Focusrite)
-    if (Audio::DeviceProtocolFactory::IsKnownDevice(device.vendorId, device.modelId)) {
-        ASFW_LOG(Discovery, "Known device-specific protocol available for vendor=0x%06x model=0x%06x",
-                 device.vendorId, device.modelId);
-        device.kind = DeviceKind::VendorSpecificAudio;
-        device.isAudioCandidate = true;
+    // Known device profiles can choose their integration mode:
+    // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
+    // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
+    const auto integrationMode = Audio::DeviceProtocolFactory::LookupIntegrationMode(device.vendorId, device.modelId);
+
+    if (integrationMode != Audio::DeviceIntegrationMode::kNone) {
+        ASFW_LOG(Discovery,
+                 "Known device profile available for vendor=0x%06x model=0x%06x integration=%u",
+                 device.vendorId,
+                 device.modelId,
+                 static_cast<unsigned>(integrationMode));
+
+        if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
+            device.kind = DeviceKind::VendorSpecificAudio;
+            device.isAudioCandidate = true;
+        } else {
+            // kAVCDriven: keep AV/C classification so CMP/plug discovery remains applicable.
+            device.kind = ClassifyDevice(rom);
+            device.isAudioCandidate = IsAudioCandidate(rom);
+        }
         
-        // Create protocol instance if we don't have one yet AND AsyncSubsystem is available
-        if (!device.protocol && asyncSubsystem) {
+#if !defined(ASFW_HOST_TEST)
+        // Create protocol instance if we don't have one yet AND bus ports are available.
+        if (!device.protocol && busOps && busInfo) {
             ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
                      guid, rom.nodeId);
             device.protocol = Audio::DeviceProtocolFactory::Create(
-                device.vendorId, device.modelId, *asyncSubsystem, rom.nodeId);
+                device.vendorId, device.modelId, *busOps, *busInfo, rom.nodeId);
             
             if (device.protocol) {
                 ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
@@ -58,16 +86,31 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             }
         } else if (!device.protocol) {
             ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
-                     "AsyncSubsystem not provided", guid, rom.nodeId);
+                     "FireWire bus ports not provided",
+                     guid,
+                     rom.nodeId);
         }
+#endif
     } else {
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);
     }
+
+    // TODO: Generic AV/C devices should work purely via MusicSubunit discovery; vendor protocols are only for extra controls.
+    // TODO: Generic DICE/TCAT discovery (non-hardcoded vendor/model) is not implemented yet.
     
     device.gen = rom.gen;
     device.nodeId = rom.nodeId;
     device.link = link;
+
+    // Clamp max async payload by remote MaxRec code (BIB bus options).
+    const uint32_t maxFromRec32 = ASFW::FW::MaxAsyncPayloadBytesFromMaxRec(rom.bib.maxRec);
+    const uint16_t maxFromRec = (maxFromRec32 > std::numeric_limits<uint16_t>::max())
+                                    ? std::numeric_limits<uint16_t>::max()
+                                    : static_cast<uint16_t>(maxFromRec32);
+    if (device.link.maxPayloadBytes > maxFromRec) {
+        device.link.maxPayloadBytes = maxFromRec;
+    }
     device.state = LifeState::Identified;
     
     GenNodeKey key = MakeKey(rom.gen, rom.nodeId);
@@ -83,17 +126,17 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
         default: break;
     }
 
-    if (!device.vendorName.empty() && !device.modelName.empty()) {
+    if (!device.vendorName.empty() && !device.modelName.empty()) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
         ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) "
                  "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.vendorName.c_str(),
                  device.modelId, device.modelName.c_str(), kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen);
+                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
     } else {
         ASFW_LOG(Discovery, "Device upsert: GUID=0x%016llx vendor=0x%06x model=0x%06x "
                  "kind=%{public}s audioCandidate=%d node=%u gen=%u",
                  guid, device.vendorId, device.modelId, kindStr,
-                 device.isAudioCandidate, rom.nodeId, rom.gen);
+                 device.isAudioCandidate, rom.nodeId, rom.gen.value);
     }
     
     return device;
@@ -122,7 +165,7 @@ void DeviceRegistry::MarkDuplicateGuid(Generation gen, Guid64 guid, uint8_t node
     if (it != devicesByGuid_.end()) {
         it->second.state = LifeState::Quarantined;
         ASFW_LOG(Discovery, "⚠️  Duplicate GUID detected: 0x%016llx node=%u gen=%u (quarantined)",
-                 guid, nodeId, gen);
+                 guid, nodeId, gen.value);
     }
 }
 
@@ -137,7 +180,7 @@ void DeviceRegistry::MarkLost(Generation gen, uint8_t nodeId) {
             devIt->second.state = LifeState::Lost;
             devIt->second.nodeId = 0xFF;  // Clear nodeId
             ASFW_LOG(Discovery, "Device lost: GUID=0x%016llx node=%u gen=%u",
-                     guid, nodeId, gen);
+                     guid, nodeId, gen.value);
         }
         // Remove from secondary index
         genNodeToGuid_.erase(it);
@@ -192,13 +235,9 @@ void DeviceRegistry::Clear() {
 }
 
 DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
-    for (const auto& entry : rom.rootDirMinimal) {
-        if (entry.key == CfgKey::Unit_Spec_Id) {
-            const uint32_t specId = entry.value;
-            
-            if (specId == kUnitSpecId_TA) {
-                return DeviceKind::TA_61883;
-            }
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId == kUnitSpecId_TA) {
+            return DeviceKind::TA_61883;
         }
     }
     
@@ -212,11 +251,9 @@ bool DeviceRegistry::IsAudioCandidate(const ConfigROM& rom) const {
     
     bool hasAudioSpec = false;
     
-    for (const auto& entry : rom.rootDirMinimal) {
-        if (entry.key == CfgKey::Unit_Spec_Id) {
-            if (entry.value == kUnitSpecId_TA || entry.value == kUnitSpecId_AVC) {
-                hasAudioSpec = true;
-            }
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId == kUnitSpecId_TA || unit.unitSpecId == kUnitSpecId_AVC) {
+            hasAudioSpec = true;
         }
     }
     
@@ -224,8 +261,7 @@ bool DeviceRegistry::IsAudioCandidate(const ConfigROM& rom) const {
 }
 
 DeviceRegistry::GenNodeKey DeviceRegistry::MakeKey(Generation gen, uint8_t nodeId) {
-    return (static_cast<uint32_t>(gen) << 8) | static_cast<uint32_t>(nodeId);
+    return (gen.value << 8) | static_cast<uint32_t>(nodeId);
 }
 
 } // namespace ASFW::Discovery
-

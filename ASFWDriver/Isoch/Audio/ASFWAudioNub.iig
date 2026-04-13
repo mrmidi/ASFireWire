@@ -19,6 +19,9 @@
 #include <DriverKit/OSString.iig>
 #include <DriverKit/OSArray.iig>
 #include <atomic>
+#include <cstdint>
+
+class ASFWDriver;
 
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
 // Properties set by ASFWDriver:
@@ -49,16 +52,21 @@ public:
         IOBufferMemoryDescriptor** outMemory,
         uint64_t* outBytes);
 
+    // RPC method: AudioDriver calls this to start/stop audio streaming for this GUID.
+    // This replaces the previous side-effect-based autostart from CopyTransmitQueueMemory().
+    virtual kern_return_t StartAudioStreaming();
+    virtual kern_return_t StopAudioStreaming();
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
-    void* GetParentDriver() const LOCALONLY;
+    ASFWDriver* GetParentDriver() const LOCALONLY;
 
     // Get the local mapping of the TX queue for IT context to consume
-    void* GetTxQueueLocalMapping() const LOCALONLY;
+    uint8_t* GetTxQueueLocalMapping() const LOCALONLY;
     uint64_t GetTxQueueBytes() const LOCALONLY;
 
     // ZERO-COPY: Get the local mapping of output audio buffer for IT DMA
     // This is the same memory that IOUserAudioStream writes to
-    void* GetOutputAudioLocalMapping() const LOCALONLY;
+    uint8_t* GetOutputAudioLocalMapping() const LOCALONLY;
     uint64_t GetOutputAudioBytes() const LOCALONLY;
     uint32_t GetOutputAudioFrameCapacity() const LOCALONLY;
     
@@ -66,6 +74,8 @@ public:
     // Must be called before CopyTransmitQueueMemory / CopyOutputAudioMemory
     void SetChannelCount(uint32_t channels) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;
+    uint32_t GetInputChannelCount() const LOCALONLY;
+    uint32_t GetOutputChannelCount() const LOCALONLY;
 
     // Stream mode selected during discovery:
     //   0 = non-blocking, 1 = blocking
@@ -84,9 +94,24 @@ public:
         uint64_t* outBytes);
 
     // LOCALONLY methods for controller-side RX queue access (same process)
-    void* GetRxQueueLocalMapping() const LOCALONLY;
+    uint8_t* GetRxQueueLocalMapping() const LOCALONLY;
     uint64_t GetRxQueueBytes() const LOCALONLY;
     void EnsureRxQueueCreated() LOCALONLY;
+
+    // Device identity for protocol bridge routing
+    void SetGuid(uint64_t guid) LOCALONLY;
+    uint64_t GetGuid() const LOCALONLY;
+
+    // RPC protocol-backed boolean control bridge (AudioDriver -> ASFWDriver process)
+    virtual kern_return_t GetProtocolBooleanControl(
+        uint32_t classIdFourCC,
+        uint32_t element,
+        bool* outValue);
+
+    virtual kern_return_t SetProtocolBooleanControl(
+        uint32_t classIdFourCC,
+        uint32_t element,
+        bool value);
 };
 
 struct ASFWAudioNub_IVars {
@@ -95,8 +120,11 @@ struct ASFWAudioNub_IVars {
     IOMemoryMap* txQueueMap;              // Local mapping of txQueueMem
     uint64_t txQueueBytes;                // Size of shared memory
 
-    // Audio channel count (read from ASFWDriver properties)
+    // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)
+    uint64_t guid{0};
     uint32_t channelCount{2};
+    uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
+    uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
 
     // ZERO-COPY: Shared output audio buffer for IOUserAudioStream AND IT DMA

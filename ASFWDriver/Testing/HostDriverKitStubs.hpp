@@ -3,9 +3,33 @@
 #ifdef ASFW_HOST_TEST
 
 #include <mach/kern_return.h>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <DriverKit/IOReturn.h>
+#include <DriverKit/IOLib.h>
+
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#ifndef OSSwapBigToHostInt32
+#define OSSwapBigToHostInt32(x) __builtin_bswap32(static_cast<uint32_t>(x))
+#endif
+#ifndef OSSwapHostToBigInt32
+#define OSSwapHostToBigInt32(x) __builtin_bswap32(static_cast<uint32_t>(x))
+#endif
+#else
+#ifndef OSSwapBigToHostInt32
+#define OSSwapBigToHostInt32(x) static_cast<uint32_t>(x)
+#endif
+#ifndef OSSwapHostToBigInt32
+#define OSSwapHostToBigInt32(x) static_cast<uint32_t>(x)
+#endif
+#endif
 
 struct IOAddressSegment {
     uint64_t address{0};
@@ -16,6 +40,36 @@ struct IOAddressSegment {
 class IOBufferMemoryDescriptor;
 
 class IOService {};
+
+namespace ASFW::Testing {
+
+inline uint64_t DefaultHostMonotonicNow() {
+    using namespace std::chrono;
+    return duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+inline std::function<uint64_t()>& HostMonotonicClockOverride() {
+    static std::function<uint64_t()> clockOverride;
+    return clockOverride;
+}
+
+inline uint64_t HostMonotonicNow() {
+    auto& clockOverride = HostMonotonicClockOverride();
+    if (clockOverride) {
+        return clockOverride();
+    }
+    return DefaultHostMonotonicNow();
+}
+
+inline void SetHostMonotonicClockForTesting(std::function<uint64_t()> provider) {
+    HostMonotonicClockOverride() = std::move(provider);
+}
+
+inline void ResetHostMonotonicClockForTesting() {
+    HostMonotonicClockOverride() = {};
+}
+
+} // namespace ASFW::Testing
 
 class OSObject {
 public:
@@ -30,14 +84,42 @@ class OSAction : public OSObject {};
 
 class IODispatchQueue : public OSObject {
 public:
+    struct PendingWorkItem {
+        uint64_t dueNs{0};
+        std::function<void()> work;
+    };
+
     static kern_return_t Create(const char*, uint64_t, uint64_t, IODispatchQueue**) {
         return kIOReturnUnsupported;
     }
 
     void DispatchAsync(const std::function<void()>& work) {
-        if (work) {
-            work();
+        if (!work) {
+            return;
         }
+
+        if (manualDispatchForTesting_) {
+            EnqueueForTesting(ASFW::Testing::HostMonotonicNow(), work);
+            return;
+        }
+
+        work();
+    }
+
+    void DispatchAsyncAfter(uint64_t delayNs, const std::function<void()>& work) {
+        if (!work) {
+            return;
+        }
+
+        if (manualDispatchForTesting_) {
+            EnqueueForTesting(ASFW::Testing::HostMonotonicNow() + delayNs, work);
+            return;
+        }
+
+        if (delayNs > 0U) {
+            std::this_thread::sleep_for(std::chrono::nanoseconds(delayNs));
+        }
+        work();
     }
 
     void DispatchSync(const std::function<void()>& work) {
@@ -45,6 +127,85 @@ public:
             work();
         }
     }
+
+    void SetManualDispatchForTesting(bool manual) {
+        manualDispatchForTesting_ = manual;
+    }
+
+    [[nodiscard]] bool UsesManualDispatchForTesting() const {
+        return manualDispatchForTesting_;
+    }
+
+    [[nodiscard]] size_t PendingTaskCountForTesting() const {
+        std::scoped_lock lock(pendingLock_);
+        return pending_.size();
+    }
+
+    size_t DrainReadyForTesting() {
+        if (!manualDispatchForTesting_) {
+            return 0;
+        }
+
+        size_t drained = 0;
+        while (true) {
+            std::function<void()> work;
+            {
+                std::scoped_lock lock(pendingLock_);
+                const uint64_t nowNs = ASFW::Testing::HostMonotonicNow();
+                const auto it = std::find_if(
+                    pending_.begin(), pending_.end(),
+                    [nowNs](const PendingWorkItem& item) { return item.dueNs <= nowNs; });
+                if (it == pending_.end()) {
+                    break;
+                }
+                work = std::move(it->work);
+                pending_.erase(it);
+            }
+
+            if (work) {
+                work();
+                ++drained;
+            }
+        }
+
+        return drained;
+    }
+
+    size_t DrainAllForTesting() {
+        if (!manualDispatchForTesting_) {
+            return 0;
+        }
+
+        size_t drained = 0;
+        while (true) {
+            std::function<void()> work;
+            {
+                std::scoped_lock lock(pendingLock_);
+                if (pending_.empty()) {
+                    break;
+                }
+                work = std::move(pending_.front().work);
+                pending_.pop_front();
+            }
+
+            if (work) {
+                work();
+                ++drained;
+            }
+        }
+
+        return drained;
+    }
+
+private:
+    void EnqueueForTesting(uint64_t dueNs, const std::function<void()>& work) {
+        std::scoped_lock lock(pendingLock_);
+        pending_.push_back(PendingWorkItem{dueNs, work});
+    }
+
+    mutable std::mutex pendingLock_;
+    std::deque<PendingWorkItem> pending_;
+    bool manualDispatchForTesting_{false};
 };
 
 using IODispatchQueueName = const char*;
@@ -165,7 +326,11 @@ public:
         if (!segmentOut) return kIOReturnBadArgument;
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);
-        segmentOut[0] = seg;
+        static std::atomic<uint32_t> sMockIOVA{0x10000000u};
+        const uint32_t size = static_cast<uint32_t>(length > 0 ? length : seg.length);
+        const uint32_t next = sMockIOVA.fetch_add(size + 0x1000u, std::memory_order_relaxed);
+        segmentOut[0].address = next;
+        segmentOut[0].length = seg.length;
         *segments = 1;
         return kIOReturnSuccess;
     }
@@ -197,16 +362,17 @@ public:
     OSSharedPtr(T* ptr, OSRetainTag) : ptr_(ptr) {}
     OSSharedPtr(std::nullptr_t) : ptr_(nullptr) {}
 
-
-    T* get() const { return ptr_; }
-    T* operator->() const { return ptr_; }
+    T* get() const { return ptr_.get(); }
+    T* operator->() const { return ptr_.get(); }
     T& operator*() const { return *ptr_; }
     explicit operator bool() const { return ptr_ != nullptr; }
 
-    void reset() { ptr_ = nullptr; }
+    void reset() { ptr_.reset(); }
+    void reset(T* ptr, OSNoRetainTag) { ptr_.reset(ptr); }
+    void reset(T* ptr, OSRetainTag) { ptr_.reset(ptr); }
 
 private:
-    T* ptr_{nullptr};
+    std::shared_ptr<T> ptr_;
 };
 
 #endif // ASFW_HOST_TEST

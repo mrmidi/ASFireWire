@@ -329,43 +329,9 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
 
 void DeviceManager::MarkDeviceLost(Guid64 guid)
 {
-    IOLockLock(mutex_);
-    auto it = devicesByGuid_.find(guid);
-    if (it == devicesByGuid_.end()) {
-        IOLockUnlock(mutex_);
-        return;
-    }
-
-    auto device = it->second;
-    if (!device || !device->IsReady()) {
-        IOLockUnlock(mutex_);
-        return;
-    }
-
-    // Suspend device
-    device->Suspend();
-
-    // Remove from secondary index (no longer has valid nodeId)
-    auto genNodeIt = genNodeToGuid_.begin();
-    while (genNodeIt != genNodeToGuid_.end()) {
-        if (genNodeIt->second == guid) {
-            genNodeIt = genNodeToGuid_.erase(genNodeIt);
-        } else {
-            ++genNodeIt;
-        }
-    }
-
-    // Notify observers
-    NotifyDeviceSuspended(device);
-
-    // Notify unit observers for suspended units
-    for (const auto& unit : device->GetUnits()) {
-        if (unit && unit->IsSuspended()) {
-            NotifyUnitSuspended(unit);
-        }
-    }
-
-    IOLockUnlock(mutex_);
+    // Immediate-unplug policy for audio stability/cleanup.
+    // TODO: check suspend+timeout policy if needed
+    TerminateDevice(guid);
 }
 
 void DeviceManager::TerminateDevice(Guid64 guid)
@@ -496,7 +462,7 @@ bool DeviceManager::UnitMatchesCallback(
 
 DeviceManager::GenNodeKey DeviceManager::MakeKey(Generation gen, uint8_t nodeId)
 {
-    return (static_cast<uint32_t>(gen) << 8) | nodeId;
+    return (gen.value << 8) | static_cast<uint32_t>(nodeId);
 }
 
 } // namespace ASFW::Discovery

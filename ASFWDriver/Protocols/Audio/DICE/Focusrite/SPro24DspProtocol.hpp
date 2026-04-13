@@ -11,13 +11,9 @@
 #include "../Core/DICETypes.hpp"
 #include "../../IDeviceProtocol.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
-
-// Forward declare AsyncSubsystem
-namespace ASFW::Async {
-    class AsyncSubsystem;
-}
 
 namespace ASFW::Audio::DICE::Focusrite {
 
@@ -110,9 +106,12 @@ public:
     template<typename T> using ResultCallback = std::function<void(IOReturn, T)>;
     
     /// Construct protocol handler
-    /// @param subsystem  Reference to async subsystem
+    /// @param busOps     FireWire bus operations port
+    /// @param busInfo    FireWire bus info port
     /// @param nodeId     Target device node ID
-    SPro24DspProtocol(Async::AsyncSubsystem& subsystem, uint16_t nodeId);
+    SPro24DspProtocol(Protocols::Ports::FireWireBusOps& busOps,
+                      Protocols::Ports::FireWireBusInfo& busInfo,
+                      uint16_t nodeId);
     
     /// Initialize protocol (reads sections, caches state)
     /// Note: This starts async operations. Use InitializeAsync for callback-based init.
@@ -126,6 +125,8 @@ public:
     
     /// Device has DSP effects
     bool HasDsp() const override { return true; }
+
+    bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
     
     /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
     IOReturn StartDuplex48k() override;
@@ -187,11 +188,18 @@ public:
     void StartStreamTest(VoidCallback callback);
 
 private:
-    Async::AsyncSubsystem& subsystem_;
     DICETransaction tx_;
     GeneralSections sections_{};
     uint32_t appSectionBase_{0};
     bool initialized_{false};
+
+    // Runtime-discovered DICE stream caps (authoritative after async capability discovery).
+    std::atomic<uint32_t> runtimeSampleRateHz_{0};
+    std::atomic<uint32_t> hostInputPcmChannels_{0};    // DICE TX stream 0 PCM
+    std::atomic<uint32_t> hostOutputPcmChannels_{0};   // DICE RX stream 0 PCM
+    std::atomic<uint32_t> deviceToHostAm824Slots_{0};  // DICE TX stream 0 slots
+    std::atomic<uint32_t> hostToDeviceAm824Slots_{0};  // DICE RX stream 0 slots
+    std::atomic<bool> runtimeCapsValid_{false};
     
     /// Send software notice to commit changes
     void SendSwNotice(SwNotice notice, VoidCallback callback);

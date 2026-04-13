@@ -20,6 +20,7 @@
 #include "NonBlockingCadence48k.hpp"
 #include "BlockingDbcGenerator.hpp"
 #include "AudioRingBuffer.hpp"
+#include "../Config/AudioConstants.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <atomic>
@@ -34,20 +35,30 @@ enum class StreamMode : uint8_t {
     kBlocking = 1,
 };
 
-/// Maximum supported channel count (compile-time buffer sizing)
-constexpr uint32_t kMaxSupportedChannels = 16;
-
 /// Compile-time maximum frames per DATA packet (48k blocking path).
 constexpr uint32_t kSamplesPerDataPacket = 8;
 
 /// CIP header size in bytes
 constexpr uint32_t kCIPHeaderSize = 8;
 
-/// Compile-time max audio data size (8 frames × 16 channels × 4 bytes)
-constexpr uint32_t kMaxAudioDataSize = kSamplesPerDataPacket * kMaxSupportedChannels * sizeof(uint32_t);
+/// Compile-time max audio payload size (8 frames × max AM824 slots × 4 bytes)
+constexpr size_t kMaxAudioDataSize =
+    static_cast<size_t>(kSamplesPerDataPacket) * Isoch::Config::kMaxAmdtpDbs * sizeof(uint32_t);
 
 /// Compile-time max assembled packet size (CIP header + max audio data)
-constexpr uint32_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
+constexpr size_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
+
+/// Underrun diagnostic snapshot (1A: detection).
+/// All fields atomically updated in assembleDataPacket() hot path.
+/// Read/reset from Poll() non-RT path for logging.
+struct UnderrunDiag {
+    std::atomic<uint64_t> underrunCount{0};
+    std::atomic<uint32_t> lastFillLevel{0};
+    std::atomic<uint32_t> lastRequestedFrames{0};
+    std::atomic<uint32_t> lastAvailableFrames{0};
+    std::atomic<uint64_t> lastCycleNumber{0};
+    std::atomic<uint8_t>  lastDbc{0};
+};
 
 /// Assembled packet structure
 struct AssembledPacket {
@@ -66,21 +77,33 @@ struct AssembledPacket {
 ///   3. Call assembleNext() for each FireWire cycle (8000/sec)
 ///   4. Transmit or validate the assembled packet
 ///
+// Hot-path layout intentionally keeps cadence, DBC, ring-buffer, and diagnostics separate.
+// NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 class PacketAssembler {
 public:
     /// Construct a packet assembler.
-    /// @param channels Number of audio channels (1..kMaxSupportedChannels)
+    /// @param channels Number of PCM audio channels (1..Isoch::Config::kMaxPcmChannels)
     /// @param sid Source node ID (6 bits)
     explicit PacketAssembler(uint32_t channels = 2, uint8_t sid = 0) noexcept
         : channelCount_(channels)
+        , am824SlotCount_(channels)
+        , midiSlotsPerEvent_(0)
         , cipBuilder_(sid, static_cast<uint8_t>(channels)) {}
 
     /// Get channel count.
     uint32_t channelCount() const noexcept { return channelCount_; }
 
+    /// Get AM824 slot count per event (CIP DBS on wire).
+    uint32_t am824SlotCount() const noexcept { return am824SlotCount_; }
+
+    /// Get additional non-audio AM824 slots (e.g. MIDI) per event.
+    uint32_t midiSlotsPerEvent() const noexcept { return midiSlotsPerEvent_; }
+
     /// Get runtime data packet size in bytes.
     uint32_t dataPacketSize() const noexcept {
-        return kCIPHeaderSize + samplesPerDataPacket() * channelCount_ * sizeof(uint32_t);
+        const size_t payloadBytes =
+            static_cast<size_t>(samplesPerDataPacket()) * am824SlotCount_ * sizeof(uint32_t);
+        return static_cast<uint32_t>(kCIPHeaderSize + payloadBytes);
     }
 
     /// Get DATA packet frame count for the active stream mode (48k paths only).
@@ -97,8 +120,21 @@ public:
     /// Reconfigure channel count and SID (resets all state).
     /// Use this instead of assignment since atomics prevent copy/move.
     void reconfigure(uint32_t channels, uint8_t sid) noexcept {
+        reconfigureAM824(channels, channels, sid);
+    }
+
+    /// Reconfigure PCM channels and wire AM824 slot count (CIP DBS).
+    /// `am824Slots` may exceed `channels` when the stream carries non-audio slots
+    /// such as MIDI conformant data.
+    // Positional arguments mirror PCM-channels / wire-slots / SID reconfiguration.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    void reconfigureAM824(uint32_t channels, uint32_t am824Slots, uint8_t sid) noexcept {
         channelCount_ = channels;
-        cipBuilder_ = CIPHeaderBuilder(sid, static_cast<uint8_t>(channels));
+        am824SlotCount_ = am824Slots;
+        midiSlotsPerEvent_ = (am824SlotCount_ > channelCount_)
+            ? (am824SlotCount_ - channelCount_)
+            : 0;
+        cipBuilder_ = CIPHeaderBuilder(sid, static_cast<uint8_t>(am824SlotCount_));
         ringBuffer_.reconfigure(channels);
         blockingCadence_.reset();
         nonBlockingCadence_.reset();
@@ -109,6 +145,7 @@ public:
         zeroCopyCapacity_ = 0;
         dbgDataPackets_.store(0, std::memory_order_relaxed);
         dbgUnderrunPackets_.store(0, std::memory_order_relaxed);
+        underrunDiag_.underrunCount.store(0, std::memory_order_relaxed);
     }
 
     /// Set the source node ID.
@@ -161,24 +198,30 @@ public:
     /// Assemble the next packet based on current cadence position.
     ///
     /// @param syt Presentation timestamp (SYT) for DATA packets
+    /// @param silent When true, DATA packets get zero-filled audio (no ring buffer read,
+    ///               no underrun counters). Cadence/DBC/CIP all advance normally.
     /// @return Assembled packet ready for transmission
     ///
-    AssembledPacket assembleNext(uint16_t syt = 0) noexcept {
+    AssembledPacket assembleNext(uint16_t syt = 0, bool silent = false) noexcept {
         AssembledPacket packet{};
         packet.cycleNumber = currentCycleNumber();
         packet.isData = nextIsData();
         const uint8_t samplesInPacket = static_cast<uint8_t>(samplesPerDataPacket());
         packet.dbc = dbcGen_.getDbc(packet.isData, samplesInPacket);
-        
+
         if (packet.isData) {
-            assembleDataPacket(packet, syt);
+            if (silent) {
+                assembleDataPacketSilent(packet, syt);
+            } else {
+                assembleDataPacket(packet, syt);
+            }
         } else {
             assembleNoDataPacket(packet);
         }
-        
+
         // Advance cadence for next cycle
         advanceCadence();
-        
+
         return packet;
     }
     
@@ -240,7 +283,7 @@ private:
         std::memcpy(packet.data + 4, &cip.q1, 4);
 
         // Read audio samples - ZERO-COPY path or ring buffer fallback
-        int32_t samples[kSamplesPerDataPacket * kMaxSupportedChannels];
+        int32_t samples[kSamplesPerDataPacket * Isoch::Config::kMaxPcmChannels];
         uint32_t framesRead = 0;
 
         if (zeroCopyEnabled_ && zeroCopyBase_) {
@@ -265,20 +308,41 @@ private:
         if (framesRead < framesPerPacket) {
             dbgUnderrunPackets_.fetch_add(1, std::memory_order_relaxed);
 
+            // 1A: Underrun snapshot (RT-safe atomic stores, no logging)
+            underrunDiag_.underrunCount.fetch_add(1, std::memory_order_relaxed);
+            underrunDiag_.lastFillLevel.store(ringBuffer_.fillLevel(), std::memory_order_relaxed);
+            underrunDiag_.lastRequestedFrames.store(framesPerPacket, std::memory_order_relaxed);
+            underrunDiag_.lastAvailableFrames.store(framesRead, std::memory_order_relaxed);
+            underrunDiag_.lastCycleNumber.store(packet.cycleNumber, std::memory_order_relaxed);
+            underrunDiag_.lastDbc.store(packet.dbc, std::memory_order_relaxed);
+
             // SAFETY: Zero remaining samples to prevent encoding stale stack data
-            size_t samplesRead = framesRead * channelCount_;
-            size_t totalSamples = framesPerPacket * channelCount_;
+            size_t samplesRead = static_cast<size_t>(framesRead) * channelCount_;
+            size_t totalSamples = static_cast<size_t>(framesPerPacket) * channelCount_;
             std::memset(&samples[samplesRead], 0, (totalSamples - samplesRead) * sizeof(int32_t));
         }
 
         // Encode samples to AM824 format
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
-
-        for (uint32_t i = 0; i < framesPerPacket * channelCount_; ++i) {
-            audioQuadlets[i] = AM824Encoder::encode(samples[i]);
-        }
+        encodeInterleavedFramesToAm824(samples, framesPerPacket, audioQuadlets);
     }
     
+    /// Assemble a silent DATA packet (CIP header + zero-filled audio).
+    /// Cadence/DBC advance normally, but no ring buffer read and no underrun counters.
+    void assembleDataPacketSilent(AssembledPacket& packet, uint16_t syt) noexcept {
+        const uint32_t framesPerPacket = samplesPerDataPacket();
+        packet.size = dataPacketSize();
+
+        CIPHeader cip = cipBuilder_.build(packet.dbc, syt, false);
+        std::memcpy(packet.data, &cip.q0, 4);
+        std::memcpy(packet.data + 4, &cip.q1, 4);
+
+        // IMPORTANT: Silent audio must still be valid AM824/MBLA (label 0x40),
+        // otherwise some devices interpret it as garbage (audible noise).
+        uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
+        fillSilentAm824Frames(framesPerPacket, audioQuadlets);
+    }
+
     /// Assemble a NO-DATA packet (8 bytes: CIP only).
     void assembleNoDataPacket(AssembledPacket& packet) noexcept {
         packet.size = kCIPHeaderSize;
@@ -291,7 +355,44 @@ private:
         std::memcpy(packet.data + 4, &cip.q1, 4);
     }
     
-    uint32_t channelCount_{2};               ///< Number of audio channels
+    static constexpr uint32_t encodeMidiPlaceholder(uint32_t midiSlotIndex) noexcept {
+        const uint8_t label = static_cast<uint8_t>(
+            kAM824LabelMIDIConformantBase + (midiSlotIndex & 0x03u));
+        return AM824Encoder::encodeLabelOnly(label);
+    }
+
+    void encodeInterleavedFramesToAm824(const int32_t* pcmInterleaved,
+                                        uint32_t frames,
+                                        uint32_t* outWireQuadlets) const noexcept {
+        for (uint32_t f = 0; f < frames; ++f) {
+            const int32_t* frameIn = pcmInterleaved + (static_cast<size_t>(f) * channelCount_);
+            uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824SlotCount_);
+
+            for (uint32_t ch = 0; ch < channelCount_; ++ch) {
+                frameOut[ch] = AM824Encoder::encode(frameIn[ch]);
+            }
+            for (uint32_t s = 0; s < midiSlotsPerEvent_; ++s) {
+                frameOut[channelCount_ + s] = encodeMidiPlaceholder(s);
+            }
+        }
+    }
+
+    void fillSilentAm824Frames(uint32_t frames, uint32_t* outWireQuadlets) const noexcept {
+        const uint32_t silence = AM824Encoder::encodeSilence();
+        for (uint32_t f = 0; f < frames; ++f) {
+            uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824SlotCount_);
+            for (uint32_t ch = 0; ch < channelCount_; ++ch) {
+                frameOut[ch] = silence;
+            }
+            for (uint32_t s = 0; s < midiSlotsPerEvent_; ++s) {
+                frameOut[channelCount_ + s] = encodeMidiPlaceholder(s);
+            }
+        }
+    }
+
+    uint32_t channelCount_{2};               ///< Number of PCM audio channels
+    uint32_t am824SlotCount_{2};             ///< Wire AM824 slots per event (CIP DBS)
+    uint32_t midiSlotsPerEvent_{0};          ///< Extra AM824 slots after PCM (MIDI, etc.)
     uint64_t currentCycleNumber() const noexcept {
         switch (streamMode_) {
             case StreamMode::kBlocking:
@@ -326,16 +427,37 @@ private:
     bool zeroCopyEnabled_{false};
     StreamMode streamMode_{StreamMode::kBlocking};
     
+    // 1A: Underrun diagnostics (RT-safe atomics, read from Poll)
+    UnderrunDiag underrunDiag_;
+
     // Debug counters (for 1Hz logging instead of hot-path logging)
     std::atomic<uint64_t> dbgDataPackets_{0};
     std::atomic<uint64_t> dbgUnderrunPackets_{0};
     
 public:
     /// Snapshot debug counters for 1Hz logging (resets counters atomically)
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void snapshotDebug(uint64_t& dataPkts, uint64_t& underruns) noexcept {
         dataPkts = dbgDataPackets_.exchange(0, std::memory_order_relaxed);
         underruns = dbgUnderrunPackets_.exchange(0, std::memory_order_relaxed);
     }
+
+    /// 1A: Record an underrun from external caller (zero-copy path).
+    /// Called by IsochTransmitContext when zeroCopyFillBefore < framesPerPacket.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    void recordUnderrun(uint32_t fillLevel, uint32_t requestedFrames,
+                        uint32_t availableFrames, uint64_t cycleNumber, // NOLINT(bugprone-easily-swappable-parameters)
+                        uint8_t dbc) noexcept {
+        underrunDiag_.underrunCount.fetch_add(1, std::memory_order_relaxed);
+        underrunDiag_.lastFillLevel.store(fillLevel, std::memory_order_relaxed);
+        underrunDiag_.lastRequestedFrames.store(requestedFrames, std::memory_order_relaxed);
+        underrunDiag_.lastAvailableFrames.store(availableFrames, std::memory_order_relaxed);
+        underrunDiag_.lastCycleNumber.store(cycleNumber, std::memory_order_relaxed);
+        underrunDiag_.lastDbc.store(dbc, std::memory_order_relaxed);
+    }
+
+    /// 1A: Read underrun diagnostic snapshot (returns current count, not delta).
+    const UnderrunDiag& underrunDiag() const noexcept { return underrunDiag_; }
 };
 
 } // namespace Encoding

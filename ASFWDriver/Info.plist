@@ -34,10 +34,14 @@
 			<integer>1</integer>
 			<key>ASFWHardwareVerbosity</key>
 			<integer>1</integer>
-			<key>ASFWEnableHexDumps</key>
-			<false/>
-			<key>ASFWLogStatistics</key>
-			<true/>
+				<key>ASFWEnableHexDumps</key>
+				<false/>
+				<key>ASFWEnableIsochTxVerifier</key>
+				<false/>
+				<key>ASFWAutoStartAudioStreams</key>
+				<true/>
+				<key>ASFWLogStatistics</key>
+				<true/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>

@@ -1,16 +1,23 @@
 # Build artifacts
 build/
 build-ninja/
+build-tests/
+build-tests-codex/
 **/build/
 **/build_*/
 tests_build/
 *.log
+tests.log
+build-tests*/
 
 # Local tooling caches
 .cache/
 
 # .DS_Store
 .DS_Store
+
+# .env
+.env
 
 # Coverage report
 coverage_html/
@@ -39,3 +46,14 @@ docs/
 
 # Exclude Plugins/VersionGeneratorPlugin from public repository
 Plugins/VersionGeneratorPlugin
+
+# LLM Tools
+
+.claude/
+opencode.json
+
+# Xcode per-user state
+**/xcuserdata/
+
+# Local Codex scratch builds
+build-codex/

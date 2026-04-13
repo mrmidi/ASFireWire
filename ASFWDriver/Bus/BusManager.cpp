@@ -1,17 +1,49 @@
 #include "BusManager.hpp"
 #include "Logging.hpp"
+
 #include <algorithm>
+#include <span>
 
 namespace ASFW::Driver {
 
-// IEEE 1394-1995 §8.4.2.4 - Self-ID Packet 0 Format
-namespace SelfID {
-    constexpr uint32_t kGapCountShift = 16;
-    constexpr uint32_t kGapCountMask = 0x003F0000;  // Bits[21:16] before shift
-    constexpr uint32_t kSelfIDTag = 0x80000000;     // Bits[31:30] = 10 (Self-ID identifier)
-    constexpr uint32_t kPacket0Mask = 0x00C00000;   // Bits[23:22] = packet number
-    constexpr uint32_t kPacket0Type = 0x00000000;   // Packet 0 has bits[23:22] = 00
+namespace {
+
+[[nodiscard]] std::vector<uint8_t> ExtractObservedBaseGaps(const std::vector<uint32_t>& selfIDs) {
+    std::vector<uint8_t> gaps;
+    gaps.reserve(selfIDs.size());
+
+    for (const uint32_t packet : selfIDs) {
+        if (!IsSelfIDTag(packet) || IsExtended(packet)) {
+            continue;
+        }
+        gaps.push_back(ExtractGapCount(packet));
+    }
+
+    return gaps;
 }
+
+[[nodiscard]] bool AreObservedGapsConsistent(std::span<const uint8_t> gaps) {
+    if (gaps.empty()) {
+        return true;
+    }
+
+    const uint8_t referenceGap = gaps.front();
+    return std::all_of(gaps.begin(), gaps.end(),
+                       [referenceGap](const uint8_t gap) { return gap == referenceGap; });
+}
+
+[[nodiscard]] bool AnyObservedGapIsZero(std::span<const uint8_t> gaps) {
+    return std::any_of(gaps.begin(), gaps.end(), [](const uint8_t gap) { return gap == 0U; });
+}
+
+[[nodiscard]] bool AnyObservedGapNeedsRetool(std::span<const uint8_t> gaps, const uint8_t previousGap,
+                                             const uint8_t targetGap) {
+    return std::any_of(gaps.begin(), gaps.end(), [previousGap, targetGap](const uint8_t gap) {
+        return gap != previousGap && gap != targetGap;
+    });
+}
+
+} // namespace
 
 // ============================================================================
 // Configuration Methods
@@ -32,10 +64,30 @@ void BusManager::SetDelegateMode(bool enable) {
     ASFW_LOG(BusManager, "Delegate mode %{public}s", enable ? "enabled" : "disabled");
 }
 
+void BusManager::SetGapOptimizationEnabled(bool enable) {
+    config_.enableGapOptimization = enable;
+    ASFW_LOG(BusManager, "Gap optimization %{public}s", enable ? "enabled" : "disabled");
+}
+
 void BusManager::SetForcedGapCount(uint8_t gapCount) {
     config_.forcedGapCount = gapCount;
     config_.forcedGapFlag = (gapCount > 0);
     ASFW_LOG(BusManager, "Forced gap count set to %u (flag=%d)", gapCount, config_.forcedGapFlag);
+}
+
+const char* BusManager::GapDecisionReasonString(const GapDecisionReason reason) noexcept {
+    switch (reason) {
+    case GapDecisionReason::MismatchForce63:
+        return "MismatchForce63";
+    case GapDecisionReason::ForcedGap:
+        return "ForcedGap";
+    case GapDecisionReason::TargetGap:
+        return "TargetGap";
+    case GapDecisionReason::ZeroObservedGap:
+        return "ZeroObservedGap";
+    }
+
+    return "Unknown";
 }
 
 // ============================================================================
@@ -114,9 +166,39 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
             if (irmNodeID == 0xFF) {
                 badIRM = true;
             }
-            
+
             if (badIRM) {
                 ASFW_LOG(BusManager, "⚠️  Bad IRM detected (node %u)", irmNodeID);
+            }
+        }
+
+        // Apple's AssignCycleMaster fallback (IOFireWireController.cpp):
+        // If bad IRM or no IRM at all, we must ensure *somebody* becomes IRM.
+        // DICE-class devices don't support IRM, so our node must take over
+        // for isochronous resource management to work.
+        if (badIRM || irmNodeID == 0xFF) {
+            if (!config_.delegateCycleMaster) {
+                // We want to be cycle master — force ourselves as IRM
+                PhyConfigCommand cmd{};
+                cmd.setContender = true;
+                cmd.forceRootNodeID = localNodeID;
+                ASFW_LOG(BusManager, "Forcing local node as IRM (bad IRM or no contenders)");
+                return cmd;
+            } else if (otherContender) {
+                // Delegate mode but other node can do it
+                PhyConfigCommand cmd{};
+                cmd.setContender = false;
+                cmd.forceRootNodeID = otherContenderID;
+                ASFW_LOG(BusManager, "Delegating IRM to node %u (bad IRM=%u)", otherContenderID, irmNodeID);
+                return cmd;
+            } else {
+                // Nobody else can do it.  Apple pattern:
+                // "Oh well, nobody else can do it. Make Mac root."
+                PhyConfigCommand cmd{};
+                cmd.setContender = true;
+                cmd.forceRootNodeID = localNodeID;
+                ASFW_LOG(BusManager, "No IRM candidates — forcing local node as contender (Apple fallback)");
+                return cmd;
             }
         }
     }
@@ -126,7 +208,7 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
     return std::nullopt;
 }
 
-std::optional<BusManager::PhyConfigCommand> BusManager::OptimizeGapCount(
+std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
     const TopologySnapshot& topology,
     const std::vector<uint32_t>& selfIDs)
 {
@@ -134,160 +216,99 @@ std::optional<BusManager::PhyConfigCommand> BusManager::OptimizeGapCount(
         return std::nullopt;
     }
 
-    if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
+    if (!topology.localNodeId.has_value() || !topology.irmNodeId.has_value()) {
         return std::nullopt;
     }
 
     const uint8_t localNodeID = *topology.localNodeId;
-    const uint8_t rootNodeID = *topology.rootNodeId;
-
-    if (topology.irmNodeId.has_value() && *topology.irmNodeId != localNodeID) {
+    if (*topology.irmNodeId != localNodeID) {
+        ASFW_LOG_V3(BusManager, "Skipping gap optimization because local node %u is not IRM %u",
+                    localNodeID, *topology.irmNodeId);
         return std::nullopt;
     }
 
-    uint8_t newGap = 0;
+    const std::vector<uint8_t> observedGaps = ExtractObservedBaseGaps(selfIDs);
+    if (observedGaps.empty()) {
+        ASFW_LOG_V3(BusManager, "Skipping gap optimization because no validated packet-0 gaps exist");
+        return std::nullopt;
+    }
+
+    // Apple IOFireWireFamily `processSelfIDs()` corrects validated packet-0
+    // mismatches by forcing a conservative `gap_count = 63` before later
+    // optimization is considered.
+    if (!AreObservedGapsConsistent(observedGaps)) {
+        ASFW_LOG(BusManager, "Gap mismatch across validated packet-0 Self-IDs; forcing gap 63");
+        return GapDecision{0x3F, GapDecisionReason::MismatchForce63};
+    }
+
+    const uint8_t targetGap =
+        config_.forcedGapFlag ? config_.forcedGapCount : CalculateGapFromHops(topology.maxHopsFromRoot);
 
     if (config_.forcedGapFlag) {
-        newGap = config_.forcedGapCount;
-        ASFW_LOG(BusManager, "Using forced gap count: %u", newGap);
-    } else {
-        uint8_t maxHops = rootNodeID;
-        if (maxHops > 25) maxHops = 25;
-        uint8_t hopGap = CalculateGapFromHops(maxHops);
-
-        uint8_t pingGap = hopGap;
-
-        newGap = std::max(hopGap, pingGap);
-
-        ASFW_LOG(BusManager, "Calculated gap: hops=%u→gap=%u final=%u",
-                 maxHops, hopGap, newGap);
-    }
-
-    bool retoolGap = false;
-
-    if (!AreGapsConsistent(selfIDs)) {
-        ASFW_LOG(BusManager, "Gap counts inconsistent across Self-IDs");
-        retoolGap = true;
-    }
-
-    if (!retoolGap && !selfIDs.empty()) {
-        uint8_t currentGap = ExtractGapCount(selfIDs[0]);
-        if (currentGap != newGap && currentGap != previousGap_) {
-            ASFW_LOG(BusManager, "Gap mismatch: current=%u new=%u prev=%u",
-                     currentGap, newGap, previousGap_);
-            retoolGap = true;
+        if (targetGap == gapState_.lastConfirmedGap) {
+            ASFW_LOG_V3(BusManager, "Forced gap %u already matches last confirmed gap", targetGap);
+            return std::nullopt;
         }
+
+        ASFW_LOG(BusManager, "Forcing gap count to %u (confirmed=%u)", targetGap,
+                 gapState_.lastConfirmedGap);
+        return GapDecision{targetGap, GapDecisionReason::ForcedGap};
     }
 
-    if (retoolGap) {
-        ASFW_LOG(BusManager, "🔧 Applying gap count: %u (previous=%u)", newGap, previousGap_);
-        previousGap_ = newGap;
-
-        PhyConfigCommand cmd{};
-        cmd.gapCount = newGap;
-        return cmd;
+    // Apple IOFireWireFamily `finishedBusScan()` only retools after the bus is
+    // stable if the observed packet-0 gaps are still unusable (zero) or do not
+    // match either the previous programmed gap or the newly computed target.
+    if (AnyObservedGapIsZero(observedGaps)) {
+        ASFW_LOG(BusManager, "Observed zero gap_count; retooling to target gap %u", targetGap);
+        return GapDecision{targetGap, GapDecisionReason::ZeroObservedGap};
     }
 
-    ASFW_LOG(BusManager, "✅ Gap optimization: No action needed (gap=%u)", newGap);
+    if (AnyObservedGapNeedsRetool(observedGaps, gapState_.lastConfirmedGap, targetGap)) {
+        ASFW_LOG(BusManager, "Retooling gap count to %u (confirmed=%u)", targetGap,
+                 gapState_.lastConfirmedGap);
+        return GapDecision{targetGap, GapDecisionReason::TargetGap};
+    }
+
+    ASFW_LOG_V3(BusManager,
+                "Gap optimization stable: observed gaps already match confirmed %u or target %u",
+                gapState_.lastConfirmedGap, targetGap);
     return std::nullopt;
 }
 
-std::optional<uint8_t> BusManager::FindOtherContender(
-    const TopologySnapshot& topology,
-    uint8_t excludeNodeID) const
-{
-    for (const auto& node : topology.nodes) {
-        if (node.nodeId != excludeNodeID &&
-            node.isIRMCandidate &&
-            node.linkActive)
-        {
-            return node.nodeId;
-        }
-    }
-    return std::nullopt;
+void BusManager::NoteGapResetIssued(const uint8_t gapCount, const GapDecisionReason reason) {
+    gapState_.inFlight = GapState::InFlightReset{gapCount, reason};
+    ASFW_LOG_V3(BusManager, "Gap reset issued: target=%u reason=%{public}s", gapCount,
+                GapDecisionReasonString(reason));
 }
 
-uint8_t BusManager::SelectGoodRoot(
-    const TopologySnapshot& topology,
-    const std::vector<bool>& badIRMFlags,
-    uint8_t badIRMNodeID) const
-{
-    if (topology.localNodeId.has_value()) {
-        return *topology.localNodeId;
+void BusManager::NoteStableGapObserved(const uint8_t observedGap) {
+    const auto inFlight = gapState_.inFlight;
+    gapState_.lastConfirmedGap = observedGap;
+    gapState_.inFlight.reset();
+
+    if (inFlight.has_value()) {
+        ASFW_LOG_V3(BusManager,
+                    "Stable packet-0 gap %u accepted after in-flight target %u (%{public}s)",
+                    observedGap, inFlight->gapCount, GapDecisionReasonString(inFlight->reason));
+        return;
     }
 
-    for (auto it = topology.nodes.rbegin(); it != topology.nodes.rend(); ++it) {
-        if (it->isIRMCandidate &&
-            it->linkActive &&
-            it->nodeId != badIRMNodeID &&
-            (it->nodeId >= badIRMFlags.size() || !badIRMFlags[it->nodeId]))
-        {
-            return it->nodeId;
-        }
-    }
-
-    for (auto it = topology.nodes.rbegin(); it != topology.nodes.rend(); ++it) {
-        if (it->linkActive && it->nodeId != badIRMNodeID) {
-            return it->nodeId;
-        }
-    }
-
-    return topology.rootNodeId.value_or(0);
+    ASFW_LOG_V3(BusManager, "Stable packet-0 gap %u accepted", observedGap);
 }
 
-BusManager::PhyConfigCommand BusManager::BuildPhyConfigCommand(
-    std::optional<uint8_t> forceRootNodeID,
-    std::optional<uint8_t> gapCount) const {
-    PhyConfigCommand cmd{};
-    cmd.forceRootNodeID = forceRootNodeID;
-    cmd.gapCount = gapCount;
-    return cmd;
+void BusManager::ClearInFlightGapReset() {
+    if (!gapState_.inFlight.has_value()) {
+        return;
+    }
+
+    ASFW_LOG_V2(BusManager, "Discarding in-flight gap target %u after dispatch failure",
+                gapState_.inFlight->gapCount);
+    gapState_.inFlight.reset();
 }
 
 uint8_t BusManager::CalculateGapFromHops(uint8_t maxHops) const {
     if (maxHops >= 26) maxHops = 25;
     return GAP_TABLE[maxHops];
-}
-
-uint8_t BusManager::CalculateGapFromPing(uint32_t maxPingNs) const {
-    if (maxPingNs > 245) maxPingNs = 245;
-
-    if (maxPingNs >= 29) {
-        uint32_t index = (maxPingNs - 20) / 9;
-        if (index >= 26) index = 25;
-        return GAP_TABLE[index];
-    } else {
-        return 5;
-    }
-}
-
-uint8_t BusManager::ExtractGapCount(uint32_t selfIDQuad) {
-    if ((selfIDQuad & SelfID::kSelfIDTag) == SelfID::kSelfIDTag &&
-        (selfIDQuad & SelfID::kPacket0Mask) == SelfID::kPacket0Type) {
-        return (selfIDQuad & SelfID::kGapCountMask) >> SelfID::kGapCountShift;
-    }
-    return 0x3F;
-}
-
-bool BusManager::AreGapsConsistent(const std::vector<uint32_t>& selfIDs) {
-    if (selfIDs.empty()) return true;
-
-    std::optional<uint8_t> referenceGap;
-    for (const uint32_t quad : selfIDs) {
-        if ((quad & SelfID::kSelfIDTag) == SelfID::kSelfIDTag &&
-            (quad & SelfID::kPacket0Mask) == SelfID::kPacket0Type) {
-            if (!referenceGap.has_value()) {
-                referenceGap = ExtractGapCount(quad);
-            } else {
-                uint8_t gap = ExtractGapCount(quad);
-                if (gap != *referenceGap) {
-                    return false;
-                }
-            }
-        }
-    }
-
-    return true;
 }
 
 } // namespace ASFW::Driver

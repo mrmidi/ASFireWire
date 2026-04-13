@@ -6,6 +6,10 @@
 
 set -Eeuo pipefail
 
+# Always run from the repository root so relative build paths are stable.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 # -------- Config --------
 PROJECT_NAME="ASFW"
 SCHEME_NAME="ASFW"
@@ -119,8 +123,8 @@ generate_compile_commands() {
     -project "${PROJECT_NAME}.xcodeproj"
     -scheme "${SCHEME_NAME}"
     -configuration "${CONFIGURATION}"
-    -arch "${ARCH_NAME}"
     -derivedDataPath "${DERIVED}"
+    -destination "platform=macOS,arch=${ARCH_NAME}"
     clean
     build
   )
@@ -157,7 +161,9 @@ run_tests() {
   require_cmd ctest
 
   log "Configuring tests (cmake) in ${TEST_BUILD_DIR}..."
-  cmake -S "${TESTS_DIR}" -B "${TEST_BUILD_DIR}" -DCMAKE_BUILD_TYPE="${CONFIGURATION}" >/dev/null
+  cmake -S "${TESTS_DIR}" -B "${TEST_BUILD_DIR}" \
+    -DCMAKE_BUILD_TYPE="${CONFIGURATION}" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
 
   log "Building tests..."
   # Use cmake --build for portability; forward config for multi-config generators
@@ -188,7 +194,7 @@ run_swift_tests() {
     -scheme "${SCHEME_NAME}"
     -configuration "${CONFIGURATION}"
     -derivedDataPath "${DERIVED}"
-    -destination 'platform=macOS,arch=arm64'
+    -destination "platform=macOS,arch=${ARCH_NAME}"
     -only-testing:ASFWTests
   )
   
@@ -287,16 +293,16 @@ run_build() {
 
   # Run xcodebuild. We capture everything to RAW_LOG.
   set +e
-  xcodebuild \
-    -project "${PROJECT_NAME}.xcodeproj" \
-    -scheme "${SCHEME_NAME}" \
-    -configuration "${CONFIGURATION}" \
-    -arch "${ARCH_NAME}" \
-    -derivedDataPath "${DERIVED}" \
-    -resultBundlePath "${RESULT_BUNDLE}" \
-    CODE_SIGNING_ALLOWED=NO \
-    CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGN_IDENTITY="" \
+	  xcodebuild \
+	    -project "${PROJECT_NAME}.xcodeproj" \
+	    -scheme "${SCHEME_NAME}" \
+	    -configuration "${CONFIGURATION}" \
+	    -derivedDataPath "${DERIVED}" \
+	    -destination "platform=macOS,arch=${ARCH_NAME}" \
+	    -resultBundlePath "${RESULT_BUNDLE}" \
+	    CODE_SIGNING_ALLOWED=NO \
+	    CODE_SIGNING_REQUIRED=NO \
+	    CODE_SIGN_IDENTITY="" \
     ${QUIET_FLAG[@]+"${QUIET_FLAG[@]}"} \
     build \
     2>&1 | tee "${RAW_LOG}"

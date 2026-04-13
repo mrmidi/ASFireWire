@@ -11,26 +11,27 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Logging/LogConfig.hpp"
+#include "../../Audio/AudioCoordinator.hpp"
+#include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Protocols/Audio/IDeviceProtocol.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
+#include "../../Service/DriverContext.hpp"
+#include "../Config/AudioConstants.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
+#include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSNumber.h>
+#include <DriverKit/OSSharedPtr.h>
 
-// TX queue capacity: 4096 frames = ~85ms @ 48kHz
-// This provides good buffering without excessive latency
-static constexpr uint32_t kTxQueueCapacityFrames = 4096;
+#include <algorithm>
 
-// ZERO-COPY: Output audio buffer size
-// Match kZeroTimestampPeriod from ASFWAudioDriver (512 frames)
-static constexpr uint32_t kOutputAudioBufferFrames = 512;
-// RX queue capacity: 4096 frames = ~85ms @ 48kHz (matches AudioRingBuffer)
-static constexpr uint32_t kRxQueueCapacityFrames = 4096;
-
-static constexpr uint8_t kAutoIsochReceiveChannel = 0;   // Device TX -> Host IR
-static constexpr uint8_t kAutoIsochTransmitChannel = 1;  // Host IT -> Device RX
+// TX queue capacity: Config::kTxQueueCapacityFrames frames = ~85ms @ 48kHz.
+// ZERO-COPY: Output audio buffer size matches Config::kAudioIoPeriodFrames.
+// RX queue capacity: Config::kRxQueueCapacityFrames frames = ~85ms @ 48kHz (matches AudioRingBuffer).
 
 static ASFWDriver* GetParentASFWDriver(const ASFWAudioNub_IVars* iv)
 {
@@ -40,102 +41,135 @@ static ASFWDriver* GetParentASFWDriver(const ASFWAudioNub_IVars* iv)
     return OSDynamicCast(ASFWDriver, iv->parentDriver);
 }
 
-static void ConfigureDeviceDuplex48kBestEffort(ASFWDriver* parent)
-{
+static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVars* iv) noexcept {
+    ASFWDriver* parent = GetParentASFWDriver(iv);
     if (!parent) {
-        return;
+        return nullptr;
+    }
+    auto* ctx = static_cast<ServiceContext*>(parent->GetServiceContext());
+    if (!ctx || !ctx->audioCoordinator) {
+        return nullptr;
+    }
+    return ctx->audioCoordinator.get();
+}
+
+struct ProtocolRuntimeBinding {
+    ASFW::Discovery::DeviceRecord* device{nullptr};
+    ASFW::Audio::IDeviceProtocol* protocol{nullptr};
+    ASFW::Protocols::AVC::IAVCDiscovery* avcDiscovery{nullptr};
+};
+
+static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
+                                                   ProtocolRuntimeBinding& outBinding);
+
+static uint32_t ClampAudioChannels(uint32_t channels) {
+    if (channels == 0) {
+        return 0;
+    }
+    return (channels > ASFW::Isoch::Config::kMaxPcmChannels)
+        ? ASFW::Isoch::Config::kMaxPcmChannels
+        : channels;
+}
+
+static uint32_t FallbackInputChannels(const ASFWAudioNub_IVars* iv) {
+    if (!iv) {
+        return 0;
+    }
+    return ClampAudioChannels(iv->inputChannelCount ? iv->inputChannelCount : iv->channelCount);
+}
+
+static uint32_t FallbackOutputChannels(const ASFWAudioNub_IVars* iv) {
+    if (!iv) {
+        return 0;
+    }
+    return ClampAudioChannels(iv->outputChannelCount ? iv->outputChannelCount : iv->channelCount);
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+static bool TryResolveRuntimeAudioChannels(ASFWAudioNub_IVars* iv,
+                                           uint32_t& outInputChannels, // NOLINT(bugprone-easily-swappable-parameters)
+                                           uint32_t& outOutputChannels)
+{
+    if (!iv) {
+        return false;
     }
 
-    auto* controllerCore = static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore());
+    ProtocolRuntimeBinding binding{};
+    if (ResolveProtocolRuntimeBinding(iv, binding) != kIOReturnSuccess || !binding.protocol) {
+        return false;
+    }
+
+    ASFW::Audio::AudioStreamRuntimeCaps caps{};
+    if (!binding.protocol->GetRuntimeAudioStreamCaps(caps)) {
+        return false;
+    }
+
+    if (caps.hostInputPcmChannels > ASFW::Isoch::Config::kMaxPcmChannels ||
+        caps.hostOutputPcmChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+        ASFW_LOG_WARNING(Audio,
+                         "ASFWAudioNub: Clamping protocol PCM channels in=%u out=%u to max=%u",
+                         caps.hostInputPcmChannels,
+                         caps.hostOutputPcmChannels,
+                         ASFW::Isoch::Config::kMaxPcmChannels);
+    }
+
+    const uint32_t inputCh = ClampAudioChannels(caps.hostInputPcmChannels);
+    const uint32_t outputCh = ClampAudioChannels(caps.hostOutputPcmChannels);
+    if (inputCh == 0 || outputCh == 0) {
+        return false;
+    }
+
+    iv->inputChannelCount = inputCh;
+    iv->outputChannelCount = outputCh;
+    iv->channelCount = (inputCh > outputCh) ? inputCh : outputCh;
+
+    outInputChannels = inputCh;
+    outOutputChannels = outputCh;
+    return true;
+}
+
+static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
+                                                   ProtocolRuntimeBinding& outBinding)
+{
+    if (!iv || iv->guid == 0) {
+        return kIOReturnNotReady;
+    }
+
+    const ASFWDriver* parent = GetParentASFWDriver(iv);
+    if (!parent) {
+        return kIOReturnNotReady;
+    }
+
+    const auto* controllerCore = static_cast<ASFW::Driver::ControllerCore*>(parent->GetControllerCore());
     if (!controllerCore) {
-        ASFW_LOG(Audio, "ASFWAudioNub: AutoStart: missing ControllerCore");
-        return;
+        return kIOReturnNotReady;
     }
 
     auto* registry = controllerCore->GetDeviceRegistry();
-    const auto topology = controllerCore->LatestTopology();
-    if (!registry || !topology.has_value()) {
-        ASFW_LOG(Audio, "ASFWAudioNub: AutoStart: missing DeviceRegistry/Topology");
-        return;
+    if (!registry) {
+        return kIOReturnNotReady;
     }
 
-    auto devices = registry->LiveDevices(topology->generation);
-    for (auto& device : devices) {
-        if (!device.protocol) {
-            continue;
-        }
-
-        const IOReturn status = device.protocol->StartDuplex48k();
-        if (status == kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioNub: Device duplex configured at 48kHz (GUID=%llx)", device.guid);
-        } else {
-            ASFW_LOG(Audio, "ASFWAudioNub: Device duplex config failed (GUID=%llx status=0x%x)",
-                     device.guid, status);
-        }
-        return;
+    auto* device = registry->FindByGuid(iv->guid);
+    if (!device) {
+        return kIOReturnNotFound;
+    }
+    if (!device->protocol) {
+        return kIOReturnUnsupported;
     }
 
-    ASFW_LOG(Audio, "ASFWAudioNub: AutoStart: no protocol device available for duplex config");
+    auto* avcDiscovery = controllerCore->GetAVCDiscovery();
+    if (!avcDiscovery) {
+        return kIOReturnNotReady;
+    }
+
+    outBinding.device = device;
+    outBinding.protocol = device->protocol.get();
+    outBinding.avcDiscovery = avcDiscovery;
+    return kIOReturnSuccess;
 }
 
-static void AutoStartStreamsIfNeeded(ASFWAudioNub* self, ASFWAudioNub_IVars* iv)
-{
-    (void)self;
-    if (!iv) {
-        return;
-    }
-
-    ASFWDriver* parent = GetParentASFWDriver(iv);
-    if (!parent) {
-        return;
-    }
-
-    // Gate on context existence to avoid duplicate bring-up attempts.
-    const bool irRunning = parent->GetIsochReceiveContext() != nullptr;
-    const bool itRunning = parent->GetIsochTransmitContext() != nullptr;
-    if (irRunning && itRunning) {
-        return;
-    }
-
-    ConfigureDeviceDuplex48kBestEffort(parent);
-
-    ASFW_LOG(Audio, "ASFWAudioNub: AutoStart -> duplex (IR ch%u, IT ch%u)",
-             kAutoIsochReceiveChannel, kAutoIsochTransmitChannel);
-
-    if (!irRunning) {
-        const kern_return_t irKr = parent->StartIsochReceive(kAutoIsochReceiveChannel);
-        if (irKr == kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioNub: ✅ IR started");
-        } else {
-            ASFW_LOG(Audio, "ASFWAudioNub: StartIsochReceive failed: 0x%x", irKr);
-        }
-    }
-
-    if (!itRunning) {
-        const kern_return_t itKr = parent->StartIsochTransmit(kAutoIsochTransmitChannel);
-        if (itKr == kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioNub: ✅ IT started");
-        } else {
-            ASFW_LOG(Audio, "ASFWAudioNub: StartIsochTransmit failed: 0x%x", itKr);
-        }
-    }
-}
-
-static void AutoStopStreamsBestEffort(ASFWAudioNub* self, ASFWAudioNub_IVars* iv)
-{
-    (void)self;
-    if (!iv) {
-        return;
-    }
-    ASFWDriver* parent = GetParentASFWDriver(iv);
-    if (!parent) {
-        return;
-    }
-
-    ASFW_LOG(Audio, "ASFWAudioNub: AutoStop -> duplex");
-    parent->StopIsochReceive();
-    parent->StopIsochTransmit();
-}
+// Stream start/stop is now orchestrated by AudioCoordinator backends.
 
 // Helper to create and initialize the TX queue
 static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
@@ -147,13 +181,19 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
         return kIOReturnSuccess;
     }
 
-    if (iv->channelCount == 0 || iv->channelCount > 16) {
-        ASFW_LOG(Audio, "ASFWAudioNub: CreateTxQueue: invalid channelCount=%u (SetChannelCount not called?)",
-                 iv->channelCount);
+    uint32_t inputChUnused = 0;
+    uint32_t txChannels = FallbackOutputChannels(iv);
+    (void)TryResolveRuntimeAudioChannels(iv, inputChUnused, txChannels);
+
+    if (txChannels == 0 || txChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+        ASFW_LOG(Audio, "ASFWAudioNub: CreateTxQueue: invalid outputChannelCount=%u",
+                 txChannels);
         return kIOReturnNotReady;
     }
 
-    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kTxQueueCapacityFrames, iv->channelCount);
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(
+        ASFW::Isoch::Config::kTxQueueCapacityFrames,
+        txChannels);
 
     // Allocate IOBufferMemoryDescriptor
     IOBufferMemoryDescriptor* mem = nullptr;
@@ -192,9 +232,10 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     }
 
     // Initialize SPSC queue in shared memory
-    void* base = reinterpret_cast<void*>(map->GetAddress());
-    bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(base, bytes, kTxQueueCapacityFrames, iv->channelCount);
-    if (!initOk) {
+    auto* base = reinterpret_cast<void*>(map->GetAddress());
+    if (const bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(
+            base, bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels);
+        !initOk) {
         ASFW_LOG(Audio, "ASFWAudioNub: TxSharedQueue initialization failed");
         map->release();
         mem->release();
@@ -205,8 +246,8 @@ static kern_return_t CreateTxQueue(ASFWAudioNub_IVars* iv)
     iv->txQueueMap = map;    // retained
     iv->txQueueBytes = bytes;
 
-    ASFW_LOG(Audio, "ASFWAudioNub: TX queue created: %llu bytes, %u frames capacity, base=%p",
-             bytes, kTxQueueCapacityFrames, base);
+    ASFW_LOG(Audio, "ASFWAudioNub: TX queue created: %llu bytes, %u frames capacity, ch=%u base=%p",
+             bytes, ASFW::Isoch::Config::kTxQueueCapacityFrames, txChannels, base);
 
     return kIOReturnSuccess;
 }
@@ -221,13 +262,19 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
         return kIOReturnSuccess;
     }
 
-    if (iv->channelCount == 0 || iv->channelCount > 16) {
-        ASFW_LOG(Audio, "ASFWAudioNub: CreateRxQueue: invalid channelCount=%u (SetChannelCount not called?)",
-                 iv->channelCount);
+    uint32_t rxChannels = FallbackInputChannels(iv);
+    uint32_t outputChUnused = 0;
+    (void)TryResolveRuntimeAudioChannels(iv, rxChannels, outputChUnused);
+
+    if (rxChannels == 0 || rxChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+        ASFW_LOG(Audio, "ASFWAudioNub: CreateRxQueue: invalid inputChannelCount=%u",
+                 rxChannels);
         return kIOReturnNotReady;
     }
 
-    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kRxQueueCapacityFrames, iv->channelCount);
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(
+        ASFW::Isoch::Config::kRxQueueCapacityFrames,
+        rxChannels);
 
     // Allocate IOBufferMemoryDescriptor
     IOBufferMemoryDescriptor* mem = nullptr;
@@ -266,9 +313,10 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     }
 
     // Initialize SPSC queue in shared memory
-    void* base = reinterpret_cast<void*>(map->GetAddress());
-    bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(base, bytes, kRxQueueCapacityFrames, iv->channelCount);
-    if (!initOk) {
+    auto* base = reinterpret_cast<void*>(map->GetAddress());
+    if (const bool initOk = ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(
+            base, bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels);
+        !initOk) {
         ASFW_LOG(Audio, "ASFWAudioNub: RX shared queue initialization failed");
         map->release();
         mem->release();
@@ -279,16 +327,15 @@ static kern_return_t CreateRxQueue(ASFWAudioNub_IVars* iv)
     iv->rxQueueMap = map;    // retained
     iv->rxQueueBytes = bytes;
 
-    ASFW_LOG(Audio, "ASFWAudioNub: RX queue created: %llu bytes, %u frames capacity, base=%p",
-             bytes, kRxQueueCapacityFrames, base);
+    ASFW_LOG(Audio, "ASFWAudioNub: RX queue created: %llu bytes, %u frames capacity, ch=%u base=%p",
+             bytes, ASFW::Isoch::Config::kRxQueueCapacityFrames, rxChannels, base);
 
     return kIOReturnSuccess;
 }
 
 bool ASFWAudioNub::init()
 {
-    bool result = super::init();
-    if (!result) {
+    if (const bool result = super::init(); !result) {
         ASFW_LOG(Audio, "ASFWAudioNub: super::init() failed");
         return false;
     }
@@ -303,6 +350,10 @@ bool ASFWAudioNub::init()
     ivars->txQueueMem = nullptr;
     ivars->txQueueMap = nullptr;
     ivars->txQueueBytes = 0;
+    ivars->guid = 0;
+    ivars->channelCount = 2;
+    ivars->inputChannelCount = 2;
+    ivars->outputChannelCount = 2;
     
     // ZERO-COPY: Initialize output audio buffer ivars
     ivars->outputAudioMem = nullptr;
@@ -364,9 +415,30 @@ kern_return_t IMPL(ASFWAudioNub, Start)
     // Store reference to parent driver (ASFWDriver)
     ivars->parentDriver = provider;
 
-    // Channel count is set directly via SetChannelCount() by AVCDiscovery
-    // TX queue and audio buffer are created lazily on first RPC access
-    // (CopyTransmitQueueMemory / CopyOutputAudioMemory)
+    // Seed channel counts from properties (if available). Queue sizing may later
+    // be refined from runtime protocol caps at first queue creation.
+    OSDictionary* propsRaw = nullptr;
+    if (CopyProperties(&propsRaw) == kIOReturnSuccess && propsRaw) {
+        OSSharedPtr<OSDictionary> props(propsRaw, OSNoRetain);
+        if (auto* count = OSDynamicCast(OSNumber, props->getObject("ASFWChannelCount"))) {
+            ivars->channelCount = ClampAudioChannels(count->unsigned32BitValue());
+        }
+        if (auto* inputCount = OSDynamicCast(OSNumber, props->getObject("ASFWInputChannelCount"))) {
+            ivars->inputChannelCount = ClampAudioChannels(inputCount->unsigned32BitValue());
+        }
+        if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject("ASFWOutputChannelCount"))) {
+            ivars->outputChannelCount = ClampAudioChannels(outputCount->unsigned32BitValue());
+        }
+        if (ivars->inputChannelCount == 0) {
+            ivars->inputChannelCount = ivars->channelCount;
+        }
+        if (ivars->outputChannelCount == 0) {
+            ivars->outputChannelCount = ivars->channelCount;
+        }
+        ivars->channelCount = std::max(ivars->inputChannelCount, ivars->outputChannelCount);
+    }
+
+    // TX/RX queues and audio buffer are created lazily on first RPC access.
 
     // Register the service so ASFWAudioDriver can match on us
     error = RegisterService();
@@ -383,7 +455,6 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioNub: Stop()");
     if (ivars) {
-        AutoStopStreamsBestEffort(this, ivars);
         ivars->parentDriver = nullptr;
         // Note: Don't release txQueueMem/Map here - they may still be in use
         // They will be released in free()
@@ -407,8 +478,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyTransmitQueueMemory)
     }
 
     // Ensure TX queue exists
-    kern_return_t kr = CreateTxQueue(ivars);
-    if (kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateTxQueue(ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: CopyTransmitQueueMemory: CreateTxQueue failed: 0x%x", kr);
         return kr;
     }
@@ -421,25 +491,22 @@ kern_return_t IMPL(ASFWAudioNub, CopyTransmitQueueMemory)
     ASFW_LOG(Audio, "ASFWAudioNub: CopyTransmitQueueMemory: returning mem=%p bytes=%llu",
              ivars->txQueueMem, ivars->txQueueBytes);
 
-    // Audio driver calls this during Start(); treat that as the post-create hook.
-    AutoStartStreamsIfNeeded(this, ivars);
-
     return kIOReturnSuccess;
 }
 
 // LOCALONLY: Get parent driver pointer (same process)
-void* ASFWAudioNub::GetParentDriver() const
+ASFWDriver* ASFWAudioNub::GetParentDriver() const
 {
-    return ivars ? ivars->parentDriver : nullptr;
+    return ivars ? OSDynamicCast(ASFWDriver, ivars->parentDriver) : nullptr;
 }
 
 // LOCALONLY: Get local mapping base address for IT context
-void* ASFWAudioNub::GetTxQueueLocalMapping() const
+uint8_t* ASFWAudioNub::GetTxQueueLocalMapping() const
 {
     if (!ivars || !ivars->txQueueMap) {
         return nullptr;
     }
-    return reinterpret_cast<void*>(ivars->txQueueMap->GetAddress());
+    return reinterpret_cast<uint8_t*>(ivars->txQueueMap->GetAddress());
 }
 
 // LOCALONLY: Get TX queue size
@@ -462,14 +529,18 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
         return kIOReturnSuccess;
     }
 
-    if (iv->channelCount == 0 || iv->channelCount > 16) {
-        ASFW_LOG(Audio, "ASFWAudioNub: CreateOutputAudioBuffer: invalid channelCount=%u (SetChannelCount not called?)",
-                 iv->channelCount);
+    uint32_t inputChUnused = 0;
+    uint32_t outputChannels = FallbackOutputChannels(iv);
+    (void)TryResolveRuntimeAudioChannels(iv, inputChUnused, outputChannels);
+
+    if (outputChannels == 0 || outputChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
+        ASFW_LOG(Audio, "ASFWAudioNub: CreateOutputAudioBuffer: invalid outputChannelCount=%u",
+                 outputChannels);
         return kIOReturnNotReady;
     }
 
-    const uint32_t bytesPerFrame = iv->channelCount * sizeof(int32_t);
-    const uint64_t bufferBytes = uint64_t(kOutputAudioBufferFrames) * bytesPerFrame;
+    const uint32_t bytesPerFrame = outputChannels * sizeof(int32_t);
+    const uint64_t bufferBytes = uint64_t(ASFW::Isoch::Config::kAudioIoPeriodFrames) * bytesPerFrame;
 
     // Create IOBufferMemoryDescriptor for shared audio buffer
     IOBufferMemoryDescriptor* mem = nullptr;
@@ -508,16 +579,16 @@ static kern_return_t CreateOutputAudioBuffer(ASFWAudioNub_IVars* iv)
     }
 
     // Zero the buffer initially
-    void* base = reinterpret_cast<void*>(map->GetAddress());
+    auto* base = reinterpret_cast<void*>(map->GetAddress());
     memset(base, 0, bufferBytes);
 
     iv->outputAudioMem = mem;    // retained
     iv->outputAudioMap = map;    // retained
     iv->outputAudioBytes = bufferBytes;
-    iv->outputAudioFrameCapacity = kOutputAudioBufferFrames;
+    iv->outputAudioFrameCapacity = ASFW::Isoch::Config::kAudioIoPeriodFrames;
 
     ASFW_LOG(Audio, "ASFWAudioNub: ZERO-COPY output audio buffer created: %llu bytes, %u frames (%u ch), base=%p",
-             bufferBytes, kOutputAudioBufferFrames, iv->channelCount, base);
+             bufferBytes, ASFW::Isoch::Config::kAudioIoPeriodFrames, outputChannels, base);
 
     return kIOReturnSuccess;
 }
@@ -538,8 +609,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyOutputAudioMemory)
     }
 
     // Ensure output audio buffer exists
-    kern_return_t kr = CreateOutputAudioBuffer(ivars);
-    if (kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateOutputAudioBuffer(ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: CopyOutputAudioMemory: CreateOutputAudioBuffer failed: 0x%x", kr);
         return kr;
     }
@@ -552,19 +622,65 @@ kern_return_t IMPL(ASFWAudioNub, CopyOutputAudioMemory)
     ASFW_LOG(Audio, "ASFWAudioNub: CopyOutputAudioMemory: returning mem=%p bytes=%llu frames=%u",
              ivars->outputAudioMem, ivars->outputAudioBytes, ivars->outputAudioFrameCapacity);
 
-    // Also trigger from ZERO-COPY path (if used).
-    AutoStartStreamsIfNeeded(this, ivars);
-
     return kIOReturnSuccess;
 }
 
+kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
+{
+    if (!ivars || ivars->guid == 0) {
+        return kIOReturnNotReady;
+    }
+
+    // Auto-start gating (Info.plist + runtime), useful for debugging discovery without streams.
+    if (!ASFW::LogConfig::Shared().IsAudioAutoStartEnabled()) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: StartAudioStreaming skipped (auto-start disabled) GUID=0x%016llx",
+                 ivars->guid);
+        return kIOReturnSuccess;
+    }
+
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
+        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming: missing AudioCoordinator");
+        return kIOReturnNotReady;
+    }
+
+    // Ensure queues exist before starting isoch.
+    (void)CreateRxQueue(ivars);
+    (void)CreateTxQueue(ivars);
+
+    const IOReturn kr = coordinator->StartStreaming(ivars->guid);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
+    }
+    return kr;
+}
+
+kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
+{
+    if (!ivars || ivars->guid == 0) {
+        return kIOReturnNotReady;
+    }
+
+    auto* coordinator = GetAudioCoordinator(ivars);
+    if (!coordinator) {
+        return kIOReturnNotReady;
+    }
+
+    const IOReturn kr = coordinator->StopStreaming(ivars->guid);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioNub: StopAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
+    }
+    return kr;
+}
+
 // LOCALONLY: Get local mapping for IT DMA access (ZERO-COPY read)
-void* ASFWAudioNub::GetOutputAudioLocalMapping() const
+uint8_t* ASFWAudioNub::GetOutputAudioLocalMapping() const
 {
     if (!ivars || !ivars->outputAudioMap) {
         return nullptr;
     }
-    return reinterpret_cast<void*>(ivars->outputAudioMap->GetAddress());
+    return reinterpret_cast<uint8_t*>(ivars->outputAudioMap->GetAddress());
 }
 
 // LOCALONLY: Get output audio buffer size
@@ -597,14 +713,43 @@ uint32_t ASFWAudioNub::GetOutputWritePosition() const
 void ASFWAudioNub::SetChannelCount(uint32_t channels)
 {
     if (!ivars) return;
-    ivars->channelCount = channels;
-    ASFW_LOG(Audio, "ASFWAudioNub: Channel count set to %u (from MusicSubunit)", channels);
+    const uint32_t clamped = ClampAudioChannels(channels);
+    ivars->channelCount = clamped;
+    ivars->inputChannelCount = clamped;
+    ivars->outputChannelCount = clamped;
+    ASFW_LOG(Audio, "ASFWAudioNub: Channel count set to %u (legacy aggregate)", clamped);
 }
 
 // LOCALONLY: Get channel count
 uint32_t ASFWAudioNub::GetChannelCount() const
 {
     return ivars ? ivars->channelCount : 0;
+}
+
+uint32_t ASFWAudioNub::GetInputChannelCount() const
+{
+    if (!ivars) return 0;
+    return ivars->inputChannelCount ? ivars->inputChannelCount : ivars->channelCount;
+}
+
+uint32_t ASFWAudioNub::GetOutputChannelCount() const
+{
+    if (!ivars) return 0;
+    return ivars->outputChannelCount ? ivars->outputChannelCount : ivars->channelCount;
+}
+
+void ASFWAudioNub::SetGuid(uint64_t guid)
+{
+    if (!ivars) {
+        return;
+    }
+    ivars->guid = guid;
+    ASFW_LOG(Audio, "ASFWAudioNub: GUID set to 0x%016llx", guid);
+}
+
+uint64_t ASFWAudioNub::GetGuid() const
+{
+    return ivars ? ivars->guid : 0;
 }
 
 void ASFWAudioNub::SetStreamMode(uint32_t modeRaw)
@@ -628,8 +773,7 @@ uint32_t ASFWAudioNub::GetStreamMode() const
 void ASFWAudioNub::EnsureRxQueueCreated()
 {
     if (!ivars) return;
-    kern_return_t kr = CreateRxQueue(ivars);
-    if (kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateRxQueue(ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: EnsureRxQueueCreated failed: 0x%x", kr);
     }
 }
@@ -650,8 +794,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyRxQueueMemory)
     }
 
     // Ensure RX queue exists (lazy creation)
-    kern_return_t kr = CreateRxQueue(ivars);
-    if (kr != kIOReturnSuccess) {
+    if (const kern_return_t kr = CreateRxQueue(ivars); kr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioNub: CopyRxQueueMemory: CreateRxQueue failed: 0x%x", kr);
         return kr;
     }
@@ -667,13 +810,69 @@ kern_return_t IMPL(ASFWAudioNub, CopyRxQueueMemory)
     return kIOReturnSuccess;
 }
 
+kern_return_t IMPL(ASFWAudioNub, GetProtocolBooleanControl)
+{
+    if (!ivars || !outValue) {
+        return kIOReturnBadArgument;
+    }
+
+    ProtocolRuntimeBinding binding{};
+    if (kern_return_t status = ResolveProtocolRuntimeBinding(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+
+    if (!binding.protocol->SupportsBooleanControl(classIdFourCC, element)) {
+        return kIOReturnUnsupported;
+    }
+
+    auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
+    if (!transport) {
+        return kIOReturnNotReady;
+    }
+
+    binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+
+    bool value = false;
+    const kern_return_t status = binding.protocol->GetBooleanControlValue(classIdFourCC, element, value);
+    if (status == kIOReturnSuccess) {
+        *outValue = value;
+    }
+    return status;
+}
+
+kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    ProtocolRuntimeBinding binding{};
+    if (kern_return_t status = ResolveProtocolRuntimeBinding(ivars, binding);
+        status != kIOReturnSuccess) {
+        return status;
+    }
+
+    if (!binding.protocol->SupportsBooleanControl(classIdFourCC, element)) {
+        return kIOReturnUnsupported;
+    }
+
+    auto* transport = binding.avcDiscovery->GetFCPTransportForNodeID(binding.device->nodeId);
+    if (!transport) {
+        return kIOReturnNotReady;
+    }
+
+    binding.protocol->UpdateRuntimeContext(binding.device->nodeId, transport);
+    return binding.protocol->SetBooleanControlValue(classIdFourCC, element, value);
+}
+
 // LOCALONLY: Get local mapping base address for IR context
-void* ASFWAudioNub::GetRxQueueLocalMapping() const
+uint8_t* ASFWAudioNub::GetRxQueueLocalMapping() const
 {
     if (!ivars || !ivars->rxQueueMap) {
         return nullptr;
     }
-    return reinterpret_cast<void*>(ivars->rxQueueMap->GetAddress());
+    return reinterpret_cast<uint8_t*>(ivars->rxQueueMap->GetAddress());
 }
 
 // LOCALONLY: Get RX queue size

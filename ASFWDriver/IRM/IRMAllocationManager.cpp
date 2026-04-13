@@ -1,4 +1,5 @@
 #include "IRMAllocationManager.hpp"
+#include "../Common/CallbackUtils.hpp"
 #include "../Logging/Logging.hpp"
 #include <os/log.h>
 
@@ -42,7 +43,7 @@ void IRMAllocationManager::Allocate(uint8_t channel,
             allocationGeneration_ = irmClient_.GetGeneration();
 
             ASFW_LOG(IRM, "AllocationManager: Allocated channel %u, %u bandwidth units, gen %u",
-                     channel_, bandwidthUnits_, allocationGeneration_);
+                     channel_, bandwidthUnits_, allocationGeneration_.value);
         }
         callback(status);
     };
@@ -64,9 +65,10 @@ void IRMAllocationManager::Allocate(uint8_t channel,
 void IRMAllocationManager::Release(AllocationCallback callback,
                                     const RetryPolicy& retryPolicy)
 {
+    auto callbackState = Common::ShareCallback(std::move(callback));
     if (!isAllocated_) {
         ASFW_LOG(IRM, "AllocationManager: No allocation to release");
-        callback(AllocationStatus::Success);
+        Common::InvokeSharedCallback(callbackState, AllocationStatus::Success);
         return;
     }
 
@@ -80,12 +82,12 @@ void IRMAllocationManager::Release(AllocationCallback callback,
     isAllocated_ = false;
     channel_ = 0xFF;
     bandwidthUnits_ = 0;
-    allocationGeneration_ = 0;
+    allocationGeneration_ = Generation{0};
 
     // Release resources
     irmClient_.ReleaseResources(channelToRelease, bandwidthToRelease,
-        [callback](AllocationStatus status) {
-            callback(status);
+        [callbackState](AllocationStatus status) {
+            Common::InvokeSharedCallback(callbackState, status);
         },
         retryPolicy);
 }
@@ -103,12 +105,12 @@ void IRMAllocationManager::OnBusReset(Generation newGeneration) {
     if (allocationGeneration_ == newGeneration) {
         // Generation hasn't changed (shouldn't happen, but check anyway)
         ASFW_LOG(IRM, "AllocationManager: OnBusReset called with same generation %u",
-                 newGeneration);
+                 newGeneration.value);
         return;
     }
 
     ASFW_LOG(IRM, "AllocationManager: Bus reset detected (gen %u -> %u), attempting reallocation",
-             allocationGeneration_, newGeneration);
+             allocationGeneration_.value, newGeneration.value);
 
     // Attempt to reallocate same resources
     AttemptReallocation(newGeneration);
@@ -141,7 +143,7 @@ void IRMAllocationManager::AttemptReallocation(Generation newGeneration) {
 
                 ASFW_LOG(IRM, "AllocationManager: Reallocation succeeded "
                          "(channel %u, %u bandwidth units, gen %u)",
-                         channelToRealloc, bandwidthToRealloc, newGeneration);
+                         channelToRealloc, bandwidthToRealloc, newGeneration.value);
             } else if (status == AllocationStatus::GenerationMismatch) {
                 // Another bus reset occurred during reallocation
                 // This is handled by another OnBusReset() call, so just log
@@ -165,7 +167,7 @@ void IRMAllocationManager::OnReallocationFailed() {
     isAllocated_ = false;
     channel_ = 0xFF;
     bandwidthUnits_ = 0;
-    allocationGeneration_ = 0;
+    allocationGeneration_ = Generation{0};
 
     ASFW_LOG_ERROR(IRM, "AllocationManager: Allocation lost (channel %u, %u bandwidth units)",
                    lostChannel, lostBandwidth);

@@ -126,8 +126,9 @@ size_t DescriptorBuilder::ReserveBlocks(uint8_t blocks) noexcept {
     return kInvalidRingIndex;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(const void* headerData,
-                                                                            std::size_t headerSize,
+                                                                            std::size_t headerSize, // NOLINT(bugprone-easily-swappable-parameters)
                                                                             uint64_t payloadDeviceAddress,
                                                                             std::size_t payloadSize,
                                                                             bool needsFlush) {
@@ -251,14 +252,13 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         // - EOL is indicated SOLELY by branchWord=0
         // - Using b=BranchNever on OUTPUT_LAST triggers evt_unknown on strict controllers
         // - Apple's control word baseline: 0x123C0010 = cmd=1, key=2, i=3, b=3, reqCount=16
-        immDesc->common.control = OHCIDescriptor::BuildControl(
-            static_cast<uint16_t>(headerSize),    // reqCount
-            OHCIDescriptor::kCmdOutputLast,       // cmd
-            OHCIDescriptor::kKeyImmediate,        // key
-            OHCIDescriptor::kIntAlways,           // i=3: always interrupt
-            OHCIDescriptor::kBranchAlways,        // b=3: ALWAYS for OUTPUT_LAST (EOL via branchWord)
-            false                                 // ping
-        );
+        immDesc->common.control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(headerSize),
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyImmediate,
+            .interruptBits = OHCIDescriptor::kIntAlways,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
 
         dmaManager_.PublishRange(immDesc, sizeof(OHCIDescriptorImmediate));
 
@@ -470,7 +470,7 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
         const uint16_t dataLength = static_cast<uint16_t>(q3_initial >> 16);
         const uint16_t extTcode = static_cast<uint16_t>(q3_initial & 0xFFFFu);
 
-        if (tCode == 0x9) {
+        if (tCode == 0x9) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
             // LOCK: expect dataLength=8, extTcode=0x0002
             ASFW_LOG_V3(Async,
                      "   Q3 decode: dataLength=%u extTcode=0x%04x (expected: dataLength=8 extTcode=0x0002 for CAS)",
@@ -492,14 +492,13 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
     // Configure header descriptor (OUTPUT_MORE_Immediate, ping=false for standard async)
     // OHCI Table 7-2: OUTPUT_MORE* descriptors MUST have b=00 per spec
     // Hardware links to next descriptor via contiguity, not via branchWord
-    headerImmDesc->common.control = OHCIDescriptor::BuildControl(
-        static_cast<uint16_t>(headerSize),        // reqCount
-        OHCIDescriptor::kCmdOutputMore,           // cmd
-        OHCIDescriptor::kKeyImmediate,            // key
-        OHCIDescriptor::kIntNever,                // i (interrupt control)
-        OHCIDescriptor::kBranchNever,             // b=00: REQUIRED by OHCI spec for OUTPUT_MORE*
-        false                                     // ping
-    );
+    headerImmDesc->common.control = OHCIDescriptor::BuildControl({
+        .reqCount = static_cast<uint16_t>(headerSize),
+        .command = OHCIDescriptor::kCmdOutputMore,
+        .key = OHCIDescriptor::kKeyImmediate,
+        .interruptBits = OHCIDescriptor::kIntNever,
+        .branchBits = OHCIDescriptor::kBranchNever,
+    });
 
     dmaManager_.PublishRange(headerImmDesc, sizeof(OHCIDescriptorImmediate));
 
@@ -512,14 +511,13 @@ DescriptorBuilder::DescriptorChain DescriptorBuilder::BuildTransactionChain(cons
 
     std::atomic_thread_fence(std::memory_order_release);
 
-    payloadDescriptor->control = OHCIDescriptor::BuildControl(
-        static_cast<uint16_t>(payloadSize),       // reqCount
-        OHCIDescriptor::kCmdOutputLast,           // cmd
-        OHCIDescriptor::kKeyStandard,             // key
-        OHCIDescriptor::kIntAlways,               // i=3: always interrupt on OUTPUT_LAST
-        OHCIDescriptor::kBranchAlways,            // b=3: ALWAYS for OUTPUT_LAST (even at EOL)
-        false                                     // ping
-    );
+    payloadDescriptor->control = OHCIDescriptor::BuildControl({
+        .reqCount = static_cast<uint16_t>(payloadSize),
+        .command = OHCIDescriptor::kCmdOutputLast,
+        .key = OHCIDescriptor::kKeyStandard,
+        .interruptBits = OHCIDescriptor::kIntAlways,
+        .branchBits = OHCIDescriptor::kBranchAlways,
+    });
 
     dmaManager_.PublishRange(payloadDescriptor, sizeof(OHCIDescriptor));
 
@@ -771,6 +769,7 @@ void DescriptorBuilder::UnlinkTail(size_t tailIndex) noexcept {
     }
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void DescriptorBuilder::FlushTail(size_t tailIndex, uint8_t blocks) noexcept {
     if (ring_.Capacity() == 0) return;
     HW::OHCIDescriptor* desc = ring_.At(tailIndex);

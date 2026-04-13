@@ -6,6 +6,7 @@
 //
 
 #include "AVCUnit.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 #include "Descriptors/DescriptorAccessor.hpp"
 #include "AVCSignalFormatCommand.hpp"
@@ -18,8 +19,12 @@ using namespace ASFW::Protocols::AVC;
 
 AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
                  std::shared_ptr<Discovery::FWUnit> unit,
-                 Async::AsyncSubsystem& asyncSubsystem)
-    : device_(device), unit_(unit), asyncSubsystem_(asyncSubsystem) {
+                 Protocols::Ports::FireWireBusOps& busOps,
+                 Protocols::Ports::FireWireBusInfo& busInfo)
+    : device_(device),
+      unit_(unit),
+      busOps_(busOps),
+      busInfo_(busInfo) {
 
     // Check for custom FCP addresses in Config ROM (optional)
     // For now, use standard addresses
@@ -34,7 +39,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
     // Create FCP transport
     fcpTransport_ = OSSharedPtr(new FCPTransport, OSNoRetain);
     if (fcpTransport_) {
-        fcpTransport_->init(&asyncSubsystem_, device.get(), config);
+        fcpTransport_->init(&busOps_, &busInfo_, device.get(), config);
 
         // Create DescriptorAccessor for unit-level descriptors (Phase 5)
         descriptorAccessor_ = std::make_shared<DescriptorAccessor>(*fcpTransport_, kAVCSubunitUnit);
@@ -52,6 +57,7 @@ AVCUnit::AVCUnit(std::shared_ptr<Discovery::FWDevice> device,
 }
 
 void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     // UNIT_INFO: [STATUS, unit, opcode=0x30], no operands
     AVCCdb cdb{};
     cdb.ctype = static_cast<uint8_t>(AVCCommandType::kStatus);
@@ -59,15 +65,15 @@ void AVCUnit::ProbeUnitInfo(std::function<void(bool)> completion) {
     cdb.opcode = static_cast<uint8_t>(AVCOpcode::kUnitInfo);
     cdb.operandLength = 0;
 
-    SubmitCommand(cdb, [this, completion](AVCResult result, const AVCCdb&) {
+    SubmitCommand(cdb, [this, completionState](AVCResult result, const AVCCdb&) {
         if (!IsSuccess(result)) {
             ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO failed: result=%d",
                          static_cast<int>(result));
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
             return;
         }
         ASFW_LOG_V2(AVC, "AVCUnit: UNIT_INFO succeeded");
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
     });
 }
 
@@ -80,34 +86,35 @@ AVCUnit::~AVCUnit() {
 //==============================================================================
 
 void AVCUnit::Initialize(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     if (initialized_) {
         ASFW_LOG_V2(AVC, "AVCUnit: Already initialized");
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
         return;
     }
 
     ASFW_LOG_V1(AVC, "AVCUnit: Initializing...");
 
-    ProbeDescriptorMechanism([this, completion](bool descriptorOk) {
-        ProbeSignalFormat([this, completion](bool signalFormatOk) {
-            ProbeUnitInfo([this, completion](bool unitOk) {
+    ProbeDescriptorMechanism([this, completionState](bool descriptorOk) {
+        ProbeSignalFormat([this, completionState](bool signalFormatOk) {
+            ProbeUnitInfo([this, completionState](bool unitOk) {
                 if (!unitOk) {
                     ASFW_LOG_V1(AVC, "AVCUnit: UNIT_INFO probe failed");
-                    completion(false);
+                    Common::InvokeSharedCallback(completionState, false);
                     return;
                 }
 
-            ProbeSubunits([this, completion](bool subunitOk) {
+            ProbeSubunits([this, completionState](bool subunitOk) {
                 if (!subunitOk) {
                     ASFW_LOG_V1(AVC, "AVCUnit: Subunit probe failed");
-                    completion(false);
+                    Common::InvokeSharedCallback(completionState, false);
                     return;
                 }
 
-                ProbePlugs([this, completion](bool plugsOk) {
+                ProbePlugs([this, completionState](bool plugsOk) {
                     initialized_ = plugsOk;
 
-                    if (plugsOk) {
+                    if (plugsOk) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                         ASFW_LOG_V1(AVC,
                                    "AVCUnit: Initialized - "
                                    "%zu subunits, %u/%u ISO plugs, "
@@ -121,7 +128,7 @@ void AVCUnit::Initialize(std::function<void(bool)> completion) {
                         ASFW_LOG_V1(AVC, "AVCUnit: Plug probe failed");
                     }
 
-                    completion(plugsOk);
+                    Common::InvokeSharedCallback(completionState, plugsOk);
                 });
             });
         });
@@ -155,16 +162,17 @@ void AVCUnit::ReScan(std::function<void(bool)> completion) {
 //==============================================================================
 
 void AVCUnit::ProbeSubunits(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     // Create SUBUNIT_INFO command (page 0)
     auto cmd = std::make_shared<AVCSubunitInfoCommand>(*fcpTransport_, 0);
 
     // Submit command
-    cmd->Submit([this, completion, cmd](AVCResult result,
+    cmd->Submit([this, completionState, cmd](AVCResult result,
                                          const AVCSubunitInfoCommand::SubunitInfo& info) {
         if (!IsSuccess(result)) {
         ASFW_LOG_V1(AVC, "AVCUnit: SUBUNIT_INFO failed: result=%d",
                          static_cast<int>(result));
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
             return;
         }
 
@@ -174,7 +182,7 @@ void AVCUnit::ProbeSubunits(std::function<void(bool)> completion) {
         ASFW_LOG_V1(AVC, "AVCUnit: Found %zu subunits", subunits_.size());
 
         // Now parse capabilities for each subunit
-        ParseSubunitCapabilities(0, completion);
+        ParseSubunitCapabilities(0, *completionState);
     });
 }
 
@@ -230,20 +238,21 @@ void AVCUnit::StoreSubunitInfo(const AVCSubunitInfoCommand::SubunitInfo& info) {
 
 
 void AVCUnit::ParseSubunitCapabilities(size_t index, std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     if (index >= subunits_.size()) {
         // All done
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
         return;
     }
 
     auto subunit = subunits_[index];
-    subunit->ParseCapabilities(*this, [this, index, completion](bool success) {
+    subunit->ParseCapabilities(*this, [this, index, completionState](bool success) {
         if (!success) {
             ASFW_LOG_V2(AVC, "AVCUnit: Failed to parse capabilities for subunit %zu", index);
             // Continue anyway? Yes, partial success is better than failure.
         }
         // Next
-        ParseSubunitCapabilities(index + 1, completion);
+        ParseSubunitCapabilities(index + 1, *completionState);
     });
 }
 
@@ -253,16 +262,17 @@ void AVCUnit::ParseSubunitCapabilities(size_t index, std::function<void(bool)> c
 //==============================================================================
 
 void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     // Query unit-level plugs (subunit = 0xFF) using new command (Opcode 0x02 Subfunction 0x00)
     auto cmd = std::make_shared<AVCUnitPlugInfoCommand>(*this);
 
-    cmd->Submit([this, completion](AVCResult result,
+    cmd->Submit([this, completionState](AVCResult result,
                                          const UnitPlugCounts& info) {
         if (!IsSuccess(result)) {
             ASFW_LOG_V1(AVC,
                          "AVCUnit: PLUG_INFO failed: result=%d",
                          static_cast<int>(result));
-            completion(false);
+            Common::InvokeSharedCallback(completionState, false);
             return;
         }
 
@@ -274,15 +284,16 @@ void AVCUnit::ProbePlugs(std::function<void(bool)> completion) {
                     info.isoInputPlugs, info.isoOutputPlugs,
                     info.extInputPlugs, info.extOutputPlugs);
 
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
     });
 }
 
 void AVCUnit::ProbeSignalFormat(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     // Query Plug 0
     auto cmd = std::make_shared<AVCOutputPlugSignalFormatCommand>(*fcpTransport_, 0);
 
-    cmd->Submit([this, completion](AVCResult result,
+    cmd->Submit([this, completionState](AVCResult result,
                                    const AVCOutputPlugSignalFormatCommand::SignalFormat& fmt) {
         if (IsSuccess(result)) {
             ASFW_LOG_INFO(Discovery, "Received Signal Format: Format=0x%02x, RateCode=0x%02x", fmt.formatHierarchy, fmt.formatSync);
@@ -294,7 +305,7 @@ void AVCUnit::ProbeSignalFormat(std::function<void(bool)> completion) {
                 auto rate = StreamFormats::MusicSubunitCodeToSampleRate(fmt.formatSync);
                 uint32_t freqHz = StreamFormats::SampleRateToHz(rate);
                 
-                if (freqHz > 0) {
+                if (freqHz > 0) { // NOSONAR(cpp:S3923): branches log different diagnostic messages
                     ASFW_LOG_INFO(Discovery, "Device is locked to %u Hz (Code 0x%02x).", freqHz, fmt.formatSync);
                 } else {
                     ASFW_LOG_INFO(Discovery, "Device is locked to Unknown Rate (Code 0x%02x).", fmt.formatSync);
@@ -304,7 +315,7 @@ void AVCUnit::ProbeSignalFormat(std::function<void(bool)> completion) {
             ASFW_LOG_ERROR(Discovery, "Failed to send Signal Format Query: result=%d", static_cast<int>(result));
         }
         // Always continue
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
     });
 }
 
@@ -385,12 +396,13 @@ bool AVCUnit::ParseUnitIdentifier(const std::vector<uint8_t>& data) {
 }
 
 void AVCUnit::ProbeDescriptorMechanism(std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     ASFW_LOG_V2(AVC, "AVCUnit: Probing descriptor mechanism (Status Descriptor 0x80)...");
 
     if (!descriptorAccessor_) {
         ASFW_LOG_V2(AVC, "AVCUnit: No DescriptorAccessor, skipping descriptors");
         descriptorInfo_.descriptorMechanismSupported = false;
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
         return;
     }
 
@@ -401,12 +413,12 @@ void AVCUnit::ProbeDescriptorMechanism(std::function<void(bool)> completion) {
 
     descriptorAccessor_->readWithOpenCloseSequence(
         specifier,
-        [this, self, completion](const DescriptorAccessor::ReadDescriptorResult& result) {
+        [this, self, completionState](const DescriptorAccessor::ReadDescriptorResult& result) {
             if (!result.success) {
                 ASFW_LOG_V2(AVC, "AVCUnit: Status Descriptor read failed: %d",
                              static_cast<int>(result.avcResult));
                 descriptorInfo_.descriptorMechanismSupported = false;
-                completion(true);  // Continue despite failure
+                Common::InvokeSharedCallback(completionState, true);  // Continue despite failure
                 return;
             }
 
@@ -423,18 +435,19 @@ void AVCUnit::ProbeDescriptorMechanism(std::function<void(bool)> completion) {
             }
             
             // Skip TraverseRootLists for Music Subunits using Status Descriptor model
-            completion(true);
+            Common::InvokeSharedCallback(completionState, true);
         });
 }
 
 void AVCUnit::TraverseRootLists(size_t listIndex,
                                 std::function<void(bool)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
     if (listIndex >= descriptorInfo_.rootListIDs.size()) {
         // All lists traversed
         ASFW_LOG_V2(AVC,
                      "AVCUnit: Traversed all %zu root object lists",
                      descriptorInfo_.rootListContents.size());
-        completion(true);
+        Common::InvokeSharedCallback(completionState, true);
         return;
     }
 
@@ -445,7 +458,7 @@ void AVCUnit::TraverseRootLists(size_t listIndex,
 
     auto self = shared_from_this();
     ReadRootObjectList(listID,
-        [this, self, listIndex, listID, completion]
+        [this, self, listIndex, listID, completionState]
         (bool success, std::vector<uint64_t> objectIDs) {
 
             if (success) {
@@ -465,16 +478,17 @@ void AVCUnit::TraverseRootLists(size_t listIndex,
             }
 
             // Continue to next list (graceful degradation)
-            TraverseRootLists(listIndex + 1, completion);
+            TraverseRootLists(listIndex + 1, *completionState);
         });
 }
 
 void AVCUnit::ReadRootObjectList(
     uint64_t listID,
     std::function<void(bool success, std::vector<uint64_t> objectIDs)> completion) {
+    auto completionState = Common::ShareCallback(std::move(completion));
 
     if (!descriptorAccessor_) {
-        completion(false, {});
+        Common::InvokeSharedCallback(completionState, false, std::vector<uint64_t>{});
         return;
     }
 
@@ -496,14 +510,14 @@ void AVCUnit::ReadRootObjectList(
 
     descriptorAccessor_->readWithOpenCloseSequence(
         specifier,
-        [this, self, listID, completion]
+        [this, self, listID, completionState]
         (const DescriptorAccessor::ReadDescriptorResult& result) {
 
             if (!result.success) {
                 ASFW_LOG_V2(AVC,
                                 "AVCUnit: Failed to read list 0x%llx: result=%d",
                                 listID, static_cast<int>(result.avcResult));
-                completion(false, {});
+                Common::InvokeSharedCallback(completionState, false, std::vector<uint64_t>{});
                 return;
             }
 
@@ -511,7 +525,7 @@ void AVCUnit::ReadRootObjectList(
             const auto& data = result.data;
             if (data.size() < 4) {
                 ASFW_LOG_V1(AVC, "AVCUnit: List descriptor too short");
-                completion(false, {});
+                Common::InvokeSharedCallback(completionState, false, std::vector<uint64_t>{});
                 return;
             }
 
@@ -530,7 +544,7 @@ void AVCUnit::ReadRootObjectList(
 
             if (data.size() < expectedSize) {
                 ASFW_LOG_V1(AVC, "AVCUnit: List data too short for entries");
-                completion(false, {});
+                Common::InvokeSharedCallback(completionState, false, std::vector<uint64_t>{});
                 return;
             }
 
@@ -547,7 +561,7 @@ void AVCUnit::ReadRootObjectList(
                 ptr += objectIdSize;
             }
 
-            completion(true, std::move(objectIDs));
+            Common::InvokeSharedCallback(completionState, true, std::move(objectIDs));
         });
 }
 

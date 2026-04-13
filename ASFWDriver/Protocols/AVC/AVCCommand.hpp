@@ -13,12 +13,14 @@
 #else
 #include <DriverKit/IOLib.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>
 #include <optional>
 #include "AVCDefs.hpp"
 #include "FCPTransport.hpp"
+#include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
 // Forward declarations for dispatch types (implementation uses libdispatch)
@@ -172,8 +174,9 @@ public:
     ///
     /// @param completion Callback with result and response CDB
     void Submit(AVCCompletion completion) {
+        auto completionState = Common::ShareCallback(std::move(completion));
         if (!cdb_.IsValid()) {
-            completion(AVCResult::kInvalidResponse, cdb_);
+            Common::InvokeSharedCallback(completionState, AVCResult::kInvalidResponse, cdb_);
             return;
         }
 
@@ -185,13 +188,13 @@ public:
         
         if (!self) {
              ASFW_LOG(AVC, "AVCCommand::Submit called without shared ownership - command dropped");
-             completion(AVCResult::kTransportError, cdb_);
+             Common::InvokeSharedCallback(completionState, AVCResult::kTransportError, cdb_);
              return;
         }
         
         fcpHandle_ = transport_.SubmitCommand(frame,
-            [self, completion](FCPStatus fcpStatus, const FCPFrame& response) {
-                self->OnFCPComplete(fcpStatus, response, completion);
+            [self, completionState](FCPStatus fcpStatus, const FCPFrame& response) {
+                self->OnFCPComplete(fcpStatus, response, completionState);
             });
     }
 
@@ -219,24 +222,24 @@ protected:
     /// @param completion User completion callback
     virtual void OnFCPComplete(FCPStatus fcpStatus,
                                const FCPFrame& response,
-                               AVCCompletion completion) {
+                               const std::shared_ptr<AVCCompletion>& completion) {
         // Handle FCP-level errors
         if (fcpStatus != FCPStatus::kOk) {
             AVCResult result = MapFCPStatus(fcpStatus);
-            completion(result, cdb_);
+            Common::InvokeSharedCallback(completion, result, cdb_);
             return;
         }
 
         // Decode AV/C response
         auto responseCdb = AVCCdb::Decode(response);
         if (!responseCdb) {
-            completion(AVCResult::kInvalidResponse, cdb_);
+            Common::InvokeSharedCallback(completion, AVCResult::kInvalidResponse, cdb_);
             return;
         }
 
         // Map ctype to result
         AVCResult result = CTypeToResult(responseCdb->ctype);
-        completion(result, *responseCdb);
+        Common::InvokeSharedCallback(completion, result, *responseCdb);
     }
 
     /// Map FCP status to AV/C result

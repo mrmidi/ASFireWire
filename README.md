@@ -1,6 +1,6 @@
 # ASFW project
 
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mrmidi_ASFW&metric=alert_status&token=3ca1b3d10414117bb3e75b1779090b4ea47f1585)](https://sonarcloud.io/summary/new_code?id=mrmidi_ASFW)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=mrmidi_ASFW&metric=alert_status&token=3ca1b3d10414117bb3e75b1779090b4ea47f1585)](https://sonarcloud.io/summary/new_code?id=mrmidi_ASFW) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mrmidi/ASFireWire)
 
 ## Table of Contents
 
@@ -164,6 +164,8 @@ Enabling `systemextensionsctl developer on` is recommended — it allows install
 
 ## Contributing
 
+Nice place to start with — [DeepWiki page for ASFW](https://deepwiki.com/mrmidi/ASFireWire).
+
 Contributions are VERY welcome! If you want to contribute to the project, please follow these steps:
 
 1. Fork the repository on GitHub
@@ -178,7 +180,7 @@ Literally any help is appreciated, from fixing typos in documentation to impleme
 
 You can reach me via:
 
-- Discord server: https://discord.gg/jAdXhrr2
+- Discord server: https://discord.gg/c82rmSEEPY
 - Email: me [at] mrmidi.net
 - LinkedIn: https://www.linkedin.com/in/mrmidi/
 

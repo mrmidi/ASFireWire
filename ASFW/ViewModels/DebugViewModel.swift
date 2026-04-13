@@ -234,6 +234,106 @@ class DebugViewModel: ObservableObject {
         }
     }
 
+    func performAsyncBlockRead(destinationID: UInt16,
+                               addressHigh: UInt16,
+                               addressLow: UInt32,
+                               length: UInt32) {
+        guard isConnected else {
+            asyncErrorMessage = "Driver connection is not available."
+            asyncStatusMessage = nil
+            return
+        }
+
+        asyncInProgress = true
+        asyncErrorMessage = nil
+        asyncStatusMessage = "Issuing async block read..."
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let handle = self.connector.asyncBlockRead(destinationID: destinationID,
+                                                       addressHigh: addressHigh,
+                                                       addressLow: addressLow,
+                                                       length: length)
+            DispatchQueue.main.async {
+                self.asyncInProgress = false
+                if let handle = handle {
+                    let message = String(format: "Async block read handle 0x%04X (len=%u)", handle, length)
+                    self.asyncStatusMessage = message
+                    self.asyncErrorMessage = nil
+                    self.driverViewModel?.log(message, source: .userClient, level: .info)
+                } else {
+                    let error = self.connector.lastError ?? "Async block read failed"
+                    self.asyncErrorMessage = error
+                    self.asyncStatusMessage = nil
+                    self.driverViewModel?.log(error, source: .userClient, level: .error)
+                }
+            }
+        }
+    }
+
+    func performAsyncBlockWrite(destinationID: UInt16,
+                                addressHigh: UInt16,
+                                addressLow: UInt32,
+                                payload: Data) {
+        guard isConnected else {
+            asyncErrorMessage = "Driver connection is not available."
+            asyncStatusMessage = nil
+            return
+        }
+
+        asyncInProgress = true
+        asyncErrorMessage = nil
+        asyncStatusMessage = "Issuing async block write..."
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let handle = self.connector.asyncBlockWrite(destinationID: destinationID,
+                                                        addressHigh: addressHigh,
+                                                        addressLow: addressLow,
+                                                        payload: payload)
+            DispatchQueue.main.async {
+                self.asyncInProgress = false
+                if let handle = handle {
+                    let message = String(format: "Async block write handle 0x%04X (bytes=%u)", handle, payload.count)
+                    self.asyncStatusMessage = message
+                    self.asyncErrorMessage = nil
+                    self.driverViewModel?.log(message, source: .userClient, level: .info)
+                } else {
+                    let error = self.connector.lastError ?? "Async block write failed"
+                    self.asyncErrorMessage = error
+                    self.asyncStatusMessage = nil
+                    self.driverViewModel?.log(error, source: .userClient, level: .error)
+                }
+            }
+        }
+    }
+
+    func fetchTransactionResult(handle: UInt16,
+                                completion: @escaping (ASFWDriverConnector.AsyncTransactionResult?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            let result = self.connector.getTransactionResult(handle: handle)
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+    }
+
+    func decodeResponseCode(_ code: UInt8) -> String {
+        switch code {
+        case 0: return "Complete"
+        case 1: return "Conflict"
+        case 2: return "Data error"
+        case 3: return "Type error"
+        case 4: return "Address error"
+        case 7: return "Rejected"
+        default: return String(format: "Unknown (0x%X)", code)
+        }
+    }
+
     nonisolated deinit {
         Task { @MainActor [weak self] in
             guard let self else { return }

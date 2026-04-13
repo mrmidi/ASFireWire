@@ -38,10 +38,11 @@ namespace EntryType = ::ASFW::FW::EntryType;
 namespace ConfigKey = ::ASFW::FW::ConfigKey;
 
 // ============================================================================
-// Bus Info Block (BIB) Bit Field Masks
+// Config ROM Header + Bus Options Fields (IEEE 1212 / TA 1999027)
 // ============================================================================
-// Single source of truth: FW::BIBFields in FWCommon.hpp
-namespace BIBFields = ::ASFW::FW::BIBFields;
+// Single source of truth: FWCommon.hpp
+namespace ConfigROMHeaderFields = ::ASFW::FW::ConfigROMHeaderFields;
+namespace BusOptionsFields = ::ASFW::FW::BusOptionsFields;
 
 // ============================================================================
 // Max Payload by Speed (Conservative Values)

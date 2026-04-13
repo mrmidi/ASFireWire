@@ -6,8 +6,8 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOReturn.h>
 
+#include "Error.hpp"
 #include "Transaction.hpp"
-#include "Error.hpp"  // Phase 2.1: Rich error context
 
 namespace ASFW::Async {
 
@@ -20,7 +20,7 @@ namespace ASFW::Async {
  * **Thread Safety**
  * All operations are serialized via internal IOLock.
  *
- * **Error Handling (Phase 2.1)**
+ * **Error Handling**
  * Uses Result<T, Error> for rich error context with source location tracking.
  * Errors include file, line, function, and human-readable messages.
  *
@@ -30,12 +30,11 @@ namespace ASFW::Async {
  * - Remove(): Delete completed/failed transactions
  * - State transitions tracked via Transaction::TransitionTo()
  *
- * **Migration Path**
- * Phase 1.1 introduces this alongside OutstandingTable. Later phases
- * will deprecate OutstandingTable entirely.
+ * This manager is the single authoritative owner of in-flight transaction state.
+ * Legacy scattered tracking should not be reintroduced alongside it.
  */
 class TransactionManager {
-public:
+  public:
     TransactionManager() = default;
     ~TransactionManager();
 
@@ -48,8 +47,8 @@ public:
      * \code
      * auto result = txnMgr->Initialize();
      * if (!result) {
-     *     result.error().Log();  // Logs: "Initialize failed at TransactionManager.cpp:42 - No memory for lock"
-     *     return result.error().kr;
+     *     result.error().Log();
+     *     return result.error().BoundaryStatus();
      * }
      * \endcode
      */
@@ -82,13 +81,13 @@ public:
      * auto result = txnMgr->Allocate(label, gen, nodeID);
      * if (!result) {
      *     result.error().Log();
-     *     return result.error().kr;
+     *     return result.error().BoundaryStatus();
      * }
      * Transaction* txn = result.value();  // or *result
      * \endcode
      */
-    [[nodiscard]] Result<Transaction*>
-    Allocate(TLabel label, BusGeneration generation, NodeID nodeID) noexcept;
+    [[nodiscard]] Result<Transaction*> Allocate(TLabel label, BusGeneration generation,
+                                                NodeID nodeID) noexcept;
 
     /**
      * \brief Find transaction by tLabel.
@@ -131,14 +130,12 @@ public:
      * });
      * \endcode
      */
-    template<typename F>
-    bool WithTransaction(TLabel label, F&& fn) noexcept;
+    template <typename F> bool WithTransaction(TLabel label, F&& fn) noexcept;
 
     /**
      * \brief Alias for WithTransaction (backwards compatibility).
      */
-    template<typename F>
-    bool WithTransactionByLabel(TLabel label, F&& fn) noexcept;
+    template <typename F> bool WithTransactionByLabel(TLabel label, F&& fn) noexcept;
 
     /**
      * \brief Remove transaction from manager.
@@ -185,7 +182,7 @@ public:
      *
      * \param fn Callback to invoke for each transaction
      *
-     * **Usage (Phase 2.0)**
+     * **Usage**
      * Used by OnTimeoutTick to check all transactions for expiration.
      *
      * **Example**
@@ -200,8 +197,7 @@ public:
      * **Thread Safety**
      * Holds lock during entire iteration. Keep callback fast!
      */
-    template<typename F>
-    void ForEachTransaction(F&& fn) noexcept;
+    template <typename F> void ForEachTransaction(F&& fn) noexcept;
 
     /**
      * \brief Dump all transaction states for debugging.
@@ -214,7 +210,7 @@ public:
     TransactionManager(TransactionManager&&) = delete;
     TransactionManager& operator=(TransactionManager&&) = delete;
 
-private:
+  private:
     // Apple's pattern: Array indexed by tLabel (0-63)
     // Matches AsyncPendingTrans fPendingQ[64] from AppleFWOHCI.kext
     std::array<std::unique_ptr<Transaction>, 64> transactions_;
@@ -227,8 +223,7 @@ private:
 // Template Implementation
 // =============================================================================
 
-template<typename F>
-bool TransactionManager::WithTransaction(TLabel label, F&& fn) noexcept {
+template <typename F> bool TransactionManager::WithTransaction(TLabel label, F&& fn) noexcept {
     if (!lock_ || !initialized_) {
         return false;
     }
@@ -250,14 +245,13 @@ bool TransactionManager::WithTransaction(TLabel label, F&& fn) noexcept {
     return true;
 }
 
-template<typename F>
+template <typename F>
 bool TransactionManager::WithTransactionByLabel(TLabel label, F&& fn) noexcept {
     // WithTransactionByLabel is now identical to WithTransaction
     return WithTransaction(label, std::forward<F>(fn));
 }
 
-template<typename F>
-void TransactionManager::ForEachTransaction(F&& fn) noexcept {
+template <typename F> void TransactionManager::ForEachTransaction(F&& fn) noexcept {
     if (!lock_ || !initialized_) {
         return;
     }

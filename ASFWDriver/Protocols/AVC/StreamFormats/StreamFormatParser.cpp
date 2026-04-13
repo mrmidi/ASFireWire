@@ -255,9 +255,10 @@ SyncMode StreamFormatParser::ExtractSyncMode(uint8_t syncByte) {
     return (syncByte & 0x04) ? SyncMode::kSynchronized : SyncMode::kNoSync;
 }
 
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 std::vector<ChannelFormatInfo> StreamFormatParser::ParseChannelFormats(
     const uint8_t* data,
-    size_t length,
+    size_t length, // NOLINT(bugprone-easily-swappable-parameters)
     uint8_t numFields
 ) {
     std::vector<ChannelFormatInfo> formats;

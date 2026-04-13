@@ -128,8 +128,7 @@ uint8_t ControllerMetrics::GetIRMNodeID() const
 void ControllerMetrics::SetControllerState(const char* stateName)
 {
     if (stateName) {
-        std::strncpy(stateName_, stateName, sizeof(stateName_) - 1);
-        stateName_[sizeof(stateName_) - 1] = '\0';
+        strlcpy(stateName_, stateName, sizeof(stateName_));
     }
 }
 
@@ -156,7 +155,7 @@ void ControllerMetrics::Reset()
     localNodeID_.store(0xFF, std::memory_order_release);
     rootNodeID_.store(0xFF, std::memory_order_release);
     irmNodeID_.store(0xFF, std::memory_order_release);
-    std::strncpy(stateName_, "Reset", sizeof(stateName_));
+    strlcpy(stateName_, "Reset", sizeof(stateName_));
 }
 
 } // namespace ASFW::Driver
