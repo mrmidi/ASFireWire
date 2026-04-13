@@ -499,11 +499,12 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     const bool dead = (ctrl & ContextControl::kDead) != 0;
     const uint32_t eventCode = (ctrl & ContextControl::kEventCodeMask) >> ContextControl::kEventCodeShift;
 
-    ASFW_LOG(Isoch, "IT: run=%d active=%d dead=%d evt=0x%02x pkts=%llu IRQ=%llu | CmdPtr=0x%08x Ctrl=0x%08x",
-             run, active, dead, eventCode,
-             packetsAssembled_,
-             interruptCount_.load(std::memory_order_relaxed),
-             cmdPtr, ctrl);
+    // DEBUG-ONLY: periodic IT state logging to help identify patterns in IT failures. Not super lightweight, so gated behind a config flag and not on the hot path of Poll().
+    // ASFW_LOG(Isoch, "IT: run=%d active=%d dead=%d evt=0x%02x pkts=%llu IRQ=%llu | CmdPtr=0x%08x Ctrl=0x%08x",
+    //          run, active, dead, eventCode,
+    //          packetsAssembled_,
+    //          interruptCount_.load(std::memory_order_relaxed),
+    //          cmdPtr, ctrl);
 }
 
 void IsochTransmitContext::DumpPayloadBuffers(uint32_t numPackets) const noexcept {

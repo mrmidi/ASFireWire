@@ -1,5 +1,6 @@
 #include "AudioIOPath.hpp"
 
+#include "../Config/AudioRxProfiles.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <algorithm>
@@ -8,8 +9,6 @@
 
 namespace ASFW::Isoch::Audio {
 namespace detail {
-
-constexpr uint32_t kRxTargetFillFrames = 2048;
 
 [[nodiscard]] size_t PCMByteCount(uint32_t frames, uint32_t channels) noexcept {
     return size_t(frames) * sizeof(int32_t) * channels;
@@ -33,16 +32,35 @@ void ZeroFrames(int32_t* pcm, uint32_t frames, uint32_t channels) {
     return framesRead;
 }
 
-void MaybeDrainRxStartup(AudioIOPathState& state) {
+void MaybeDrainRxStartup(AudioIOPathState& state,
+                         uint32_t ioBufferFrameSize,
+                         uint64_t sampleTime) {
     if (!state.rxQueueValid || !state.rxQueueReader || !state.rxStartupDrained || *state.rxStartupDrained) {
         return;
     }
 
+    const auto& rxProfile = ASFW::Isoch::Config::GetActiveRxProfile();
+    const uint32_t targetFillFrames = rxProfile.startupFillTargetFrames;
+    const uint32_t largeBacklogThreshold = targetFillFrames + rxProfile.startupDrainThresholdFrames;
     const uint32_t fill = state.rxQueueReader->FillLevelFrames();
-    if (fill > kRxTargetFillFrames + 256U) {
-        const uint32_t excess = fill - kRxTargetFillFrames;
-        state.rxQueueReader->ConsumeFrames(excess);
+    uint32_t drained = 0;
+
+    if (fill > targetFillFrames) {
+        drained = fill - targetFillFrames;
+        drained = state.rxQueueReader->ConsumeFrames(drained);
     }
+
+    const uint32_t fillAfter = state.rxQueueReader->FillLevelFrames();
+    ASFW_LOG(Audio,
+             "RX startup rebase profile=%{public}s fill=%u target=%u drained=%u result=%u%{public}s sample=%llu io=%u",
+             rxProfile.name,
+             fill,
+             targetFillFrames,
+             drained,
+             fillAfter,
+             fill > largeBacklogThreshold ? " large-backlog" : "",
+             sampleTime,
+             ioBufferFrameSize);
     *state.rxStartupDrained = true;
 }
 
@@ -75,7 +93,7 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
     }
 
     const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
-    MaybeDrainRxStartup(state);
+    MaybeDrainRxStartup(state, ioBufferFrameSize, sampleTime);
 
     auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);
     auto* pcmSecond = reinterpret_cast<int32_t*>(segment.address);
