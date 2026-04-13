@@ -246,9 +246,11 @@ kern_return_t IMPL(ASFWDriver, Start) {
                     }
                     return ASFW::Async::ResponseCode::NoResponse;
                 });
-            ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
+            ASFW_LOG(Controller, "FCPResponseRouter wired to PacketRouter (tCode 0x1)");
         }
     }
+
+    DriverWiring::EnsureSbp2Deps(ctx);
 
     if (ctx.deps.speedPolicy) {
         if (!ctx.deps.romScanner) {
