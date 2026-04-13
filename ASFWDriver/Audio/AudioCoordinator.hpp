@@ -49,9 +49,14 @@ public:
     // IAVCAudioConfigListener
     void OnAVCAudioConfigurationReady(uint64_t guid,
                                       const Model::ASFWAudioDevice& config) noexcept override;
+    void HandleCycleInconsistent() noexcept;
 
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept;
+    [[nodiscard]] IOReturn RequestDiceClockConfig(
+        uint64_t guid,
+        const DICE::DiceDesiredClockConfig& desiredClock,
+        DICE::DiceRestartReason reason) noexcept;
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }
 

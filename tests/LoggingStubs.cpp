@@ -138,6 +138,7 @@ uint8_t LogConfig::GetFCPVerbosity() const { return 0; }
 uint8_t LogConfig::GetCMPVerbosity() const { return 0; }
 uint8_t LogConfig::GetIRMVerbosity() const { return 0; }
 uint8_t LogConfig::GetMusicSubunitVerbosity() const { return 0; }
+uint8_t LogConfig::GetDICEVerbosity() const { return 0; }
 uint8_t LogConfig::GetIsochVerbosity() const { return 0; }
 bool LogConfig::IsHexDumpsEnabled() const { return false; }
 bool LogConfig::IsIsochTxVerifierEnabled() const { return false; }
@@ -154,6 +155,7 @@ void LogConfig::SetFCPVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetCMPVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetIRMVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetMusicSubunitVerbosity(uint8_t) { /* no-op stub */ }
+void LogConfig::SetDICEVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetIsochVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetHexDumps(bool) { /* no-op stub */ }
 void LogConfig::SetIsochTxVerifierEnabled(bool) { /* no-op stub */ }

@@ -41,6 +41,7 @@ struct ServiceContext {
     ASFW::Driver::InterruptDispatcher interruptDispatcher;
     std::shared_ptr<ASFW::Audio::AudioCoordinator> audioCoordinator;
 
+    void DisarmProviderNotifications();
     void Reset();
 };
 

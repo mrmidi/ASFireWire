@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
+#include "../ASFWDriver/Isoch/Encoding/TimingUtils.hpp"
 #include "../ASFWDriver/Isoch/Core/ExternalSyncBridge.hpp"
 #include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
 #include "../ASFWDriver/Shared/TxSharedQueue.hpp"
@@ -115,6 +116,38 @@ TEST(IsochTransmitContext, ConfigureFailsOnInvalidQueueChannelValue) {
 
     EXPECT_EQ(ctx.Configure(/*channel=*/0, /*sid=*/0x3F, /*streamModeRaw=*/0, /*requestedChannels=*/kQueueChannels),
               kIOReturnBadArgument);
+}
+
+TEST(IsochTransmitContext, StopTransitionsConfiguredContextToStopped) {
+    constexpr uint32_t kQueueChannels = 6;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes =
+        ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochTransmitContext ctx;
+    ctx.SetSharedTxQueue(storage.data(), bytes);
+
+    ASSERT_EQ(ctx.Configure(/*channel=*/0,
+                            /*sid=*/0x3F,
+                            /*streamModeRaw=*/0,
+                            /*requestedChannels=*/kQueueChannels),
+              kIOReturnSuccess);
+    ASSERT_EQ(ctx.GetState(), ITState::Configured);
+
+    ctx.Stop();
+    EXPECT_EQ(ctx.GetState(), ITState::Stopped);
+
+    EXPECT_EQ(ctx.Configure(/*channel=*/0,
+                            /*sid=*/0x3F,
+                            /*streamModeRaw=*/0,
+                            /*requestedChannels=*/kQueueChannels),
+              kIOReturnSuccess);
 }
 
 TEST(IsochTransmitContext, BlockingCadenceCountsMatchOneSecond) {
@@ -296,4 +329,186 @@ TEST(IsochTransmitContext, TxPipelineMatchesFocusritePlaybackSytSequence) {
     EXPECT_EQ(pkt2Dbc, 0x08);
     EXPECT_EQ(pkt3Dbc, 0x10);
     EXPECT_EQ(pkt4Dbc, 0x18);
+}
+
+TEST(IsochTransmitContext, PrimeSyncFailsWhenRxSeedIsStale) {
+    constexpr uint32_t kQueueChannels = 8;
+    constexpr uint32_t kAm824Slots = 9;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes =
+        ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochAudioTxPipeline pipeline;
+    pipeline.SetSharedTxQueue(storage.data(), bytes);
+    ASSERT_EQ(pipeline.Configure(/*sid=*/0x00,
+                                 /*streamModeRaw=*/1u,
+                                 /*requestedChannels=*/kQueueChannels,
+                                 /*requestedAm824Slots=*/kAm824Slots,
+                                 AudioWireFormat::kAM824),
+              kIOReturnSuccess);
+
+    Core::ExternalSyncBridge bridge;
+    bridge.active.store(true, std::memory_order_release);
+    bridge.clockEstablished.store(true, std::memory_order_release);
+    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     Core::ExternalSyncBridge::kFdf48k,
+                                                                     static_cast<uint8_t>(kAm824Slots)),
+                              std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(1, std::memory_order_release);
+
+    pipeline.SetExternalSyncBridge(&bridge);
+    pipeline.ResetForStart();
+    pipeline.SetCycleTrackingValid(true);
+    EXPECT_FALSE(pipeline.PrimeSyncFromExternalBridge());
+}
+
+TEST(IsochTransmitContext, PrimeSyncSucceedsWithFreshQualifiedSeedAfterLiveClockDrops) {
+    constexpr uint32_t kQueueChannels = 8;
+    constexpr uint32_t kAm824Slots = 9;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes =
+        ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochAudioTxPipeline pipeline;
+    pipeline.SetSharedTxQueue(storage.data(), bytes);
+    ASSERT_EQ(pipeline.Configure(/*sid=*/0x00,
+                                 /*streamModeRaw=*/1u,
+                                 /*requestedChannels=*/kQueueChannels,
+                                 /*requestedAm824Slots=*/kAm824Slots,
+                                 AudioWireFormat::kAM824),
+              kIOReturnSuccess);
+
+    Core::ExternalSyncBridge bridge;
+    bridge.active.store(true, std::memory_order_release);
+    bridge.clockEstablished.store(false, std::memory_order_release);
+    bridge.startupQualified.store(true, std::memory_order_release);
+    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     Core::ExternalSyncBridge::kFdf48k,
+                                                                     static_cast<uint8_t>(kAm824Slots)),
+                              std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
+
+    pipeline.SetExternalSyncBridge(&bridge);
+    pipeline.ResetForStart();
+    pipeline.SetCycleTrackingValid(true);
+    EXPECT_TRUE(pipeline.PrimeSyncFromExternalBridge());
+}
+
+TEST(IsochTransmitContext, PrimeSyncAllowsQualifiedStartupSeedWithinStartupGraceWindow) {
+    constexpr uint32_t kQueueChannels = 8;
+    constexpr uint32_t kAm824Slots = 9;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes =
+        ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochAudioTxPipeline pipeline;
+    pipeline.SetSharedTxQueue(storage.data(), bytes);
+    ASSERT_EQ(pipeline.Configure(/*sid=*/0x00,
+                                 /*streamModeRaw=*/1u,
+                                 /*requestedChannels=*/kQueueChannels,
+                                 /*requestedAm824Slots=*/kAm824Slots,
+                                 AudioWireFormat::kAM824),
+              kIOReturnSuccess);
+
+    ASSERT_TRUE(ASFW::Timing::initializeHostTimebase());
+    const uint64_t nowTicks = mach_absolute_time();
+    const uint64_t graceTicks =
+        ASFW::Timing::nanosToHostTicks(ASFW::Isoch::Core::kExternalSyncStartupSeedGraceNanos);
+    ASSERT_GT(graceTicks, 0u);
+
+    Core::ExternalSyncBridge bridge;
+    bridge.active.store(true, std::memory_order_release);
+    bridge.clockEstablished.store(false, std::memory_order_release);
+    bridge.startupQualified.store(true, std::memory_order_release);
+    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     Core::ExternalSyncBridge::kFdf48k,
+                                                                     static_cast<uint8_t>(kAm824Slots)),
+                              std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(nowTicks - (graceTicks / 2), std::memory_order_release);
+
+    pipeline.SetExternalSyncBridge(&bridge);
+    pipeline.ResetForStart();
+    pipeline.SetCycleTrackingValid(true);
+    EXPECT_TRUE(pipeline.PrimeSyncFromExternalBridge());
+}
+
+TEST(IsochTransmitContext, FirstDataPacketKeepsSeededSytWhenBridgeAdvancesByWholePackets) {
+    constexpr uint32_t kQueueChannels = 8;
+    constexpr uint32_t kAm824Slots = 9;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes =
+        ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochAudioTxPipeline pipeline;
+    pipeline.SetSharedTxQueue(storage.data(), bytes);
+    ASSERT_EQ(pipeline.Configure(/*sid=*/0x00,
+                                 /*streamModeRaw=*/1u,
+                                 /*requestedChannels=*/kQueueChannels,
+                                 /*requestedAm824Slots=*/kAm824Slots,
+                                 AudioWireFormat::kAM824),
+              kIOReturnSuccess);
+
+    Core::ExternalSyncBridge bridge;
+    bridge.active.store(true, std::memory_order_release);
+    bridge.clockEstablished.store(true, std::memory_order_release);
+    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0x54B0,
+                                                                     Core::ExternalSyncBridge::kFdf48k,
+                                                                     static_cast<uint8_t>(kAm824Slots)),
+                              std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
+
+    pipeline.SetExternalSyncBridge(&bridge);
+    pipeline.ResetForStart();
+    pipeline.SetCycleTrackingValid(true);
+    ASSERT_TRUE(pipeline.PrimeSyncFromExternalBridge());
+
+    // Simulate RX advancing by two DATA packets before TX emits its first DATA packet.
+    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD4B0,
+                                                                     Core::ExternalSyncBridge::kFdf48k,
+                                                                     static_cast<uint8_t>(kAm824Slots)),
+                              std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
+
+    const auto pkt0 = pipeline.NextSilentPacket(/*transmitCycle=*/3830);
+    const bool pkt0IsData = pkt0.isData;
+    const uint16_t pkt0Syt = ReadPacketSyt(pkt0);
+
+    const auto pkt1 = pipeline.NextSilentPacket(/*transmitCycle=*/3831);
+    const bool pkt1IsData = pkt1.isData;
+    const uint16_t pkt1Syt = ReadPacketSyt(pkt1);
+
+    const auto pkt2 = pipeline.NextSilentPacket(/*transmitCycle=*/3832);
+    const bool pkt2IsData = pkt2.isData;
+    const uint16_t pkt2Syt = ReadPacketSyt(pkt2);
+
+    EXPECT_FALSE(pkt0IsData);
+    EXPECT_TRUE(pkt1IsData);
+    EXPECT_TRUE(pkt2IsData);
+    EXPECT_EQ(pkt0Syt, 0xFFFF);
+    EXPECT_EQ(pkt1Syt, 0x54B0);
+    EXPECT_EQ(pkt2Syt, 0x68B0);
 }

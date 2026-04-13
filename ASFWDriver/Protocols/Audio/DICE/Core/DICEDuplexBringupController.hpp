@@ -5,9 +5,10 @@
 
 #pragma once
 
+#include "IDICEDuplexProtocol.hpp"
+#include "DICERestartSession.hpp"
 #include "DICETypes.hpp"
 #include "DICETransaction.hpp"
-#include "../../IDeviceProtocol.hpp"
 #include "../../../Ports/ProtocolRegisterIO.hpp"
 #include "../../../Ports/FireWireBusPort.hpp"
 #include <DriverKit/IODispatchQueue.h>
@@ -26,6 +27,10 @@ namespace ASFW::Audio::DICE {
 class DICEDuplexBringupController {
 public:
     using VoidCallback = std::function<void(IOReturn)>;
+    using PrepareCallback = IDICEDuplexProtocol::PrepareCallback;
+    using StageCallback = IDICEDuplexProtocol::StageCallback;
+    using ConfirmCallback = IDICEDuplexProtocol::ConfirmCallback;
+    using ClockApplyCallback = IDICEDuplexProtocol::ClockApplyCallback;
 
     DICEDuplexBringupController(
         DICETransaction& diceReader,
@@ -38,6 +43,15 @@ public:
     DICEDuplexBringupController& operator=(const DICEDuplexBringupController&) = delete;
 
     // Async duplex methods (were IOReturn, now void + callback)
+    void PrepareDuplex(const AudioDuplexChannels& channels,
+                       const DiceDesiredClockConfig& desiredClock,
+                       PrepareCallback callback);
+    void ProgramRx(StageCallback callback);
+    void ProgramTxAndEnableDuplex(StageCallback callback);
+    void ConfirmDuplexStart(ConfirmCallback callback);
+    void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock, ClockApplyCallback callback);
+
+    // Transitional wrappers for existing non-coordinator callers.
     void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback);
     void ProgramRxForDuplex48k(VoidCallback callback);
     void ProgramTxAndEnableDuplex48k(VoidCallback callback);
@@ -45,12 +59,18 @@ public:
     [[nodiscard]] IOReturn StopDuplex();       // stays sync — pure writes, no HW wait
     void ReleaseOwner(VoidCallback callback);
 
-    [[nodiscard]] bool IsPrepared()     const noexcept { return duplexPrepared_; }
-    [[nodiscard]] bool IsArmed()        const noexcept { return duplexArmed_; }
-    [[nodiscard]] bool IsRunning()      const noexcept { return duplexRunning_; }
-    [[nodiscard]] bool IsOwnerClaimed() const noexcept { return ownerClaimed_; }
+    [[nodiscard]] bool IsPrepared() const noexcept { return restartSession_.devicePrepared; }
+    [[nodiscard]] bool IsArmed() const noexcept { return restartSession_.deviceTxArmed; }
+    [[nodiscard]] bool IsRunning() const noexcept { return restartSession_.deviceRunning; }
+    [[nodiscard]] bool IsOwnerClaimed() const noexcept { return restartSession_.ownerClaimed; }
 
 private:
+    enum class FlowMode : uint8_t {
+        kNone,
+        kPrepareDuplex,
+        kClockApply,
+    };
+
     // Async step chain for PrepareDuplex48k raw-parity path
     void DoReadGlobalStatus(AudioDuplexChannels channels, VoidCallback cb);
     void DoRefreshSectionLayout(AudioDuplexChannels channels, VoidCallback cb);
@@ -68,6 +88,8 @@ private:
     void DoProgramTx(AudioDuplexChannels channels, VoidCallback cb);
     void DoFinishPrepare(VoidCallback cb);
     void DoRollback(IOReturn error, VoidCallback cb);
+    void DoCompleteClockApply(VoidCallback cb);
+    void RefreshRuntimeCaps(VoidCallback cb);
 
     // Async step chain for ConfirmDuplex48kStart
     void DoPollSourceLock(uint32_t attempt, uint32_t accumulatedNotify, VoidCallback cb);
@@ -92,15 +114,14 @@ private:
     IODispatchQueue* workQueue_;   // NOT owned — borrowed from caller
     GeneralSections sections_;
 
-    bool duplexPrepared_{false};
-    bool duplexArmed_{false};
-    bool duplexRunning_{false};
-    bool ownerClaimed_{false};
-    bool duplexRxProgrammed_{false};
-    FW::Generation bringupGeneration_{0};
-    uint8_t preparedTxIsoChannel_{0xFF};
-    uint8_t preparedRxIsoChannel_{0xFF};
+    DiceRestartSession restartSession_{};
+    FlowMode flowMode_{FlowMode::kNone};
+    AudioStreamRuntimeCaps runtimeCaps_{};
+    uint32_t confirmNotification_{0};
+    uint32_t confirmStatus_{0};
+    uint32_t confirmExtStatus_{0};
     IOReturn stopSequenceError_{kIOReturnSuccess};
+    bool refreshRuntimeCapsOnPrepare_{true};
 };
 
 } // namespace ASFW::Audio::DICE

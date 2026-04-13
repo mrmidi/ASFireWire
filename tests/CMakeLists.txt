@@ -1191,6 +1191,28 @@ target_include_directories(ExternalSyncBridgeTests PRIVATE ${ASFW_COMMON_INCLUDE
 
 gtest_discover_tests(ExternalSyncBridgeTests)
 
+# Isoch audio RX pipeline timing-loss tests
+add_executable(IsochAudioRxPipelineTests
+    "${ASFW_TESTS_DIR}/IsochAudioRxPipelineTests.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochAudioRxPipeline.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(IsochAudioRxPipelineTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(IsochAudioRxPipelineTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IsochAudioRxPipelineTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IsochAudioRxPipelineTests)
+
 # External sync discipline (48k) tests
 add_executable(ExternalSyncDiscipline48kTests
     "${ASFW_TESTS_DIR}/ExternalSyncDiscipline48kTests.cpp"
@@ -1319,24 +1341,48 @@ target_include_directories(DICETcatProtocolTests PRIVATE ${ASFW_COMMON_INCLUDES}
 
 gtest_discover_tests(DICETcatProtocolTests)
 
-# DICE bring-up sequencing tests
-add_executable(DiceBringupSequenceTests
-    "${ASFW_TESTS_DIR}/DiceBringupSequenceTests.cpp"
+# DICE restart-session tests
+add_executable(DICERestartSessionTests
+    "${ASFW_TESTS_DIR}/DICERestartSessionTests.cpp"
 )
 
-target_link_libraries(DiceBringupSequenceTests
+target_link_libraries(DICERestartSessionTests
     PRIVATE
         GTest::gtest_main
 )
 
-target_compile_definitions(DiceBringupSequenceTests
+target_compile_definitions(DICERestartSessionTests
     PRIVATE
         ASFW_HOST_TEST
 )
 
-target_include_directories(DiceBringupSequenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+target_include_directories(DICERestartSessionTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
-gtest_discover_tests(DiceBringupSequenceTests)
+gtest_discover_tests(DICERestartSessionTests)
+
+# DICE duplex restart coordinator FSM tests
+add_executable(DiceDuplexRestartCoordinatorTests
+    "${ASFW_TESTS_DIR}/DiceDuplexRestartCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Backends/DiceDuplexRestartCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/IRM/IRMClient.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(DiceDuplexRestartCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiceDuplexRestartCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiceDuplexRestartCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DiceDuplexRestartCoordinatorTests)
 
 # Apogee protocol boolean control mapping tests
 add_executable(ApogeeBooleanControlMappingTests

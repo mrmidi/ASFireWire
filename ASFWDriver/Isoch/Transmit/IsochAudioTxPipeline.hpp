@@ -39,6 +39,14 @@ public:
         // Fill level low-water alerts (with hysteresis)
         std::atomic<uint64_t> rbLowEvents{0};
         std::atomic<uint64_t> txqLowEvents{0};
+        std::atomic<uint32_t> prePrimeFillBefore{0};
+        std::atomic<uint32_t> prePrimeTransferred{0};
+        std::atomic<uint32_t> prePrimeAssemblerFillAfter{0};
+        std::atomic<uint32_t> prePrimeQueueFillAfter{0};
+        std::atomic<uint32_t> prePrimeLimitFrames{0};
+        std::atomic<uint32_t> prePrimeLimitHit{0};
+        std::atomic<uint32_t> peakAssemblerFill{0};
+        std::atomic<uint32_t> peakSharedTxFill{0};
     };
 
     IsochAudioTxPipeline() noexcept = default;
@@ -89,6 +97,9 @@ public:
     void OnPollTick1ms() noexcept;
 
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
+    [[nodiscard]] uint32_t CurrentFillTarget() const noexcept { return adaptiveFill_.currentTarget; }
+    [[nodiscard]] uint32_t BaseFillTarget() const noexcept { return adaptiveFill_.baseTarget; }
+    [[nodiscard]] uint32_t MaxFillTarget() const noexcept { return adaptiveFill_.maxTarget; }
 
     // -------------------------------------------------------------------------
     // Tx::IIsochTxPacketProvider
@@ -109,8 +120,29 @@ private:
     };
 
     struct ExternalSyncState {
+        enum class SeedStatus : uint8_t {
+            Ok = 0,
+            NoBridge,
+            Inactive,
+            NotEstablished,
+            MissingTimestamp,
+            Stale,
+            InvalidSyt,
+            UnsupportedFdf,
+        };
+
         bool enabled{false};
         uint16_t rxSyt{Core::ExternalSyncBridge::kNoInfoSyt};
+        uint8_t rxFdf{0};
+        uint8_t rxDbs{0};
+        uint32_t updateSeq{0};
+        uint64_t ageUsec{0};
+        uint64_t staleThresholdUsec{0};
+        bool bridgePresent{false};
+        bool active{false};
+        bool clockEstablished{false};
+        bool startupQualified{false};
+        SeedStatus status{SeedStatus::NoBridge};
     };
 
     struct AudioInjectionPlan {
@@ -134,8 +166,7 @@ private:
     void AdvanceAdaptiveFillWindow() noexcept;
     void ApplyAdaptiveFillPolicy() noexcept;
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
-    [[nodiscard]] ExternalSyncState ReadExternalSyncState() noexcept;
-    [[nodiscard]] bool HasFreshExternalSyncUpdate(const Core::ExternalSyncBridge& bridge) noexcept;
+    [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
     [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
     [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
     [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 #ifdef ASFW_HOST_TEST
@@ -55,6 +56,9 @@ struct IsochDuplexStartParams {
 
 class IsochService {
 public:
+    using TimingLossCallback = std::function<void(uint64_t guid)>;
+    using TxRecoveryCallback = std::function<bool(uint64_t guid, uint32_t reasonBits)>;
+
     IsochService() = default;
     ~IsochService() = default;
 
@@ -96,12 +100,18 @@ public:
     kern_return_t StopDuplex(uint64_t guid, IRM::IRMClient* irmClient = nullptr);
 
     void StopAll();
+    void SetTimingLossCallback(TimingLossCallback callback) noexcept;
+    void SetTxRecoveryCallback(TxRecoveryCallback callback) noexcept;
 
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
 private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
+    void RefreshReceiveTimingLossCallback() noexcept;
+    void RefreshTransmitRecoveryCallback() noexcept;
+    void OnReceiveTimingLossDetected() noexcept;
+    [[nodiscard]] bool OnTransmitRecoveryRequested(uint32_t reasonBits) noexcept;
 
     struct SharedQueueMapping {
         OSSharedPtr<IOBufferMemoryDescriptor> memory{};
@@ -127,6 +137,8 @@ private:
     SharedQueueMapping txQueue_{};
 
     uint64_t activeGuid_{0};
+    TimingLossCallback timingLossCallback_{};
+    TxRecoveryCallback txRecoveryCallback_{};
 
     struct ReservedDuplexResources {
         bool playbackActive{false};

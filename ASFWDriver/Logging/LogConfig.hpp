@@ -24,6 +24,7 @@ namespace ASFW {
  * - ASFWAsyncVerbosity (integer 0-4): Controls Async subsystem logging detail
  * - ASFWControllerVerbosity (integer 0-4): Controls Controller logging (future)
  * - ASFWHardwareVerbosity (integer 0-4): Controls Hardware logging (future)
+ * - ASFWDICEVerbosity (integer 0-4): Controls DICE/FSM logging detail
  * - ASFWEnableHexDumps (boolean): Force enable/disable packet dumps
  * - ASFWLogStatistics (boolean): Enable aggregate statistics logging
  * - ASFWEnableIsochTxVerifier (boolean): Enable dev-only IT TX verifier (expensive)
@@ -104,6 +105,7 @@ public:
      * @brief Get AVC subsystem verbosity level (0-4)
      */
     uint8_t GetAVCVerbosity() const;
+    uint8_t GetDICEVerbosity() const;
     uint8_t GetIsochVerbosity() const;
 
     /**
@@ -184,6 +186,7 @@ public:
      * @brief Set AVC verbosity at runtime
      */
     void SetAVCVerbosity(uint8_t level);
+    void SetDICEVerbosity(uint8_t level);
     void SetIsochVerbosity(uint8_t level);
     void SetHexDumps(bool enable);
 
@@ -237,6 +240,7 @@ private:
     std::atomic<uint8_t> cmpVerbosity_;
     std::atomic<uint8_t> irmVerbosity_;
     std::atomic<uint8_t> avcVerbosity_;
+    std::atomic<uint8_t> diceVerbosity_;
     std::atomic<uint8_t> isochVerbosity_;
     std::atomic<bool> enableHexDumps_;
     std::atomic<bool> isochTxVerifierEnabled_;

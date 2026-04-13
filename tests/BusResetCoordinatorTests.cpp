@@ -368,6 +368,10 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
     EXPECT_EQ(rig.async.flushAtContextsCount, 1U);
     EXPECT_EQ(rig.async.rearmAtContextsCount, 1U);
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    const auto operations = rig.hardware.CopyTestOperations();
+    EXPECT_TRUE(std::find(operations.begin(), operations.end(),
+                          HardwareInterface::TestOperation::SendPhyGlobalResume) ==
+                operations.end());
 }
 
 TEST(BusResetCoordinatorTests, StickyCompletionOnlyStillCompletesDecodePath) {

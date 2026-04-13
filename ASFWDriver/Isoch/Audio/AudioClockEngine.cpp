@@ -189,8 +189,18 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
     const uint64_t framesSent = state.ioMetrics->totalFramesSent.load(std::memory_order_relaxed);
     const uint64_t callbacks = state.ioMetrics->callbackCount.load(std::memory_order_relaxed);
     const uint64_t underruns = state.ioMetrics->underruns.load(std::memory_order_relaxed);
+    const uint32_t lastIoBufferFrameSize =
+        state.ioMetrics->lastIoBufferFrameSize.load(std::memory_order_relaxed);
+    const int64_t lastCallbackSampleDelta =
+        state.ioMetrics->lastCallbackSampleDelta.load(std::memory_order_relaxed);
+    const uint32_t lastRxQueueFillFrames =
+        state.ioMetrics->lastRxQueueFillFrames.load(std::memory_order_relaxed);
+    const uint32_t lastTxQueueFillFrames =
+        state.ioMetrics->lastTxQueueFillFrames.load(std::memory_order_relaxed);
+    const uint32_t lastAssemblerFillFrames =
+        state.ioMetrics->lastAssemblerFillFrames.load(std::memory_order_relaxed);
 
-    uint32_t ringFillLevel = 0;
+    uint32_t ringFillLevel = lastAssemblerFillFrames;
     uint64_t ringUnderruns = 0;
     if (localEncodingActive) {
         ringFillLevel = state.packetAssembler->bufferFillLevel();
@@ -215,14 +225,17 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
 
     if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
         ASFW_LOG(Audio,
-                 "IO: %.1fs recv=%llu sent=%llu (%.0f/s) cb=%llu ring=%u rxFill=%u overruns=%llu underruns=%llu/%llu | LocalEnc:%{public}s %llu pkts (%.0f/s, D:%llu N:%llu)",
+                 "IO: %.1fs recv=%llu sent=%llu (%.0f/s) cb=%llu buf=%u sampleDelta=%lld rxFill=%u txFill=%u asmFill=%u overruns=%llu underruns=%llu/%llu | LocalEnc:%{public}s %llu pkts (%.0f/s, D:%llu N:%llu)",
                  elapsedSec,
                  framesReceived,
                  framesSent,
                  framesPerSec,
                  callbacks,
+                 lastIoBufferFrameSize,
+                 lastCallbackSampleDelta,
+                 lastRxQueueFillFrames,
+                 lastTxQueueFillFrames,
                  ringFillLevel,
-                 rxFill,
                  state.encodingMetrics->overruns,
                  underruns,
                  ringUnderruns,
@@ -297,6 +310,13 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.ioMetrics->totalFramesSent.store(0, std::memory_order_relaxed);
     state.ioMetrics->callbackCount.store(0, std::memory_order_relaxed);
     state.ioMetrics->underruns.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastIoBufferFrameSize.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastCallbackSampleTime.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastCallbackSampleDelta.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastCallbackOperation.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastRxQueueFillFrames.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastTxQueueFillFrames.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastAssemblerFillFrames.store(0, std::memory_order_relaxed);
     state.ioMetrics->startTime = mach_absolute_time();
     *state.metricsLogCounter = 0;
 

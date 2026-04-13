@@ -46,13 +46,46 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
 
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
-    dice_.OnDeviceRecordUpdated(device->GetGUID());
+    const uint64_t guid = device->GetGUID();
+    dice_.OnDeviceRecordUpdated(guid);
+
+    bool recoverActiveStream = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        recoverActiveStream = (activeGuid_ == guid);
+        IOLockUnlock(lock_);
+    }
+
+    if (!recoverActiveStream) {
+        return;
+    }
+
+    ASFW_LOG(Audio,
+             "AudioCoordinator: Device resumed while active; scheduling DICE recovery GUID=0x%016llx",
+             guid);
+    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kBusResetRebind);
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
-    (void)device;
-    // No-op for now: bus resets can suspend devices transiently and we don't yet have a robust
-    // "stop+restart while CoreAudio is running" pipeline here.
+    if (!device) {
+        return;
+    }
+
+    const uint64_t guid = device->GetGUID();
+    bool suspendedActiveStream = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        suspendedActiveStream = (activeGuid_ == guid);
+        IOLockUnlock(lock_);
+    }
+
+    if (!suspendedActiveStream) {
+        return;
+    }
+
+    ASFW_LOG_WARNING(Audio,
+                     "AudioCoordinator: Active device suspended; waiting for resume to recover GUID=0x%016llx",
+                     guid);
 }
 
 void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
@@ -74,6 +107,36 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
                                                    const Model::ASFWAudioDevice& config) noexcept {
     avc_.OnAudioConfigurationReady(guid, config);
+}
+
+void AudioCoordinator::HandleCycleInconsistent() noexcept {
+    uint64_t guid = 0;
+    if (lock_) {
+        IOLockLock(lock_);
+        guid = activeGuid_;
+        IOLockUnlock(lock_);
+    }
+
+    if (guid == 0) {
+        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
+            ASFW_LOG(Audio, "AudioCoordinator: Ignoring cycleInconsistent with no active audio GUID");
+        }
+        return;
+    }
+
+    if (BackendForGuid(guid) != &dice_) {
+        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
+            ASFW_LOG(Audio,
+                     "AudioCoordinator: Ignoring cycleInconsistent for non-DICE active GUID=0x%016llx",
+                     guid);
+        }
+        return;
+    }
+
+    ASFW_LOG_WARNING(Audio,
+                     "AudioCoordinator: cycleInconsistent observed; scheduling DICE recovery GUID=0x%016llx",
+                     guid);
+    dice_.HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterCycleInconsistent);
 }
 
 IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
@@ -194,6 +257,56 @@ IOReturn AudioCoordinator::StopStreaming(uint64_t guid) noexcept {
              "AudioCoordinator: StopStreaming ok backend=%{public}s GUID=0x%016llx",
              backend->Name(),
              guid);
+    return kIOReturnSuccess;
+}
+
+IOReturn AudioCoordinator::RequestDiceClockConfig(
+    uint64_t guid,
+    const DICE::DiceDesiredClockConfig& desiredClock,
+    DICE::DiceRestartReason reason) noexcept {
+    if (guid == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ != 0 && activeGuid_ != guid) {
+            const uint64_t active = activeGuid_;
+            IOLockUnlock(lock_);
+            ASFW_LOG_WARNING(Audio,
+                             "AudioCoordinator: RequestDiceClockConfig busy requested=0x%016llx active=0x%016llx",
+                             guid,
+                             active);
+            return kIOReturnBusy;
+        }
+        IOLockUnlock(lock_);
+    }
+
+    const auto* record = registry_.FindByGuid(guid);
+    if (!record) {
+        return kIOReturnNotReady;
+    }
+
+    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
+    if (integration != DeviceIntegrationMode::kHardcodedNub) {
+        return kIOReturnUnsupported;
+    }
+
+    const IOReturn kr = dice_.RequestClockConfig(guid, desiredClock, reason);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioCoordinator: RequestDiceClockConfig failed GUID=0x%016llx kr=0x%x",
+                       guid,
+                       kr);
+        return kr;
+    }
+
+    ASFW_LOG(Audio,
+             "AudioCoordinator: RequestDiceClockConfig ok GUID=0x%016llx rate=%uHz clock=0x%08x reason=%u",
+             guid,
+             desiredClock.sampleRateHz,
+             desiredClock.clockSelect,
+             static_cast<unsigned>(reason));
     return kIOReturnSuccess;
 }
 

@@ -79,6 +79,7 @@ public:
 
     void SetSharedRxQueue(uint8_t* base, uint64_t bytes);
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
+    void SetTimingLossCallback(Rx::IsochAudioRxPipeline::TimingLossCallback callback) noexcept;
 
     void LogHardwareState();
 

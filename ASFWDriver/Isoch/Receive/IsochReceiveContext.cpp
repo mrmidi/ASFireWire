@@ -5,6 +5,8 @@
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Diagnostics/Signposts.hpp"
 
+#include <utility>
+
 namespace ASFW::Isoch {
 
 // ============================================================================
@@ -186,6 +188,11 @@ void IsochReceiveContext::SetSharedRxQueue(uint8_t* base, uint64_t bytes) {
 
 void IsochReceiveContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
     audio_.SetExternalSyncBridge(bridge);
+}
+
+void IsochReceiveContext::SetTimingLossCallback(
+    Rx::IsochAudioRxPipeline::TimingLossCallback callback) noexcept {
+    audio_.SetTimingLossCallback(std::move(callback));
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {

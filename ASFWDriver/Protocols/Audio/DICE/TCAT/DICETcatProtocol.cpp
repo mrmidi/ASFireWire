@@ -68,43 +68,141 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     return true;
 }
 
-void DICETcatProtocol::PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
+void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
+                                     const DiceDesiredClockConfig& desiredClock,
+                                     PrepareCallback callback) {
     if (!initialized_ || !duplexCtrl_) {
-        callback(kIOReturnNotReady);
+        callback(kIOReturnNotReady, {});
         return;
     }
-    duplexCtrl_->PrepareDuplex48k(channels, std::move(callback));
+
+    duplexCtrl_->PrepareDuplex(
+        channels,
+        desiredClock,
+        [this, callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult result) mutable {
+            if (status == kIOReturnSuccess) {
+                CacheRuntimeCaps(result.runtimeCaps);
+            }
+            callback(status, result);
+        });
 }
 
-void DICETcatProtocol::ProgramRxForDuplex48k(VoidCallback callback) {
+void DICETcatProtocol::ProgramRx(StageCallback callback) {
     if (!initialized_ || !duplexCtrl_) {
-        callback(kIOReturnNotReady);
+        callback(kIOReturnNotReady, {});
         return;
     }
-    duplexCtrl_->ProgramRxForDuplex48k(std::move(callback));
+
+    duplexCtrl_->ProgramRx(std::move(callback));
 }
 
-void DICETcatProtocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
+void DICETcatProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     if (!initialized_ || !duplexCtrl_) {
-        callback(kIOReturnNotReady);
+        callback(kIOReturnNotReady, {});
         return;
     }
-    duplexCtrl_->ProgramTxAndEnableDuplex48k(std::move(callback));
+
+    duplexCtrl_->ProgramTxAndEnableDuplex(std::move(callback));
 }
 
-void DICETcatProtocol::ConfirmDuplex48kStart(VoidCallback callback) {
+void DICETcatProtocol::ConfirmDuplexStart(ConfirmCallback callback) {
     if (!initialized_ || !duplexCtrl_) {
-        callback(kIOReturnNotReady);
+        callback(kIOReturnNotReady, {});
         return;
     }
 
-    duplexCtrl_->ConfirmDuplex48kStart([this, callback = std::move(callback)](IOReturn status) mutable {
-        if (status != kIOReturnSuccess) {
-            callback(status);
+    duplexCtrl_->ConfirmDuplexStart(
+        [this, callback = std::move(callback)](IOReturn status, DiceDuplexConfirmResult result) mutable {
+            if (status == kIOReturnSuccess) {
+                CacheRuntimeCaps(result.runtimeCaps);
+            }
+            callback(status, result);
+        });
+}
+
+void DICETcatProtocol::ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
+                                        ClockApplyCallback callback) {
+    if (!initialized_ || !duplexCtrl_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    duplexCtrl_->ApplyClockConfig(
+        desiredClock,
+        [this, callback = std::move(callback)](IOReturn status, DiceClockApplyResult result) mutable {
+            if (status == kIOReturnSuccess) {
+                CacheRuntimeCaps(result.runtimeCaps);
+            }
+            callback(status, result);
+        });
+}
+
+void DICETcatProtocol::ReadDuplexHealth(HealthCallback callback) {
+    if (!initialized_) {
+        callback(kIOReturnNotReady, {});
+        return;
+    }
+
+    EnsureSectionsLoaded([this, callback = std::move(callback)](IOReturn sectionStatus) mutable {
+        if (sectionStatus != kIOReturnSuccess) {
+            callback(sectionStatus, {});
             return;
         }
 
-        EnsureRuntimeCapsLoaded(std::move(callback));
+        diceReader_.ReadGlobalState(
+            sections_,
+            [this, callback = std::move(callback)](IOReturn status, GlobalState global) mutable {
+                if (status != kIOReturnSuccess) {
+                    callback(status, {});
+                    return;
+                }
+
+                AudioStreamRuntimeCaps caps{};
+                (void)GetRuntimeAudioStreamCaps(caps);
+
+                callback(status,
+                         DiceDuplexHealthResult{
+                             .generation = busInfo_.GetGeneration(),
+                             .appliedClock =
+                                 DiceDesiredClockConfig{
+                                     .sampleRateHz = global.sampleRate,
+                                     .clockSelect = global.clockSelect,
+                                 },
+                             .runtimeCaps = caps,
+                             .notification = global.notification,
+                             .status = global.status,
+                             .extStatus = global.extStatus,
+                         });
+            });
+    });
+}
+
+void DICETcatProtocol::PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) {
+    PrepareDuplex(channels,
+                  DiceDesiredClockConfig{
+                      .sampleRateHz = 48000U,
+                      .clockSelect = kDiceClockSelect48kInternal,
+                  },
+                  [callback = std::move(callback)](IOReturn status, DiceDuplexPrepareResult) mutable {
+                      callback(status);
+                  });
+}
+
+void DICETcatProtocol::ProgramRxForDuplex48k(VoidCallback callback) {
+    ProgramRx([callback = std::move(callback)](IOReturn status, DiceDuplexStageResult) mutable {
+        callback(status);
+    });
+}
+
+void DICETcatProtocol::ProgramTxAndEnableDuplex48k(VoidCallback callback) {
+    ProgramTxAndEnableDuplex([callback = std::move(callback)](IOReturn status, DiceDuplexStageResult) mutable {
+        callback(status);
+    });
+}
+
+void DICETcatProtocol::ConfirmDuplex48kStart(VoidCallback callback) {
+    ConfirmDuplexStart([callback = std::move(callback)](IOReturn status, DiceDuplexConfirmResult) mutable {
+        callback(status);
     });
 }
 
@@ -206,12 +304,21 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
 void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
                                         const StreamConfig& tx,
                                         const StreamConfig& rx) noexcept {
-    hostInputPcmChannels_.store(tx.TotalPcmChannels(), std::memory_order_relaxed);
-    deviceToHostAm824Slots_.store(tx.TotalAm824Slots(), std::memory_order_relaxed);
-    hostOutputPcmChannels_.store(rx.TotalPcmChannels(), std::memory_order_relaxed);
-    hostToDeviceAm824Slots_.store(rx.TotalAm824Slots(), std::memory_order_relaxed);
+    CacheRuntimeCaps(AudioStreamRuntimeCaps{
+        .hostInputPcmChannels = tx.TotalPcmChannels(),
+        .hostOutputPcmChannels = rx.TotalPcmChannels(),
+        .deviceToHostAm824Slots = tx.TotalAm824Slots(),
+        .hostToDeviceAm824Slots = rx.TotalAm824Slots(),
+        .sampleRateHz = global.sampleRate,
+    });
+}
 
-    runtimeSampleRateHz_.store(global.sampleRate, std::memory_order_relaxed);
+void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
+    hostInputPcmChannels_.store(caps.hostInputPcmChannels, std::memory_order_relaxed);
+    deviceToHostAm824Slots_.store(caps.deviceToHostAm824Slots, std::memory_order_relaxed);
+    hostOutputPcmChannels_.store(caps.hostOutputPcmChannels, std::memory_order_relaxed);
+    hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);
+    runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_relaxed);
     runtimeCapsValid_.store(true, std::memory_order_release);
 }
 

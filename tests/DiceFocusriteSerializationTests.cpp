@@ -196,6 +196,30 @@ TEST(DiceFocusriteSerializationTests, NotificationMailboxDecodesBigEndianWireQua
                   ASFW::Audio::DICE::Notify::kLockChange);
 }
 
+TEST(DiceFocusriteSerializationTests, NotificationMailboxObserverReceivesPublishedBits) {
+    struct ObserverState {
+        uint32_t bits{0};
+        int calls{0};
+    } state;
+
+    auto observer = [](void* context, uint32_t bits) {
+        auto* state = static_cast<ObserverState*>(context);
+        state->bits |= bits;
+        ++state->calls;
+    };
+
+    NotificationMailbox::Reset();
+    NotificationMailbox::SetObserver(&state, observer);
+    NotificationMailbox::Publish(ASFW::Audio::DICE::Notify::kLockChange);
+    NotificationMailbox::Publish(ASFW::Audio::DICE::Notify::kExtStatus);
+    NotificationMailbox::ClearObserver(&state);
+
+    EXPECT_EQ(state.calls, 2);
+    EXPECT_EQ(state.bits,
+              ASFW::Audio::DICE::Notify::kLockChange |
+                  ASFW::Audio::DICE::Notify::kExtStatus);
+}
+
 TEST(DiceFocusriteSerializationTests, DiceStatusHelpersDecodeSourceAndArx1LockState) {
     constexpr uint32_t status =
         ASFW::Audio::DICE::StatusBits::kSourceLocked |

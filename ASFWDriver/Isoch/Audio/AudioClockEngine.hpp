@@ -16,6 +16,13 @@ struct IOMetricsState {
     std::atomic<uint64_t> totalFramesSent{0};
     std::atomic<uint64_t> callbackCount{0};
     std::atomic<uint64_t> underruns{0};
+    std::atomic<uint32_t> lastIoBufferFrameSize{0};
+    std::atomic<uint64_t> lastCallbackSampleTime{0};
+    std::atomic<int64_t> lastCallbackSampleDelta{0};
+    std::atomic<uint32_t> lastCallbackOperation{0};
+    std::atomic<uint32_t> lastRxQueueFillFrames{0};
+    std::atomic<uint32_t> lastTxQueueFillFrames{0};
+    std::atomic<uint32_t> lastAssemblerFillFrames{0};
     uint64_t startTime{0};
 };
 

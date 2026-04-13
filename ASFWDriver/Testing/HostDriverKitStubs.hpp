@@ -352,6 +352,7 @@ static constexpr uint64_t kIODMACommandCreateNoOptions = 0;
 static constexpr uint64_t kIODMACommandPrepareForDMANoOptions = 0;
 static constexpr uint64_t kIODMACommandCompleteDMANoOptions = 0;
 static constexpr uint64_t kIODMACommandSpecificationNoOptions = 0;
+static constexpr uint64_t kIOMemoryMapCacheModeDefault = 0;
 static constexpr uint64_t kIOMemoryMapCacheModeInhibit = 0;
 
 template <typename T>

@@ -20,7 +20,7 @@ uint16_t EncodeSytFromTick(int32_t tick) {
 TEST(ExternalSyncDiscipline48k, FirstPassSnapsToRxPhase) {
     ExternalSyncDiscipline48k discipline;
 
-    // TX at tick 0, RX at tick 1500 — first call should snap with full correction.
+    // TX at tick 0, RX at tick 1500 — first call should correct sub-packet error.
     auto result = discipline.Update(/*enabled=*/true,
                                     EncodeSytFromTick(0),
                                     EncodeSytFromTick(1500));
@@ -102,16 +102,17 @@ TEST(ExternalSyncDiscipline48k, NoCooldownBetweenCorrections) {
     EXPECT_EQ(r2.correctionTicks, -800);
 }
 
-TEST(ExternalSyncDiscipline48k, FirstPassUsesFullDomainForMultiPacketOffset) {
+TEST(ExternalSyncDiscipline48k, FirstPassIgnoresWholePacketIntervalOffset) {
     ExternalSyncDiscipline48k discipline;
 
-    // First pass sees the full 12288-tick (3-packet) offset from FireBug captures
+    // A 3-packet delta should not cause a first-pass re-phase after the generator
+    // has already been seeded from RX.
     auto first = discipline.Update(/*enabled=*/true,
                                    EncodeSytFromTick(0),
                                    EncodeSytFromTick(12288));
     EXPECT_TRUE(first.firstPassSnap);
-    EXPECT_EQ(first.phaseErrorTicks, 12288);
-    EXPECT_EQ(first.correctionTicks, 12288);
+    EXPECT_EQ(first.phaseErrorTicks, 0);
+    EXPECT_EQ(first.correctionTicks, 0);
 }
 
 TEST(ExternalSyncDiscipline48k, SteadyStateIgnoresWholePacketIntervalJitter) {
@@ -210,7 +211,7 @@ TEST(ExternalSyncDiscipline48k, ResetRestoresFirstPassMode) {
     // Next call should be first-pass again
     auto result = discipline.Update(/*enabled=*/true,
                                     EncodeSytFromTick(0),
-                                    EncodeSytFromTick(500));
+                                    EncodeSytFromTick(700));
     EXPECT_TRUE(result.firstPassSnap);
-    EXPECT_EQ(result.correctionTicks, 500);
+    EXPECT_EQ(result.correctionTicks, 700);
 }

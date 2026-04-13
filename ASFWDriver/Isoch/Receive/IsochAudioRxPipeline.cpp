@@ -2,6 +2,8 @@
 
 #include "IsochAudioRxPipeline.hpp"
 
+#include <utility>
+
 namespace ASFW::Isoch::Rx {
 
 void IsochAudioRxPipeline::ConfigureFor48k() noexcept {
@@ -61,6 +63,7 @@ void IsochAudioRxPipeline::OnPacket(const uint8_t* payload, size_t length) noexc
     if (establishTransition) {
         ASFW_LOG(Isoch, "IR SYT CLOCK ESTABLISHED syt=0x%04x fdf=0x%02x dbs=%u seq=%u",
                  summary.syt, summary.fdf, summary.dbs, updateSeq);
+        externalSyncBridge_->startupQualified.store(true, std::memory_order_release);
         externalSyncBridge_->clockEstablished.store(true, std::memory_order_release);
     }
 }
@@ -108,9 +111,23 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
         if (staleTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
             staleTicks = ASFW::Timing::nanosToHostTicks(kExternalSyncStaleNanos);
         }
-        (void)externalSyncClockState_.HandleStale(*externalSyncBridge_,
-                                                  mach_absolute_time(),
-                                                  staleTicks);
+        const uint64_t nowTicks = mach_absolute_time();
+        if (externalSyncClockState_.HandleStale(*externalSyncBridge_, nowTicks, staleTicks)) {
+            const uint64_t lastTicks =
+                externalSyncBridge_->lastUpdateHostTicks.load(std::memory_order_acquire);
+            const uint64_t staleForMs =
+                (nowTicks >= lastTicks)
+                    ? (ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL)
+                    : 0;
+
+            ASFW_LOG_WARNING(Isoch,
+                             "IR SYT CLOCK LOST staleFor=%llums threshold=%llums",
+                             staleForMs,
+                             kExternalSyncStaleNanos / 1'000'000ULL);
+            if (timingLossCallback_) {
+                timingLossCallback_();
+            }
+        }
     }
 }
 
@@ -139,6 +156,10 @@ void IsochAudioRxPipeline::SetExternalSyncBridge(Core::ExternalSyncBridge* bridg
     if (externalSyncBridge_) {
         externalSyncBridge_->Reset();
     }
+}
+
+void IsochAudioRxPipeline::SetTimingLossCallback(TimingLossCallback callback) noexcept {
+    timingLossCallback_ = std::move(callback);
 }
 
 } // namespace ASFW::Isoch::Rx
