@@ -5,6 +5,7 @@
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
 #include "../Async/AsyncSubsystem.hpp"
+#include "../Async/Interfaces/IFireWireBus.hpp"
 #include "../Async/PacketHelpers.hpp"
 #include "../Async/ResponseCode.hpp"
 #include "../Async/Tx/ResponseSender.hpp"
@@ -137,10 +138,11 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
 void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
     auto& d = ctx.deps;
 
-    if (!d.fcpResponseRouter && d.avcDiscovery && d.asyncSubsystem) {
+    if (!d.fcpResponseRouter && d.avcDiscovery && ctx.controller) {
+        auto& bus = ctx.controller->Bus();
         d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
             *d.avcDiscovery,
-            d.asyncSubsystem->GetGenerationTracker()
+            bus
         );
         ASFW_LOG(Controller, "[Controller] FCPResponseRouter initialized");
     }
@@ -185,7 +187,17 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
                     }
 
                     if (fcpRouter) {
-                        return fcpRouter->RouteBlockWrite(packet);
+                        const Protocols::Ports::BlockWriteRequestView request{
+                            .sourceID = packet.sourceID,
+                            .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
+                            .payload = packet.payload,
+                        };
+                        const auto disposition = fcpRouter->RouteBlockWrite(request);
+                        if (disposition ==
+                            Protocols::Ports::BlockWriteDisposition::kAddressError) {
+                            return ASFW::Async::ResponseCode::AddressError;
+                        }
+                        return ASFW::Async::ResponseCode::Complete;
                     }
 
                     return ASFW::Async::ResponseCode::AddressError;
