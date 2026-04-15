@@ -9,8 +9,8 @@ ControllerConfig ControllerConfig::MakeDefault() {
     config.vendor.vendorName = "Unknown";
     config.localGuid = 0;
     config.enableVerboseLogging = false;
-    config.experimentalHostCycleMasterBringup = false;
-    config.allowCycleMasterEligibility = false;
+    config.experimentalHostCycleMasterBringup = true;
+    config.allowCycleMasterEligibility = true;
     config.supportedSpeeds = {100, 200, 400};
     return config;
 }

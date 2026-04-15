@@ -5,17 +5,21 @@
 
 namespace ASFW::Driver {
 
-// Experimental Nikon 8000 ED bring-up path:
-// - enable local contender / cycle-master eligibility
-// - disable delegation so the host keeps root/cycle-master responsibility
+// Host cycle-master bring-up configuration:
+// - enable local contender / cycle-master eligibility (matches Linux/Apple default)
+// - delegation controlled by experimentalHostCycleMasterBringup property
 //
-// The shipped default remains the conservative delegated path used by the rest
-// of the driver. This helper centralizes the override so ControllerCore and
-// tests apply the same behavior.
+// Per Linux firewire_ohci: PHY contender bit is always set during init.
+// Per Apple IOFireWireController: contender is set for most configurations.
+// The host MUST be contender-capable for proper bus management (IRM election,
+// cycle-start generation), especially in 2-node topologies with SBP-2 devices.
 inline void ApplyBringupOverrides(ControllerConfig& config, BusManager* busManager) {
-    config.allowCycleMasterEligibility = config.experimentalHostCycleMasterBringup;
+    // Always enable contender — matches Linux/Apple behavior
+    config.allowCycleMasterEligibility = true;
 
     if (busManager != nullptr) {
+        // When experimental flag is set, disable delegation so host keeps
+        // root/cycle-master. Otherwise use default delegation policy.
         busManager->SetDelegateMode(!config.experimentalHostCycleMasterBringup);
     }
 }

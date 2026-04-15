@@ -407,10 +407,9 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
             // Use constants from IEEE1394.hpp
             // (kPhyReg4Address, kPhyLinkActive, kPhyContender)
             //
-            // CRITICAL FIX: Only set Contender bit if allowCycleMasterEligibility is true
-            // - This matches Apple's behavior (conditional PHY reg 4 setup)
-            // - Prevents two-contender bus topology issues with devices like Apogee Duet
-            // - Default config has allowCycleMasterEligibility=false (delegate mode)
+            // Per Linux firewire_ohci and Apple IOFireWireController:
+            // Always set Contender bit. ApplyBringupOverrides ensures
+            // allowCycleMasterEligibility=true (matching Linux/Apple defaults).
 
             const uint8_t phyReg4Bits =
                 config_.allowCycleMasterEligibility

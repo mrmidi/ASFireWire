@@ -19,8 +19,8 @@ struct ControllerConfig {
     VendorInfo vendor;
     uint64_t localGuid{0};
     bool enableVerboseLogging{false};
-    bool experimentalHostCycleMasterBringup{false};
-    bool allowCycleMasterEligibility{false};
+    bool experimentalHostCycleMasterBringup{true};
+    bool allowCycleMasterEligibility{true};
     std::vector<uint32_t> supportedSpeeds;
 
     static ControllerConfig MakeDefault();
