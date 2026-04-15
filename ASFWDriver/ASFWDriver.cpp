@@ -69,6 +69,27 @@ class ASFWDriverUserClient;
 
 namespace {
 constexpr uint64_t kAsyncWatchdogPeriodUsec = 1000; // 1 ms tick (hybrid: interrupt + timer backup)
+
+bool PropertyIsEnabled(const OSObject* property) {
+    if (property == nullptr) {
+        return false;
+    }
+
+    if (const auto booleanProp = OSDynamicCast(OSBoolean, property)) {
+        return booleanProp == kOSBooleanTrue;
+    }
+
+    if (const auto numberProp = OSDynamicCast(OSNumber, property)) {
+        return numberProp->unsigned32BitValue() != 0;
+    }
+
+    if (const auto stringProp = OSDynamicCast(OSString, property)) {
+        return stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
+               stringProp->isEqualTo("TRUE");
+    }
+
+    return false;
+}
 } // namespace
 
 bool ASFWDriver::init() {
@@ -109,22 +130,20 @@ kern_return_t IMPL(ASFWDriver, Start) {
     ctx.stopping.store(false, std::memory_order_release);
     DriverWiring::EnsureDeps(this, ctx);
     bool traceProperty = false;
+    bool experimentalHostCycleMasterBringup = false;
     if (OSDictionary* serviceProperties = nullptr;
         CopyProperties(&serviceProperties) == kIOReturnSuccess && serviceProperties != nullptr) {
-        if (auto property = serviceProperties->getObject("ASFWTraceDMACoherency")) {
-            if (auto booleanProp = OSDynamicCast(OSBoolean, property)) {
-                traceProperty = (booleanProp == kOSBooleanTrue);
-            } else if (auto numberProp = OSDynamicCast(OSNumber, property)) {
-                traceProperty = numberProp->unsigned32BitValue() != 0;
-            } else if (auto stringProp = OSDynamicCast(OSString, property)) {
-                traceProperty = stringProp->isEqualTo("1") || stringProp->isEqualTo("true") ||
-                                stringProp->isEqualTo("TRUE");
-            }
-        }
+        traceProperty = PropertyIsEnabled(serviceProperties->getObject("ASFWTraceDMACoherency"));
+        experimentalHostCycleMasterBringup =
+            PropertyIsEnabled(serviceProperties->getObject("ASFWExperimentalHostCycleMasterBringup"));
         serviceProperties->release();
     }
+    ctx.config.experimentalHostCycleMasterBringup = experimentalHostCycleMasterBringup;
     ASFW_LOG(Controller, "ASFWDriver::Start(): ASFWTraceDMACoherency property=%{public}s",
              traceProperty ? "true" : "false");
+    ASFW_LOG(Controller,
+             "ASFWDriver::Start(): ASFWExperimentalHostCycleMasterBringup property=%{public}s",
+             experimentalHostCycleMasterBringup ? "true" : "false");
     if (auto statusKr = ctx.statusPublisher.Prepare(); statusKr != kIOReturnSuccess) {
         DriverWiring::CleanupStartFailure(ctx);
         return statusKr;

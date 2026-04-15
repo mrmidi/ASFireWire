@@ -90,7 +90,8 @@ Gap handling is intentionally two-phase:
 Gap state is transactional:
 
 - `lastConfirmedGap` tracks the last stable packet-0 gap observed on an
-  accepted topology;
+  accepted topology, and remains `0xFF` until the first stable generation is
+  accepted so "unknown previous gap" is distinct from a confirmed `63`;
 - `inFlight` exists only after the coordinator successfully dispatches a
   corrective reset carrying a new gap target;
 - failed corrective dispatch clears `inFlight` and does not advance the

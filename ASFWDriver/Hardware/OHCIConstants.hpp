@@ -14,19 +14,42 @@ namespace ASFW::Driver {
 constexpr uint32_t kAsReqAcceptAllMask = 0x80000000u;
 
 // Default link control configuration used during controller initialization
+// Per Linux ohci_enable() (ohci.c:2317-2318): cycleMaster is set at init time,
+// not deferred. For simple 2-node topologies the host is root and must immediately
+// act as cycle master to generate cycle-start packets.
 constexpr uint32_t kDefaultLinkControl = LinkControlBits::kRcvSelfID |
 										   LinkControlBits::kRcvPhyPkt |
-										   LinkControlBits::kCycleTimerEnable;
+										   LinkControlBits::kCycleTimerEnable |
+										   LinkControlBits::kCycleMaster;
 
 // Posted write priming bits (OHCI HCControl - enable posted writes and LPS)
 constexpr uint32_t kPostedWritePrimingBits = HCControlBits::kPostedWriteEnable |
 											 HCControlBits::kLPS;
 
-// Default ATRetries value (cycleLimit=200 maxPhys=3 maxResp=3 maxReq=3)
-constexpr uint32_t kDefaultATRetries = (3u << 0) | (3u << 4) | (3u << 8) | (200u << 16);
+// Default ATRetries value
+// Per Linux firewire_ohci ohci_enable(): maxReq=15, maxResp=2, maxPhys=8, cycleLimit=200
+// Higher maxReq/maxPhys reduce transaction failures on slow or busy devices.
+constexpr uint32_t kDefaultATRetries = (15u << 0) | (2u << 4) | (8u << 8) | (200u << 16);
 
-// Default node capabilities for our local node (kNodeCapabilities: general device flag set)
-constexpr uint32_t kDefaultNodeCapabilities = 0x00000001u;
+// Node capabilities advertised in our local Config ROM. Keep the baseline
+// conservative and only set cPhyEnhance when the PHY/Link 1394a enhancement
+// path actually succeeded during initialization.
+struct NodeCapabilityBits {
+    static constexpr uint32_t kCPhyEnhance = 1u << 15;
+    static constexpr uint32_t kSLink = 1u << 9;
+    static constexpr uint32_t kInitReq = 1u << 8;
+    static constexpr uint32_t kRespReq = 1u << 7;
+};
+
+constexpr uint32_t kNodeCapabilitiesBase =
+    NodeCapabilityBits::kSLink |
+    NodeCapabilityBits::kInitReq |
+    NodeCapabilityBits::kRespReq;
+
+[[nodiscard]] constexpr uint32_t MakeNodeCapabilities(const bool phyEnhanceEnabled) noexcept {
+    return kNodeCapabilitiesBase |
+           (phyEnhanceEnabled ? NodeCapabilityBits::kCPhyEnhance : 0u);
+}
 
 // OHCI version check for 1.1 (0x010010) used in initial channel configuration
 constexpr uint32_t kOHCI_1_1 = 0x010010u;

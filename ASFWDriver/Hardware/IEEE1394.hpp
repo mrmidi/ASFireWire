@@ -90,7 +90,11 @@ constexpr uint8_t kPhyContender  = 0x40;  // Bit 6
 // PHY gap count mask (register-level value: lower 6 bits)
 constexpr uint8_t kPhyGapCountMask = 0x3Fu; // 6-bit gap count field in PHY reg1
 
-// PHY register 5: Bit 6 enables IEEE 1394a accelerated arbitration (Enab_accel)
+// PHY register 5: IEEE 1394a enhancement bits
+// Bit 6 = Enab_accel (accelerated arbitration)
+// Bit 5 = Enab_multi (multi-speed packet concatenation)
+// Per Linux firewire_ohci configure_1394a_enhancements(): both bits are set together.
 constexpr uint8_t kPhyReg5Address = 5;
 constexpr uint8_t kPhyEnableAcceleration = 0x40;  // Bit 6
+constexpr uint8_t kPhyEnableMulti = 0x20;          // Bit 5
 }

@@ -253,6 +253,7 @@ gtest_discover_tests(SelfIDCaptureTests)
 add_executable(BusManagerGapOptimizationTests
     "${ASFW_TESTS_DIR}/BusManagerGapOptimizationTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 

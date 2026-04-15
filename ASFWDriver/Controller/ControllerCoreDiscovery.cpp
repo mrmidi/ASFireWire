@@ -115,6 +115,14 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         // CMP (PCR) operations target a *specific device's* plug registers, not the IRM node.
         // Device-scoped CMP wiring is done at stream start time (IsochService).
     }
+
+    // NOTE: CSR STATE_SET CMSTR write removed. Apple IOFireWireFamily does NOT write
+    // CSR STATE_SET via async transactions — it uses the OHCI LinkControl register
+    // directly (kCycleMaster bit), which ASFWDriver already sets in kDefaultLinkControl
+    // during controller initialization. Async loopback to the local node does not work
+    // in ASFWDriver (always returns timeout), so the previous implementation was a no-op.
+    // OHCI hardware generates cycle-start packets automatically when the node is root
+    // and kCycleMaster is set in LinkControl.
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
