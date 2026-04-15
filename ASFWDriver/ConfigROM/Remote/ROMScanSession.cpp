@@ -366,13 +366,28 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
 }
 
 void ROMScanSession::ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId) {
+    // DIAGNOSTIC: Log BIB header fields to understand ROM scan decisions
+    const auto& bib = node.ROM().bib;
+    ASFW_LOG(ConfigROM,
+             "[DIAG] Node %u BIB: busInfoLength=%u crcLength=%u guid=0x%04x%08x "
+             "irmc=%d cmc=%d isc=%d max_rec=%u link_spd=%u",
+             nodeId, bib.busInfoLength, bib.crcLength,
+             static_cast<uint32_t>(bib.guid >> 32), static_cast<uint32_t>(bib.guid & 0xFFFFFFFF),
+             bib.irmc ? 1 : 0, bib.cmc ? 1 : 0, bib.isc ? 1 : 0,
+             bib.maxRec, bib.linkSpd);
+
     if (params_.doIRMCheck && topology_.irmNodeId.has_value() && *topology_.irmNodeId == nodeId &&
         node.ROM().bib.irmc) {
+        ASFW_LOG(ConfigROM, "[DIAG] Node %u: entering IRM check branch", nodeId);
         StartIRMRead(node);
         return;
     }
 
     if (node.ROM().bib.crcLength <= node.ROM().bib.busInfoLength) {
+        ASFW_LOG(ConfigROM,
+                 "[DIAG] Node %u: EARLY EXIT — crcLength(%u) <= busInfoLength(%u), "
+                 "marking as minimal ROM (no root directory)",
+                 nodeId, bib.crcLength, bib.busInfoLength);
         if (!TransitionNodeState(node, ROMScanNodeStateMachine::State::Complete,
                                  "BIB minimal ROM complete")) {
             Pump();
@@ -383,6 +398,9 @@ void ROMScanSession::ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint
         return;
     }
 
+    ASFW_LOG(ConfigROM,
+             "[DIAG] Node %u: crcLength(%u) > busInfoLength(%u), proceeding to root dir read",
+             nodeId, bib.crcLength, bib.busInfoLength);
     StartRootDirRead(node);
 }
 

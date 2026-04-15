@@ -145,6 +145,28 @@ void ROMReader::ScheduleQuadletReadStep(const std::shared_ptr<QuadletReadContext
 void ROMReader::HandleQuadletReadComplete(const std::shared_ptr<QuadletReadContext>& ctx,
                                           Async::AsyncStatus status,
                                           std::span<const uint8_t> responsePayload) {
+    // DIAGNOSTIC: Log each quadlet read result for ROM discovery
+    if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(ConfigROM,
+                 "[DIAG] ROMReader node=%u qIdx=%u/%u FAILED status=%u (addr=0x%08x)",
+                 ctx->nodeId, ctx->quadletIndex, ctx->quadletCount,
+                 static_cast<uint32_t>(status),
+                 ctx->baseAddress + ctx->quadletIndex * 4);
+    } else if (IsValidQuadletPayload(responsePayload.size())) {
+        uint32_t q = 0;
+        std::memcpy(&q, responsePayload.data(), sizeof(q));
+        ASFW_LOG(ConfigROM,
+                 "[DIAG] ROMReader node=%u qIdx=%u/%u OK quadlet=0x%08x (addr=0x%08x)",
+                 ctx->nodeId, ctx->quadletIndex, ctx->quadletCount,
+                 q, ctx->baseAddress + ctx->quadletIndex * 4);
+    } else {
+        ASFW_LOG(ConfigROM,
+                 "[DIAG] ROMReader node=%u qIdx=%u/%u BAD payload=%zu (addr=0x%08x)",
+                 ctx->nodeId, ctx->quadletIndex, ctx->quadletCount,
+                 responsePayload.size(),
+                 ctx->baseAddress + ctx->quadletIndex * 4);
+    }
+
     if (CanTreatAsEOF(ctx->policy, status, responsePayload.size(), ctx->successCount)) {
         EmitQuadletReadResult(ctx, /*success=*/true, status, ctx->successCount);
         return;
@@ -339,6 +361,11 @@ void ROMReader::ReadRootDirQuadlets(uint8_t nodeId, Generation generation, FwSpe
             const uint32_t hdr = OSSwapBigToHostInt32(hdrBe);
             auto entryCount = static_cast<uint16_t>((hdr >> 16) & 0xFFFFU);
             entryCount = ClampHeaderFirstEntryCount(entryCount);
+
+            ASFW_LOG(ConfigROM,
+                     "[DIAG] ROMReader root dir header: raw=0x%08x host=0x%08x entryCount=%u "
+                     "(node=%u offset=0x%x)",
+                     hdrBe, hdr, entryCount, nodeId, offsetBytes);
 
             if (entryCount == 0) {
                 ReadResult out{};
