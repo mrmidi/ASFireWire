@@ -5,6 +5,7 @@
 #include <string>
 #include <functional>
 #include <span>
+#include <type_traits>
 #include <DriverKit/IOReturn.h>
 
 // Forward declaration - we'll define FWAddress helpers before FWAddress uses them
@@ -280,16 +281,21 @@ struct RetryPolicy {
 
 struct PacketContext {
     uint16_t sourceNodeID{0};
-    uint8_t generation{0};
+    uint16_t generation{0};
     uint8_t speedCode{0};
 };
 
 struct TransactionContext {
     uint16_t sourceNodeID{0};
-    uint8_t generation{0};
+    uint16_t generation{0};
     uint8_t speedCode{0};
     PacketContext packetContext{};
 };
+
+static_assert(std::is_same_v<decltype(PacketContext::generation), uint16_t>,
+              "PacketContext::generation must keep full 16-bit bus generation");
+static_assert(std::is_same_v<decltype(TransactionContext::generation), uint16_t>,
+              "TransactionContext::generation must keep full 16-bit bus generation");
 
 struct ReadParams {
     uint16_t destinationID{0};
