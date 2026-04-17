@@ -12,6 +12,7 @@
 
 #include "ASFWDriver/ConfigROM/ConfigROMBuilder.hpp"
 #include "ASFWDriver/ConfigROM/ConfigROMTypes.hpp"
+#include "ASFWDriver/Hardware/OHCIConstants.hpp"
 #include "TestDataUtils.hpp"
 
 using ASFW::Driver::ConfigROMBuilder;
@@ -201,6 +202,20 @@ TEST(ConfigROMBuilderTests, UpdateGenerationRefreshesBusInfoAndHeaderCrc) {
     EXPECT_EQ(header >> 24, 4u);
     EXPECT_EQ((header >> 16) & 0xFFu, 4u);
     EXPECT_EQ(header & 0xFFFFu, ComputeCRC(native, 1, 4));
+}
+
+TEST(ConfigROMBuilderTests, NodeCapabilitiesDoNotAdvertisePhyEnhanceWhenDisabled) {
+    const uint32_t caps = ASFW::Driver::MakeNodeCapabilities(false);
+
+    EXPECT_EQ(caps, ASFW::Driver::kNodeCapabilitiesBase);
+    EXPECT_EQ(caps & ASFW::Driver::NodeCapabilityBits::kCPhyEnhance, 0u);
+}
+
+TEST(ConfigROMBuilderTests, NodeCapabilitiesAdvertisePhyEnhanceWhenEnabled) {
+    const uint32_t caps = ASFW::Driver::MakeNodeCapabilities(true);
+
+    EXPECT_EQ(caps, ASFW::Driver::kNodeCapabilitiesBase |
+                        ASFW::Driver::NodeCapabilityBits::kCPhyEnhance);
 }
 
 class ConfigROMBuilderLeafCrcTests : public ::testing::TestWithParam<size_t> {};
