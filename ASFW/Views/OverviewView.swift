@@ -43,6 +43,7 @@ struct OverviewView: View {
                         statusIndicator
                         Text(viewModel.activationStatus)
                             .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
                         Spacer()
                     }
                     .padding()
