@@ -58,6 +58,10 @@ enum {
     kMethodDeallocateAddressRange = 47,
     kMethodReadIncomingData = 48,
     kMethodWriteLocalData = 49,
+    // Diagnostics
+    kMethodGetBusStateDiagnostics = 50,
+    kMethodReadPhyRegister = 51,
+    kMethodInitiateBusReset = 52,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -489,6 +493,16 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
 
     case kMethodStopIsochTransmit:
         return runtimeState->Isoch().StopIsochTransmit(arguments);
+
+    // DiagnosticsHandler methods (50, 51, 52)
+    case kMethodGetBusStateDiagnostics:
+        return runtimeState->Diagnostics().GetBusStateDiagnostics(arguments);
+
+    case kMethodReadPhyRegister:
+        return runtimeState->Diagnostics().ReadPhyRegister(arguments);
+
+    case kMethodInitiateBusReset:
+        return runtimeState->Diagnostics().InitiateBusReset(arguments);
 
     default:
         return kIOReturnBadArgument;
