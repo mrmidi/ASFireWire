@@ -282,6 +282,9 @@ bool SBP2LoginSession::AllocateResources() noexcept {
 }
 
 void SBP2LoginSession::DeallocateResources() noexcept {
+    lastORB_ = nullptr;
+    deferredORB_ = nullptr;
+
     if (loginORBHandle_) {
         addrSpaceMgr_.DeallocateAddressRange(this, loginORBHandle_);
         loginORBHandle_ = 0;
@@ -835,8 +838,25 @@ void SBP2LoginSession::CompleteLogoutFromStatusBlock(const Wire::StatusBlock& bl
 
 void SBP2LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block,
                                            uint32_t length) noexcept {
+    // In LoggedIn state, status blocks signal ORB completion.
+    // The status block contains orbOffsetHi/orbOffsetLo that identifies which ORB
+    // completed. Currently we only support single-ORB-in-flight and match via
+    // lastORB_. Multi-ORB matching will require an ORB list keyed by offset.
     if (statusCallback_) {
         statusCallback_(block, length);
+    }
+
+    if (lastORB_ != nullptr) {
+        lastORB_->CancelTimer();
+        auto& cb = lastORB_->GetCompletionCallback();
+        if (cb) {
+            int status = 0;
+            if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo &&
+                block.sbpStatus != Wire::SBPStatus::kDummyORBCompleted) {
+                status = -static_cast<int>(block.sbpStatus);
+            }
+            cb(status);
+        }
     }
 }
 
@@ -888,6 +908,227 @@ void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
 #endif
             cb();
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ORB Submission
+// ---------------------------------------------------------------------------
+
+bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
+    if (state_ != LoginState::LoggedIn) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: state=%s, rejecting", ToString(state_));
+        return false;
+    }
+
+    if (orb == nullptr || orb->IsAppended()) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: invalid ORB (null=%d, appended=%d)",
+                 orb == nullptr, orb != nullptr && orb->IsAppended());
+        return false;
+    }
+
+    // Compute fetch agent and doorbell addresses from CBA.
+    fetchAgentAddress_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = commandBlockAgent_.addressHi,
+            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kORBPointer,
+            .nodeID = loginNodeID_
+        }
+    };
+    doorbellAddress_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = commandBlockAgent_.addressHi,
+            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kDoorbell,
+            .nodeID = loginNodeID_
+        }
+    };
+
+    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const FW::FwSpeed speed = busInfo_.GetSpeed(
+        FW::NodeId{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)});
+
+    // Max payload log: derive from maxPayloadSize_ (bytes → log2(quadlets)).
+    // Capped at 15 (max 2^15 = 32768 quadlets = 128KB).
+    uint16_t maxPayloadLog = 0;
+    {
+        uint16_t payloadBytes = maxPayloadSize_;
+        if (payloadBytes > 4096) payloadBytes = 4096;
+        uint16_t quadlets = payloadBytes / 4;
+        if (quadlets > 0) {
+            maxPayloadLog = 0;
+            while ((1u << maxPayloadLog) < quadlets && maxPayloadLog < 15) {
+                maxPayloadLog++;
+            }
+        }
+    }
+
+    orb->PrepareForExecution(localNode, speed, maxPayloadLog);
+    orb->SetFetchAgentWriteRetries(20);
+
+    const bool isImmediate = (orb->GetFlags() & SBP2CommandORB::kImmediate) != 0;
+
+    if (isImmediate) {
+        // Immediate: write ORB address directly to fetch agent
+        lastORB_ = orb;
+
+        if (fetchAgentWriteInUse_) {
+            // Fetch agent write in flight — defer until completion
+            deferredORB_ = orb;
+            ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: fetch agent busy, deferring ORB");
+            return true;
+        }
+
+        AppendORBImmediate(orb);
+    } else {
+        // Chained: link to last ORB, ring doorbell
+        AppendORB(orb);
+        RingDoorbell();
+    }
+
+    return true;
+}
+
+void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
+    // Cancel any in-flight fetch agent write
+    if (fetchAgentWriteInUse_ && fetchAgentWriteHandle_) {
+        bus_.Cancel(fetchAgentWriteHandle_);
+    }
+
+    // Build 8-byte ORB address in big-endian
+    // Format: [nodeID(2)][addressHi(2)][addressLo(4)]
+    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const Async::FWAddress orbAddr = orb->GetORBAddress();
+
+    fetchAgentWriteData_[0] = static_cast<uint8_t>(localNode >> 8);
+    fetchAgentWriteData_[1] = static_cast<uint8_t>(localNode & 0xFF);
+    fetchAgentWriteData_[2] = static_cast<uint8_t>(orbAddr.addressHi >> 8);
+    fetchAgentWriteData_[3] = static_cast<uint8_t>(orbAddr.addressHi & 0xFF);
+    const uint32_t addrLoBE = ToBE32(orbAddr.addressLo);
+    std::memcpy(&fetchAgentWriteData_[4], &addrLoBE, sizeof(uint32_t));
+
+    fetchAgentWriteInUse_ = true;
+
+    const FW::Generation gen{loginGeneration_};
+    const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
+    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
+
+    fetchAgentWriteHandle_ = bus_.WriteBlock(
+        gen, node, fetchAgentAddress_,
+        std::span<const uint8_t>{fetchAgentWriteData_.data(), fetchAgentWriteData_.size()},
+        speed,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            OnFetchAgentWriteComplete(status, response);
+        });
+
+    if (!fetchAgentWriteHandle_) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::AppendORBImmediate: WriteBlock failed");
+        fetchAgentWriteInUse_ = false;
+    }
+
+    ASFW_LOG(SBP2,
+             "SBP2LoginSession::AppendORBImmediate: wrote ORB addr %04x:%08x to fetch agent",
+             localNode, orbAddr.addressLo);
+}
+
+void SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
+    if (lastORB_ == nullptr) {
+        // First ORB — write directly to fetch agent instead of chaining
+        lastORB_ = orb;
+        AppendORBImmediate(orb);
+        return;
+    }
+
+    if (lastORB_ != orb) {
+        const Async::FWAddress orbAddr = orb->GetORBAddress();
+
+        // Set the new ORB's address in big-endian into the last ORB's next pointer
+        const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+        const uint32_t nextHi = ToBE32(
+            (static_cast<uint32_t>(localNode) << 16) | orbAddr.addressHi);
+        const uint32_t nextLo = ToBE32(orbAddr.addressLo);
+        lastORB_->SetNextORBAddress(nextHi, nextLo);
+
+        lastORB_ = orb;
+    }
+}
+
+void SBP2LoginSession::RingDoorbell() noexcept {
+    if (doorbellInProgress_) {
+        doorbellRingAgain_ = true;
+        return;
+    }
+
+    doorbellInProgress_ = true;
+
+    const FW::Generation gen{loginGeneration_};
+    const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
+    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
+
+    doorbellWriteHandle_ = bus_.WriteQuad(
+        gen, node, doorbellAddress_, 0, speed,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            OnDoorbellComplete(status, response);
+        });
+
+    if (!doorbellWriteHandle_) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::RingDoorbell: WriteQuad failed");
+        doorbellInProgress_ = false;
+    }
+}
+
+void SBP2LoginSession::OnFetchAgentWriteComplete(Async::AsyncStatus status,
+                                                   std::span<const uint8_t> response) noexcept {
+    fetchAgentWriteInUse_ = false;
+
+    if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(SBP2,
+                 "SBP2LoginSession::OnFetchAgentWriteComplete: status=%s, retries=%u",
+                 Async::ToString(status),
+                 lastORB_ ? lastORB_->GetFetchAgentWriteRetries() : 0);
+
+        if (lastORB_ != nullptr) {
+            uint32_t retries = lastORB_->GetFetchAgentWriteRetries();
+            if (retries > 0) {
+                retries--;
+                lastORB_->SetFetchAgentWriteRetries(retries);
+                // Retry after a delay
+                SubmitDelayedCallback(1000, [this]() {
+                    AppendORBImmediate(lastORB_);
+                });
+                return;
+            }
+
+            // Retries exhausted — report failure
+            auto& cb = lastORB_->GetCompletionCallback();
+            if (cb) {
+                cb(-1);
+            }
+        }
+        return;
+    }
+
+    // Fetch agent write succeeded. Submit deferred ORB if any.
+    SBP2CommandORB* deferred = deferredORB_;
+    deferredORB_ = nullptr;
+
+    if (deferred != nullptr) {
+        ASFW_LOG(SBP2, "SBP2LoginSession: submitting deferred ORB");
+        AppendORBImmediate(deferred);
+    }
+}
+
+void SBP2LoginSession::OnDoorbellComplete(Async::AsyncStatus status,
+                                            std::span<const uint8_t> response) noexcept {
+    doorbellInProgress_ = false;
+
+    if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::OnDoorbellComplete: status=%s",
+                 Async::ToString(status));
+    }
+
+    if (doorbellRingAgain_) {
+        doorbellRingAgain_ = false;
+        RingDoorbell();
     }
 }
 

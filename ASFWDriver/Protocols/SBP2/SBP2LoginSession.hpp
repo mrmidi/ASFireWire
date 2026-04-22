@@ -12,6 +12,7 @@
 //   6. Call Logout() to terminate session
 
 #include "SBP2WireFormats.hpp"
+#include "SBP2CommandORB.hpp"
 #include "AddressSpaceManager.hpp"
 #include "../../Async/AsyncTypes.hpp"
 #include "../../Logging/Logging.hpp"
@@ -181,6 +182,14 @@ public:
     /// Set max payload size override (clipped by login response).
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
 
+    // -----------------------------------------------------------------------
+    // ORB submission
+    // -----------------------------------------------------------------------
+
+    /// Submit a Normal Command ORB to the device's fetch agent.
+    /// Requires LoggedIn state. ORB must be fully configured before calling.
+    [[nodiscard]] bool SubmitORB(SBP2CommandORB* orb) noexcept;
+
 private:
     // -----------------------------------------------------------------------
     // Internal: resource allocation
@@ -339,6 +348,45 @@ private:
     static constexpr uint16_t kCSRBusAddressHi = 0x0000FFFFu;
     static constexpr uint32_t kBusyTimeoutAddressLo = 0xF0000210u;
     static constexpr uint32_t kBusyTimeoutValue = 0x0000000Fu;
+
+    // -----------------------------------------------------------------------
+    // Fetch Agent / Doorbell internals
+    // -----------------------------------------------------------------------
+
+    /// Write ORB address to fetch agent (CBA + kORBPointer).
+    void AppendORBImmediate(SBP2CommandORB* orb) noexcept;
+
+    /// Chain ORB to last ORB's next pointer.
+    void AppendORB(SBP2CommandORB* orb) noexcept;
+
+    /// Ring doorbell (write quadlet to CBA + kDoorbell).
+    void RingDoorbell() noexcept;
+
+    /// Fetch agent write completion handler.
+    void OnFetchAgentWriteComplete(Async::AsyncStatus status,
+                                    std::span<const uint8_t> response) noexcept;
+
+    /// Doorbell write completion handler.
+    void OnDoorbellComplete(Async::AsyncStatus status,
+                             std::span<const uint8_t> response) noexcept;
+
+    // Fetch agent state
+    Async::FWAddress fetchAgentAddress_{};
+    Async::FWAddress doorbellAddress_{};
+    Async::AsyncHandle fetchAgentWriteHandle_{};
+    bool fetchAgentWriteInUse_{false};
+
+    // ORB chain state
+    SBP2CommandORB* lastORB_{nullptr};
+    SBP2CommandORB* deferredORB_{nullptr};
+
+    // Doorbell state
+    Async::AsyncHandle doorbellWriteHandle_{};
+    bool doorbellInProgress_{false};
+    bool doorbellRingAgain_{false};
+
+    // Fetch agent write data (8-byte BE ORB address)
+    std::array<uint8_t, 8> fetchAgentWriteData_{};
 };
 
 } // namespace ASFW::Protocols::SBP2
