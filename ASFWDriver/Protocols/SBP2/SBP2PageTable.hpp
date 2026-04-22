@@ -106,8 +106,8 @@ public:
         // Multi-PTE: allocate address space for the page table.
         const uint32_t ptSize = pteCount_ * sizeof(Wire::PageTableEntry);
 
-        auto kr = addrMgr_.AllocateAddressRange(
-            owner_, 0xFFFF, 0, ptSize,
+        auto kr = addrMgr_.AllocateAddressRangeAuto(
+            owner_, 0xFFFF, ptSize,
             &pageTableHandle_, &pageTableMeta_);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(SBP2, "SBP2PageTable: failed to allocate page table: 0x%08x", kr);

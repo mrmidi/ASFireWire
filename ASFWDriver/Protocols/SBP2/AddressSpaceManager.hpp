@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <limits>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -70,48 +71,79 @@ public:
             return kIOReturnBadArgument;
         }
 
-        const uint64_t start = ComposeAddress(addressHi, addressLo);
-        const uint64_t end = start + static_cast<uint64_t>(length);
-        if (end < start) {
+        IOLockLock(lock_);
+        const kern_return_t kr = AllocateAddressRangeLocked(
+            owner, addressHi, addressLo, length, outHandle, outMeta);
+        IOLockUnlock(lock_);
+        return kr;
+    }
+
+    kern_return_t AllocateAddressRangeAuto(void* owner,
+                                           uint16_t addressHi,
+                                           uint32_t length,
+                                           uint64_t* outHandle,
+                                           AddressRangeMeta* outMeta = nullptr) {
+        if (!lock_ || !outHandle || length == 0) {
             return kIOReturnBadArgument;
+        }
+        if (addressHi != kAutoAddressHi) {
+            return kIOReturnBadArgument;
+        }
+
+        const uint64_t windowStart = ComposeAddress(addressHi, kAutoAddressWindowStartLo);
+        const uint64_t windowEndExclusive = ComposeAddress(addressHi, kAutoAddressWindowEndLo) + 1ULL;
+        const uint64_t windowLength = windowEndExclusive - windowStart;
+        if (static_cast<uint64_t>(length) > windowLength) {
+            return kIOReturnNoSpace;
         }
 
         IOLockLock(lock_);
 
+        std::vector<std::pair<uint64_t, uint64_t>> occupied;
+        occupied.reserve(ranges_.size());
+
         for (const auto& entry : ranges_) {
-            if (RangesOverlap(start,
-                              static_cast<uint64_t>(length),
-                              entry.second.meta.address,
-                              static_cast<uint64_t>(entry.second.meta.length))) {
-                IOLockUnlock(lock_);
-                return kIOReturnNoSpace;
+            const auto& meta = entry.second.meta;
+            if (meta.addressHi != addressHi) {
+                continue;
             }
+
+            const uint64_t rangeStart = meta.address;
+            const uint64_t rangeEnd = rangeStart + static_cast<uint64_t>(meta.length);
+            if (rangeEnd <= windowStart || rangeStart >= windowEndExclusive) {
+                continue;
+            }
+
+            occupied.emplace_back(rangeStart, rangeEnd);
         }
 
-        AddressRange range{};
-        range.owner = owner;
-        range.meta.handle = nextHandle_++;
-        range.meta.address = start;
-        range.meta.addressHi = addressHi;
-        range.meta.addressLo = addressLo;
-        range.meta.length = length;
-        range.buffer.resize(length, 0);
+        std::sort(occupied.begin(), occupied.end());
 
-        const kern_return_t kr = AllocateBacking(range);
-        if (kr != kIOReturnSuccess) {
+        uint64_t candidate = AlignUp(windowStart, kAutoAddressAlignment);
+        for (const auto& [rangeStart, rangeEnd] : occupied) {
+            if (rangeEnd <= candidate) {
+                continue;
+            }
+            if (CanFitRange(candidate, length, rangeStart)) {
+                break;
+            }
+            candidate = AlignUp(rangeEnd, kAutoAddressAlignment);
+        }
+
+        if (!CanFitRange(candidate, length, windowEndExclusive)) {
             IOLockUnlock(lock_);
-            return kr;
+            return kIOReturnNoSpace;
         }
 
-        const uint64_t handle = range.meta.handle;
-        if (outMeta) {
-            *outMeta = range.meta;
-        }
-        ranges_.emplace(handle, std::move(range));
-        *outHandle = handle;
-
+        const kern_return_t kr = AllocateAddressRangeLocked(
+            owner,
+            addressHi,
+            static_cast<uint32_t>(candidate & 0xFFFF'FFFFULL),
+            length,
+            outHandle,
+            outMeta);
         IOLockUnlock(lock_);
-        return kIOReturnSuccess;
+        return kr;
     }
 
     kern_return_t DeallocateAddressRange(void* owner, uint64_t handle) {
@@ -330,6 +362,11 @@ public:
     }
 
 private:
+    static constexpr uint16_t kAutoAddressHi = 0xFFFFu;
+    static constexpr uint32_t kAutoAddressWindowStartLo = 0x0010'0000u;
+    static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
+    static constexpr uint64_t kAutoAddressAlignment = 8ULL;
+
     struct AddressRange {
         AddressRangeMeta meta{};
         void* owner{nullptr};
@@ -346,6 +383,16 @@ private:
 
     static uint64_t ComposeAddress(uint16_t hi, uint32_t lo) {
         return (static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo);
+    }
+
+    static uint64_t AlignUp(uint64_t value, uint64_t alignment) {
+        const uint64_t mask = alignment - 1ULL;
+        return (value + mask) & ~mask;
+    }
+
+    static bool CanFitRange(uint64_t start, uint32_t length, uint64_t limitExclusive) {
+        const uint64_t end = start + static_cast<uint64_t>(length);
+        return end >= start && end <= limitExclusive;
     }
 
     static bool RangesOverlap(uint64_t leftStart,
@@ -382,6 +429,50 @@ private:
         }
 
         return nullptr;
+    }
+
+    kern_return_t AllocateAddressRangeLocked(void* owner,
+                                             uint16_t addressHi,
+                                             uint32_t addressLo,
+                                             uint32_t length,
+                                             uint64_t* outHandle,
+                                             AddressRangeMeta* outMeta) {
+        const uint64_t start = ComposeAddress(addressHi, addressLo);
+        const uint64_t end = start + static_cast<uint64_t>(length);
+        if (end < start) {
+            return kIOReturnBadArgument;
+        }
+
+        for (const auto& entry : ranges_) {
+            if (RangesOverlap(start,
+                              static_cast<uint64_t>(length),
+                              entry.second.meta.address,
+                              static_cast<uint64_t>(entry.second.meta.length))) {
+                return kIOReturnNoSpace;
+            }
+        }
+
+        AddressRange range{};
+        range.owner = owner;
+        range.meta.handle = nextHandle_++;
+        range.meta.address = start;
+        range.meta.addressHi = addressHi;
+        range.meta.addressLo = addressLo;
+        range.meta.length = length;
+        range.buffer.resize(length, 0);
+
+        const kern_return_t kr = AllocateBacking(range);
+        if (kr != kIOReturnSuccess) {
+            return kr;
+        }
+
+        const uint64_t handle = range.meta.handle;
+        if (outMeta) {
+            *outMeta = range.meta;
+        }
+        ranges_.emplace(handle, std::move(range));
+        *outHandle = handle;
+        return kIOReturnSuccess;
     }
 
     kern_return_t AllocateBacking(AddressRange& range) {

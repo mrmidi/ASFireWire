@@ -22,6 +22,7 @@ SBP2CommandORB::SBP2CommandORB(AddressSpaceManager& addrMgr, void* owner,
 
 SBP2CommandORB::~SBP2CommandORB() {
     CancelTimer();
+    lifetimeToken_.reset();
     DeallocateResources();
 }
 
@@ -34,8 +35,8 @@ bool SBP2CommandORB::AllocateResources() noexcept {
 
     orbStorage_.resize(orbSize, 0);
 
-    const kern_return_t kr = addrMgr_.AllocateAddressRange(
-        owner_, 0xFFFF, 0, orbSize,
+    const kern_return_t kr = addrMgr_.AllocateAddressRangeAuto(
+        owner_, 0xFFFF, orbSize,
         &orbHandle_, &orbMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2CommandORB: failed to allocate ORB address space: 0x%08x", kr);
@@ -203,19 +204,43 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
 
     timerQueue_ = queue;
     inProgress_ = true;
-
-    // Capture values by copy for block safety
     const uint32_t timeout = timeoutDuration_;
-    auto cb = completionCallback_;
+    const uint64_t expectedGeneration =
+        timerGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
+    const std::weak_ptr<int> weakLifetime = lifetimeToken_;
+    const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
 
-#ifndef ASFW_HOST_TEST
-    queue->DispatchAsync(^{
-        IOSleep(timeout);
-        if (inProgress_ && completionCallback_) {
-            ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
-            inProgress_ = false;
-            completionCallback_(-1);
+#ifdef ASFW_HOST_TEST
+    queue->DispatchAsyncAfter(delayNs, [this, weakLifetime, expectedGeneration, timeout]() {
+        if (weakLifetime.expired()) {
+            return;
         }
+        if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
+            !inProgress_ ||
+            !completionCallback_) {
+            return;
+        }
+
+        ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
+        inProgress_ = false;
+        timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        completionCallback_(-1);
+    });
+#else
+    queue->DispatchAsyncAfter(delayNs, ^{
+        if (weakLifetime.expired()) {
+            return;
+        }
+        if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
+            !inProgress_ ||
+            !completionCallback_) {
+            return;
+        }
+
+        ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
+        inProgress_ = false;
+        timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        completionCallback_(-1);
     });
 #endif
 }
@@ -223,6 +248,7 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
 void SBP2CommandORB::CancelTimer() noexcept {
     inProgress_ = false;
     timerQueue_ = nullptr;
+    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 } // namespace ASFW::Protocols::SBP2

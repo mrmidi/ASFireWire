@@ -15,14 +15,15 @@
 
 #include <DriverKit/IOLib.h>
 #ifdef ASFW_HOST_TEST
-#include <chrono>
-#include <thread>
+#include "../../Testing/HostDriverKitStubs.hpp"
 #else
 #include <DriverKit/IODispatchQueue.h>
 #endif
 
+#include <atomic>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <span>
 
 namespace ASFW::Protocols::SBP2 {
@@ -116,6 +117,8 @@ private:
 
     // Timer.
     IODispatchQueue* timerQueue_{nullptr};
+    std::atomic<uint64_t> timerGeneration_{0};
+    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2

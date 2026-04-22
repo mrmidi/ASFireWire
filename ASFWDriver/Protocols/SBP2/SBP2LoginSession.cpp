@@ -21,6 +21,9 @@ SBP2LoginSession::SBP2LoginSession(Async::IFireWireBus& bus,
     , addrSpaceMgr_(addrSpaceMgr) {}
 
 SBP2LoginSession::~SBP2LoginSession() {
+    CancelPendingTimer();
+    ClearORBTracking(true);
+    lifetimeToken_.reset();
     DeallocateResources();
 }
 
@@ -91,8 +94,9 @@ bool SBP2LoginSession::Login() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{loginORBAddressBE_.data(), loginORBAddressBE_.size()},
         speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnLoginWriteComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                      std::span<const uint8_t> response) {
+            OnLoginWriteComplete(requestGeneration, status, response);
         });
 
     if (!loginWriteHandle_) {
@@ -136,8 +140,9 @@ bool SBP2LoginSession::Logout() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{logoutORBAddressBE_.data(), logoutORBAddressBE_.size()},
         speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnLogoutWriteComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                      std::span<const uint8_t> response) {
+            OnLogoutWriteComplete(requestGeneration, status, response);
         });
 
     if (!logoutWriteHandle_) {
@@ -183,8 +188,9 @@ bool SBP2LoginSession::Reconnect() noexcept {
         gen, node, mgmtAddr,
         std::span<const uint8_t>{reconnectORBAddressBE_.data(), reconnectORBAddressBE_.size()},
         speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnReconnectWriteComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                      std::span<const uint8_t> response) {
+            OnReconnectWriteComplete(requestGeneration, status, response);
         });
 
     if (!reconnectWriteHandle_) {
@@ -212,13 +218,15 @@ void SBP2LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             CancelLoginTimer();
             loginRetryCount_ = 0;
             loginGeneration_ = newGeneration;
-            SubmitDelayedCallback(100, [this]() {
-                Login();
-            });
+            ClearORBTracking(true);
+            SetState(LoginState::Idle);
+            SubmitDelayedCallback(100, [this]() { (void)Login(); });
             break;
 
         case LoginState::LoggedIn:
             // Transition to Suspended — wait for topology then reconnect.
+            CancelPendingTimer();
+            ClearORBTracking(true);
             SetState(LoginState::Suspended);
             loginGeneration_ = newGeneration;
             break;
@@ -226,13 +234,17 @@ void SBP2LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
         case LoginState::Reconnecting:
             // Reconnect was in flight — retry.
             reconnectTimerActive_ = false;
-            SubmitDelayedCallback(100, [this]() {
-                Reconnect();
-            });
+            CancelPendingTimer();
+            ClearORBTracking(true);
+            loginGeneration_ = newGeneration;
+            SetState(LoginState::Suspended);
+            SubmitDelayedCallback(100, [this]() { (void)Reconnect(); });
             break;
 
         case LoginState::LoggingOut:
             // Logout in flight during bus reset — consider logged out.
+            CancelPendingTimer();
+            ClearORBTracking(true);
             SetState(LoginState::Idle);
             break;
 
@@ -282,8 +294,7 @@ bool SBP2LoginSession::AllocateResources() noexcept {
 }
 
 void SBP2LoginSession::DeallocateResources() noexcept {
-    lastORB_ = nullptr;
-    deferredORB_ = nullptr;
+    ClearORBTracking(true);
 
     if (loginORBHandle_) {
         addrSpaceMgr_.DeallocateAddressRange(this, loginORBHandle_);
@@ -309,9 +320,8 @@ void SBP2LoginSession::DeallocateResources() noexcept {
 
 bool SBP2LoginSession::AllocateLoginORBAddressSpace() noexcept {
     // Login ORB is 32 bytes, readable by target device.
-    // Use address Hi=0xFFFF (initial CSR space), Lo=auto.
-    auto kr = addrSpaceMgr_.AllocateAddressRange(
-        this, 0xFFFF, 0, Wire::LoginORB::kSize,
+    auto kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+        this, 0xFFFF, Wire::LoginORB::kSize,
         &loginORBHandle_, &loginORBMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate login ORB address space: 0x%08x", kr);
@@ -322,8 +332,8 @@ bool SBP2LoginSession::AllocateLoginORBAddressSpace() noexcept {
 
 bool SBP2LoginSession::AllocateLoginResponseAddressSpace() noexcept {
     // Login response is 16 bytes, writable by target device.
-    auto kr = addrSpaceMgr_.AllocateAddressRange(
-        this, 0xFFFF, 0, Wire::LoginResponse::kSize,
+    auto kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+        this, 0xFFFF, Wire::LoginResponse::kSize,
         &loginResponseHandle_, &loginResponseMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate login response address space: 0x%08x", kr);
@@ -334,8 +344,8 @@ bool SBP2LoginSession::AllocateLoginResponseAddressSpace() noexcept {
 
 bool SBP2LoginSession::AllocateStatusBlockAddressSpace() noexcept {
     // Status block is up to 32 bytes, writable by target device.
-    auto kr = addrSpaceMgr_.AllocateAddressRange(
-        this, 0xFFFF, 0, Wire::StatusBlock::kMaxSize,
+    auto kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+        this, 0xFFFF, Wire::StatusBlock::kMaxSize,
         &statusBlockHandle_, &statusBlockMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate status block address space: 0x%08x", kr);
@@ -345,8 +355,8 @@ bool SBP2LoginSession::AllocateStatusBlockAddressSpace() noexcept {
 }
 
 bool SBP2LoginSession::AllocateReconnectORBAddressSpace() noexcept {
-    auto kr = addrSpaceMgr_.AllocateAddressRange(
-        this, 0xFFFF, 0, Wire::ReconnectORB::kSize,
+    auto kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+        this, 0xFFFF, Wire::ReconnectORB::kSize,
         &reconnectORBHandle_, &reconnectORBMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate reconnect ORB address space: 0x%08x", kr);
@@ -356,8 +366,8 @@ bool SBP2LoginSession::AllocateReconnectORBAddressSpace() noexcept {
 }
 
 bool SBP2LoginSession::AllocateLogoutORBAddressSpace() noexcept {
-    auto kr = addrSpaceMgr_.AllocateAddressRange(
-        this, 0xFFFF, 0, Wire::LogoutORB::kSize,
+    auto kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+        this, 0xFFFF, Wire::LogoutORB::kSize,
         &logoutORBHandle_, &logoutORBMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate logout ORB address space: 0x%08x", kr);
@@ -487,8 +497,13 @@ void SBP2LoginSession::BuildLogoutORB() noexcept {
 // Completion Handlers
 // ---------------------------------------------------------------------------
 
-void SBP2LoginSession::OnLoginWriteComplete(Async::AsyncStatus status,
+void SBP2LoginSession::OnLoginWriteComplete(uint16_t expectedGeneration,
+                                            Async::AsyncStatus status,
                                             std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggingIn) {
+        return;
+    }
+
     CancelLoginTimer();
 
     if (status != Async::AsyncStatus::kSuccess) {
@@ -501,7 +516,7 @@ void SBP2LoginSession::OnLoginWriteComplete(Async::AsyncStatus status,
                 loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
                 loginNodeID_ = targetInfo_.targetNodeId;
                 SetState(LoginState::Idle);
-                Login();
+                (void)Login();
             });
             return;
         }
@@ -543,7 +558,7 @@ void SBP2LoginSession::OnLoginTimeout() noexcept {
     if (loginRetryCount_ < kLoginRetryMax) {
         loginRetryCount_++;
         SetState(LoginState::Idle);
-        Login();
+        (void)Login();
     } else {
         SetState(LoginState::Failed);
         if (loginCallback_) {
@@ -555,15 +570,20 @@ void SBP2LoginSession::OnLoginTimeout() noexcept {
     }
 }
 
-void SBP2LoginSession::OnReconnectWriteComplete(Async::AsyncStatus status,
-                                                 std::span<const uint8_t> response) noexcept {
+void SBP2LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
+                                                Async::AsyncStatus status,
+                                                std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_ || state_ != LoginState::Reconnecting) {
+        return;
+    }
+
     reconnectTimerActive_ = false;
 
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession::OnReconnectWriteComplete: status=%s, retrying",
                  Async::ToString(status));
 
-        SubmitDelayedCallback(100, [this]() { Reconnect(); });
+        SubmitDelayedCallback(100, [this]() { (void)Reconnect(); });
         return;
     }
 
@@ -580,11 +600,16 @@ void SBP2LoginSession::OnReconnectTimeout() noexcept {
 
     ASFW_LOG(SBP2, "SBP2LoginSession: reconnect timeout, falling back to full login");
     SetState(LoginState::Idle);
-    Login();
+    (void)Login();
 }
 
-void SBP2LoginSession::OnLogoutWriteComplete(Async::AsyncStatus status,
-                                              std::span<const uint8_t> response) noexcept {
+void SBP2LoginSession::OnLogoutWriteComplete(uint16_t expectedGeneration,
+                                             Async::AsyncStatus status,
+                                             std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggingOut) {
+        return;
+    }
+
     logoutTimerActive_ = false;
 
     if (status != Async::AsyncStatus::kSuccess) {
@@ -684,7 +709,7 @@ void SBP2LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& blo
                 loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
                 loginNodeID_ = targetInfo_.targetNodeId;
                 SetState(LoginState::Idle);
-                Login();
+                (void)Login();
             });
             return;
         }
@@ -718,7 +743,7 @@ void SBP2LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& blo
                 loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
                 loginNodeID_ = targetInfo_.targetNodeId;
                 SetState(LoginState::Idle);
-                Login();
+                (void)Login();
             });
             return;
         }
@@ -839,7 +864,7 @@ void SBP2LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock&
                  block.sbpStatus);
 
         SetState(LoginState::Idle);
-        Login();
+        (void)Login();
         return;
     }
 
@@ -895,11 +920,21 @@ void SBP2LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block,
         return;
     }
 
-    // Solicited status: ORB completion.
-    // Currently only supports single-ORB-in-flight matching via lastORB_.
-    if (lastORB_ != nullptr) {
-        lastORB_->CancelTimer();
-        auto& cb = lastORB_->GetCompletionCallback();
+    const uint64_t orbKey = MakeORBKey(FromBE16(block.orbOffsetHi), FromBE32(block.orbOffsetLo));
+    const auto it = outstandingORBs_.find(orbKey);
+    if (it == outstandingORBs_.end()) {
+        ASFW_LOG(SBP2,
+                 "SBP2LoginSession::ProcessStatusBlock: unmatched ORB status hi=%04x lo=%08x",
+                 FromBE16(block.orbOffsetHi),
+                 FromBE32(block.orbOffsetLo));
+        return;
+    }
+
+    SBP2CommandORB* orb = it->second;
+    outstandingORBs_.erase(it);
+    if (orb != nullptr) {
+        orb->CancelTimer();
+        auto& cb = orb->GetCompletionCallback();
         if (cb) {
             int status = 0;
             if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo &&
@@ -934,32 +969,80 @@ void SBP2LoginSession::CancelLoginTimer() noexcept {
     CancelPendingTimer();
 }
 
-void SBP2LoginSession::SetWorkQueue(IODispatchQueue* queue) noexcept {
-    workQueue_ = queue;
-}
-
 void SBP2LoginSession::CancelPendingTimer() noexcept {
-    // With the DispatchAsync + IOSleep pattern we can't truly cancel in-flight
-    // sleeps, but timeout handlers check state_ before acting.
-    pendingTimerCallback_ = nullptr;
+    delayedCallbackGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
                                               std::function<void()> callback) noexcept {
-    pendingTimerCallback_ = callback;
-
-    if (workQueue_) {
-        // Capture by value to avoid use-after-free if callback is replaced.
-        auto cb = std::move(callback);
-        workQueue_->DispatchAsync(^{
-#ifdef ASFW_HOST_TEST
-            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-#else
-            IOSleep(static_cast<uint32_t>(delayMs));
-#endif
-            cb();
-        });
+    if (workQueue_ == nullptr || !callback) {
+        return;
     }
+
+    const uint64_t expectedGeneration =
+        delayedCallbackGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
+    const std::weak_ptr<int> weakLifetime = lifetimeToken_;
+    const uint64_t delayNs = delayMs * 1'000'000ULL;
+
+#ifdef ASFW_HOST_TEST
+    workQueue_->DispatchAsyncAfter(delayNs, [this, weakLifetime, expectedGeneration, cb = std::move(callback)]() mutable {
+        if (weakLifetime.expired()) {
+            return;
+        }
+        if (delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
+            return;
+        }
+        cb();
+    });
+#else
+    auto cb = std::move(callback);
+    workQueue_->DispatchAsyncAfter(delayNs, ^{
+        if (weakLifetime.expired()) {
+            return;
+        }
+        if (delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
+            return;
+        }
+        cb();
+    });
+#endif
+}
+
+uint64_t SBP2LoginSession::MakeORBKey(uint16_t addressHi, uint32_t addressLo) noexcept {
+    return (static_cast<uint64_t>(addressHi) << 32) | static_cast<uint64_t>(addressLo);
+}
+
+uint64_t SBP2LoginSession::MakeORBKey(const Async::FWAddress& address) noexcept {
+    return MakeORBKey(address.addressHi, address.addressLo);
+}
+
+void SBP2LoginSession::ClearORBTracking(bool cancelTimers) noexcept {
+    if (cancelTimers) {
+        for (auto& [key, orb] : outstandingORBs_) {
+            if (orb != nullptr) {
+                orb->CancelTimer();
+                orb->SetAppended(false);
+            }
+        }
+        if (activeFetchAgentORB_ != nullptr) {
+            activeFetchAgentORB_->CancelTimer();
+        }
+        for (auto* orb : pendingImmediateORBs_) {
+            if (orb != nullptr) {
+                orb->CancelTimer();
+            }
+        }
+    }
+
+    outstandingORBs_.clear();
+    pendingImmediateORBs_.clear();
+    chainTailORB_ = nullptr;
+    activeFetchAgentORB_ = nullptr;
+    fetchAgentWriteHandle_ = {};
+    fetchAgentWriteInUse_ = false;
+    doorbellWriteHandle_ = {};
+    doorbellInProgress_ = false;
+    doorbellRingAgain_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,16 +1084,16 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
 
     orb->PrepareForExecution(localNode, speed, maxPayloadLog);
     orb->SetFetchAgentWriteRetries(20);
+    orb->SetAppended(true);
+    outstandingORBs_[MakeORBKey(orb->GetORBAddress())] = orb;
 
     const bool isImmediate = (orb->GetFlags() & SBP2CommandORB::kImmediate) != 0;
 
     if (isImmediate) {
-        // Immediate: write ORB address directly to fetch agent
-        lastORB_ = orb;
+        chainTailORB_ = orb;
 
         if (fetchAgentWriteInUse_) {
-            // Fetch agent write in flight — defer until completion
-            deferredORB_ = orb;
+            pendingImmediateORBs_.push_back(orb);
             ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: fetch agent busy, deferring ORB");
             return true;
         }
@@ -1026,9 +1109,8 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
 }
 
 void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
-    // Cancel any in-flight fetch agent write
-    if (fetchAgentWriteInUse_ && fetchAgentWriteHandle_) {
-        bus_.Cancel(fetchAgentWriteHandle_);
+    if (orb == nullptr || fetchAgentWriteInUse_) {
+        return;
     }
 
     // Build 8-byte ORB address in big-endian
@@ -1043,6 +1125,7 @@ void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
     const uint32_t addrLoBE = ToBE32(orbAddr.addressLo);
     std::memcpy(&fetchAgentWriteData_[4], &addrLoBE, sizeof(uint32_t));
 
+    activeFetchAgentORB_ = orb;
     fetchAgentWriteInUse_ = true;
 
     const FW::Generation gen{loginGeneration_};
@@ -1053,13 +1136,15 @@ void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
         gen, node, fetchAgentAddress_,
         std::span<const uint8_t>{fetchAgentWriteData_.data(), fetchAgentWriteData_.size()},
         speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnFetchAgentWriteComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                     std::span<const uint8_t> response) {
+            OnFetchAgentWriteComplete(requestGeneration, status, response);
         });
 
     if (!fetchAgentWriteHandle_) {
         ASFW_LOG(SBP2, "SBP2LoginSession::AppendORBImmediate: WriteBlock failed");
         fetchAgentWriteInUse_ = false;
+        activeFetchAgentORB_ = nullptr;
     }
 
     ASFW_LOG(SBP2,
@@ -1068,14 +1153,14 @@ void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
 }
 
 void SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
-    if (lastORB_ == nullptr) {
+    if (chainTailORB_ == nullptr) {
         // First ORB — write directly to fetch agent instead of chaining
-        lastORB_ = orb;
+        chainTailORB_ = orb;
         AppendORBImmediate(orb);
         return;
     }
 
-    if (lastORB_ != orb) {
+    if (chainTailORB_ != orb) {
         const Async::FWAddress orbAddr = orb->GetORBAddress();
 
         // Set the new ORB's address in big-endian into the last ORB's next pointer
@@ -1083,9 +1168,9 @@ void SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
         const uint32_t nextHi = ToBE32(
             (static_cast<uint32_t>(localNode) << 16) | orbAddr.addressHi);
         const uint32_t nextLo = ToBE32(orbAddr.addressLo);
-        lastORB_->SetNextORBAddress(nextHi, nextLo);
+        chainTailORB_->SetNextORBAddress(nextHi, nextLo);
 
-        lastORB_ = orb;
+        chainTailORB_ = orb;
     }
 }
 
@@ -1103,8 +1188,9 @@ void SBP2LoginSession::RingDoorbell() noexcept {
 
     doorbellWriteHandle_ = bus_.WriteQuad(
         gen, node, doorbellAddress_, 0, speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnDoorbellComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                     std::span<const uint8_t> response) {
+            OnDoorbellComplete(requestGeneration, status, response);
         });
 
     if (!doorbellWriteHandle_) {
@@ -1113,50 +1199,74 @@ void SBP2LoginSession::RingDoorbell() noexcept {
     }
 }
 
-void SBP2LoginSession::OnFetchAgentWriteComplete(Async::AsyncStatus status,
-                                                   std::span<const uint8_t> response) noexcept {
+void SBP2LoginSession::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
+                                                 Async::AsyncStatus status,
+                                                 std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggedIn) {
+        return;
+    }
+
     fetchAgentWriteInUse_ = false;
+    fetchAgentWriteHandle_ = {};
 
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG(SBP2,
                  "SBP2LoginSession::OnFetchAgentWriteComplete: status=%s, retries=%u",
                  Async::ToString(status),
-                 lastORB_ ? lastORB_->GetFetchAgentWriteRetries() : 0);
+                 activeFetchAgentORB_ ? activeFetchAgentORB_->GetFetchAgentWriteRetries() : 0);
 
-        if (lastORB_ != nullptr) {
-            uint32_t retries = lastORB_->GetFetchAgentWriteRetries();
+        if (activeFetchAgentORB_ != nullptr) {
+            uint32_t retries = activeFetchAgentORB_->GetFetchAgentWriteRetries();
             if (retries > 0) {
                 retries--;
-                lastORB_->SetFetchAgentWriteRetries(retries);
+                activeFetchAgentORB_->SetFetchAgentWriteRetries(retries);
                 // Retry after a delay
-                SubmitDelayedCallback(1000, [this]() {
-                    AppendORBImmediate(lastORB_);
+                SBP2CommandORB* retryORB = activeFetchAgentORB_;
+                SubmitDelayedCallback(1000, [this, retryORB]() {
+                    if (activeFetchAgentORB_ == retryORB) {
+                        AppendORBImmediate(retryORB);
+                    }
                 });
                 return;
             }
 
             // Retries exhausted — report failure
-            auto& cb = lastORB_->GetCompletionCallback();
+            outstandingORBs_.erase(MakeORBKey(activeFetchAgentORB_->GetORBAddress()));
+            activeFetchAgentORB_->SetAppended(false);
+            auto& cb = activeFetchAgentORB_->GetCompletionCallback();
             if (cb) {
                 cb(-1);
             }
+        }
+        activeFetchAgentORB_ = nullptr;
+        if (!pendingImmediateORBs_.empty()) {
+            SBP2CommandORB* next = pendingImmediateORBs_.front();
+            pendingImmediateORBs_.pop_front();
+            AppendORBImmediate(next);
         }
         return;
     }
 
     // Fetch agent write succeeded. Submit deferred ORB if any.
-    SBP2CommandORB* deferred = deferredORB_;
-    deferredORB_ = nullptr;
+    activeFetchAgentORB_ = nullptr;
 
-    if (deferred != nullptr) {
+    if (!pendingImmediateORBs_.empty()) {
+        SBP2CommandORB* next = pendingImmediateORBs_.front();
+        pendingImmediateORBs_.pop_front();
         ASFW_LOG(SBP2, "SBP2LoginSession: submitting deferred ORB");
-        AppendORBImmediate(deferred);
+        AppendORBImmediate(next);
     }
 }
 
-void SBP2LoginSession::OnDoorbellComplete(Async::AsyncStatus status,
-                                            std::span<const uint8_t> response) noexcept {
+void SBP2LoginSession::OnDoorbellComplete(uint16_t expectedGeneration,
+                                          Async::AsyncStatus status,
+                                          std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggedIn) {
+        return;
+    }
+
     doorbellInProgress_ = false;
+    doorbellWriteHandle_ = {};
 
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession::OnDoorbellComplete: status=%s",
@@ -1189,9 +1299,7 @@ bool SBP2LoginSession::SubmitManagementORB(SBP2ManagementORB* orb) noexcept {
     orb->SetManagementAgentOffset(targetInfo_.managementAgentOffset);
     orb->SetTargetNode(loginGeneration_, loginNodeID_);
     orb->SetTimeout(targetInfo_.managementTimeoutMs);
-#ifndef ASFW_HOST_TEST
     orb->SetWorkQueue(workQueue_);
-#endif
 
     ASFW_LOG(SBP2, "SBP2LoginSession::SubmitManagementORB: function=%u",
              static_cast<uint16_t>(orb->GetFunction()));
@@ -1223,8 +1331,9 @@ void SBP2LoginSession::ResetFetchAgent(std::function<void(int)> callback) noexce
 
     agentResetWriteHandle_ = bus_.WriteQuad(
         gen, node, agentResetAddress_, 0, speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnAgentResetComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                     std::span<const uint8_t> response) {
+            OnAgentResetComplete(requestGeneration, status, response);
         });
 
     if (!agentResetWriteHandle_) {
@@ -1237,13 +1346,17 @@ void SBP2LoginSession::ResetFetchAgent(std::function<void(int)> callback) noexce
     }
 }
 
-void SBP2LoginSession::OnAgentResetComplete(Async::AsyncStatus status,
-                                              std::span<const uint8_t> response) noexcept {
+void SBP2LoginSession::OnAgentResetComplete(uint16_t expectedGeneration,
+                                            Async::AsyncStatus status,
+                                            std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_) {
+        return;
+    }
+
     agentResetInProgress_ = false;
 
     // Clear ORB chain after reset
-    lastORB_ = nullptr;
-    deferredORB_ = nullptr;
+    ClearORBTracking(true);
 
     ASFW_LOG(SBP2, "SBP2LoginSession::OnAgentResetComplete: status=%s, ORB chain cleared",
              Async::ToString(status));
@@ -1272,14 +1385,20 @@ void SBP2LoginSession::EnableUnsolicitedStatus() noexcept {
 
     unsolicitedStatusWriteHandle_ = bus_.WriteQuad(
         gen, node, unsolicitedStatusAddress_, 0, speed,
-        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
-            OnUnsolicitedStatusEnableComplete(status, response);
+        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                     std::span<const uint8_t> response) {
+            OnUnsolicitedStatusEnableComplete(requestGeneration, status, response);
         });
 }
 
 void SBP2LoginSession::OnUnsolicitedStatusEnableComplete(
+    uint16_t expectedGeneration,
     Async::AsyncStatus status,
     std::span<const uint8_t> response) noexcept {
+    if (expectedGeneration != loginGeneration_ || state_ != LoginState::LoggedIn) {
+        return;
+    }
+
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG(SBP2, "SBP2LoginSession::OnUnsolicitedStatusEnableComplete: status=%s",
                  Async::ToString(status));

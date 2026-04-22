@@ -25,6 +25,8 @@ SBP2ManagementORB::SBP2ManagementORB(Async::IFireWireBus& bus,
     , owner_(owner) {}
 
 SBP2ManagementORB::~SBP2ManagementORB() {
+    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    lifetimeToken_.reset();
     DeallocateResources();
 }
 
@@ -38,8 +40,8 @@ bool SBP2ManagementORB::AllocateResources() noexcept {
     }
 
     // Allocate ORB address space (32 bytes)
-    auto kr = addrMgr_.AllocateAddressRange(
-        owner_, 0xFFFF, 0, Wire::TaskManagementORB::kSize,
+    auto kr = addrMgr_.AllocateAddressRangeAuto(
+        owner_, 0xFFFF, Wire::TaskManagementORB::kSize,
         &orbHandle_, &orbMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2ManagementORB: failed to allocate ORB: 0x%08x", kr);
@@ -47,8 +49,8 @@ bool SBP2ManagementORB::AllocateResources() noexcept {
     }
 
     // Allocate per-ORB status block address space (32 bytes)
-    kr = addrMgr_.AllocateAddressRange(
-        owner_, 0xFFFF, 0, Wire::StatusBlock::kMaxSize,
+    kr = addrMgr_.AllocateAddressRangeAuto(
+        owner_, 0xFFFF, Wire::StatusBlock::kMaxSize,
         &statusBlockHandle_, &statusBlockMeta_);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(SBP2, "SBP2ManagementORB: failed to allocate status block: 0x%08x", kr);
@@ -193,12 +195,36 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
     ASFW_LOG(SBP2, "SBP2ManagementORB: mgmt agent ACK'd, waiting for status block (timeout=%ums)",
              timeoutMs_);
 
-    if (workQueue_) {
+    if (workQueue_ && timeoutMs_ > 0) {
         const uint32_t timeout = timeoutMs_;
-#ifndef ASFW_HOST_TEST
-        workQueue_->DispatchAsync(^{
-            IOSleep(timeout);
-            this->OnTimeout();
+        const uint64_t expectedGeneration =
+            timerGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
+        const std::weak_ptr<int> weakLifetime = lifetimeToken_;
+        const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
+
+#ifdef ASFW_HOST_TEST
+        workQueue_->DispatchAsyncAfter(delayNs, [this, weakLifetime, expectedGeneration]() {
+            if (weakLifetime.expired()) {
+                return;
+            }
+            if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
+                !timerActive_ ||
+                !inProgress_) {
+                return;
+            }
+            OnTimeout();
+        });
+#else
+        workQueue_->DispatchAsyncAfter(delayNs, ^{
+            if (weakLifetime.expired()) {
+                return;
+            }
+            if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
+                !timerActive_ ||
+                !inProgress_) {
+                return;
+            }
+            OnTimeout();
         });
 #endif
     }
@@ -227,6 +253,7 @@ void SBP2ManagementORB::OnTimeout() noexcept {
 void SBP2ManagementORB::Complete(int status) noexcept {
     inProgress_ = false;
     timerActive_ = false;
+    timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
 
     if (completionCallback_) {
         completionCallback_(status);

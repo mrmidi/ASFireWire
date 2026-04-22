@@ -14,13 +14,14 @@
 
 #include <DriverKit/IOLib.h>
 #ifdef ASFW_HOST_TEST
-#include <chrono>
-#include <thread>
+#include "../../Testing/HostDriverKitStubs.hpp"
 #else
 #include <DriverKit/IODispatchQueue.h>
 #endif
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <span>
 
 namespace ASFW::Async {
@@ -67,12 +68,7 @@ public:
         nodeID_ = nodeID;
     }
 
-    /// Set the dispatch queue for timeout scheduling. Must be called before Execute.
-#ifdef ASFW_HOST_TEST
-    void SetWorkQueue(void* queue) noexcept { workQueue_ = queue; }
-#else
     void SetWorkQueue(IODispatchQueue* queue) noexcept { workQueue_ = queue; }
-#endif
 
     // Lifecycle
     [[nodiscard]] bool Execute() noexcept;
@@ -129,11 +125,9 @@ private:
     uint16_t nodeID_{0xFFFF};
 
     // Timer infrastructure
-#ifdef ASFW_HOST_TEST
-    void* workQueue_{nullptr};
-#else
     IODispatchQueue* workQueue_{nullptr};
-#endif
+    std::atomic<uint64_t> timerGeneration_{0};
+    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2

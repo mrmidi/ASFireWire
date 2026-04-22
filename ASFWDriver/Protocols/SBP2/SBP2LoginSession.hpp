@@ -20,15 +20,18 @@
 
 #include <DriverKit/IOLib.h>
 #ifdef ASFW_HOST_TEST
-#include <chrono>
-#include <thread>
+#include "../../Testing/HostDriverKitStubs.hpp"
 #else
 #include <DriverKit/IODispatchQueue.h>
 #endif
 
+#include <atomic>
+#include <deque>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
+#include <unordered_map>
 
 namespace ASFW::Async {
 class IFireWireBus;
@@ -139,11 +142,7 @@ public:
 
     /// Bind the IODispatchQueue used for delayed callbacks (timers).
     /// Must be called before Login() for timeout/retry support.
-#ifdef ASFW_HOST_TEST
-    void SetWorkQueue(void* queue) noexcept { workQueue_ = queue; }
-#else
-    void SetWorkQueue(IODispatchQueue* queue) noexcept;
-#endif
+    void SetWorkQueue(IODispatchQueue* queue) noexcept { workQueue_ = queue; }
 
     // -----------------------------------------------------------------------
     // Session operations
@@ -227,11 +226,17 @@ private:
     // Internal: completion handlers
     // -----------------------------------------------------------------------
 
-    void OnLoginWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response) noexcept;
+    void OnLoginWriteComplete(uint16_t expectedGeneration,
+                              Async::AsyncStatus status,
+                              std::span<const uint8_t> response) noexcept;
     void OnLoginTimeout() noexcept;
-    void OnReconnectWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response) noexcept;
+    void OnReconnectWriteComplete(uint16_t expectedGeneration,
+                                  Async::AsyncStatus status,
+                                  std::span<const uint8_t> response) noexcept;
     void OnReconnectTimeout() noexcept;
-    void OnLogoutWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response) noexcept;
+    void OnLogoutWriteComplete(uint16_t expectedGeneration,
+                               Async::AsyncStatus status,
+                               std::span<const uint8_t> response) noexcept;
     void OnLogoutTimeout() noexcept;
 
     // -----------------------------------------------------------------------
@@ -264,6 +269,9 @@ private:
 
     /// Cancel any pending timer callback.
     void CancelPendingTimer() noexcept;
+    void ClearORBTracking(bool cancelTimers) noexcept;
+    [[nodiscard]] static uint64_t MakeORBKey(uint16_t addressHi, uint32_t addressLo) noexcept;
+    [[nodiscard]] static uint64_t MakeORBKey(const Async::FWAddress& address) noexcept;
 
     // -----------------------------------------------------------------------
     // Members
@@ -345,12 +353,9 @@ private:
     // Timer infrastructure
     // -----------------------------------------------------------------------
 
-#ifdef ASFW_HOST_TEST
-    void* workQueue_{nullptr};
-#else
     IODispatchQueue* workQueue_{nullptr};
-#endif
-    std::function<void()> pendingTimerCallback_;
+    std::atomic<uint64_t> delayedCallbackGeneration_{0};
+    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 
     // -----------------------------------------------------------------------
     // Constants
@@ -374,20 +379,24 @@ private:
     void RingDoorbell() noexcept;
 
     /// Fetch agent write completion handler.
-    void OnFetchAgentWriteComplete(Async::AsyncStatus status,
-                                    std::span<const uint8_t> response) noexcept;
+    void OnFetchAgentWriteComplete(uint16_t expectedGeneration,
+                                   Async::AsyncStatus status,
+                                   std::span<const uint8_t> response) noexcept;
 
     /// Doorbell write completion handler.
-    void OnDoorbellComplete(Async::AsyncStatus status,
-                             std::span<const uint8_t> response) noexcept;
+    void OnDoorbellComplete(uint16_t expectedGeneration,
+                            Async::AsyncStatus status,
+                            std::span<const uint8_t> response) noexcept;
 
     /// Fetch agent reset completion handler.
-    void OnAgentResetComplete(Async::AsyncStatus status,
-                               std::span<const uint8_t> response) noexcept;
+    void OnAgentResetComplete(uint16_t expectedGeneration,
+                              Async::AsyncStatus status,
+                              std::span<const uint8_t> response) noexcept;
 
     /// Unsolicited status enable completion handler.
-    void OnUnsolicitedStatusEnableComplete(Async::AsyncStatus status,
-                                            std::span<const uint8_t> response) noexcept;
+    void OnUnsolicitedStatusEnableComplete(uint16_t expectedGeneration,
+                                           Async::AsyncStatus status,
+                                           std::span<const uint8_t> response) noexcept;
 
     // Fetch agent state
     Async::FWAddress fetchAgentAddress_{};
@@ -396,8 +405,10 @@ private:
     bool fetchAgentWriteInUse_{false};
 
     // ORB chain state
-    SBP2CommandORB* lastORB_{nullptr};
-    SBP2CommandORB* deferredORB_{nullptr};
+    SBP2CommandORB* chainTailORB_{nullptr};
+    SBP2CommandORB* activeFetchAgentORB_{nullptr};
+    std::deque<SBP2CommandORB*> pendingImmediateORBs_;
+    std::unordered_map<uint64_t, SBP2CommandORB*> outstandingORBs_;
 
     // Doorbell state
     Async::AsyncHandle doorbellWriteHandle_{};
