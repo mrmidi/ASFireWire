@@ -68,7 +68,7 @@ class DriverViewModel: ObservableObject {
         }
     }
     
-    func installDriver() {
+    func installDriver(completion: ((Result<String, Error>) -> Void)? = nil) {
         isBusy = true
         activationStatus = "Requesting activation..."
         log("Activation request submitted", source: .app, level: .info)
@@ -85,6 +85,7 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = "Error: \(error.localizedDescription)"
                     self.log(error.localizedDescription, source: .app, level: .error)
                 }
+                completion?(result)
             }
         }
     }

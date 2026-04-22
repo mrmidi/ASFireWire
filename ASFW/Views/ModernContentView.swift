@@ -9,6 +9,7 @@ import SwiftUI
 import Foundation
 
 struct ModernContentView: View {
+    let autoActivateDriverOnLaunch: Bool
     @StateObject private var driverVM = DriverViewModel()
     @StateObject private var debugVM = DebugViewModel()
     @StateObject private var sbp2DebugVM: SBP2DebugViewModel
@@ -16,8 +17,10 @@ struct ModernContentView: View {
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
+    @State private var didTriggerAutoDriverActivation = false
 
-    init() {
+    init(autoActivateDriverOnLaunch: Bool = false) {
+        self.autoActivateDriverOnLaunch = autoActivateDriverOnLaunch
         let driverViewModel = DriverViewModel()
         let debugViewModel = DebugViewModel()
         let sbp2ViewModel = SBP2DebugViewModel(connector: debugViewModel.connector)
@@ -143,7 +146,7 @@ struct ModernContentView: View {
                         }
                         
                         Button {
-                            driverVM.installDriver()
+                            reinstallDriverAndReconnect()
                         } label: {
                             Label("Install", systemImage: "arrow.down.circle.fill")
                         }
@@ -177,10 +180,15 @@ struct ModernContentView: View {
         }
         .onAppear {
             debugVM.setDriverViewModel(driverVM)
-            debugVM.connect()
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
             loadLoggingPreset()
+            if autoActivateDriverOnLaunch && !didTriggerAutoDriverActivation {
+                didTriggerAutoDriverActivation = true
+                reinstallDriverAndReconnect()
+            } else {
+                debugVM.connect()
+            }
         }
         .onDisappear {
             debugVM.disconnect()
@@ -233,6 +241,18 @@ struct ModernContentView: View {
                         self.loggingPreset = .standard
                     }
                 }
+            }
+        }
+    }
+
+    private func reinstallDriverAndReconnect() {
+        debugVM.disconnect()
+        driverVM.driverVersion = nil
+
+        driverVM.installDriver { _ in
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                debugVM.connect(forceAttempt: true)
             }
         }
     }

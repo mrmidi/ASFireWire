@@ -75,8 +75,8 @@ class DebugViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
-    func connect() {
-        connector.connect(forceAttempt: false)
+    func connect(forceAttempt: Bool = false) {
+        connector.connect(forceAttempt: forceAttempt)
     }
     
     func disconnect() {
