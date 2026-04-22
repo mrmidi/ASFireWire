@@ -247,12 +247,12 @@ TEST(SBP2LoginSessionTests, SolicitedStatusCompletesORBMatchingByORBAddress) {
     SBP2CommandORB first(rig.addressManager, &rig.session, 16);
     first.SetFlags(0);
     int firstStatus = 99;
-    first.SetCompletionCallback([&firstStatus](int status) { firstStatus = status; });
+    first.SetCompletionCallback([&firstStatus](int status, uint8_t) { firstStatus = status; });
 
     SBP2CommandORB second(rig.addressManager, &rig.session, 16);
     second.SetFlags(0);
     int secondStatus = 99;
-    second.SetCompletionCallback([&secondStatus](int status) { secondStatus = status; });
+    second.SetCompletionCallback([&secondStatus](int status, uint8_t) { secondStatus = status; });
 
     ASSERT_TRUE(rig.session.SubmitORB(&first));
     ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));

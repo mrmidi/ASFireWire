@@ -88,7 +88,7 @@ TEST(SBP2ORBTests, CommandORBTimerFiresOnHostQueue) {
     SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x1), 16);
     int completionStatus = 99;
     orb.SetTimeout(5);
-    orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
+    orb.SetCompletionCallback([&completionStatus](int status, uint8_t) { completionStatus = status; });
 
     orb.StartTimer(&rig.queue);
     rig.AdvanceMs(5);
@@ -102,7 +102,7 @@ TEST(SBP2ORBTests, CommandORBCancelSuppressesPendingTimeout) {
     SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x2), 16);
     int completionCount = 0;
     orb.SetTimeout(5);
-    orb.SetCompletionCallback([&completionCount](int) { ++completionCount; });
+    orb.SetCompletionCallback([&completionCount](int, uint8_t) { ++completionCount; });
 
     orb.StartTimer(&rig.queue);
     orb.CancelTimer();
@@ -119,7 +119,7 @@ TEST(SBP2ORBTests, CommandORBDestructionInvalidatesPendingTimeout) {
         auto orb = std::make_unique<SBP2CommandORB>(
             rig.addressManager, reinterpret_cast<void*>(0x3), 16);
         orb->SetTimeout(5);
-        orb->SetCompletionCallback([&completionCount](int) { ++completionCount; });
+        orb->SetCompletionCallback([&completionCount](int, uint8_t) { ++completionCount; });
         orb->StartTimer(&rig.queue);
     }
 
