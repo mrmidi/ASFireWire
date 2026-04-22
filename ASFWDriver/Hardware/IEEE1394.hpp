@@ -90,11 +90,18 @@ constexpr uint8_t kPhyContender  = 0x40;  // Bit 6
 // PHY gap count mask (register-level value: lower 6 bits)
 constexpr uint8_t kPhyGapCountMask = 0x3Fu; // 6-bit gap count field in PHY reg1
 
+// PHY register 1: bus reset control
+// Bit 6 = IBR (Initiate Bus Reset) — long bus reset
+constexpr uint8_t kPhyReg1Address = 1;
+constexpr uint8_t kPhyInitiateBusReset = 0x40;  // Bit 6
+
 // PHY register 5: IEEE 1394a enhancement bits
+// Bit 6 = SBR (Initiate Short Bus Reset) per IEEE 1394a §7.2.2
 // Bit 6 = Enab_accel (accelerated arbitration)
 // Bit 5 = Enab_multi (multi-speed packet concatenation)
 // Per Linux firewire_ohci configure_1394a_enhancements(): both bits are set together.
 constexpr uint8_t kPhyReg5Address = 5;
-constexpr uint8_t kPhyEnableAcceleration = 0x40;  // Bit 6
-constexpr uint8_t kPhyEnableMulti = 0x20;          // Bit 5
+constexpr uint8_t kPhyEnableAcceleration = 0x40;  // Bit 6 (also SBR when written standalone)
+constexpr uint8_t kPhyInitiateShortBusReset = 0x40; // Bit 6 = SBR (IEEE 1394a)
+constexpr uint8_t kPhyEnableMulti = 0x20;            // Bit 5
 }
