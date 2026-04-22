@@ -57,6 +57,7 @@ class FCPResponseRouter;
 
 namespace ASFW::Protocols::SBP2 {
 class AddressSpaceManager;
+class SBP2SessionRegistry;
 }
 
 namespace ASFW::IRM {
@@ -96,6 +97,7 @@ class ControllerCore {
         std::shared_ptr<ASFW::Protocols::AVC::AVCDiscovery> avcDiscovery;
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
         std::shared_ptr<ASFW::Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager;
+        std::shared_ptr<ASFW::Protocols::SBP2::SBP2SessionRegistry> sbp2SessionRegistry;
 
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
 
@@ -139,6 +141,11 @@ class ControllerCore {
     void SetFCPResponseRouter(std::shared_ptr<Protocols::AVC::FCPResponseRouter> fcpResponseRouter);
 
     Protocols::SBP2::AddressSpaceManager* GetSbp2AddressSpaceManager() const;
+    Protocols::SBP2::SBP2SessionRegistry* GetSBP2SessionRegistry() const;
+    void SetSbp2AddressSpaceManager(
+        std::shared_ptr<Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager);
+    void SetSBP2SessionRegistry(
+        std::shared_ptr<Protocols::SBP2::SBP2SessionRegistry> sbp2SessionRegistry);
 
     IRM::IRMClient* GetIRMClient() const;
     void SetIRMClient(std::shared_ptr<IRM::IRMClient> client);

@@ -514,8 +514,11 @@ struct DriverConnectorFWDeviceInfo: Identifiable {
     let generation: UInt32
     let state: DriverConnectorFWDeviceState
     let units: [DriverConnectorFWUnitInfo]
+    let deviceKind: UInt8  // DeviceKind enum value from driver
 
     var stateString: String { state.description }
+    var isStorage: Bool { deviceKind == 4 }  // DeviceKind::Storage = 4
+    var storageUnits: [DriverConnectorFWUnitInfo] { units.filter(\.isSBP2Storage) }
 }
 
 struct DriverConnectorFWUnitInfo: Identifiable {
@@ -530,6 +533,7 @@ struct DriverConnectorFWUnitInfo: Identifiable {
     var specIdHex: String { String(format: "0x%06X", specId) }
     var swVersionHex: String { String(format: "0x%06X", swVersion) }
     var stateString: String { state.description }
+    var isSBP2Storage: Bool { specId == 0x010483 }
 }
 
 // API compatibility aliases (keep existing public names and nested access stable)

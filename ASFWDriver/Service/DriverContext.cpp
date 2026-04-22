@@ -28,6 +28,7 @@
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
+#include "../Protocols/SBP2/SBP2SessionRegistry.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::Reset() {
@@ -47,6 +48,7 @@ void ServiceContext::Reset() {
     deps.topology.reset();
     deps.fcpResponseRouter.reset();  // Clean up FCP router
     deps.sbp2AddressSpaceManager.reset();
+    deps.sbp2SessionRegistry.reset();
     deps.avcDiscovery.reset();       // Clean up AV/C discovery
     deps.irmClient.reset();          // Clean up IRM client
     deps.asyncController.reset();
@@ -151,6 +153,23 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
         d.sbp2AddressSpaceManager = std::make_shared<ASFW::Protocols::SBP2::AddressSpaceManager>(
             d.hardware.get());
         ASFW_LOG(Controller, "[Controller] SBP2 AddressSpaceManager initialized");
+    }
+
+    if (!d.sbp2SessionRegistry && ctx.controller && d.deviceManager && d.sbp2AddressSpaceManager) {
+        auto& bus = ctx.controller->Bus();
+        d.sbp2SessionRegistry =
+            std::make_shared<ASFW::Protocols::SBP2::SBP2SessionRegistry>(
+                bus,
+                bus,
+                *d.sbp2AddressSpaceManager,
+                *d.deviceManager,
+                ctx.workQueue.get());
+        ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");
+    }
+
+    if (ctx.controller) {
+        ctx.controller->SetSbp2AddressSpaceManager(d.sbp2AddressSpaceManager);
+        ctx.controller->SetSBP2SessionRegistry(d.sbp2SessionRegistry);
     }
 
     if (d.asyncSubsystem) {

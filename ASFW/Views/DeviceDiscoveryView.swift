@@ -9,6 +9,7 @@ import SwiftUI
 
 struct DeviceDiscoveryView: View {
     @ObservedObject var viewModel: DebugViewModel
+    var onOpenSBP2Device: ((ASFWDriverConnector.FWDeviceInfo) -> Void)? = nil
     @State private var devices: [ASFWDriverConnector.FWDeviceInfo] = []
     @State private var selectedDeviceId: UInt64?
     @State private var autoRefreshEnabled = true
@@ -71,7 +72,7 @@ struct DeviceDiscoveryView: View {
 
                     // Right: Device details
                     if let selectedDevice = devices.first(where: { $0.id == selectedDeviceId }) {
-                        DeviceDetailView(device: selectedDevice)
+                        DeviceDetailView(device: selectedDevice, onOpenSBP2Device: onOpenSBP2Device)
                     } else {
                         ContentUnavailableView(
                             "Select a Device",
@@ -160,6 +161,7 @@ struct DeviceRowView: View {
 
 struct DeviceDetailView: View {
     let device: ASFWDriverConnector.FWDeviceInfo
+    var onOpenSBP2Device: ((ASFWDriverConnector.FWDeviceInfo) -> Void)? = nil
 
     var body: some View {
         ScrollView {
@@ -207,8 +209,31 @@ struct DeviceDetailView: View {
                             Text(String(format: "0x%06X", device.modelId))
                                 .monospaced()
                         }
+                        GridRow {
+                            Text("Kind:")
+                                .fontWeight(.medium)
+                            Text(device.isStorage ? "Storage (SBP-2)" : "Other")
+                        }
                     }
                     .padding()
+                }
+
+                if device.isStorage, let onOpenSBP2Device {
+                    GroupBox("Storage Debug") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("This device exposes at least one SBP-2 storage unit.")
+                                .foregroundStyle(.secondary)
+
+                            Button {
+                                onOpenSBP2Device(device)
+                            } label: {
+                                Label("Open SBP-2 Debug", systemImage: "externaldrive.badge.questionmark")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                    }
                 }
 
                 // Units Section

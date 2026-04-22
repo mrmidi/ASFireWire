@@ -62,6 +62,14 @@ void FWUnit::ParseEntries(const std::vector<RomEntry>& entries)
                 modelId_ = entry.value;
                 break;
 
+            case CfgKey::Management_Agent_Offset:
+                managementAgentOffset_ = entry.value;
+                break;
+
+            case CfgKey::Unit_Characteristics:
+                unitCharacteristics_ = entry.value;
+                break;
+
             // Other keys (CSR offsets, dependent directories) ignored for now
             default:
                 break;

@@ -62,6 +62,13 @@ enum {
     kMethodGetBusStateDiagnostics = 50,
     kMethodReadPhyRegister = 51,
     kMethodInitiateBusReset = 52,
+    // SBP-2 session management
+    kMethodCreateSBP2Session = 53,
+    kMethodStartSBP2Login = 54,
+    kMethodGetSBP2SessionState = 55,
+    kMethodSubmitSBP2Inquiry = 56,
+    kMethodGetSBP2InquiryResult = 57,
+    kMethodReleaseSBP2Session = 58,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -503,6 +510,25 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
 
     case kMethodInitiateBusReset:
         return runtimeState->Diagnostics().InitiateBusReset(arguments);
+
+    // SBP-2 session management (53-58)
+    case kMethodCreateSBP2Session:
+        return runtimeState->SBP2().CreateSBP2Session(arguments, this);
+
+    case kMethodStartSBP2Login:
+        return runtimeState->SBP2().StartSBP2Login(arguments);
+
+    case kMethodGetSBP2SessionState:
+        return runtimeState->SBP2().GetSBP2SessionState(arguments);
+
+    case kMethodSubmitSBP2Inquiry:
+        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments);
+
+    case kMethodGetSBP2InquiryResult:
+        return runtimeState->SBP2().GetSBP2InquiryResult(arguments);
+
+    case kMethodReleaseSBP2Session:
+        return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
 
     default:
         return kIOReturnBadArgument;

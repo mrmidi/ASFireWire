@@ -116,6 +116,10 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         // Device-scoped CMP wiring is done at stream start time (IsochService).
     }
 
+    if (deps_.sbp2SessionRegistry) {
+        deps_.sbp2SessionRegistry->OnBusReset(static_cast<uint16_t>(snap.generation));
+    }
+
     // NOTE: CSR STATE_SET CMSTR write removed. Apple IOFireWireFamily does NOT write
     // CSR STATE_SET via async transactions — it uses the OHCI LinkControl register
     // directly (kCycleMaster bit), which ASFWDriver already sets in kDefaultLinkControl
@@ -219,6 +223,10 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u", roms.size(),
              gen.value);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
+
+    if (deps_.sbp2SessionRegistry) {
+        deps_.sbp2SessionRegistry->RefreshTargets(gen);
+    }
 }
 
 } // namespace ASFW::Driver

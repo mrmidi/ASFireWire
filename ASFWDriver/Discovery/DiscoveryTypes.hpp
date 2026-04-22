@@ -87,6 +87,9 @@ enum class CfgKey : uint8_t {
     Logical_Unit_Number = 0x14,
     Node_Capabilities = 0x0C,
     Unit_Directory = 0xD1,  // IEEE 1212 Unit_Directory (keyId=0x11 when keyType=3)
+    Management_Agent_Offset = 0x38,  // SBP-2 (CSR offset type=1 in unit directory)
+    Unit_Characteristics   = 0x39,  // SBP-2 (immediate in unit directory)
+    Fast_Start             = 0x3A,  // SBP-2 (leaf in unit directory)
 };
 
 struct RomEntry {
@@ -107,6 +110,11 @@ struct UnitDirectory {
     std::optional<uint32_t> logicalUnitNumber;
     std::optional<uint32_t> modelId;
     std::optional<std::string> modelName;
+
+    // SBP-2 specific (from Management_Agent_Offset, Unit_Characteristics, Fast_Start keys)
+    std::optional<uint32_t> managementAgentOffset;
+    std::optional<uint32_t> unitCharacteristics;
+    std::optional<uint32_t> fastStart;
 };
 
 // ROM lifecycle state (matching Apple IOFireWireROMCache patterns)

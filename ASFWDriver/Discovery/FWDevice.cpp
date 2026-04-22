@@ -121,6 +121,29 @@ std::vector<RomEntry> FWDevice::ExtractUnitDirectory(
                     entries.push_back(RomEntry{CfgKey::Logical_Unit_Number, value, keyType, 0});
                 }
                 break;
+            case 0x38:  // Management_Agent_Offset (SBP-2, CSR offset)
+                if (keyType == 1) {
+                    entries.push_back(RomEntry{CfgKey::Management_Agent_Offset, value, keyType, 0});
+                }
+                break;
+            case 0x39:  // Unit_Characteristics (SBP-2, immediate)
+                if (keyType == 0) {
+                    entries.push_back(RomEntry{CfgKey::Unit_Characteristics, value, keyType, 0});
+                }
+                break;
+            case 0x3A:  // Fast_Start (SBP-2, leaf)
+                if (keyType == 2) {
+                    // Compute leaf offset: value is a signed 24-bit offset from this entry
+                    const int32_t signedValue = ((value & 0x800000U) != 0U)
+                        ? static_cast<int32_t>(value | 0xFF000000U)
+                        : static_cast<int32_t>(value);
+                    const int32_t rel = static_cast<int32_t>(i) + signedValue;
+                    if (rel >= 0) {
+                        entries.push_back(RomEntry{CfgKey::Fast_Start, value, keyType,
+                                                   static_cast<uint32_t>(rel)});
+                    }
+                }
+                break;
             default:
                 break;
         }

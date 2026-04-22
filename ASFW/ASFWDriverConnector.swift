@@ -59,6 +59,13 @@ final class ASFWDriverConnector: ObservableObject {
         case deallocateAddressRange = 47
         case readIncomingData = 48
         case writeLocalData = 49
+        // SBP-2 session management
+        case createSBP2Session = 53
+        case startSBP2Login = 54
+        case getSBP2SessionState = 55
+        case submitSBP2Inquiry = 56
+        case getSBP2InquiryResult = 57
+        case releaseSBP2Session = 58
     }
 
     // MARK: - Re-exported Models

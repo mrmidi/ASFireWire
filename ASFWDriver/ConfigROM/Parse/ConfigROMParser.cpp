@@ -134,6 +134,29 @@ void ConfigROMParser::AppendRecognizedEntry(std::vector<RomEntry>& entries, uint
         }
         return;
 
+    case 0x38: // Management_Agent_Offset (SBP-2) — CSR offset in unit directory
+        if (keyType == EntryType::kCSROffset) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Management_Agent_Offset, .value = value, .entryType = keyType});
+        }
+        return;
+
+    case 0x39: // Unit_Characteristics (SBP-2) — immediate
+        if (keyType == EntryType::kImmediate) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Unit_Characteristics, .value = value, .entryType = keyType});
+        }
+        return;
+
+    case 0x3A: // Fast_Start (SBP-2) — leaf
+        if (keyType == EntryType::kLeaf && targetOffsetQuadlets != 0) {
+            entries.push_back(
+                RomEntry{.key = CfgKey::Fast_Start,
+                         .value = value,
+                         .entryType = keyType,
+                         .leafOffsetQuadlets = targetOffsetQuadlets});
+        }
+        return;
     default:
         return;
     }

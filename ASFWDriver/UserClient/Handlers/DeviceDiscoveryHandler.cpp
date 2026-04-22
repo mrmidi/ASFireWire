@@ -139,7 +139,7 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
         deviceWire.nodeId = device->GetNodeID();
         deviceWire.state = StateToWire(device->GetState());
         deviceWire.unitCount = static_cast<uint8_t>(device->GetUnits().size());
-        deviceWire._padding = 0;
+        deviceWire.deviceKind = static_cast<uint8_t>(device->GetKind());
 
         // Copy vendor and model names
         CopyStringToBuffer(deviceWire.vendorName, sizeof(deviceWire.vendorName),

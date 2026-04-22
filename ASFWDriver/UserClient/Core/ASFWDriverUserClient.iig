@@ -63,6 +63,13 @@ public:
         kMethodGetBusStateDiagnostics  = 50,
         kMethodReadPhyRegister         = 51,
         kMethodInitiateBusReset        = 52,
+        // SBP-2 session management
+        kMethodCreateSBP2Session       = 53,
+        kMethodStartSBP2Login          = 54,
+        kMethodGetSBP2SessionState     = 55,
+        kMethodSubmitSBP2Inquiry       = 56,
+        kMethodGetSBP2InquiryResult    = 57,
+        kMethodReleaseSBP2Session      = 58,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

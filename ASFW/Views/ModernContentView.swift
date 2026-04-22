@@ -11,6 +11,7 @@ import Foundation
 struct ModernContentView: View {
     @StateObject private var driverVM = DriverViewModel()
     @StateObject private var debugVM = DebugViewModel()
+    @StateObject private var sbp2DebugVM: SBP2DebugViewModel
     @StateObject private var topologyVM: TopologyViewModel
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @State private var selectedSection: SidebarSection? = .overview
@@ -19,9 +20,11 @@ struct ModernContentView: View {
     init() {
         let driverViewModel = DriverViewModel()
         let debugViewModel = DebugViewModel()
+        let sbp2ViewModel = SBP2DebugViewModel(connector: debugViewModel.connector)
         let topologyViewModel = TopologyViewModel(connector: debugViewModel.connector)
         _driverVM = StateObject(wrappedValue: driverViewModel)
         _debugVM = StateObject(wrappedValue: debugViewModel)
+        _sbp2DebugVM = StateObject(wrappedValue: sbp2ViewModel)
         _topologyVM = StateObject(wrappedValue: topologyViewModel)
         _romExplorerVM = StateObject(wrappedValue: RomExplorerViewModel(
             connector: debugViewModel.connector,
@@ -32,6 +35,7 @@ struct ModernContentView: View {
     enum SidebarSection: String, CaseIterable, Identifiable {
         case overview = "Overview"
         case devices = "Device Discovery"
+        case sbp2 = "SBP-2 Debug"
         case avcUnits = "AV/C Units"
         case avcCommands = "AV/C Commands"
         case ping = "Ping"
@@ -53,6 +57,7 @@ struct ModernContentView: View {
             switch self {
             case .overview: return "info.circle"
             case .devices: return "externaldrive.connected.to.line.below"
+            case .sbp2: return "externaldrive.badge.questionmark"
             case .avcUnits: return "music.note"
             case .avcCommands: return "command"
             case .ping: return "waveform.path"
@@ -90,7 +95,12 @@ struct ModernContentView: View {
                 case .overview:
                     OverviewView(viewModel: driverVM)
                 case .devices:
-                    DeviceDiscoveryView(viewModel: debugVM)
+                    DeviceDiscoveryView(viewModel: debugVM) { device in
+                        sbp2DebugVM.openDevice(device)
+                        selectedSection = .sbp2
+                    }
+                case .sbp2:
+                    SBP2DebugView(viewModel: sbp2DebugVM)
                 case .avcUnits:
                     AVCDebugView(viewModel: debugVM)
                 case .avcCommands:

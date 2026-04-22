@@ -32,7 +32,7 @@ struct __attribute__((packed)) FWDeviceWire {
     uint8_t nodeId;
     uint8_t state;              // 0=Created, 1=Ready, 2=Suspended, 3=Terminated
     uint8_t unitCount;          // Number of units following this device
-    uint8_t _padding;
+    uint8_t deviceKind;         // DeviceKind enum value
     char vendorName[64];        // null-terminated
     char modelName[64];         // null-terminated
     // Followed by: FWUnitWire array (unitCount elements)

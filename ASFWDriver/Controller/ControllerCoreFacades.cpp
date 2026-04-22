@@ -110,6 +110,20 @@ Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager
     return deps_.sbp2AddressSpaceManager.get();
 }
 
+Protocols::SBP2::SBP2SessionRegistry* ControllerCore::GetSBP2SessionRegistry() const {
+    return deps_.sbp2SessionRegistry.get();
+}
+
+void ControllerCore::SetSbp2AddressSpaceManager(
+    std::shared_ptr<Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager) {
+    deps_.sbp2AddressSpaceManager = std::move(sbp2AddressSpaceManager);
+}
+
+void ControllerCore::SetSBP2SessionRegistry(
+    std::shared_ptr<Protocols::SBP2::SBP2SessionRegistry> sbp2SessionRegistry) {
+    deps_.sbp2SessionRegistry = std::move(sbp2SessionRegistry);
+}
+
 void ControllerCore::SetIRMClient(std::shared_ptr<IRM::IRMClient> client) {
     deps_.irmClient = std::move(client);
 }
