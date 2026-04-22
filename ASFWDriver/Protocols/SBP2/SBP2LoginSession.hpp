@@ -17,6 +17,12 @@
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
+#ifdef ASFW_HOST_TEST
+#include <chrono>
+#include <thread>
+#else
+#include <DriverKit/IODispatchQueue.h>
+#endif
 
 #include <functional>
 #include <optional>
@@ -129,6 +135,14 @@ public:
     /// Set status block notification callback (receives solicited + unsolicited status).
     void SetStatusCallback(StatusCallback cb) noexcept { statusCallback_ = std::move(cb); }
 
+    /// Bind the IODispatchQueue used for delayed callbacks (timers).
+    /// Must be called before Login() for timeout/retry support.
+#ifdef ASFW_HOST_TEST
+    void SetWorkQueue(void* queue) noexcept { workQueue_ = queue; }
+#else
+    void SetWorkQueue(IODispatchQueue* queue) noexcept;
+#endif
+
     // -----------------------------------------------------------------------
     // Session operations
     // -----------------------------------------------------------------------
@@ -204,8 +218,17 @@ private:
     // Internal: status block handling
     // -----------------------------------------------------------------------
 
-    /// Called when a status block write arrives from the device.
+    /// Called by AddressSpaceManager remote-write callback when the device
+    /// writes a status block. Dispatches to the appropriate state handler.
+    void OnStatusBlockRemoteWrite(uint32_t offset, std::span<const uint8_t> payload) noexcept;
+
+    /// Parse and dispatch a received status block.
     void ProcessStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
+
+    // Internal: login/reconnect completion via status block
+    void CompleteLoginFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
+    void CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
+    void CompleteLogoutFromStatusBlock(const Wire::StatusBlock& block, uint32_t length) noexcept;
 
     // -----------------------------------------------------------------------
     // Internal: helpers
@@ -215,9 +238,12 @@ private:
     void StartLoginTimer() noexcept;
     void CancelLoginTimer() noexcept;
 
-    /// Submit a delayed callback (simulates Apple's createDelayedCmd).
+    /// Submit a delayed callback via IOTimerDispatchSource.
     void SubmitDelayedCallback(uint64_t delayMs,
                                std::function<void()> callback) noexcept;
+
+    /// Cancel any pending timer callback.
+    void CancelPendingTimer() noexcept;
 
     // -----------------------------------------------------------------------
     // Members
@@ -294,6 +320,17 @@ private:
     LoginCallback loginCallback_;
     LogoutCallback logoutCallback_;
     StatusCallback statusCallback_;
+
+    // -----------------------------------------------------------------------
+    // Timer infrastructure
+    // -----------------------------------------------------------------------
+
+#ifdef ASFW_HOST_TEST
+    void* workQueue_{nullptr};
+#else
+    IODispatchQueue* workQueue_{nullptr};
+#endif
+    std::function<void()> pendingTimerCallback_;
 
     // -----------------------------------------------------------------------
     // Constants

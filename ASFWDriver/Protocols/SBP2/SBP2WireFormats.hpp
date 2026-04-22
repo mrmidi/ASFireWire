@@ -245,7 +245,7 @@ struct CommandBlockAgentOffsets {
 
 namespace Options {
     // Login ORB options
-    static constexpr uint16_t kExclusiveLogin = ToBE16(0x0020);
+    static constexpr uint16_t kExclusiveLogin = ToBE16(0x2000); // bit 13 per SBP-2 Table 14
 
     // Reconnect ORB options
     static constexpr uint16_t kReconnectNotify = ToBE16(0x8003); // reconnect + notify

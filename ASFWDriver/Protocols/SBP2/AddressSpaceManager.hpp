@@ -8,6 +8,7 @@
 #include <span>
 #include <unordered_map>
 #include <vector>
+#include <functional>
 
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
@@ -22,6 +23,11 @@ namespace ASFW::Protocols::SBP2 {
 
 class AddressSpaceManager {
 public:
+    // Callback invoked when a remote write arrives for a registered range.
+    // Parameters: handle, offset within range, payload data.
+    using RemoteWriteCallback = std::function<void(uint64_t handle,
+                                                   uint32_t offset,
+                                                   std::span<const uint8_t> payload)>;
     struct AddressRangeMeta {
         uint64_t handle{0};
         uint64_t address{0};
@@ -197,16 +203,30 @@ public:
             return Async::ResponseCode::AddressError;
         }
 
-        IOLockLock(lock_);
-        auto* range = FindRangeByAddressLocked(address, static_cast<uint32_t>(payload.size()));
-        if (!range) {
+        RemoteWriteCallback callback;
+        uint64_t handle = 0;
+        uint32_t offset = 0;
+
+        {
+            IOLockLock(lock_);
+            auto* range = FindRangeByAddressLocked(address, static_cast<uint32_t>(payload.size()));
+            if (!range) {
+                IOLockUnlock(lock_);
+                return Async::ResponseCode::AddressError;
+            }
+
+            offset = static_cast<uint32_t>(address - range->meta.address);
+            WriteBytesLocked(*range, offset, payload);
+            callback = range->onRemoteWrite;
+            handle = range->meta.handle;
             IOLockUnlock(lock_);
-            return Async::ResponseCode::AddressError;
         }
 
-        const uint32_t offset = static_cast<uint32_t>(address - range->meta.address);
-        WriteBytesLocked(*range, offset, payload);
-        IOLockUnlock(lock_);
+        // Fire callback outside lock to avoid deadlock.
+        if (callback) {
+            callback(handle, offset, payload);
+        }
+
         return Async::ResponseCode::Complete;
     }
 
@@ -281,6 +301,21 @@ public:
         IOLockUnlock(lock_);
     }
 
+    // Register a callback to fire when a remote write arrives for the given handle.
+    // Must be called after AllocateAddressRange. Replaces any previous callback.
+    void SetRemoteWriteCallback(uint64_t handle, RemoteWriteCallback callback) {
+        if (!lock_ || handle == 0) {
+            return;
+        }
+
+        IOLockLock(lock_);
+        auto it = ranges_.find(handle);
+        if (it != ranges_.end()) {
+            it->second.onRemoteWrite = std::move(callback);
+        }
+        IOLockUnlock(lock_);
+    }
+
     void ClearAll() {
         if (!lock_) {
             return;
@@ -299,6 +334,7 @@ private:
         AddressRangeMeta meta{};
         void* owner{nullptr};
         std::vector<uint8_t> buffer;
+        RemoteWriteCallback onRemoteWrite;
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};

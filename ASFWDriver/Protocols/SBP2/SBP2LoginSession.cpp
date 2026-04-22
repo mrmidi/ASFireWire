@@ -268,6 +268,15 @@ bool SBP2LoginSession::AllocateResources() noexcept {
     if (!AllocateReconnectORBAddressSpace()) return false;
     if (!AllocateLogoutORBAddressSpace()) return false;
 
+    // Register a callback for status block writes — the device writes status
+    // here to signal login/reconnect/logout completion (and ORB completion
+    // in Step 2).
+    addrSpaceMgr_.SetRemoteWriteCallback(
+        statusBlockHandle_,
+        [this](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
+            OnStatusBlockRemoteWrite(offset, payload);
+        });
+
     ASFW_LOG(SBP2, "SBP2LoginSession: all address spaces allocated");
     return true;
 }
@@ -419,11 +428,11 @@ void SBP2LoginSession::BuildReconnectORB() noexcept {
     reconnectORBBuffer_.options = Options::kReconnectNotify;
     reconnectORBBuffer_.loginID = ToBE16(loginID_);
 
-    // Status FIFO address (use the reconnect-specific one).
+    // Status FIFO address — reuse the dedicated status block address space.
     const uint32_t statusAddrHi = ToBE32(
-        (static_cast<uint32_t>(reconnectORBMeta_.addressHi)) |
+        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
         (static_cast<uint32_t>(localNode) << 16));
-    const uint32_t statusAddrLo = ToBE32(reconnectORBMeta_.addressLo);
+    const uint32_t statusAddrLo = ToBE32(statusBlockMeta_.addressLo);
     reconnectORBBuffer_.statusFIFOAddressHi = statusAddrHi;
     reconnectORBBuffer_.statusFIFOAddressLo = statusAddrLo;
 
@@ -450,10 +459,11 @@ void SBP2LoginSession::BuildLogoutORB() noexcept {
     logoutORBBuffer_.options = Options::kLogoutNotify;
     logoutORBBuffer_.loginID = ToBE16(loginID_);
 
+    // Status FIFO address — reuse the dedicated status block address space.
     const uint32_t statusAddrHi = ToBE32(
-        (static_cast<uint32_t>(logoutORBMeta_.addressHi)) |
+        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
         (static_cast<uint32_t>(localNode) << 16));
-    const uint32_t statusAddrLo = ToBE32(logoutORBMeta_.addressLo);
+    const uint32_t statusAddrLo = ToBE32(statusBlockMeta_.addressLo);
     logoutORBBuffer_.statusFIFOAddressHi = statusAddrHi;
     logoutORBBuffer_.statusFIFOAddressLo = statusAddrLo;
 
@@ -485,7 +495,6 @@ void SBP2LoginSession::OnLoginWriteComplete(Async::AsyncStatus status,
         if (loginRetryCount_ < kLoginRetryMax) {
             loginRetryCount_++;
             SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
-                // Update generation in case of bus reset during retries.
                 loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
                 loginNodeID_ = targetInfo_.targetNodeId;
                 SetState(LoginState::Idle);
@@ -506,142 +515,17 @@ void SBP2LoginSession::OnLoginWriteComplete(Async::AsyncStatus status,
         return;
     }
 
-    // Management agent write succeeded — the device will now fetch the ORB
-    // and write a status block. Read the login response from our address space.
-    std::vector<uint8_t> responseData;
-    auto kr = addrSpaceMgr_.ReadIncomingData(
-        this, loginResponseHandle_, 0, sizeof(Wire::LoginResponse), &responseData);
-
-    if (kr != kIOReturnSuccess || responseData.size() < sizeof(Wire::LoginResponse)) {
-        ASFW_LOG(SBP2,
-                 "SBP2LoginSession: failed to read login response (kr=0x%08x, len=%zu)",
-                 kr, responseData.size());
-
-        // Still check status block — maybe the device wrote status before response.
-        // For now, treat as failure and retry.
-        if (loginRetryCount_ < kLoginRetryMax) {
-            loginRetryCount_++;
-            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                Login();
-            });
-            return;
-        }
-
-        SetState(LoginState::Failed);
-        if (loginCallback_) {
-            LoginCompleteParams params{};
-            params.status = -1;
-            params.generation = loginGeneration_;
-            loginCallback_(params);
-        }
-        return;
-    }
-
-    // Parse login response.
-    Wire::LoginResponse resp{};
-    std::memcpy(&resp, responseData.data(), sizeof(resp));
-
-    // Convert from big-endian.
-    loginID_ = FromBE16(resp.loginID);
-    reconnectHold_ = FromBE16(resp.reconnectHold);
-    loginResponse_ = resp;
-
-    // Extract command block agent address.
-    const uint32_t cbaHi = FromBE32(resp.commandBlockAgentAddressHi);
-    const uint32_t cbaLo = FromBE32(resp.commandBlockAgentAddressLo);
-    commandBlockAgent_ = Async::FWAddress{
-        Async::FWAddress::QualifiedAddressParts{
-            .addressHi = static_cast<uint16_t>(cbaHi & 0xFFFFu),
-            .addressLo = cbaLo,
-            .nodeID = loginNodeID_
-        }
-    };
-
-    // Also read status block.
-    std::vector<uint8_t> statusData;
-    addrSpaceMgr_.ReadIncomingData(
-        this, statusBlockHandle_, 0, Wire::StatusBlock::kMaxSize, &statusData);
-
-    Wire::StatusBlock statusBlock{};
-    uint32_t statusLen = 0;
-    if (statusData.size() >= sizeof(uint8_t)) {
-        statusLen = static_cast<uint32_t>(statusData.size());
-        if (statusLen > sizeof(statusBlock)) {
-            statusLen = sizeof(statusBlock);
-        }
-        std::memcpy(&statusBlock, statusData.data(), statusLen);
-    }
-
-    const uint8_t sbpStatus = statusBlock.sbpStatus;
-    if (sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
-        ASFW_LOG(SBP2,
-                 "SBP2LoginSession: login failed — sbpStatus=%u, retrying (%u/%u)",
-                 sbpStatus, loginRetryCount_ + 1, kLoginRetryMax);
-
-        if (loginRetryCount_ < kLoginRetryMax) {
-            loginRetryCount_++;
-            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                Login();
-            });
-            return;
-        }
-
-        SetState(LoginState::Failed);
-        if (loginCallback_) {
-            LoginCompleteParams params{};
-            params.status = -1;
-            params.statusBlock = statusBlock;
-            params.statusBlockLength = statusLen;
-            params.generation = loginGeneration_;
-            loginCallback_(params);
-        }
-        return;
-    }
-
-    loginRetryCount_ = 0;
-    SetState(LoginState::LoggedIn);
-
-    ASFW_LOG(SBP2,
-             "SBP2LoginSession: login successful — loginID=%u, CBA=%04x:%08x, "
-             "reconnectHold=2^%u=%us",
-             loginID_,
-             commandBlockAgent_.addressHi, commandBlockAgent_.addressLo,
-             reconnectHold_, ReconnectHoldSeconds());
-
-    // Send Set Busy Timeout to the device.
-    {
-        const uint32_t busyTimeout = ToBE32(kBusyTimeoutValue);
-        const Async::FWAddress busyAddr{
-            Async::FWAddress::QualifiedAddressParts{
-                .addressHi = kCSRBusAddressHi,
-                .addressLo = kBusyTimeoutAddressLo,
-                .nodeID = loginNodeID_
-            }
-        };
-        bus_.WriteBlock(
-            FW::Generation{loginGeneration_},
-            FW::NodeId{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)},
-            busyAddr,
-            std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&busyTimeout), 4},
-            busInfo_.GetSpeed(FW::NodeId{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)}),
-            [](Async::AsyncStatus, std::span<const uint8_t>) {});
-    }
-
-    if (loginCallback_) {
-        LoginCompleteParams params{};
-        params.status = 0;
-        params.loginResponse = loginResponse_;
-        params.statusBlock = statusBlock;
-        params.statusBlockLength = statusLen;
-        params.generation = loginGeneration_;
-        loginCallback_(params);
-    }
+    // Management agent write ACK'd. The device will now:
+    //   1. Fetch the ORB via read from our address space
+    //   2. Process the login
+    //   3. Write login response to our address space
+    //   4. Write status block to our status FIFO
+    //
+    // We wait for the status block write callback (OnStatusBlockRemoteWrite)
+    // before reading the login response. Restart the timer for the device
+    // processing window.
+    ASFW_LOG(SBP2, "SBP2LoginSession: management agent write ACK'd, waiting for status block");
+    StartLoginTimer();
 }
 
 void SBP2LoginSession::OnLoginTimeout() noexcept {
@@ -680,40 +564,8 @@ void SBP2LoginSession::OnReconnectWriteComplete(Async::AsyncStatus status,
         return;
     }
 
-    // Read status block to check reconnect result.
-    std::vector<uint8_t> statusData;
-    addrSpaceMgr_.ReadIncomingData(
-        this, statusBlockHandle_, 0, Wire::StatusBlock::kMaxSize, &statusData);
-
-    Wire::StatusBlock statusBlock{};
-    uint32_t statusLen = 0;
-    if (!statusData.empty()) {
-        statusLen = static_cast<uint32_t>(std::min(statusData.size(), sizeof(statusBlock)));
-        std::memcpy(&statusBlock, statusData.data(), statusLen);
-    }
-
-    if (statusBlock.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
-        ASFW_LOG(SBP2,
-                 "SBP2LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
-                 statusBlock.sbpStatus);
-
-        SetState(LoginState::Idle);
-        Login();
-        return;
-    }
-
-    SetState(LoginState::LoggedIn);
-    ASFW_LOG(SBP2, "SBP2LoginSession: reconnect successful — loginID=%u", loginID_);
-
-    if (loginCallback_) {
-        LoginCompleteParams params{};
-        params.status = 0;
-        params.loginResponse = loginResponse_;
-        params.statusBlock = statusBlock;
-        params.statusBlockLength = statusLen;
-        params.generation = loginGeneration_;
-        loginCallback_(params);
-    }
+    // Reconnect ORB write ACK'd. Wait for status block from device.
+    ASFW_LOG(SBP2, "SBP2LoginSession: reconnect write ACK'd, waiting for status block");
 }
 
 void SBP2LoginSession::OnReconnectTimeout() noexcept {
@@ -769,12 +621,220 @@ void SBP2LoginSession::OnLogoutTimeout() noexcept {
 // Status Block Handling
 // ---------------------------------------------------------------------------
 
+void SBP2LoginSession::OnStatusBlockRemoteWrite(uint32_t offset,
+                                                 std::span<const uint8_t> payload) noexcept {
+    if (payload.empty()) {
+        return;
+    }
+
+    Wire::StatusBlock block{};
+    uint32_t len = static_cast<uint32_t>(payload.size());
+    if (len > sizeof(block)) {
+        len = sizeof(block);
+    }
+    std::memcpy(&block, payload.data(), len);
+
+    ASFW_LOG(SBP2,
+             "SBP2LoginSession::OnStatusBlockRemoteWrite: state=%s offset=%u len=%u "
+             "src=%u resp=%u dead=%u sbpStatus=%u",
+             ToString(state_), offset, len,
+             block.Source(), block.Response(), block.DeadBit(), block.sbpStatus);
+
+    // Dispatch to state-specific handler.
+    switch (state_) {
+        case LoginState::LoggingIn:
+            CancelLoginTimer();
+            CompleteLoginFromStatusBlock(block, len);
+            break;
+
+        case LoginState::Reconnecting:
+            reconnectTimerActive_ = false;
+            CompleteReconnectFromStatusBlock(block, len);
+            break;
+
+        case LoginState::LoggingOut:
+            logoutTimerActive_ = false;
+            CompleteLogoutFromStatusBlock(block, len);
+            break;
+
+        case LoginState::LoggedIn:
+            // Unsolicited status or ORB completion — forward to callback.
+            ProcessStatusBlock(block, len);
+            break;
+
+        default:
+            ASFW_LOG(SBP2, "SBP2LoginSession: unexpected status block in state %s", ToString(state_));
+            break;
+    }
+}
+
+void SBP2LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& block,
+                                                     uint32_t length) noexcept {
+    if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
+        ASFW_LOG(SBP2,
+                 "SBP2LoginSession: login failed — sbpStatus=%u, retrying (%u/%u)",
+                 block.sbpStatus, loginRetryCount_ + 1, kLoginRetryMax);
+
+        if (loginRetryCount_ < kLoginRetryMax) {
+            loginRetryCount_++;
+            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
+                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
+                loginNodeID_ = targetInfo_.targetNodeId;
+                SetState(LoginState::Idle);
+                Login();
+            });
+            return;
+        }
+
+        SetState(LoginState::Failed);
+        if (loginCallback_) {
+            LoginCompleteParams params{};
+            params.status = -1;
+            params.statusBlock = block;
+            params.statusBlockLength = length;
+            params.generation = loginGeneration_;
+            loginCallback_(params);
+        }
+        return;
+    }
+
+    // Login succeeded — read the login response that the device wrote to
+    // our address space.
+    std::vector<uint8_t> responseData;
+    auto kr = addrSpaceMgr_.ReadIncomingData(
+        this, loginResponseHandle_, 0, sizeof(Wire::LoginResponse), &responseData);
+
+    if (kr != kIOReturnSuccess || responseData.size() < sizeof(Wire::LoginResponse)) {
+        ASFW_LOG(SBP2,
+                 "SBP2LoginSession: failed to read login response (kr=0x%08x, len=%zu)",
+                 kr, responseData.size());
+
+        if (loginRetryCount_ < kLoginRetryMax) {
+            loginRetryCount_++;
+            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
+                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
+                loginNodeID_ = targetInfo_.targetNodeId;
+                SetState(LoginState::Idle);
+                Login();
+            });
+            return;
+        }
+
+        SetState(LoginState::Failed);
+        if (loginCallback_) {
+            LoginCompleteParams params{};
+            params.status = -1;
+            params.statusBlock = block;
+            params.statusBlockLength = length;
+            params.generation = loginGeneration_;
+            loginCallback_(params);
+        }
+        return;
+    }
+
+    // Parse login response.
+    Wire::LoginResponse resp{};
+    std::memcpy(&resp, responseData.data(), sizeof(resp));
+
+    loginID_ = FromBE16(resp.loginID);
+    reconnectHold_ = FromBE16(resp.reconnectHold);
+    loginResponse_ = resp;
+
+    // Extract command block agent address.
+    const uint32_t cbaHi = FromBE32(resp.commandBlockAgentAddressHi);
+    const uint32_t cbaLo = FromBE32(resp.commandBlockAgentAddressLo);
+    commandBlockAgent_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = static_cast<uint16_t>(cbaHi & 0xFFFFu),
+            .addressLo = cbaLo,
+            .nodeID = loginNodeID_
+        }
+    };
+
+    loginRetryCount_ = 0;
+    SetState(LoginState::LoggedIn);
+
+    ASFW_LOG(SBP2,
+             "SBP2LoginSession: login successful — loginID=%u, CBA=%04x:%08x, "
+             "reconnectHold=2^%u=%us",
+             loginID_,
+             commandBlockAgent_.addressHi, commandBlockAgent_.addressLo,
+             reconnectHold_, ReconnectHoldSeconds());
+
+    // Send Set Busy Timeout to the device.
+    {
+        const uint32_t busyTimeout = ToBE32(kBusyTimeoutValue);
+        const Async::FWAddress busyAddr{
+            Async::FWAddress::QualifiedAddressParts{
+                .addressHi = kCSRBusAddressHi,
+                .addressLo = kBusyTimeoutAddressLo,
+                .nodeID = loginNodeID_
+            }
+        };
+        bus_.WriteBlock(
+            FW::Generation{loginGeneration_},
+            FW::NodeId{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)},
+            busyAddr,
+            std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&busyTimeout), 4},
+            busInfo_.GetSpeed(FW::NodeId{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)}),
+            [](Async::AsyncStatus, std::span<const uint8_t>) {});
+    }
+
+    if (loginCallback_) {
+        LoginCompleteParams params{};
+        params.status = 0;
+        params.loginResponse = loginResponse_;
+        params.statusBlock = block;
+        params.statusBlockLength = length;
+        params.generation = loginGeneration_;
+        loginCallback_(params);
+    }
+}
+
+void SBP2LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock& block,
+                                                         uint32_t length) noexcept {
+    if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
+        ASFW_LOG(SBP2,
+                 "SBP2LoginSession: reconnect failed — sbpStatus=%u, falling back to full login",
+                 block.sbpStatus);
+
+        SetState(LoginState::Idle);
+        Login();
+        return;
+    }
+
+    SetState(LoginState::LoggedIn);
+    ASFW_LOG(SBP2, "SBP2LoginSession: reconnect successful — loginID=%u", loginID_);
+
+    if (loginCallback_) {
+        LoginCompleteParams params{};
+        params.status = 0;
+        params.loginResponse = loginResponse_;
+        params.statusBlock = block;
+        params.statusBlockLength = length;
+        params.generation = loginGeneration_;
+        loginCallback_(params);
+    }
+}
+
+void SBP2LoginSession::CompleteLogoutFromStatusBlock(const Wire::StatusBlock& block,
+                                                      uint32_t length) noexcept {
+    const uint16_t oldLoginID = loginID_;
+    loginID_ = 0;
+    SetState(LoginState::Idle);
+
+    ASFW_LOG(SBP2, "SBP2LoginSession: logout complete (was loginID=%u)", oldLoginID);
+
+    if (logoutCallback_) {
+        LogoutCompleteParams params{};
+        params.status = 0;
+        params.generation = loginGeneration_;
+        logoutCallback_(params);
+    }
+}
+
 void SBP2LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block,
                                            uint32_t length) noexcept {
-    ASFW_LOG(SBP2,
-             "SBP2LoginSession::ProcessStatusBlock: src=%u resp=%u dead=%u len=%u sbpStatus=%u",
-             block.Source(), block.Response(), block.DeadBit(), block.Length(), block.sbpStatus);
-
     if (statusCallback_) {
         statusCallback_(block, length);
     }
@@ -800,20 +860,35 @@ void SBP2LoginSession::StartLoginTimer() noexcept {
 
 void SBP2LoginSession::CancelLoginTimer() noexcept {
     loginTimerActive_ = false;
-    // Note: We cannot truly cancel the delayed callback in this simplified model.
-    // The timeout handler checks state_ before acting, so spurious firings are harmless.
+    CancelPendingTimer();
+}
+
+void SBP2LoginSession::SetWorkQueue(IODispatchQueue* queue) noexcept {
+    workQueue_ = queue;
+}
+
+void SBP2LoginSession::CancelPendingTimer() noexcept {
+    // With the DispatchAsync + IOSleep pattern we can't truly cancel in-flight
+    // sleeps, but timeout handlers check state_ before acting.
+    pendingTimerCallback_ = nullptr;
 }
 
 void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
                                               std::function<void()> callback) noexcept {
-    // TODO: Integrate with IODispatchQueue or WorkQueue for delayed execution.
-    // For now, this is a placeholder that stores the callback for future scheduling.
-    // The actual timer integration will be wired in DriverContext during initialization.
-    (void)delayMs;
-    (void)callback;
+    pendingTimerCallback_ = callback;
 
-    // When IODispatchQueue is available:
-    // queue->SetDelayedFunction(delayMs * 1000, callback);
+    if (workQueue_) {
+        // Capture by value to avoid use-after-free if callback is replaced.
+        auto cb = std::move(callback);
+        workQueue_->DispatchAsync(^{
+#ifdef ASFW_HOST_TEST
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+#else
+            IOSleep(static_cast<uint32_t>(delayMs));
+#endif
+            cb();
+        });
+    }
 }
 
 } // namespace ASFW::Protocols::SBP2
