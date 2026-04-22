@@ -112,7 +112,7 @@ private:
 
     // State.
     bool isAppended_{false};
-    bool inProgress_{false};
+    std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
     // Timer.

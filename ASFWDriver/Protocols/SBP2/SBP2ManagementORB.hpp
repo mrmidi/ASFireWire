@@ -74,7 +74,7 @@ public:
     [[nodiscard]] bool Execute() noexcept;
 
     [[nodiscard]] Function GetFunction() const noexcept { return function_; }
-    [[nodiscard]] bool InProgress() const noexcept { return inProgress_; }
+    [[nodiscard]] bool InProgress() const noexcept { return inProgress_.load(std::memory_order_relaxed); }
 
 private:
     bool AllocateResources() noexcept;
@@ -117,8 +117,8 @@ private:
     Async::AsyncHandle writeHandle_{};
 
     // State
-    bool inProgress_{false};
-    bool timerActive_{false};
+    std::atomic<bool> inProgress_{false};
+    std::atomic<bool> timerActive_{false};
 
     // Node targeting
     uint16_t generation_{0};

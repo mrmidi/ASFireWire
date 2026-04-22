@@ -134,7 +134,7 @@ void SBP2ManagementORB::BuildManagementORB() noexcept {
 // ---------------------------------------------------------------------------
 
 bool SBP2ManagementORB::Execute() noexcept {
-    if (inProgress_) {
+    if (inProgress_.load(std::memory_order_relaxed)) {
         ASFW_LOG(SBP2, "SBP2ManagementORB::Execute: already in progress");
         return false;
     }
@@ -145,7 +145,7 @@ bool SBP2ManagementORB::Execute() noexcept {
 
     BuildManagementORB();
 
-    inProgress_ = true;
+    inProgress_.store(true, std::memory_order_relaxed);
 
     // Write ORB address to management agent
     const FW::Generation gen{generation_};
@@ -169,7 +169,7 @@ bool SBP2ManagementORB::Execute() noexcept {
 
     if (!writeHandle_) {
         ASFW_LOG(SBP2, "SBP2ManagementORB::Execute: WriteBlock failed");
-        inProgress_ = false;
+        inProgress_.store(false, std::memory_order_relaxed);
         return false;
     }
 
@@ -191,7 +191,7 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
     }
 
     // Management agent write ACK'd. Start timeout, wait for status block.
-    timerActive_ = true;
+    timerActive_.store(true, std::memory_order_relaxed);
     ASFW_LOG(SBP2, "SBP2ManagementORB: mgmt agent ACK'd, waiting for status block (timeout=%ums)",
              timeoutMs_);
 
@@ -208,8 +208,8 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
                 return;
             }
             if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-                !timerActive_ ||
-                !inProgress_) {
+                !timerActive_.load(std::memory_order_relaxed) ||
+                !inProgress_.load(std::memory_order_relaxed)) {
                 return;
             }
             OnTimeout();
@@ -220,8 +220,8 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
                 return;
             }
             if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-                !timerActive_ ||
-                !inProgress_) {
+                !timerActive_.load(std::memory_order_relaxed) ||
+                !inProgress_.load(std::memory_order_relaxed)) {
                 return;
             }
             OnTimeout();
@@ -232,7 +232,7 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
 
 void SBP2ManagementORB::OnStatusBlockWrite(uint32_t offset,
                                              std::span<const uint8_t> payload) noexcept {
-    if (!inProgress_) {
+    if (!inProgress_.load(std::memory_order_relaxed)) {
         return;
     }
 
@@ -243,7 +243,7 @@ void SBP2ManagementORB::OnStatusBlockWrite(uint32_t offset,
 }
 
 void SBP2ManagementORB::OnTimeout() noexcept {
-    if (!inProgress_) {
+    if (!inProgress_.load(std::memory_order_relaxed)) {
         return;
     }
     ASFW_LOG(SBP2, "SBP2ManagementORB: timeout");
@@ -251,8 +251,8 @@ void SBP2ManagementORB::OnTimeout() noexcept {
 }
 
 void SBP2ManagementORB::Complete(int status) noexcept {
-    inProgress_ = false;
-    timerActive_ = false;
+    inProgress_.store(false, std::memory_order_relaxed);
+    timerActive_.store(false, std::memory_order_relaxed);
     timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
 
     if (completionCallback_) {

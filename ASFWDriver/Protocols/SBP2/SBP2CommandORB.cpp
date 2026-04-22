@@ -203,7 +203,7 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
     }
 
     timerQueue_ = queue;
-    inProgress_ = true;
+    inProgress_.store(true, std::memory_order_relaxed);
     const uint32_t timeout = timeoutDuration_;
     const uint64_t expectedGeneration =
         timerGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
@@ -216,13 +216,13 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
             return;
         }
         if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-            !inProgress_ ||
+            !inProgress_.load(std::memory_order_relaxed) ||
             !completionCallback_) {
             return;
         }
 
         ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
-        inProgress_ = false;
+        inProgress_.store(false, std::memory_order_relaxed);
         timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
         completionCallback_(-1);
     });
@@ -232,13 +232,13 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
             return;
         }
         if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-            !inProgress_ ||
+            !inProgress_.load(std::memory_order_relaxed) ||
             !completionCallback_) {
             return;
         }
 
         ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
-        inProgress_ = false;
+        inProgress_.store(false, std::memory_order_relaxed);
         timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
         completionCallback_(-1);
     });
@@ -246,7 +246,7 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
 }
 
 void SBP2CommandORB::CancelTimer() noexcept {
-    inProgress_ = false;
+    inProgress_.store(false, std::memory_order_relaxed);
     timerQueue_ = nullptr;
     timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
