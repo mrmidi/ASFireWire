@@ -98,14 +98,70 @@
 ### 进行中
 
 - 真机 smoke：扫描仪实机 `discover -> session -> login -> inquiry -> TUR -> request sense -> raw cdb -> release`
+  - 2026-04-22 当前安装方式：`./install-debug-asfw.sh` 安装到 `/Applications/ASFW.app`
+  - 当前 active dext hash 与 app 内嵌 dext hash 一致：`506348c677a978b0d2d449b3ae348d4d00e94f5741c9b2affba46596fe8d9c37`
+  - `systemextensionsctl` 仍显示一个旧 ASFW 条目处于 `terminated waiting to uninstall on reboot`，最终合并前建议重启清理一次
+  - ASFW app 已能在 SBP-2 Debug 页发现 Nikon 设备：GUID `0x0090B54001FFFFFF`，node `0`，generation `2`，`1 SBP-2 unit`
+  - 当前阻塞：该 unit 显示 `Mgmt Agent: n/a`，因此 session/login/command smoke 尚未进入可验证状态
 - bus reset / reconnect 硬化
 - in-flight 命令失败收敛与资源清理验证
 
 ### 未完成
 
+- 修复/解释 Nikon SBP-2 unit 未暴露 `Management_Agent_Offset` 的问题
+- 修复 Swift discovery wire parsing 测试失败
 - 扫描仪厂商特定命令归纳
 - 扫描业务 API / UI
 - 更广泛的真机兼容性回归
+
+### 最新验证记录（2026-04-22）
+
+参考最新研究报告：
+
+- `/Users/gly/workspace/github/moderncoolscan/docs/protocol/asfw-vs-apple-bus-init-comparison.md`
+
+关键结论：
+
+- Nikon management agent 地址计算与 Apple 一致：ROM `Management_Agent_Offset = 0x00c000` 时，CSR 地址应为 `0xF0030000`
+- 当前问题不应优先归因于地址计算；更可能是设备在 ASFWDriver 初始化时没有完全激活 SBP-2 management agent CSR 空间
+- 最高优先级诊断分两条线：
+  - 验证 ASFWDriver block read/write 事务是否对已知 CSR 地址和其它 SBP-2 设备可靠
+  - 收敛 ASFWDriver 与 Apple IOFireWireFamily 的 bus init 时序差异，尤其是初始双 bus reset 与 Self-ID 后立即 discovery
+
+已执行：
+
+- `cmake --build build/tests_build --target AddressSpaceManagerTests SBP2LoginSessionTests SBP2ORBTests SBP2SessionRegistryTests`
+- `ctest --test-dir build/tests_build -R 'AddressSpaceManager|SBP2' --output-on-failure`
+
+结果：
+
+- SBP-2 host tests 通过：21/21
+- 覆盖范围包括 address space、login session、ORB timer/status、session registry、标准 SCSI helper 与 REQUEST SENSE payload/sense 回收
+
+已执行：
+
+- `xcodebuild test -project ASFW.xcodeproj -scheme ASFW -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY='' -only-testing:ASFWTests/DeviceDiscoveryWireParsingTests -quiet`
+
+结果：
+
+- 失败：`DeviceDiscoveryWireParsingTests/parsesStorageDeviceKindAndUnitROMOffset`
+- 失败：`DeviceDiscoveryWireParsingTests/parsesSBP2UnitMetadataEvenWhenDeviceKindIsNotStorage`
+- 现象：测试进程在 `#expect(device.sbp2Units[0].managementAgentOffset == 0x80)` 附近失败
+- 初步判断：测试 fixture 或解析路径仍需与当前 SBP-2 spec/swVersion 识别规则对齐，不能作为合并前绿灯
+
+真机 UI smoke：
+
+- 通过：ASFW app 可连接当前 active dext，并在 SBP-2 Debug 页列出 Nikon SBP-2 unit
+- 通过：unit 基本字段可见：ROM offset `6`，Spec ID `0x00609E`，LUN `0x60000`，Unit Characteristics `0x000104D8`
+- 阻塞：`Management_Agent_Offset` 未显示，当前为 `n/a`
+- 未验证：`Create Session -> Start Login -> INQUIRY -> TUR -> REQUEST SENSE -> Raw CDB -> Release`
+- 未验证原因：session 创建依赖 `Management_Agent_Offset`，当前 discovery 元数据不足
+
+代码侧对照：
+
+- `ControllerCore::EnableInterruptsAndStartBus()` 当前仍在 `linkEnable + BIBimageValid` 后执行显式 PHY long reset；这与研究报告指出的“初始双 bus reset”风险一致
+- `BusResetCoordinator::StepComplete()` 当前只在 `previousScanHadBusyNodes_` 时延迟 discovery；普通路径没有 Apple `kScanBusDelay = 100ms` 等效等待
+- `SBP2LoginSession` 和 `SBP2ManagementORB` 的 login / management ORB 提交依赖 `WriteBlock`，因此 block transaction 可靠性是 SBP-2 login 前置门槛
 
 ---
 
@@ -192,6 +248,7 @@
 
 - 软件层面已具备完整调试闭环
 - 后续只差真机 smoke 与恢复硬化
+- 2026-04-22 真机 UI 已确认可发现 Nikon SBP-2 unit，但因 `Management_Agent_Offset` 缺失，尚未验证 session/login/command 闭环
 
 ---
 
@@ -207,6 +264,11 @@
 
 ### 待完成
 
+- [ ] 修复 Nikon SBP-2 unit discovery 中 `Management_Agent_Offset` 缺失，或确认该设备 ROM 的正确管理代理来源
+- [ ] 用已知 CSR 地址验证 ASFWDriver block read/write：先测 Nikon `0xF0000400`，再用已知 FireWire 硬盘作对照
+- [ ] 尝试去掉 `EnableInterruptsAndStartBus()` 中 linkEnable 后的显式 PHY long reset，并验证 Nikon management agent 是否出现
+- [ ] 在 Self-ID 完成到 discovery callback 之间加入 Apple 等效 100ms scan delay，并验证 Nikon management agent 是否出现
+- [ ] 评估 2 节点拓扑是否应跳过 gap count 优化，避免 ROM/management-agent bring-up 期间再次 reset
 - [ ] 真机验证 bus reset 期间拒绝新命令提交
 - [ ] 真机验证 reconnect 成功后可继续发命令
 - [ ] 验证断开设备 / owner 释放 / 重复创建释放不会残留 DMA、地址空间或旧结果
@@ -216,7 +278,20 @@
 
 ## 下一步执行顺序
 
-1. **真机 smoke 固化**
+1. **block transaction 基线验证**
+   - Nikon：
+     - `mcs tx read --node 0 --address 0xF0000400`
+     - `mcs tx block-read --node 0 --address 0xF0000400 --length 8`
+   - 如果可用，再用同一 Thunderbolt adapter 接 FireWire 硬盘重复 block-read
+   - 若所有设备 block-read 都失败，优先排查 ASFWDriver async block transaction/AT descriptor/response parsing
+
+2. **bus init 时序 A/B 测试**
+   - 去掉 linkEnable 后紧接的显式 PHY long reset，只依赖 `linkEnable + BIBimageValid` 自动 reset
+   - 加入 Self-ID 后 100ms discovery delay
+   - 记录 Nikon 是否开始暴露 `Management_Agent_Offset` / management agent CSR
+
+3. **真机 smoke 固化**
+   - 先修复/确认 Nikon unit 的 `Management_Agent_Offset`，否则无法创建 SBP-2 session
    - 扫描仪接入后按固定顺序执行：
      - discover
      - create session
@@ -228,16 +303,16 @@
      - release
    - 保存日志中的 generation、loginID、transport status、SBP-2 status、sense
 
-2. **bus reset / reconnect 验证**
+4. **bus reset / reconnect 验证**
    - reset 期间确认新命令被拒绝
    - in-flight 命令确认进入失败态
    - reconnect 后确认 session 可继续使用
 
-3. **scanner-specific 命令摸底**
+5. **scanner-specific 命令摸底**
    - 优先通过 raw CDB 记录厂商命令与返回
    - 在拿到稳定证据前，不新增高层协议封装
 
-4. **补强回归**
+6. **补强回归**
    - 按需增加 session 清理、reset 收敛、raw CDB 错误路径测试
 
 ---
