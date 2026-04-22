@@ -70,6 +70,10 @@ void FWUnit::ParseEntries(const std::vector<RomEntry>& entries)
                 unitCharacteristics_ = entry.value;
                 break;
 
+            case CfgKey::Fast_Start:
+                fastStart_ = entry.value;
+                break;
+
             // Other keys (CSR offsets, dependent directories) ignored for now
             default:
                 break;

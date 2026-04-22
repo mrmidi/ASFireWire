@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstring>
 #include <cstdint>
 #include <vector>
 
@@ -8,7 +9,9 @@
 
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/SBP2/AddressSpaceManager.hpp"
+#include "../../Protocols/SBP2/SCSICommandSet.hpp"
 #include "../../Protocols/SBP2/SBP2SessionRegistry.hpp"
+#include "../WireFormats/SBP2CommandWireFormats.hpp"
 
 namespace ASFW::UserClient {
 
@@ -228,6 +231,109 @@ public:
         }
 
         OSData* output = OSData::withBytes(result->data(), static_cast<uint32_t>(result->size()));
+        if (!output) {
+            return kIOReturnNoMemory;
+        }
+
+        args->structureOutput = output;
+        args->structureOutputDescriptor = nullptr;
+        return kIOReturnSuccess;
+    }
+
+    kern_return_t SubmitSBP2Command(IOUserClientMethodArguments* args) {
+        if (!registry_) {
+            return kIOReturnNotReady;
+        }
+        if (!args || !args->scalarInput || args->scalarInputCount < 1 || !args->structureInput) {
+            return kIOReturnBadArgument;
+        }
+
+        OSData* input = OSDynamicCast(OSData, args->structureInput);
+        if (!input) {
+            return kIOReturnBadArgument;
+        }
+
+        const auto* bytes = static_cast<const uint8_t*>(input->getBytesNoCopy());
+        const size_t inputLength = input->getLength();
+        if (!bytes || inputLength < sizeof(Wire::SBP2CommandRequestWire)) {
+            return kIOReturnBadArgument;
+        }
+
+        const auto* header = reinterpret_cast<const Wire::SBP2CommandRequestWire*>(bytes);
+        const size_t expectedLength =
+            sizeof(Wire::SBP2CommandRequestWire) +
+            static_cast<size_t>(header->cdbLength) +
+            static_cast<size_t>(header->outgoingLength);
+        if (inputLength != expectedLength || header->cdbLength == 0) {
+            return kIOReturnBadArgument;
+        }
+
+        Protocols::SBP2::SCSI::DataDirection direction{};
+        switch (header->direction) {
+        case 0:
+            direction = Protocols::SBP2::SCSI::DataDirection::None;
+            break;
+        case 1:
+            direction = Protocols::SBP2::SCSI::DataDirection::FromTarget;
+            break;
+        case 2:
+            direction = Protocols::SBP2::SCSI::DataDirection::ToTarget;
+            break;
+        default:
+            return kIOReturnBadArgument;
+        }
+
+        Protocols::SBP2::SCSI::CommandRequest request{};
+        request.direction = direction;
+        request.transferLength = header->transferLength;
+        request.timeoutMs = header->timeoutMs;
+        request.captureSenseData = header->captureSenseData != 0;
+
+        const uint8_t* cursor = bytes + sizeof(Wire::SBP2CommandRequestWire);
+        request.cdb.assign(cursor, cursor + header->cdbLength);
+        cursor += header->cdbLength;
+        request.outgoingPayload.assign(cursor, cursor + header->outgoingLength);
+
+        const uint64_t handle = args->scalarInput[0];
+        return registry_->SubmitCommand(handle, request) ? kIOReturnSuccess : kIOReturnError;
+    }
+
+    kern_return_t GetSBP2CommandResult(IOUserClientMethodArguments* args) {
+        if (!registry_) {
+            return kIOReturnNotReady;
+        }
+        if (!args || !args->scalarInput || args->scalarInputCount < 1) {
+            return kIOReturnBadArgument;
+        }
+
+        const uint64_t handle = args->scalarInput[0];
+        auto result = registry_->GetCommandResult(handle);
+        if (!result.has_value()) {
+            return kIOReturnNotFound;
+        }
+
+        Wire::SBP2CommandResultWire header{};
+        header.transportStatus = result->transportStatus;
+        header.sbpStatus = result->sbpStatus;
+        header.payloadLength = static_cast<uint32_t>(result->payload.size());
+        header.senseLength = static_cast<uint32_t>(result->senseData.size());
+
+        std::vector<uint8_t> serialized(
+            sizeof(Wire::SBP2CommandResultWire) +
+            result->payload.size() +
+            result->senseData.size());
+        memcpy(serialized.data(), &header, sizeof(header));
+
+        size_t offset = sizeof(Wire::SBP2CommandResultWire);
+        if (!result->payload.empty()) {
+            memcpy(serialized.data() + offset, result->payload.data(), result->payload.size());
+            offset += result->payload.size();
+        }
+        if (!result->senseData.empty()) {
+            memcpy(serialized.data() + offset, result->senseData.data(), result->senseData.size());
+        }
+
+        OSData* output = OSData::withBytes(serialized.data(), static_cast<uint32_t>(serialized.size()));
         if (!output) {
             return kIOReturnNoMemory;
         }

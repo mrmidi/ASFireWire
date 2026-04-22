@@ -53,42 +53,45 @@ struct SBP2DebugView: View {
                 systemImage: "cable.connector.slash",
                 description: Text("Connect to the driver to debug SBP-2 sessions.")
             )
-        } else if viewModel.storageDevices.isEmpty && !viewModel.isLoadingDevices {
+        } else if viewModel.sbp2Devices.isEmpty && !viewModel.isLoadingDevices {
             ContentUnavailableView(
-                "No SBP-2 Storage Devices",
+                "No SBP-2 Devices",
                 systemImage: "externaldrive.badge.questionmark",
-                description: Text("Refresh after attaching a FireWire SBP-2 storage target.")
+                description: Text("Refresh after attaching a FireWire SBP-2 target.")
             )
         } else {
             HSplitView {
-                List(viewModel.storageDevices, selection: $viewModel.selectedDeviceID) { device in
-                    StorageDeviceRow(device: device)
+                List(viewModel.sbp2Devices, selection: $viewModel.selectedDeviceID) { device in
+                    SBP2DeviceRow(device: device)
                         .tag(device.guid)
                 }
                 .frame(minWidth: 240, idealWidth: 280, maxWidth: 320)
 
-                if let device = viewModel.selectedDevice {
+                if let device = viewModel.selectedDevice, let unit = viewModel.selectedUnit {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            devicePanel(device)
+                            devicePanel(device: device, unit: unit)
                             sessionPanel
-                            inquiryPanel
+                            probePanel
+                            rawCommandPanel
+                            resultPanel
                             statusPanel
                         }
                         .padding()
                     }
                 } else {
                     ContentUnavailableView(
-                        "Select a Storage Device",
+                        "Select an SBP-2 Device",
                         systemImage: "sidebar.left",
-                        description: Text("Choose an SBP-2 storage device to create a session.")
+                        description: Text("Choose an SBP-2 device and unit to create a session.")
                     )
                 }
             }
         }
     }
 
-    private func devicePanel(_ device: ASFWDriverConnector.FWDeviceInfo) -> some View {
+    private func devicePanel(device: ASFWDriverConnector.FWDeviceInfo,
+                             unit: ASFWDriverConnector.FWUnitInfo) -> some View {
         GroupBox("Selected Device") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(deviceTitle(device))
@@ -116,18 +119,59 @@ struct SBP2DebugView: View {
                     GridRow {
                         Text("Units:")
                             .foregroundStyle(.secondary)
-                        Text("\(device.storageUnits.count)")
+                        Text("\(device.sbp2Units.count)")
                     }
                 }
 
                 Picker("SBP-2 Unit", selection: $viewModel.selectedUnitROMOffset) {
-                    ForEach(device.storageUnits) { unit in
-                        Text(unitLabel(unit))
-                            .tag(Optional(unit.romOffset))
+                    ForEach(device.sbp2Units) { listedUnit in
+                        Text(unitLabel(listedUnit))
+                            .tag(Optional(listedUnit.romOffset))
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(maxWidth: 360, alignment: .leading)
+                .frame(maxWidth: 420, alignment: .leading)
+
+                Divider()
+
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                    GridRow {
+                        Text("ROM Offset:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "%u", unit.romOffset))
+                            .monospaced()
+                    }
+                    GridRow {
+                        Text("Spec ID:")
+                            .foregroundStyle(.secondary)
+                        Text(unit.specIdHex)
+                            .monospaced()
+                    }
+                    GridRow {
+                        Text("LUN:")
+                            .foregroundStyle(.secondary)
+                        Text(unit.lun.map { String(format: "0x%02X", $0) } ?? "n/a")
+                            .monospaced()
+                    }
+                    GridRow {
+                        Text("Mgmt Agent:")
+                            .foregroundStyle(.secondary)
+                        Text(unit.managementAgentOffset.map { String(format: "0x%08X", $0) } ?? "n/a")
+                            .monospaced()
+                    }
+                    GridRow {
+                        Text("Unit Chars:")
+                            .foregroundStyle(.secondary)
+                        Text(unit.unitCharacteristics.map { String(format: "0x%08X", $0) } ?? "n/a")
+                            .monospaced()
+                    }
+                    GridRow {
+                        Text("Fast Start:")
+                            .foregroundStyle(.secondary)
+                        Text(unit.fastStart.map { String(format: "0x%08X", $0) } ?? "n/a")
+                            .monospaced()
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
@@ -204,14 +248,28 @@ struct SBP2DebugView: View {
         }
     }
 
-    private var inquiryPanel: some View {
-        GroupBox("INQUIRY") {
+    private var probePanel: some View {
+        GroupBox("Standard Probes") {
             VStack(alignment: .leading, spacing: 12) {
-                Button("Run Inquiry") {
-                    viewModel.runInquiry()
+                HStack(spacing: 12) {
+                    Button("INQUIRY") {
+                        viewModel.runInquiry()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.sessionState?.isLoggedIn != true || viewModel.isBusy)
+
+                    Button("TEST UNIT READY") {
+                        viewModel.runTestUnitReady()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.sessionState?.isLoggedIn != true || viewModel.isBusy)
+
+                    Button("REQUEST SENSE") {
+                        viewModel.runRequestSense()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.sessionState?.isLoggedIn != true || viewModel.isBusy)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(viewModel.sessionState?.isLoggedIn != true || viewModel.isBusy)
 
                 if let summary = viewModel.inquirySummary {
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
@@ -233,16 +291,115 @@ struct SBP2DebugView: View {
                     }
                 }
 
-                if let inquiryData = viewModel.inquiryData {
-                    Text(hexDump(inquiryData))
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Color.secondary.opacity(0.08))
-                        .cornerRadius(8)
+                if let sense = viewModel.senseSummary {
+                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                        GridRow {
+                            Text("Sense Key:")
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "0x%02X", sense.senseKey))
+                                .monospaced()
+                        }
+                        GridRow {
+                            Text("ASC/ASCQ:")
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "0x%02X / 0x%02X", sense.asc, sense.ascq))
+                                .monospaced()
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+    }
+
+    private var rawCommandPanel: some View {
+        GroupBox("Raw CDB") {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("CDB hex", text: $viewModel.rawCDBHex)
+                    .textFieldStyle(.roundedBorder)
+
+                HStack(spacing: 12) {
+                    Picker("Direction", selection: $viewModel.rawDirection) {
+                        ForEach(SBP2CommandDataDirection.allCases) { direction in
+                            Text(direction.displayName).tag(direction)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    TextField("Transfer", text: $viewModel.rawTransferLength)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                }
+
+                TextField("Outgoing payload hex", text: $viewModel.rawOutgoingHex)
+                    .textFieldStyle(.roundedBorder)
+
+                Button("Send Raw CDB") {
+                    viewModel.runRawCommand()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.sessionState?.isLoggedIn != true || viewModel.isBusy)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+    }
+
+    private var resultPanel: some View {
+        GroupBox("Last Result") {
+            VStack(alignment: .leading, spacing: 12) {
+                if let commandName = viewModel.lastCommandName,
+                   let result = viewModel.commandResult {
+                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                        GridRow {
+                            Text("Command:")
+                                .foregroundStyle(.secondary)
+                            Text(commandName)
+                        }
+                        GridRow {
+                            Text("Transport:")
+                                .foregroundStyle(.secondary)
+                            Text("\(result.transportStatus)")
+                                .monospaced()
+                        }
+                        GridRow {
+                            Text("SBP Status:")
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "0x%02X", result.sbpStatus))
+                                .monospaced()
+                        }
+                    }
+
+                    if !result.payload.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Payload")
+                                .font(.headline)
+                            Text(hexDump(result.payload))
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.secondary.opacity(0.08))
+                                .cornerRadius(8)
+                        }
+                    }
+
+                    if !result.senseData.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Sense Data")
+                                .font(.headline)
+                            Text(hexDump(result.senseData))
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.secondary.opacity(0.08))
+                                .cornerRadius(8)
+                        }
+                    }
                 } else {
-                    Text("No INQUIRY data available yet.")
+                    Text("No command result available yet.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -291,7 +448,7 @@ struct SBP2DebugView: View {
     }
 }
 
-private struct StorageDeviceRow: View {
+private struct SBP2DeviceRow: View {
     let device: ASFWDriverConnector.FWDeviceInfo
 
     var body: some View {
@@ -312,7 +469,7 @@ private struct StorageDeviceRow: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("\(device.storageUnits.count) SBP-2 unit\(device.storageUnits.count == 1 ? "" : "s")")
+            Text("\(device.sbp2Units.count) SBP-2 unit\(device.sbp2Units.count == 1 ? "" : "s")")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -321,7 +478,7 @@ private struct StorageDeviceRow: View {
 
     private var title: String {
         let combined = "\(device.vendorName) \(device.modelName)".trimmingCharacters(in: .whitespaces)
-        return combined.isEmpty ? String(format: "Storage 0x%016llX", device.guid) : combined
+        return combined.isEmpty ? String(format: "SBP-2 0x%016llX", device.guid) : combined
     }
 }
 

@@ -1,7 +1,98 @@
 import Foundation
 import IOKit
 
+enum SBP2CommandDataDirection: UInt8, CaseIterable, Identifiable {
+    case none = 0
+    case fromTarget = 1
+    case toTarget = 2
+
+    var id: UInt8 { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .fromTarget: return "Read"
+        case .toTarget: return "Write"
+        }
+    }
+}
+
+struct SBP2CommandRequest {
+    let cdb: [UInt8]
+    let direction: SBP2CommandDataDirection
+    let transferLength: UInt32
+    let outgoingData: Data
+    let timeoutMs: UInt32
+    let captureSenseData: Bool
+
+    init(cdb: [UInt8],
+         direction: SBP2CommandDataDirection,
+         transferLength: UInt32 = 0,
+         outgoingData: Data = Data(),
+         timeoutMs: UInt32 = 2000,
+         captureSenseData: Bool = false) {
+        self.cdb = cdb
+        self.direction = direction
+        self.transferLength = transferLength
+        self.outgoingData = outgoingData
+        self.timeoutMs = timeoutMs
+        self.captureSenseData = captureSenseData
+    }
+
+    static func inquiry(allocationLength: UInt8 = 96) -> SBP2CommandRequest {
+        SBP2CommandRequest(
+            cdb: [0x12, 0x00, 0x00, allocationLength, 0x00, 0x00],
+            direction: .fromTarget,
+            transferLength: UInt32(allocationLength))
+    }
+
+    static func testUnitReady() -> SBP2CommandRequest {
+        SBP2CommandRequest(cdb: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00], direction: .none)
+    }
+
+    static func requestSense(allocationLength: UInt8 = 18) -> SBP2CommandRequest {
+        SBP2CommandRequest(
+            cdb: [0x03, 0x00, 0x00, allocationLength, 0x00, 0x00],
+            direction: .fromTarget,
+            transferLength: UInt32(allocationLength),
+            captureSenseData: true)
+    }
+}
+
+struct SBP2CommandResult {
+    let transportStatus: Int32
+    let sbpStatus: UInt8
+    let payload: Data
+    let senseData: Data
+
+    var isSuccess: Bool {
+        transportStatus == 0 && sbpStatus == 0
+    }
+}
+
 extension ASFWDriverConnector {
+
+    private func appendUInt32LE(_ value: UInt32, to data: inout Data) {
+        var littleEndianValue = value.littleEndian
+        withUnsafeBytes(of: &littleEndianValue) { rawBuffer in
+            data.append(contentsOf: rawBuffer)
+        }
+    }
+
+    private func appendInt32LE(_ value: Int32, to data: inout Data) {
+        var littleEndianValue = value.littleEndian
+        withUnsafeBytes(of: &littleEndianValue) { rawBuffer in
+            data.append(contentsOf: rawBuffer)
+        }
+    }
+
+    private func readUInt32LE(_ data: Data, offset: Int) -> UInt32 {
+        var value: UInt32 = 0
+        for index in 0..<4 {
+            value |= UInt32(data[data.startIndex + offset + index]) << (index * 8)
+        }
+        return value
+    }
 
     // MARK: - SBP-2 Address Space Management
 
@@ -286,44 +377,85 @@ extension ASFWDriverConnector {
     /// - Returns: true if inquiry was submitted successfully.
     @discardableResult
     func submitSBP2Inquiry(handle: UInt64, allocationLength: UInt8 = 96) -> Bool {
+        submitSBP2Command(handle: handle, request: .inquiry(allocationLength: allocationLength))
+    }
+
+    @discardableResult
+    func submitSBP2Command(handle: UInt64, request: SBP2CommandRequest) -> Bool {
         guard isConnected else {
-            log("submitSBP2Inquiry: Not connected", level: .warning)
+            log("submitSBP2Command: Not connected", level: .warning)
             return false
         }
 
-        var inputs: [UInt64] = [handle, UInt64(allocationLength)]
+        var payload = Data()
+        appendUInt32LE(UInt32(request.cdb.count), to: &payload)
+        appendUInt32LE(request.transferLength, to: &payload)
+        appendUInt32LE(UInt32(request.outgoingData.count), to: &payload)
+        appendUInt32LE(request.timeoutMs, to: &payload)
+        payload.append(request.direction.rawValue)
+        payload.append(request.captureSenseData ? 1 : 0)
+        payload.append(contentsOf: [0, 0])
+        payload.append(contentsOf: request.cdb)
+        payload.append(request.outgoingData)
 
-        let kr = inputs.withUnsafeMutableBufferPointer { buffer -> kern_return_t in
-            IOConnectCallScalarMethod(
-                connection,
-                Method.submitSBP2Inquiry.rawValue,
-                buffer.baseAddress,
-                UInt32(buffer.count),
-                nil,
-                nil)
+        var scalars: [UInt64] = [handle]
+
+        let kr = payload.withUnsafeBytes { inputPtr in
+            scalars.withUnsafeMutableBufferPointer { scalarBuffer -> kern_return_t in
+                IOConnectCallMethod(
+                    connection,
+                    Method.submitSBP2Command.rawValue,
+                    scalarBuffer.baseAddress,
+                    UInt32(scalarBuffer.count),
+                    inputPtr.baseAddress,
+                    payload.count,
+                    nil,
+                    nil,
+                    nil,
+                    nil)
+            }
         }
 
         guard kr == KERN_SUCCESS else {
-            let errorMsg = "submitSBP2Inquiry failed: \(interpretIOReturn(kr))"
+            let errorMsg = "submitSBP2Command failed: \(interpretIOReturn(kr))"
             log(errorMsg, level: .error)
             lastError = errorMsg
             return false
         }
 
-        log(String(format: "SBP2 INQUIRY submitted (handle=0x%llX, allocLen=%u)", handle, allocationLength), level: .success)
+        log(String(format: "SBP2 command submitted (handle=0x%llX, cdb=%02X, dir=%u, xfer=%u)",
+                   handle, request.cdb.first ?? 0, request.direction.rawValue, request.transferLength),
+            level: .success)
         return true
     }
 
     /// Get the result of a completed INQUIRY command (destructive read).
     /// - Returns: Raw INQUIRY data, or nil if not ready.
     func getSBP2InquiryResult(handle: UInt64) -> Data? {
+        guard let result = getSBP2CommandResult(handle: handle), result.isSuccess else {
+            return nil
+        }
+
+        let out = result.payload
+
+        if out.count >= 36 {
+            let vendor = String(data: out[8..<16], encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? "???"
+            let product = String(data: out[16..<32], encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? "???"
+            let revision = String(data: out[32..<36], encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? "???"
+            log(String(format: "SBP2 INQUIRY result: %@ %@ (rev %@, %zu bytes)", vendor, product, revision, out.count), level: .success)
+        }
+
+        return out
+    }
+
+    func getSBP2CommandResult(handle: UInt64) -> SBP2CommandResult? {
         guard isConnected else {
-            log("getSBP2InquiryResult: Not connected", level: .warning)
+            log("getSBP2CommandResult: Not connected", level: .warning)
             return nil
         }
 
         var scalars: [UInt64] = [handle]
-        var outSize: Int = 256
+        var outSize: Int = 512
         var out = Data(count: outSize)
 
         func doCall() -> kern_return_t {
@@ -331,7 +463,7 @@ extension ASFWDriverConnector {
                 scalars.withUnsafeMutableBufferPointer { scalarPtr -> kern_return_t in
                     IOConnectCallMethod(
                         connection,
-                        Method.getSBP2InquiryResult.rawValue,
+                        Method.getSBP2CommandResult.rawValue,
                         scalarPtr.baseAddress,
                         UInt32(scalarPtr.count),
                         nil,
@@ -355,16 +487,31 @@ extension ASFWDriverConnector {
         }
 
         out.count = outSize
-
-        // Parse vendor/product from raw INQUIRY data for logging
-        if out.count >= 36 {
-            let vendor = String(data: out[8..<16], encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? "???"
-            let product = String(data: out[16..<32], encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? "???"
-            let revision = String(data: out[32..<36], encoding: .ascii)?.trimmingCharacters(in: .controlCharacters) ?? "???"
-            log(String(format: "SBP2 INQUIRY result: %@ %@ (rev %@, %zu bytes)", vendor, product, revision, outSize), level: .success)
+        guard out.count >= 16 else {
+            return nil
         }
 
-        return out
+        let transportStatus = Int32(bitPattern: readUInt32LE(out, offset: 0))
+        let sbpStatus = out[out.startIndex + 4]
+        let payloadLength = Int(readUInt32LE(out, offset: 8))
+        let senseLength = Int(readUInt32LE(out, offset: 12))
+        let payloadStart = 16
+        let payloadEnd = payloadStart + payloadLength
+        let senseEnd = payloadEnd + senseLength
+        guard senseEnd <= out.count else {
+            return nil
+        }
+
+        let payload = out.subdata(in: payloadStart..<payloadEnd)
+        let senseData = out.subdata(in: payloadEnd..<senseEnd)
+        log(String(format: "SBP2 command result (handle=0x%llX, transport=%d, sbp=%u, payload=%u, sense=%u)",
+                   handle, transportStatus, sbpStatus, payloadLength, senseLength),
+            level: transportStatus == 0 ? .success : .warning)
+        return SBP2CommandResult(
+            transportStatus: transportStatus,
+            sbpStatus: sbpStatus,
+            payload: payload,
+            senseData: senseData)
     }
 
     /// Release an SBP-2 session.

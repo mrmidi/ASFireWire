@@ -160,6 +160,10 @@ kern_return_t DeviceDiscoveryHandler::GetDiscoveredDevices(IOUserClientMethodArg
             unitWire.romOffset = unit->GetDirectoryOffset();
             unitWire.state = UnitStateToWire(unit->GetState());
             memset(unitWire._padding, 0, sizeof(unitWire._padding));
+            unitWire.managementAgentOffset = unit->GetManagementAgentOffset().value_or(0);
+            unitWire.lun = unit->GetLUN().value_or(0);
+            unitWire.unitCharacteristics = unit->GetUnitCharacteristics().value_or(0);
+            unitWire.fastStart = unit->GetFastStart().value_or(0);
 
             // Copy vendor and product names
             CopyStringToBuffer(unitWire.vendorName, sizeof(unitWire.vendorName),

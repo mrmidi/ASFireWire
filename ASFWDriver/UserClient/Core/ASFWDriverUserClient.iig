@@ -70,6 +70,8 @@ public:
         kMethodSubmitSBP2Inquiry       = 56,
         kMethodGetSBP2InquiryResult    = 57,
         kMethodReleaseSBP2Session      = 58,
+        kMethodSubmitSBP2Command       = 59,
+        kMethodGetSBP2CommandResult    = 60,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

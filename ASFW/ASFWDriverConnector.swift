@@ -66,6 +66,8 @@ final class ASFWDriverConnector: ObservableObject {
         case submitSBP2Inquiry = 56
         case getSBP2InquiryResult = 57
         case releaseSBP2Session = 58
+        case submitSBP2Command = 59
+        case getSBP2CommandResult = 60
     }
 
     // MARK: - Re-exported Models

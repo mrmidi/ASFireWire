@@ -99,7 +99,7 @@ extension ASFWDriverConnector {
             // Read units
             var units: [FWUnitInfo] = []
             for _ in 0..<unitCount {
-                guard offset + 144 <= data.count else {  // sizeof(FWUnitWire) = 144
+                guard offset + 160 <= data.count else {  // sizeof(FWUnitWire) = 160
                     print("[Connector] ❌ Data truncated while reading unit")
                     return nil
                 }
@@ -108,8 +108,12 @@ extension ASFWDriverConnector {
                 let swVersion = readUInt32(at: offset + 4)
                 let romOffset = readUInt32(at: offset + 8)
                 let unitStateRaw = readUInt8(at: offset + 12)
-                let unitVendorName = readCString(at: offset + 16, length: 64)
-                let unitProductName = readCString(at: offset + 80, length: 64)
+                let managementAgentOffset = readUInt32(at: offset + 16)
+                let lun = readUInt32(at: offset + 20)
+                let unitCharacteristics = readUInt32(at: offset + 24)
+                let fastStart = readUInt32(at: offset + 28)
+                let unitVendorName = readCString(at: offset + 32, length: 64)
+                let unitProductName = readCString(at: offset + 96, length: 64)
 
                 let unitState = FWUnitState(rawValue: unitStateRaw) ?? .created
 
@@ -118,11 +122,15 @@ extension ASFWDriverConnector {
                     swVersion: swVersion,
                     state: unitState,
                     romOffset: romOffset,
+                    managementAgentOffset: managementAgentOffset == 0 ? nil : managementAgentOffset,
+                    lun: lun == 0 ? nil : lun,
+                    unitCharacteristics: unitCharacteristics == 0 ? nil : unitCharacteristics,
+                    fastStart: fastStart == 0 ? nil : fastStart,
                     vendorName: unitVendorName.isEmpty ? nil : unitVendorName,
                     productName: unitProductName.isEmpty ? nil : unitProductName
                 ))
 
-                offset += 144  // sizeof(FWUnitWire)
+                offset += 160  // sizeof(FWUnitWire)
             }
 
             devices.append(FWDeviceInfo(

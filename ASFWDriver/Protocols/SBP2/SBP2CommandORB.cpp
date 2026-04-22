@@ -3,6 +3,7 @@
 // Ref: SBP-2 §5.1.1 (Normal Command ORB format)
 
 #include "SBP2CommandORB.hpp"
+#include "SBP2DelayedDispatch.hpp"
 #include "../../Common/FWCommon.hpp"
 
 namespace ASFW::Protocols::SBP2 {
@@ -92,10 +93,10 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
 
     // Data descriptor: fill in localNodeID in the hi word
     if (dataDescriptor_.isDirect) {
-        // Direct mode: dataDescriptorLo already has the address,
-        // just need to set nodeID in hi word
+        // Direct mode: preserve addressHi and inject local node ID.
         orb->dataDescriptorHi = Wire::ToBE32(
-            static_cast<uint32_t>(localNodeID) << 16);
+            (static_cast<uint32_t>(localNodeID) << 16) |
+            (Wire::FromBE32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu));
         orb->dataDescriptorLo = dataDescriptor_.dataDescriptorLo;
     } else {
         // Page table mode: dataDescriptorHi already has nodeID + addressHi from Build()
@@ -210,8 +211,7 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
     const std::weak_ptr<int> weakLifetime = lifetimeToken_;
     const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
 
-#ifdef ASFW_HOST_TEST
-    queue->DispatchAsyncAfter(delayNs, [this, weakLifetime, expectedGeneration, timeout]() {
+    DispatchAfterCompat(queue, delayNs, [this, weakLifetime, expectedGeneration, timeout]() {
         if (weakLifetime.expired()) {
             return;
         }
@@ -224,25 +224,8 @@ void SBP2CommandORB::StartTimer(IODispatchQueue* queue) noexcept {
         ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
         inProgress_.store(false, std::memory_order_relaxed);
         timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        completionCallback_(-1);
+        completionCallback_(-1, Wire::SBPStatus::kUnspecifiedError);
     });
-#else
-    queue->DispatchAsyncAfter(delayNs, ^{
-        if (weakLifetime.expired()) {
-            return;
-        }
-        if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-            !inProgress_.load(std::memory_order_relaxed) ||
-            !completionCallback_) {
-            return;
-        }
-
-        ASFW_LOG(SBP2, "SBP2CommandORB: ORB timeout after %u ms", timeout);
-        inProgress_.store(false, std::memory_order_relaxed);
-        timerGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        completionCallback_(-1);
-    });
-#endif
 }
 
 void SBP2CommandORB::CancelTimer() noexcept {

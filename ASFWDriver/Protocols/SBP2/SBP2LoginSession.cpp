@@ -1,4 +1,5 @@
 #include "SBP2LoginSession.hpp"
+#include "SBP2DelayedDispatch.hpp"
 #include "AddressSpaceManager.hpp"
 
 #include "../../Async/Interfaces/IFireWireBus.hpp"
@@ -936,12 +937,7 @@ void SBP2LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block,
         orb->CancelTimer();
         auto& cb = orb->GetCompletionCallback();
         if (cb) {
-            int status = 0;
-            if (block.sbpStatus != Wire::SBPStatus::kNoAdditionalInfo &&
-                block.sbpStatus != Wire::SBPStatus::kDummyORBCompleted) {
-                status = -static_cast<int>(block.sbpStatus);
-            }
-            cb(status);
+            cb(0, block.sbpStatus);
         }
     }
 }
@@ -984,8 +980,7 @@ void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
     const std::weak_ptr<int> weakLifetime = lifetimeToken_;
     const uint64_t delayNs = delayMs * 1'000'000ULL;
 
-#ifdef ASFW_HOST_TEST
-    workQueue_->DispatchAsyncAfter(delayNs, [this, weakLifetime, expectedGeneration, cb = std::move(callback)]() mutable {
+    DispatchAfterCompat(workQueue_, delayNs, [this, weakLifetime, expectedGeneration, cb = std::move(callback)]() mutable {
         if (weakLifetime.expired()) {
             return;
         }
@@ -994,18 +989,6 @@ void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
         }
         cb();
     });
-#else
-    auto cb = std::move(callback);
-    workQueue_->DispatchAsyncAfter(delayNs, ^{
-        if (weakLifetime.expired()) {
-            return;
-        }
-        if (delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
-            return;
-        }
-        cb();
-    });
-#endif
 }
 
 uint64_t SBP2LoginSession::MakeORBKey(uint16_t addressHi, uint32_t addressLo) noexcept {
@@ -1235,7 +1218,7 @@ void SBP2LoginSession::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
             activeFetchAgentORB_->SetAppended(false);
             auto& cb = activeFetchAgentORB_->GetCompletionCallback();
             if (cb) {
-                cb(-1);
+                cb(-1, Wire::SBPStatus::kUnspecifiedError);
             }
         }
         activeFetchAgentORB_ = nullptr;

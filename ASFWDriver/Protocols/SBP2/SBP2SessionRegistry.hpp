@@ -7,6 +7,7 @@
 #include "SBP2LoginSession.hpp"
 #include "SBP2CommandORB.hpp"
 #include "SBP2PageTable.hpp"
+#include "SCSICommandSet.hpp"
 #include "AddressSpaceManager.hpp"
 #include "../../Discovery/IDeviceManager.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
@@ -41,13 +42,15 @@ struct SBP2SessionRecord {
     std::unique_ptr<SBP2LoginSession> session;
     SBP2SessionState state{};
 
-    // INQUIRY result (destructive read)
-    std::vector<uint8_t> inquiryResult;
-    bool inquiryReady{false};
-    bool inquiryInFlight{false};
-    std::unique_ptr<SBP2CommandORB> inquiryORB;
-    std::unique_ptr<SBP2PageTable> inquiryPageTable;
-    uint64_t inquiryBufferHandle{0};
+    std::optional<SCSI::CommandRequest> activeCommandRequest;
+    std::optional<SCSI::CommandResult> pendingCommandResult;
+    std::optional<uint8_t> activeCommandOpcode;
+    std::optional<uint8_t> lastCompletedCommandOpcode;
+    bool commandReady{false};
+    bool commandInFlight{false};
+    std::unique_ptr<SBP2CommandORB> commandORB;
+    std::unique_ptr<SBP2PageTable> commandPageTable;
+    uint64_t commandBufferHandle{0};
 };
 
 class SBP2SessionRegistry {
@@ -81,6 +84,12 @@ public:
     // Get inquiry result (destructive read). Returns nullopt if not ready.
     [[nodiscard]] std::optional<std::vector<uint8_t>> GetInquiryResult(uint64_t handle);
 
+    // Submit a generic SCSI command. Returns false if not logged in or another command is active.
+    [[nodiscard]] bool SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request);
+
+    // Get generic command result (destructive read). Returns nullopt if not ready.
+    [[nodiscard]] std::optional<SCSI::CommandResult> GetCommandResult(uint64_t handle);
+
     // Release a specific session.
     [[nodiscard]] bool ReleaseSession(uint64_t handle);
 
@@ -99,7 +108,7 @@ private:
 
     std::shared_ptr<Discovery::FWUnit> ResolveUnit(uint64_t guid, uint32_t romOffset) const;
 
-    void CleanupInquiryResources(SBP2SessionRecord& record);
+    void CleanupCommandResources(SBP2SessionRecord& record);
 
     Async::IFireWireBus& bus_;
     Async::IFireWireBusInfo& busInfo_;

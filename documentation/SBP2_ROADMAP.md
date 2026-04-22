@@ -1,206 +1,257 @@
-# SBP-2 开发路线图
+# SBP-2 Scanner-First Bring-up Roadmap
 
-> 目标：在 ASFW 驱动中实现完整的 SBP-2（Serial Bus Protocol 2）协议栈，支持 FireWire 扫描仪及其他 SBP-2 设备的发现、登录、命令传输与后续系统集成。
+> 目标：把 FireWire 扫描仪调通到“可稳定发命令、可持续拿到协议证据”的状态。当前阶段以通用 SBP-2 unit bring-up 为主，不预设块设备语义，也不提前承诺扫描业务 UI。
+
+## 当前阶段目标
+
+本阶段成功标准：
+
+- 扫描仪可在 discovery 中作为通用 `SBP-2 unit` 被看见
+- Swift 调试页可创建 session、发起 login、轮询状态
+- 调试页可执行标准探测命令：`INQUIRY`、`TEST UNIT READY`、`REQUEST SENSE`
+- 调试页可执行 `raw CDB passthrough`
+- 命令结果可回显 transport status、SBP-2 status、payload、sense
+- DriverKit scheme 可以重新构建
+
+本阶段明确不做：
+
+- 图像采集工作流
+- 扫描参数 UI
+- 厂商协议高层封装
+- `DeviceKind::Scanner` 新分类
+
+---
 
 ## 现状
 
-- **已完成**：
-  - `AddressSpaceManager` — 地址空间分配、DMA 后端、远程读写响应、UserClient 四方法 API（选择器 46-49）、`PacketRouter` tCode 路由集成
-  - **阶段一**：SBP-2 核心数据结构 — `SBP2WireFormats.hpp` 和 `SBP2PageTable.hpp`
-  - **阶段二的最小发现链路**：驱动已基于 `Unit_Spec_Id == 0x010483` 将设备归类为 `DeviceKind::Storage`，Swift 侧已解析 `deviceKind` 并可筛出 SBP-2 storage unit
-  - **阶段三**：`SBP2LoginSession` / `SBP2ManagementORB` 已实现核心登录状态机、状态块处理、超时重试与任务管理 ORB
-  - **阶段四**：`SBP2CommandORB`、页表、Fetch Agent 操作与事务跟踪已接入登录会话
-  - **最小 UserClient / Swift 调试闭环**：`SBP2SessionRegistry`、`SBP2Handler`、Swift `DriverConnector+SBP2.swift`、`SBP2DebugViewModel`、`SBP2DebugView` 已接通 `create session -> start login -> get state -> submit INQUIRY -> fetch result -> release`
-  - **基础测试**：已有 `AddressSpaceManagerTests`、`SBP2LoginSessionTests`、`SBP2ORBTests`，Swift 侧新增 `DeviceDiscoveryWireParsingTests`
-- **进行中**：
-  - **阶段二**：更完整的 SBP-2 设备建模、metadata 与通知路径
-  - **阶段五**：当前仅完成面向调试的 `INQUIRY` vertical slice，尚未抽象为通用 SCSI 命令层
-  - **阶段六**：总线重置恢复、资源清理、真机 smoke、完整 DriverKit 构建收口
-- **未完成**：
-  - 扫描仪特定命令与工作流
-  - 面向产品功能的块读写 / 扫描业务 UI
-  - 生产级健壮性与更广泛硬件回归
+### 已完成
+
+- **scanner-first 重定向**
+  - 路线从 `storage-only` 调整为“通用 SBP-2 unit + scanner-first bring-up”
+  - 不再依赖 `storageDevices` 作为调试入口
+
+- **阶段一：SBP-2 基础协议与页表**
+  - `SBP2WireFormats.hpp`
+  - `SBP2PageTable.hpp`
+
+- **阶段二：通用 SBP-2 unit 发现链路**
+  - `FWUnit` 解析并暴露 `Management_Agent_Offset`、`LUN`、`Unit Characteristics`、`Fast Start`
+  - discovery wire format 已携带上述字段
+  - Swift `FWDeviceInfo` / `FWUnitInfo` 已暴露：
+    - `hasSBP2Unit`
+    - `sbp2Units`
+    - `managementAgentOffset`
+    - `lun`
+    - `unitCharacteristics`
+    - `fastStart`
+  - 现有 `storageUnits` 暂时保留为兼容别名，但不再作为 SBP-2 Debug 唯一数据源
+
+- **阶段三：session / login 生命周期**
+  - `SBP2LoginSession`
+  - `SBP2ManagementORB`
+  - `SBP2SessionRegistry`
+  - UserClient 生命周期 API：
+    - `createSBP2Session`
+    - `startSBP2Login`
+    - `getSBP2SessionState`
+    - `releaseSBP2Session`
+
+- **阶段四：通用命令层基础版**
+  - 新增 `SCSICommandSet.hpp`
+  - `SBP2SessionRegistry` 已从 `INQUIRY-only` 演进为通用命令提交/取回结果
+  - 保留 `submitSBP2Inquiry` / `getSBP2InquiryResult` 作为兼容包装
+  - 新增标准 helper：
+    - `INQUIRY`
+    - `TEST UNIT READY`
+    - `REQUEST SENSE`
+  - 新增 `raw CDB passthrough`
+  - 统一命令结果对象，包含：
+    - `transportStatus`
+    - `sbpStatus`
+    - `payload`
+    - `senseData`
+
+- **阶段四：Swift 调试闭环**
+  - SBP-2 Debug 页已改为通用 `SBP-2 Device / Unit`
+  - 可执行：
+    - `Create Session`
+    - `Start Login`
+    - `Release`
+    - `INQUIRY`
+    - `TEST UNIT READY`
+    - `REQUEST SENSE`
+    - `Raw CDB`
+  - 结果页可展示 vendor / product / revision、sense 摘要、原始 payload 与状态码
+
+- **阶段五前置：DriverKit 构建收口**
+  - 新增 `SBP2DelayedDispatch.hpp`
+  - 已移除对 `IODispatchQueue::DispatchAsyncAfter` 的直接依赖
+  - 当前工程可重新通过 `xcodebuild`
+
+- **基础验证**
+  - `AddressSpaceManagerTests`
+  - `SBP2LoginSessionTests`
+  - `SBP2ORBTests`
+  - `SBP2SessionRegistryTests`
+  - `xcodebuild build -project ASFW.xcodeproj -scheme ASFW -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY='' -quiet`
+
+### 进行中
+
+- 真机 smoke：扫描仪实机 `discover -> session -> login -> inquiry -> TUR -> request sense -> raw cdb -> release`
+- bus reset / reconnect 硬化
+- in-flight 命令失败收敛与资源清理验证
+
+### 未完成
+
+- 扫描仪厂商特定命令归纳
+- 扫描业务 API / UI
+- 更广泛的真机兼容性回归
 
 ---
 
-## 阶段一：SBP-2 协议数据结构与常量 ✅
+## 分阶段状态
 
-**目标**：定义 SBP-2 规范中的核心数据结构，不涉及运行时逻辑。
+## 阶段 0：目标与命名收口 ✅
 
-### 交付物
+**目标**：把工作重点明确为 scanner-first bring-up，而不是继续沿 storage 路线扩张。
 
-- [x] `Protocols/SBP2/SBP2WireFormats.hpp` — Management ORB、LoginResponse、StatusBlock、CommandBlockORB、PageTableEntry 等 wire-format 类型
-- [x] `Protocols/SBP2/SBP2PageTable.hpp` — scatter-gather 页表构建器，含 direct-address 快捷路径
-- [x] 关键结构体布局与 SBP-2 规范一致，并在代码中保留规范语义
+### 结果
 
-### 备注
-
-实现没有拆分为 `SBP2Constants.hpp` + `SBP2Types.hpp`，而是统一放在 `SBP2WireFormats.hpp` 中。常量定义主要以内联 `constexpr` 的形式存在。
+- [x] 路线图与实现目标调整为“通用 SBP-2 unit”
+- [x] 明确当前阶段只做协议 bring-up，不做扫描业务层
+- [x] 保留现有 `DeviceKind::Storage` 兼容逻辑，不新增 `DeviceKind::Scanner`
 
 ---
 
-## 阶段二：SBP-2 设备发现与分类 🟡
+## 阶段 1：去掉 storage-only 入口限制 ✅
 
-**目标**：让驱动能从 Config ROM 中识别 SBP-2 设备，并把最小可用信息传到 Swift 调试层。
+**目标**：让任意具备 SBP-2 unit 的设备都能进入调试链路。
 
-### 交付物
+### 结果
 
-- [x] 扩展 `DeviceRegistry::ClassifyDevice()` — 识别 `Unit_Spec_Id == 0x010483`，返回现有的 `DeviceKind::Storage`
-- [x] 在 discovery wire format 中带出 `deviceKind`
-- [x] 在 Swift 端 `FWDeviceInfo` 中反映 `deviceKind`，并支持 `storageUnits` / `isSBP2Storage` 过滤
-- [ ] 细化 SBP-2 设备建模 —— 评估是否需要在 `DeviceKind::Storage` 之上增加 scanner 细分，或通过额外 metadata 区分
-- [ ] 扩展 discovery 元数据 —— 增加更完整的 LUN / Management Agent / 设备能力信息
-- [ ] 在 `DeviceManager` 中增加 SBP-2 设备通知路径（类似音频设备的 observer 模式）
+- [x] Swift discovery model 新增 `hasSBP2Unit` / `sbp2Units`
+- [x] `FWUnitInfo` 新增 SBP-2 元数据字段
+- [x] Device Discovery 页和 SBP-2 Debug 页都改为基于通用 SBP-2 unit 工作
+- [x] 调试文案改为 `SBP-2 Device / Unit`
 
 ### 验收标准
 
-- 驱动日志中可见 SBP-2 设备被归类为 `DeviceKind::Storage`
-- Swift 应用能通过 `getDiscoveredDevices` 看到 storage 设备及其 unit / ROM offset 信息
-- 不影响现有音频设备分类
+- Swift 应用可以看到带 SBP-2 unit 的设备，而不要求它先被标记为 storage
+- 调试入口不再显示 storage-only 语义
 
 ---
 
-## 阶段三：Management Agent 与登录协议 ✅
+## 阶段 2：DriverKit 构建基线 ✅
 
-**目标**：实现 SBP-2 登录/重连的核心会话机制，并为上层调试流提供最小 session 生命周期 API。
+**目标**：先让工程重新可构建，再继续做真机 bring-up。
 
-### 交付物
+### 结果
 
-- [x] `Protocols/SBP2/SBP2LoginSession.hpp/cpp` — Login / Reconnect / Logout 状态机、状态块处理、超时与重试逻辑
-- [x] `Protocols/SBP2/SBP2ManagementORB.hpp/cpp` — AbortTask、AbortTaskSet、LogicalUnitReset、TargetReset
-- [x] ORB / 状态 FIFO 地址空间分配 —— 通过 `AddressSpaceManager` 集成实现
-- [x] `Protocols/SBP2/SBP2SessionRegistry.hpp/cpp` — 面向 UserClient 的会话注册表与目标解析
-- [x] UserClient 最小 session API —— `createSBP2Session`、`startSBP2Login`、`getSBP2SessionState`、`releaseSBP2Session`
-- [x] `ControllerCore` / `UserClientRuntimeState` wiring —— address-space manager 与 session registry 已显式注入
-- [ ] 系统级 bus-reset / reconnect 收口 —— `SBP2LoginSession` 类内逻辑存在，但还未完成主生命周期整合验证
-
-### 数据流
-
-```text
-Swift App → UserClient → SBP2SessionRegistry → SBP2LoginSession → AddressSpaceManager → Async TX → FireWire Device
-                                                                                                  ↓
-Swift App ← UserClient ← Session State / StatusFIFO ← AddressSpaceManager ← Async RX ← Status Block
-```
+- [x] `SBP2CommandORB`、`SBP2ManagementORB`、`SBP2LoginSession` 统一改为兼容的延时调度封装
+- [x] 规避 `DispatchAsyncAfter` 在 DriverKit 构建中的缺失问题
+- [x] 完整工程已重新通过 Xcode 构建
 
 ### 验收标准
 
-- `SBP2LoginSessionTests` 已提供基础单元测试覆盖
-- 代码路径可查询登录状态、generation、loginID、lastError、reconnectPending
-- 真机 login / reconnect smoke 仍待完成
+- `xcodebuild` 能完成构建
+- 主机侧 ORB / session 测试仍通过
 
 ---
 
-## 阶段四：Fetch Agent 与命令传输 ✅
+## 阶段 3：通用命令层与 raw CDB ✅
 
-**目标**：通过 Fetch Agent 提交命令 ORB，并把最小调试命令链路暴露给 Swift。
+**目标**：把 `INQUIRY` 从专用调试路径提升为通用命令框架的一个实例。
 
-### 交付物
+### 结果
 
-- [x] Fetch Agent 管理 —— `ResetFetchAgent()`、`RingDoorbell()`、ORB Pointer 写入与状态跟踪
-- [x] `Protocols/SBP2/SBP2CommandORB.hpp/cpp` — 命令 ORB、数据描述符、回调与页表支持
-- [x] `Protocols/SBP2/SBP2PageTable.hpp` — scatter-gather 与 direct-address 路径
-- [x] SBP-2 事务跟踪 —— 由 `SBP2LoginSession` 集成管理
-- [x] UserClient / Swift 最小命令 API —— `submitSBP2Inquiry`、`getSBP2InquiryResult`
-- [ ] 通用命令提交接口 —— 当前仍以最小 INQUIRY 调试接口为主，未抽象为通用命令层
+- [x] 新增 `SCSICommandSet` 最小抽象
+- [x] `SBP2SessionRegistry` 支持通用命令提交与结果获取
+- [x] 兼容保留 inquiry 专用 API
+- [x] 命令结果统一输出 transport status、SBP-2 status、payload、sense
+- [x] 新增 `raw CDB passthrough`
+
+### 当前范围
+
+- 标准 helper 当前仅覆盖 bring-up 必需的三条命令
+- `READ_CAPACITY` 不属于当前扫描仪 bring-up 的 P0 范围
+
+---
+
+## 阶段 4：扫描仪最小调试闭环 ✅
+
+**目标**：围绕扫描仪 bring-up 提供足够强的调试入口，而不是产品界面。
+
+### 结果
+
+- [x] 调试页可创建 / 登录 / 释放 session
+- [x] 调试页可执行标准探测命令
+- [x] 调试页可执行任意 raw CDB
+- [x] 可查看命令结果、payload、sense、状态码
 
 ### 验收标准
 
-- Swift 调试页可以沿 `submit INQUIRY -> fetch result` 路径读取响应数据
-- `SBP2ORBTests` 已覆盖基础 ORB / 传输辅助逻辑
-- 真机 INQUIRY smoke、队列化多命令与大数据传输仍待补充验证
+- 软件层面已具备完整调试闭环
+- 后续只差真机 smoke 与恢复硬化
 
 ---
 
-## 阶段五：SCSI 命令层与扫描仪适配 🟡
+## 阶段 5：恢复与生命周期硬化 🟡
 
-**目标**：在 SBP-2 命令传输之上实现更通用的 SCSI 命令层，并逐步演进到扫描仪适配。
+**目标**：把当前调试闭环推进到可持续真机验证的平台。
 
-### 交付物
+### 已完成
 
-- [x] 最小 `INQUIRY` vertical slice —— 目前已作为调试流的一部分接入 `SBP2SessionRegistry` / Swift Debug UI
-- [ ] `Protocols/SBP2/SCSICommandSet.hpp/cpp` —— 通用 SCSI 命令抽象（`INQUIRY`、`TEST_UNIT_READY`、`REQUEST_SENSE`、`READ_CAPACITY` 等）
-- [ ] 扫描仪特定命令与能力建模（如目标设备需要）
-- [ ] 面向业务流程的 Swift 会话 API，而不仅是调试入口
+- [x] bus reset 时在飞命令会收敛到失败态
+- [x] reconnect 链路已接入主生命周期
+- [x] `ReleaseSession` 路径会清理命令状态与缓存结果
 
-### 验收标准
+### 待完成
 
-- 调试 UI 能展示 `INQUIRY` 的 vendor / product / revision 与原始响应数据
-- 真机上完成一次稳定的 `login + inquiry` smoke
-- 通用 SCSI 命令集与扫描仪工作流仍待实现
-
----
-
-## 阶段六：健壮性与系统集成 🟡
-
-**目标**：补齐错误恢复、总线重置处理、资源管理与完整构建验证，使 SBP-2 从调试闭环走向可持续维护。
-
-### 交付物
-
-- [ ] 总线重置恢复 —— 将 `HandleBusReset()` / `Reconnect()` 真正接入驱动主生命周期并做硬件验证
-- [ ] 资源清理 —— 连接断开时释放 ORB、地址空间、DMA 缓冲区，并验证无泄漏
-- [ ] 错误恢复 —— 完善重试策略、命令失败收敛、Fetch Agent 重置边缘路径
-- [ ] 并发与多 LUN 场景 —— 锁保护与生命周期规则
-- [ ] Swift 应用集成 —— 从 Debug 页面演进到更稳定的产品级入口
-- [ ] 文档更新 —— 在仓库文档中补充 SBP-2 架构与调试说明
-- [ ] 构建收口 —— 解决 `SBP2ManagementORB.cpp` / `SBP2CommandORB.cpp` 中 `IODispatchQueue::DispatchAsyncAfter` 相关的 DriverKit 构建问题
-- [ ] 扩充测试 —— bus reset、reconnect、硬件 smoke、更多 Swift / C++ 回归用例
-
-### 验收标准
-
-- 热插拔与总线重置不会导致驱动崩溃或会话永久失效
-- 真机 smoke 能稳定完成 `create session -> login -> inquiry -> release`
-- 完整 DriverKit scheme 可通过当前工程构建
+- [ ] 真机验证 bus reset 期间拒绝新命令提交
+- [ ] 真机验证 reconnect 成功后可继续发命令
+- [ ] 验证断开设备 / owner 释放 / 重复创建释放不会残留 DMA、地址空间或旧结果
+- [ ] 收集稳定 smoke 证据：generation、loginID、target node、SBP-2 status、sense、raw CDB 往返数据
 
 ---
 
-## 文件结构预览
+## 下一步执行顺序
 
-```text
-ASFWDriver/Protocols/SBP2/
-  ├── AddressSpaceManager.hpp/cpp    # ✅ 已完成
-  ├── SBP2WireFormats.hpp            # ✅ 已完成
-  ├── SBP2PageTable.hpp              # ✅ 已完成
-  ├── SBP2LoginSession.hpp/cpp       # ✅ 已完成
-  ├── SBP2ManagementORB.hpp/cpp      # ✅ 已完成
-  ├── SBP2CommandORB.hpp/cpp         # ✅ 已完成
-  └── SBP2SessionRegistry.hpp/cpp    # ✅ 已完成（会话注册与 INQUIRY 调试闭环）
+1. **真机 smoke 固化**
+   - 扫描仪接入后按固定顺序执行：
+     - discover
+     - create session
+     - start login
+     - inquiry
+     - test unit ready
+     - request sense
+     - raw cdb
+     - release
+   - 保存日志中的 generation、loginID、transport status、SBP-2 status、sense
 
-ASFWDriver/UserClient/Handlers/
-  └── SBP2Handler.hpp                # ✅ 已包含地址空间 + session/inquiry selectors
+2. **bus reset / reconnect 验证**
+   - reset 期间确认新命令被拒绝
+   - in-flight 命令确认进入失败态
+   - reconnect 后确认 session 可继续使用
 
-ASFW/
-  ├── DriverConnector+Discovery.swift   # ✅ 已解析 deviceKind
-  ├── DriverConnector+SBP2.swift        # ✅ 已完成最小 session / inquiry API
-  ├── ViewModels/SBP2DebugViewModel.swift
-  └── Views/SBP2DebugView.swift
+3. **scanner-specific 命令摸底**
+   - 优先通过 raw CDB 记录厂商命令与返回
+   - 在拿到稳定证据前，不新增高层协议封装
 
-tests/
-  ├── AddressSpaceManagerTests.cpp
-  ├── SBP2LoginSessionTests.cpp
-  └── SBP2ORBTests.cpp
+4. **补强回归**
+   - 按需增加 session 清理、reset 收敛、raw CDB 错误路径测试
 
-ASFWTests/
-  └── DeviceDiscoveryWireParsingTests.swift
-```
-
-## 依赖关系
-
-```text
-阶段一（类型定义）✅
-  ├── 阶段二（设备分类）🟡
-  └── 阶段三（登录协议）✅
-        └── 阶段四（Fetch Agent / 命令传输）✅
-              └── 阶段五（SCSI 命令层）🟡
-                    当前先冻结在 INQUIRY vertical slice
-                    └── 阶段六（健壮性与系统集成）🟡
-```
+---
 
 ## 风险与注意事项
 
-1. **参考实现稀缺**：仍需持续参考 Linux `firewire-sbp2` 与 Apple `IOFireWireSBP2` 的行为差异
-2. **扫描仪兼容性**：目标扫描仪可能使用厂商特定命令集，不能简单类比存储设备
-3. **OHCI 描述符限制**：Fetch Agent 写操作与命令提交流程仍需更多硬件侧验证
-4. **DMA 一致性**：大数据传输时页表映射与 OHCI 硬件同步仍是高风险点
-5. **DriverKit API 差异**：当前完整 DriverKit 构建仍被 `IODispatchQueue::DispatchAsyncAfter` 用法阻塞，需要先修正 ORB 定时实现
-6. **硬件验证缺口**：当前已打通软件调试闭环，但真机 `login + inquiry` smoke 还未形成稳定证据
-7. **生命周期收口不足**：bus reset / reconnect 的类内能力已存在，但系统级接线与恢复策略仍待验证
+1. **扫描仪未必遵循块设备语义**
+   - 当前实现已避免把 scanner bring-up 绑定到 storage 语义，但后续仍需根据真机证据决定命令集合
+
+2. **raw CDB 是 bring-up 必需能力**
+   - 对扫描仪而言，这不是调试锦上添花，而是识别厂商协议的基础能力
+
+3. **真机验证仍是主要缺口**
+   - 当前软件路径已打通，但是否能稳定工作仍取决于硬件侧 login、命令完成与 reset 行为
+
+4. **DriverKit 构建虽已恢复，运行时行为仍需实机确认**
+   - 构建通过不等于扫描仪协议行为已稳定

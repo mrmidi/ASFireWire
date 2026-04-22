@@ -95,7 +95,8 @@ public:
 
         // Optimization: single PTE with quadlet-aligned address → direct mode.
         if (pteCount_ == 1 && (ptes[0].segmentBaseAddressLo & Wire::ToBE32(0x3u)) == 0) {
-            result_.dataDescriptorHi = 0;  // localNodeID filled in by PrepareForExecution
+            result_.dataDescriptorHi = Wire::ToBE32(
+                static_cast<uint32_t>(segments.front().address >> 32) & 0xFFFFu);
             result_.dataDescriptorLo = ptes[0].segmentBaseAddressLo;
             result_.dataSize = ptes[0].segmentLength;  // still BE, ORB reads it BE
             result_.options = 0;  // no page table

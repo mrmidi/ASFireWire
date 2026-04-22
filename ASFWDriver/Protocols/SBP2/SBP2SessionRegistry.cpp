@@ -1,6 +1,8 @@
 #include "SBP2SessionRegistry.hpp"
-#include "../../Discovery/FWUnit.hpp"
+
+#include "../../Async/Interfaces/IFireWireBusInfo.hpp"
 #include "../../Discovery/FWDevice.hpp"
+#include "../../Discovery/FWUnit.hpp"
 
 #include <cstring>
 
@@ -29,43 +31,50 @@ private:
     IOLock* lock_{nullptr};
 };
 
-} // namespace
+constexpr uint8_t kInquiryOpcode = 0x12;
 
-// SCSI INQUIRY CDB (6 bytes)
-static void BuildInquiryCDB(uint8_t allocationLength, std::span<uint8_t, 6> cdb) {
-    cdb[0] = 0x12;                // OPERATION CODE = INQUIRY
-    cdb[1] = 0x00;                // EVPD=0, page code=0
-    cdb[2] = 0x00;                // Page code
-    cdb[3] = allocationLength;    // Allocation length
-    cdb[4] = 0x00;                // Reserved
-    cdb[5] = 0x00;                // Control
+uint32_t BuildCommandFlags(SCSI::DataDirection direction) {
+    uint32_t flags = SBP2CommandORB::kNotify |
+        SBP2CommandORB::kImmediate |
+        SBP2CommandORB::kNormalORB;
+    if (direction == SCSI::DataDirection::FromTarget) {
+        flags |= SBP2CommandORB::kDataFromTarget;
+    }
+    return flags;
 }
 
-// Build SBP2TargetInfo from FWUnit metadata.
-static SBP2TargetInfo BuildTargetInfoFromUnit(const Discovery::FWUnit& unit) {
+SBP2TargetInfo BuildTargetInfoFromUnit(const Discovery::FWUnit& unit) {
     SBP2TargetInfo info{};
 
     info.managementAgentOffset = unit.GetManagementAgentOffset().value_or(0);
     info.lun = static_cast<uint16_t>(unit.GetLUN().value_or(0) & 0xFFFF);
 
-    auto uc = unit.GetUnitCharacteristics();
-    if (uc.has_value()) {
-        const uint32_t v = *uc;
-        const uint8_t orbSizeUnits = static_cast<uint8_t>((v >> 24) & 0xFF);
-        const uint8_t timeoutUnits = static_cast<uint8_t>((v >> 16) & 0xFF);
+    if (auto uc = unit.GetUnitCharacteristics(); uc.has_value()) {
+        const uint32_t value = *uc;
+        const uint8_t orbSizeUnits = static_cast<uint8_t>((value >> 24) & 0xFF);
+        const uint8_t timeoutUnits = static_cast<uint8_t>((value >> 16) & 0xFF);
         info.managementTimeoutMs = static_cast<uint32_t>(timeoutUnits) * 500;
         info.maxORBSize = std::max<uint16_t>(static_cast<uint16_t>(orbSizeUnits) * 4, 32);
     }
     info.maxCommandBlockSize = info.maxORBSize > 12
-        ? static_cast<uint16_t>(info.maxORBSize - 12) : 0;
+        ? static_cast<uint16_t>(info.maxORBSize - 12)
+        : 0;
 
-    auto device = unit.GetDevice();
-    if (device) {
+    if (auto fastStart = unit.GetFastStart(); fastStart.has_value()) {
+        const uint32_t value = *fastStart;
+        info.fastStartSupported = true;
+        info.fastStartOffset = static_cast<uint8_t>((value >> 8) & 0xFF);
+        info.fastStartMaxPayload = static_cast<uint8_t>(value & 0xFF);
+    }
+
+    if (auto device = unit.GetDevice(); device) {
         info.targetNodeId = device->GetNodeID();
     }
 
     return info;
 }
+
+} // namespace
 
 SBP2SessionRegistry::SBP2SessionRegistry(Async::IFireWireBus& bus,
                                          Async::IFireWireBusInfo& busInfo,
@@ -83,12 +92,10 @@ SBP2SessionRegistry::SBP2SessionRegistry(Async::IFireWireBus& bus,
 SBP2SessionRegistry::~SBP2SessionRegistry() {
     IOLockGuard lock(lock_);
     for (auto& [handle, record] : sessions_) {
-        if (record.session) {
-            if (record.session->State() == LoginState::LoggedIn) {
-                record.session->Logout();
-            }
+        if (record.session && record.session->State() == LoginState::LoggedIn) {
+            (void)record.session->Logout();
         }
-        CleanupInquiryResources(record);
+        CleanupCommandResources(record);
     }
     sessions_.clear();
 
@@ -99,8 +106,8 @@ SBP2SessionRegistry::~SBP2SessionRegistry() {
 }
 
 std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
-                                                                 uint64_t guid,
-                                                                 uint32_t romOffset) {
+                                                                uint64_t guid,
+                                                                uint32_t romOffset) {
     auto unit = ResolveUnit(guid, romOffset);
     if (!unit) {
         ASFW_LOG(SBP2, "SBP2SessionRegistry: no unit found for guid=0x%016llx romOffset=%u",
@@ -113,7 +120,7 @@ std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
         return std::unexpected(kIOReturnUnsupported);
     }
 
-    auto mgmtOffset = unit->GetManagementAgentOffset();
+    const auto mgmtOffset = unit->GetManagementAgentOffset();
     if (!mgmtOffset.has_value() || *mgmtOffset == 0) {
         ASFW_LOG(SBP2, "SBP2SessionRegistry: unit has no Management_Agent_Offset");
         return std::unexpected(kIOReturnUnsupported);
@@ -162,7 +169,9 @@ bool SBP2SessionRegistry::StartLogin(uint64_t handle) {
     record->session->SetLoginCallback([this, handle](const LoginCompleteParams& params) {
         IOLockGuard cbLock(lock_);
         auto* rec = FindByHandle(handle);
-        if (!rec) return;
+        if (rec == nullptr) {
+            return;
+        }
 
         rec->state.lastError = params.status;
         if (params.status == 0) {
@@ -194,109 +203,183 @@ std::optional<SBP2SessionState> SBP2SessionRegistry::GetSessionState(uint64_t ha
 }
 
 bool SBP2SessionRegistry::SubmitInquiry(uint64_t handle, uint8_t allocationLength) {
-    IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
-    if (!record || !record->session) {
-        return false;
-    }
-
-    if (record->session->State() != LoginState::LoggedIn) {
-        return false;
-    }
-
-    if (record->inquiryInFlight) {
-        return false;
-    }
-
-    // Allocate read buffer
-    uint64_t bufHandle{0};
-    AddressSpaceManager::AddressRangeMeta bufMeta{};
-    const kern_return_t kr = addrSpaceMgr_.AllocateAddressRangeAuto(
-        record->owner, 0xFFFF, allocationLength, &bufHandle, &bufMeta);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG(SBP2, "SBP2SessionRegistry: failed to allocate inquiry buffer: 0x%08x", kr);
-        return false;
-    }
-
-    // Build page table
-    auto pageTable = std::make_unique<SBP2PageTable>(addrSpaceMgr_, record->owner);
-    SBP2PageTable::Segment seg{bufMeta.address, allocationLength};
-    if (!pageTable->Build(std::span<const SBP2PageTable::Segment>(&seg, 1),
-                          busInfo_.GetLocalNodeID().value)) {
-        addrSpaceMgr_.DeallocateAddressRange(record->owner, bufHandle);
-        return false;
-    }
-
-    // Create ORB
-    const uint16_t maxCDB = record->session->TargetInfo().maxCommandBlockSize;
-    if (maxCDB < 6) {
-        addrSpaceMgr_.DeallocateAddressRange(record->owner, bufHandle);
-        return false;
-    }
-
-    auto orb = std::make_unique<SBP2CommandORB>(addrSpaceMgr_, record->owner, maxCDB);
-
-    // Set CDB
-    std::array<uint8_t, 6> cdb{};
-    BuildInquiryCDB(allocationLength, std::span<uint8_t, 6>{cdb});
-    orb->SetCommandBlock(std::span<const uint8_t>{cdb.data(), 6});
-
-    // Set flags and page table
-    orb->SetFlags(SBP2CommandORB::kNotify | SBP2CommandORB::kDataFromTarget |
-                  SBP2CommandORB::kImmediate | SBP2CommandORB::kNormalORB);
-    orb->SetMaxPayloadSize(record->session->MaxPayloadSize());
-    orb->SetDataDescriptor(pageTable->GetResult());
-
-    const uint64_t captureHandle = handle;
-    const uint64_t captureBufHandle = bufHandle;
-    const uint8_t captureAllocLen = allocationLength;
-
-    orb->SetCompletionCallback([this, captureHandle, captureBufHandle, captureAllocLen](int status) {
-        IOLockGuard cbLock(lock_);
-        auto* rec = FindByHandle(captureHandle);
-        if (!rec) return;
-
-        rec->inquiryInFlight = false;
-
-        if (status != 0) {
-            rec->state.lastError = status;
-            return;
-        }
-
-        // Read inquiry data from address space buffer
-        std::vector<uint8_t> data;
-        const kern_return_t kr = addrSpaceMgr_.ReadIncomingData(
-            rec->owner, captureBufHandle, 0, captureAllocLen, &data);
-        if (kr == kIOReturnSuccess && !data.empty()) {
-            rec->inquiryResult = std::move(data);
-            rec->inquiryReady = true;
-        }
-    });
-
-    if (!record->session->SubmitORB(orb.get())) {
-        addrSpaceMgr_.DeallocateAddressRange(record->owner, bufHandle);
-        return false;
-    }
-
-    record->inquiryInFlight = true;
-    record->inquiryBufferHandle = bufHandle;
-    record->inquiryORB = std::move(orb);
-    record->inquiryPageTable = std::move(pageTable);
-
-    return true;
+    return SubmitCommand(handle, SCSI::BuildInquiryRequest(allocationLength));
 }
 
 std::optional<std::vector<uint8_t>> SBP2SessionRegistry::GetInquiryResult(uint64_t handle) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandle(handle);
-    if (!record || !record->inquiryReady) {
+    if (!record || !record->commandReady || !record->pendingCommandResult.has_value() ||
+        record->lastCompletedCommandOpcode != kInquiryOpcode) {
         return std::nullopt;
     }
 
-    auto result = std::move(record->inquiryResult);
-    record->inquiryResult.clear();
-    record->inquiryReady = false;
-    CleanupInquiryResources(*record);
+    if (record->pendingCommandResult->transportStatus != 0 ||
+        record->pendingCommandResult->sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
+        record->pendingCommandResult.reset();
+        record->lastCompletedCommandOpcode.reset();
+        record->commandReady = false;
+        return std::nullopt;
+    }
+
+    auto payload = std::move(record->pendingCommandResult->payload);
+    record->pendingCommandResult.reset();
+    record->lastCompletedCommandOpcode.reset();
+    record->commandReady = false;
+    return payload;
+}
+
+bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request) {
+    IOLockGuard lock(lock_);
+    auto* record = FindByHandle(handle);
+    if (!record || !record->session || request.cdb.empty()) {
+        return false;
+    }
+
+    if (record->session->State() != LoginState::LoggedIn || record->commandInFlight) {
+        return false;
+    }
+
+    if (request.transferLength > 0 && request.direction == SCSI::DataDirection::None) {
+        return false;
+    }
+    if (request.direction == SCSI::DataDirection::FromTarget && !request.outgoingPayload.empty()) {
+        return false;
+    }
+    if (request.direction == SCSI::DataDirection::ToTarget &&
+        request.outgoingPayload.size() != request.transferLength) {
+        return false;
+    }
+
+    const uint16_t maxCDB = record->session->TargetInfo().maxCommandBlockSize;
+    if (maxCDB < request.cdb.size()) {
+        return false;
+    }
+
+    uint64_t bufferHandle = 0;
+    AddressSpaceManager::AddressRangeMeta bufferMeta{};
+    if (request.transferLength > 0) {
+        const kern_return_t kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+            record->owner, 0xFFFF, request.transferLength, &bufferHandle, &bufferMeta);
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(SBP2, "SBP2SessionRegistry: failed to allocate command buffer: 0x%08x", kr);
+            return false;
+        }
+    }
+
+    std::unique_ptr<SBP2PageTable> pageTable;
+    if (request.transferLength > 0) {
+        if (request.direction == SCSI::DataDirection::ToTarget) {
+            const kern_return_t writeKr = addrSpaceMgr_.WriteLocalData(
+                record->owner,
+                bufferHandle,
+                0,
+                std::span<const uint8_t>{request.outgoingPayload.data(), request.outgoingPayload.size()});
+            if (writeKr != kIOReturnSuccess) {
+                addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
+                return false;
+            }
+        }
+
+        pageTable = std::make_unique<SBP2PageTable>(addrSpaceMgr_, record->owner);
+        SBP2PageTable::Segment segment{bufferMeta.address, request.transferLength};
+        if (!pageTable->Build(std::span<const SBP2PageTable::Segment>(&segment, 1),
+                              busInfo_.GetLocalNodeID().value)) {
+            addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
+            return false;
+        }
+    }
+
+    auto orb = std::make_unique<SBP2CommandORB>(addrSpaceMgr_, record->owner, maxCDB);
+    orb->SetCommandBlock(std::span<const uint8_t>{request.cdb.data(), request.cdb.size()});
+    orb->SetFlags(BuildCommandFlags(request.direction));
+    orb->SetMaxPayloadSize(record->session->MaxPayloadSize());
+    orb->SetTimeout(request.timeoutMs > 0
+        ? request.timeoutMs
+        : record->session->TargetInfo().managementTimeoutMs);
+    if (pageTable) {
+        orb->SetDataDescriptor(pageTable->GetResult());
+    }
+
+    const uint64_t captureHandle = handle;
+    orb->SetCompletionCallback([this, captureHandle](int transportStatus, uint8_t sbpStatus) {
+        IOLockGuard cbLock(lock_);
+        auto* rec = FindByHandle(captureHandle);
+        if (rec == nullptr) {
+            return;
+        }
+
+        rec->commandInFlight = false;
+        rec->commandReady = true;
+        rec->lastCompletedCommandOpcode = rec->activeCommandOpcode;
+        rec->activeCommandOpcode.reset();
+
+        SCSI::CommandResult result{};
+        result.transportStatus = transportStatus;
+        result.sbpStatus = sbpStatus;
+
+        if (transportStatus == 0 &&
+            sbpStatus == Wire::SBPStatus::kNoAdditionalInfo &&
+            rec->activeCommandRequest.has_value() &&
+            rec->activeCommandRequest->direction == SCSI::DataDirection::FromTarget &&
+            rec->activeCommandRequest->transferLength > 0 &&
+            rec->commandBufferHandle != 0) {
+            std::vector<uint8_t> payload;
+            const kern_return_t readKr = addrSpaceMgr_.ReadIncomingData(
+                rec->owner,
+                rec->commandBufferHandle,
+                0,
+                rec->activeCommandRequest->transferLength,
+                &payload);
+            if (readKr == kIOReturnSuccess) {
+                result.payload = std::move(payload);
+            } else {
+                result.transportStatus = static_cast<int>(readKr);
+            }
+        }
+
+        if (rec->activeCommandRequest.has_value() && rec->activeCommandRequest->captureSenseData) {
+            result.senseData = result.payload;
+        }
+
+        rec->state.lastError = static_cast<int32_t>(result.transportStatus);
+        if (result.transportStatus == 0 && result.sbpStatus == Wire::SBPStatus::kNoAdditionalInfo) {
+            rec->state.lastError = 0;
+        }
+        rec->pendingCommandResult = std::move(result);
+        rec->activeCommandRequest.reset();
+        CleanupCommandResources(*rec);
+    });
+
+    if (!record->session->SubmitORB(orb.get())) {
+        if (bufferHandle != 0) {
+            addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
+        }
+        return false;
+    }
+
+    record->commandInFlight = true;
+    record->commandReady = false;
+    record->pendingCommandResult.reset();
+    record->activeCommandRequest = request;
+    record->activeCommandOpcode = request.cdb.front();
+    record->commandBufferHandle = bufferHandle;
+    record->commandORB = std::move(orb);
+    record->commandPageTable = std::move(pageTable);
+    return true;
+}
+
+std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetCommandResult(uint64_t handle) {
+    IOLockGuard lock(lock_);
+    auto* record = FindByHandle(handle);
+    if (!record || !record->commandReady || !record->pendingCommandResult.has_value()) {
+        return std::nullopt;
+    }
+
+    SCSI::CommandResult result = std::move(*record->pendingCommandResult);
+    record->pendingCommandResult.reset();
+    record->lastCompletedCommandOpcode.reset();
+    record->commandReady = false;
     return result;
 }
 
@@ -308,13 +391,11 @@ bool SBP2SessionRegistry::ReleaseSession(uint64_t handle) {
     }
 
     auto& record = it->second;
-    if (record.session) {
-        if (record.session->State() == LoginState::LoggedIn) {
-            record.session->Logout();
-        }
+    if (record.session && record.session->State() == LoginState::LoggedIn) {
+        (void)record.session->Logout();
     }
 
-    CleanupInquiryResources(record);
+    CleanupCommandResources(record);
     sessions_.erase(it);
     return true;
 }
@@ -325,9 +406,9 @@ void SBP2SessionRegistry::ReleaseOwner(void* owner) {
         if (it->second.owner == owner) {
             auto& record = it->second;
             if (record.session && record.session->State() == LoginState::LoggedIn) {
-                record.session->Logout();
+                (void)record.session->Logout();
             }
-            CleanupInquiryResources(record);
+            CleanupCommandResources(record);
             it = sessions_.erase(it);
         } else {
             ++it;
@@ -341,16 +422,30 @@ void SBP2SessionRegistry::OnBusReset(uint16_t newGeneration) {
         if (record.session) {
             record.session->HandleBusReset(newGeneration);
         }
+        if (record.commandInFlight || record.commandORB) {
+            record.commandInFlight = false;
+            record.commandReady = true;
+            record.lastCompletedCommandOpcode = record.activeCommandOpcode;
+            record.activeCommandOpcode.reset();
+
+            SCSI::CommandResult result{};
+            result.transportStatus = static_cast<int>(kIOReturnAborted);
+            result.sbpStatus = Wire::SBPStatus::kRequestAborted;
+            record.pendingCommandResult = std::move(result);
+            record.state.lastError = static_cast<int32_t>(kIOReturnAborted);
+            record.activeCommandRequest.reset();
+            CleanupCommandResources(record);
+        }
     }
 }
 
 void SBP2SessionRegistry::RefreshTargets(Discovery::Generation gen) {
     IOLockGuard lock(lock_);
     for (auto& [handle, record] : sessions_) {
-        if (!record.session) continue;
-        if (record.session->State() != LoginState::Suspended) continue;
+        if (!record.session || record.session->State() != LoginState::Suspended) {
+            continue;
+        }
 
-        // Re-resolve unit to get updated node ID
         auto unit = ResolveUnit(record.guid, record.romOffset);
         if (!unit) {
             ASFW_LOG(SBP2, "SBP2SessionRegistry: RefreshTargets: unit not found for handle=%llu",
@@ -358,19 +453,14 @@ void SBP2SessionRegistry::RefreshTargets(Discovery::Generation gen) {
             continue;
         }
 
-        // Update target info with fresh node ID
         auto targetInfo = BuildTargetInfoFromUnit(*unit);
         record.session->Configure(targetInfo);
 
         ASFW_LOG(SBP2, "SBP2SessionRegistry: reconnecting session handle=%llu gen=%u",
                  handle, gen.value);
-        record.session->Reconnect();
+        (void)record.session->Reconnect();
     }
 }
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
 
 SBP2SessionRecord* SBP2SessionRegistry::FindByHandle(uint64_t handle) {
     auto it = sessions_.find(handle);
@@ -383,8 +473,8 @@ const SBP2SessionRecord* SBP2SessionRegistry::FindByHandle(uint64_t handle) cons
 }
 
 std::shared_ptr<Discovery::FWUnit> SBP2SessionRegistry::ResolveUnit(uint64_t guid,
-                                                                      uint32_t romOffset) const {
-    auto devices = deviceManager_.GetAllDevices();
+                                                                    uint32_t romOffset) const {
+    const auto devices = deviceManager_.GetAllDevices();
     for (const auto& device : devices) {
         if (!device || device->GetGUID() != guid) {
             continue;
@@ -398,14 +488,14 @@ std::shared_ptr<Discovery::FWUnit> SBP2SessionRegistry::ResolveUnit(uint64_t gui
     return nullptr;
 }
 
-void SBP2SessionRegistry::CleanupInquiryResources(SBP2SessionRecord& record) {
-    if (record.inquiryBufferHandle) {
-        addrSpaceMgr_.DeallocateAddressRange(record.owner, record.inquiryBufferHandle);
-        record.inquiryBufferHandle = 0;
+void SBP2SessionRegistry::CleanupCommandResources(SBP2SessionRecord& record) {
+    if (record.commandBufferHandle != 0) {
+        addrSpaceMgr_.DeallocateAddressRange(record.owner, record.commandBufferHandle);
+        record.commandBufferHandle = 0;
     }
-    record.inquiryORB.reset();
-    record.inquiryPageTable.reset();
-    record.inquiryInFlight = false;
+    record.commandORB.reset();
+    record.commandPageTable.reset();
+    record.commandInFlight = false;
 }
 
 } // namespace ASFW::Protocols::SBP2

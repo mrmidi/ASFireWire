@@ -19,6 +19,10 @@ struct __attribute__((packed)) FWUnitWire {
     uint32_t romOffset;
     uint8_t state;              // 0=Created, 1=Ready, 2=Suspended, 3=Terminated
     uint8_t _padding[3];
+    uint32_t managementAgentOffset;
+    uint32_t lun;
+    uint32_t unitCharacteristics;
+    uint32_t fastStart;
     char vendorName[64];        // null-terminated
     char productName[64];       // null-terminated
 };

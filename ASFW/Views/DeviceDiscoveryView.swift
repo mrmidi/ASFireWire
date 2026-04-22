@@ -212,16 +212,16 @@ struct DeviceDetailView: View {
                         GridRow {
                             Text("Kind:")
                                 .fontWeight(.medium)
-                            Text(device.isStorage ? "Storage (SBP-2)" : "Other")
+                            Text(device.hasSBP2Unit ? "SBP-2 Device" : (device.isStorage ? "Storage" : "Other"))
                         }
                     }
                     .padding()
                 }
 
-                if device.isStorage, let onOpenSBP2Device {
-                    GroupBox("Storage Debug") {
+                if device.hasSBP2Unit, let onOpenSBP2Device {
+                    GroupBox("SBP-2 Debug") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("This device exposes at least one SBP-2 storage unit.")
+                            Text("This device exposes at least one SBP-2 unit.")
                                 .foregroundStyle(.secondary)
 
                             Button {
@@ -294,6 +294,38 @@ struct UnitCardView: View {
                         .foregroundStyle(.secondary)
                     Text(String(format: "%d quadlets", unit.romOffset))
                         .monospaced()
+                }
+                if let managementAgentOffset = unit.managementAgentOffset {
+                    GridRow {
+                        Text("Mgmt Agent:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%08X", managementAgentOffset))
+                            .monospaced()
+                    }
+                }
+                if let lun = unit.lun {
+                    GridRow {
+                        Text("LUN:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%02X", lun))
+                            .monospaced()
+                    }
+                }
+                if let unitCharacteristics = unit.unitCharacteristics {
+                    GridRow {
+                        Text("Unit Chars:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%08X", unitCharacteristics))
+                            .monospaced()
+                    }
+                }
+                if let fastStart = unit.fastStart {
+                    GridRow {
+                        Text("Fast Start:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%08X", fastStart))
+                            .monospaced()
+                    }
                 }
 
                 if let vendorName = unit.vendorName, !vendorName.isEmpty {

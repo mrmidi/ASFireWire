@@ -1296,6 +1296,34 @@ target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SBP2ORBTests)
 
+# SBP-2 Session Registry / command tests
+add_executable(SBP2SessionRegistryTests
+    "${ASFW_TESTS_DIR}/SBP2SessionRegistryTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2SessionRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SBP2SessionRegistryTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SBP2SessionRegistryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SBP2SessionRegistryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SBP2SessionRegistryTests)
+
 # Device protocol factory routing tests
 add_executable(DeviceProtocolFactoryTests
     "${ASFW_TESTS_DIR}/DeviceProtocolFactoryTests.cpp"

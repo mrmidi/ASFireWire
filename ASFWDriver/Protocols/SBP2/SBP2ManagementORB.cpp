@@ -3,6 +3,7 @@
 // Ref: SBP-2 §6 (Task Management)
 
 #include "SBP2ManagementORB.hpp"
+#include "SBP2DelayedDispatch.hpp"
 
 #include "../../Async/Interfaces/IFireWireBus.hpp"
 #include "../../Async/Interfaces/IFireWireBusInfo.hpp"
@@ -202,8 +203,7 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
         const std::weak_ptr<int> weakLifetime = lifetimeToken_;
         const uint64_t delayNs = static_cast<uint64_t>(timeout) * 1'000'000ULL;
 
-#ifdef ASFW_HOST_TEST
-        workQueue_->DispatchAsyncAfter(delayNs, [this, weakLifetime, expectedGeneration]() {
+        DispatchAfterCompat(workQueue_, delayNs, [this, weakLifetime, expectedGeneration]() {
             if (weakLifetime.expired()) {
                 return;
             }
@@ -214,19 +214,6 @@ void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
             }
             OnTimeout();
         });
-#else
-        workQueue_->DispatchAsyncAfter(delayNs, ^{
-            if (weakLifetime.expired()) {
-                return;
-            }
-            if (timerGeneration_.load(std::memory_order_acquire) != expectedGeneration ||
-                !timerActive_.load(std::memory_order_relaxed) ||
-                !inProgress_.load(std::memory_order_relaxed)) {
-                return;
-            }
-            OnTimeout();
-        });
-#endif
     }
 }
 

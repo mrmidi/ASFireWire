@@ -40,7 +40,7 @@ public:
         kDummyORB       = (1 << 8),
     };
 
-    using CompletionCallback = std::function<void(int status)>;
+    using CompletionCallback = std::function<void(int transportStatus, uint8_t sbpStatus)>;
 
     SBP2CommandORB(AddressSpaceManager& addrMgr, void* owner,
                    uint32_t maxCommandBlockSize);
