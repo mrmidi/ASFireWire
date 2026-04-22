@@ -34,16 +34,17 @@ constexpr std::array<uint32_t, N> LoadHostQuadlets(const uint8_t* base) {
     return words;
 }
 
-std::vector<uint8_t> MakeARBufferFromWireWords(std::initializer_list<uint32_t> quadlets,
+std::vector<uint8_t> MakeARBufferFromOHCIWords(std::initializer_list<uint32_t> hostOrderQuadlets,
                                                uint32_t trailerLE = 0) {
     std::vector<uint8_t> bytes;
-    bytes.reserve(quadlets.size() * sizeof(uint32_t) + sizeof(uint32_t));
+    bytes.reserve(hostOrderQuadlets.size() * sizeof(uint32_t) + sizeof(uint32_t));
 
-    for (uint32_t word : quadlets) {
-        bytes.push_back(static_cast<uint8_t>((word >> 24) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((word >> 16) & 0xFF));
-        bytes.push_back(static_cast<uint8_t>((word >> 8) & 0xFF));
+    for (uint32_t word : hostOrderQuadlets) {
+        // OHCI AR DMA stores each received quadlet in little-endian memory order.
         bytes.push_back(static_cast<uint8_t>(word & 0xFF));
+        bytes.push_back(static_cast<uint8_t>((word >> 8) & 0xFF));
+        bytes.push_back(static_cast<uint8_t>((word >> 16) & 0xFF));
+        bytes.push_back(static_cast<uint8_t>((word >> 24) & 0xFF));
     }
 
     // OHCI appends a little-endian trailer. Zero is portable regardless of byte order.
@@ -208,7 +209,7 @@ TEST(AsyncPacketSerDesLinuxCompat, LockRequestMatchesLinuxVector) {
 // -----------------------
 
 TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
-    const auto packet = MakeARBufferFromWireWords({
+    const auto packet = MakeARBufferFromOHCIWords({
         0xFFC1F160u,
         0xFFC00000u,
         0x00000000u,
@@ -241,7 +242,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
 
 TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) {
     // Q3 specifies data_length = 0x20 (32 bytes), so we need to include 32 bytes of payload
-    const auto packet = MakeARBufferFromWireWords({
+    const auto packet = MakeARBufferFromOHCIWords({
         0xFFC1E170u,  // Q0: header
         0xFFC00000u,  // Q1: source ID
         0x00000000u,  // Q2: reserved
@@ -275,7 +276,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) 
 }
 
 TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength) {
-    const auto packet = MakeARBufferFromWireWords({
+    const auto packet = MakeARBufferFromOHCIWords({
         0xFFC12DB0u,
         0xFFC00000u,
         0x00000000u,
@@ -306,10 +307,10 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
 }
 
 TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
-    // Read quadlet response packet: tLabel=48, tCode=6, rCode=0
-    // IEEE 1394 wire: Byte2=[tLabel:6][rt:2], Byte3=[tCode:4][rCode:4]
+    // Read quadlet response packet as OHCI AR DMA memory: tLabel=48, tCode=6, rCode=0.
+    // After the little-endian quadlet write, memory byte1 holds [tLabel:6][rt:2].
     const std::array<uint8_t, 16> responseBytes{
-        0x60, 0x01, 0xC2, 0x60,  // Fixed byte3: was 0xFF (invalid tCode=0xF) → 0x60 (tCode=6)
+        0x60, 0xC2, 0x01, 0x60,
         0x00, 0x00, 0xC0, 0xFF,
         0x00, 0x00, 0x00, 0x00,
         0x04, 0x20, 0x8F, 0xE2,

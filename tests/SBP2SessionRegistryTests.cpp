@@ -251,4 +251,53 @@ TEST(SBP2SessionRegistryTests, CreateSessionAcceptsRealSBP2SpecAndVersion) {
     ASSERT_TRUE(result.has_value());
 }
 
+TEST(SBP2SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey) {
+    DeviceManager deviceManager;
+
+    DeviceRecord record{};
+    record.guid = SessionRegistryRig::kGuid + 1U;
+    record.vendorId = 0x0090B5;
+    record.modelId = 0x004001;
+    record.kind = DeviceKind::Unknown;
+    record.vendorName = "Nikon";
+    record.modelName = "LS-4000 ED";
+    record.gen = Generation{1};
+    record.nodeId = 0x00;
+    record.link = LinkPolicy{};
+    record.state = LifeState::Ready;
+
+    ConfigROM rom{};
+    rom.gen = Generation{1};
+    rom.nodeId = record.nodeId;
+    rom.bib.busInfoLength = 4;
+    rom.rootDirMinimal = {
+        RomEntry{CfgKey::Unit_Directory, 0x000001, 3, 1},
+    };
+    rom.rawQuadlets = {
+        ToBE32(0x04045343u),
+        ToBE32(0x31333934u),
+        ToBE32(0x00FF5012u),
+        ToBE32(0x0090B540u),
+        ToBE32(0x01FFFFFFu),
+        ToBE32(0x0001B344u),
+        ToBE32(0x0004CAEEu),
+        ToBE32(0x1200609Eu),
+        ToBE32(0x13010483u),
+        ToBE32(0x5400C000u),
+        ToBE32(0x14060000u),
+    };
+
+    auto device = deviceManager.UpsertDevice(record, rom);
+    ASSERT_NE(device, nullptr);
+    ASSERT_EQ(device->GetUnits().size(), 1u);
+
+    const auto& unit = device->GetUnits().front();
+    ASSERT_NE(unit, nullptr);
+    EXPECT_TRUE(unit->Matches(kSBP2UnitSpecId, kSBP2UnitSwVersion));
+    ASSERT_TRUE(unit->GetManagementAgentOffset().has_value());
+    EXPECT_EQ(*unit->GetManagementAgentOffset(), 0x00C000u);
+    ASSERT_TRUE(unit->GetLUN().has_value());
+    EXPECT_EQ(*unit->GetLUN(), 0x060000u);
+}
+
 } // namespace

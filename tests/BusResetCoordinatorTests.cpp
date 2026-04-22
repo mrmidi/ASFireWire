@@ -355,7 +355,7 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
         7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
     rig.PrimeCapture(rawCapture, 7U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     EXPECT_EQ(rig.publishedTopologies.front().generation, 7U);
@@ -370,6 +370,25 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
 }
 
+TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+
+    const auto rawCapture = MakeRawSelfIDCapture(
+        7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 7U);
+    rig.TriggerStickyCompletion();
+
+    rig.AdvanceMs(99U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+
+    rig.AdvanceMs(1U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_EQ(rig.publishedTopologies.front().generation, 7U);
+}
+
 TEST(BusResetCoordinatorTests, StickyCompletionOnlyStillCompletesDecodePath) {
     BusResetTestRig rig;
     rig.Initialize();
@@ -380,7 +399,7 @@ TEST(BusResetCoordinatorTests, StickyCompletionOnlyStillCompletesDecodePath) {
         3U, {MakeBaseSelfID(0U, 63U, true, false), MakeBaseSelfID(1U, 63U)});
     rig.PrimeCapture(rawCapture, 3U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     EXPECT_EQ(rig.publishedTopologies.front().generation, 3U);
@@ -435,7 +454,7 @@ TEST(BusResetCoordinatorTests, InvalidTopologyDoesNotReusePreviouslyPublishedSna
         MakeRawSelfIDCapture(12U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
     rig.PrimeCapture(stableCapture, 12U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     rig.ResetHardwareState();
@@ -676,7 +695,7 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
                                                 MakeBaseSelfID(1U, 21U, true, false)}),
                      21U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());

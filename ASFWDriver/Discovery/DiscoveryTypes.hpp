@@ -87,7 +87,7 @@ enum class CfgKey : uint8_t {
     Logical_Unit_Number = 0x14,
     Node_Capabilities = 0x0C,
     Unit_Directory = 0xD1,  // IEEE 1212 Unit_Directory (keyId=0x11 when keyType=3)
-    Management_Agent_Offset = 0x38,  // SBP-2 (CSR offset type=1 in unit directory)
+    Management_Agent_Offset = 0x54,  // SBP-2 (keyType=CSR offset, keyId=0x14)
     Unit_Characteristics   = 0x39,  // SBP-2 (immediate in unit directory)
     Fast_Start             = 0x3A,  // SBP-2 (leaf in unit directory)
 };

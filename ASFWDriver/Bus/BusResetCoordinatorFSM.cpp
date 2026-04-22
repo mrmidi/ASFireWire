@@ -1,9 +1,8 @@
 #include "BusResetCoordinator.hpp"
 
-#ifdef ASFW_HOST_TEST
-#include <chrono>
-#include <thread>
-#else
+#include <algorithm>
+
+#ifndef ASFW_HOST_TEST
 #include <DriverKit/IOLib.h>
 #endif
 
@@ -18,6 +17,7 @@ namespace {
 
 constexpr uint32_t kDeferredPollMs = 1;
 constexpr uint32_t kSelfIDTimeoutMs = 1000;
+constexpr uint32_t kAppleScanBusDelayMs = 100;
 
 } // namespace
 
@@ -199,28 +199,27 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepComplete() {
     if (topologyCallback_ && cycle_.acceptedTopology.has_value() && (workQueue_.get() != nullptr)) {
         auto topo = *cycle_.acceptedTopology;
         const Discovery::Generation generation{topo.generation};
+        uint32_t delayMs = kAppleScanBusDelayMs;
 
         if (previousScanHadBusyNodes_ && currentDiscoveryDelayMs_ > 0U) {
-            const uint32_t delayMs = currentDiscoveryDelayMs_;
-            ASFW_LOG(BusReset, "Discovery delayed %ums for generation %u", delayMs,
-                     generation.value);
-            workQueue_->DispatchAsync(^{
-#ifdef ASFW_HOST_TEST
-              std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-#else
-              IOSleep(delayMs);
-#endif
-              if (ReadyForDiscovery(generation)) {
-                  topologyCallback_(topo);
-              }
-            });
-        } else {
-            workQueue_->DispatchAsync(^{
-              if (ReadyForDiscovery(generation)) {
-                  topologyCallback_(topo);
-              }
-            });
+            delayMs = std::max(delayMs, currentDiscoveryDelayMs_);
         }
+
+        ASFW_LOG(BusReset, "Discovery delayed %ums for generation %u", delayMs, generation.value);
+#ifdef ASFW_HOST_TEST
+        workQueue_->DispatchAsyncAfter(static_cast<uint64_t>(delayMs) * 1'000'000ULL, ^{
+          if (ReadyForDiscovery(generation)) {
+              topologyCallback_(topo);
+          }
+        });
+#else
+        workQueue_->DispatchAsync(^{
+          IOSleep(delayMs);
+          if (ReadyForDiscovery(generation)) {
+              topologyCallback_(topo);
+          }
+        });
+#endif
     }
 
     return StepResult::Finish;

@@ -627,23 +627,7 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     ASFW_LOG(Hardware,
              "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
     hw.SetHCControlBits(HCControlBits::kLinkEnable | HCControlBits::kBibImageValid);
-
-    // Explicit PHY-initiated bus reset to guarantee Config ROM shadow activation.
-    // Only attempted if PHY programming was successful during init.
-    // The auto reset from linkEnable alone may not reliably activate the shadow
-    // on all controllers; the explicit reset ensures topology discovery completes.
-    if (phyProgramSupported_ && phyConfigOk_) {
-        ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
-        const bool forced = hw.InitiateBusReset(false); // long reset per OHCI §7.2.3.1
-        if (!forced) {
-            ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
-        } else {
-            ASFW_LOG(Hardware, "Bus reset initiated via PHY control - shadow update will occur");
-        }
-    } else {
-        ASFW_LOG(Hardware,
-                 "Skipping forced reset (PHY not confirmed); relying on auto reset from linkEnable");
-    }
+    ASFW_LOG(Hardware, "Relying on linkEnable auto reset for Config ROM shadow activation");
 
     if (deps_.asyncController) {
         const kern_return_t armStatus = deps_.asyncController->ArmARContextsOnly();

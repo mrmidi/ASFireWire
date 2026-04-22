@@ -137,6 +137,24 @@ TEST(BusManagerGapOptimizationTests, ObservedDefault63GapWithUnknownHistoryRetoo
     EXPECT_EQ(decision->gapCount, 10U);
 }
 
+TEST(BusManagerGapOptimizationTests, TwoNodeLocalRootSkipsTargetGapOptimization) {
+    BusManager busManager;
+    busManager.SetGapOptimizationEnabled(true);
+
+    auto topology = MakeTopology(1U, 1U, 1U);
+    topology.rootNodeId = 1U;
+    topology.nodes = {
+        MakeNode(0U, true),
+        MakeNode(1U, true),
+    };
+
+    const auto decision =
+        busManager.EvaluateGapPolicy(topology,
+                                     {MakeBaseSelfID(0U, 63U), MakeBaseSelfID(1U, 63U)});
+
+    EXPECT_FALSE(decision.has_value());
+}
+
 TEST(BusManagerGapOptimizationTests, ObservedGapsMatchingConfirmedGapNeedNoAction) {
     BusManager busManager;
     busManager.SetGapOptimizationEnabled(true);

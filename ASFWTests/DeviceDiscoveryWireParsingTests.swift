@@ -39,8 +39,8 @@ struct DeviceDiscoveryWireParsingTests {
         appendCString("Oxford", byteCount: 64, to: &wire)
         appendCString("911 Bridge", byteCount: 64, to: &wire)
 
+        appendLE(UInt32(0x00609E), to: &wire)
         appendLE(UInt32(0x010483), to: &wire)
-        appendLE(UInt32(0x060000), to: &wire)
         appendLE(UInt32(0x44), to: &wire)
         wire.append(1) // unitState = Ready
         wire.append(contentsOf: [UInt8](repeating: 0, count: 3))
@@ -62,7 +62,7 @@ struct DeviceDiscoveryWireParsingTests {
         #expect(device.modelName == "911 Bridge")
         #expect(device.units.count == 1)
         #expect(device.units[0].romOffset == 0x44)
-        #expect(device.units[0].specId == 0x010483)
+        #expect(device.units[0].specId == 0x00609E)
         #expect(device.units[0].isSBP2Storage)
     }
 
@@ -84,8 +84,8 @@ struct DeviceDiscoveryWireParsingTests {
         appendCString("ScannerCo", byteCount: 64, to: &wire)
         appendCString("FilmScanner", byteCount: 64, to: &wire)
 
+        appendLE(UInt32(0x00609E), to: &wire)
         appendLE(UInt32(0x010483), to: &wire)
-        appendLE(UInt32(0x060000), to: &wire)
         appendLE(UInt32(0x88), to: &wire)
         wire.append(1) // unitState = Ready
         wire.append(contentsOf: [UInt8](repeating: 0, count: 3))

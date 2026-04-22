@@ -111,10 +111,14 @@ void ConfigROMParser::AppendRecognizedEntry(std::vector<RomEntry>& entries, uint
         }
         return;
 
-    case 0x14: // Logical_Unit_Number
+    case 0x14: // Logical_Unit_Number or SBP-2 Management_Agent_Offset
         if (keyType == EntryType::kImmediate) {
             entries.push_back(
                 RomEntry{.key = CfgKey::Logical_Unit_Number, .value = value, .entryType = keyType});
+        } else if (keyType == EntryType::kCSROffset) {
+            entries.push_back(RomEntry{.key = CfgKey::Management_Agent_Offset,
+                                       .value = value,
+                                       .entryType = keyType});
         }
         return;
 
@@ -134,7 +138,7 @@ void ConfigROMParser::AppendRecognizedEntry(std::vector<RomEntry>& entries, uint
         }
         return;
 
-    case 0x38: // Management_Agent_Offset (SBP-2) — CSR offset in unit directory
+    case 0x38: // Legacy non-standard fallback for Management_Agent_Offset
         if (keyType == EntryType::kCSROffset) {
             entries.push_back(
                 RomEntry{.key = CfgKey::Management_Agent_Offset, .value = value, .entryType = keyType});
