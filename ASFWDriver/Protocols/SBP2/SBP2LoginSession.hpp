@@ -13,6 +13,7 @@
 
 #include "SBP2WireFormats.hpp"
 #include "SBP2CommandORB.hpp"
+#include "SBP2ManagementORB.hpp"
 #include "AddressSpaceManager.hpp"
 #include "../../Async/AsyncTypes.hpp"
 #include "../../Logging/Logging.hpp"
@@ -189,6 +190,16 @@ public:
     /// Submit a Normal Command ORB to the device's fetch agent.
     /// Requires LoggedIn state. ORB must be fully configured before calling.
     [[nodiscard]] bool SubmitORB(SBP2CommandORB* orb) noexcept;
+
+    /// Submit a management ORB (abort task, reset, etc).
+    /// Requires LoggedIn state. ORB must be fully configured before calling.
+    [[nodiscard]] bool SubmitManagementORB(SBP2ManagementORB* orb) noexcept;
+
+    /// Reset the fetch agent. Clears ORB chain. Completion via callback.
+    void ResetFetchAgent(std::function<void(int)> callback) noexcept;
+
+    /// Re-enable unsolicited status after device sends one.
+    void EnableUnsolicitedStatus() noexcept;
 
 private:
     // -----------------------------------------------------------------------
@@ -370,6 +381,14 @@ private:
     void OnDoorbellComplete(Async::AsyncStatus status,
                              std::span<const uint8_t> response) noexcept;
 
+    /// Fetch agent reset completion handler.
+    void OnAgentResetComplete(Async::AsyncStatus status,
+                               std::span<const uint8_t> response) noexcept;
+
+    /// Unsolicited status enable completion handler.
+    void OnUnsolicitedStatusEnableComplete(Async::AsyncStatus status,
+                                            std::span<const uint8_t> response) noexcept;
+
     // Fetch agent state
     Async::FWAddress fetchAgentAddress_{};
     Async::FWAddress doorbellAddress_{};
@@ -387,6 +406,17 @@ private:
 
     // Fetch agent write data (8-byte BE ORB address)
     std::array<uint8_t, 8> fetchAgentWriteData_{};
+
+    // Agent reset state
+    Async::FWAddress agentResetAddress_{};
+    Async::AsyncHandle agentResetWriteHandle_{};
+    bool agentResetInProgress_{false};
+    std::function<void(int)> agentResetCallback_;
+
+    // Unsolicited status enable state
+    Async::FWAddress unsolicitedStatusAddress_{};
+    Async::AsyncHandle unsolicitedStatusWriteHandle_{};
+    bool unsolicitedStatusRequested_{false};
 };
 
 } // namespace ASFW::Protocols::SBP2

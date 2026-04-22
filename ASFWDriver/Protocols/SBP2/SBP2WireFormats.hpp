@@ -231,12 +231,12 @@ static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
 }
 
 // Command Block Agent register offsets (relative to agent base from login response).
+// Verified against Apple IOFireWireSBP2Login::clearAllTasksInSet / login response processing.
 struct CommandBlockAgentOffsets {
-    static constexpr uint32_t kORBPointer      = 0x00; // Write ORB address here (fetch agent)
-    static constexpr uint32_t kDoorbell         = 0x04; // Ring doorbell
-    static constexpr uint32_t kAgentReset       = 0x08; // Reset fetch agent
-    static constexpr uint32_t kORBTimeout       = 0x0C; // ORB timeout
-    static constexpr uint32_t kProhibitedOrb    = 0x10; // Prohibited ORB pointer
+    static constexpr uint32_t kAgentReset               = 0x04; // Fetch agent reset (quadlet write)
+    static constexpr uint32_t kFetchAgent               = 0x08; // ORB pointer write (fetch agent, non-fast-start)
+    static constexpr uint32_t kDoorbell                  = 0x10; // Doorbell ring (quadlet write)
+    static constexpr uint32_t kUnsolicitedStatusEnable   = 0x14; // Re-enable unsolicited status
 };
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,236 @@
+// SBP-2 Management ORB implementation.
+// Ported from Apple IOFireWireSBP2ManagementORB.
+// Ref: SBP-2 §6 (Task Management)
+
+#include "SBP2ManagementORB.hpp"
+
+#include "../../Async/Interfaces/IFireWireBus.hpp"
+#include "../../Async/Interfaces/IFireWireBusInfo.hpp"
+#include "../../Common/FWCommon.hpp"
+
+namespace ASFW::Protocols::SBP2 {
+
+using namespace ASFW::Protocols::SBP2::Wire;
+
+// ---------------------------------------------------------------------------
+// Construction / Destruction
+// ---------------------------------------------------------------------------
+
+SBP2ManagementORB::SBP2ManagementORB(Async::IFireWireBus& bus,
+                                     Async::IFireWireBusInfo& busInfo,
+                                     AddressSpaceManager& addrMgr, void* owner)
+    : bus_(bus)
+    , busInfo_(busInfo)
+    , addrMgr_(addrMgr)
+    , owner_(owner) {}
+
+SBP2ManagementORB::~SBP2ManagementORB() {
+    DeallocateResources();
+}
+
+// ---------------------------------------------------------------------------
+// Resource allocation
+// ---------------------------------------------------------------------------
+
+bool SBP2ManagementORB::AllocateResources() noexcept {
+    if (orbHandle_ != 0) {
+        return true; // Already allocated
+    }
+
+    // Allocate ORB address space (32 bytes)
+    auto kr = addrMgr_.AllocateAddressRange(
+        owner_, 0xFFFF, 0, Wire::TaskManagementORB::kSize,
+        &orbHandle_, &orbMeta_);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(SBP2, "SBP2ManagementORB: failed to allocate ORB: 0x%08x", kr);
+        return false;
+    }
+
+    // Allocate per-ORB status block address space (32 bytes)
+    kr = addrMgr_.AllocateAddressRange(
+        owner_, 0xFFFF, 0, Wire::StatusBlock::kMaxSize,
+        &statusBlockHandle_, &statusBlockMeta_);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(SBP2, "SBP2ManagementORB: failed to allocate status block: 0x%08x", kr);
+        addrMgr_.DeallocateAddressRange(owner_, orbHandle_);
+        orbHandle_ = 0;
+        return false;
+    }
+
+    // Register remote-write callback for the per-ORB status block
+    addrMgr_.SetRemoteWriteCallback(
+        statusBlockHandle_,
+        [this](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
+            OnStatusBlockWrite(offset, payload);
+        });
+
+    return true;
+}
+
+void SBP2ManagementORB::DeallocateResources() noexcept {
+    if (statusBlockHandle_ != 0) {
+        addrMgr_.DeallocateAddressRange(owner_, statusBlockHandle_);
+        statusBlockHandle_ = 0;
+    }
+    if (orbHandle_ != 0) {
+        addrMgr_.DeallocateAddressRange(owner_, orbHandle_);
+        orbHandle_ = 0;
+    }
+    orbMeta_ = {};
+    statusBlockMeta_ = {};
+}
+
+// ---------------------------------------------------------------------------
+// ORB construction
+// ---------------------------------------------------------------------------
+
+void SBP2ManagementORB::BuildManagementORB() noexcept {
+    std::memset(&orbBuffer_, 0, sizeof(orbBuffer_));
+
+    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+
+    // Options: notify (bit 15) | function code (low nibble)
+    const auto fn = static_cast<uint16_t>(function_);
+    orbBuffer_.options = ToBE16(static_cast<uint16_t>(0x8000u | fn));
+    orbBuffer_.loginID = ToBE16(loginID_);
+
+    // For AbortTask: set target ORB address (quadlet-aligned, big-endian)
+    if (function_ == Function::AbortTask) {
+        orbBuffer_.orbOffsetHi = ToBE32(targetORBAddressHi_);
+        orbBuffer_.orbOffsetLo = ToBE32(targetORBAddressLo_ & 0xFFFFFFFCu);
+    }
+
+    // Status FIFO address
+    orbBuffer_.statusFIFOAddressHi = ToBE32(
+        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
+        (static_cast<uint32_t>(localNode) << 16));
+    orbBuffer_.statusFIFOAddressLo = ToBE32(statusBlockMeta_.addressLo);
+
+    // Write ORB to address space
+    addrMgr_.WriteLocalData(
+        owner_, orbHandle_, 0,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&orbBuffer_),
+                                  sizeof(orbBuffer_)});
+
+    // Build 8-byte management agent write payload: ORB address in BE
+    orbAddressBE_[0] = static_cast<uint8_t>(localNode >> 8);
+    orbAddressBE_[1] = static_cast<uint8_t>(localNode & 0xFF);
+    orbAddressBE_[2] = static_cast<uint8_t>(orbMeta_.addressHi >> 8);
+    orbAddressBE_[3] = static_cast<uint8_t>(orbMeta_.addressHi & 0xFF);
+    const uint32_t addrLoBE = ToBE32(orbMeta_.addressLo);
+    std::memcpy(&orbAddressBE_[4], &addrLoBE, sizeof(uint32_t));
+
+    ASFW_LOG(SBP2,
+             "SBP2ManagementORB: built function=%u loginID=%u ORB at %04x:%08x status at %04x:%08x",
+             fn, loginID_,
+             localNode, orbMeta_.addressLo,
+             localNode, statusBlockMeta_.addressLo);
+}
+
+// ---------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------
+
+bool SBP2ManagementORB::Execute() noexcept {
+    if (inProgress_) {
+        ASFW_LOG(SBP2, "SBP2ManagementORB::Execute: already in progress");
+        return false;
+    }
+
+    if (!AllocateResources()) {
+        return false;
+    }
+
+    BuildManagementORB();
+
+    inProgress_ = true;
+
+    // Write ORB address to management agent
+    const FW::Generation gen{generation_};
+    const FW::NodeId node{static_cast<uint8_t>(nodeID_ & 0x3Fu)};
+    const Async::FWAddress mgmtAddr{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = 0xFFFF,
+            .addressLo = ManagementAgentAddressLo(managementAgentOffset_),
+            .nodeID = nodeID_
+        }
+    };
+    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
+
+    writeHandle_ = bus_.WriteBlock(
+        gen, node, mgmtAddr,
+        std::span<const uint8_t>{orbAddressBE_.data(), orbAddressBE_.size()},
+        speed,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            OnWriteComplete(status, response);
+        });
+
+    if (!writeHandle_) {
+        ASFW_LOG(SBP2, "SBP2ManagementORB::Execute: WriteBlock failed");
+        inProgress_ = false;
+        return false;
+    }
+
+    ASFW_LOG(SBP2, "SBP2ManagementORB::Execute: wrote management ORB to agent");
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Completion handlers
+// ---------------------------------------------------------------------------
+
+void SBP2ManagementORB::OnWriteComplete(Async::AsyncStatus status,
+                                         std::span<const uint8_t> response) noexcept {
+    if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(SBP2, "SBP2ManagementORB::OnWriteComplete: status=%s",
+                 Async::ToString(status));
+        Complete(-1);
+        return;
+    }
+
+    // Management agent write ACK'd. Start timeout, wait for status block.
+    timerActive_ = true;
+    ASFW_LOG(SBP2, "SBP2ManagementORB: mgmt agent ACK'd, waiting for status block (timeout=%ums)",
+             timeoutMs_);
+
+    if (workQueue_) {
+        const uint32_t timeout = timeoutMs_;
+#ifndef ASFW_HOST_TEST
+        workQueue_->DispatchAsync(^{
+            IOSleep(timeout);
+            this->OnTimeout();
+        });
+#endif
+    }
+}
+
+void SBP2ManagementORB::OnStatusBlockWrite(uint32_t offset,
+                                             std::span<const uint8_t> payload) noexcept {
+    if (!inProgress_) {
+        return;
+    }
+
+    ASFW_LOG(SBP2, "SBP2ManagementORB: received status block (offset=%u len=%zu)",
+             offset, payload.size());
+
+    Complete(0);
+}
+
+void SBP2ManagementORB::OnTimeout() noexcept {
+    if (!inProgress_) {
+        return;
+    }
+    ASFW_LOG(SBP2, "SBP2ManagementORB: timeout");
+    Complete(-2);
+}
+
+void SBP2ManagementORB::Complete(int status) noexcept {
+    inProgress_ = false;
+    timerActive_ = false;
+
+    if (completionCallback_) {
+        completionCallback_(status);
+    }
+}
+
+} // namespace ASFW::Protocols::SBP2

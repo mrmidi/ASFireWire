@@ -10,8 +10,6 @@
 		3A1693F02E808765000BD368 /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693EF2E808765000BD368 /* DriverKit.framework */; };
 		3A1693F92E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */; };
-		3A27C5302ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
-		3A27C5322ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
 		3ABA31132EF8564A0046405D /* AudioDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABA31122EF8564A0046405D /* AudioDriverKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -51,7 +49,6 @@
 		3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */ = {isa = PBXFileReference; explicitFileType = "wrapper.driver-extension"; includeInIndex = 0; path = net.mrmidi.ASFW.ASFWDriver.dext; sourceTree = BUILT_PRODUCTS_DIR; };
 		3A1693EF2E808765000BD368 /* DriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DriverKit.framework; path = System/Library/Frameworks/DriverKit.framework; sourceTree = SDKROOT; };
 		3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PCIDriverKit.framework; path = Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.0.sdk/System/DriverKit/System/Library/Frameworks/PCIDriverKit.framework; sourceTree = DEVELOPER_DIR; };
-		3A27C52E2ECDE045009CA664 /* bump.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = bump.sh; sourceTree = "<group>"; };
 		3AB4713F2EE31CF0003A4E2A /* ASFWTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFWTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3AB471482EE31E7A003A4E2A /* ASFW.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = ASFW.xctestplan; sourceTree = "<group>"; };
 		3ABA31122EF8564A0046405D /* AudioDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioDriverKit.framework; path = Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.1.sdk/System/DriverKit/System/Library/Frameworks/AudioDriverKit.framework; sourceTree = DEVELOPER_DIR; };
@@ -129,7 +126,6 @@
 				3A1693D92E808727000BD368 /* Products */,
 				ASFWAPPENTITLEMENTS /* App.entitlements */,
 				ASFWDRIVERENTITLEMENTS /* ASFWDriver.entitlements */,
-				3A27C52E2ECDE045009CA664 /* bump.sh */,
 			);
 			sourceTree = "<group>";
 		};
@@ -283,7 +279,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A27C5302ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -291,7 +286,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A27C5322ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -339,7 +333,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "ls ${SRCROOT}\n$SRCROOT/bump.sh\n";
+			shellScript = "\"${SRCROOT}/bump.sh\" refresh\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -584,7 +578,13 @@
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					"*.md",
+					"*.bak",
+					"*.bak2",
+					"*.sh",
+					"*.txt",
+				);
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",
@@ -618,7 +618,13 @@
 				DEVELOPMENT_TEAM = F6YA6B56LR;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					"*.md",
+					"*.bak",
+					"*.bak2",
+					"*.sh",
+					"*.txt",
+				);
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SDKROOT)/System/DriverKit/System/Library/Frameworks",

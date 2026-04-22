@@ -757,6 +757,43 @@ void SBP2LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& blo
     loginRetryCount_ = 0;
     SetState(LoginState::LoggedIn);
 
+    // If unsolicited status was requested while not logged in, enable it now.
+    if (unsolicitedStatusRequested_) {
+        unsolicitedStatusRequested_ = false;
+        EnableUnsolicitedStatus();
+    }
+
+    // Compute CBA-derived addresses for fetch agent, doorbell, agent reset,
+    // and unsolicited status enable.
+    fetchAgentAddress_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = commandBlockAgent_.addressHi,
+            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kFetchAgent,
+            .nodeID = loginNodeID_
+        }
+    };
+    doorbellAddress_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = commandBlockAgent_.addressHi,
+            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kDoorbell,
+            .nodeID = loginNodeID_
+        }
+    };
+    agentResetAddress_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = commandBlockAgent_.addressHi,
+            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kAgentReset,
+            .nodeID = loginNodeID_
+        }
+    };
+    unsolicitedStatusAddress_ = Async::FWAddress{
+        Async::FWAddress::QualifiedAddressParts{
+            .addressHi = commandBlockAgent_.addressHi,
+            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kUnsolicitedStatusEnable,
+            .nodeID = loginNodeID_
+        }
+    };
+
     ASFW_LOG(SBP2,
              "SBP2LoginSession: login successful — loginID=%u, CBA=%04x:%08x, "
              "reconnectHold=2^%u=%us",
@@ -809,6 +846,12 @@ void SBP2LoginSession::CompleteReconnectFromStatusBlock(const Wire::StatusBlock&
     SetState(LoginState::LoggedIn);
     ASFW_LOG(SBP2, "SBP2LoginSession: reconnect successful — loginID=%u", loginID_);
 
+    // If unsolicited status was requested while not logged in, enable it now.
+    if (unsolicitedStatusRequested_) {
+        unsolicitedStatusRequested_ = false;
+        EnableUnsolicitedStatus();
+    }
+
     if (loginCallback_) {
         LoginCompleteParams params{};
         params.status = 0;
@@ -838,14 +881,22 @@ void SBP2LoginSession::CompleteLogoutFromStatusBlock(const Wire::StatusBlock& bl
 
 void SBP2LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block,
                                            uint32_t length) noexcept {
-    // In LoggedIn state, status blocks signal ORB completion.
-    // The status block contains orbOffsetHi/orbOffsetLo that identifies which ORB
-    // completed. Currently we only support single-ORB-in-flight and match via
-    // lastORB_. Multi-ORB matching will require an ORB list keyed by offset.
+    // Distinguish unsolicited vs solicited status.
+    // Unsolicited: (details & 0xC0) == 0x80 (source bit set, resp == 0)
+    const bool isUnsolicited = (block.details & 0xC0) == 0x80;
+
     if (statusCallback_) {
         statusCallback_(block, length);
     }
 
+    if (isUnsolicited) {
+        // Re-enable unsolicited status so device can send more
+        EnableUnsolicitedStatus();
+        return;
+    }
+
+    // Solicited status: ORB completion.
+    // Currently only supports single-ORB-in-flight matching via lastORB_.
     if (lastORB_ != nullptr) {
         lastORB_->CancelTimer();
         auto& cb = lastORB_->GetCompletionCallback();
@@ -927,21 +978,7 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
         return false;
     }
 
-    // Compute fetch agent and doorbell addresses from CBA.
-    fetchAgentAddress_ = Async::FWAddress{
-        Async::FWAddress::QualifiedAddressParts{
-            .addressHi = commandBlockAgent_.addressHi,
-            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kORBPointer,
-            .nodeID = loginNodeID_
-        }
-    };
-    doorbellAddress_ = Async::FWAddress{
-        Async::FWAddress::QualifiedAddressParts{
-            .addressHi = commandBlockAgent_.addressHi,
-            .addressLo = commandBlockAgent_.addressLo + Wire::CommandBlockAgentOffsets::kDoorbell,
-            .nodeID = loginNodeID_
-        }
-    };
+    // Fetch agent and doorbell addresses are computed at login time.
 
     const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
     const FW::FwSpeed speed = busInfo_.GetSpeed(
@@ -1129,6 +1166,123 @@ void SBP2LoginSession::OnDoorbellComplete(Async::AsyncStatus status,
     if (doorbellRingAgain_) {
         doorbellRingAgain_ = false;
         RingDoorbell();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Management ORB Submission
+// ---------------------------------------------------------------------------
+
+bool SBP2LoginSession::SubmitManagementORB(SBP2ManagementORB* orb) noexcept {
+    if (state_ != LoginState::LoggedIn) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::SubmitManagementORB: state=%s, rejecting",
+                 ToString(state_));
+        return false;
+    }
+
+    if (orb == nullptr) {
+        return false;
+    }
+
+    // Configure the management ORB with current session parameters
+    orb->SetLoginID(loginID_);
+    orb->SetManagementAgentOffset(targetInfo_.managementAgentOffset);
+    orb->SetTargetNode(loginGeneration_, loginNodeID_);
+    orb->SetTimeout(targetInfo_.managementTimeoutMs);
+#ifndef ASFW_HOST_TEST
+    orb->SetWorkQueue(workQueue_);
+#endif
+
+    ASFW_LOG(SBP2, "SBP2LoginSession::SubmitManagementORB: function=%u",
+             static_cast<uint16_t>(orb->GetFunction()));
+
+    return orb->Execute();
+}
+
+// ---------------------------------------------------------------------------
+// Fetch Agent Reset
+// ---------------------------------------------------------------------------
+
+void SBP2LoginSession::ResetFetchAgent(std::function<void(int)> callback) noexcept {
+    if (state_ != LoginState::LoggedIn) {
+        if (callback) callback(-1);
+        return;
+    }
+
+    if (agentResetInProgress_) {
+        if (callback) callback(-1);
+        return;
+    }
+
+    agentResetInProgress_ = true;
+    agentResetCallback_ = std::move(callback);
+
+    const FW::Generation gen{loginGeneration_};
+    const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
+    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
+
+    agentResetWriteHandle_ = bus_.WriteQuad(
+        gen, node, agentResetAddress_, 0, speed,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            OnAgentResetComplete(status, response);
+        });
+
+    if (!agentResetWriteHandle_) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::ResetFetchAgent: WriteQuad failed");
+        agentResetInProgress_ = false;
+        if (agentResetCallback_) {
+            agentResetCallback_(-1);
+            agentResetCallback_ = nullptr;
+        }
+    }
+}
+
+void SBP2LoginSession::OnAgentResetComplete(Async::AsyncStatus status,
+                                              std::span<const uint8_t> response) noexcept {
+    agentResetInProgress_ = false;
+
+    // Clear ORB chain after reset
+    lastORB_ = nullptr;
+    deferredORB_ = nullptr;
+
+    ASFW_LOG(SBP2, "SBP2LoginSession::OnAgentResetComplete: status=%s, ORB chain cleared",
+             Async::ToString(status));
+
+    if (agentResetCallback_) {
+        int result = (status == Async::AsyncStatus::kSuccess) ? 0 : -1;
+        auto cb = std::move(agentResetCallback_);
+        agentResetCallback_ = nullptr;
+        cb(result);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unsolicited Status Enable
+// ---------------------------------------------------------------------------
+
+void SBP2LoginSession::EnableUnsolicitedStatus() noexcept {
+    if (state_ != LoginState::LoggedIn) {
+        unsolicitedStatusRequested_ = true;
+        return;
+    }
+
+    const FW::Generation gen{loginGeneration_};
+    const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
+    const FW::FwSpeed speed = busInfo_.GetSpeed(node);
+
+    unsolicitedStatusWriteHandle_ = bus_.WriteQuad(
+        gen, node, unsolicitedStatusAddress_, 0, speed,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> response) {
+            OnUnsolicitedStatusEnableComplete(status, response);
+        });
+}
+
+void SBP2LoginSession::OnUnsolicitedStatusEnableComplete(
+    Async::AsyncStatus status,
+    std::span<const uint8_t> response) noexcept {
+    if (status != Async::AsyncStatus::kSuccess) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::OnUnsolicitedStatusEnableComplete: status=%s",
+                 Async::ToString(status));
     }
 }
 
