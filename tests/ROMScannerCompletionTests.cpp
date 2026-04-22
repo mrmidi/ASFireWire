@@ -178,10 +178,11 @@ public:
 // Helper to create minimal BIB (Bus Info Block) for testing
 // Q0: info_length=1 (minimal ROM), crc_length=1, crc=valid
 // Format: [31:24]=info_length, [23:16]=crc_length, [15:0]=crc
-std::vector<uint32_t> CreateMinimalBIB() {
+std::vector<uint32_t> CreateMinimalBIB(uint64_t guid = 0) {
     // Minimal BIB: header quadlet + 4 quadlets of zeros
     // info_length=4 (standard BIB), crc_length=4 (minimal total ROM), crc=0x0000
-    return {0x04040000, 0, 0, 0, 0};
+    return {0x04040000, 0, 0, static_cast<uint32_t>(guid >> 32),
+            static_cast<uint32_t>(guid & 0xFFFFFFFF)};
 }
 
 // Helper to create full BIB with GUID
@@ -261,6 +262,135 @@ TEST(ROMScannerCompletion, ManualRead_MinimalROM_InvokesCallbackImmediately) {
     EXPECT_EQ(completedROMs.size(), 1u);
     EXPECT_EQ(completedROMs[0].nodeId, 1);
     EXPECT_EQ(completedROMs[0].gen.value, 42u);
+}
+
+TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_ProbesRootDirBeforeCompletion) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+
+    bool callbackInvoked = false;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    constexpr uint64_t kNikonGuid = 0x0090B54001FFFFFFULL;
+
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 43;
+    topology.busBase16 = 0xFFC0;
+    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+
+    ScanCompletionCallback onComplete = [&](Generation /*gen*/, std::vector<ConfigROM> roms,
+                                            bool busy) {
+        std::lock_guard lock(mtx);
+        callbackInvoked = true;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
+    ASSERT_TRUE(scanner.Start(request, onComplete));
+    mockAsync.WaitForPendingReads(1);
+
+    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB(kNikonGuid));
+
+    EXPECT_FALSE(callbackInvoked) << "Nikon minimal ROM should not complete immediately";
+
+    mockAsync.WaitForPendingReads(5);
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 5u)
+        << "Compatibility path should schedule a root directory probe";
+    EXPECT_EQ(mockAsync.pendingReads_[4].address.addressLo,
+              ASFW::FW::ConfigROMAddr::kAddressLo + 20u);
+
+    const std::vector<uint32_t> rootDir = {
+        0x00020000,
+        0x03000001,
+        0x17000002,
+    };
+    mockAsync.SimulateSequentialReads(4, rootDir);
+
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
+    }
+
+    EXPECT_TRUE(callbackInvoked);
+    EXPECT_TRUE(hadBusyNodes);
+    ASSERT_EQ(completedROMs.size(), 1u);
+    EXPECT_EQ(completedROMs[0].bib.guid, kNikonGuid);
+    EXPECT_FALSE(completedROMs[0].rootDirMinimal.empty());
+}
+
+TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_RootDirProbeTimeoutsThenCompletesMinimal) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+
+    bool callbackInvoked = false;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    constexpr uint64_t kNikonGuid = 0x0090B54001FFFFFFULL;
+
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 44;
+    topology.busBase16 = 0xFFC0;
+    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+
+    ScanCompletionCallback onComplete = [&](Generation /*gen*/, std::vector<ConfigROM> roms,
+                                            bool busy) {
+        std::lock_guard lock(mtx);
+        callbackInvoked = true;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
+    ASSERT_TRUE(scanner.Start(request, onComplete));
+    mockAsync.WaitForPendingReads(1);
+
+    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB(kNikonGuid));
+    EXPECT_FALSE(callbackInvoked);
+
+    for (size_t attempt = 0; attempt < 4; ++attempt) {
+        mockAsync.WaitForPendingReads(5 + attempt);
+        EXPECT_EQ(mockAsync.pendingReads_[4 + attempt].address.addressLo,
+                  ASFW::FW::ConfigROMAddr::kAddressLo + 20u);
+        mockAsync.SimulateReadTimeout(4 + attempt);
+    }
+
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
+    }
+
+    EXPECT_TRUE(callbackInvoked);
+    EXPECT_TRUE(hadBusyNodes);
+    ASSERT_EQ(completedROMs.size(), 1u);
+    EXPECT_EQ(completedROMs[0].bib.guid, kNikonGuid);
+    EXPECT_TRUE(completedROMs[0].rootDirMinimal.empty());
 }
 
 TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
