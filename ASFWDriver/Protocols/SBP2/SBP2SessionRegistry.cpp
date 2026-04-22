@@ -115,8 +115,10 @@ std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
         return std::unexpected(kIOReturnNotFound);
     }
 
-    if (unit->GetUnitSpecID() != kSBP2UnitSpecId) {
-        ASFW_LOG(SBP2, "SBP2SessionRegistry: unit spec 0x%06x is not SBP-2", unit->GetUnitSpecID());
+    if (!unit->Matches(kSBP2UnitSpecId, kSBP2UnitSwVersion)) {
+        ASFW_LOG(SBP2,
+                 "SBP2SessionRegistry: unit identity spec=0x%06x sw=0x%06x is not SBP-2",
+                 unit->GetUnitSpecID(), unit->GetUnitSwVersion());
         return std::unexpected(kIOReturnUnsupported);
     }
 

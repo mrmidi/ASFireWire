@@ -13,6 +13,9 @@
 
 namespace {
 
+constexpr uint32_t kSBP2UnitSpecId = 0x00609E;
+constexpr uint32_t kSBP2UnitSwVersion = 0x010483;
+
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceKind;
@@ -102,8 +105,8 @@ public:
         rom.vendorName = record.vendorName;
         rom.modelName = record.modelName;
         rom.rootDirMinimal = {
-            RomEntry{CfgKey::Unit_Spec_Id, 0x010483, 0, 0},
-            RomEntry{CfgKey::Unit_Sw_Version, 0x060000, 0, 0},
+            RomEntry{CfgKey::Unit_Spec_Id, kSBP2UnitSpecId, 0, 0},
+            RomEntry{CfgKey::Unit_Sw_Version, kSBP2UnitSwVersion, 0, 0},
             RomEntry{CfgKey::Logical_Unit_Number, 0x000002, 0, 0},
             RomEntry{CfgKey::Management_Agent_Offset, 0x000080, 1, 0},
             RomEntry{CfgKey::Unit_Characteristics, 0x080400, 0, 0},
@@ -238,6 +241,14 @@ TEST(SBP2SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
     EXPECT_EQ(SBPStatus::kNoAdditionalInfo, result->sbpStatus);
     EXPECT_EQ(sensePayload, result->payload);
     EXPECT_EQ(sensePayload, result->senseData);
+}
+
+TEST(SBP2SessionRegistryTests, CreateSessionAcceptsRealSBP2SpecAndVersion) {
+    SessionRegistryRig rig;
+    auto result = rig.registry.CreateSession(reinterpret_cast<void*>(0xCAFE),
+                                             SessionRegistryRig::kGuid,
+                                             0);
+    ASSERT_TRUE(result.has_value());
 }
 
 } // namespace

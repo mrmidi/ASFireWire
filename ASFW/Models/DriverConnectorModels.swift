@@ -536,10 +536,15 @@ struct DriverConnectorFWUnitInfo: Identifiable {
     let vendorName: String?
     let productName: String?
 
+    private static let sbp2SpecId: UInt32 = 0x00609E
+    private static let sbp2SwVersion: UInt32 = 0x010483
+
     var specIdHex: String { String(format: "0x%06X", specId) }
     var swVersionHex: String { String(format: "0x%06X", swVersion) }
     var stateString: String { state.description }
-    var isSBP2Unit: Bool { specId == 0x010483 }
+    var isSBP2Unit: Bool {
+        specId == Self.sbp2SpecId && swVersion == Self.sbp2SwVersion
+    }
     var isSBP2Storage: Bool { isSBP2Unit }
 }
 

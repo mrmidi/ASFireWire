@@ -22,8 +22,9 @@
 
 namespace ASFW::Protocols::SBP2 {
 
-// SBP-2 Unit_Spec_Id per ANSI INCITS 335-1999
-inline constexpr uint32_t kSBP2UnitSpecId = 0x010483;
+// SBP-2 Unit_Directory identity used by Nikon/modernscan and visible in raw ROM.
+inline constexpr uint32_t kSBP2UnitSpecId = 0x00609E;
+inline constexpr uint32_t kSBP2UnitSwVersion = 0x010483;
 
 // Per-session state exposed to UserClient
 struct SBP2SessionState {
