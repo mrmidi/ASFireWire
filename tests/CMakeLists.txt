@@ -1439,3 +1439,22 @@ target_compile_definitions(ROMScanNodeStateMachineTests
 target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScanNodeStateMachineTests)
+
+add_executable(AddressSpaceManagerTests
+    "${ASFW_TESTS_DIR}/AddressSpaceManagerTests.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+)
+
+target_link_libraries(AddressSpaceManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AddressSpaceManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AddressSpaceManagerTests)

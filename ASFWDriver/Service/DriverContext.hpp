@@ -49,6 +49,7 @@ namespace ASFW::Driver {
 class DriverWiring {
 public:
     static void EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx);
+    static void EnsureSbp2Deps(::ServiceContext& ctx);
     static kern_return_t PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx);
     static kern_return_t PrepareInterrupts(ASFWDriver& service, IOService* provider, ::ServiceContext& ctx);
     static kern_return_t PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx);
