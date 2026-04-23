@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
+#include "IEEE1394.hpp"
 #include "Logging.hpp"
 
 #ifndef ASFW_HOST_TEST
@@ -333,8 +334,12 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
 }
 
 bool HardwareInterface::InitiateBusReset(bool shortReset) {
-    (void)shortReset;
-    return UpdatePhyRegister(1, 0, 0x40);
+    if (shortReset) {
+        // IEEE 1394a short bus reset: PHY register 5, bit 6 (SBR)
+        return UpdatePhyRegister(kPhyReg5Address, 0, kPhyInitiateShortBusReset);
+    }
+    // Long bus reset: PHY register 1, bit 6 (IBR)
+    return UpdatePhyRegister(kPhyReg1Address, 0, kPhyInitiateBusReset);
 }
 
 void HardwareInterface::SetContender(bool enable) {

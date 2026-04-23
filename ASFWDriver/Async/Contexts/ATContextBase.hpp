@@ -716,6 +716,50 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
 
         const uint16_t xferStatus = HW::AT_xferStatus(*desc);
         if (xferStatus == 0) {
+            // Two-descriptor transactions use OUTPUT_MORE (header) followed by
+            // OUTPUT_LAST (payload). Hardware may only write completion status on
+            // OUTPUT_LAST. If the current head is an OUTPUT_MORE precursor and the
+            // next descriptor has completed, advance head to that descriptor first.
+            const uint16_t controlHi = static_cast<uint16_t>(desc->control >> HW::OHCIDescriptor::kControlHighShift);
+            const uint8_t cmd = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
+            const uint8_t key = static_cast<uint8_t>((controlHi >> HW::OHCIDescriptor::kKeyShift) & 0x7);
+            if (cmd != HW::OHCIDescriptor::kCmdOutputLast) {
+                const uint8_t blocks = (key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
+                const size_t nextIndex = (headIndex + blocks) % capacity;
+                HW::OHCIDescriptor* nextDesc = ring_->At(nextIndex);
+                if (nextDesc) {
+                    const bool nextIsImm = HW::IsImmediate(*nextDesc);
+                    if (dmaManager_) {
+                        dmaManager_->FetchRange(nextDesc, nextIsImm ? sizeof(HW::OHCIDescriptorImmediate)
+                                                                    : sizeof(HW::OHCIDescriptor));
+                    }
+                    const uint16_t nextStatus = HW::AT_xferStatus(*nextDesc);
+                    if (nextStatus != 0) {
+                        ASFW_LOG_V2(Async,
+                                    "ScanCompletion: advancing past OUTPUT_MORE precursor head=%zu -> %zu (next status=0x%04x)",
+                                    headIndex,
+                                    nextIndex,
+                                    nextStatus);
+                        for (uint8_t i = 0; i < blocks; ++i) {
+                            const size_t clearIndex = (headIndex + i) % capacity;
+                            HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
+                            if (!clearDesc) {
+                                continue;
+                            }
+                            ClearDescriptorStatus(*clearDesc);
+                            if (dmaManager_) {
+                                const bool clearImm = HW::IsImmediate(*clearDesc);
+                                const size_t flushSize = clearImm ? sizeof(HW::OHCIDescriptorImmediate)
+                                                                  : sizeof(HW::OHCIDescriptor);
+                                dmaManager_->PublishRange(clearDesc, flushSize);
+                            }
+                        }
+                        ring_->SetHead(nextIndex);
+                        continue;
+                    }
+                }
+            }
+
             // Per Apple's handleCompletedCommand (DecompilationAnalysis_handleCompletedCommand.md):
             // When statusWord==0, hardware hasn't completed. But check if this is an
             // ORPHANED descriptor - one that was cancelled/timed out and hardware skipped over.
