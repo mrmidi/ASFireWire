@@ -116,9 +116,16 @@ std::vector<RomEntry> FWDevice::ExtractUnitDirectory(
                     entries.push_back(RomEntry{CfgKey::Unit_Sw_Version, value, keyType, 0});
                 }
                 break;
-            case 0x14:  // Logical_Unit_Number
+            case 0x14:  // Logical_Unit_Number or SBP-2 Management_Agent_Offset
                 if (keyType == 0) {  // Immediate
                     entries.push_back(RomEntry{CfgKey::Logical_Unit_Number, value, keyType, 0});
+                } else if (keyType == 1) {  // CSR offset
+                    entries.push_back(RomEntry{CfgKey::Management_Agent_Offset, value, keyType, 0});
+                }
+                break;
+            case 0x38:  // Legacy non-standard fallback for Management_Agent_Offset
+                if (keyType == 1) {
+                    entries.push_back(RomEntry{CfgKey::Management_Agent_Offset, value, keyType, 0});
                 }
                 break;
             default:
