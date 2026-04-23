@@ -358,15 +358,14 @@ kern_return_t TransactionHandler::GetTransactionResult(IOUserClientMethodArgumen
         args->scalarOutputCount = 3;
     }
 
-    if (args->structureOutput && foundResult->dataLength > 0) {
-        OSData* resultData = OSData::withBytes(foundResult->data, foundResult->dataLength);
-        if (resultData) {
-            args->structureOutput = resultData;
-            args->structureOutputDescriptor = nullptr;
-        } else {
-            storage_->Unlock();
-            return kIOReturnNoMemory;
-        }
+    const void* resultBytes = foundResult->data;
+    OSData* resultData = OSData::withBytes(resultBytes, foundResult->dataLength);
+    if (resultData) {
+        args->structureOutput = resultData;
+        args->structureOutputDescriptor = nullptr;
+    } else {
+        storage_->Unlock();
+        return kIOReturnNoMemory;
     }
 
     ASFW_LOG(UserClient, "GetTransactionResult: handle=0x%04x status=%u rCode=0x%02x len=%u",

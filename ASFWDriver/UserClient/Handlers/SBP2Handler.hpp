@@ -84,14 +84,34 @@ public:
         std::vector<uint8_t> data;
         const kern_return_t kr = manager_->ReadIncomingData(owner, handle, offset, length, &data);
         if (kr != kIOReturnSuccess) {
+            ASFW_LOG(UserClient,
+                     "ReadIncomingData: owner=%p handle=0x%llx offset=%u len=%u -> kr=0x%x",
+                     owner,
+                     static_cast<unsigned long long>(handle),
+                     offset,
+                     length,
+                     static_cast<unsigned int>(kr));
             return kr;
         }
 
         OSData* output = OSData::withBytes(data.data(), static_cast<uint32_t>(data.size()));
         if (!output) {
+            ASFW_LOG(UserClient,
+                     "ReadIncomingData: owner=%p handle=0x%llx offset=%u len=%u -> no memory",
+                     owner,
+                     static_cast<unsigned long long>(handle),
+                     offset,
+                     length);
             return kIOReturnNoMemory;
         }
 
+        ASFW_LOG(UserClient,
+                 "ReadIncomingData: owner=%p handle=0x%llx offset=%u len=%u -> %u bytes",
+                 owner,
+                 static_cast<unsigned long long>(handle),
+                 offset,
+                 length,
+                 static_cast<unsigned int>(data.size()));
         args->structureOutput = output;
         args->structureOutputDescriptor = nullptr;
         return kIOReturnSuccess;

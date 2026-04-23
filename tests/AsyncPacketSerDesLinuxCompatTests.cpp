@@ -306,6 +306,45 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
     EXPECT_TRUE(handled);
 }
 
+TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBeforeHandler) {
+    const auto packet = MakeARBufferFromOHCIWords({
+        0xFFC16510u,  // Q0: tCode=0x1 (write block), tLabel arbitrary
+        0xFFC0ECC0u,  // Q1: src=0xFFC0, addrHi=0xECC0
+        0x00000000u,  // Q2: addrLo
+        0x00080000u,  // Q3: data_length=8
+        0x11223344u,  // payload q0
+        0x55667788u,  // payload q1
+    });
+
+    std::vector<uint8_t> misaligned;
+    misaligned.reserve(packet.size() + 4);
+    misaligned.insert(misaligned.end(), {0xDE, 0xAD, 0xBE, 0xEF});
+    misaligned.insert(misaligned.end(), packet.begin(), packet.end());
+
+    const auto buffer = std::span<const uint8_t>(misaligned.data() + 4, packet.size());
+    const auto rawPayloadPtr = reinterpret_cast<uintptr_t>(buffer.data() + 16);
+
+    PacketRouter router;
+    bool handled = false;
+    router.RegisterRequestHandler(0x1, [&](const ARPacketView& view) {
+        handled = true;
+        EXPECT_EQ(view.payload.size(), 8u);
+        EXPECT_EQ(0u, reinterpret_cast<uintptr_t>(view.payload.data()) & 0x7u);
+        EXPECT_NE(rawPayloadPtr, reinterpret_cast<uintptr_t>(view.payload.data()));
+        if (view.payload.size() == 8u) {
+            EXPECT_EQ((std::array<uint8_t, 8>{0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55}),
+                      (std::array<uint8_t, 8>{
+                          view.payload[0], view.payload[1], view.payload[2], view.payload[3],
+                          view.payload[4], view.payload[5], view.payload[6], view.payload[7],
+                      }));
+        }
+        return ResponseCode::Complete;
+    });
+
+    router.RoutePacket(ARContextType::Request, buffer);
+    EXPECT_TRUE(handled);
+}
+
 TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
     // Read quadlet response packet as OHCI AR DMA memory: tLabel=48, tCode=6, rCode=0.
     // After the little-endian quadlet write, memory byte1 holds [tLabel:6][rt:2].

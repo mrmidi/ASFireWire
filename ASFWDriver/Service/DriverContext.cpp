@@ -182,24 +182,41 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
             router->RegisterRequestHandler(
                 0x0,
                 [sbp2Manager](const ASFW::Async::ARPacketView& packet) {
+                    uint64_t destOffset = 0;
+                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
                     if (!sbp2Manager || packet.header.size() < 16) {
                         return ASFW::Async::ResponseCode::AddressError;
                     }
 
-                    const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                    destOffset = ASFW::Async::ExtractDestOffset(packet.header);
                     const auto quadletData =
                         std::span<const uint8_t>(packet.header.data() + 12, 4);
-                    return sbp2Manager->ApplyRemoteWrite(destOffset, quadletData);
+                    result = sbp2Manager->ApplyRemoteWrite(destOffset, quadletData);
+                    ASFW_LOG_V2(
+                        Async,
+                        "SBP2 AR write-quadlet req: src=0x%04x offset=0x%012llx len=4 -> rcode=0x%x",
+                        packet.sourceID,
+                        static_cast<unsigned long long>(destOffset),
+                        static_cast<unsigned>(result));
+                    return result;
                 });
 
             // Block write requests (tCode 0x1): SBP-2 first, then FCP fallback.
             router->RegisterRequestHandler(
                 0x1,
                 [sbp2Manager, fcpRouter](const ASFW::Async::ARPacketView& packet) {
+                    uint64_t destOffset = 0;
                     if (sbp2Manager && packet.header.size() >= 16 && !packet.payload.empty()) {
-                        const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                        destOffset = ASFW::Async::ExtractDestOffset(packet.header);
                         const auto sbp2Result =
                             sbp2Manager->ApplyRemoteWrite(destOffset, packet.payload);
+                        ASFW_LOG_V2(
+                            Async,
+                            "SBP2 AR write-block req: src=0x%04x offset=0x%012llx len=%zu -> rcode=0x%x",
+                            packet.sourceID,
+                            static_cast<unsigned long long>(destOffset),
+                            packet.payload.size(),
+                            static_cast<unsigned>(sbp2Result));
                         if (sbp2Result != ASFW::Async::ResponseCode::AddressError) {
                             return sbp2Result;
                         }
@@ -246,17 +263,40 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
                 [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
                     ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
                     ASFW::Protocols::SBP2::AddressSpaceManager::ReadSlice slice{};
+                    uint64_t destOffset = 0;
+                    uint32_t readLength = 0;
 
                     if (sbp2Manager && packet.header.size() >= 16) {
-                        const uint32_t readLength =
+                        destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                        readLength =
                             static_cast<uint32_t>(ASFW::Async::ExtractDataLength(packet.header));
                         if (readLength > 0) {
-                            const uint64_t destOffset =
-                                ASFW::Async::ExtractDestOffset(packet.header);
                             result = sbp2Manager->ResolveReadSlice(destOffset, readLength, &slice);
                         } else {
                             result = ASFW::Async::ResponseCode::DataError;
                         }
+                    }
+
+                    if (result == ASFW::Async::ResponseCode::Complete) {
+                        ASFW_LOG_V2(
+                            Async,
+                            "SBP2 AR read-block req: src=0x%04x offset=0x%012llx len=%u -> "
+                            "rcode=0x%x payload=0x%08x/%u",
+                            packet.sourceID,
+                            static_cast<unsigned long long>(destOffset),
+                            readLength,
+                            static_cast<unsigned>(result),
+                            static_cast<unsigned>(slice.payloadDeviceAddress),
+                            slice.payloadLength);
+                    } else {
+                        ASFW_LOG_V2(
+                            Async,
+                            "SBP2 AR read-block req: src=0x%04x offset=0x%012llx len=%u -> "
+                            "rcode=0x%x",
+                            packet.sourceID,
+                            static_cast<unsigned long long>(destOffset),
+                            readLength,
+                            static_cast<unsigned>(result));
                     }
 
                     if (responder) {

@@ -90,7 +90,8 @@ void SBP2ManagementORB::DeallocateResources() noexcept {
 void SBP2ManagementORB::BuildManagementORB() noexcept {
     std::memset(&orbBuffer_, 0, sizeof(orbBuffer_));
 
-    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const uint16_t localNode =
+        NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
 
     // Options: notify (bit 15) | function code (low nibble)
     const auto fn = static_cast<uint16_t>(function_);
@@ -105,8 +106,7 @@ void SBP2ManagementORB::BuildManagementORB() noexcept {
 
     // Status FIFO address
     orbBuffer_.statusFIFOAddressHi = ToBE32(
-        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
-        (static_cast<uint32_t>(localNode) << 16));
+        ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
     orbBuffer_.statusFIFOAddressLo = ToBE32(statusBlockMeta_.addressLo);
 
     // Write ORB to address space

@@ -75,6 +75,15 @@ class UserClientRuntimeState final {
         busResetHandler_.reset();
     }
 
+    void ReleaseOwner(void* owner) noexcept {
+        if (owner == nullptr) {
+            return;
+        }
+        if (sbp2Handler_ != nullptr) {
+            sbp2Handler_->ReleaseOwner(owner);
+        }
+    }
+
     [[nodiscard]] bool HandlersReady() const noexcept {
         return busResetHandler_ != nullptr && topologyHandler_ != nullptr &&
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&

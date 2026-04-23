@@ -385,27 +385,27 @@ void SBP2LoginSession::BuildLoginORB() noexcept {
     std::memset(&loginORBBuffer_, 0, sizeof(loginORBBuffer_));
 
     // Get local node ID for filling address fields.
-    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const uint16_t localNode =
+        NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
 
     // Login response address: nodeID in upper 16 bits of addressHi.
     const uint32_t responseAddrHi = ToBE32(
-        (static_cast<uint32_t>(loginResponseMeta_.addressHi)) |
-        (static_cast<uint32_t>(localNode) << 16));
+        ComposeBusAddressHi(localNode, loginResponseMeta_.addressHi));
     const uint32_t responseAddrLo = ToBE32(loginResponseMeta_.addressLo);
 
     // Status FIFO address.
     const uint32_t statusAddrHi = ToBE32(
-        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
-        (static_cast<uint32_t>(localNode) << 16));
+        ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
     const uint32_t statusAddrLo = ToBE32(statusBlockMeta_.addressLo);
 
     // Fill login ORB fields.
     loginORBBuffer_.loginResponseAddressHi = responseAddrHi;
     loginORBBuffer_.loginResponseAddressLo = responseAddrLo;
-    loginORBBuffer_.options = Options::kExclusiveLogin;
-    loginORBBuffer_.loginResponseLength = ToBE16(sizeof(Wire::LoginResponse));
+    loginORBBuffer_.options = static_cast<uint16_t>(
+        Options::kLoginNotify | Options::kExclusiveLogin);
     loginORBBuffer_.lun = ToBE16(targetInfo_.lun);
     loginORBBuffer_.passwordLength = 0;
+    loginORBBuffer_.loginResponseLength = ToBE16(sizeof(Wire::LoginResponse));
     loginORBBuffer_.statusFIFOAddressHi = statusAddrHi;
     loginORBBuffer_.statusFIFOAddressLo = statusAddrLo;
 
@@ -436,7 +436,8 @@ void SBP2LoginSession::BuildLoginORB() noexcept {
 void SBP2LoginSession::BuildReconnectORB() noexcept {
     std::memset(&reconnectORBBuffer_, 0, sizeof(reconnectORBBuffer_));
 
-    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const uint16_t localNode =
+        NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
 
     // Reconnect ORB: options = reconnect (3) | notify
     reconnectORBBuffer_.options = Options::kReconnectNotify;
@@ -444,8 +445,7 @@ void SBP2LoginSession::BuildReconnectORB() noexcept {
 
     // Status FIFO address — reuse the dedicated status block address space.
     const uint32_t statusAddrHi = ToBE32(
-        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
-        (static_cast<uint32_t>(localNode) << 16));
+        ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
     const uint32_t statusAddrLo = ToBE32(statusBlockMeta_.addressLo);
     reconnectORBBuffer_.statusFIFOAddressHi = statusAddrHi;
     reconnectORBBuffer_.statusFIFOAddressLo = statusAddrLo;
@@ -468,15 +468,15 @@ void SBP2LoginSession::BuildReconnectORB() noexcept {
 void SBP2LoginSession::BuildLogoutORB() noexcept {
     std::memset(&logoutORBBuffer_, 0, sizeof(logoutORBBuffer_));
 
-    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const uint16_t localNode =
+        NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
 
     logoutORBBuffer_.options = Options::kLogoutNotify;
     logoutORBBuffer_.loginID = ToBE16(loginID_);
 
     // Status FIFO address — reuse the dedicated status block address space.
     const uint32_t statusAddrHi = ToBE32(
-        (static_cast<uint32_t>(statusBlockMeta_.addressHi)) |
-        (static_cast<uint32_t>(localNode) << 16));
+        ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
     const uint32_t statusAddrLo = ToBE32(statusBlockMeta_.addressLo);
     logoutORBBuffer_.statusFIFOAddressHi = statusAddrHi;
     logoutORBBuffer_.statusFIFOAddressLo = statusAddrLo;
@@ -1046,7 +1046,8 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
 
     // Fetch agent and doorbell addresses are computed at login time.
 
-    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const uint16_t localNode =
+        NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
     const FW::FwSpeed speed = busInfo_.GetSpeed(
         FW::NodeId{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)});
 
@@ -1098,7 +1099,8 @@ void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
 
     // Build 8-byte ORB address in big-endian
     // Format: [nodeID(2)][addressHi(2)][addressLo(4)]
-    const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
+    const uint16_t localNode =
+        NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
     const Async::FWAddress orbAddr = orb->GetORBAddress();
 
     fetchAgentWriteData_[0] = static_cast<uint8_t>(localNode >> 8);
@@ -1147,9 +1149,9 @@ void SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
         const Async::FWAddress orbAddr = orb->GetORBAddress();
 
         // Set the new ORB's address in big-endian into the last ORB's next pointer
-        const uint16_t localNode = static_cast<uint16_t>(busInfo_.GetLocalNodeID().value);
-        const uint32_t nextHi = ToBE32(
-            (static_cast<uint32_t>(localNode) << 16) | orbAddr.addressHi);
+        const uint16_t localNode =
+            NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
+        const uint32_t nextHi = ToBE32(ComposeBusAddressHi(localNode, orbAddr.addressHi));
         const uint32_t nextLo = ToBE32(orbAddr.addressLo);
         chainTailORB_->SetNextORBAddress(nextHi, nextLo);
 

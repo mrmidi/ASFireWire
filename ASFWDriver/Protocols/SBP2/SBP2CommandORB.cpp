@@ -86,6 +86,7 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
                                          FW::FwSpeed speed,
                                          uint16_t maxPayloadLog) noexcept {
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
+    const uint16_t busNodeID = Wire::NormalizeBusNodeID(localNodeID);
 
     // Null next-ORB pointer (bit 31 set = null terminator)
     orb->nextORBAddressHi = Wire::ToBE32(Wire::NormalORB::kNextORBNull);
@@ -95,8 +96,9 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
     if (dataDescriptor_.isDirect) {
         // Direct mode: preserve addressHi and inject local node ID.
         orb->dataDescriptorHi = Wire::ToBE32(
-            (static_cast<uint32_t>(localNodeID) << 16) |
-            (Wire::FromBE32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu));
+            Wire::ComposeBusAddressHi(
+                busNodeID,
+                static_cast<uint16_t>(Wire::FromBE32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu)));
         orb->dataDescriptorLo = dataDescriptor_.dataDescriptorLo;
     } else {
         // Page table mode: dataDescriptorHi already has nodeID + addressHi from Build()

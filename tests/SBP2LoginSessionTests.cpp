@@ -20,6 +20,7 @@ using ASFW::Protocols::SBP2::Wire::FromBE16;
 using ASFW::Protocols::SBP2::Wire::FromBE32;
 using ASFW::Protocols::SBP2::Wire::LoginORB;
 using ASFW::Protocols::SBP2::Wire::LoginResponse;
+using ASFW::Protocols::SBP2::Wire::NormalizeBusNodeID;
 using ASFW::Protocols::SBP2::Wire::StatusBlock;
 using ASFW::Protocols::SBP2::Wire::ToBE16;
 using ASFW::Protocols::SBP2::Wire::ToBE32;
@@ -158,6 +159,50 @@ TEST(SBP2LoginSessionTests, LoginAckCancelsStaleTimeoutBeforeStatusArrives) {
 
     EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
     EXPECT_EQ(1u, rig.bus.WriteCount());
+}
+
+TEST(SBP2LoginSessionTests, LoginORBMatchesAppleWireLayout) {
+    SessionRig rig;
+
+    ASSERT_TRUE(rig.session.Login());
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());
+
+    const auto& loginWrite = rig.bus.WriteAt(0);
+    const uint64_t loginOrbAddress = DecodeOrbAddressFromPayload(loginWrite.data);
+
+    const uint32_t quadlet4 = FromBE32(
+        ReadQuadlet(rig.addressManager, loginOrbAddress + offsetof(LoginORB, options)));
+    const uint32_t quadlet5 = FromBE32(
+        ReadQuadlet(rig.addressManager, loginOrbAddress + offsetof(LoginORB, passwordLength)));
+
+    EXPECT_EQ(0x9000u, static_cast<uint16_t>(quadlet4 >> 16));
+    EXPECT_EQ(3u, static_cast<uint16_t>(quadlet4 & 0xFFFFu));
+    EXPECT_EQ(0u, static_cast<uint16_t>(quadlet5 >> 16));
+    EXPECT_EQ(LoginResponse::kSize, static_cast<uint16_t>(quadlet5 & 0xFFFFu));
+}
+
+TEST(SBP2LoginSessionTests, LoginORBUsesFullBusNodeIdInEmbeddedAddresses) {
+    SessionRig rig;
+
+    ASSERT_TRUE(rig.session.Login());
+    ASSERT_EQ(1u, rig.bus.PendingWriteCount());
+
+    const auto& loginWrite = rig.bus.WriteAt(0);
+    ASSERT_EQ(8u, loginWrite.data.size());
+
+    const uint16_t payloadNode =
+        static_cast<uint16_t>((static_cast<uint16_t>(loginWrite.data[0]) << 8) |
+                              loginWrite.data[1]);
+    const uint64_t loginOrbAddress = DecodeOrbAddressFromPayload(loginWrite.data);
+    const uint32_t responseHi = FromBE32(
+        ReadQuadlet(rig.addressManager, loginOrbAddress + offsetof(LoginORB, loginResponseAddressHi)));
+    const uint32_t statusHi = FromBE32(
+        ReadQuadlet(rig.addressManager, loginOrbAddress + offsetof(LoginORB, statusFIFOAddressHi)));
+
+    const uint16_t expectedNode = NormalizeBusNodeID(0x2A);
+    EXPECT_EQ(expectedNode, payloadNode);
+    EXPECT_EQ((static_cast<uint32_t>(expectedNode) << 16) | 0xFFFFu, responseHi);
+    EXPECT_EQ((static_cast<uint32_t>(expectedNode) << 16) | 0xFFFFu, statusHi);
 }
 
 TEST(SBP2LoginSessionTests, BusResetWhileLoggingInRetriesLoginAfterDelay) {

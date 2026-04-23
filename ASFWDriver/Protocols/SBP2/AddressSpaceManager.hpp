@@ -22,6 +22,12 @@
 
 namespace ASFW::Protocols::SBP2 {
 
+#ifdef ASFW_HOST_TEST
+#define ASFW_ADDRSPACE_LOG(fmt, ...)
+#else
+#define ASFW_ADDRSPACE_LOG(fmt, ...) ASFW_LOG_V2(Async, fmt, ##__VA_ARGS__)
+#endif
+
 class AddressSpaceManager {
 public:
     // Callback invoked when a remote write arrives for a registered range.
@@ -154,14 +160,30 @@ public:
         IOLockLock(lock_);
         auto it = ranges_.find(handle);
         if (it == ranges_.end()) {
+            ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] dealloc miss owner=%p handle=0x%llx ranges=%lu",
+                               this,
+                               owner,
+                               static_cast<unsigned long long>(handle),
+                               static_cast<unsigned long>(ranges_.size()));
             IOLockUnlock(lock_);
             return kIOReturnNotFound;
         }
         if (it->second.owner != owner) {
+            ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] dealloc denied owner=%p handle=0x%llx actualOwner=%p",
+                               this,
+                               owner,
+                               static_cast<unsigned long long>(handle),
+                               it->second.owner);
             IOLockUnlock(lock_);
             return kIOReturnNotPermitted;
         }
 
+        ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] dealloc owner=%p handle=0x%llx addr=0x%012llx len=%u",
+                           this,
+                           owner,
+                           static_cast<unsigned long long>(handle),
+                           static_cast<unsigned long long>(it->second.meta.address),
+                           it->second.meta.length);
         CleanupBacking(it->second);
         ranges_.erase(it);
         IOLockUnlock(lock_);
@@ -243,11 +265,25 @@ public:
             IOLockLock(lock_);
             auto* range = FindRangeByAddressLocked(address, static_cast<uint32_t>(payload.size()));
             if (!range) {
+                LogRangesLocked("write miss", address, static_cast<uint32_t>(payload.size()));
                 IOLockUnlock(lock_);
                 return Async::ResponseCode::AddressError;
             }
 
             offset = static_cast<uint32_t>(address - range->meta.address);
+            ASFW_ADDRSPACE_LOG(
+                "AddressSpaceManager[%p] remote write addr=0x%012llx len=%zu src=%p "
+                "handle=0x%llx rangeAddr=0x%012llx off=%u buf=%p mapped=%p backing=%u",
+                this,
+                static_cast<unsigned long long>(address),
+                payload.size(),
+                payload.data(),
+                static_cast<unsigned long long>(range->meta.handle),
+                static_cast<unsigned long long>(range->meta.address),
+                offset,
+                range->buffer.data(),
+                range->mappedBytes,
+                range->hasBacking ? 1u : 0u);
             WriteBytesLocked(*range, offset, payload);
             callback = range->onRemoteWrite;
             handle = range->meta.handle;
@@ -272,6 +308,7 @@ public:
         IOLockLock(lock_);
         auto* range = FindRangeByAddressLocked(address, length);
         if (!range) {
+            LogRangesLocked("resolve miss", address, length);
             IOLockUnlock(lock_);
             return Async::ResponseCode::AddressError;
         }
@@ -324,6 +361,13 @@ public:
         IOLockLock(lock_);
         for (auto it = ranges_.begin(); it != ranges_.end();) {
             if (it->second.owner == owner) {
+                ASFW_ADDRSPACE_LOG(
+                    "AddressSpaceManager[%p] release owner=%p handle=0x%llx addr=0x%012llx len=%u",
+                    this,
+                    owner,
+                    static_cast<unsigned long long>(it->second.meta.handle),
+                    static_cast<unsigned long long>(it->second.meta.address),
+                    it->second.meta.length);
                 CleanupBacking(it->second);
                 it = ranges_.erase(it);
             } else {
@@ -431,6 +475,27 @@ private:
         return nullptr;
     }
 
+    void LogRangesLocked(const char* reason, uint64_t address, uint32_t length) {
+        ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] %s addr=0x%012llx len=%u ranges=%lu",
+                           this,
+                           reason,
+                           static_cast<unsigned long long>(address),
+                           length,
+                           static_cast<unsigned long>(ranges_.size()));
+        for (const auto& entry : ranges_) {
+            const auto& range = entry.second;
+            ASFW_ADDRSPACE_LOG(
+                "AddressSpaceManager[%p] range handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
+                this,
+                static_cast<unsigned long long>(range.meta.handle),
+                range.owner,
+                static_cast<unsigned long long>(range.meta.address),
+                range.meta.length,
+                range.hasBacking ? 1u : 0u,
+                static_cast<unsigned>(range.deviceAddress));
+        }
+    }
+
     kern_return_t AllocateAddressRangeLocked(void* owner,
                                              uint16_t addressHi,
                                              uint32_t addressLo,
@@ -471,6 +536,13 @@ private:
             *outMeta = range.meta;
         }
         ranges_.emplace(handle, std::move(range));
+        ASFW_ADDRSPACE_LOG("AddressSpaceManager[%p] alloc owner=%p handle=0x%llx addr=0x%012llx len=%u ranges=%lu",
+                           this,
+                           owner,
+                           static_cast<unsigned long long>(handle),
+                           static_cast<unsigned long long>(start),
+                           length,
+                           static_cast<unsigned long>(ranges_.size()));
         *outHandle = handle;
         return kIOReturnSuccess;
     }
@@ -575,17 +647,49 @@ private:
         OSSynchronizeIO();
     }
 
+    static void CopyPayloadBytes(uint8_t* destination,
+                                 std::span<const uint8_t> source) {
+        if (!destination || source.empty()) {
+            return;
+        }
+
+        const auto sourceAddr = reinterpret_cast<uintptr_t>(source.data());
+        const auto destAddr = reinterpret_cast<uintptr_t>(destination);
+        const bool quadletAligned = ((sourceAddr | destAddr) & 0x3u) == 0;
+
+        std::size_t index = 0;
+        if (quadletAligned) {
+            for (; index + sizeof(uint32_t) <= source.size(); index += sizeof(uint32_t)) {
+                uint32_t quadlet = 0;
+                __builtin_memcpy(&quadlet, source.data() + index, sizeof(uint32_t));
+                __builtin_memcpy(destination + index, &quadlet, sizeof(uint32_t));
+            }
+        }
+
+        for (; index < source.size(); ++index) {
+            destination[index] = source[index];
+        }
+    }
+
     static void WriteBytesLocked(AddressRange& range,
                                  uint32_t offset,
                                  std::span<const uint8_t> data) {
-        std::memcpy(range.buffer.data() + static_cast<std::size_t>(offset),
-                    data.data(),
-                    data.size());
+        ASFW_ADDRSPACE_LOG(
+            "AddressSpaceManager write handle=0x%llx off=%u len=%zu src=%p buf=%p mapped=%p "
+            "srcAlign=%zu bufAlign=%zu mappedAlign=%zu",
+            static_cast<unsigned long long>(range.meta.handle),
+            offset,
+            data.size(),
+            data.data(),
+            range.buffer.data(),
+            range.mappedBytes,
+            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(data.data()) & 0x7ULL),
+            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.buffer.data()) & 0x7ULL),
+            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.mappedBytes) & 0x7ULL));
+        CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
 
         if (range.hasBacking && range.mappedBytes) {
-            std::memcpy(range.mappedBytes + static_cast<std::size_t>(offset),
-                        data.data(),
-                        data.size());
+            CopyPayloadBytes(range.mappedBytes + static_cast<std::size_t>(offset), data);
             std::atomic_thread_fence(std::memory_order_release);
             SyncRange(range, offset, data.size());
         }
@@ -596,5 +700,7 @@ private:
     uint64_t nextHandle_{1};
     std::unordered_map<uint64_t, AddressRange> ranges_;
 };
+
+#undef ASFW_ADDRSPACE_LOG
 
 } // namespace ASFW::Protocols::SBP2

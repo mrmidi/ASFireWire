@@ -79,6 +79,55 @@ TEST(AddressSpaceManagerTests, ApplyRemoteWriteThenReadIncoming) {
     EXPECT_EQ(0xCC, readback[4]);
 }
 
+TEST(AddressSpaceManagerTests, ApplyRemoteWriteAcceptsQuadletAlignedMisalignedSource) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    uint64_t handle = 0;
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRange(reinterpret_cast<void*>(0xD),
+                                           0xFFFF,
+                                           0x0021'0000,
+                                           16,
+                                           &handle,
+                                           nullptr));
+
+    alignas(8) std::array<uint8_t, 20> raw{};
+    raw[4] = 0x10;
+    raw[5] = 0x20;
+    raw[6] = 0x30;
+    raw[7] = 0x40;
+    raw[8] = 0x50;
+    raw[9] = 0x60;
+    raw[10] = 0x70;
+    raw[11] = 0x80;
+
+    const uint64_t writeAddress = ComposeAddress(0xFFFF, 0x0021'0000) + 4;
+    const auto payload = std::span<const uint8_t>(raw.data() + 4, 8);
+    ASSERT_EQ(0u, reinterpret_cast<uintptr_t>(payload.data()) & 0x3u);
+    ASSERT_EQ(4u, reinterpret_cast<uintptr_t>(payload.data()) & 0x7u);
+
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              manager.ApplyRemoteWrite(writeAddress, payload));
+
+    std::vector<uint8_t> readback;
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.ReadIncomingData(reinterpret_cast<void*>(0xD),
+                                       handle,
+                                       0,
+                                       16,
+                                       &readback));
+
+    ASSERT_EQ(16u, readback.size());
+    EXPECT_EQ(0x10, readback[4]);
+    EXPECT_EQ(0x20, readback[5]);
+    EXPECT_EQ(0x30, readback[6]);
+    EXPECT_EQ(0x40, readback[7]);
+    EXPECT_EQ(0x50, readback[8]);
+    EXPECT_EQ(0x60, readback[9]);
+    EXPECT_EQ(0x70, readback[10]);
+    EXPECT_EQ(0x80, readback[11]);
+}
+
 TEST(AddressSpaceManagerTests, ReadAfterDeallocateReturnsNotFound) {
     ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
 

@@ -52,14 +52,14 @@ struct LoginORB {
     // Quadlet 3: login response address (lo)
     uint32_t loginResponseAddressLo{0};
 
-    // Quadlet 4: options + login response length
-    // [31:16] options (notify bit, etc.), [15:0] login response length
+    // Quadlet 4: options + LUN
+    // [31:16] options (notify/reconnect/exclusive), [15:0] LUN
     uint16_t options{0};
-    uint16_t loginResponseLength{0};
-
-    // Quadlet 5: LUN
     uint16_t lun{0};
+
+    // Quadlet 5: password length + login response length
     uint16_t passwordLength{0};
+    uint16_t loginResponseLength{0};
 
     // Quadlet 6: status FIFO address (hi)
     uint32_t statusFIFOAddressHi{0};
@@ -230,6 +230,22 @@ static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
     return 0xF0000000u + (managementOffset << 2);
 }
 
+// SBP-2 ORBs embed a full 16-bit node ID in bus addresses. ASFW's generic
+// bus-info path exposes only the local 6-bit physical node number, so expand it
+// to the local-bus form Apple uses (0xffc0 | phyId) before writing ORBs.
+[[nodiscard]] inline constexpr uint16_t NormalizeBusNodeID(uint16_t nodeID) noexcept {
+    if ((nodeID & 0xFFC0u) == 0xFFC0u) {
+        return nodeID;
+    }
+    return static_cast<uint16_t>(0xFFC0u | (nodeID & 0x003Fu));
+}
+
+[[nodiscard]] inline constexpr uint32_t ComposeBusAddressHi(uint16_t nodeID,
+                                                            uint16_t addressHi) noexcept {
+    return (static_cast<uint32_t>(NormalizeBusNodeID(nodeID)) << 16) |
+           static_cast<uint32_t>(addressHi);
+}
+
 // Command Block Agent register offsets (relative to agent base from login response).
 // Verified against Apple IOFireWireSBP2Login::clearAllTasksInSet / login response processing.
 struct CommandBlockAgentOffsets {
@@ -245,7 +261,8 @@ struct CommandBlockAgentOffsets {
 
 namespace Options {
     // Login ORB options
-    static constexpr uint16_t kExclusiveLogin = ToBE16(0x2000); // bit 13 per SBP-2 Table 14
+    static constexpr uint16_t kLoginNotify    = ToBE16(0x8000);
+    static constexpr uint16_t kExclusiveLogin = ToBE16(0x1000);
 
     // Reconnect ORB options
     static constexpr uint16_t kReconnectNotify = ToBE16(0x8003); // reconnect + notify

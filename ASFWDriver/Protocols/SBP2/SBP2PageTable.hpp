@@ -47,6 +47,7 @@ public:
                              uint16_t localNodeID,
                              uint32_t maxPageClipSize = 0xF000) noexcept {
         Clear();
+        const uint16_t busNodeID = Wire::NormalizeBusNodeID(localNodeID);
 
         if (segments.empty()) {
             result_ = {};
@@ -126,8 +127,7 @@ public:
         }
 
         result_.dataDescriptorHi = Wire::ToBE32(
-            static_cast<uint32_t>(pageTableMeta_.addressHi) |
-            (static_cast<uint32_t>(localNodeID) << 16));
+            Wire::ComposeBusAddressHi(busNodeID, pageTableMeta_.addressHi));
         result_.dataDescriptorLo = Wire::ToBE32(pageTableMeta_.addressLo);
         result_.dataSize = Wire::ToBE16(static_cast<uint16_t>(pteCount_));
         result_.options = Wire::Options::kPageTableUnrestricted;

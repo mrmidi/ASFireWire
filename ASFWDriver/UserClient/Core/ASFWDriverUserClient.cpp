@@ -151,7 +151,10 @@ void ASFWDriverUserClient::free() {
         }
 
         if (ivars->runtimeState) {
-            delete static_cast<ASFW::UserClient::UserClientRuntimeState*>(ivars->runtimeState);
+            auto* runtimeState =
+                static_cast<ASFW::UserClient::UserClientRuntimeState*>(ivars->runtimeState);
+            runtimeState->ReleaseOwner(this);
+            delete runtimeState;
             ivars->runtimeState = nullptr;
         }
         IOSafeDeleteNULL(ivars, ASFWDriverUserClient_IVars, 1);
@@ -215,6 +218,9 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
         ivars->driver = nullptr;
     }
     if (auto* runtimeState = ASFW::UserClient::GetRuntimeState(this); runtimeState != nullptr) {
+        // Release owner-bound SBP-2 resources before handler teardown so
+        // abrupt client exit cannot strand address ranges inside the driver.
+        runtimeState->ReleaseOwner(this);
         runtimeState->ResetHandlers();
     }
 
