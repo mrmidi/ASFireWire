@@ -102,9 +102,6 @@ public:
                 return;
             }
 
-            // Store ACK code in transaction for timeout handler
-            txn->SetAckCode(ackCode);
-
             // PHY packets complete on AT path only (no AR response expected).
             if (txn->GetCompletionStrategy() == CompletionStrategy::CompleteOnPHY) {
                 ASFW_LOG(Async, "  → Completed (PHY, AT-only) ackCode=0x%X event=0x%02X", ackCode, eventCode);
@@ -175,6 +172,50 @@ public:
             const auto strategy = txn->GetCompletionStrategy();
             const bool needsARData = txn->IsReadOperation() || strategy == CompletionStrategy::CompleteOnAR;
 
+            // Normalize ACK semantics from OHCI event code first.
+            // Some controllers report raw ackCode values (e.g. 0x8) that do not map
+            // directly to IEEE 1394 ack constants; eventCode is authoritative.
+            uint8_t normalizedAckCode = ackCode;
+            switch (static_cast<OHCIEventCode>(eventCode)) {
+                case OHCIEventCode::kAckComplete:
+                    normalizedAckCode = 0x0;
+                    break;
+                case OHCIEventCode::kAckPending:
+                    normalizedAckCode = 0x1;
+                    break;
+                case OHCIEventCode::kAckBusyX:
+                    normalizedAckCode = 0x4;
+                    break;
+                case OHCIEventCode::kAckBusyA:
+                    normalizedAckCode = 0x5;
+                    break;
+                case OHCIEventCode::kAckBusyB:
+                    normalizedAckCode = 0x6;
+                    break;
+                case OHCIEventCode::kAckTardy:
+                    normalizedAckCode = 0xC;
+                    break;
+                case OHCIEventCode::kAckDataError:
+                    normalizedAckCode = 0xD;
+                    break;
+                case OHCIEventCode::kAckTypeError:
+                    normalizedAckCode = 0xE;
+                    break;
+                default:
+                    break;
+            }
+            if (normalizedAckCode != ackCode) {
+                ASFW_LOG_V2(Async,
+                            "  ℹ️  Normalized ackCode 0x%X -> 0x%X from event=0x%02X",
+                            ackCode,
+                            normalizedAckCode,
+                            eventCode);
+                ackCode = normalizedAckCode;
+            }
+
+            // Store normalized ACK code in transaction for timeout handler.
+            txn->SetAckCode(ackCode);
+
             switch (ackCode) {
                 case 0x1:  // kFWAckPending (split transaction)
                     ASFW_LOG_V2(Async, "  → AwaitingAR (ackPending, need AR response)");
@@ -235,6 +276,26 @@ public:
                     transitionTag1 = "OnATCompletion: ackError";
                     transitionTag2 = "OnATCompletion: ackError";
                     postKr = kIOReturnError;
+                    break;
+
+                case 0x8:
+                    // Compatibility fallback for controllers that surface legacy/packed
+                    // ack values. For write-like commands without response payload, treat
+                    // this as completion on AT; reads/locks still require AR data.
+                    if (needsARData) {
+                        ASFW_LOG_V2(Async, "  → AwaitingAR (legacy ackCode=0x8, data required)");
+                        txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: legacy_ack8");
+                        txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: legacy_ack8");
+                        break;
+                    }
+                    if (txn->TryMarkCompleted()) {
+                        ASFW_LOG_V1(Async, "  → Completed (legacy ackCode=0x8, AT path won)");
+                        postAction = PostAction::kCompleteSuccess;
+                        transitionTag1 = "OnATCompletion: legacy_ack8";
+                        transitionTag2 = "OnATCompletion: legacy_ack8";
+                    } else {
+                        ASFW_LOG_V3(Async, "  → legacy ackCode=0x8 but AR already completed, ignoring");
+                    }
                     break;
 
                 default:

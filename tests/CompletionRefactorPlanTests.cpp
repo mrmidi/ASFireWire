@@ -79,6 +79,23 @@ TEST(CompletionRefactorPlan, AckCompleteWriteCompletesOnAT) {
     EXPECT_EQ(h.mgr.Find(TLabel{1}), nullptr);  // Extracted on completion
 }
 
+TEST(CompletionRefactorPlan, AckCompleteEventNormalizesLegacyAck8ForWrite) {
+    Harness h;
+    ASSERT_TRUE(h.initOk);
+    CallbackRecorder cb;
+    auto* txn = h.AllocateTxn(/*label=*/6, /*gen=*/1, /*node=*/0x1234,
+                              /*tcode=*/0x1, CompletionStrategy::CompleteOnAT, cb);
+    ASSERT_NE(txn, nullptr);
+
+    h.handler.OnATCompletion(MakeTx(/*label=*/6,
+                                    /*ackCode=*/0x8,
+                                    /*eventCode=*/static_cast<uint8_t>(OHCIEventCode::kAckComplete)));
+
+    EXPECT_EQ(cb.called, 1);
+    EXPECT_EQ(cb.lastKr, kIOReturnSuccess);
+    EXPECT_EQ(h.mgr.Find(TLabel{6}), nullptr);
+}
+
 TEST(CompletionRefactorPlan, AckPendingWriteWaitsForARThenCompletes) {
     Harness h;
     ASSERT_TRUE(h.initOk);
