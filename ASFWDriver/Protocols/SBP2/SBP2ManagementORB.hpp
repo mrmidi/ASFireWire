@@ -69,6 +69,7 @@ public:
     }
 
     void SetWorkQueue(IODispatchQueue* queue) noexcept { workQueue_ = queue; }
+    void SetTimeoutQueue(IODispatchQueue* queue) noexcept { timeoutQueue_ = queue; }
 
     // Lifecycle
     [[nodiscard]] bool Execute() noexcept;
@@ -79,7 +80,7 @@ public:
 private:
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
-    void BuildManagementORB() noexcept;
+    [[nodiscard]] kern_return_t BuildManagementORB() noexcept;
 
     void OnWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response) noexcept;
     void OnStatusBlockWrite(uint32_t offset, std::span<const uint8_t> payload) noexcept;
@@ -126,6 +127,7 @@ private:
 
     // Timer infrastructure
     IODispatchQueue* workQueue_{nullptr};
+    IODispatchQueue* timeoutQueue_{nullptr};
     std::atomic<uint64_t> timerGeneration_{0};
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };

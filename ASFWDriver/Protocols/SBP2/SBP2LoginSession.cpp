@@ -6,6 +6,8 @@
 #include "../../Async/Interfaces/IFireWireBusInfo.hpp"
 #include "../../Common/FWCommon.hpp"
 
+#include <algorithm>
+
 namespace ASFW::Protocols::SBP2 {
 
 using namespace ASFW::Protocols::SBP2::Wire;
@@ -25,7 +27,24 @@ SBP2LoginSession::~SBP2LoginSession() {
     CancelPendingTimer();
     ClearORBTracking(true);
     lifetimeToken_.reset();
+    ReleaseOwnedTimeoutQueue();
     DeallocateResources();
+}
+
+void SBP2LoginSession::SetWorkQueue(IODispatchQueue* queue) noexcept {
+    workQueue_ = queue;
+    if (timeoutQueue_ == nullptr) {
+        EnsureTimeoutQueue();
+    }
+}
+
+void SBP2LoginSession::SetTimeoutQueue(IODispatchQueue* queue) noexcept {
+    timeoutQueue_ = queue;
+    if (queue != nullptr) {
+        ReleaseOwnedTimeoutQueue();
+    } else {
+        EnsureTimeoutQueue();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -969,9 +988,63 @@ void SBP2LoginSession::CancelPendingTimer() noexcept {
     delayedCallbackGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
+void SBP2LoginSession::EnsureTimeoutQueue() noexcept {
+    if (timeoutQueue_ != nullptr || workQueue_ == nullptr) {
+        return;
+    }
+
+#ifdef ASFW_HOST_TEST
+    ownedTimeoutQueue_ = std::make_unique<IODispatchQueue>();
+    if (ownedTimeoutQueue_ != nullptr &&
+        workQueue_->UsesManualDispatchForTesting()) {
+        ownedTimeoutQueue_->SetManualDispatchForTesting(true);
+    }
+    timeoutQueue_ = ownedTimeoutQueue_.get();
+#else
+    IODispatchQueue* queue = nullptr;
+    const kern_return_t kr = IODispatchQueue::Create("com.asfw.sbp2.timeout", 0, 0, &queue);
+    if (kr != kIOReturnSuccess || queue == nullptr) {
+        ASFW_LOG(SBP2,
+                 "SBP2LoginSession: failed to create timeout queue (kr=0x%08x), falling back to workQueue",
+                 kr);
+        timeoutQueue_ = workQueue_;
+        return;
+    }
+    ownedTimeoutQueue_ = queue;
+    timeoutQueue_ = ownedTimeoutQueue_;
+#endif
+}
+
+void SBP2LoginSession::ReleaseOwnedTimeoutQueue() noexcept {
+#ifdef ASFW_HOST_TEST
+    IODispatchQueue* ownedQueue = ownedTimeoutQueue_.get();
+    ownedTimeoutQueue_.reset();
+    if (timeoutQueue_ == ownedQueue) {
+        timeoutQueue_ = nullptr;
+    }
+#else
+    IODispatchQueue* ownedQueue = ownedTimeoutQueue_;
+    if (ownedTimeoutQueue_ != nullptr) {
+        ownedTimeoutQueue_->release();
+        ownedTimeoutQueue_ = nullptr;
+    }
+    if (timeoutQueue_ == ownedQueue) {
+        timeoutQueue_ = nullptr;
+    }
+#endif
+}
+
+IODispatchQueue* SBP2LoginSession::EffectiveTimeoutQueue() const noexcept {
+    if (timeoutQueue_ != nullptr) {
+        return timeoutQueue_;
+    }
+    return workQueue_;
+}
+
 void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
                                               std::function<void()> callback) noexcept {
-    if (workQueue_ == nullptr || !callback) {
+    IODispatchQueue* delayQueue = timeoutQueue_ != nullptr ? timeoutQueue_ : workQueue_;
+    if (workQueue_ == nullptr || delayQueue == nullptr || !callback) {
         return;
     }
 
@@ -979,15 +1052,31 @@ void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
         delayedCallbackGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
     const std::weak_ptr<int> weakLifetime = lifetimeToken_;
     const uint64_t delayNs = delayMs * 1'000'000ULL;
+    IODispatchQueue* bounceQueue = workQueue_;
 
-    DispatchAfterCompat(workQueue_, delayNs, [this, weakLifetime, expectedGeneration, cb = std::move(callback)]() mutable {
+    DispatchAfterCompat(delayQueue,
+                        delayNs,
+                        [this,
+                         weakLifetime,
+                         expectedGeneration,
+                         bounceQueue,
+                         cb = std::move(callback)]() mutable {
         if (weakLifetime.expired()) {
             return;
         }
-        if (delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
-            return;
-        }
-        cb();
+        DispatchAsyncCompat(bounceQueue,
+                            [this,
+                             weakLifetime,
+                             expectedGeneration,
+                             cb = std::move(cb)]() mutable {
+            if (weakLifetime.expired()) {
+                return;
+            }
+            if (delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
+                return;
+            }
+            cb();
+        });
     });
 }
 
@@ -1038,9 +1127,11 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
         return false;
     }
 
-    if (orb == nullptr || orb->IsAppended()) {
-        ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: invalid ORB (null=%d, appended=%d)",
-                 orb == nullptr, orb != nullptr && orb->IsAppended());
+    if (orb == nullptr || !orb->IsValid() || orb->IsAppended()) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: invalid ORB (null=%d, valid=%d, appended=%d)",
+                 orb == nullptr,
+                 orb != nullptr && orb->IsValid(),
+                 orb != nullptr && orb->IsAppended());
         return false;
     }
 
@@ -1066,7 +1157,13 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
         }
     }
 
-    orb->PrepareForExecution(localNode, speed, maxPayloadLog);
+    const kern_return_t prepareKr = orb->PrepareForExecution(localNode, speed, maxPayloadLog);
+    if (prepareKr != kIOReturnSuccess) {
+        ASFW_LOG(SBP2, "SBP2LoginSession::SubmitORB: PrepareForExecution failed: 0x%08x",
+                 prepareKr);
+        return false;
+    }
+
     orb->SetFetchAgentWriteRetries(20);
     orb->SetAppended(true);
     outstandingORBs_[MakeORBKey(orb->GetORBAddress())] = orb;
@@ -1082,19 +1179,21 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
             return true;
         }
 
-        AppendORBImmediate(orb);
+        return AppendORBImmediate(orb);
     } else {
         // Chained: link to last ORB, ring doorbell
-        AppendORB(orb);
+        if (!AppendORB(orb)) {
+            return false;
+        }
         RingDoorbell();
     }
 
     return true;
 }
 
-void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
+bool SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
     if (orb == nullptr || fetchAgentWriteInUse_) {
-        return;
+        return false;
     }
 
     // Build 8-byte ORB address in big-endian
@@ -1130,19 +1229,48 @@ void SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
         ASFW_LOG(SBP2, "SBP2LoginSession::AppendORBImmediate: WriteBlock failed");
         fetchAgentWriteInUse_ = false;
         activeFetchAgentORB_ = nullptr;
+        FailSubmittedORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
+        return false;
     }
 
     ASFW_LOG(SBP2,
              "SBP2LoginSession::AppendORBImmediate: wrote ORB addr %04x:%08x to fetch agent",
              localNode, orbAddr.addressLo);
+    return true;
 }
 
-void SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
+void SBP2LoginSession::FailSubmittedORB(SBP2CommandORB* orb,
+                                        int transportStatus,
+                                        uint8_t sbpStatus) noexcept {
+    if (orb == nullptr) {
+        return;
+    }
+
+    const auto key = MakeORBKey(orb->GetORBAddress());
+    outstandingORBs_.erase(key);
+    pendingImmediateORBs_.erase(
+        std::remove(pendingImmediateORBs_.begin(), pendingImmediateORBs_.end(), orb),
+        pendingImmediateORBs_.end());
+    if (activeFetchAgentORB_ == orb) {
+        activeFetchAgentORB_ = nullptr;
+    }
+    if (chainTailORB_ == orb) {
+        chainTailORB_ = nullptr;
+    }
+    orb->CancelTimer();
+    orb->SetAppended(false);
+
+    auto& cb = orb->GetCompletionCallback();
+    if (cb) {
+        cb(transportStatus, sbpStatus);
+    }
+}
+
+bool SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
     if (chainTailORB_ == nullptr) {
         // First ORB — write directly to fetch agent instead of chaining
         chainTailORB_ = orb;
-        AppendORBImmediate(orb);
-        return;
+        return AppendORBImmediate(orb);
     }
 
     if (chainTailORB_ != orb) {
@@ -1153,10 +1281,18 @@ void SBP2LoginSession::AppendORB(SBP2CommandORB* orb) noexcept {
             NormalizeBusNodeID(static_cast<uint16_t>(busInfo_.GetLocalNodeID().value));
         const uint32_t nextHi = ToBE32(ComposeBusAddressHi(localNode, orbAddr.addressHi));
         const uint32_t nextLo = ToBE32(orbAddr.addressLo);
-        chainTailORB_->SetNextORBAddress(nextHi, nextLo);
+        const kern_return_t linkKr = chainTailORB_->SetNextORBAddress(nextHi, nextLo);
+        if (linkKr != kIOReturnSuccess) {
+            ASFW_LOG(SBP2, "SBP2LoginSession::AppendORB: SetNextORBAddress failed: 0x%08x",
+                     linkKr);
+            FailSubmittedORB(orb, -1, Wire::SBPStatus::kUnspecifiedError);
+            return false;
+        }
 
         chainTailORB_ = orb;
     }
+
+    return true;
 }
 
 void SBP2LoginSession::RingDoorbell() noexcept {
@@ -1279,12 +1415,15 @@ bool SBP2LoginSession::SubmitManagementORB(SBP2ManagementORB* orb) noexcept {
         return false;
     }
 
+    EnsureTimeoutQueue();
+
     // Configure the management ORB with current session parameters
     orb->SetLoginID(loginID_);
     orb->SetManagementAgentOffset(targetInfo_.managementAgentOffset);
     orb->SetTargetNode(loginGeneration_, loginNodeID_);
     orb->SetTimeout(targetInfo_.managementTimeoutMs);
     orb->SetWorkQueue(workQueue_);
+    orb->SetTimeoutQueue(EffectiveTimeoutQueue());
 
     ASFW_LOG(SBP2, "SBP2LoginSession::SubmitManagementORB: function=%u",
              static_cast<uint16_t>(orb->GetFunction()));

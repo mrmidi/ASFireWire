@@ -51,7 +51,7 @@ struct SBP2TargetInfo {
     // From Unit_Characteristics key (if present)
     uint32_t managementTimeoutMs{2000};  // (byte[1] of unitCharacteristics) * 500 ms
     uint16_t maxORBSize{32};             // (byte[0] * 4), min 32
-    uint16_t maxCommandBlockSize{0};     // maxORBSize - 12
+    uint16_t maxCommandBlockSize{0};     // maxORBSize - sizeof(NormalORB header)
 
     // From Fast_Start key (optional)
     bool fastStartSupported{false};
@@ -142,7 +142,8 @@ public:
 
     /// Bind the IODispatchQueue used for delayed callbacks (timers).
     /// Must be called before Login() for timeout/retry support.
-    void SetWorkQueue(IODispatchQueue* queue) noexcept { workQueue_ = queue; }
+    void SetWorkQueue(IODispatchQueue* queue) noexcept;
+    void SetTimeoutQueue(IODispatchQueue* queue) noexcept;
 
     // -----------------------------------------------------------------------
     // Session operations
@@ -269,6 +270,9 @@ private:
 
     /// Cancel any pending timer callback.
     void CancelPendingTimer() noexcept;
+    void EnsureTimeoutQueue() noexcept;
+    void ReleaseOwnedTimeoutQueue() noexcept;
+    [[nodiscard]] IODispatchQueue* EffectiveTimeoutQueue() const noexcept;
     void ClearORBTracking(bool cancelTimers) noexcept;
     [[nodiscard]] static uint64_t MakeORBKey(uint16_t addressHi, uint32_t addressLo) noexcept;
     [[nodiscard]] static uint64_t MakeORBKey(const Async::FWAddress& address) noexcept;
@@ -354,6 +358,12 @@ private:
     // -----------------------------------------------------------------------
 
     IODispatchQueue* workQueue_{nullptr};
+    IODispatchQueue* timeoutQueue_{nullptr};
+#ifdef ASFW_HOST_TEST
+    std::unique_ptr<IODispatchQueue> ownedTimeoutQueue_{};
+#else
+    IODispatchQueue* ownedTimeoutQueue_{nullptr};
+#endif
     std::atomic<uint64_t> delayedCallbackGeneration_{0};
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 
@@ -370,10 +380,13 @@ private:
     // -----------------------------------------------------------------------
 
     /// Write ORB address to fetch agent (CBA + kORBPointer).
-    void AppendORBImmediate(SBP2CommandORB* orb) noexcept;
+    bool AppendORBImmediate(SBP2CommandORB* orb) noexcept;
+    void FailSubmittedORB(SBP2CommandORB* orb,
+                          int transportStatus,
+                          uint8_t sbpStatus) noexcept;
 
     /// Chain ORB to last ORB's next pointer.
-    void AppendORB(SBP2CommandORB* orb) noexcept;
+    [[nodiscard]] bool AppendORB(SBP2CommandORB* orb) noexcept;
 
     /// Ring doorbell (write quadlet to CBA + kDoorbell).
     void RingDoorbell() noexcept;

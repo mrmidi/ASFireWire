@@ -62,23 +62,25 @@ public:
     }
 
     // Internal: called by SBP2LoginSession before submission.
-    void PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
-                             uint16_t maxPayloadLog) noexcept;
+    [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID,
+                                                    FW::FwSpeed speed,
+                                                    uint16_t maxPayloadLog) noexcept;
 
     // Internal: ORB address for fetch agent / chaining.
     [[nodiscard]] Async::FWAddress GetORBAddress() const noexcept;
 
     // Internal: set the next ORB pointer (big-endian values).
-    void SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
+    [[nodiscard]] kern_return_t SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
 
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
-    void SetToDummy() noexcept;
+    [[nodiscard]] kern_return_t SetToDummy() noexcept;
 
     // Internal: timer management.
-    void StartTimer(IODispatchQueue* queue) noexcept;
+    void StartTimer(IODispatchQueue* completionQueue, IODispatchQueue* timeoutQueue) noexcept;
     void CancelTimer() noexcept;
 
     // State tracking.
+    [[nodiscard]] bool IsValid() const noexcept { return isValid_; }
     [[nodiscard]] bool IsAppended() const noexcept { return isAppended_; }
     void SetAppended(bool state) noexcept { isAppended_ = state; }
 
@@ -91,7 +93,7 @@ public:
 private:
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
-    void WriteORBToAddressSpace() noexcept;
+    [[nodiscard]] kern_return_t WriteORBToAddressSpace() noexcept;
 
     AddressSpaceManager& addrMgr_;
     void* owner_;
@@ -111,11 +113,13 @@ private:
     SBP2PageTable::Result dataDescriptor_{};
 
     // State.
+    bool isValid_{false};
     bool isAppended_{false};
     std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
     // Timer.
+    IODispatchQueue* completionQueue_{nullptr};
     IODispatchQueue* timerQueue_{nullptr};
     std::atomic<uint64_t> timerGeneration_{0};
     std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
