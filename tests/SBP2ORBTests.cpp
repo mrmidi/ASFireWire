@@ -6,6 +6,7 @@
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
 #include "tests/mocks/DeferredFireWireBus.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -57,7 +58,8 @@ uint64_t ReadStatusAddressFromManagementORB(AddressSpaceManager& manager, uint64
 class ORBTimerRig {
 public:
     ORBTimerRig() {
-        queue.SetManualDispatchForTesting(true);
+        workQueue.SetManualDispatchForTesting(true);
+        timeoutQueue.SetManualDispatchForTesting(true);
         ASFW::Testing::SetHostMonotonicClockForTesting([this]() { return nowNs; });
 
         bus.SetGeneration(ASFW::FW::Generation{1});
@@ -70,7 +72,8 @@ public:
     }
 
     void DrainReady() {
-        while (queue.DrainReadyForTesting() > 0U) {
+        while (workQueue.DrainReadyForTesting() > 0U ||
+               timeoutQueue.DrainReadyForTesting() > 0U) {
         }
     }
 
@@ -81,7 +84,8 @@ public:
 
     ASFW::Async::Testing::DeferredFireWireBus bus;
     AddressSpaceManager addressManager{nullptr};
-    IODispatchQueue queue;
+    IODispatchQueue workQueue;
+    IODispatchQueue timeoutQueue;
     uint64_t nowNs{0};
 };
 
@@ -93,7 +97,7 @@ TEST(SBP2ORBTests, CommandORBTimerFiresOnHostQueue) {
     orb.SetTimeout(5);
     orb.SetCompletionCallback([&completionStatus](int status, uint8_t) { completionStatus = status; });
 
-    orb.StartTimer(&rig.queue);
+    orb.StartTimer(&rig.workQueue, &rig.timeoutQueue);
     rig.AdvanceMs(5);
 
     EXPECT_EQ(-1, completionStatus);
@@ -107,7 +111,7 @@ TEST(SBP2ORBTests, CommandORBCancelSuppressesPendingTimeout) {
     orb.SetTimeout(5);
     orb.SetCompletionCallback([&completionCount](int, uint8_t) { ++completionCount; });
 
-    orb.StartTimer(&rig.queue);
+    orb.StartTimer(&rig.workQueue, &rig.timeoutQueue);
     orb.CancelTimer();
     rig.AdvanceMs(5);
 
@@ -123,7 +127,7 @@ TEST(SBP2ORBTests, CommandORBDestructionInvalidatesPendingTimeout) {
             rig.addressManager, reinterpret_cast<void*>(0x3), 16);
         orb->SetTimeout(5);
         orb->SetCompletionCallback([&completionCount](int, uint8_t) { ++completionCount; });
-        orb->StartTimer(&rig.queue);
+        orb->StartTimer(&rig.workQueue, &rig.timeoutQueue);
     }
 
     rig.AdvanceMs(5);
@@ -139,7 +143,8 @@ TEST(SBP2ORBTests, ManagementORBStatusWriteCancelsTimeout) {
     orb.SetManagementAgentOffset(0x80);
     orb.SetTargetNode(1, 0x3F);
     orb.SetTimeout(5);
-    orb.SetWorkQueue(&rig.queue);
+    orb.SetWorkQueue(&rig.workQueue);
+    orb.SetTimeoutQueue(&rig.timeoutQueue);
 
     int completionStatus = 99;
     orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
@@ -157,6 +162,8 @@ TEST(SBP2ORBTests, ManagementORBStatusWriteCancelsTimeout) {
     StatusBlock status{};
     status.details = 0;
     status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    status.orbOffsetHi = ToBE16(static_cast<uint16_t>((orbAddress >> 32) & 0xFFFFu));
+    status.orbOffsetLo = ToBE32(static_cast<uint32_t>(orbAddress & 0xFFFF'FFFFu));
     rig.addressManager.ApplyRemoteWrite(
         ReadStatusAddressFromManagementORB(rig.addressManager, orbAddress),
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
@@ -201,7 +208,7 @@ TEST(SBP2ORBTests, CommandORBDirectDescriptorUsesFullBusNodeId) {
     descriptor.isDirect = true;
 
     orb.SetDataDescriptor(descriptor);
-    orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6);
+    ASSERT_EQ(kIOReturnSuccess, orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6));
 
     const auto orbAddress = orb.GetORBAddress();
     const uint64_t packedAddress = ComposeAddress(orbAddress.addressHi, orbAddress.addressLo);
@@ -225,7 +232,8 @@ TEST(SBP2ORBTests, ManagementORBDestructionInvalidatesPendingTimeout) {
         orb->SetManagementAgentOffset(0x81);
         orb->SetTargetNode(1, 0x3F);
         orb->SetTimeout(5);
-        orb->SetWorkQueue(&rig.queue);
+        orb->SetWorkQueue(&rig.workQueue);
+        orb->SetTimeoutQueue(&rig.timeoutQueue);
         orb->SetCompletionCallback([&completionCount](int) { ++completionCount; });
 
         ASSERT_TRUE(orb->Execute());
@@ -234,6 +242,142 @@ TEST(SBP2ORBTests, ManagementORBDestructionInvalidatesPendingTimeout) {
     }
 
     rig.AdvanceMs(5);
+    EXPECT_EQ(0, completionCount);
+}
+
+TEST(SBP2ORBTests, ManagementORBPropagatesDeviceStatusFailure) {
+    ORBTimerRig rig;
+
+    SBP2ManagementORB orb(rig.bus, rig.bus, rig.addressManager, reinterpret_cast<void*>(0x8));
+    orb.SetFunction(SBP2ManagementORB::Function::LogicalUnitReset);
+    orb.SetLoginID(0x44);
+    orb.SetManagementAgentOffset(0x90);
+    orb.SetTargetNode(1, 0x3F);
+    orb.SetTimeout(5);
+    orb.SetWorkQueue(&rig.workQueue);
+    orb.SetTimeoutQueue(&rig.timeoutQueue);
+
+    int completionStatus = 99;
+    orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
+
+    ASSERT_TRUE(orb.Execute());
+    const auto& write = rig.bus.WriteAt(0);
+    const uint64_t orbAddress = DecodeOrbAddressFromPayload(write.data);
+
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    rig.DrainReady();
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kFunctionRejected;
+    status.orbOffsetHi = ToBE16(static_cast<uint16_t>((orbAddress >> 32) & 0xFFFFu));
+    status.orbOffsetLo = ToBE32(static_cast<uint32_t>(orbAddress & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        ReadStatusAddressFromManagementORB(rig.addressManager, orbAddress),
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    rig.DrainReady();
+    EXPECT_EQ(-4, completionStatus);
+}
+
+TEST(SBP2ORBTests, ManagementORBRejectsMalformedStatusPayload) {
+    ORBTimerRig rig;
+
+    SBP2ManagementORB orb(rig.bus, rig.bus, rig.addressManager, reinterpret_cast<void*>(0x9));
+    orb.SetFunction(SBP2ManagementORB::Function::AbortTaskSet);
+    orb.SetLoginID(0x45);
+    orb.SetManagementAgentOffset(0x91);
+    orb.SetTargetNode(1, 0x3F);
+    orb.SetTimeout(5);
+    orb.SetWorkQueue(&rig.workQueue);
+    orb.SetTimeoutQueue(&rig.timeoutQueue);
+
+    int completionStatus = 99;
+    orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
+
+    ASSERT_TRUE(orb.Execute());
+    const auto& write = rig.bus.WriteAt(0);
+    const uint64_t orbAddress = DecodeOrbAddressFromPayload(write.data);
+
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    rig.DrainReady();
+
+    const std::array<uint8_t, 4> shortPayload{0, 0, 0, 0};
+    rig.addressManager.ApplyRemoteWrite(
+        ReadStatusAddressFromManagementORB(rig.addressManager, orbAddress),
+        std::span<const uint8_t>{shortPayload.data(), shortPayload.size()});
+
+    rig.DrainReady();
+    EXPECT_EQ(-3, completionStatus);
+}
+
+TEST(SBP2ORBTests, ManagementORBRejectsMismatchedStatusORBAddress) {
+    ORBTimerRig rig;
+
+    SBP2ManagementORB orb(rig.bus, rig.bus, rig.addressManager, reinterpret_cast<void*>(0xA));
+    orb.SetFunction(SBP2ManagementORB::Function::AbortTaskSet);
+    orb.SetLoginID(0x46);
+    orb.SetManagementAgentOffset(0x92);
+    orb.SetTargetNode(1, 0x3F);
+    orb.SetTimeout(5);
+    orb.SetWorkQueue(&rig.workQueue);
+    orb.SetTimeoutQueue(&rig.timeoutQueue);
+
+    int completionStatus = 99;
+    orb.SetCompletionCallback([&completionStatus](int status) { completionStatus = status; });
+
+    ASSERT_TRUE(orb.Execute());
+    const auto& write = rig.bus.WriteAt(0);
+    const uint64_t orbAddress = DecodeOrbAddressFromPayload(write.data);
+
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    rig.DrainReady();
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    status.orbOffsetHi = ToBE16(static_cast<uint16_t>(((orbAddress + 8) >> 32) & 0xFFFFu));
+    status.orbOffsetLo = ToBE32(static_cast<uint32_t>((orbAddress + 8) & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        ReadStatusAddressFromManagementORB(rig.addressManager, orbAddress),
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    rig.DrainReady();
+    EXPECT_EQ(-3, completionStatus);
+}
+
+TEST(SBP2ORBTests, ManagementORBDestroyedAfterExecuteIgnoresPendingWriteAndStatus) {
+    ORBTimerRig rig;
+
+    int completionCount = 0;
+    uint64_t statusAddress = 0;
+    {
+        auto orb = std::make_unique<SBP2ManagementORB>(
+            rig.bus, rig.bus, rig.addressManager, reinterpret_cast<void*>(0xB));
+        orb->SetFunction(SBP2ManagementORB::Function::AbortTaskSet);
+        orb->SetLoginID(0x47);
+        orb->SetManagementAgentOffset(0x93);
+        orb->SetTargetNode(1, 0x3F);
+        orb->SetTimeout(5);
+        orb->SetWorkQueue(&rig.workQueue);
+        orb->SetTimeoutQueue(&rig.timeoutQueue);
+        orb->SetCompletionCallback([&completionCount](int) { ++completionCount; });
+
+        ASSERT_TRUE(orb->Execute());
+        const auto& write = rig.bus.WriteAt(0);
+        const uint64_t orbAddress = DecodeOrbAddressFromPayload(write.data);
+        statusAddress = ReadStatusAddressFromManagementORB(rig.addressManager, orbAddress);
+    }
+
+    EXPECT_EQ(0u, rig.bus.PendingWriteCount());
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        statusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+    rig.AdvanceMs(5);
+
     EXPECT_EQ(0, completionCount);
 }
 

@@ -243,6 +243,20 @@ TEST(SBP2SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
     EXPECT_EQ(sensePayload, result->senseData);
 }
 
+TEST(SBP2SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    SCSI::CommandRequest request{};
+    request.cdb = std::vector<uint8_t>(16, 0x12);
+    request.direction = SCSI::DataDirection::None;
+    request.transferLength = 0;
+    request.timeoutMs = 100;
+
+    EXPECT_FALSE(rig.registry.SubmitCommand(handle, request));
+}
+
 TEST(SBP2SessionRegistryTests, CreateSessionAcceptsRealSBP2SpecAndVersion) {
     SessionRegistryRig rig;
     auto result = rig.registry.CreateSession(reinterpret_cast<void*>(0xCAFE),

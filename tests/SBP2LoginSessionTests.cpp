@@ -60,7 +60,8 @@ class SessionRig {
 public:
     SessionRig()
         : session(bus, bus, addressManager) {
-        queue.SetManualDispatchForTesting(true);
+        workQueue.SetManualDispatchForTesting(true);
+        timeoutQueue.SetManualDispatchForTesting(true);
         ASFW::Testing::SetHostMonotonicClockForTesting([this]() { return nowNs; });
 
         bus.SetGeneration(ASFW::FW::Generation{1});
@@ -72,9 +73,10 @@ public:
         info.lun = 3;
         info.managementTimeoutMs = 10;
         info.maxORBSize = 32;
-        info.maxCommandBlockSize = 16;
+        info.maxCommandBlockSize = 12;
 
-        session.SetWorkQueue(&queue);
+        session.SetWorkQueue(&workQueue);
+        session.SetTimeoutQueue(&timeoutQueue);
         session.Configure(info);
     }
 
@@ -83,7 +85,8 @@ public:
     }
 
     void DrainReady() {
-        while (queue.DrainReadyForTesting() > 0U) {
+        while (workQueue.DrainReadyForTesting() > 0U ||
+               timeoutQueue.DrainReadyForTesting() > 0U) {
         }
     }
 
@@ -139,7 +142,8 @@ public:
     ASFW::Async::Testing::DeferredFireWireBus bus;
     AddressSpaceManager addressManager{nullptr};
     SBP2LoginSession session;
-    IODispatchQueue queue;
+    IODispatchQueue workQueue;
+    IODispatchQueue timeoutQueue;
     uint64_t nowNs{0};
     uint64_t sessionStatusAddress{0};
 };
@@ -223,6 +227,23 @@ TEST(SBP2LoginSessionTests, BusResetWhileLoggingInRetriesLoginAfterDelay) {
     EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
     EXPECT_EQ(2u, rig.bus.WriteCount());
     EXPECT_EQ(2u, rig.session.Generation());
+}
+
+TEST(SBP2LoginSessionTests, LoginRetryDelayUsesTimeoutQueueInsteadOfWorkQueue) {
+    SessionRig rig;
+
+    ASSERT_TRUE(rig.session.Login());
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+
+    EXPECT_EQ(0u, rig.workQueue.PendingTaskCountForTesting());
+    EXPECT_GT(rig.timeoutQueue.PendingTaskCountForTesting(), 0u);
+
+    int workExecuted = 0;
+    rig.workQueue.DispatchAsync([&workExecuted]() { ++workExecuted; });
+    rig.DrainReady();
+
+    EXPECT_EQ(1, workExecuted);
 }
 
 TEST(SBP2LoginSessionTests, BusResetWhileReconnectingRetriesReconnectAfterDelay) {
@@ -320,6 +341,36 @@ TEST(SBP2LoginSessionTests, SolicitedStatusCompletesORBMatchingByORBAddress) {
 
     EXPECT_EQ(0, firstStatus);
     EXPECT_EQ(99, secondStatus);
+}
+
+TEST(SBP2LoginSessionTests, ChainedORBLinkFailureReturnsFalseWithoutDoorbellWrite) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+
+    auto* firstOwner = reinterpret_cast<void*>(0x101);
+    auto* secondOwner = reinterpret_cast<void*>(0x102);
+
+    SBP2CommandORB first(rig.addressManager, firstOwner, 16);
+    first.SetFlags(0);
+    ASSERT_TRUE(rig.session.SubmitORB(&first));
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    rig.DrainReady();
+
+    rig.addressManager.ReleaseOwner(firstOwner);
+
+    SBP2CommandORB second(rig.addressManager, secondOwner, 16);
+    second.SetFlags(0);
+
+    int secondTransportStatus = 99;
+    second.SetCompletionCallback([&secondTransportStatus](int status, uint8_t) {
+        secondTransportStatus = status;
+    });
+
+    const size_t writeCountBeforeSubmit = rig.bus.WriteCount();
+    EXPECT_FALSE(rig.session.SubmitORB(&second));
+    EXPECT_EQ(writeCountBeforeSubmit, rig.bus.WriteCount());
+    EXPECT_EQ(-1, secondTransportStatus);
+    EXPECT_FALSE(second.IsAppended());
 }
 
 } // namespace
