@@ -56,8 +56,8 @@ SBP2TargetInfo BuildTargetInfoFromUnit(const Discovery::FWUnit& unit) {
         info.managementTimeoutMs = static_cast<uint32_t>(timeoutUnits) * 500;
         info.maxORBSize = std::max<uint16_t>(static_cast<uint16_t>(orbSizeUnits) * 4, 32);
     }
-    info.maxCommandBlockSize = info.maxORBSize > 12
-        ? static_cast<uint16_t>(info.maxORBSize - 12)
+    info.maxCommandBlockSize = info.maxORBSize > Wire::NormalORB::kHeaderSize
+        ? static_cast<uint16_t>(info.maxORBSize - Wire::NormalORB::kHeaderSize)
         : 0;
 
     if (auto fastStart = unit.GetFastStart(); fastStart.has_value()) {

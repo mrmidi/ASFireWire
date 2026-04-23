@@ -6,8 +6,10 @@
 // Use ToBusOrder / FromBusOrder from Core/PhyPackets.hpp or std::byteswap for conversion.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 namespace ASFW::Protocols::SBP2::Wire {
 
@@ -154,17 +156,24 @@ struct NormalORB {
     // Access via CommandBlock() helper.
 
     [[nodiscard]] uint32_t* CommandBlock() noexcept {
-        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + 16);
+        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + kHeaderSize);
     }
     [[nodiscard]] const uint32_t* CommandBlock() const noexcept {
-        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + 16);
+        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + kHeaderSize);
     }
 
     // Minimum ORB size (no command block)
-    static constexpr uint32_t kHeaderSize = 16;
+    static constexpr uint32_t kHeaderSize = 20;
     // Null next-ORB indicator (bit 31 set in hi address)
     static constexpr uint32_t kNextORBNull = 0x80000000u;
 };
+
+static_assert(sizeof(NormalORB) == NormalORB::kHeaderSize, "NormalORB header must be 20 bytes");
+static_assert(std::is_trivially_copyable_v<NormalORB>, "NormalORB must stay trivially copyable");
+static_assert(offsetof(NormalORB, nextORBAddressHi) == 0, "NormalORB next hi offset changed");
+static_assert(offsetof(NormalORB, dataDescriptorHi) == 8, "NormalORB data descriptor hi offset changed");
+static_assert(offsetof(NormalORB, options) == 16, "NormalORB options offset changed");
+static_assert(offsetof(NormalORB, dataSize) == 18, "NormalORB data size offset changed");
 
 // Page Table Entry — maps data buffer for DMA.
 // Ref: SBP-2 §5.1.2
@@ -177,6 +186,10 @@ struct PageTableEntry {
 };
 
 static_assert(sizeof(PageTableEntry) == PageTableEntry::kSize, "PTE must be 8 bytes");
+static_assert(std::is_trivially_copyable_v<PageTableEntry>,
+              "PageTableEntry must stay trivially copyable");
+static_assert(offsetof(PageTableEntry, segmentLength) == 0, "PTE length offset changed");
+static_assert(offsetof(PageTableEntry, segmentBaseAddressLo) == 4, "PTE addressLo offset changed");
 
 // ---------------------------------------------------------------------------
 // SBP-2 Status Block
@@ -199,6 +212,11 @@ struct StatusBlock {
 };
 
 static_assert(sizeof(StatusBlock) == 32, "StatusBlock must be 32 bytes");
+static_assert(std::is_trivially_copyable_v<StatusBlock>,
+              "StatusBlock must stay trivially copyable");
+static_assert(offsetof(StatusBlock, details) == 0, "StatusBlock details offset changed");
+static_assert(offsetof(StatusBlock, orbOffsetHi) == 2, "StatusBlock orbOffsetHi offset changed");
+static_assert(offsetof(StatusBlock, orbOffsetLo) == 4, "StatusBlock orbOffsetLo offset changed");
 
 // ---------------------------------------------------------------------------
 // SBP-2 Management ORB (Task Management)
@@ -219,6 +237,14 @@ struct TaskManagementORB {
 };
 
 static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
+static_assert(std::is_trivially_copyable_v<TaskManagementORB>,
+              "TaskManagementORB must stay trivially copyable");
+static_assert(offsetof(TaskManagementORB, orbOffsetHi) == 0,
+              "TaskManagementORB orbOffsetHi offset changed");
+static_assert(offsetof(TaskManagementORB, options) == 16,
+              "TaskManagementORB options offset changed");
+static_assert(offsetof(TaskManagementORB, statusFIFOAddressHi) == 24,
+              "TaskManagementORB status FIFO hi offset changed");
 
 // ---------------------------------------------------------------------------
 // Management Agent address calculation
