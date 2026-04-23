@@ -172,3 +172,103 @@ TEST(AddressSpaceManagerTests, OutOfBoundsReadReturnsNoSpace) {
                                        4,
                                        &readback));
 }
+
+TEST(AddressSpaceManagerTests, AutoAllocationReturnsDistinctAlignedRanges) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    uint64_t firstHandle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta firstMeta{};
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0x5),
+                                               0xFFFF,
+                                               16,
+                                               &firstHandle,
+                                               &firstMeta));
+
+    uint64_t secondHandle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta secondMeta{};
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0x6),
+                                               0xFFFF,
+                                               24,
+                                               &secondHandle,
+                                               &secondMeta));
+
+    EXPECT_EQ(0xFFFFu, firstMeta.addressHi);
+    EXPECT_EQ(0xFFFFu, secondMeta.addressHi);
+    EXPECT_EQ(0u, firstMeta.addressLo % 8u);
+    EXPECT_EQ(0u, secondMeta.addressLo % 8u);
+    EXPECT_LT(firstMeta.addressLo, secondMeta.addressLo);
+    EXPECT_LE(firstMeta.addressLo + firstMeta.length, secondMeta.addressLo);
+}
+
+TEST(AddressSpaceManagerTests, AutoAllocationSkipsOccupiedFixedRange) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    uint64_t fixedHandle = 0;
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRange(reinterpret_cast<void*>(0x7),
+                                           0xFFFF,
+                                           0x0010'0000,
+                                           16,
+                                           &fixedHandle,
+                                           nullptr));
+
+    uint64_t autoHandle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta autoMeta{};
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0x8),
+                                               0xFFFF,
+                                               16,
+                                               &autoHandle,
+                                               &autoMeta));
+
+    EXPECT_EQ(0x0010'0010u, autoMeta.addressLo);
+}
+
+TEST(AddressSpaceManagerTests, AutoAllocationReusesFreedGap) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    uint64_t firstHandle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta firstMeta{};
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0x9),
+                                               0xFFFF,
+                                               16,
+                                               &firstHandle,
+                                               &firstMeta));
+
+    uint64_t secondHandle = 0;
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0xA),
+                                               0xFFFF,
+                                               16,
+                                               &secondHandle,
+                                               nullptr));
+
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.DeallocateAddressRange(reinterpret_cast<void*>(0x9), firstHandle));
+
+    uint64_t thirdHandle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta thirdMeta{};
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0xB),
+                                               0xFFFF,
+                                               8,
+                                               &thirdHandle,
+                                               &thirdMeta));
+
+    EXPECT_EQ(firstMeta.addressLo, thirdMeta.addressLo);
+}
+
+TEST(AddressSpaceManagerTests, AutoAllocationRejectsRequestLargerThanWindow) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    uint64_t handle = 0;
+    EXPECT_EQ(kIOReturnNoSpace,
+              manager.AllocateAddressRangeAuto(reinterpret_cast<void*>(0xC),
+                                               0xFFFF,
+                                               0x0FF0'0001u,
+                                               &handle,
+                                               nullptr));
+}
