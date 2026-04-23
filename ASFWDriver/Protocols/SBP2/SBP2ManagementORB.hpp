@@ -60,7 +60,10 @@ public:
     }
     void SetManagementAgentOffset(uint32_t offset) noexcept { managementAgentOffset_ = offset; }
     void SetTimeout(uint32_t ms) noexcept { timeoutMs_ = ms; }
-    void SetCompletionCallback(CompletionCallback cb) noexcept { completionCallback_ = std::move(cb); }
+    void SetCompletionCallback(CompletionCallback cb) noexcept {
+        completionCallback_ = std::move(cb);
+        asyncState_->completionCallback = completionCallback_;
+    }
 
     // Set node targeting (called by SBP2LoginSession before Execute)
     void SetTargetNode(uint16_t generation, uint16_t nodeID) noexcept {
@@ -75,17 +78,33 @@ public:
     [[nodiscard]] bool Execute() noexcept;
 
     [[nodiscard]] Function GetFunction() const noexcept { return function_; }
-    [[nodiscard]] bool InProgress() const noexcept { return inProgress_.load(std::memory_order_relaxed); }
+    [[nodiscard]] bool InProgress() const noexcept {
+        return asyncState_->inProgress.load(std::memory_order_relaxed);
+    }
+
+    // Shared by delayed callbacks after the ORB object itself may have been destroyed.
+    struct AsyncState {
+        AsyncState(Async::IFireWireBus* busIn, AddressSpaceManager* addrMgrIn)
+            : bus(busIn)
+            , addrMgr(addrMgrIn) {}
+
+        Async::IFireWireBus* bus{nullptr};
+        AddressSpaceManager* addrMgr{nullptr};
+        std::atomic<bool> destroyed{false};
+        std::atomic<bool> inProgress{false};
+        std::atomic<bool> timerActive{false};
+        std::atomic<uint64_t> timerGeneration{0};
+        std::atomic<uint64_t> statusBlockHandle{0};
+        std::atomic<uint32_t> writeHandleValue{0};
+        std::atomic<uint16_t> expectedORBAddressHi{0};
+        std::atomic<uint32_t> expectedORBAddressLo{0};
+        CompletionCallback completionCallback{};
+    };
 
 private:
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
     [[nodiscard]] kern_return_t BuildManagementORB() noexcept;
-
-    void OnWriteComplete(Async::AsyncStatus status, std::span<const uint8_t> response) noexcept;
-    void OnStatusBlockWrite(uint32_t offset, std::span<const uint8_t> payload) noexcept;
-    void OnTimeout() noexcept;
-    void Complete(int status) noexcept;
 
     // Dependencies
     Async::IFireWireBus& bus_;
@@ -115,11 +134,8 @@ private:
 
     // Management agent write payload (8-byte BE ORB address)
     std::array<uint8_t, 8> orbAddressBE_{};
-    Async::AsyncHandle writeHandle_{};
 
-    // State
-    std::atomic<bool> inProgress_{false};
-    std::atomic<bool> timerActive_{false};
+    std::shared_ptr<AsyncState> asyncState_;
 
     // Node targeting
     uint16_t generation_{0};
@@ -128,8 +144,6 @@ private:
     // Timer infrastructure
     IODispatchQueue* workQueue_{nullptr};
     IODispatchQueue* timeoutQueue_{nullptr};
-    std::atomic<uint64_t> timerGeneration_{0};
-    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
 };
 
 } // namespace ASFW::Protocols::SBP2

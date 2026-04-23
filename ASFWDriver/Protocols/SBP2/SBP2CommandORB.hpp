@@ -54,7 +54,10 @@ public:
     void SetFlags(uint32_t flags) noexcept { flags_ = flags; }
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
     void SetTimeout(uint32_t ms) noexcept { timeoutDuration_ = ms; }
-    void SetCompletionCallback(CompletionCallback cb) noexcept { completionCallback_ = std::move(cb); }
+    void SetCompletionCallback(CompletionCallback cb) noexcept {
+        completionCallback_ = std::move(cb);
+        timerState_->completionCallback = completionCallback_;
+    }
 
     // Bind page table result from SBP2PageTable::Build.
     void SetDataDescriptor(const SBP2PageTable::Result& ptResult) noexcept {
@@ -91,6 +94,12 @@ public:
     [[nodiscard]] CompletionCallback& GetCompletionCallback() noexcept { return completionCallback_; }
 
 private:
+    struct TimerState {
+        std::atomic<bool> inProgress{false};
+        std::atomic<uint64_t> generation{0};
+        CompletionCallback completionCallback{};
+    };
+
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
     [[nodiscard]] kern_return_t WriteORBToAddressSpace() noexcept;
@@ -115,14 +124,12 @@ private:
     // State.
     bool isValid_{false};
     bool isAppended_{false};
-    std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
     // Timer.
     IODispatchQueue* completionQueue_{nullptr};
     IODispatchQueue* timerQueue_{nullptr};
-    std::atomic<uint64_t> timerGeneration_{0};
-    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
+    std::shared_ptr<TimerState> timerState_{std::make_shared<TimerState>()};
 };
 
 } // namespace ASFW::Protocols::SBP2

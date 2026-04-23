@@ -491,6 +491,9 @@ std::shared_ptr<Discovery::FWUnit> SBP2SessionRegistry::ResolveUnit(uint64_t gui
 }
 
 void SBP2SessionRegistry::CleanupCommandResources(SBP2SessionRecord& record) {
+    if (record.session) {
+        record.session->ClearORBTracking(true);
+    }
     if (record.commandBufferHandle != 0) {
         addrSpaceMgr_.DeallocateAddressRange(record.owner, record.commandBufferHandle);
         record.commandBufferHandle = 0;

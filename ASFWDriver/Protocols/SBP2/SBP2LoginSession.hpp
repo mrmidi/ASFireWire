@@ -111,6 +111,8 @@ enum class LoginState : uint8_t {
 // ---------------------------------------------------------------------------
 
 class SBP2LoginSession {
+    friend class SBP2SessionRegistry;
+
 public:
     using LoginCallback = std::function<void(const LoginCompleteParams&)>;
     using LogoutCallback = std::function<void(const LogoutCompleteParams&)>;
