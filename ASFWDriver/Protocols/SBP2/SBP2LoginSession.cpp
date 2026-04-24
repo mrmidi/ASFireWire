@@ -347,6 +347,7 @@ bool SBP2LoginSession::AllocateLoginORBAddressSpace() noexcept {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate login ORB address space: 0x%08x", kr);
         return false;
     }
+    addrSpaceMgr_.SetDebugLabel(loginORBHandle_, "sbp2-login-orb");
     return true;
 }
 
@@ -359,6 +360,7 @@ bool SBP2LoginSession::AllocateLoginResponseAddressSpace() noexcept {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate login response address space: 0x%08x", kr);
         return false;
     }
+    addrSpaceMgr_.SetDebugLabel(loginResponseHandle_, "sbp2-login-response");
     return true;
 }
 
@@ -371,6 +373,7 @@ bool SBP2LoginSession::AllocateStatusBlockAddressSpace() noexcept {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate status block address space: 0x%08x", kr);
         return false;
     }
+    addrSpaceMgr_.SetDebugLabel(statusBlockHandle_, "sbp2-status-fifo");
     return true;
 }
 
@@ -382,6 +385,7 @@ bool SBP2LoginSession::AllocateReconnectORBAddressSpace() noexcept {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate reconnect ORB address space: 0x%08x", kr);
         return false;
     }
+    addrSpaceMgr_.SetDebugLabel(reconnectORBHandle_, "sbp2-reconnect-orb");
     return true;
 }
 
@@ -393,6 +397,7 @@ bool SBP2LoginSession::AllocateLogoutORBAddressSpace() noexcept {
         ASFW_LOG(SBP2, "SBP2LoginSession: failed to allocate logout ORB address space: 0x%08x", kr);
         return false;
     }
+    addrSpaceMgr_.SetDebugLabel(logoutORBHandle_, "sbp2-logout-orb");
     return true;
 }
 
@@ -444,8 +449,13 @@ void SBP2LoginSession::BuildLoginORB() noexcept {
     std::memcpy(&loginORBAddressBE_[4], &orbAddrLoBE, sizeof(uint32_t));
 
     ASFW_LOG(SBP2,
-             "SBP2LoginSession::BuildLoginORB: ORB at %04x:%08x, response at %04x:%08x, "
-             "status at %04x:%08x, LUN=%u",
+             "SBP2LoginSession::BuildLoginORB: mgmt=0x%08x payload=%02x%02x:%02x%02x:%02x%02x%02x%02x "
+             "ORB at %04x:%08x, response at %04x:%08x, status at %04x:%08x, LUN=%u",
+             ManagementAgentAddressLo(targetInfo_.managementAgentOffset),
+             loginORBAddressBE_[0], loginORBAddressBE_[1],
+             loginORBAddressBE_[2], loginORBAddressBE_[3],
+             loginORBAddressBE_[4], loginORBAddressBE_[5],
+             loginORBAddressBE_[6], loginORBAddressBE_[7],
              localNode, loginORBMeta_.addressLo,
              localNode, loginResponseMeta_.addressLo,
              localNode, statusBlockMeta_.addressLo,
@@ -573,7 +583,16 @@ void SBP2LoginSession::OnLoginTimeout() noexcept {
         return; // Already handled
     }
 
-    ASFW_LOG(SBP2, "SBP2LoginSession: login timeout (%u/%u)", loginRetryCount_ + 1, kLoginRetryMax);
+    ASFW_LOG(SBP2,
+             "SBP2LoginSession: login timeout (%u/%u) waiting for target node=0x%04x "
+             "to read label=sbp2-login-orb at %04x:%08x and write label=sbp2-status-fifo at %04x:%08x",
+             loginRetryCount_ + 1,
+             kLoginRetryMax,
+             loginNodeID_,
+             loginORBMeta_.addressHi,
+             loginORBMeta_.addressLo,
+             statusBlockMeta_.addressHi,
+             statusBlockMeta_.addressLo);
 
     if (loginRetryCount_ < kLoginRetryMax) {
         loginRetryCount_++;
