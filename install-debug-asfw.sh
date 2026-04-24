@@ -291,11 +291,16 @@ BUILT_DEXT_HASH="$(sha256 "${BUILT_DEXT_BINARY}")"
 
 close_existing_asfw_app
 
-if $FRESH_INSTALL; then
+if $FRESH_INSTALL || has_duplicate_asfw_extensions; then
+  if ! $FRESH_INSTALL; then
+    log "Detected duplicated ASFW system extension state before install; performing cleanup."
+  fi
   cleanup_asfw_systemextensions
-elif has_duplicate_asfw_extensions; then
-  log "Detected duplicated ASFW system extension state before install; performing cleanup."
-  cleanup_asfw_systemextensions
+  if has_duplicate_asfw_extensions; then
+    log "Cleanup did not fully clear duplicates; retrying..."
+    sleep 2
+    cleanup_asfw_systemextensions
+  fi
 fi
 
 if [[ -e "${APP_DEST}" ]]; then
