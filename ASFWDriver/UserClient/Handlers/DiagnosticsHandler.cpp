@@ -57,6 +57,20 @@ kern_return_t DiagnosticsHandler::GetBusStateDiagnostics(IOUserClientMethodArgum
     if (busReset) {
         wire.busResetFsmState = static_cast<uint8_t>(busReset->GetState());
         wire.busResetCount = busReset->Metrics().resetCount;
+        const auto resetDiag = busReset->Diagnostics();
+        wire.diagnosticsVersion = 2;
+        wire.readyForDiscoveryFailureBits = resetDiag.readyForDiscoveryFailureBits;
+        wire.lastRecoveryReasonCode = static_cast<uint8_t>(resetDiag.lastRecoveryReasonCode);
+        wire.lastResetKind = resetDiag.lastResetKind;
+        wire.driverStartId = resetDiag.driverStartId;
+        wire.resetEpoch = resetDiag.resetEpoch;
+        wire.manualResetEpoch = resetDiag.manualResetEpoch;
+        wire.softwareResetIssuedCount = resetDiag.softwareResetIssuedCount;
+        wire.busResetIrqCount = resetDiag.busResetIrqCount;
+        wire.lastAcceptedGeneration = resetDiag.lastAcceptedGeneration;
+        wire.lastTopologyNodeCount = resetDiag.lastTopologyNodeCount;
+        wire.recoveryResetAttempts = resetDiag.recoveryResetAttempts;
+        wire.discoveryCallbackCount = resetDiag.discoveryCallbackCount;
     }
 
     // Topology

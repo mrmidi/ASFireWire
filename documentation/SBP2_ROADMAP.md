@@ -164,6 +164,7 @@
 - 已在 `BusResetCoordinator::StepComplete()` 中加入最小 `100ms` discovery delay
 - 已对 2 节点 `local=root` 拓扑跳过普通 `TargetGap` 优化，避免无意义 gap retool/reset
 - host / Swift / 工程构建验证通过；2026-04-24 真机已确认 SBP-2 login / inquiry 主路径打通，剩余缺口收敛到 transaction result 读侧容量、management agent direct-read 诊断、reset/discovery 收敛与 logout cleanup 语义
+- reset/discovery 收敛修复方向：`bus-state` diagnostics 追加 reset epoch、manual reset epoch、IRQ 计数、accepted generation、ReadyForDiscovery failure bits；user-initiated reset 若未观察到 busReset IRQ/topology，会在 bounded 次数内补发 short recovery reset。真机验证入口为 moderncoolscan 的 `mcs diag reset-smoke --node <id> --attempts <n> --settle-ms <ms>`。
 
 历史真机 smoke（2026-04-22，已被 2026-04-24 结果部分 supersede）：
 

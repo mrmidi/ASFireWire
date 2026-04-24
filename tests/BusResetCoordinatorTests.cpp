@@ -492,6 +492,40 @@ TEST(BusResetCoordinatorTests, SelfIDTimeoutRequestsShortRecoveryResetAfterDeadl
               std::string::npos);
 }
 
+TEST(BusResetCoordinatorTests, ManualResetWithoutIrqTriggersOneBoundedRecoveryReset) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.coordinator.RequestUserReset(true);
+    rig.DrainReady();
+
+    auto countBusResets = [&rig]() {
+        const auto operations = rig.hardware.CopyTestOperations();
+        return static_cast<size_t>(std::count(operations.begin(), operations.end(),
+                                             HardwareInterface::TestOperation::InitiateBusReset));
+    };
+
+    EXPECT_EQ(countBusResets(), 1U);
+    auto diag = rig.coordinator.Diagnostics();
+    EXPECT_EQ(diag.manualResetEpoch, 1U);
+    EXPECT_EQ(diag.resetEpoch, 0U);
+    EXPECT_EQ(diag.softwareResetIssuedCount, 1U);
+
+    rig.AdvanceMs(499U);
+    EXPECT_EQ(countBusResets(), 1U);
+
+    rig.AdvanceMs(1U);
+    EXPECT_EQ(countBusResets(), 2U);
+    diag = rig.coordinator.Diagnostics();
+    EXPECT_EQ(diag.recoveryResetAttempts, 1U);
+    EXPECT_EQ(diag.softwareResetIssuedCount, 2U);
+    EXPECT_EQ(diag.lastRecoveryReasonCode,
+              BusResetCoordinator::RecoveryReasonCode::ManualResetWatchdog);
+
+    rig.AdvanceMs(1000U);
+    EXPECT_EQ(countBusResets(), 2U);
+}
+
 TEST(BusResetCoordinatorTests, GapMismatchResetIsDeferredThenSentWithPhyConfig) {
     BusResetTestRig rig;
     rig.Initialize(true);

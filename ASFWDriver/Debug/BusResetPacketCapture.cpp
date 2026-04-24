@@ -51,12 +51,17 @@ void BusResetPacketCapture::CapturePacket(const uint32_t* dmaQuadlets,
     snapshot.captureTimestamp = GetCurrentTimestamp();
     snapshot.generation = generation;
 
-    // Copy raw quadlets (little-endian from DMA)
-    std::memcpy(snapshot.rawQuadlets, dmaQuadlets, sizeof(snapshot.rawQuadlets));
+    // The synthetic bus-reset packet can be routed from an unaligned AR buffer.
+    // DriverKit's memcpy may still use wider loads, so copy byte-by-byte.
+    const auto* bytes = reinterpret_cast<const uint8_t*>(dmaQuadlets);
+    auto* rawBytes = reinterpret_cast<uint8_t*>(snapshot.rawQuadlets);
+    for (size_t i = 0; i < sizeof(snapshot.rawQuadlets); ++i) {
+        rawBytes[i] = bytes[i];
+    }
 
     // Convert to wire format (big-endian)
     for (int i = 0; i < 4; ++i) {
-        snapshot.wireQuadlets[i] = LEtoBE(dmaQuadlets[i]);
+        snapshot.wireQuadlets[i] = LEtoBE(snapshot.rawQuadlets[i]);
     }
 
     // Extract tCode from wire format Q0[31:28]

@@ -30,8 +30,22 @@ struct __attribute__((packed)) BusStateWire {
     uint8_t delegateCm;       // delegateCycleMaster bool (0/1)
     uint8_t phyReg1;          // PHY register 1 value
     uint8_t phyReg4;          // PHY register 4 value
-    // 9 bytes above (24 + 9 = 33)
-    uint8_t pad[31];          // Padding to 64 bytes total
+    // 9 bytes above (24 + 9 = 33). Versioned reset diagnostics occupy the
+    // previous padding area; old clients that only know the first 33 bytes
+    // continue to parse the stable prefix.
+    uint8_t diagnosticsVersion;
+    uint8_t readyForDiscoveryFailureBits;
+    uint8_t lastRecoveryReasonCode;
+    uint8_t lastResetKind;
+    uint32_t driverStartId;
+    uint32_t resetEpoch;
+    uint32_t manualResetEpoch;
+    uint32_t softwareResetIssuedCount;
+    uint32_t busResetIrqCount;
+    uint32_t lastAcceptedGeneration;
+    uint8_t lastTopologyNodeCount;
+    uint8_t recoveryResetAttempts;
+    uint8_t discoveryCallbackCount;
 };
 static_assert(sizeof(BusStateWire) == 64, "BusStateWire must be 64 bytes");
 
