@@ -341,6 +341,29 @@ target_include_directories(FireWireIOReturnTests PRIVATE ${ASFW_COMMON_INCLUDES}
 gtest_discover_tests(FireWireIOReturnTests)
 
 # =============================================================================
+# Transaction Storage Tests - async user-client result retention
+# =============================================================================
+add_executable(TransactionStorageTests
+    "${ASFW_TESTS_DIR}/TransactionStorageTests.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Storage/TransactionStorage.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(TransactionStorageTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TransactionStorageTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TransactionStorageTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TransactionStorageTests)
+
+# =============================================================================
 # DMA Memory Tests - FakeDMAMemory unit tests
 # =============================================================================
 add_executable(DMAMemoryTests
@@ -1517,6 +1540,24 @@ target_compile_definitions(ROMScannerDetailsDiscoveryTests
 target_include_directories(ROMScannerDetailsDiscoveryTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScannerDetailsDiscoveryTests)
+
+add_executable(DiscoveryConvergenceTests
+    "${ASFW_TESTS_DIR}/DiscoveryConvergenceTests.cpp"
+)
+
+target_link_libraries(DiscoveryConvergenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiscoveryConvergenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiscoveryConvergenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DiscoveryConvergenceTests)
 
 add_executable(ROMScanNodeStateMachineTests
     "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"

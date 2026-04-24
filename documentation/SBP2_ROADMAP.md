@@ -13,6 +13,13 @@
 - 命令结果可回显 transport status、SBP-2 status、payload、sense
 - DriverKit scheme 可以重新构建
 
+### 最新基线（2026-04-24）
+
+- 真机 Nikon SBP-2 `login` 与 SCSI `INQUIRY` 已稳定成功，后续开发以此为已打通基线。
+- `sbp2 probe` 中 management agent CSR 直读仍可能出现 `asyncBlockRead length mismatch` 或 `status=5`；当前将其视为读侧诊断问题。SBP-2 主路径以 ORB pointer block write、login response/status 与 inquiry 成功为准。
+- 一次 bus reset 后 discovery 曾短暂变成 0 设备，第二次 short reset 恢复；这归类为 ASFWDriver reset/topology/discovery 收敛问题，独立于 moderncoolscan logout 清理语义。
+- UserClient async transaction result 需要返回完整 payload，并通过 `kIOReturnNoSpace` 做容量协商，避免旧的 512 字节静默截断造成上层误报 length mismatch。
+
 本阶段明确不做：
 
 - 图像采集工作流
@@ -156,9 +163,9 @@
 - 已去掉 `EnableInterruptsAndStartBus()` 中 `linkEnable + BIBimageValid` 后的显式 PHY long reset
 - 已在 `BusResetCoordinator::StepComplete()` 中加入最小 `100ms` discovery delay
 - 已对 2 节点 `local=root` 拓扑跳过普通 `TargetGap` 优化，避免无意义 gap retool/reset
-- host / Swift / 工程构建验证通过；当前真机已确认 discovery 侧修复生效，剩余缺口收敛到 block transaction / management agent CSR / session login
+- host / Swift / 工程构建验证通过；2026-04-24 真机已确认 SBP-2 login / inquiry 主路径打通，剩余缺口收敛到 transaction result 读侧容量、management agent direct-read 诊断、reset/discovery 收敛与 logout cleanup 语义
 
-真机 smoke（2026-04-22）：
+历史真机 smoke（2026-04-22，已被 2026-04-24 结果部分 supersede）：
 
 - 通过：`install-debug-asfw.sh --refresh` 已将 active dext 切换到新 build；本轮验证 active hash=`81b195440272b2bec0ee5e96ea73520dd040604120043b8f433e23c199bbad19`
 - 通过：新 dext 初始上电后总线为空；执行 `mcs-cli diag bus-reset` 后 Nikon 节点出现，`generation=2`，`Local/Root/IRM=1/1/1`，`cycleMaster=1`
@@ -167,9 +174,7 @@
 - 失败：Config ROM 基线里 `mcs-cli tx read --node 0 --addr 0xf0000400 --len 4` 返回 `00 00 00 00`，而 `--len 8` 失败为 `asyncBlockRead status=5`；从 dext 日志可见其真实响应为 `rCode=0x07 (AddressError)`
 - 失败：management agent CSR 直读不通；`mcs-cli tx read --node 0 --addr 0xf0030000 --len 4` 当前返回 `asyncRead status=5`，从 dext 日志可见真实响应为 `rCode=0x06 (TypeError)`；`--len 8` 仍失败
 - 失败：`mcs-cli sbp2 probe --node 0` 已能算出 `csr_addr=0xf0030000`，但 `MANAGEMENT_AGENT` 读取失败；`STATE_CLEAR/STATE_SET/NODE_IDS` 也返回 `asyncRead status=1`
-- 失败：`mcs-cli sbp2 login --node 0` 超时于 `sbp2 status timeout after 100 polls`
-- 失败：`mcs-cli sbp2 inquiry --node 0` 在地址空间分配阶段失败，错误为 `allocateAddressRange failed: 0xe00002db`（`kIOReturnNoSpace`）
-- 未完成：`TEST UNIT READY` / `REQUEST SENSE` / `Raw CDB` / `Release` 无法继续，因为 login 没有成功建立 session
+- 已 supersede：`mcs-cli sbp2 login --node 0` 超时与 `mcs-cli sbp2 inquiry --node 0` 地址空间分配失败不再代表当前基线；2026-04-24 真机 login / inquiry 已稳定成功
 - 通过：已修复 user client `Stop/free` 路径未释放 owner 绑定 SBP-2 资源的问题；真机上用“启动 `mcs-cli sbp2 login` 后半路杀进程，再立即重试同命令”的方式回归，第二次不再命中 `allocateAddressRange failed: 0xe00002db`，而是继续进入 `sbp2 status timeout after 100 polls`
 
 离线协议排查（2026-04-23）：
@@ -294,31 +299,29 @@
 - [x] 在 Self-ID 完成到 discovery callback 之间加入 Apple 等效 100ms scan delay（代码已改，待真机确认效果）
 - [x] 对 2 节点 `local=root` 拓扑跳过普通 gap count 优化（代码已改，待真机确认效果）
 - [x] 真机确认 Nikon unit 开始暴露 `Management_Agent_Offset`
-- [ ] 真机确认 management agent CSR (`0xF0030000`) 可读并可用于 session/login
-- [ ] 真机确认 full-node-id ORB 修复后，Nikon 会开始向 login response / status FIFO 地址写回数据
+- [~] 真机确认 management agent CSR (`0xF0030000`) 可读并可用于 session/login
+  - ORB pointer block write 已可用于 session/login；direct read 仍可能失败，作为独立读侧诊断处理
+- [x] 真机确认 full-node-id ORB 修复后，Nikon 会开始向 login response / status FIFO 地址写回数据，login / inquiry 主路径稳定成功
 - [ ] 真机验证 bus reset 期间拒绝新命令提交
 - [ ] 真机验证 reconnect 成功后可继续发命令
 - [~] 验证断开设备 / owner 释放 / 重复创建释放不会残留 DMA、地址空间或旧结果
   - 已确认 user client 异常退出后不会再遗留固定地址分配冲突
   - 仍需覆盖断开设备、bus reset 与旧 transaction result 清理
-- [ ] 收集稳定 smoke 证据：当前仅有 `generation=2`、`target node=0`；`loginID` / `SBP-2 status` / `sense` / `raw CDB` 仍被 login 前阻塞
+- [~] 收集稳定 smoke 证据：`loginID` 与 inquiry 已可稳定取得；后续继续补 TUR / REQUEST SENSE / raw CDB、reset 后恢复与 logout warning 记录
 
 ---
 
 ## 下一步执行顺序
 
-1. **重装包含 full-node-id ORB 修复的新 dext，并优先复测 login**
+1. **固定 login / inquiry 稳定基线并补 logout warning 语义**
    - 固定顺序：
-     - 重新安装 / 激活最新 dext
      - `mcs-cli diag bus-reset`
      - `mcs-cli list`
      - `mcs-cli sbp2 login --node 0`
-   - 同步抓 dext 日志，重点确认：
-     - Nikon 是否仍只反复读取 login ORB
-     - 是否开始写 `login response` / `status FIFO`
-     - `sbp2 status timeout after 100 polls` 是否消失或转化为新的更靠后的失败点
+     - `mcs-cli sbp2 inquiry --node 0`
+   - 输出应在主操作成功时保留成功结果；logout cleanup 失败只记录为 warning
 
-2. **若 login 仍失败，再继续收敛 async block transaction / management agent CSR 读路径**
+2. **继续收敛 async read / management agent CSR direct-read 诊断**
    - 已确认 discovery 已给出 `Management_Agent_Offset=0x00c000 -> csr_addr=0xF0030000`
    - 已从 dext 日志确认：`0xF0000400` block read 的真实响应是 `rCode=0x07 (AddressError)`
    - 已从 dext 日志确认：`0xF0030000` quadlet read 的真实响应是 `rCode=0x06 (TypeError)`

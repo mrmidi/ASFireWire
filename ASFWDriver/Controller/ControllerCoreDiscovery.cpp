@@ -16,6 +16,7 @@
 #include "../ConfigROM/ROMScanner.hpp"
 #include "../Diagnostics/DiagnosticLogger.hpp"
 #include "../Diagnostics/MetricsSink.hpp"
+#include "../Discovery/DiscoveryConvergence.hpp"
 #include "../Discovery/DeviceManager.hpp"
 #include "../Discovery/DeviceRegistry.hpp"
 #include "../Discovery/SpeedPolicy.hpp"
@@ -167,6 +168,15 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
             deps_.busReset->EscalateDiscoveryDelay();
         }
     }
+
+    bool zeroRomScanInconclusive = false;
+    if (deps_.topology) {
+        if (const auto latestTopology = deps_.topology->LatestSnapshot()) {
+            zeroRomScanInconclusive = Discovery::IsZeroRomScanInconclusive(
+                gen, roms.size(), *latestTopology);
+        }
+    }
+
     std::unordered_set<uint64_t> discoveredGuids;
     discoveredGuids.reserve(roms.size());
 
@@ -201,7 +211,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                  deviceRecord.isAudioCandidate ? "YES" : "NO");
     }
 
-    if (deps_.deviceManager) {
+    if (deps_.deviceManager && !zeroRomScanInconclusive) {
         auto devices = deps_.deviceManager->GetAllDevices();
         for (const auto& device : devices) {
             if (!device) {
@@ -218,6 +228,11 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                      gen.value, guid);
             deps_.deviceManager->MarkDeviceLost(guid);
         }
+    } else if (deps_.deviceManager && zeroRomScanInconclusive) {
+        ASFW_LOG(Discovery,
+                 "ROM scan for gen=%u produced 0 ROMs but topology still has remote "
+                 "link-active nodes — keeping existing devices until a conclusive scan",
+                 gen.value);
     }
 
     ASFW_LOG(Discovery, "═══════════════════════════════════════");
@@ -225,8 +240,12 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
              gen.value);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
 
-    if (deps_.sbp2SessionRegistry) {
+    if (deps_.sbp2SessionRegistry && !zeroRomScanInconclusive) {
         deps_.sbp2SessionRegistry->RefreshTargets(gen);
+    } else if (deps_.sbp2SessionRegistry) {
+        ASFW_LOG(Discovery,
+                 "Skipping SBP-2 target refresh for inconclusive zero-ROM scan gen=%u",
+                 gen.value);
     }
 }
 

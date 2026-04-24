@@ -358,7 +358,7 @@ kern_return_t TransactionHandler::GetTransactionResult(IOUserClientMethodArgumen
         args->scalarOutputCount = 3;
     }
 
-    const void* resultBytes = foundResult->data;
+    const void* resultBytes = foundResult->Data();
     OSData* resultData = OSData::withBytes(resultBytes, foundResult->dataLength);
     if (resultData) {
         args->structureOutput = resultData;
