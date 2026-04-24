@@ -164,7 +164,8 @@
 - 已在 `BusResetCoordinator::StepComplete()` 中加入最小 `100ms` discovery delay
 - 已对 2 节点 `local=root` 拓扑跳过普通 `TargetGap` 优化，避免无意义 gap retool/reset
 - host / Swift / 工程构建验证通过；2026-04-24 真机已确认 SBP-2 login / inquiry 主路径打通，剩余缺口收敛到 transaction result 读侧容量、management agent direct-read 诊断、reset/discovery 收敛与 logout cleanup 语义
-- reset/discovery 收敛修复方向：`bus-state` diagnostics 追加 reset epoch、manual reset epoch、IRQ 计数、accepted generation、ReadyForDiscovery failure bits；user-initiated reset 若未观察到 busReset IRQ/topology，会在 bounded 次数内补发 short recovery reset。真机验证入口为 moderncoolscan 的 `mcs diag reset-smoke --node <id> --attempts <n> --settle-ms <ms>`。
+- reset/discovery 收敛修复方向：`bus-state` diagnostics 追加 reset epoch、manual reset epoch、IRQ 计数、accepted generation、ReadyForDiscovery failure bits；user-initiated reset 若未观察到 busReset IRQ/topology，会在 bounded 次数内补发 short recovery reset。真机验证入口为 moderncoolscan 的 `mcs diag reset-smoke --node <id> --attempts <n> --settle-ms <ms> --readiness-attempts <n> --readiness-interval-ms <ms>`。
+- reset 后剩余窗口已收敛到 SBP-2 target-ready / ROM-profile readiness：moderncoolscan 的 reset-smoke 将 probe/login/inquiry 作为 bounded readiness phase 重试，且把 `Device is not SBP-2` 视为 not-ready；ASFWDriver 侧新增 ROM 入库/导出日志摘要（rawQuadlets/rootEntries/unitDirs/hasSBP2）用于确认窗口内是否缓存或导出了缺失 SBP-2 unit 的 ROM。
 
 历史真机 smoke（2026-04-22，已被 2026-04-24 结果部分 supersede）：
 
