@@ -18,6 +18,28 @@ void ResetZeroCopyTimeline(ZeroCopyTimelineState& timeline) {
     timeline.phaseFrames = 0;
 }
 
+const char* ClockAuthorityName(ClockAuthority authority) {
+    switch (authority) {
+        case ClockAuthority::kTransportRx:
+            return "transport-rx";
+        case ClockAuthority::kFallback:
+        default:
+            return "fallback";
+    }
+}
+
+void ResetTimingModel(AudioTimingModel& model) {
+    model.transportAnchorSample = 0;
+    model.transportAnchorHost = 0;
+    model.transportFresh = false;
+    model.startupAligned = false;
+    model.inputSampleOffset = 0;
+    model.outputSampleOffset = 0;
+    model.clockAuthority = ClockAuthority::kFallback;
+    model.transportHostNanosPerSampleQ8 = 0;
+    model.transportSeq = 0;
+}
+
 void ResetClockSync(ClockSyncState& clockSync) {
     clockSync.fillErrorIntegral = 0;
     clockSync.lastFillError = 0;
@@ -28,8 +50,7 @@ void ResetClockSync(ClockSyncState& clockSync) {
     clockSync.wasSaturated = false;
     clockSync.driftDirection = 0;
     clockSync.monotoneDriftTicks = 0;
-    clockSync.transportEpochValid = false;
-    clockSync.transportSampleFrameOrigin = 0;
+    ResetTimingModel(clockSync.timingModel);
 }
 
 uint64_t RoundWithFraction(double& fractionalTicks, double currentTicksPerBuffer) {
@@ -187,6 +208,114 @@ uint64_t ComputeHostTicksPerBuffer(AudioClockEngineState& state,
     return static_cast<uint64_t>(state.clockSync->currentTicksPerBuffer);
 }
 
+void RefreshTimingModel(AudioClockEngineState& state,
+                        uint64_t nowTicks,
+                        uint32_t fallbackQ8,
+                        uint64_t hostTicksPerBuffer) {
+    auto& model = state.clockSync->timingModel;
+    model.transportFresh = false;
+    model.clockAuthority = ClockAuthority::kFallback;
+
+    if (!state.rxQueueValid || !state.rxQueueReader) {
+        return;
+    }
+
+    const auto transportTiming = state.rxQueueReader->ReadTransportTiming();
+    if (!transportTiming.valid || transportTiming.anchorHostTicks == 0) {
+        return;
+    }
+
+    model.transportAnchorSample = transportTiming.anchorSampleFrame;
+    model.transportAnchorHost = transportTiming.anchorHostTicks;
+    model.transportHostNanosPerSampleQ8 =
+        (transportTiming.hostNanosPerSampleQ8 != 0)
+            ? transportTiming.hostNanosPerSampleQ8
+            : fallbackQ8;
+    model.transportSeq = transportTiming.seq;
+
+    const auto startupAlignment = state.rxQueueReader->ReadStartupAlignment();
+    if (startupAlignment.valid) {
+        const bool wasAligned = model.startupAligned;
+        model.inputSampleOffset = startupAlignment.inputSampleOffset;
+        model.outputSampleOffset = startupAlignment.outputSampleOffset;
+        model.startupAligned = true;
+
+        if (!wasAligned) {
+            ASFW_LOG_RL(Audio,
+                        "zts/model",
+                        1000,
+                        OS_LOG_TYPE_DEFAULT,
+                        "ZTS model adopted startup alignment seq=%u transportSeq=%u sample=%llu inOff=%llu outOff=%llu",
+                        startupAlignment.seq,
+                        model.transportSeq,
+                        startupAlignment.sampleTime,
+                        model.inputSampleOffset,
+                        model.outputSampleOffset);
+        }
+    }
+
+    const uint64_t ageTicks = (nowTicks >= transportTiming.anchorHostTicks)
+                                ? (nowTicks - transportTiming.anchorHostTicks)
+                                : 0;
+    const uint64_t maxFreshTicks = (hostTicksPerBuffer != 0) ? (hostTicksPerBuffer * 2) : 0;
+    model.transportFresh = (model.transportHostNanosPerSampleQ8 != 0) &&
+                           ((maxFreshTicks == 0) || (ageTicks <= maxFreshTicks));
+    if (!model.transportFresh) {
+        return;
+    }
+
+    model.clockAuthority = ClockAuthority::kTransportRx;
+}
+
+bool PublishFromTimingModel(AudioClockEngineState& state,
+                            uint64_t nowTicks,
+                            uint64_t hostTicksPerBuffer,
+                            uint64_t& outSampleTime,
+                            uint64_t& outHostTime,
+                            uint32_t& outQ8) {
+    const auto& model = state.clockSync->timingModel;
+    if (model.clockAuthority != ClockAuthority::kTransportRx ||
+        !model.transportFresh ||
+        !model.startupAligned ||
+        model.transportAnchorHost == 0) {
+        return false;
+    }
+
+    outSampleTime = (model.transportAnchorSample >= model.outputSampleOffset)
+                  ? (model.transportAnchorSample - model.outputSampleOffset)
+                  : 0;
+    outHostTime = model.transportAnchorHost;
+    outQ8 = model.transportHostNanosPerSampleQ8;
+
+    const double hostTicksPerSample = HostTicksPerSampleFromQ8(outQ8);
+    uint64_t extrapolatedTicks = 0;
+    if (nowTicks > model.transportAnchorHost && hostTicksPerSample > 0.0) {
+        const uint64_t ageTicks = nowTicks - model.transportAnchorHost;
+        const uint64_t maxExtrapolationTicks = hostTicksPerBuffer * 2;
+        extrapolatedTicks = (ageTicks > maxExtrapolationTicks) ? maxExtrapolationTicks : ageTicks;
+        const auto extrapolatedSamples =
+            static_cast<uint64_t>(static_cast<double>(extrapolatedTicks) / hostTicksPerSample);
+        outSampleTime += extrapolatedSamples;
+        outHostTime += extrapolatedTicks;
+    }
+
+    ASFW_LOG_RL(Audio,
+                "zts/src",
+                1000,
+                OS_LOG_TYPE_DEFAULT,
+                "ZTS model authority=%{public}s seq=%u sample=%llu host=%llu q8=%u fresh=%d aligned=%d inOff=%llu outOff=%llu",
+                ClockAuthorityName(model.clockAuthority),
+                model.transportSeq,
+                outSampleTime,
+                outHostTime,
+                outQ8,
+                model.transportFresh,
+                model.startupAligned,
+                model.inputSampleOffset,
+                model.outputSampleOffset);
+    return true;
+}
+
 void LogPeriodicMetrics(AudioClockEngineState& state,
                         uint64_t time,
                         bool localEncodingActive,
@@ -263,11 +392,13 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
         if (q8 > 0) {
             const uint32_t txFill = state.txQueueValid ? state.txQueueWriter->FillLevelFrames() : 0;
             ASFW_LOG(Audio,
-                     "CLK: q8=%u corr=%.1f ppm rxFill=%u txFill=%u (cycle-time, unified)",
+                     "CLK: q8=%u corr=%.1f ppm rxFill=%u txFill=%u authority=%{public}s aligned=%d",
                      q8,
                      corrPpm,
                      rxFill,
-                     txFill);
+                     txFill,
+                     ClockAuthorityName(state.clockSync->timingModel.clockAuthority),
+                     state.clockSync->timingModel.startupAligned);
         } else if (state.zeroCopyEnabled && state.txQueueValid) {
             const uint32_t fill = state.txQueueWriter->FillLevelFrames();
             ASFW_LOG(Audio,
@@ -335,6 +466,9 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.packetAssembler->reset();
     *state.rxStartupDrained = false;
     detail::ResetZeroCopyTimeline(*state.zeroCopyTimeline);
+    if (state.rxQueueValid && state.rxQueueReader) {
+        state.rxQueueReader->ResetStartupAlignment();
+    }
 
     struct mach_timebase_info timebaseInfo;
     mach_timebase_info(&timebaseInfo);
@@ -395,6 +529,9 @@ void PrepareClockEngineForStop(AudioClockEngineState& state) {
 
     detail::ResetClockSync(*state.clockSync);
     state.zeroCopyTimeline->valid = false;
+    if (state.rxQueueValid && state.rxQueueReader) {
+        state.rxQueueReader->ResetStartupAlignment();
+    }
 
     if (state.timestampTimer) {
         state.timestampTimer->SetEnable(false);
@@ -423,59 +560,15 @@ void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time) {
     const uint64_t hostTicksPerBuffer = detail::ComputeHostTicksPerBuffer(state, q8, rxPllReady);
     uint64_t publishedSampleTime = 0;
     uint64_t publishedHostTime = time;
-    const auto transportTiming = state.rxQueueValid
-                               ? state.rxQueueReader->ReadTransportTiming()
-                               : ASFW::Shared::TxSharedQueueSPSC::TransportTimingSnapshot{};
-    const uint32_t transportQ8 =
-        (transportTiming.hostNanosPerSampleQ8 != 0) ? transportTiming.hostNanosPerSampleQ8 : q8;
+    uint32_t publishedQ8 = q8;
+    detail::RefreshTimingModel(state, time, q8, hostTicksPerBuffer);
 
-    if (transportTiming.valid && transportTiming.anchorHostTicks != 0) {
-        uint64_t currentPublishedSampleTime = 0;
-        uint64_t currentPublishedHostTime = 0;
-        state.audioDevice->GetCurrentZeroTimestamp(&currentPublishedSampleTime, &currentPublishedHostTime);
-
-        if (!state.clockSync->transportEpochValid) {
-            if (transportTiming.anchorSampleFrame >= currentPublishedSampleTime) {
-                state.clockSync->transportSampleFrameOrigin =
-                    transportTiming.anchorSampleFrame - currentPublishedSampleTime;
-            } else {
-                state.clockSync->transportSampleFrameOrigin = 0;
-            }
-            state.clockSync->transportEpochValid = true;
-        }
-
-        uint64_t relativeAnchorSample = 0;
-        if (transportTiming.anchorSampleFrame >= state.clockSync->transportSampleFrameOrigin) {
-            relativeAnchorSample =
-                transportTiming.anchorSampleFrame - state.clockSync->transportSampleFrameOrigin;
-        }
-
-        publishedSampleTime = relativeAnchorSample;
-        publishedHostTime = transportTiming.anchorHostTicks;
-
-        const double hostTicksPerSample = detail::HostTicksPerSampleFromQ8(transportQ8);
-        uint64_t extrapolatedTicks = 0;
-        if (time > transportTiming.anchorHostTicks && hostTicksPerSample > 0.0) {
-            const uint64_t ageTicks = time - transportTiming.anchorHostTicks;
-            const uint64_t maxExtrapolationTicks = hostTicksPerBuffer * 2;
-            extrapolatedTicks = (ageTicks > maxExtrapolationTicks) ? maxExtrapolationTicks : ageTicks;
-            const auto extrapolatedSamples =
-                static_cast<uint64_t>(static_cast<double>(extrapolatedTicks) / hostTicksPerSample);
-            publishedSampleTime += extrapolatedSamples;
-            publishedHostTime += extrapolatedTicks;
-        }
-
-        ASFW_LOG_RL(Audio,
-                    "zts/src",
-                    1000,
-                    OS_LOG_TYPE_DEFAULT,
-                    "ZTS transport seq=%u sample=%llu host=%llu q8=%u extrapTicks=%llu",
-                    transportTiming.seq,
-                    publishedSampleTime,
-                    publishedHostTime,
-                    transportQ8,
-                    extrapolatedTicks);
-    } else {
+    if (!detail::PublishFromTimingModel(state,
+                                        time,
+                                        hostTicksPerBuffer,
+                                        publishedSampleTime,
+                                        publishedHostTime,
+                                        publishedQ8)) {
         uint64_t currentSampleTime = 0;
         uint64_t currentHostTime = 0;
         state.audioDevice->GetCurrentZeroTimestamp(&currentSampleTime, &currentHostTime);
@@ -494,10 +587,11 @@ void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time) {
                     "zts/fallback",
                     1000,
                     OS_LOG_TYPE_DEFAULT,
-                    "ZTS fallback synthetic sample=%llu host=%llu q8=%u",
+                    "ZTS fallback synthetic sample=%llu host=%llu q8=%u aligned=%d",
                     publishedSampleTime,
                     publishedHostTime,
-                    q8);
+                    q8,
+                    state.clockSync->timingModel.startupAligned);
     }
 
     state.audioDevice->UpdateCurrentZeroTimestamp(publishedSampleTime, publishedHostTime);

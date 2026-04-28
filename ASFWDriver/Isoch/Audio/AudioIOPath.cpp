@@ -64,6 +64,37 @@ void MaybeDrainRxStartup(AudioIOPathState& state,
     *state.rxStartupDrained = true;
 }
 
+void MaybeLatchTransportStartupAlignment(AudioIOPathState& state, uint64_t sampleTime) {
+    if (!state.rxQueueValid || !state.rxQueueReader) {
+        return;
+    }
+
+    const auto existingAlignment = state.rxQueueReader->ReadStartupAlignment();
+    if (existingAlignment.valid) {
+        return;
+    }
+
+    const auto transportTiming = state.rxQueueReader->ReadTransportTiming();
+    if (!transportTiming.valid || transportTiming.anchorHostTicks == 0) {
+        return;
+    }
+
+    const uint64_t offset = (transportTiming.anchorSampleFrame >= sampleTime)
+                          ? (transportTiming.anchorSampleFrame - sampleTime)
+                          : 0;
+    state.rxQueueReader->SetStartupAlignment(sampleTime, offset, offset);
+
+    ASFW_LOG(Audio,
+             "RX startup timing aligned sample=%llu transportSample=%llu transportHost=%llu q8=%u seq=%u inOff=%llu outOff=%llu",
+             sampleTime,
+             transportTiming.anchorSampleFrame,
+             transportTiming.anchorHostTicks,
+             transportTiming.hostNanosPerSampleQ8,
+             transportTiming.seq,
+             offset,
+             offset);
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t HandleBeginRead(AudioIOPathState& state,
                               uint32_t ioBufferFrameSize, // NOLINT(bugprone-easily-swappable-parameters)
@@ -93,6 +124,7 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
     }
 
     const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
+    MaybeLatchTransportStartupAlignment(state, sampleTime);
     MaybeDrainRxStartup(state, ioBufferFrameSize, sampleTime);
 
     auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);

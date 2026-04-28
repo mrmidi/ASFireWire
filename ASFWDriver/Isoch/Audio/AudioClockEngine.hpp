@@ -35,6 +35,26 @@ struct EncodingMetricsState {
     double lastLogElapsedSec{0.0};
 };
 
+enum class ClockAuthority : uint8_t {
+    kFallback = 0,
+    kTransportRx = 1,
+};
+
+struct AudioTimingModel {
+    uint64_t transportAnchorSample{0};
+    uint64_t transportAnchorHost{0};
+    bool transportFresh{false};
+    bool startupAligned{false};
+    uint64_t inputSampleOffset{0};
+    uint64_t outputSampleOffset{0};
+    ClockAuthority clockAuthority{ClockAuthority::kFallback};
+
+    // Transport-derived cadence metadata rides alongside the authority model so
+    // the publisher does not need to re-interpret raw transport snapshots.
+    uint32_t transportHostNanosPerSampleQ8{0};
+    uint32_t transportSeq{0};
+};
+
 struct ClockSyncState {
     uint32_t targetFillLevel{0};
     int64_t fillErrorIntegral{0};
@@ -51,8 +71,7 @@ struct ClockSyncState {
     bool wasSaturated{false};
     int32_t driftDirection{0};
     uint32_t monotoneDriftTicks{0};
-    bool transportEpochValid{false};
-    uint64_t transportSampleFrameOrigin{0};
+    AudioTimingModel timingModel;
 };
 
 struct AudioClockEngineState {
