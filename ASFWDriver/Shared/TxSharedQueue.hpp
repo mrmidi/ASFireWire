@@ -82,7 +82,19 @@ struct TxQueueHeader {
     CachelineAtomicU32 transportTimingSeq;
     CachelineAtomicU64 transportAnchorSampleFrame;
     CachelineAtomicU64 transportAnchorHostTicks;
-};
+
+    // Startup alignment latched on first host-read readiness.
+    // startupAlignmentSeq:
+    //   seqlock-style counter; odd = writer active, even = stable snapshot.
+    // startupAlignmentSampleTime:
+    //   host callback sampleTime at the moment transport startup alignment was latched.
+    // input/outputSampleOffset:
+    //   transportAnchorSampleFrame - startupAlignmentSampleTime at latch time.
+    CachelineAtomicU32 startupAlignmentSeq;
+    CachelineAtomicU64 startupAlignmentSampleTime;
+    CachelineAtomicU64 startupInputSampleOffset;
+    CachelineAtomicU64 startupOutputSampleOffset;
+    };
 static_assert((sizeof(TxQueueHeader) % 8) == 0, "Header alignment sanity");
 
 // SPSC ring buffer for cross-process audio streaming
@@ -96,6 +108,14 @@ public:
         uint64_t anchorSampleFrame{0};
         uint64_t anchorHostTicks{0};
         uint32_t hostNanosPerSampleQ8{0};
+        uint32_t seq{0};
+    };
+
+    struct StartupAlignmentSnapshot {
+        bool valid{false};
+        uint64_t sampleTime{0};
+        uint64_t inputSampleOffset{0};
+        uint64_t outputSampleOffset{0};
         uint32_t seq{0};
     };
 
@@ -138,6 +158,10 @@ public:
         hdr->transportTimingSeq.v.store(0, std::memory_order_relaxed);
         hdr->transportAnchorSampleFrame.v.store(0, std::memory_order_relaxed);
         hdr->transportAnchorHostTicks.v.store(0, std::memory_order_relaxed);
+        hdr->startupAlignmentSeq.v.store(0, std::memory_order_relaxed);
+        hdr->startupAlignmentSampleTime.v.store(0, std::memory_order_relaxed);
+        hdr->startupInputSampleOffset.v.store(0, std::memory_order_relaxed);
+        hdr->startupOutputSampleOffset.v.store(0, std::memory_order_relaxed);
 
         // Publish header initialization
         std::atomic_thread_fence(std::memory_order_release);
@@ -375,6 +399,14 @@ public:
         hdr_->corrHostNanosPerSampleQ8.v.store(0, std::memory_order_release);
     }
 
+    void ResetStartupAlignment() {
+        if (!hdr_) return;
+        hdr_->startupAlignmentSeq.v.store(0, std::memory_order_release);
+        hdr_->startupAlignmentSampleTime.v.store(0, std::memory_order_release);
+        hdr_->startupInputSampleOffset.v.store(0, std::memory_order_release);
+        hdr_->startupOutputSampleOffset.v.store(0, std::memory_order_release);
+    }
+
     void SetTransportTiming(uint64_t sampleFrame, uint64_t hostTicks, uint32_t q8) {
         if (!hdr_) return;
         hdr_->transportTimingSeq.v.fetch_add(1, std::memory_order_acq_rel); // odd = writer active
@@ -407,6 +439,44 @@ public:
             };
 
             const uint32_t seqAfter = hdr_->transportTimingSeq.v.load(std::memory_order_acquire);
+            if (seqBefore == seqAfter) {
+                return snapshot;
+            }
+        }
+    }
+
+    void SetStartupAlignment(uint64_t sampleTime, uint64_t inputOffset, uint64_t outputOffset) {
+        if (!hdr_) return;
+        hdr_->startupAlignmentSeq.v.fetch_add(1, std::memory_order_acq_rel); // odd = writer active
+        hdr_->startupAlignmentSampleTime.v.store(sampleTime, std::memory_order_release);
+        hdr_->startupInputSampleOffset.v.store(inputOffset, std::memory_order_release);
+        hdr_->startupOutputSampleOffset.v.store(outputOffset, std::memory_order_release);
+        hdr_->startupAlignmentSeq.v.fetch_add(1, std::memory_order_acq_rel); // even = stable snapshot
+    }
+
+    [[nodiscard]] StartupAlignmentSnapshot ReadStartupAlignment() const {
+        if (!hdr_) {
+            return {};
+        }
+
+        for (;;) {
+            const uint32_t seqBefore = hdr_->startupAlignmentSeq.v.load(std::memory_order_acquire);
+            if ((seqBefore & 1U) != 0U) {
+                continue;
+            }
+
+            StartupAlignmentSnapshot snapshot{
+                .valid = seqBefore != 0U,
+                .sampleTime =
+                    hdr_->startupAlignmentSampleTime.v.load(std::memory_order_acquire),
+                .inputSampleOffset =
+                    hdr_->startupInputSampleOffset.v.load(std::memory_order_acquire),
+                .outputSampleOffset =
+                    hdr_->startupOutputSampleOffset.v.load(std::memory_order_acquire),
+                .seq = seqBefore,
+            };
+
+            const uint32_t seqAfter = hdr_->startupAlignmentSeq.v.load(std::memory_order_acquire);
             if (seqBefore == seqAfter) {
                 return snapshot;
             }

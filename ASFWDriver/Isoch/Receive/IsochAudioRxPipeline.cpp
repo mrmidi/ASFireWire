@@ -46,6 +46,7 @@ void IsochAudioRxPipeline::OnStart() noexcept {
     transportHostNanosPerSampleQ8_ = 0;
     transportTimingPublishCount_ = 0;
     rxSharedQueue_.ResetTransportTiming();
+    rxSharedQueue_.ResetStartupAlignment();
 
     if (externalSyncBridge_) {
         externalSyncBridge_->Reset();
@@ -63,6 +64,7 @@ void IsochAudioRxPipeline::OnStop() noexcept {
         externalSyncBridge_->Reset();
     }
     rxSharedQueue_.ResetTransportTiming();
+    rxSharedQueue_.ResetStartupAlignment();
     externalSyncClockState_.Reset();
 }
 

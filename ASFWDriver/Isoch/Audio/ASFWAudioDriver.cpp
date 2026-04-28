@@ -902,6 +902,8 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
 
     ASFW::Isoch::Audio::AudioClockEngineState clockState{
         .timestampTimer = ivars ? ivars->runtime.timestampTimer.get() : nullptr,
+        .rxQueueValid = ivars ? ivars->shared.rxQueueValid : false,
+        .rxQueueReader = ivars ? &ivars->shared.rxQueueReader : nullptr,
         .zeroCopyTimeline = ivars ? &ivars->runtime.zeroCopyTimeline : nullptr,
         .clockSync = ivars ? &ivars->runtime.clockSync : nullptr,
     };
