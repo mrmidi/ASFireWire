@@ -21,6 +21,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 12;
         outCaps.deviceToHostAm824Slots = 9;
         outCaps.hostToDeviceAm824Slots = 13;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 
@@ -31,6 +33,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 8;
         outCaps.deviceToHostAm824Slots = 17;
         outCaps.hostToDeviceAm824Slots = 9;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 
@@ -41,19 +45,23 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 8;
         outCaps.deviceToHostAm824Slots = 17;
         outCaps.hostToDeviceAm824Slots = 9;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 
-    // Alesis MultiMix 12 FireWire local test profile.
-    // The observed ROM reports the family model as 0x000000. The 12-channel
-    // model sends 12 mixer channels plus the main stereo pair to the host, and
-    // receives a stereo return from the host.
+    // Alesis MultiMix FireWire local recording-stability profile.
+    // The observed stream table exposes one active device-to-host stream with
+    // 12 PCM/AM824 slots; a second 2-channel stream is present but disabled
+    // with iso=-1, so it must not be advertised to CoreAudio.
     if (vendorId == 0x000595U && modelId == 0x000000U) {
         outCaps.sampleRateHz = 48000;
-        outCaps.hostInputPcmChannels = 14;
+        outCaps.hostInputPcmChannels = 12;
         outCaps.hostOutputPcmChannels = 2;
-        outCaps.deviceToHostAm824Slots = 14;
+        outCaps.deviceToHostAm824Slots = 12;
         outCaps.hostToDeviceAm824Slots = 2;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 

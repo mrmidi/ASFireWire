@@ -61,6 +61,48 @@ void LogSectionPreview(const char* label, const uint8_t* data, size_t size) {
              HexPreview(data, size).c_str());
 }
 
+void LogGlobalStateDetails(const GlobalState& state) {
+    const uint32_t clockSource = state.clockSelect & ClockSelect::kSourceMask;
+    const uint32_t clockRateIndex =
+        (state.clockSelect & ClockSelect::kRateMask) >> ClockSelect::kRateShift;
+    const uint32_t nominalRateHz = NominalRateHz(state.status);
+    const uint32_t clockRateHz = RateHzFromIndex(clockRateIndex);
+    const uint32_t arxLocks = state.extStatus &
+        (ExtStatusBits::kArx1Locked |
+         ExtStatusBits::kArx2Locked |
+         ExtStatusBits::kArx3Locked |
+         ExtStatusBits::kArx4Locked);
+    const uint32_t arxSlips = state.extStatus &
+        (ExtStatusBits::kArx1Slip |
+         ExtStatusBits::kArx2Slip |
+         ExtStatusBits::kArx3Slip |
+         ExtStatusBits::kArx4Slip);
+
+    ASFW_LOG(DICE,
+             "DICE register snapshot: global owner=0x%016llx notify=0x%08x "
+             "clockSelect=0x%08x clockSource=%u clockRateIndex=%u clockRateHz=%u "
+             "enable=%u status=0x%08x locked=%u nominalRateHz=%u "
+             "extStatus=0x%08x arxLocks=0x%08x arxSlips=0x%08x "
+             "sampleRate=%u clockCaps=0x%08x version=0x%08x nickname='%{public}s'",
+             static_cast<unsigned long long>(state.owner),
+             state.notification,
+             state.clockSelect,
+             clockSource,
+             clockRateIndex,
+             clockRateHz,
+             state.enabled ? 1U : 0U,
+             state.status,
+             IsSourceLocked(state.status) ? 1U : 0U,
+             nominalRateHz,
+             state.extStatus,
+             arxLocks,
+             arxSlips,
+             state.sampleRate,
+             state.clockCaps,
+             state.version,
+             state.nickname);
+}
+
 } // anonymous namespace
 
 DICETransaction::DICETransaction(Protocols::Ports::ProtocolRegisterIO& io)
@@ -83,6 +125,19 @@ void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSe
                  sections.global.offset, sections.global.size,
                  sections.txStreamFormat.offset, sections.txStreamFormat.size,
                  sections.rxStreamFormat.offset, sections.rxStreamFormat.size);
+        ASFW_LOG(DICE,
+                 "DICE register snapshot: sections global=0x%08x+%u "
+                 "tx=0x%08x+%u rx=0x%08x+%u extSync=0x%08x+%u reserved=0x%08x+%u",
+                 sections.global.offset,
+                 sections.global.size,
+                 sections.txStreamFormat.offset,
+                 sections.txStreamFormat.size,
+                 sections.rxStreamFormat.offset,
+                 sections.rxStreamFormat.size,
+                 sections.extSync.offset,
+                 sections.extSync.size,
+                 sections.reserved.offset,
+                 sections.reserved.size);
         
         Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, sections);
     });
@@ -196,6 +251,7 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
         
         ASFW_LOG(DICE, "Global: rate=%uHz caps=0x%08x version=0x%08x nickname='%{public}s'",
                  state.sampleRate, state.clockCaps, state.version, state.nickname);
+        LogGlobalStateDetails(state);
         
         Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, state);
     });
@@ -331,13 +387,31 @@ uint32_t ComputeAm824Slots(uint32_t pcmChannels, uint32_t midiPorts) noexcept {
 }
 
 void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
-    ASFW_LOG(DICE, "%{public}s Streams: count=%u entrySize=%uB pcm=%u midi=%u am824Slots=%u",
+    ASFW_LOG(DICE, "%{public}s Streams: count=%u active=%u entrySize=%uB pcm=%u/%u midi=%u/%u am824Slots=%u/%u disabledPcm=%u",
              prefix,
              config.numStreams,
+             config.ActiveStreamCount(),
              config.entrySizeBytes,
+             config.ActivePcmChannels(),
              config.TotalPcmChannels(),
+             config.ActiveMidiPorts(),
              config.TotalMidiPorts(),
-             config.TotalAm824Slots());
+             config.ActiveAm824Slots(),
+             config.TotalAm824Slots(),
+             config.DisabledPcmChannels());
+    ASFW_LOG(DICE,
+             "DICE register snapshot: %{public}s streams count=%u active=%u entrySize=%uB activePcm=%u totalPcm=%u activeMidi=%u totalMidi=%u activeAm824Slots=%u totalAm824Slots=%u disabledPcm=%u",
+             prefix,
+             config.numStreams,
+             config.ActiveStreamCount(),
+             config.entrySizeBytes,
+             config.ActivePcmChannels(),
+             config.TotalPcmChannels(),
+             config.ActiveMidiPorts(),
+             config.TotalMidiPorts(),
+             config.ActiveAm824Slots(),
+             config.TotalAm824Slots(),
+             config.DisabledPcmChannels());
 
     for (uint32_t i = 0; i < config.numStreams && i < 4; ++i) {
         const auto& e = config.streams[i];
@@ -352,6 +426,15 @@ void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
                      e.midiPorts,
                      ComputeAm824Slots(e.pcmChannels, e.midiPorts),
                      e.labels);
+            ASFW_LOG(DICE,
+                     "DICE register snapshot: %{public}s[%u] iso=%d seqStart=%u pcm=%u midi=%u am824Slots=%u",
+                     prefix,
+                     i,
+                     e.isoChannel,
+                     e.seqStart,
+                     e.pcmChannels,
+                     e.midiPorts,
+                     ComputeAm824Slots(e.pcmChannels, e.midiPorts));
         } else {
             ASFW_LOG(DICE,
                      "  %{public}s[%u]: iso=%d speed=%u pcm=%u midi=%u am824Slots=%u labels='%{public}s'",
@@ -363,6 +446,15 @@ void LogStreamConfigDetails(const char* prefix, const StreamConfig& config) {
                      e.midiPorts,
                      ComputeAm824Slots(e.pcmChannels, e.midiPorts),
                      e.labels);
+            ASFW_LOG(DICE,
+                     "DICE register snapshot: %{public}s[%u] iso=%d speed=%u pcm=%u midi=%u am824Slots=%u",
+                     prefix,
+                     i,
+                     e.isoChannel,
+                     e.speed,
+                     e.pcmChannels,
+                     e.midiPorts,
+                     ComputeAm824Slots(e.pcmChannels, e.midiPorts));
         }
     }
 }

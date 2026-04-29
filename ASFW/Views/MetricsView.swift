@@ -163,6 +163,41 @@ struct MetricsView: View {
                         color: (viewModel.metrics?.errors ?? 0) == 0 ? .green : .orange)
             }
             .padding(.horizontal)
+
+            if let m = viewModel.metrics {
+                HStack(spacing: 16) {
+                    StatCard(title: "Decoded",
+                            value: formatNumber(m.decodedFrames),
+                            unit: "frames",
+                            color: .primary)
+
+                    StatCard(title: "RX Fill",
+                            value: "\(m.rxQueueFillFrames)/\(m.rxQueueCapacityFrames)",
+                            unit: "frames",
+                            color: m.rxQueueFillFrames > 0 ? .green : .orange)
+
+                    StatCard(title: "RX Zero Fill",
+                            value: formatNumber(m.rxQueueUnderreadFrames),
+                            unit: "\(m.rxQueueUnderreadEvents) events",
+                            color: m.rxQueueUnderreadFrames == 0 ? .green : .red)
+
+                    StatCard(title: "RX Queue Drop",
+                            value: formatNumber(m.rxQueueProducerDropFrames),
+                            unit: "\(m.rxQueueProducerDropEvents) events",
+                            color: m.rxQueueProducerDropFrames == 0 ? .green : .red)
+
+                    StatCard(title: "Transport Rate",
+                            value: m.transportRateHz.map { String(format: "%.1f", $0) } ?? "n/a",
+                            unit: "Hz",
+                            color: rateColor(m.transportRateHz))
+
+                    StatCard(title: "RX Profile",
+                            value: m.activeRxProfileName,
+                            unit: "lat \(m.halInputLatencyFrames) safe \(m.halInputSafetyOffsetFrames)",
+                            color: m.activeRxProfileName == "A" ? .green : .blue)
+                }
+                .padding(.horizontal)
+            }
             
             // Histograms Row
             HStack(spacing: 16) {
@@ -246,6 +281,11 @@ struct MetricsView: View {
             return String(format: "%.1fK", Double(n) / 1_000)
         }
         return String(n)
+    }
+
+    private func rateColor(_ rate: Double?) -> Color {
+        guard let rate else { return .secondary }
+        return abs(rate - 48_000.0) < 25.0 ? .green : .orange
     }
 }
 
@@ -404,6 +444,9 @@ struct CIPStatusBar: View {
                 Text(String(format: "FDF=0x%02X", metrics.cipFDF))
                 Text(String(format: "SYT=0x%04X", metrics.cipSYT))
                 Text(String(format: "DBC=0x%02X", metrics.cipDBC))
+                Text("SYTClock=\(metrics.sytClockEstablished ? "est" : "wait")")
+                Text("Lost=\(metrics.sytClockLostCount)")
+                Text("Align=\(metrics.startupAlignmentValid ? "yes" : "no")")
             }
             .font(.system(.caption, design: .monospaced))
             

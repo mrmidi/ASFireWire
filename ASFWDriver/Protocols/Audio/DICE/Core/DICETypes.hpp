@@ -340,6 +340,10 @@ struct StreamFormatEntry {
     [[nodiscard]] uint32_t Am824Slots() const noexcept {
         return pcmChannels + ((midiPorts + 7u) / 8u);
     }
+
+    [[nodiscard]] bool IsActive() const noexcept {
+        return isoChannel >= 0;
+    }
 };
 
 /// TX/RX stream section configuration
@@ -358,10 +362,30 @@ struct StreamConfig {
         return total;
     }
 
+    [[nodiscard]] uint32_t ActivePcmChannels() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            if (streams[i].IsActive()) {
+                total += streams[i].pcmChannels;
+            }
+        }
+        return total;
+    }
+
     [[nodiscard]] uint32_t TotalMidiPorts() const noexcept {
         uint32_t total = 0;
         for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
             total += streams[i].midiPorts;
+        }
+        return total;
+    }
+
+    [[nodiscard]] uint32_t ActiveMidiPorts() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            if (streams[i].IsActive()) {
+                total += streams[i].midiPorts;
+            }
         }
         return total;
     }
@@ -372,6 +396,41 @@ struct StreamConfig {
             total += streams[i].Am824Slots();
         }
         return total;
+    }
+
+    [[nodiscard]] uint32_t ActiveAm824Slots() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            if (streams[i].IsActive()) {
+                total += streams[i].Am824Slots();
+            }
+        }
+        return total;
+    }
+
+    [[nodiscard]] uint32_t ActiveStreamCount() const noexcept {
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            if (streams[i].IsActive()) {
+                ++total;
+            }
+        }
+        return total;
+    }
+
+    [[nodiscard]] uint8_t FirstActiveIsoChannel(uint8_t fallback) const noexcept {
+        for (uint32_t i = 0; i < numStreams && i < 4; ++i) {
+            if (streams[i].IsActive() && streams[i].isoChannel <= 0x3F) {
+                return static_cast<uint8_t>(streams[i].isoChannel);
+            }
+        }
+        return fallback;
+    }
+
+    [[nodiscard]] uint32_t DisabledPcmChannels() const noexcept {
+        const uint32_t total = TotalPcmChannels();
+        const uint32_t active = ActivePcmChannels();
+        return (total > active) ? (total - active) : 0;
     }
 
     // Legacy alias kept while call sites migrate to explicit semantics.

@@ -9,12 +9,14 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../../IRM/IRMClient.hpp"
 #include "../../Isoch/IsochReceiveContext.hpp"
+#include "../../Isoch/Config/AudioRxProfiles.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
 #include "../../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../../Protocols/AVC/StreamFormats/AVCSignalFormatCommand.hpp"
 #include "../../Shared/SharedDataModels.hpp"
+#include "../../Shared/TxSharedQueue.hpp"
 #include "ASFWDriver.h" // Generated header from .iig
 #include "ControllerCoreAccess.hpp"
 #include <DriverKit/IOLib.h>
@@ -340,6 +342,50 @@ kern_return_t IsochHandler::GetIsochRxMetrics(IOUserClientMethodArguments* args)
     snapshot.cipSYT = processor.LastSYT();
     snapshot.cipDBC = processor.LastDBC();
 
+    snapshot.decodedFrames = processor.DecodedFrameCount();
+    snapshot.rxQueueProducerDropEvents = processor.RxQueueProducerDropEvents();
+    snapshot.rxQueueProducerDropFrames = processor.RxQueueProducerDropFrames();
+
+    uint32_t activeRxProfileRaw =
+        ASFW::Shared::kTxQueueDefaultRxProfileId;
+    if (auto* rxQueue = processor.GetOutputSharedQueue(); rxQueue && rxQueue->IsValid()) {
+        snapshot.rxQueueUnderreadEvents = rxQueue->ConsumerUnderreadEvents();
+        snapshot.rxQueueUnderreadFrames = rxQueue->ConsumerUnderreadFrames();
+        snapshot.rxQueueFillFrames = rxQueue->FillLevelFrames();
+        snapshot.rxQueueCapacityFrames = rxQueue->CapacityFrames();
+        snapshot.corrHostNanosPerSampleQ8 = rxQueue->CorrHostNanosPerSampleQ8();
+        activeRxProfileRaw = rxQueue->ActiveRxProfileId();
+
+        const auto timing = rxQueue->ReadTransportTiming();
+        snapshot.transportTimingValid = timing.valid ? 1 : 0;
+        snapshot.transportAnchorSampleFrame = timing.anchorSampleFrame;
+        snapshot.transportAnchorHostTicks = timing.anchorHostTicks;
+        snapshot.transportHostNanosPerSampleQ8 = timing.hostNanosPerSampleQ8;
+
+        const auto alignment = rxQueue->ReadStartupAlignment();
+        snapshot.startupAlignmentValid = alignment.valid ? 1 : 0;
+        snapshot.startupAlignmentSampleTime = alignment.sampleTime;
+        snapshot.startupInputSampleOffset = alignment.inputSampleOffset;
+        snapshot.startupOutputSampleOffset = alignment.outputSampleOffset;
+    }
+
+    if (activeRxProfileRaw > ASFW::Isoch::Config::RxProfileRawValue(ASFW::Isoch::Config::RxProfileId::C)) {
+        activeRxProfileRaw = ASFW::Shared::kTxQueueDefaultRxProfileId;
+    }
+    snapshot.activeRxProfile = static_cast<uint8_t>(activeRxProfileRaw);
+    const auto selectedRxProfile =
+        ASFW::Isoch::Config::SelectRxProfile(static_cast<ASFW::Isoch::Config::RxProfileId>(
+            snapshot.activeRxProfile));
+    snapshot.halInputLatencyFrames = selectedRxProfile.inputLatencyFrames;
+    snapshot.halInputSafetyOffsetFrames = selectedRxProfile.safetyOffsetFrames;
+
+    const auto clockHealth = context->GetClockHealth();
+    snapshot.sytClockActive = clockHealth.active ? 1 : 0;
+    snapshot.sytClockEstablished = clockHealth.clockEstablished ? 1 : 0;
+    snapshot.sytStartupQualified = clockHealth.startupQualified ? 1 : 0;
+    snapshot.sytClockUpdateSeq = clockHealth.updateSeq;
+    snapshot.sytClockLostCount = clockHealth.lostCount;
+
     OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
     if (!data)
         return kIOReturnNoMemory;
@@ -362,7 +408,11 @@ kern_return_t IsochHandler::ResetIsochRxMetrics(IOUserClientMethodArguments* arg
     ASFW_LOG(UserClient, "ResetIsochRxMetrics: resetting metrics");
 
     // Get StreamProcessor and reset
-    context->GetStreamProcessor().Reset();
+    auto& processor = context->GetStreamProcessor();
+    processor.Reset();
+    if (auto* rxQueue = processor.GetOutputSharedQueue(); rxQueue && rxQueue->IsValid()) {
+        rxQueue->ResetConsumerReadDiagnostics();
+    }
 
     return kIOReturnSuccess;
 }

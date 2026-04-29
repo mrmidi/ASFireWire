@@ -15,6 +15,10 @@ inline constexpr uint8_t kRxTuningProfileRaw = 1;  // default=B
 static_assert(kRxTuningProfileRaw <= 2, "Invalid ASFW_RX_TUNING_PROFILE — use 0 (A), 1 (B), or 2 (C)");
 inline constexpr RxProfileId kActiveRxProfileId = static_cast<RxProfileId>(kRxTuningProfileRaw);
 
+[[nodiscard]] constexpr uint8_t RxProfileRawValue(RxProfileId id) noexcept {
+    return static_cast<uint8_t>(id);
+}
+
 struct RxBufferProfile {
     const char* name;
     uint32_t startupFillTargetFrames;       // RX queue fill before first CoreAudio read
@@ -76,12 +80,18 @@ static_assert(IsValidRxProfile(kRxBufferProfile), "Selected RX buffer profile is
 /// Callers wishing to support hot-switching should use GetActiveRxProfile() instead of
 /// kRxBufferProfile directly.
 inline const RxBufferProfile* gActiveRxProfile = &kRxBufferProfile;
+inline RxProfileId gActiveRxProfileId = kActiveRxProfileId;
 
 [[nodiscard]] inline const RxBufferProfile& GetActiveRxProfile() noexcept {
     return *gActiveRxProfile;
 }
 
+[[nodiscard]] inline RxProfileId GetActiveRxProfileId() noexcept {
+    return gActiveRxProfileId;
+}
+
 inline void SetActiveRxProfile(RxProfileId id) noexcept {
+    gActiveRxProfileId = id;
     switch (id) {
         case RxProfileId::A: gActiveRxProfile = &kRxProfileA; break;
         case RxProfileId::B: gActiveRxProfile = &kRxProfileB; break;

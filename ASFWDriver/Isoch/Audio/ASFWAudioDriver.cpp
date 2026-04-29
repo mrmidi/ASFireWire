@@ -18,6 +18,7 @@
 #include "../../Logging/LogConfig.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
 #include "../Encoding/PacketAssembler.hpp"
+#include "../Config/AudioRxProfiles.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 
 #include <DriverKit/DriverKit.h>
@@ -36,8 +37,8 @@ static constexpr bool kEnableZeroCopyOutputPath = false;  // temporary A/B gate
 // Report only hardware/presentation pipeline latency to HAL.
 // Software queue/ring buffering should not be baked into device latency fields.
 static constexpr uint32_t kReportedDeviceLatencyFrames = 24;  // ~0.5ms @ 48kHz
-// 2A: Safety offset driven by TX buffer profile (data-driven from Phase 1 diagnostics)
-static constexpr uint32_t kReportedSafetyOffsetFrames =
+// Output safety offset remains TX-profile driven; input uses the active RX capture profile.
+static constexpr uint32_t kReportedOutputSafetyOffsetFrames =
     ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
 
 namespace {
@@ -51,6 +52,10 @@ const char* AudioOperationName(IOUserAudioIOOperation operation) {
         default:
             return "Other";
     }
+}
+
+bool IsAlesisMultiMixLocalProfile(uint32_t vendorId, uint32_t modelId) noexcept {
+    return vendorId == 0x000595U && modelId == 0x000000U;
 }
 
 } // namespace
@@ -115,6 +120,7 @@ struct AudioDriverRuntimeState {
     ASFW::Isoch::Audio::ClockSyncState clockSync;
     ASFW::Isoch::Audio::ZeroCopyTimelineState zeroCopyTimeline;
     bool rxStartupDrained{false};
+    bool rxTransportRebased{false};
 };
 
 namespace {
@@ -131,48 +137,91 @@ void LogIoCallbackMetrics(AudioDriverRuntimeState& runtime,
                           uint32_t writeEndFramesWritten,
                           uint64_t callbackOrdinal) {
     auto& ioMetrics = runtime.ioMetrics;
+    std::atomic<uint32_t>* opFrameSize = &ioMetrics.lastIoBufferFrameSize;
+    std::atomic<uint64_t>* opSampleTime = &ioMetrics.lastCallbackSampleTime;
+    if (operation == IOUserAudioIOOperationBeginRead) {
+        opFrameSize = &ioMetrics.lastBeginReadFrameSize;
+        opSampleTime = &ioMetrics.lastBeginReadSampleTime;
+    } else if (operation == IOUserAudioIOOperationWriteEnd) {
+        opFrameSize = &ioMetrics.lastWriteEndFrameSize;
+        opSampleTime = &ioMetrics.lastWriteEndSampleTime;
+    }
+
     const uint32_t previousFrameSize =
-        ioMetrics.lastIoBufferFrameSize.exchange(ioBufferFrameSize, std::memory_order_relaxed);
+        opFrameSize->exchange(ioBufferFrameSize, std::memory_order_relaxed);
     const uint64_t previousSampleTime =
-        ioMetrics.lastCallbackSampleTime.exchange(sampleTime, std::memory_order_relaxed);
+        opSampleTime->exchange(sampleTime, std::memory_order_relaxed);
     const uint32_t previousOperation =
         ioMetrics.lastCallbackOperation.exchange(static_cast<uint32_t>(operation), std::memory_order_relaxed);
 
-    const int64_t sampleDelta = (previousSampleTime == 0)
+    const bool hasPreviousForOperation = previousFrameSize != 0;
+    const int64_t sampleDelta = !hasPreviousForOperation
                               ? 0
                               : static_cast<int64_t>(sampleTime) - static_cast<int64_t>(previousSampleTime);
+    const int64_t coverageDelta = !hasPreviousForOperation
+                                ? 0
+                                : static_cast<int64_t>(sampleTime)
+                                      - static_cast<int64_t>(previousSampleTime)
+                                      - static_cast<int64_t>(previousFrameSize);
+    ioMetrics.lastIoBufferFrameSize.store(ioBufferFrameSize, std::memory_order_relaxed);
+    ioMetrics.lastCallbackSampleTime.store(sampleTime, std::memory_order_relaxed);
     ioMetrics.lastCallbackSampleDelta.store(sampleDelta, std::memory_order_relaxed);
     ioMetrics.lastRxQueueFillFrames.store(rxQueueFillFrames, std::memory_order_relaxed);
     ioMetrics.lastTxQueueFillFrames.store(txQueueFillFrames, std::memory_order_relaxed);
     ioMetrics.lastAssemblerFillFrames.store(assemblerFillFrames, std::memory_order_relaxed);
 
-    const bool frameSizeChanged = (previousFrameSize != 0) && (previousFrameSize != ioBufferFrameSize);
-    const bool sampleTimeWentBackwards = (previousSampleTime != 0) && (sampleTime < previousSampleTime);
+    const bool frameSizeChanged = hasPreviousForOperation && (previousFrameSize != ioBufferFrameSize);
+    const bool sampleTimeWentBackwards = hasPreviousForOperation && (sampleTime < previousSampleTime);
+    const bool beginReadCoverageAnomaly =
+        operation == IOUserAudioIOOperationBeginRead &&
+        hasPreviousForOperation &&
+        coverageDelta != 0;
     const bool firstFewCallbacks = callbackOrdinal <= 8;
     const bool shortOutputWrite =
         operation == IOUserAudioIOOperationWriteEnd &&
         writeEndFramesRequested > 0 &&
         writeEndFramesWritten < writeEndFramesRequested;
 
-    if (firstFewCallbacks || frameSizeChanged || sampleTimeWentBackwards || shortOutputWrite) {
+    if (firstFewCallbacks) {
         ASFW_LOG(Audio,
-                 "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u outReq=%u outWrote=%u%{public}s%{public}s%{public}s%{public}s",
+                 "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld coverDelta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u outReq=%u outWrote=%u first",
                  callbackOrdinal,
                  AudioOperationName(operation),
                  ioBufferFrameSize,
                  sampleTime,
                  sampleDelta,
+                 coverageDelta,
                  AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
                  hostTime,
                  rxQueueFillFrames,
                  txQueueFillFrames,
                  assemblerFillFrames,
                  writeEndFramesRequested,
-                 writeEndFramesWritten,
-                 firstFewCallbacks ? " first" : "",
-                 frameSizeChanged ? " frame-size-change" : "",
-                 sampleTimeWentBackwards ? " sample-regression" : "",
-                 shortOutputWrite ? " short-output-write" : "");
+                 writeEndFramesWritten);
+    } else if (frameSizeChanged || sampleTimeWentBackwards || beginReadCoverageAnomaly || shortOutputWrite) {
+        ASFW_LOG_RL(Audio,
+                    "audio/io-callback-anomaly",
+                    500,
+                    OS_LOG_TYPE_DEFAULT,
+                    "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld coverDelta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u outReq=%u outWrote=%u%{public}s%{public}s%{public}s%{public}s%{public}s",
+                    callbackOrdinal,
+                    AudioOperationName(operation),
+                    ioBufferFrameSize,
+                    sampleTime,
+                    sampleDelta,
+                    coverageDelta,
+                    AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
+                    hostTime,
+                    rxQueueFillFrames,
+                    txQueueFillFrames,
+                    assemblerFillFrames,
+                    writeEndFramesRequested,
+                    writeEndFramesWritten,
+                    frameSizeChanged ? " frame-size-change" : "",
+                    sampleTimeWentBackwards ? " sample-regression" : "",
+                    (beginReadCoverageAnomaly && coverageDelta > 0) ? " input-coverage-gap" : "",
+                    (beginReadCoverageAnomaly && coverageDelta < 0) ? " input-coverage-overlap" : "",
+                    shortOutputWrite ? " short-output-write" : "");
     }
 }
 
@@ -383,6 +432,22 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                  ivars->device.streamModeRaw == std::to_underlying(ASFW::Isoch::Audio::StreamMode::kBlocking)
                 ? "blocking" : "non-blocking");
 
+    const auto rxProfileId = IsAlesisMultiMixLocalProfile(ivars->device.vendorId, ivars->device.modelId)
+        ? ASFW::Isoch::Config::RxProfileId::A
+        : ASFW::Isoch::Config::kActiveRxProfileId;
+    ASFW::Isoch::Config::SetActiveRxProfile(rxProfileId);
+    const auto& activeRxProfile = ASFW::Isoch::Config::GetActiveRxProfile();
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: Active RX profile=%{public}s%{public}s target=%u drain=%u inputLatency=%u inputSafety=%u",
+             activeRxProfile.name,
+             IsAlesisMultiMixLocalProfile(ivars->device.vendorId, ivars->device.modelId)
+                 ? " (Alesis conservative capture)"
+                 : "",
+             activeRxProfile.startupFillTargetFrames,
+             activeRxProfile.startupDrainThresholdFrames,
+             activeRxProfile.inputLatencyFrames,
+             activeRxProfile.safetyOffsetFrames);
+
     // Temporary bring-up policy: expose exactly one format/rate in ADK.
     // Bring-up note: dynamic sample-rate advertisement is intentionally deferred.
     ASFW_LOG(Audio, "ASFWAudioDriver: Forcing single advertised format: 48kHz / 24-bit");
@@ -400,6 +465,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                                                                            ivars->shared.rxQueueReader,
                                                                            ivars->shared.rxQueueValid);
         if (rxErr == kIOReturnSuccess && ivars->shared.rxQueueValid) {
+            ivars->shared.rxQueueReader.SetActiveRxProfileId(
+                ASFW::Isoch::Config::RxProfileRawValue(ASFW::Isoch::Config::GetActiveRxProfileId()));
             ASFW_LOG(Audio,
                      "ASFWAudioDriver: RX shared queue mapped: %llu bytes",
                      ivars->shared.rxQueueBytes);
@@ -506,6 +573,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             .outputChannelCount = driverIvars->device.outputChannelCount,
             .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
             .rxStartupDrained = &driverIvars->runtime.rxStartupDrained,
+            .rxTransportRebased = &driverIvars->runtime.rxTransportRebased,
             .rxQueueValid = driverIvars->shared.rxQueueValid,
             .rxQueueReader = &driverIvars->shared.rxQueueReader,
             .txQueueValid = driverIvars->shared.txQueueValid,
@@ -548,7 +616,10 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                              callbackOrdinal);
 
         if (operation == IOUserAudioIOOperationBeginRead) {
+            auto& ioMetrics = driverIvars->runtime.ioMetrics;
             driverIvars->runtime.ioMetrics.totalFramesSent.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
+            ioMetrics.inputCallbackCount.fetch_add(1, std::memory_order_relaxed);
+            ioMetrics.inputFramesRequested.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
         } else if (operation == IOUserAudioIOOperationWriteEnd) {
             auto& ioMetrics = driverIvars->runtime.ioMetrics;
             ioMetrics.totalFramesReceived.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
@@ -751,11 +822,14 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     // Transport queue/ring buffering remains managed internally and should not
     // inflate kAudioDevicePropertyLatency compensation.
     ivars->audioDevice->SetOutputLatency(kReportedDeviceLatencyFrames);
-    ivars->audioDevice->SetInputLatency(kReportedDeviceLatencyFrames);
-    ivars->audioDevice->SetOutputSafetyOffset(kReportedSafetyOffsetFrames);
-    ivars->audioDevice->SetInputSafetyOffset(kReportedSafetyOffsetFrames);
-    ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out/in=%u, safety out/in=%u frames",
-             kReportedDeviceLatencyFrames, kReportedSafetyOffsetFrames);
+    ivars->audioDevice->SetInputLatency(activeRxProfile.inputLatencyFrames);
+    ivars->audioDevice->SetOutputSafetyOffset(kReportedOutputSafetyOffsetFrames);
+    ivars->audioDevice->SetInputSafetyOffset(activeRxProfile.safetyOffsetFrames);
+    ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out/in=%u/%u, safety out/in=%u/%u frames",
+             kReportedDeviceLatencyFrames,
+             activeRxProfile.inputLatencyFrames,
+             kReportedOutputSafetyOffsetFrames,
+             activeRxProfile.safetyOffsetFrames);
 
     // Add device to driver
     error = AddObject(ivars->audioDevice.get());
@@ -849,6 +923,19 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         }
     }
 
+    if (ivars->shared.rxQueueValid) {
+        const uint32_t staleFrames = ivars->shared.rxQueueReader.FillLevelFrames();
+        const uint32_t droppedFrames = ivars->shared.rxQueueReader.ConsumeFrames(staleFrames);
+        if (droppedFrames > 0) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDriver: Dropped stale RX backlog before HAL start: %u/%u frames",
+                     droppedFrames,
+                     staleFrames);
+        }
+        ivars->shared.rxQueueReader.ResetConsumerReadDiagnostics();
+        ivars->shared.rxQueueReader.ResetStartupAlignment();
+    }
+
     ASFW::Isoch::Audio::AudioClockEngineState clockState{
         .audioDevice = ivars->audioDevice.get(),
         .timestampTimer = ivars->runtime.timestampTimer.get(),
@@ -868,6 +955,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         .packetAssembler = &ivars->runtime.packetAssembler,
         .encodingMetrics = &ivars->runtime.encodingMetrics,
         .rxStartupDrained = &ivars->runtime.rxStartupDrained,
+        .rxTransportRebased = &ivars->runtime.rxTransportRebased,
     };
     ASFW::Isoch::Audio::PrepareClockEngineForStart(clockState);
     

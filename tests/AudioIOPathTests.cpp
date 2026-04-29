@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Isoch/Audio/AudioIOPath.hpp"
+#include "Isoch/Config/AudioRxProfiles.hpp"
 
 #include <array>
 #include <cstddef>
@@ -100,7 +101,7 @@ TEST(AudioIOPathTests, BeginReadWrapsAndZeroPadsOnPartialQueueRead) {
     ASSERT_NE(samples, nullptr);
     std::memset(samples, 0x11, kPeriodFrames * kChannels * sizeof(int32_t));
 
-    bool startupDrained = false;
+    bool startupDrained = true;
     AudioIOPathState state{
         .inputBuffer = inputBuffer,
         .inputChannelCount = kChannels,
@@ -122,6 +123,152 @@ TEST(AudioIOPathTests, BeginReadWrapsAndZeroPadsOnPartialQueueRead) {
     EXPECT_EQ(samples[1], 0);
     EXPECT_EQ(samples[2], 0);
     EXPECT_EQ(samples[3], 0);
+}
+
+TEST(AudioIOPathTests, BeginReadHoldsStartupUntilRxQueueReachesTarget) {
+    constexpr uint32_t kChannels = 2;
+    constexpr uint32_t kPeriodFrames = 8;
+
+    ASFW::Isoch::Config::SetActiveRxProfile(ASFW::Isoch::Config::RxProfileId::B);
+
+    QueueFixture rxQueue(512, kChannels);
+    ASSERT_TRUE(rxQueue.ok);
+    const std::array<int32_t, 4> twoFrames = {101, 102, 201, 202};
+    ASSERT_EQ(rxQueue.queue.Write(twoFrames.data(), 2), 2u);
+
+    IOBufferMemoryDescriptor* inputBuffer = CreateAudioBuffer(kPeriodFrames, kChannels);
+    ASSERT_NE(inputBuffer, nullptr);
+    int32_t* samples = BufferPtr(inputBuffer);
+    ASSERT_NE(samples, nullptr);
+    std::memset(samples, 0x11, kPeriodFrames * kChannels * sizeof(int32_t));
+
+    bool startupDrained = false;
+    AudioIOPathState state{
+        .inputBuffer = inputBuffer,
+        .inputChannelCount = kChannels,
+        .ioBufferPeriodFrames = kPeriodFrames,
+        .rxStartupDrained = &startupDrained,
+        .rxQueueValid = true,
+        .rxQueueReader = &rxQueue.queue,
+    };
+
+    ASSERT_EQ(HandleIOOperation(state, IOUserAudioIOOperationBeginRead, 4, 2), kIOReturnSuccess);
+    EXPECT_FALSE(startupDrained);
+    EXPECT_EQ(rxQueue.queue.ConsumerUnderreadEvents(), 1u);
+    EXPECT_EQ(rxQueue.queue.ConsumerUnderreadFrames(), 4u);
+    EXPECT_EQ(rxQueue.queue.FillLevelFrames(), 2u);
+
+    for (uint32_t frame = 2; frame < 6; ++frame) {
+        EXPECT_EQ(samples[frame * kChannels + 0], 0);
+        EXPECT_EQ(samples[frame * kChannels + 1], 0);
+    }
+}
+
+TEST(AudioIOPathTests, BeginReadRebasesRxQueueWhenTransportRateArrives) {
+    constexpr uint32_t kChannels = 2;
+    constexpr uint32_t kPeriodFrames = 8;
+
+    ASFW::Isoch::Config::SetActiveRxProfile(ASFW::Isoch::Config::RxProfileId::B);
+
+    QueueFixture rxQueue(1024, kChannels);
+    ASSERT_TRUE(rxQueue.ok);
+    std::vector<int32_t> frames(700 * kChannels);
+    for (size_t i = 0; i < frames.size(); ++i) {
+        frames[i] = static_cast<int32_t>(i + 1);
+    }
+    ASSERT_EQ(rxQueue.queue.Write(frames.data(), 700), 700u);
+    rxQueue.queue.SetCorrHostNanosPerSampleQ8(5333333);
+
+    IOBufferMemoryDescriptor* inputBuffer = CreateAudioBuffer(kPeriodFrames, kChannels);
+    ASSERT_NE(inputBuffer, nullptr);
+
+    bool startupDrained = true;
+    bool transportRebased = false;
+    AudioIOPathState state{
+        .inputBuffer = inputBuffer,
+        .inputChannelCount = kChannels,
+        .ioBufferPeriodFrames = kPeriodFrames,
+        .rxStartupDrained = &startupDrained,
+        .rxTransportRebased = &transportRebased,
+        .rxQueueValid = true,
+        .rxQueueReader = &rxQueue.queue,
+    };
+
+    ASSERT_EQ(HandleIOOperation(state, IOUserAudioIOOperationBeginRead, 4, 0), kIOReturnSuccess);
+    EXPECT_TRUE(transportRebased);
+    EXPECT_EQ(rxQueue.queue.FillLevelFrames(), 252u);
+}
+
+TEST(AudioIOPathTests, BeginReadSlewsHighWaterBacklogAfterTransportLock) {
+    constexpr uint32_t kChannels = 2;
+    constexpr uint32_t kPeriodFrames = 128;
+    constexpr uint32_t kReadFrames = 64;
+
+    ASFW::Isoch::Config::SetActiveRxProfile(ASFW::Isoch::Config::RxProfileId::B);
+
+    QueueFixture rxQueue(1024, kChannels);
+    ASSERT_TRUE(rxQueue.ok);
+    std::vector<int32_t> frames(700 * kChannels);
+    for (uint32_t frame = 0; frame < 700; ++frame) {
+        frames[frame * kChannels + 0] = static_cast<int32_t>((frame + 1) * 10 + 1);
+        frames[frame * kChannels + 1] = static_cast<int32_t>((frame + 1) * 10 + 2);
+    }
+    ASSERT_EQ(rxQueue.queue.Write(frames.data(), 700), 700u);
+    rxQueue.queue.SetCorrHostNanosPerSampleQ8(5333333);
+
+    IOBufferMemoryDescriptor* inputBuffer = CreateAudioBuffer(kPeriodFrames, kChannels);
+    ASSERT_NE(inputBuffer, nullptr);
+    int32_t* samples = BufferPtr(inputBuffer);
+    ASSERT_NE(samples, nullptr);
+
+    bool startupDrained = true;
+    bool transportRebased = true;
+    AudioIOPathState state{
+        .inputBuffer = inputBuffer,
+        .inputChannelCount = kChannels,
+        .ioBufferPeriodFrames = kPeriodFrames,
+        .rxStartupDrained = &startupDrained,
+        .rxTransportRebased = &transportRebased,
+        .rxQueueValid = true,
+        .rxQueueReader = &rxQueue.queue,
+    };
+
+    ASSERT_EQ(HandleIOOperation(state, IOUserAudioIOOperationBeginRead, kReadFrames, 0), kIOReturnSuccess);
+    EXPECT_EQ(rxQueue.queue.FillLevelFrames(), 635u);
+    EXPECT_EQ(rxQueue.queue.ConsumerUnderreadEvents(), 0u);
+    EXPECT_EQ(samples[0], 21);
+    EXPECT_EQ(samples[1], 22);
+}
+
+TEST(AudioIOPathTests, BeginReadSlewsHighWaterBacklogBeforeTransportRateArrives) {
+    constexpr uint32_t kChannels = 2;
+    constexpr uint32_t kPeriodFrames = 8;
+
+    ASFW::Isoch::Config::SetActiveRxProfile(ASFW::Isoch::Config::RxProfileId::B);
+
+    QueueFixture rxQueue(1024, kChannels);
+    ASSERT_TRUE(rxQueue.ok);
+    std::vector<int32_t> frames(700 * kChannels, 1);
+    ASSERT_EQ(rxQueue.queue.Write(frames.data(), 700), 700u);
+
+    IOBufferMemoryDescriptor* inputBuffer = CreateAudioBuffer(kPeriodFrames, kChannels);
+    ASSERT_NE(inputBuffer, nullptr);
+
+    bool startupDrained = true;
+    bool transportRebased = false;
+    AudioIOPathState state{
+        .inputBuffer = inputBuffer,
+        .inputChannelCount = kChannels,
+        .ioBufferPeriodFrames = kPeriodFrames,
+        .rxStartupDrained = &startupDrained,
+        .rxTransportRebased = &transportRebased,
+        .rxQueueValid = true,
+        .rxQueueReader = &rxQueue.queue,
+    };
+
+    ASSERT_EQ(HandleIOOperation(state, IOUserAudioIOOperationBeginRead, 4, 0), kIOReturnSuccess);
+    EXPECT_FALSE(transportRebased);
+    EXPECT_EQ(rxQueue.queue.FillLevelFrames(), 695u);
 }
 
 TEST(AudioIOPathTests, WriteEndUsesPacketAssemblerWhenTxQueueUnavailable) {

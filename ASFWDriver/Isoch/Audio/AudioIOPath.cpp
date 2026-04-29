@@ -24,19 +24,61 @@ void ZeroFrames(int32_t* pcm, uint32_t frames, uint32_t channels) {
 [[nodiscard]] uint32_t ReadFramesOrZero(Shared::TxSharedQueueSPSC& reader,
                                         int32_t* pcm,
                                         uint32_t frames,
-                                        uint32_t channels) {
+                                        uint32_t channels,
+                                        uint64_t sampleTime,
+                                        uint32_t ioBufferFrameSize,
+                                        const char* spanName) {
+    const uint32_t fillBefore = reader.FillLevelFrames();
     const uint32_t framesRead = reader.Read(pcm, frames);
     if (framesRead < frames) {
         ZeroFrames(pcm + (static_cast<size_t>(framesRead) * channels), frames - framesRead, channels);
+        ASFW_LOG_RL(Audio,
+                    "rx/consumer-underread",
+                    250,
+                    OS_LOG_TYPE_DEFAULT,
+                    "RX QUEUE UNDERREAD span=%{public}s requested=%u read=%u missing=%u fillBefore=%u fillAfter=%u events=%llu frames=%llu q8=%u sample=%llu io=%u",
+                    spanName,
+                    frames,
+                    framesRead,
+                    frames - framesRead,
+                    fillBefore,
+                    reader.FillLevelFrames(),
+                    reader.ConsumerUnderreadEvents(),
+                    reader.ConsumerUnderreadFrames(),
+                    reader.CorrHostNanosPerSampleQ8(),
+                    sampleTime,
+                    ioBufferFrameSize);
     }
     return framesRead;
 }
 
-void MaybeDrainRxStartup(AudioIOPathState& state,
+void RecordWrappedSpanUnderread(Shared::TxSharedQueueSPSC& reader,
+                                uint32_t frames,
+                                uint64_t sampleTime,
+                                uint32_t ioBufferFrameSize) {
+    const uint32_t fill = reader.FillLevelFrames();
+    reader.RecordConsumerReadResult(frames, fill, 0);
+    ASFW_LOG_RL(Audio,
+                "rx/consumer-underread",
+                250,
+                OS_LOG_TYPE_DEFAULT,
+                "RX QUEUE UNDERREAD span=wrapped-skip requested=%u read=0 missing=%u fillBefore=%u fillAfter=%u events=%llu frames=%llu q8=%u sample=%llu io=%u",
+                frames,
+                frames,
+                fill,
+                reader.FillLevelFrames(),
+                reader.ConsumerUnderreadEvents(),
+                reader.ConsumerUnderreadFrames(),
+                reader.CorrHostNanosPerSampleQ8(),
+                sampleTime,
+                ioBufferFrameSize);
+}
+
+bool MaybeDrainRxStartup(AudioIOPathState& state,
                          uint32_t ioBufferFrameSize,
                          uint64_t sampleTime) {
     if (!state.rxQueueValid || !state.rxQueueReader || !state.rxStartupDrained || *state.rxStartupDrained) {
-        return;
+        return true;
     }
 
     const auto& rxProfile = ASFW::Isoch::Config::GetActiveRxProfile();
@@ -44,6 +86,24 @@ void MaybeDrainRxStartup(AudioIOPathState& state,
     const uint32_t largeBacklogThreshold = targetFillFrames + rxProfile.startupDrainThresholdFrames;
     const uint32_t fill = state.rxQueueReader->FillLevelFrames();
     uint32_t drained = 0;
+
+    if (fill < targetFillFrames) {
+        state.rxQueueReader->RecordConsumerReadResult(ioBufferFrameSize, fill, 0);
+        ASFW_LOG_RL(Audio,
+                    "rx/startup-hold",
+                    500,
+                    OS_LOG_TYPE_DEFAULT,
+                    "RX startup hold profile=%{public}s fill=%u target=%u zeroFrames=%u events=%llu frames=%llu sample=%llu io=%u",
+                    rxProfile.name,
+                    fill,
+                    targetFillFrames,
+                    ioBufferFrameSize,
+                    state.rxQueueReader->ConsumerUnderreadEvents(),
+                    state.rxQueueReader->ConsumerUnderreadFrames(),
+                    sampleTime,
+                    ioBufferFrameSize);
+        return false;
+    }
 
     if (fill > targetFillFrames) {
         drained = fill - targetFillFrames;
@@ -62,6 +122,7 @@ void MaybeDrainRxStartup(AudioIOPathState& state,
              sampleTime,
              ioBufferFrameSize);
     *state.rxStartupDrained = true;
+    return true;
 }
 
 void MaybeLatchTransportStartupAlignment(AudioIOPathState& state, uint64_t sampleTime) {
@@ -95,6 +156,86 @@ void MaybeLatchTransportStartupAlignment(AudioIOPathState& state, uint64_t sampl
              offset);
 }
 
+uint32_t RxTargetFillFrames() noexcept {
+    return ASFW::Isoch::Config::GetActiveRxProfile().startupFillTargetFrames;
+}
+
+bool RxTransportRateReady(const AudioIOPathState& state) noexcept {
+    return state.rxQueueValid &&
+           state.rxQueueReader &&
+           state.rxQueueReader->CorrHostNanosPerSampleQ8() != 0;
+}
+
+void MaybeRebaseRxOnTransportLock(AudioIOPathState& state,
+                                  uint32_t ioBufferFrameSize,
+                                  uint64_t sampleTime) {
+    if (!RxTransportRateReady(state) || !state.rxTransportRebased || *state.rxTransportRebased) {
+        return;
+    }
+
+    const uint32_t target = RxTargetFillFrames();
+    const uint32_t fill = state.rxQueueReader->FillLevelFrames();
+    uint32_t drained = 0;
+    if (fill > target) {
+        drained = state.rxQueueReader->ConsumeFrames(fill - target);
+    }
+
+    const uint32_t fillAfter = state.rxQueueReader->FillLevelFrames();
+    *state.rxTransportRebased = true;
+    ASFW_LOG(Audio,
+             "RX transport rebase fill=%u target=%u drained=%u result=%u q8=%u sample=%llu io=%u",
+             fill,
+             target,
+             drained,
+             fillAfter,
+             state.rxQueueReader->CorrHostNanosPerSampleQ8(),
+             sampleTime,
+             ioBufferFrameSize);
+}
+
+void MaybeSlewRxHighWater(AudioIOPathState& state,
+                          uint32_t ioBufferFrameSize,
+                          uint64_t sampleTime) {
+    if (!state.rxQueueValid || !state.rxQueueReader) {
+        return;
+    }
+
+    const auto& rxProfile = ASFW::Isoch::Config::GetActiveRxProfile();
+    const uint32_t target = rxProfile.startupFillTargetFrames;
+    const uint32_t guard = std::max({rxProfile.startupDrainThresholdFrames * 2U,
+                                     ioBufferFrameSize * 2U,
+                                     256U});
+    const uint32_t highWater = target + guard;
+    const uint32_t fill = state.rxQueueReader->FillLevelFrames();
+    if (fill <= highWater) {
+        return;
+    }
+
+    const uint32_t capacity = state.rxQueueReader->CapacityFrames();
+    const bool emergency = capacity > ioBufferFrameSize && (fill + ioBufferFrameSize) >= capacity;
+    const uint32_t maxSlew = std::max(1U, ioBufferFrameSize / 64U);
+    const uint32_t desiredDrain = emergency
+        ? (fill > highWater ? fill - highWater : ioBufferFrameSize)
+        : std::min(fill - target, maxSlew);
+    const uint32_t drained = state.rxQueueReader->ConsumeFrames(desiredDrain);
+    ASFW_LOG_RL(Audio,
+                emergency ? "rx/high-water-emergency-trim" : "rx/high-water-slew",
+                500,
+                emergency ? OS_LOG_TYPE_ERROR : OS_LOG_TYPE_DEFAULT,
+                "RX high-water %{public}s fill=%u high=%u target=%u cap=%u drained=%u result=%u q8=%u rateReady=%u sample=%llu io=%u",
+                emergency ? "emergency-trim" : "slew",
+                fill,
+                highWater,
+                target,
+                capacity,
+                drained,
+                state.rxQueueReader->FillLevelFrames(),
+                state.rxQueueReader->CorrHostNanosPerSampleQ8(),
+                RxTransportRateReady(state) ? 1U : 0U,
+                sampleTime,
+                ioBufferFrameSize);
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t HandleBeginRead(AudioIOPathState& state,
                               uint32_t ioBufferFrameSize, // NOLINT(bugprone-easily-swappable-parameters)
@@ -124,11 +265,17 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
     }
 
     const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
-    MaybeLatchTransportStartupAlignment(state, sampleTime);
-    MaybeDrainRxStartup(state, ioBufferFrameSize, sampleTime);
-
     auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);
     auto* pcmSecond = reinterpret_cast<int32_t*>(segment.address);
+
+    if (!MaybeDrainRxStartup(state, ioBufferFrameSize, sampleTime)) {
+        ZeroFrames(pcmFirst, firstFrames, ch);
+        ZeroFrames(pcmSecond, secondFrames, ch);
+        return kIOReturnSuccess;
+    }
+    MaybeLatchTransportStartupAlignment(state, sampleTime);
+    MaybeRebaseRxOnTransportLock(state, ioBufferFrameSize, sampleTime);
+    MaybeSlewRxHighWater(state, ioBufferFrameSize, sampleTime);
 
     if (!state.rxQueueValid || !state.rxQueueReader) {
         ZeroFrames(pcmFirst, firstFrames, ch);
@@ -136,14 +283,27 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
         return kIOReturnSuccess;
     }
 
-    const uint32_t read1 = ReadFramesOrZero(*state.rxQueueReader, pcmFirst, firstFrames, ch);
+    const uint32_t read1 = ReadFramesOrZero(*state.rxQueueReader,
+                                            pcmFirst,
+                                            firstFrames,
+                                            ch,
+                                            sampleTime,
+                                            ioBufferFrameSize,
+                                            "first");
     if (secondFrames == 0) {
         return kIOReturnSuccess;
     }
 
     if (read1 == firstFrames) {
-        static_cast<void>(ReadFramesOrZero(*state.rxQueueReader, pcmSecond, secondFrames, ch));
+        static_cast<void>(ReadFramesOrZero(*state.rxQueueReader,
+                                           pcmSecond,
+                                           secondFrames,
+                                           ch,
+                                           sampleTime,
+                                           ioBufferFrameSize,
+                                           "wrapped"));
     } else {
+        RecordWrappedSpanUnderread(*state.rxQueueReader, secondFrames, sampleTime, ioBufferFrameSize);
         ZeroFrames(pcmSecond, secondFrames, ch);
     }
 

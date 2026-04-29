@@ -27,6 +27,7 @@ struct AudioIOPathState {
     uint32_t ioBufferPeriodFrames{0};
 
     bool* rxStartupDrained{nullptr};
+    bool* rxTransportRebased{nullptr};
     bool rxQueueValid{false};
     ASFW::Shared::TxSharedQueueSPSC* rxQueueReader{nullptr};
 

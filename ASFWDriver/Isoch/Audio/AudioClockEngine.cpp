@@ -278,12 +278,7 @@ void RefreshTimingModel(AudioClockEngineState& state,
     model.clockAuthority = ClockAuthority::kTransportRx;
 }
 
-bool PublishFromTimingModel(AudioClockEngineState& state,
-                            uint64_t nowTicks,
-                            uint64_t hostTicksPerBuffer,
-                            uint64_t& outSampleTime,
-                            uint64_t& outHostTime,
-                            uint32_t& outQ8) {
+bool TimingModelReadyForTransport(const AudioClockEngineState& state) {
     const auto& model = state.clockSync->timingModel;
     if (model.clockAuthority != ClockAuthority::kTransportRx ||
         !model.transportFresh ||
@@ -292,40 +287,58 @@ bool PublishFromTimingModel(AudioClockEngineState& state,
         return false;
     }
 
-    outSampleTime = (model.transportAnchorSample >= model.outputSampleOffset)
-                  ? (model.transportAnchorSample - model.outputSampleOffset)
-                  : 0;
-    outHostTime = model.transportAnchorHost;
-    outQ8 = model.transportHostNanosPerSampleQ8;
+    return true;
+}
 
-    const double hostTicksPerSample = HostTicksPerSampleFromQ8(outQ8);
-    uint64_t extrapolatedTicks = 0;
-    if (nowTicks > model.transportAnchorHost && hostTicksPerSample > 0.0) {
-        const uint64_t ageTicks = nowTicks - model.transportAnchorHost;
-        const uint64_t maxExtrapolationTicks = hostTicksPerBuffer * 2;
-        extrapolatedTicks = (ageTicks > maxExtrapolationTicks) ? maxExtrapolationTicks : ageTicks;
-        const auto extrapolatedSamples =
-            static_cast<uint64_t>(static_cast<double>(extrapolatedTicks) / hostTicksPerSample);
-        outSampleTime += extrapolatedSamples;
-        outHostTime += extrapolatedTicks;
+void PublishContinuousZeroTimestamp(AudioClockEngineState& state,
+                                    uint64_t time,
+                                    uint64_t hostTicksPerBuffer,
+                                    bool transportReady,
+                                    uint64_t& outSampleTime,
+                                    uint64_t& outHostTime,
+                                    uint32_t& outQ8) {
+    uint64_t currentSampleTime = 0;
+    uint64_t currentHostTime = 0;
+    state.audioDevice->GetCurrentZeroTimestamp(&currentSampleTime, &currentHostTime);
+
+    if (currentHostTime != 0) {
+        outSampleTime = currentSampleTime + state.ioBufferPeriodFrames;
+        outHostTime = currentHostTime + hostTicksPerBuffer;
+    } else {
+        outSampleTime = 0;
+        outHostTime = time;
+    }
+
+    const auto& model = state.clockSync->timingModel;
+    if (transportReady) {
+        outQ8 = model.transportHostNanosPerSampleQ8;
+        ASFW_LOG_RL(Audio,
+                    "zts/continuous",
+                    1000,
+                    OS_LOG_TYPE_DEFAULT,
+                    "ZTS continuous authority=%{public}s seq=%u sample=%llu host=%llu q8=%u rate=%.2f fresh=%d aligned=%d inOff=%llu outOff=%llu",
+                    ClockAuthorityName(model.clockAuthority),
+                    model.transportSeq,
+                    outSampleTime,
+                    outHostTime,
+                    outQ8,
+                    SampleRateFromQ8(outQ8),
+                    model.transportFresh,
+                    model.startupAligned,
+                    model.inputSampleOffset,
+                    model.outputSampleOffset);
+        return;
     }
 
     ASFW_LOG_RL(Audio,
-                "zts/src",
+                "zts/fallback",
                 1000,
                 OS_LOG_TYPE_DEFAULT,
-                "ZTS model authority=%{public}s seq=%u sample=%llu host=%llu q8=%u rate=%.2f fresh=%d aligned=%d inOff=%llu outOff=%llu",
-                ClockAuthorityName(model.clockAuthority),
-                model.transportSeq,
+                "ZTS fallback synthetic sample=%llu host=%llu q8=%u aligned=%d",
                 outSampleTime,
                 outHostTime,
                 outQ8,
-                SampleRateFromQ8(outQ8),
-                model.transportFresh,
-                model.startupAligned,
-                model.inputSampleOffset,
-                model.outputSampleOffset);
-    return true;
+                model.startupAligned);
 }
 
 void LogPeriodicMetrics(AudioClockEngineState& state,
@@ -334,13 +347,17 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
                         uint32_t rxFill,
                         bool rxPllReady,
                         uint32_t q8) {
-    if (++(*state.metricsLogCounter) % 430 != 0) {
+    if (++(*state.metricsLogCounter) % 94 != 0) {
         return;
     }
 
     const uint64_t framesReceived = state.ioMetrics->totalFramesReceived.load(std::memory_order_relaxed);
     const uint64_t framesSent = state.ioMetrics->totalFramesSent.load(std::memory_order_relaxed);
     const uint64_t callbacks = state.ioMetrics->callbackCount.load(std::memory_order_relaxed);
+    const uint64_t inputCallbacks =
+        state.ioMetrics->inputCallbackCount.load(std::memory_order_relaxed);
+    const uint64_t inputRequested =
+        state.ioMetrics->inputFramesRequested.load(std::memory_order_relaxed);
     const uint64_t underruns = state.ioMetrics->underruns.load(std::memory_order_relaxed);
     const uint64_t outputCallbacks =
         state.ioMetrics->outputCallbackCount.load(std::memory_order_relaxed);
@@ -366,6 +383,10 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
         state.ioMetrics->lastOutputFramesWritten.load(std::memory_order_relaxed);
     const uint32_t lastOutputShortfall =
         state.ioMetrics->lastOutputWriteShortfall.load(std::memory_order_relaxed);
+    const uint32_t lastBeginReadFrameSize =
+        state.ioMetrics->lastBeginReadFrameSize.load(std::memory_order_relaxed);
+    const uint64_t lastBeginReadSampleTime =
+        state.ioMetrics->lastBeginReadSampleTime.load(std::memory_order_relaxed);
 
     uint32_t ringFillLevel = lastAssemblerFillFrames;
     uint64_t ringUnderruns = 0;
@@ -386,6 +407,7 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
     }
 
     const double framesPerSec = static_cast<double>(framesReceived) / elapsedSec;
+    const double inputFramesPerSec = static_cast<double>(framesSent) / elapsedSec;
     const double dt = elapsedSec - state.encodingMetrics->lastLogElapsedSec;
     const uint64_t dp = state.encodingMetrics->packetsGenerated - state.encodingMetrics->lastLogPackets;
     const double packetsPerSec = (dt > 0.0) ? static_cast<double>(dp) / dt : 0.0;
@@ -413,6 +435,44 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
                  ClockAuthorityName(model.clockAuthority),
                  model.inputSampleOffset,
                  model.outputSampleOffset);
+    }
+
+    if (inputCallbacks > 0 || (state.rxQueueValid && state.rxQueueReader)) {
+        const uint64_t rxUnderreadEvents =
+            state.rxQueueValid ? state.rxQueueReader->ConsumerUnderreadEvents() : 0;
+        const uint64_t rxUnderreadFrames =
+            state.rxQueueValid ? state.rxQueueReader->ConsumerUnderreadFrames() : 0;
+        const uint32_t rxCap = state.rxQueueValid ? state.rxQueueReader->CapacityFrames() : 0;
+        const uint32_t lastReq =
+            state.rxQueueValid ? state.rxQueueReader->LastConsumerReadRequestedFrames() : 0;
+        const uint32_t lastAvail =
+            state.rxQueueValid ? state.rxQueueReader->LastConsumerReadAvailableFrames() : 0;
+        const uint32_t lastRead =
+            state.rxQueueValid ? state.rxQueueReader->LastConsumerReadFrames() : 0;
+        const uint32_t profile =
+            state.rxQueueValid ? state.rxQueueReader->ActiveRxProfileId() : 0;
+        const auto& model = state.clockSync->timingModel;
+        ASFW_LOG(Audio,
+                 "IO-RX: %.1fs inCb=%llu inReq=%llu sent=%llu (%.1f/s) lastBegin(fr=%u sample=%llu) rxFill=%u/%u under=%llu/%llu lastRead(req=%u avail=%u read=%u) q8=%u rate=%.2f authority=%{public}s aligned=%d profile=%u",
+                 elapsedSec,
+                 inputCallbacks,
+                 inputRequested,
+                 framesSent,
+                 inputFramesPerSec,
+                 lastBeginReadFrameSize,
+                 lastBeginReadSampleTime,
+                 rxFill,
+                 rxCap,
+                 rxUnderreadEvents,
+                 rxUnderreadFrames,
+                 lastReq,
+                 lastAvail,
+                 lastRead,
+                 q8,
+                 SampleRateFromQ8(q8),
+                 ClockAuthorityName(model.clockAuthority),
+                 model.startupAligned,
+                 profile);
     }
 
     if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
@@ -534,13 +594,16 @@ uint32_t PrimeLegacyTxQueueForTransportStart(ASFW::Shared::TxSharedQueueSPSC& qu
 void PrepareClockEngineForStart(AudioClockEngineState& state) {
     if (!state.audioDevice || !state.timestampTimer || !state.clockSync ||
         !state.hostTicksPerBuffer || !state.ioMetrics || !state.metricsLogCounter ||
-        !state.packetAssembler || !state.zeroCopyTimeline || !state.rxStartupDrained) {
+        !state.packetAssembler || !state.zeroCopyTimeline || !state.rxStartupDrained ||
+        !state.rxTransportRebased) {
         return;
     }
 
     state.ioMetrics->totalFramesReceived.store(0, std::memory_order_relaxed);
     state.ioMetrics->totalFramesSent.store(0, std::memory_order_relaxed);
     state.ioMetrics->callbackCount.store(0, std::memory_order_relaxed);
+    state.ioMetrics->inputCallbackCount.store(0, std::memory_order_relaxed);
+    state.ioMetrics->inputFramesRequested.store(0, std::memory_order_relaxed);
     state.ioMetrics->underruns.store(0, std::memory_order_relaxed);
     state.ioMetrics->outputCallbackCount.store(0, std::memory_order_relaxed);
     state.ioMetrics->outputFramesRequested.store(0, std::memory_order_relaxed);
@@ -550,6 +613,10 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.ioMetrics->lastCallbackSampleTime.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackSampleDelta.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackOperation.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastBeginReadFrameSize.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastWriteEndFrameSize.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastBeginReadSampleTime.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastWriteEndSampleTime.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastRxQueueFillFrames.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastTxQueueFillFrames.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastAssemblerFillFrames.store(0, std::memory_order_relaxed);
@@ -561,6 +628,7 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
 
     state.packetAssembler->reset();
     *state.rxStartupDrained = false;
+    *state.rxTransportRebased = false;
     detail::ResetZeroCopyTimeline(*state.zeroCopyTimeline);
     if (state.rxQueueValid && state.rxQueueReader) {
         state.rxQueueReader->ResetStartupAlignment();
@@ -660,36 +728,13 @@ void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time) {
     uint32_t publishedQ8 = q8;
     detail::RefreshTimingModel(state, time, q8, hostTicksPerBuffer);
 
-    if (!detail::PublishFromTimingModel(state,
-                                        time,
-                                        hostTicksPerBuffer,
-                                        publishedSampleTime,
-                                        publishedHostTime,
-                                        publishedQ8)) {
-        uint64_t currentSampleTime = 0;
-        uint64_t currentHostTime = 0;
-        state.audioDevice->GetCurrentZeroTimestamp(&currentSampleTime, &currentHostTime);
-
-        if (currentHostTime != 0) {
-            currentSampleTime += state.ioBufferPeriodFrames;
-            currentHostTime += hostTicksPerBuffer;
-        } else {
-            currentSampleTime = 0;
-            currentHostTime = time;
-        }
-
-        publishedSampleTime = currentSampleTime;
-        publishedHostTime = currentHostTime;
-        ASFW_LOG_RL(Audio,
-                    "zts/fallback",
-                    1000,
-                    OS_LOG_TYPE_DEFAULT,
-                    "ZTS fallback synthetic sample=%llu host=%llu q8=%u aligned=%d",
-                    publishedSampleTime,
-                    publishedHostTime,
-                    q8,
-                    state.clockSync->timingModel.startupAligned);
-    }
+    detail::PublishContinuousZeroTimestamp(state,
+                                           time,
+                                           hostTicksPerBuffer,
+                                           detail::TimingModelReadyForTransport(state),
+                                           publishedSampleTime,
+                                           publishedHostTime,
+                                           publishedQ8);
 
     state.audioDevice->UpdateCurrentZeroTimestamp(publishedSampleTime, publishedHostTime);
     state.timestampTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,

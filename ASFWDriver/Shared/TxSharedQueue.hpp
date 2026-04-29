@@ -23,7 +23,8 @@ namespace ASFW::Shared {
 
 // Magic number: 'ASFW'
 static constexpr uint32_t kTxQueueMagic = 0x41534657u;
-static constexpr uint16_t kTxQueueVersion = 2;
+static constexpr uint16_t kTxQueueVersion = 3;
+static constexpr uint32_t kTxQueueDefaultRxProfileId = 1;  // RX Profile B unless audio driver overrides.
 
 static constexpr uint64_t AlignUp(uint64_t v, uint64_t a) {
     return (v + (a - 1)) & ~(a - 1);
@@ -45,6 +46,17 @@ struct alignas(64) CachelineAtomicU64 {
     uint8_t pad[64 - sizeof(std::atomic<uint64_t>)];
 };
 static_assert(sizeof(CachelineAtomicU64) == 64, "CachelineAtomicU64 must be 64 bytes");
+
+struct alignas(64) ConsumerReadDiagnostics {
+    std::atomic<uint64_t> underreadEvents;
+    std::atomic<uint64_t> underreadFrames;
+    std::atomic<uint32_t> lastRequestedFrames;
+    std::atomic<uint32_t> lastAvailableFrames;
+    std::atomic<uint32_t> lastReadFrames;
+    std::atomic<uint32_t> activeRxProfileId;
+    uint8_t pad[32];
+};
+static_assert(sizeof(ConsumerReadDiagnostics) == 64, "ConsumerReadDiagnostics must be 64 bytes");
 
 // Shared memory header layout
 // This structure is at the beginning of the shared IOBufferMemoryDescriptor
@@ -94,7 +106,11 @@ struct TxQueueHeader {
     CachelineAtomicU64 startupAlignmentSampleTime;
     CachelineAtomicU64 startupInputSampleOffset;
     CachelineAtomicU64 startupOutputSampleOffset;
-    };
+
+    // Consumer-side RX read health. For the RX queue, ASFWAudioDriver is the consumer
+    // that zero-fills when CoreAudio asks for frames not yet decoded from FireWire.
+    ConsumerReadDiagnostics consumerReadDiagnostics;
+};
 static_assert((sizeof(TxQueueHeader) % 8) == 0, "Header alignment sanity");
 
 // SPSC ring buffer for cross-process audio streaming
@@ -162,6 +178,13 @@ public:
         hdr->startupAlignmentSampleTime.v.store(0, std::memory_order_relaxed);
         hdr->startupInputSampleOffset.v.store(0, std::memory_order_relaxed);
         hdr->startupOutputSampleOffset.v.store(0, std::memory_order_relaxed);
+        hdr->consumerReadDiagnostics.underreadEvents.store(0, std::memory_order_relaxed);
+        hdr->consumerReadDiagnostics.underreadFrames.store(0, std::memory_order_relaxed);
+        hdr->consumerReadDiagnostics.lastRequestedFrames.store(0, std::memory_order_relaxed);
+        hdr->consumerReadDiagnostics.lastAvailableFrames.store(0, std::memory_order_relaxed);
+        hdr->consumerReadDiagnostics.lastReadFrames.store(0, std::memory_order_relaxed);
+        hdr->consumerReadDiagnostics.activeRxProfileId.store(kTxQueueDefaultRxProfileId,
+                                                             std::memory_order_relaxed);
 
         // Publish header initialization
         std::atomic_thread_fence(std::memory_order_release);
@@ -219,6 +242,71 @@ public:
         const uint32_t w = hdr_->writeIndexFrames.v.load(std::memory_order_acquire);
         const uint32_t r = hdr_->readIndexFrames.v.load(std::memory_order_acquire);
         return uint32_t(w - r);
+    }
+
+    void RecordConsumerReadResult(uint32_t requestedFrames,
+                                  uint32_t availableFrames,
+                                  uint32_t readFrames) {
+        if (!IsValid() || requestedFrames == 0) return;
+        auto& diag = hdr_->consumerReadDiagnostics;
+        diag.lastRequestedFrames.store(requestedFrames, std::memory_order_release);
+        diag.lastAvailableFrames.store(availableFrames, std::memory_order_release);
+        diag.lastReadFrames.store(readFrames, std::memory_order_release);
+        if (readFrames < requestedFrames) {
+            diag.underreadEvents.fetch_add(1, std::memory_order_acq_rel);
+            diag.underreadFrames.fetch_add(requestedFrames - readFrames, std::memory_order_acq_rel);
+        }
+    }
+
+    void ResetConsumerReadDiagnostics() {
+        if (!IsValid()) return;
+        auto& diag = hdr_->consumerReadDiagnostics;
+        diag.underreadEvents.store(0, std::memory_order_release);
+        diag.underreadFrames.store(0, std::memory_order_release);
+        diag.lastRequestedFrames.store(0, std::memory_order_release);
+        diag.lastAvailableFrames.store(0, std::memory_order_release);
+        diag.lastReadFrames.store(0, std::memory_order_release);
+    }
+
+    uint64_t ConsumerUnderreadEvents() const {
+        return IsValid()
+            ? hdr_->consumerReadDiagnostics.underreadEvents.load(std::memory_order_acquire)
+            : 0;
+    }
+
+    uint64_t ConsumerUnderreadFrames() const {
+        return IsValid()
+            ? hdr_->consumerReadDiagnostics.underreadFrames.load(std::memory_order_acquire)
+            : 0;
+    }
+
+    uint32_t LastConsumerReadRequestedFrames() const {
+        return IsValid()
+            ? hdr_->consumerReadDiagnostics.lastRequestedFrames.load(std::memory_order_acquire)
+            : 0;
+    }
+
+    uint32_t LastConsumerReadAvailableFrames() const {
+        return IsValid()
+            ? hdr_->consumerReadDiagnostics.lastAvailableFrames.load(std::memory_order_acquire)
+            : 0;
+    }
+
+    uint32_t LastConsumerReadFrames() const {
+        return IsValid()
+            ? hdr_->consumerReadDiagnostics.lastReadFrames.load(std::memory_order_acquire)
+            : 0;
+    }
+
+    void SetActiveRxProfileId(uint32_t profileId) {
+        if (!IsValid()) return;
+        hdr_->consumerReadDiagnostics.activeRxProfileId.store(profileId, std::memory_order_release);
+    }
+
+    uint32_t ActiveRxProfileId() const {
+        return IsValid()
+            ? hdr_->consumerReadDiagnostics.activeRxProfileId.load(std::memory_order_acquire)
+            : kTxQueueDefaultRxProfileId;
     }
 
     // Producer: publish queue->buffer phase for zero-copy read mapping.
@@ -373,6 +461,7 @@ public:
 
         const uint32_t avail = uint32_t(w - r);
         const uint32_t n = (frames <= avail) ? frames : avail;
+        RecordConsumerReadResult(frames, avail, n);
         if (n == 0) return 0;
 
         const uint32_t idx = r & mask_;
@@ -421,6 +510,7 @@ public:
         if (!IsValid()) return;
         hdr_->writeIndexFrames.v.store(0, std::memory_order_release);
         hdr_->readIndexFrames.v.store(0, std::memory_order_release);
+        ResetConsumerReadDiagnostics();
     }
 
     // Cycle-time clock correlation: write (controller side) / read (audio driver side)

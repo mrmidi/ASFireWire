@@ -182,6 +182,11 @@ uint32_t IsochReceiveContext::Poll() {
     return processed;
 }
 
+Rx::IsochAudioRxPipeline::ClockHealthSnapshot
+IsochReceiveContext::GetClockHealth() const noexcept {
+    return audio_.ReadClockHealth();
+}
+
 void IsochReceiveContext::SetSharedRxQueue(uint8_t* base, uint64_t bytes) {
     audio_.SetSharedRxQueue(base, bytes);
 }

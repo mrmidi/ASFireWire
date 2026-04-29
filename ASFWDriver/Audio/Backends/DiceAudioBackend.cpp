@@ -264,9 +264,11 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
 
     AudioStreamRuntimeCaps caps{};
     const bool ready = record->protocol->GetRuntimeAudioStreamCaps(caps);
+    bool usedKnownProfile = false;
 
     if (!ready || caps.sampleRateHz == 0 || caps.hostInputPcmChannels == 0 || caps.hostOutputPcmChannels == 0) {
         if (DICE::TCAT::TryGetKnownDICEProfile(record->vendorId, record->modelId, caps)) {
+            usedKnownProfile = true;
             ASFW_LOG_WARNING(Audio,
                              "DiceAudioBackend: runtime caps not ready for GUID=%llx; using known DICE profile %u/%u",
                              guid,
@@ -319,6 +321,16 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             return;
         }
     }
+
+    ASFW_LOG(Audio,
+             "DiceAudioBackend: publishing DICE caps for GUID=%llx source=%{public}s rate=%u in=%u out=%u d2hSlots=%u h2dSlots=%u",
+             guid,
+             usedKnownProfile ? "known-profile" : "runtime-discovery",
+             caps.sampleRateHz,
+             caps.hostInputPcmChannels,
+             caps.hostOutputPcmChannels,
+             caps.deviceToHostAm824Slots,
+             caps.hostToDeviceAm824Slots);
 
     Model::ASFWAudioDevice dev{};
     dev.guid = record->guid;

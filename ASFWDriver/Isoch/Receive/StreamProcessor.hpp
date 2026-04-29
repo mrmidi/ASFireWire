@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <atomic>
 #include <algorithm>
+#include <cstring>
+#include <optional>
 #include "../Core/CIPHeader.hpp"
 #include "../Core/ExternalSyncBridge.hpp"
 #include "../Config/AudioConstants.hpp"
@@ -49,6 +51,12 @@ public:
             return summary;
         }
 
+        const size_t effectiveLength = EffectivePacketLength(payload, length);
+        if (effectiveLength < kIsochHeaderSize + 8) {
+            errorCount_++;
+            return summary;
+        }
+
         const auto header = DecodePacketHeader(payload);
         if (!header) {
             errorCount_++;
@@ -60,7 +68,9 @@ public:
         RecordContinuity(*header);
         RecordCipState(*header);
 
-        const auto layout = BuildPayloadLayout(payload, length, *header);
+        RecordIsochLengthClamp(length, effectiveLength, *header);
+
+        const auto layout = BuildPayloadLayout(payload, effectiveLength, *header);
         if (!layout) {
             return summary;
         }
@@ -85,13 +95,20 @@ public:
     }
     
     void LogStatistics() {
+         FlushDecodedAllZeroRun(lastDBC_.load(std::memory_order_relaxed),
+                                lastSYT_.load(std::memory_order_relaxed),
+                                lastCIP_DBS_.load(std::memory_order_relaxed));
          // Single-line compact stats
-         ASFW_LOG(Isoch, "RxStats: Pkts=%llu Data=%llu Empty=%llu Errs=%llu Drops=%llu | CIP: SID=%u DBS=%u FDF=0x%02X SYT=0x%04X DBC=0x%02X",
+         ASFW_LOG(Isoch, "RxStats: Pkts=%llu Data=%llu Empty=%llu Errs=%llu Drops=%llu Decoded=%llu ZeroDecoded=%llu/%llu maxZeroRun=%llu | CIP: SID=%u DBS=%u FDF=0x%02X SYT=0x%04X DBC=0x%02X",
              packetCount_.load(),
              samplePacketCount_.load(),
              emptyPacketCount_.load(),
              errorCount_.load(),
              discontinuityCount_.load(),
+             decodedFrameCount_.load(std::memory_order_relaxed),
+             decodedAllZeroFrameCount_.load(std::memory_order_relaxed),
+             decodedAllZeroRunEvents_.load(std::memory_order_relaxed),
+             decodedAllZeroMaxRunFrames_.load(std::memory_order_relaxed),
              lastCIP_SID_.load(),
              lastCIP_DBS_.load(),
              lastCIP_FDF_.load(),
@@ -107,6 +124,27 @@ public:
     uint64_t ErrorCount() const { return errorCount_.load(std::memory_order_relaxed); }
     uint64_t DiscontinuityCount() const { return discontinuityCount_.load(std::memory_order_relaxed); }
     uint64_t DecodedFrameCount() const { return decodedFrameCount_.load(std::memory_order_relaxed); }
+    uint64_t DecodedAllZeroFrameCount() const {
+        return decodedAllZeroFrameCount_.load(std::memory_order_relaxed);
+    }
+    uint64_t DecodedNonZeroFrameCount() const {
+        return decodedNonZeroFrameCount_.load(std::memory_order_relaxed);
+    }
+    uint64_t DecodedAllZeroRunEvents() const {
+        return decodedAllZeroRunEvents_.load(std::memory_order_relaxed);
+    }
+    uint64_t DecodedAllZeroMaxRunFrames() const {
+        return decodedAllZeroMaxRunFrames_.load(std::memory_order_relaxed);
+    }
+    uint64_t RxQueueProducerDropEvents() const {
+        return rxQueueProducerDropEvents_.load(std::memory_order_relaxed);
+    }
+    uint64_t RxQueueProducerDropFrames() const {
+        return rxQueueProducerDropFrames_.load(std::memory_order_relaxed);
+    }
+    uint64_t PcmPayloadFallbackSamples() const {
+        return pcmPayloadFallbackSamples_.load(std::memory_order_relaxed);
+    }
     
     uint8_t LastDBC() const { return lastDBC_.load(std::memory_order_relaxed); }
     uint16_t LastSYT() const { return lastSYT_.load(std::memory_order_relaxed); }
@@ -146,6 +184,13 @@ public:
         errorCount_ = 0;
         discontinuityCount_ = 0;
         decodedFrameCount_ = 0;
+        decodedAllZeroFrameCount_ = 0;
+        decodedNonZeroFrameCount_ = 0;
+        decodedAllZeroRunEvents_ = 0;
+        decodedAllZeroMaxRunFrames_ = 0;
+        currentAllZeroRunFrames_ = 0;
+        currentAllZeroRunStartFrame_ = 0;
+        currentAllZeroRunLogged_ = false;
         lastDBC_ = 0;
         lastSYT_ = 0xFFFF;
         lastDataBlockCount_ = 0; // Or assumes 0
@@ -158,9 +203,23 @@ public:
         lastPollLatencyUs_ = 0;
         lastPollPackets_ = 0;
         lastUnsupportedWireDbs_ = 0;
+        rxQueueProducerDropEvents_ = 0;
+        rxQueueProducerDropFrames_ = 0;
+        pcmPayloadFallbackSamples_ = 0;
+        lastPcmPayloadFallbackLabel_ = 0;
+        lastPcmPayloadFallbackChannel_ = 0;
+        isochLengthClampEvents_ = 0;
+        isochLengthClampBytes_ = 0;
+        lastIsochHeaderDataLength_ = 0;
     }
 
 private:
+    struct IsochHeaderDecode {
+        bool valid{false};
+        uint16_t dataLength{0};
+        uint32_t header{0};
+    };
+
     struct PayloadLayout {
         const uint32_t* dataPtr{nullptr};
         size_t payloadBytes{0};
@@ -170,6 +229,89 @@ private:
         uint32_t queueChannels{0};
         bool queueWriteSafe{true};
     };
+
+    [[nodiscard]] static uint32_t LoadU32(const uint8_t* bytes) noexcept {
+        uint32_t value = 0;
+        std::memcpy(&value, bytes, sizeof(value));
+        return value;
+    }
+
+    [[nodiscard]] static bool IsPlausibleIsochHeader(uint32_t header,
+                                                     size_t availableDataBytes) noexcept {
+        const uint16_t dataLength = static_cast<uint16_t>((header >> 16) & 0xFFFFU);
+        const uint8_t tcode = static_cast<uint8_t>((header >> 4) & 0x0FU);
+
+        return tcode == 0x0AU &&
+               dataLength >= 8U &&
+               dataLength <= availableDataBytes &&
+               (dataLength % sizeof(uint32_t)) == 0;
+    }
+
+    [[nodiscard]] static IsochHeaderDecode DecodeIsochHeader(const uint8_t* payload,
+                                                             size_t length) noexcept {
+        if (!payload || length < kIsochHeaderSize + 8) {
+            return {};
+        }
+
+        const size_t availableDataBytes = length - kIsochHeaderSize;
+        const uint32_t native = LoadU32(payload + 4);
+        const uint32_t candidates[] = {
+            native,
+            SwapBigToHost(native),
+        };
+
+        for (uint32_t header : candidates) {
+            if (!IsPlausibleIsochHeader(header, availableDataBytes)) {
+                continue;
+            }
+            return IsochHeaderDecode{
+                .valid = true,
+                .dataLength = static_cast<uint16_t>((header >> 16) & 0xFFFFU),
+                .header = header,
+            };
+        }
+
+        return {};
+    }
+
+    [[nodiscard]] size_t EffectivePacketLength(const uint8_t* payload, size_t length) noexcept {
+        const auto decoded = DecodeIsochHeader(payload, length);
+        if (!decoded.valid) {
+            return length;
+        }
+
+        lastIsochHeaderDataLength_.store(decoded.dataLength, std::memory_order_relaxed);
+        return kIsochHeaderSize + static_cast<size_t>(decoded.dataLength);
+    }
+
+    void RecordIsochLengthClamp(size_t descriptorLength,
+                                size_t effectiveLength,
+                                const CIPHeader& header) noexcept {
+        if (effectiveLength >= descriptorLength) {
+            return;
+        }
+
+        const uint64_t bytes =
+            isochLengthClampBytes_.fetch_add(descriptorLength - effectiveLength,
+                                             std::memory_order_relaxed) +
+            (descriptorLength - effectiveLength);
+        const uint64_t events =
+            isochLengthClampEvents_.fetch_add(1, std::memory_order_relaxed) + 1;
+
+        ASFW_LOG_RL(Isoch,
+                    "rx/isoch-length-clamp",
+                    1000,
+                    OS_LOG_TYPE_DEFAULT,
+                    "IR RX isoch length clamp descriptor=%zu effective=%zu trimmedBytes=%llu events=%llu dataLength=%u dbc=0x%02x syt=0x%04x dbs=%u",
+                    descriptorLength,
+                    effectiveLength,
+                    bytes,
+                    events,
+                    lastIsochHeaderDataLength_.load(std::memory_order_relaxed),
+                    header.dataBlockCounter,
+                    header.syt,
+                    header.dataBlockSize);
+    }
 
     [[nodiscard]] std::optional<CIPHeader> DecodePacketHeader(const uint8_t* payload) const noexcept {
         const uint8_t* cipStart = payload + kIsochHeaderSize;
@@ -248,7 +390,7 @@ private:
         const uint32_t cipDbs = header.dataBlockSize;
         const bool interestingDbs =
             (cipDbs > Config::kMaxAmdtpDbs) ||
-            (layout.queueChannels > 0 && cipDbs > layout.queueChannels);
+            (layout.queueChannels > 0 && cipDbs != layout.queueChannels);
         if (!interestingDbs) {
             return;
         }
@@ -272,6 +414,8 @@ private:
                  layout.queueChannels,
                  (layout.queueChannels > 0 && cipDbs > layout.queueChannels)
                      ? " likely extra AM824 slot(s), possibly MIDI"
+                     : (layout.queueChannels > 0 && cipDbs < layout.queueChannels)
+                         ? " likely host queue larger than AM824 stream"
                      : "");
 
         uint32_t extraSlotIndex = UINT32_MAX;
@@ -303,7 +447,9 @@ private:
         }
 
         samplePacketCount_++;
-        decodedFrameCount_.fetch_add(layout.eventCount, std::memory_order_relaxed);
+        const uint64_t decodedFrameBase =
+            decodedFrameCount_.fetch_add(static_cast<uint64_t>(layout.eventCount),
+                                         std::memory_order_relaxed);
         if (layout.eventCount < minEvents_) {
             minEvents_ = layout.eventCount;
         }
@@ -330,21 +476,142 @@ private:
             for (size_t ch = 0; ch < layout.decodeSlotsPerEvent; ++ch) {
                 const uint32_t sampleQuad =
                     layout.dataPtr[(i * layout.wireSlotsPerEvent) + ch];
-                if (auto sample = AM824Decoder::DecodeSample(sampleQuad)) {
+                const uint8_t label = AM824Decoder::Label(sampleQuad);
+                if (auto sample = AM824Decoder::DecodeConfiguredPcmSlot(sampleQuad)) {
                     eventSamples_[ch] = *sample;
-                } else if (AM824Decoder::IsMIDI(sampleQuad)) {
-                    eventSamples_[ch] = 0;
-                } else {
-                    eventSamples_[ch] = 0;
+                    if (!AM824Decoder::IsMultiBitLinearAudioLabel(label)) {
+                        RecordPcmPayloadFallback(header, ch, label);
+                    }
                 }
             }
 
+            const bool hasNonZeroDecodedSample = EventHasNonZeroDecodedSample(layout);
+            RecordDecodedFrameContent(header,
+                                      layout,
+                                      decodedFrameBase + static_cast<uint64_t>(i),
+                                      hasNonZeroDecodedSample);
+
             if (sharedRxQueue_ && layout.queueWriteSafe) {
-                sharedRxQueue_->Write(eventSamples_, 1);
+                if (sharedRxQueue_->Write(eventSamples_, 1) != 1) {
+                    const uint64_t frames =
+                        rxQueueProducerDropFrames_.fetch_add(1, std::memory_order_relaxed) + 1;
+                    const uint64_t events =
+                        rxQueueProducerDropEvents_.fetch_add(1, std::memory_order_relaxed) + 1;
+                    ASFW_LOG_RL(Isoch,
+                                "rxq/producer-drop",
+                                500,
+                                OS_LOG_TYPE_DEFAULT,
+                                "IR RX QUEUE OVERRUN droppedFrames=%llu events=%llu fill=%u cap=%u dbc=0x%02x syt=0x%04x",
+                                frames,
+                                events,
+                                sharedRxQueue_->FillLevelFrames(),
+                                sharedRxQueue_->CapacityFrames(),
+                                header.dataBlockCounter,
+                                header.syt);
+                }
             } else if (sharedRxQueue_ && !layout.queueWriteSafe) {
                 errorCount_++;
             }
         }
+    }
+
+    [[nodiscard]] bool EventHasNonZeroDecodedSample(const PayloadLayout& layout) const noexcept {
+        for (size_t ch = 0; ch < layout.decodeSlotsPerEvent; ++ch) {
+            if (eventSamples_[ch] != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void RecordDecodedFrameContent(const CIPHeader& header,
+                                   const PayloadLayout& layout,
+                                   uint64_t decodedFrameIndex,
+                                   bool hasNonZeroDecodedSample) noexcept {
+        if (hasNonZeroDecodedSample) {
+            decodedNonZeroFrameCount_.fetch_add(1, std::memory_order_relaxed);
+            FlushDecodedAllZeroRun(header.dataBlockCounter, header.syt, header.dataBlockSize);
+            return;
+        }
+
+        decodedAllZeroFrameCount_.fetch_add(1, std::memory_order_relaxed);
+        if (currentAllZeroRunFrames_ == 0) {
+            currentAllZeroRunStartFrame_ = decodedFrameIndex;
+            currentAllZeroRunLogged_ = false;
+        }
+        ++currentAllZeroRunFrames_;
+
+        if (!currentAllZeroRunLogged_ &&
+            currentAllZeroRunFrames_ >= kDecodedAllZeroOngoingLogFrames) {
+            currentAllZeroRunLogged_ = true;
+            ASFW_LOG(Isoch,
+                     "IR RX decoded all-zero run ongoing frames=%llu startFrame=%llu dbc=0x%02x syt=0x%04x dbs=%u queueFill=%u cap=%u decodeSlots=%zu queueCh=%u",
+                     currentAllZeroRunFrames_,
+                     currentAllZeroRunStartFrame_,
+                     header.dataBlockCounter,
+                     header.syt,
+                     header.dataBlockSize,
+                     sharedRxQueue_ ? sharedRxQueue_->FillLevelFrames() : 0,
+                     sharedRxQueue_ ? sharedRxQueue_->CapacityFrames() : 0,
+                     layout.decodeSlotsPerEvent,
+                     layout.queueChannels);
+        }
+    }
+
+    void FlushDecodedAllZeroRun(uint8_t dbc, uint16_t syt, uint8_t dbs) noexcept {
+        if (currentAllZeroRunFrames_ == 0) {
+            return;
+        }
+
+        const uint64_t runFrames = currentAllZeroRunFrames_;
+        const uint64_t runStart = currentAllZeroRunStartFrame_;
+        const uint64_t runEvents =
+            decodedAllZeroRunEvents_.fetch_add(1, std::memory_order_relaxed) + 1;
+
+        uint64_t maxRun = decodedAllZeroMaxRunFrames_.load(std::memory_order_relaxed);
+        if (runFrames > maxRun) {
+            decodedAllZeroMaxRunFrames_.store(runFrames, std::memory_order_relaxed);
+            maxRun = runFrames;
+        }
+
+        if (runFrames >= kDecodedAllZeroRunLogFrames || currentAllZeroRunLogged_) {
+            ASFW_LOG(Isoch,
+                     "IR RX decoded all-zero run frames=%llu startFrame=%llu endFrame=%llu runs=%llu totalZeroFrames=%llu maxRun=%llu dbc=0x%02x syt=0x%04x dbs=%u queueFill=%u cap=%u",
+                     runFrames,
+                     runStart,
+                     runStart + runFrames,
+                     runEvents,
+                     decodedAllZeroFrameCount_.load(std::memory_order_relaxed),
+                     maxRun,
+                     dbc,
+                     syt,
+                     dbs,
+                     sharedRxQueue_ ? sharedRxQueue_->FillLevelFrames() : 0,
+                     sharedRxQueue_ ? sharedRxQueue_->CapacityFrames() : 0);
+        }
+
+        currentAllZeroRunFrames_ = 0;
+        currentAllZeroRunStartFrame_ = 0;
+        currentAllZeroRunLogged_ = false;
+    }
+
+    void RecordPcmPayloadFallback(const CIPHeader& header, size_t channel, uint8_t label) noexcept {
+        const uint64_t count =
+            pcmPayloadFallbackSamples_.fetch_add(1, std::memory_order_relaxed) + 1;
+        lastPcmPayloadFallbackLabel_.store(label, std::memory_order_relaxed);
+        lastPcmPayloadFallbackChannel_.store(static_cast<uint32_t>(channel),
+                                             std::memory_order_relaxed);
+        ASFW_LOG_RL(Isoch,
+                    "rx/pcm-label-fallback",
+                    1000,
+                    OS_LOG_TYPE_DEFAULT,
+                    "IR RX PCM slot payload fallback label=0x%02x ch=%zu samples=%llu dbc=0x%02x syt=0x%04x dbs=%u",
+                    label,
+                    channel,
+                    count,
+                    header.dataBlockCounter,
+                    header.syt,
+                    header.dataBlockSize);
     }
 
     std::atomic<uint64_t> packetCount_{0};
@@ -353,6 +620,18 @@ private:
     std::atomic<uint64_t> errorCount_{0};
     std::atomic<uint64_t> discontinuityCount_{0};
     std::atomic<uint64_t> decodedFrameCount_{0};
+    std::atomic<uint64_t> decodedAllZeroFrameCount_{0};
+    std::atomic<uint64_t> decodedNonZeroFrameCount_{0};
+    std::atomic<uint64_t> decodedAllZeroRunEvents_{0};
+    std::atomic<uint64_t> decodedAllZeroMaxRunFrames_{0};
+    std::atomic<uint64_t> rxQueueProducerDropEvents_{0};
+    std::atomic<uint64_t> rxQueueProducerDropFrames_{0};
+    std::atomic<uint64_t> pcmPayloadFallbackSamples_{0};
+    std::atomic<uint8_t> lastPcmPayloadFallbackLabel_{0};
+    std::atomic<uint32_t> lastPcmPayloadFallbackChannel_{0};
+    std::atomic<uint64_t> isochLengthClampEvents_{0};
+    std::atomic<uint64_t> isochLengthClampBytes_{0};
+    std::atomic<uint32_t> lastIsochHeaderDataLength_{0};
     
     // Non-atomic tracking for single-thread context (ProcessPacket is serialized per channel usually)
     // But safely atomic just case
@@ -380,6 +659,12 @@ private:
     uint32_t dbsDiagHitCount_{0};
     uint32_t lastDbsDiagQueueChannels_{0};
     uint8_t lastDbsDiagCipDbs_{0xFF};
+
+    static constexpr uint64_t kDecodedAllZeroRunLogFrames = 48;       // 1 ms @ 48 kHz
+    static constexpr uint64_t kDecodedAllZeroOngoingLogFrames = 480;  // 10 ms @ 48 kHz
+    uint64_t currentAllZeroRunFrames_{0};
+    uint64_t currentAllZeroRunStartFrame_{0};
+    bool currentAllZeroRunLogged_{false};
     
     // Output shared queue for decoded RX samples (set by IsochReceiveContext)
     ASFW::Shared::TxSharedQueueSPSC* sharedRxQueue_{nullptr};

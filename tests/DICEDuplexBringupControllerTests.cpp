@@ -65,6 +65,8 @@ constexpr uint32_t kClockSelect48kInternal =
 constexpr uint32_t kLocked48kStatus =
     StatusBits::kSourceLocked |
     (ClockRateIndex::k48000 << StatusBits::kNominalRateShift);
+constexpr uint32_t kUnlocked44100Status =
+    (ClockRateIndex::k44100 << StatusBits::kNominalRateShift);
 
 enum class OpKind {
     Read,
@@ -341,6 +343,12 @@ public:
 
     void SetClockSelectWriteHandler(std::function<void()> handler) {
         clockSelectWriteHandler_ = std::move(handler);
+    }
+
+    void SetClockState(uint32_t notification, uint32_t status, uint32_t sampleRate) {
+        notification_ = notification;
+        status_ = status;
+        sampleRate_ = sampleRate;
     }
 
     void SetGeneration(Generation generation) {
@@ -1169,6 +1177,55 @@ TEST(DICEDuplexBringupControllerTests, GlobalStateConfirmationRecoversIfMailboxM
     // Active clock check reads global state and finds locked+48k —
     // completes without waiting for mailbox notification at all.
     for (size_t i = 0; i < 700 && !startStatus.has_value(); ++i) {
+        nowNs += 10'000'000ULL;
+        while (queue.DrainReadyForTesting() > 0) {
+        }
+    }
+
+    ASSERT_TRUE(startStatus.has_value());
+    EXPECT_EQ(*startStatus, kIOReturnSuccess);
+    EXPECT_TRUE(controller.IsPrepared());
+}
+
+TEST(DICEDuplexBringupControllerTests, ClockAcceptedBeforeTargetRateWaitsForTargetLock) {
+    // Some DICE devices raise CLOCK_ACCEPTED before the global section reflects
+    // the new nominal rate. Do not program streams until 48k + source lock are
+    // both visible.
+    NotificationMailbox::Reset();
+    HostClockResetGuard clockReset;
+
+    uint64_t nowNs = 0;
+    ASFW::Testing::SetHostMonotonicClockForTesting([&nowNs]() { return nowNs; });
+
+    RecordingFireWireBus bus;
+    IODispatchQueue queue;
+    queue.SetManualDispatchForTesting(true);
+    bus.SetClockState(NotifyBits::kClockAccepted, kUnlocked44100Status, 44100);
+    bus.SetClockSelectWriteHandler([&queue, &bus]() {
+        NotificationMailbox::Publish(NotifyBits::kClockAccepted);
+        queue.DispatchAsyncAfter(150'000'000ULL, [&bus]() {
+            bus.SetClockState(NotifyBits::kClockAccepted, kLocked48kStatus, 48000);
+        });
+    });
+
+    ProtocolRegisterIO io(bus, bus, 0x02);
+    DICETransaction tx(io);
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+    DICEDuplexBringupController controller(tx, io, bus, &queue, MakeGeneralSections());
+
+    std::optional<IOReturn> startStatus;
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+
+    controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
+
+    EXPECT_FALSE(startStatus.has_value());
+    EXPECT_FALSE(controller.IsPrepared());
+
+    for (size_t i = 0; i < 600 && !startStatus.has_value(); ++i) {
         nowNs += 10'000'000ULL;
         while (queue.DrainReadyForTesting() > 0) {
         }

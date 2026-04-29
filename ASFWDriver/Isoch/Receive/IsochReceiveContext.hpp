@@ -76,6 +76,7 @@ public:
     void SetCallback(IsochReceiveCallback callback);
 
     StreamProcessor& GetStreamProcessor() { return audio_.StreamProcessorRef(); }
+    [[nodiscard]] Rx::IsochAudioRxPipeline::ClockHealthSnapshot GetClockHealth() const noexcept;
 
     void SetSharedRxQueue(uint8_t* base, uint64_t bytes);
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;

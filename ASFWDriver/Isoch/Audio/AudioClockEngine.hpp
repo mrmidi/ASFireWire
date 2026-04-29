@@ -15,6 +15,8 @@ struct IOMetricsState {
     std::atomic<uint64_t> totalFramesReceived{0};
     std::atomic<uint64_t> totalFramesSent{0};
     std::atomic<uint64_t> callbackCount{0};
+    std::atomic<uint64_t> inputCallbackCount{0};
+    std::atomic<uint64_t> inputFramesRequested{0};
     std::atomic<uint64_t> underruns{0};
     std::atomic<uint64_t> outputCallbackCount{0};
     std::atomic<uint64_t> outputFramesRequested{0};
@@ -24,6 +26,10 @@ struct IOMetricsState {
     std::atomic<uint64_t> lastCallbackSampleTime{0};
     std::atomic<int64_t> lastCallbackSampleDelta{0};
     std::atomic<uint32_t> lastCallbackOperation{0};
+    std::atomic<uint32_t> lastBeginReadFrameSize{0};
+    std::atomic<uint32_t> lastWriteEndFrameSize{0};
+    std::atomic<uint64_t> lastBeginReadSampleTime{0};
+    std::atomic<uint64_t> lastWriteEndSampleTime{0};
     std::atomic<uint32_t> lastRxQueueFillFrames{0};
     std::atomic<uint32_t> lastTxQueueFillFrames{0};
     std::atomic<uint32_t> lastAssemblerFillFrames{0};
@@ -105,6 +111,7 @@ struct AudioClockEngineState {
     EncodingMetricsState* encodingMetrics{nullptr};
 
     bool* rxStartupDrained{nullptr};
+    bool* rxTransportRebased{nullptr};
 };
 
 void PrepareClockEngineForStart(AudioClockEngineState& state);

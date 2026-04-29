@@ -161,9 +161,45 @@ struct IsochRxSnapshot {
     uint16_t cipSYT;
     uint8_t cipDBC;
     uint8_t _pad2;
+
+    // RX recording health counters.
+    uint64_t decodedFrames;
+    uint64_t rxQueueUnderreadEvents;
+    uint64_t rxQueueUnderreadFrames;  // CoreAudio-facing zero-filled RX frames
+    uint64_t rxQueueProducerDropEvents;
+    uint64_t rxQueueProducerDropFrames; // FireWire decode frames dropped because RX queue was full
+
+    // Cross-process transport/startup timing from the shared RX queue.
+    uint64_t transportAnchorSampleFrame;
+    uint64_t transportAnchorHostTicks;
+    uint64_t startupAlignmentSampleTime;
+    uint64_t startupInputSampleOffset;
+    uint64_t startupOutputSampleOffset;
+
+    // SYT discipline state.
+    uint64_t sytClockLostCount;
+
+    // RX queue and rate diagnostics.
+    uint32_t rxQueueFillFrames;
+    uint32_t rxQueueCapacityFrames;
+    uint32_t corrHostNanosPerSampleQ8;
+    uint32_t transportHostNanosPerSampleQ8;
+    uint32_t sytClockUpdateSeq;
+
+    // HAL-facing input timing, after profile selection.
+    uint32_t halInputLatencyFrames;
+    uint32_t halInputSafetyOffsetFrames;
+
+    uint8_t transportTimingValid;
+    uint8_t startupAlignmentValid;
+    uint8_t activeRxProfile;       // 0=A, 1=B, 2=C
+    uint8_t sytClockEstablished;
+    uint8_t sytClockActive;
+    uint8_t sytStartupQualified;
+    uint8_t _pad3[6];
 } __attribute__((packed));
 
-static_assert(sizeof(IsochRxSnapshot) == 88, "IsochRxSnapshot must be 88 bytes");
+static_assert(sizeof(IsochRxSnapshot) == 216, "IsochRxSnapshot must be 216 bytes");
 
 } // namespace Metrics
 } // namespace ASFW

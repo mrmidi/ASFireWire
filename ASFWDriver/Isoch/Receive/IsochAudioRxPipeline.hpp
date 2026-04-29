@@ -23,6 +23,17 @@ class IsochAudioRxPipeline final {
 public:
     using TimingLossCallback = std::function<void()>;
 
+    struct ClockHealthSnapshot {
+        bool active{false};
+        bool clockEstablished{false};
+        bool startupQualified{false};
+        uint32_t updateSeq{0};
+        uint16_t lastSyt{Core::ExternalSyncBridge::kNoInfoSyt};
+        uint8_t lastFdf{0};
+        uint8_t lastDbs{0};
+        uint64_t lostCount{0};
+    };
+
     void ConfigureFor48k() noexcept;
 
     void OnStart() noexcept;
@@ -39,6 +50,7 @@ public:
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
 
     [[nodiscard]] StreamProcessor& StreamProcessorRef() noexcept { return streamProcessor_; }
+    [[nodiscard]] ClockHealthSnapshot ReadClockHealth() const noexcept;
 
 private:
     static constexpr uint64_t kExternalSyncStaleNanos = 100'000'000ULL; // 100ms
@@ -63,6 +75,8 @@ private:
     uint64_t transportSampleFrame_{0};
     uint32_t transportHostNanosPerSampleQ8_{0};
     uint32_t transportTimingPublishCount_{0};
+    uint32_t rxHealthPollCounter_{0};
+    std::atomic<uint64_t> sytClockLostCount_{0};
 };
 
 } // namespace ASFW::Isoch::Rx

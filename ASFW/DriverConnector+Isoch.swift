@@ -10,7 +10,7 @@ import IOKit
 
 // MARK: - Isoch RX Metrics Model
 
-/// Isoch Receive metrics snapshot (matches C++ IsochRxSnapshot exactly: 88 bytes)
+/// Isoch Receive metrics snapshot (matches C++ IsochRxSnapshot exactly: 216 bytes)
 struct IsochRxMetrics {
     var totalPackets: UInt64 = 0
     var dataPackets: UInt64 = 0      // 80-byte with samples
@@ -31,6 +31,32 @@ struct IsochRxMetrics {
     var cipFDF: UInt8 = 0
     var cipSYT: UInt16 = 0xFFFF
     var cipDBC: UInt8 = 0
+
+    // Recording health
+    var decodedFrames: UInt64 = 0
+    var rxQueueUnderreadEvents: UInt64 = 0
+    var rxQueueUnderreadFrames: UInt64 = 0
+    var rxQueueProducerDropEvents: UInt64 = 0
+    var rxQueueProducerDropFrames: UInt64 = 0
+    var transportAnchorSampleFrame: UInt64 = 0
+    var transportAnchorHostTicks: UInt64 = 0
+    var startupAlignmentSampleTime: UInt64 = 0
+    var startupInputSampleOffset: UInt64 = 0
+    var startupOutputSampleOffset: UInt64 = 0
+    var sytClockLostCount: UInt64 = 0
+    var rxQueueFillFrames: UInt32 = 0
+    var rxQueueCapacityFrames: UInt32 = 0
+    var corrHostNanosPerSampleQ8: UInt32 = 0
+    var transportHostNanosPerSampleQ8: UInt32 = 0
+    var sytClockUpdateSeq: UInt32 = 0
+    var halInputLatencyFrames: UInt32 = 0
+    var halInputSafetyOffsetFrames: UInt32 = 0
+    var transportTimingValid: Bool = false
+    var startupAlignmentValid: Bool = false
+    var activeRxProfile: UInt8 = 1
+    var sytClockEstablished: Bool = false
+    var sytClockActive: Bool = false
+    var sytStartupQualified: Bool = false
     
     // Computed properties
     var packetsPerSecond: Double {
@@ -41,6 +67,21 @@ struct IsochRxMetrics {
     var dataRatio: Double {
         guard totalPackets > 0 else { return 0 }
         return Double(dataPackets) / Double(totalPackets)
+    }
+
+    var transportRateHz: Double? {
+        guard transportHostNanosPerSampleQ8 > 0 else { return nil }
+        let nanosPerSample = Double(transportHostNanosPerSampleQ8) / 256.0
+        guard nanosPerSample > 0 else { return nil }
+        return 1_000_000_000.0 / nanosPerSample
+    }
+
+    var activeRxProfileName: String {
+        switch activeRxProfile {
+        case 0: return "A"
+        case 2: return "C"
+        default: return "B"
+        }
     }
 }
 
@@ -95,12 +136,12 @@ extension ASFWDriverConnector {
     func getIsochRxMetrics() -> IsochRxMetrics? {
         guard isConnected, connection != 0 else { return nil }
         
-        guard let data = callStruct(.getIsochRxMetrics, initialCap: 128) else {
+        guard let data = callStruct(.getIsochRxMetrics, initialCap: 256) else {
             log("getIsochRxMetrics: callStruct failed", level: .warning)
             return nil
         }
         
-        guard data.count >= 88 else {
+        guard data.count >= 216 else {
             log("getIsochRxMetrics: Invalid data size \(data.count)", level: .warning)
             return nil
         }
@@ -132,7 +173,31 @@ extension ASFWDriverConnector {
             m.cipSYT = base.load(fromByteOffset: 84, as: UInt16.self)
             m.cipDBC = base.load(fromByteOffset: 86, as: UInt8.self)
             // pad2 at 87
-            
+
+            m.decodedFrames = base.load(fromByteOffset: 88, as: UInt64.self)
+            m.rxQueueUnderreadEvents = base.load(fromByteOffset: 96, as: UInt64.self)
+            m.rxQueueUnderreadFrames = base.load(fromByteOffset: 104, as: UInt64.self)
+            m.rxQueueProducerDropEvents = base.load(fromByteOffset: 112, as: UInt64.self)
+            m.rxQueueProducerDropFrames = base.load(fromByteOffset: 120, as: UInt64.self)
+            m.transportAnchorSampleFrame = base.load(fromByteOffset: 128, as: UInt64.self)
+            m.transportAnchorHostTicks = base.load(fromByteOffset: 136, as: UInt64.self)
+            m.startupAlignmentSampleTime = base.load(fromByteOffset: 144, as: UInt64.self)
+            m.startupInputSampleOffset = base.load(fromByteOffset: 152, as: UInt64.self)
+            m.startupOutputSampleOffset = base.load(fromByteOffset: 160, as: UInt64.self)
+            m.sytClockLostCount = base.load(fromByteOffset: 168, as: UInt64.self)
+            m.rxQueueFillFrames = base.load(fromByteOffset: 176, as: UInt32.self)
+            m.rxQueueCapacityFrames = base.load(fromByteOffset: 180, as: UInt32.self)
+            m.corrHostNanosPerSampleQ8 = base.load(fromByteOffset: 184, as: UInt32.self)
+            m.transportHostNanosPerSampleQ8 = base.load(fromByteOffset: 188, as: UInt32.self)
+            m.sytClockUpdateSeq = base.load(fromByteOffset: 192, as: UInt32.self)
+            m.halInputLatencyFrames = base.load(fromByteOffset: 196, as: UInt32.self)
+            m.halInputSafetyOffsetFrames = base.load(fromByteOffset: 200, as: UInt32.self)
+            m.transportTimingValid = base.load(fromByteOffset: 204, as: UInt8.self) != 0
+            m.startupAlignmentValid = base.load(fromByteOffset: 205, as: UInt8.self) != 0
+            m.activeRxProfile = base.load(fromByteOffset: 206, as: UInt8.self)
+            m.sytClockEstablished = base.load(fromByteOffset: 207, as: UInt8.self) != 0
+            m.sytClockActive = base.load(fromByteOffset: 208, as: UInt8.self) != 0
+            m.sytStartupQualified = base.load(fromByteOffset: 209, as: UInt8.self) != 0
             
             return m
         }

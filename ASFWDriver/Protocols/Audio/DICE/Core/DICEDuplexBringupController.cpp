@@ -56,11 +56,15 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
                       const GlobalState& global,
                       const StreamConfig& tx,
                       const StreamConfig& rx) noexcept {
-    caps.hostInputPcmChannels = tx.TotalPcmChannels();
-    caps.deviceToHostAm824Slots = tx.TotalAm824Slots();
-    caps.hostOutputPcmChannels = rx.TotalPcmChannels();
-    caps.hostToDeviceAm824Slots = rx.TotalAm824Slots();
+    caps.hostInputPcmChannels = tx.ActivePcmChannels();
+    caps.deviceToHostAm824Slots = tx.ActiveAm824Slots();
+    caps.hostOutputPcmChannels = rx.ActivePcmChannels();
+    caps.hostToDeviceAm824Slots = rx.ActiveAm824Slots();
     caps.sampleRateHz = global.sampleRate;
+    caps.deviceToHostIsoChannel =
+        tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
+    caps.hostToDeviceIsoChannel =
+        rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
 }
 
 } // namespace
@@ -528,8 +532,12 @@ void DICEDuplexBringupController::DoActiveClockCheck(
                                     NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz;
                                 const bool sampleRateAtTarget =
                                     state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+                                const bool clockSelectAtTarget =
+                                    state.clockSelect == restartSession_.desiredClock.clockSelect;
+                                const bool targetClockReady =
+                                    clockSelectAtTarget && sourceLockedAtTarget && sampleRateAtTarget;
 
-                                if (clockAccepted || (sourceLockedAtTarget && sampleRateAtTarget)) {
+                                if (targetClockReady) {
                                     ASFW_LOG(DICE,
                                              "PrepareDuplex48k: clock confirmed via active check "
                                              "(notify=0x%08x status=0x%08x rate=%u locked=%u)",
@@ -543,10 +551,20 @@ void DICEDuplexBringupController::DoActiveClockCheck(
                                     return;
                                 }
 
-                                ASFW_LOG(DICE,
-                                         "PrepareDuplex48k: active check not yet locked "
-                                         "(notify=0x%08x status=0x%08x rate=%u), entering mailbox poll",
-                                         combinedNotify, state.status, state.sampleRate);
+                                if (clockAccepted) {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: CLOCK_ACCEPTED before target lock "
+                                             "(notify=0x%08x clockSelect=0x%08x status=0x%08x rate=%u), continuing poll",
+                                             combinedNotify,
+                                             state.clockSelect,
+                                             state.status,
+                                             state.sampleRate);
+                                } else {
+                                    ASFW_LOG(DICE,
+                                             "PrepareDuplex48k: active check not yet locked "
+                                             "(notify=0x%08x status=0x%08x rate=%u), entering mailbox poll",
+                                             combinedNotify, state.status, state.sampleRate);
+                                }
                                 DoWaitClockAccepted(channels, 0, std::move(cb));
                             });
 }
@@ -642,6 +660,8 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
                                     NominalRateHz(state.status) == restartSession_.desiredClock.sampleRateHz;
                                 const bool sampleRateAtTarget =
                                     state.sampleRate == restartSession_.desiredClock.sampleRateHz;
+                                const bool targetClockReady =
+                                    sourceLockedAtTarget && sampleRateAtTarget;
 
                                 if (state.clockSelect != restartSession_.desiredClock.clockSelect) {
                                     ASFW_LOG(DICE,
@@ -654,12 +674,17 @@ void DICEDuplexBringupController::DoReadGlobalAfterClockAccepted(
                                     return;
                                 }
 
-                                if (!clockAccepted && !(sourceLockedAtTarget && sampleRateAtTarget)) {
+                                if (!targetClockReady) {
                                     ASFW_LOG(DICE,
-                                             "PrepareDuplex48k: CLOCK_ACCEPTED not confirmed, notify=0x%08x status=0x%08x sampleRate=%u",
+                                             "PrepareDuplex48k: target clock not ready, notify=0x%08x accepted=%u status=0x%08x sampleRate=%u",
                                              combinedNotify,
+                                             clockAccepted ? 1U : 0U,
                                              state.status,
                                              state.sampleRate);
+                                    if (failureStatus == kIOReturnNotReady) {
+                                        DoWaitClockAccepted(channels, 0, std::move(cb));
+                                        return;
+                                    }
                                     DoRollback(failureStatus, std::move(cb));
                                     return;
                                 }
@@ -1104,7 +1129,11 @@ void DICEDuplexBringupController::DoPollSourceLock(
                             return;
                         }
 
-                        if (IsSourceLocked(statusValue)) {
+                        const bool sourceLockedAtTarget =
+                            IsSourceLocked(statusValue) &&
+                            NominalRateHz(statusValue) == restartSession_.desiredClock.sampleRateHz;
+
+                        if (sourceLockedAtTarget) {
                             io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kNotification),
                                            [this, notify, statusValue, cb = std::move(cb)](Async::AsyncStatus notifyTransport, uint32_t nv) mutable {
                                                 const IOReturn ns = MapTransportStatus(notifyTransport);

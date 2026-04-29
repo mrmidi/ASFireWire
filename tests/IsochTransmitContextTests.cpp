@@ -123,6 +123,43 @@ TEST(TxSharedQueueSPSC, WriteSilencePublishesZeroFrames) {
     }
 }
 
+TEST(TxSharedQueueSPSC, ConsumerReadDiagnosticsTrackZeroFillShortfall) {
+    constexpr uint32_t kQueueChannels = 2;
+    constexpr uint32_t kCapacityFrames = 16;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+    std::array<int32_t, 4 * kQueueChannels> payload{};
+    std::array<int32_t, 8 * kQueueChannels> readback{};
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+    ASFW::Shared::TxSharedQueueSPSC queue;
+    ASSERT_TRUE(queue.Attach(storage.data(), bytes));
+
+    EXPECT_EQ(queue.ActiveRxProfileId(), ASFW::Shared::kTxQueueDefaultRxProfileId);
+    queue.SetActiveRxProfileId(0);
+    EXPECT_EQ(queue.ActiveRxProfileId(), 0u);
+
+    ASSERT_EQ(queue.Write(payload.data(), 4), 4u);
+    EXPECT_EQ(queue.Read(readback.data(), 8), 4u);
+    EXPECT_EQ(queue.ConsumerUnderreadEvents(), 1u);
+    EXPECT_EQ(queue.ConsumerUnderreadFrames(), 4u);
+    EXPECT_EQ(queue.LastConsumerReadRequestedFrames(), 8u);
+    EXPECT_EQ(queue.LastConsumerReadAvailableFrames(), 4u);
+    EXPECT_EQ(queue.LastConsumerReadFrames(), 4u);
+
+    queue.RecordConsumerReadResult(2, 0, 0);
+    EXPECT_EQ(queue.ConsumerUnderreadEvents(), 2u);
+    EXPECT_EQ(queue.ConsumerUnderreadFrames(), 6u);
+
+    queue.ResetConsumerReadDiagnostics();
+    EXPECT_EQ(queue.ConsumerUnderreadEvents(), 0u);
+    EXPECT_EQ(queue.ConsumerUnderreadFrames(), 0u);
+    EXPECT_EQ(queue.ActiveRxProfileId(), 0u);
+}
+
 TEST(IsochTransmitContext, ConfigureFailsOnRequestedChannelMismatch) {
     constexpr uint32_t kQueueChannels = 4;
     constexpr uint32_t kRequestedChannels = 6;

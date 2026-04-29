@@ -45,8 +45,11 @@ void IsochAudioRxPipeline::OnStart() noexcept {
     transportSampleFrame_ = 0;
     transportHostNanosPerSampleQ8_ = 0;
     transportTimingPublishCount_ = 0;
+    rxHealthPollCounter_ = 0;
+    sytClockLostCount_.store(0, std::memory_order_release);
     rxSharedQueue_.ResetTransportTiming();
     rxSharedQueue_.ResetStartupAlignment();
+    rxSharedQueue_.ResetConsumerReadDiagnostics();
 
     if (externalSyncBridge_) {
         externalSyncBridge_->Reset();
@@ -152,6 +155,7 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
         }
         const uint64_t nowTicks = mach_absolute_time();
         if (externalSyncClockState_.HandleStale(*externalSyncBridge_, nowTicks, staleTicks)) {
+            sytClockLostCount_.fetch_add(1, std::memory_order_acq_rel);
             const uint64_t lastTicks =
                 externalSyncBridge_->lastUpdateHostTicks.load(std::memory_order_acquire);
             const uint64_t staleForMs =
@@ -167,6 +171,38 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
                 timingLossCallback_();
             }
         }
+    }
+
+    if (++rxHealthPollCounter_ >= 1000U) {
+        rxHealthPollCounter_ = 0;
+        const uint32_t queueFill = rxSharedQueue_.IsValid() ? rxSharedQueue_.FillLevelFrames() : 0;
+        const uint32_t queueCap = rxSharedQueue_.IsValid() ? rxSharedQueue_.CapacityFrames() : 0;
+        const uint64_t underreadEvents =
+            rxSharedQueue_.IsValid() ? rxSharedQueue_.ConsumerUnderreadEvents() : 0;
+        const uint64_t underreadFrames =
+            rxSharedQueue_.IsValid() ? rxSharedQueue_.ConsumerUnderreadFrames() : 0;
+        ASFW_LOG(Isoch,
+                 "IR RX HEALTH pkts=%llu data=%llu empty=%llu decoded=%llu drops=%llu errors=%llu queue=%u/%u producerDrop=%llu/%llu consumerUnder=%llu/%llu lastPoll=%u/%uus cip(dbs=%u dbc=0x%02x syt=0x%04x fdf=0x%02x) q8=%u sytLost=%llu",
+                 streamProcessor_.PacketCount(),
+                 streamProcessor_.SamplePacketCount(),
+                 streamProcessor_.EmptyPacketCount(),
+                 streamProcessor_.DecodedFrameCount(),
+                 streamProcessor_.DiscontinuityCount(),
+                 streamProcessor_.ErrorCount(),
+                 queueFill,
+                 queueCap,
+                 streamProcessor_.RxQueueProducerDropEvents(),
+                 streamProcessor_.RxQueueProducerDropFrames(),
+                 underreadEvents,
+                 underreadFrames,
+                 streamProcessor_.LastPollPackets(),
+                 streamProcessor_.LastPollLatencyUs(),
+                 streamProcessor_.LastCipDBS(),
+                 streamProcessor_.LastDBC(),
+                 streamProcessor_.LastSYT(),
+                 streamProcessor_.LastCipFDF(),
+                 rxSharedQueue_.IsValid() ? rxSharedQueue_.CorrHostNanosPerSampleQ8() : 0,
+                 sytClockLostCount_.load(std::memory_order_acquire));
     }
 }
 
@@ -199,6 +235,26 @@ void IsochAudioRxPipeline::SetExternalSyncBridge(Core::ExternalSyncBridge* bridg
 
 void IsochAudioRxPipeline::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
+}
+
+IsochAudioRxPipeline::ClockHealthSnapshot IsochAudioRxPipeline::ReadClockHealth() const noexcept {
+    ClockHealthSnapshot snapshot{};
+    snapshot.lostCount = sytClockLostCount_.load(std::memory_order_acquire);
+    if (!externalSyncBridge_) {
+        return snapshot;
+    }
+
+    const uint32_t packed = externalSyncBridge_->lastPackedRx.load(std::memory_order_acquire);
+    snapshot.active = externalSyncBridge_->active.load(std::memory_order_acquire);
+    snapshot.clockEstablished =
+        externalSyncBridge_->clockEstablished.load(std::memory_order_acquire);
+    snapshot.startupQualified =
+        externalSyncBridge_->startupQualified.load(std::memory_order_acquire);
+    snapshot.updateSeq = externalSyncBridge_->updateSeq.load(std::memory_order_acquire);
+    snapshot.lastSyt = Core::ExternalSyncBridge::UnpackSYT(packed);
+    snapshot.lastFdf = Core::ExternalSyncBridge::UnpackFDF(packed);
+    snapshot.lastDbs = Core::ExternalSyncBridge::UnpackDBS(packed);
+    return snapshot;
 }
 
 } // namespace ASFW::Isoch::Rx

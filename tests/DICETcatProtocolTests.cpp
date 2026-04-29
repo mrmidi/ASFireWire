@@ -250,7 +250,7 @@ TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     EXPECT_EQ(bus.lockCount, 0);
 }
 
-TEST(DICETcatProtocolTests, RuntimeCapsAggregateAllConfiguredStreams) {
+TEST(DICETcatProtocolTests, RuntimeCapsAggregateActiveConfiguredStreams) {
     CountingFireWireBus bus;
     DICETcatProtocol protocol(bus, bus, 2, nullptr);
 
@@ -259,14 +259,18 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateAllConfiguredStreams) {
 
     ASFW::Audio::DICE::StreamConfig tx{};
     tx.numStreams = 2;
+    tx.streams[0].isoChannel = 1;
     tx.streams[0].pcmChannels = 10;
     tx.streams[0].midiPorts = 1;
+    tx.streams[1].isoChannel = -1;
     tx.streams[1].pcmChannels = 6;
 
     ASFW::Audio::DICE::StreamConfig rx{};
     rx.numStreams = 2;
+    rx.streams[0].isoChannel = 0;
     rx.streams[0].pcmChannels = 8;
     rx.streams[0].midiPorts = 1;
+    rx.streams[1].isoChannel = -1;
     rx.streams[1].pcmChannels = 4;
 
     ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
@@ -274,10 +278,10 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateAllConfiguredStreams) {
     AudioStreamRuntimeCaps caps{};
     ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
     EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
-    EXPECT_EQ(caps.hostOutputPcmChannels, 12U);
-    EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 10U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 11U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
 }
 
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
@@ -290,10 +294,12 @@ TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
 
     ASFW::Audio::DICE::StreamConfig tx{};
     tx.numStreams = 1;
+    tx.streams[0].isoChannel = 1;
     tx.streams[0].pcmChannels = 16;
 
     ASFW::Audio::DICE::StreamConfig rx{};
     rx.numStreams = 1;
+    rx.streams[0].isoChannel = 0;
     rx.streams[0].pcmChannels = 8;
 
     ASFW::Audio::DICE::TCAT::DICETcatProtocolTestPeer::CacheRuntimeCaps(protocol, global, tx, rx);
@@ -368,9 +374,9 @@ TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     caps = {};
     EXPECT_TRUE(TryGetKnownDICEProfile(0x000595U, 0x000000U, caps));
     EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 14U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 12U);
     EXPECT_EQ(caps.hostOutputPcmChannels, 2U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 14U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 12U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 2U);
 }
 
