@@ -14,21 +14,27 @@ using ASFW::Driver::SelfIDSequenceEnumerator;
 
 namespace {
 
-std::vector<uint32_t> LoadSequenceArray(std::string_view arrayName) {
-    std::vector<uint32_t> words;
-    std::string error;
-    bool ok = ASFW::Tests::LoadHexArrayFromRepoFile(
-        "FirWireDriver/firewire/self-id-sequence-helper-test.c", arrayName, words, &error);
-    if (!ok) {
-        ADD_FAILURE() << "Failed to load array '" << arrayName << "': " << error;
-    }
-    return words;
+constexpr std::string_view kSelfIDSequenceFixturePath =
+    "FirWireDriver/firewire/self-id-sequence-helper-test.c";
+
+ASFW::Tests::ReferenceDataLoadStatus LoadSequenceArray(std::string_view arrayName,
+                                                       std::vector<uint32_t>& words,
+                                                       std::string& error) {
+    return ASFW::Tests::LoadOptionalHexArrayFromRepoFile(
+        kSelfIDSequenceFixturePath, arrayName, words, &error);
 }
 
 } // namespace
 
 TEST(SelfIDSequenceEnumeratorTests, EnumeratesValidSequencesFromLinuxFixtures) {
-    auto valid = LoadSequenceArray("valid_sequences");
+    std::vector<uint32_t> valid;
+    std::string error;
+    const auto loadStatus = LoadSequenceArray("valid_sequences", valid, error);
+    if (loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kMissingFile) {
+        GTEST_SKIP() << error;
+    }
+    ASSERT_TRUE(loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kLoaded)
+        << "Failed to load array 'valid_sequences': " << error;
     ASSERT_FALSE(valid.empty());
 
     SelfIDSequenceEnumerator enumerator;
@@ -54,7 +60,14 @@ TEST(SelfIDSequenceEnumeratorTests, EnumeratesValidSequencesFromLinuxFixtures) {
 }
 
 TEST(SelfIDSequenceEnumeratorTests, FlagsInvalidSequenceFromLinuxFixtures) {
-    auto invalid = LoadSequenceArray("invalid_sequences");
+    std::vector<uint32_t> invalid;
+    std::string error;
+    const auto loadStatus = LoadSequenceArray("invalid_sequences", invalid, error);
+    if (loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kMissingFile) {
+        GTEST_SKIP() << error;
+    }
+    ASSERT_TRUE(loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kLoaded)
+        << "Failed to load array 'invalid_sequences': " << error;
     ASSERT_FALSE(invalid.empty());
 
     SelfIDSequenceEnumerator enumerator;
@@ -66,7 +79,14 @@ TEST(SelfIDSequenceEnumeratorTests, FlagsInvalidSequenceFromLinuxFixtures) {
 }
 
 TEST(SelfIDSequenceEnumeratorTests, RecognisesChainedPacketsAndExtendedQuads) {
-    auto valid = LoadSequenceArray("valid_sequences");
+    std::vector<uint32_t> valid;
+    std::string error;
+    const auto loadStatus = LoadSequenceArray("valid_sequences", valid, error);
+    if (loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kMissingFile) {
+        GTEST_SKIP() << error;
+    }
+    ASSERT_TRUE(loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kLoaded)
+        << "Failed to load array 'valid_sequences': " << error;
     ASSERT_GE(valid.size(), static_cast<size_t>(5));
 
     // Sequence starting at index 1 should contain two quadlets with more-bit chaining

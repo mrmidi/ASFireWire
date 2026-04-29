@@ -54,6 +54,11 @@ TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
                   DeviceProtocolFactory::kApogeeVendorId,
                   DeviceProtocolFactory::kApogeeDuetModelId),
               DeviceIntegrationMode::kAVCDriven);
+
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kAlesisVendorId,
+                  DeviceProtocolFactory::kAlesisMultiMixModelId),
+              DeviceIntegrationMode::kHardcodedNub);
 }
 
 TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
@@ -94,6 +99,10 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kApogeeVendorId,
         DeviceProtocolFactory::kApogeeDuetModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kAlesisVendorId,
+        DeviceProtocolFactory::kAlesisMultiMixModelId));
 }
 
 TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
@@ -137,6 +146,15 @@ TEST(DeviceProtocolFactoryTests, KeepsDeferredMultistreamFocusriteModelsRecogniz
     ASSERT_TRUE(spro26.has_value());
     EXPECT_EQ(spro26->integrationMode, DeviceIntegrationMode::kNone);
     EXPECT_STREQ(spro26->modelName, DeviceProtocolFactory::kSPro26ModelName);
+}
+
+TEST(DeviceProtocolFactoryTests, RecognizesAlesisMultiMixDiceProfile) {
+    const auto multiMix = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kAlesisVendorId, DeviceProtocolFactory::kAlesisMultiMixModelId);
+    ASSERT_TRUE(multiMix.has_value());
+    EXPECT_EQ(multiMix->integrationMode, DeviceIntegrationMode::kHardcodedNub);
+    EXPECT_STREQ(multiMix->vendorName, DeviceProtocolFactory::kAlesisVendorName);
+    EXPECT_STREQ(multiMix->modelName, DeviceProtocolFactory::kAlesisMultiMixModelName);
 }
 
 } // namespace

@@ -29,8 +29,8 @@
 #include <new>
 #include <string>
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>           // generated from .iig
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h> // generated from .iig
+#include "ASFWDriver.h"           // generated from .iig
+#include "ASFWDriverUserClient.h" // generated from .iig
 
 #include "Async/AsyncSubsystem.hpp"
 #include "Async/DMAMemoryImpl.hpp"
@@ -63,7 +63,7 @@
 #include "Scheduling/Scheduler.hpp"
 #include "Service/DriverContext.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include "ASFWAudioNub.h"
 
 using namespace ASFW::Driver;
 

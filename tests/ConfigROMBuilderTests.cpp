@@ -256,16 +256,21 @@ struct ReferenceRomCase {
 class ConfigROMReferenceCrcTests : public ::testing::TestWithParam<ReferenceRomCase> {};
 
 TEST_P(ConfigROMReferenceCrcTests, ReferenceDataHasValidCrcs) {
+    constexpr std::string_view kDeviceAttributeFixturePath =
+        "FirWireDriver/firewire/device-attribute-test.c";
     const auto& testCase = GetParam();
     SCOPED_TRACE(testCase.description);
 
     std::vector<uint32_t> words;
     std::string errorMessage;
-    ASSERT_TRUE(ASFW::Tests::LoadHexArrayFromRepoFile("FirWireDriver/firewire/device-attribute-test.c",
-                                                      testCase.arrayName,
-                                                      words,
-                                                      &errorMessage))
-        << errorMessage;
+    const auto loadStatus = ASFW::Tests::LoadOptionalHexArrayFromRepoFile(kDeviceAttributeFixturePath,
+                                                                         testCase.arrayName,
+                                                                         words,
+                                                                         &errorMessage);
+    if (loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kMissingFile) {
+        GTEST_SKIP() << errorMessage;
+    }
+    ASSERT_TRUE(loadStatus == ASFW::Tests::ReferenceDataLoadStatus::kLoaded) << errorMessage;
     ASSERT_FALSE(words.empty());
 
     std::span<const uint32_t> span(words.data(), words.size());

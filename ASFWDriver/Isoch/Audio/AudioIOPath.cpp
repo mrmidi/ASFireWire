@@ -231,6 +231,13 @@ uint32_t WriteEndZeroCopyPublish(AudioIOPathState& state,
 kern_return_t HandleWriteEnd(AudioIOPathState& state,
                              uint32_t ioBufferFrameSize,
                              uint64_t sampleTime) {
+    if (state.writeEndFramesRequested) {
+        *state.writeEndFramesRequested = 0;
+    }
+    if (state.writeEndFramesWritten) {
+        *state.writeEndFramesWritten = 0;
+    }
+
     if (!state.outputBuffer) {
         return kIOReturnNotReady;
     }
@@ -284,6 +291,12 @@ kern_return_t HandleWriteEnd(AudioIOPathState& state,
 
     if (framesWritten < framesRequested && state.encodingOverruns) {
         (*state.encodingOverruns)++;
+    }
+    if (state.writeEndFramesRequested) {
+        *state.writeEndFramesRequested = framesRequested;
+    }
+    if (state.writeEndFramesWritten) {
+        *state.writeEndFramesWritten = framesWritten;
     }
 
     return kIOReturnSuccess;

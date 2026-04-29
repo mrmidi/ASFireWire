@@ -44,6 +44,19 @@ namespace ASFW::Audio::DICE::TCAT {
         return true;
     }
 
+    // Alesis MultiMix 12 FireWire local test profile.
+    // The observed ROM reports the family model as 0x000000. The 12-channel
+    // model sends 12 mixer channels plus the main stereo pair to the host, and
+    // receives a stereo return from the host.
+    if (vendorId == 0x000595U && modelId == 0x000000U) {
+        outCaps.sampleRateHz = 48000;
+        outCaps.hostInputPcmChannels = 14;
+        outCaps.hostOutputPcmChannels = 2;
+        outCaps.deviceToHostAm824Slots = 14;
+        outCaps.hostToDeviceAm824Slots = 2;
+        return true;
+    }
+
     return false;
 }
 

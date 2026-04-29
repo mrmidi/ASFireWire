@@ -127,6 +127,8 @@ void LogIoCallbackMetrics(AudioDriverRuntimeState& runtime,
                           uint32_t rxQueueFillFrames,
                           uint32_t txQueueFillFrames,
                           uint32_t assemblerFillFrames,
+                          uint32_t writeEndFramesRequested,
+                          uint32_t writeEndFramesWritten,
                           uint64_t callbackOrdinal) {
     auto& ioMetrics = runtime.ioMetrics;
     const uint32_t previousFrameSize =
@@ -147,65 +149,31 @@ void LogIoCallbackMetrics(AudioDriverRuntimeState& runtime,
     const bool frameSizeChanged = (previousFrameSize != 0) && (previousFrameSize != ioBufferFrameSize);
     const bool sampleTimeWentBackwards = (previousSampleTime != 0) && (sampleTime < previousSampleTime);
     const bool firstFewCallbacks = callbackOrdinal <= 8;
+    const bool shortOutputWrite =
+        operation == IOUserAudioIOOperationWriteEnd &&
+        writeEndFramesRequested > 0 &&
+        writeEndFramesWritten < writeEndFramesRequested;
 
-    // DEBUG
-    // if (frameSizeChanged) {
-    //     ASFW_LOG(Audio,
-    //              "IO callback frame-size change cb=%llu op=%{public}s prev=%u now=%u sample=%llu host=%llu rxFill=%u txFill=%u asmFill=%u",
-    //              callbackOrdinal,
-    //              AudioOperationName(operation),
-    //              previousFrameSize,
-    //              ioBufferFrameSize,
-    //              sampleTime,
-    //              hostTime,
-    //              rxQueueFillFrames,
-    //              txQueueFillFrames,
-    //              assemblerFillFrames);
-    // }
-
-    // if (sampleTimeWentBackwards) {
-    //     ASFW_LOG(Audio,
-    //              "IO callback sampleTime regression cb=%llu op=%{public}s prev=%llu now=%llu delta=%lld prevOp=%{public}s",
-    //              callbackOrdinal,
-    //              AudioOperationName(operation),
-    //              previousSampleTime,
-    //              sampleTime,
-    //              sampleDelta,
-    //              AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)));
-    // }
-
-    // if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-    //     if (firstFewCallbacks) {
-    //         ASFW_LOG(Audio,
-    //                  "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u",
-    //                  callbackOrdinal,
-    //                  AudioOperationName(operation),
-    //                  ioBufferFrameSize,
-    //                  sampleTime,
-    //                  sampleDelta,
-    //                  AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
-    //                  hostTime,
-    //                  rxQueueFillFrames,
-    //                  txQueueFillFrames,
-    //                  assemblerFillFrames);
-    //     } else {
-    //         ASFW_LOG_RL(Audio,
-    //                     "io/callback",
-    //                     1000,
-    //                     OS_LOG_TYPE_DEFAULT,
-    //                     "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u",
-    //                     callbackOrdinal,
-    //                     AudioOperationName(operation),
-    //                     ioBufferFrameSize,
-    //                     sampleTime,
-    //                     sampleDelta,
-    //                     AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
-    //                     hostTime,
-    //                     rxQueueFillFrames,
-    //                     txQueueFillFrames,
-    //                     assemblerFillFrames);
-    //     }
-    // }
+    if (firstFewCallbacks || frameSizeChanged || sampleTimeWentBackwards || shortOutputWrite) {
+        ASFW_LOG(Audio,
+                 "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u outReq=%u outWrote=%u%{public}s%{public}s%{public}s%{public}s",
+                 callbackOrdinal,
+                 AudioOperationName(operation),
+                 ioBufferFrameSize,
+                 sampleTime,
+                 sampleDelta,
+                 AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
+                 hostTime,
+                 rxQueueFillFrames,
+                 txQueueFillFrames,
+                 assemblerFillFrames,
+                 writeEndFramesRequested,
+                 writeEndFramesWritten,
+                 firstFewCallbacks ? " first" : "",
+                 frameSizeChanged ? " frame-size-change" : "",
+                 sampleTimeWentBackwards ? " sample-regression" : "",
+                 shortOutputWrite ? " short-output-write" : "");
+    }
 }
 
 } // namespace
@@ -529,6 +497,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         
         const uint64_t callbackOrdinal =
             driverIvars->runtime.ioMetrics.callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
+        uint32_t writeEndFramesRequested = 0;
+        uint32_t writeEndFramesWritten = 0;
         ASFW::Isoch::Audio::AudioIOPathState ioPathState{
             .inputBuffer = driverIvars->inputBuffer.get(),
             .outputBuffer = driverIvars->outputBuffer.get(),
@@ -545,6 +515,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             .zeroCopyTimeline = &driverIvars->runtime.zeroCopyTimeline,
             .packetAssembler = &driverIvars->runtime.packetAssembler,
             .encodingOverruns = &driverIvars->runtime.encodingMetrics.overruns,
+            .writeEndFramesRequested = &writeEndFramesRequested,
+            .writeEndFramesWritten = &writeEndFramesWritten,
         };
 
         const kern_return_t operationStatus = ASFW::Isoch::Audio::HandleIOOperation(ioPathState,
@@ -571,12 +543,27 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                              rxQueueFillFrames,
                              txQueueFillFrames,
                              assemblerFillFrames,
+                             writeEndFramesRequested,
+                             writeEndFramesWritten,
                              callbackOrdinal);
 
         if (operation == IOUserAudioIOOperationBeginRead) {
             driverIvars->runtime.ioMetrics.totalFramesSent.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
         } else if (operation == IOUserAudioIOOperationWriteEnd) {
-            driverIvars->runtime.ioMetrics.totalFramesReceived.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
+            auto& ioMetrics = driverIvars->runtime.ioMetrics;
+            ioMetrics.totalFramesReceived.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
+            ioMetrics.outputCallbackCount.fetch_add(1, std::memory_order_relaxed);
+            ioMetrics.outputFramesRequested.fetch_add(writeEndFramesRequested, std::memory_order_relaxed);
+            ioMetrics.outputFramesWritten.fetch_add(writeEndFramesWritten, std::memory_order_relaxed);
+            ioMetrics.lastOutputFramesRequested.store(writeEndFramesRequested, std::memory_order_relaxed);
+            ioMetrics.lastOutputFramesWritten.store(writeEndFramesWritten, std::memory_order_relaxed);
+            const uint32_t shortfall = (writeEndFramesRequested > writeEndFramesWritten)
+                                     ? (writeEndFramesRequested - writeEndFramesWritten)
+                                     : 0;
+            ioMetrics.lastOutputWriteShortfall.store(shortfall, std::memory_order_relaxed);
+            if (shortfall > 0) {
+                ioMetrics.outputShortWriteCount.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         
         return kIOReturnSuccess;
@@ -848,6 +835,10 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     if (!ivars || !ivars->audioDevice || !ivars->runtime.timestampTimer) {
         ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - not initialized");
         return kIOReturnNotReady;
+    }
+
+    if (ivars->shared.txQueueValid && !ivars->shared.zeroCopyEnabled) {
+        ASFW::Isoch::Audio::PrimeLegacyTxQueueForTransportStart(ivars->shared.txQueueWriter);
     }
 
     if (ivars->device.audioNub) {

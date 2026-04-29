@@ -10,6 +10,9 @@
 namespace ASFW::Isoch::Audio {
 namespace detail {
 
+constexpr uint32_t kLegacyTxStartupPrefillMaxFrames = 2048;
+constexpr uint32_t kLegacyTxStartupPrefillMinFrames = 512;
+
 void ResetZeroCopyTimeline(ZeroCopyTimelineState& timeline) {
     timeline.valid = false;
     timeline.lastSampleTime = 0;
@@ -79,6 +82,14 @@ double HostTicksPerSampleFromQ8(uint32_t q8) {
     struct mach_timebase_info tb;
     mach_timebase_info(&tb);
     return nanosPerSample * static_cast<double>(tb.denom) / static_cast<double>(tb.numer);
+}
+
+double SampleRateFromQ8(uint32_t q8) {
+    if (q8 == 0) {
+        return 0.0;
+    }
+    const double nanosPerSample = q8 / 256.0;
+    return (nanosPerSample > 0.0) ? (1e9 / nanosPerSample) : 0.0;
 }
 
 uint64_t ApplyZeroCopyPllClock(AudioClockEngineState& state) {
@@ -303,12 +314,13 @@ bool PublishFromTimingModel(AudioClockEngineState& state,
                 "zts/src",
                 1000,
                 OS_LOG_TYPE_DEFAULT,
-                "ZTS model authority=%{public}s seq=%u sample=%llu host=%llu q8=%u fresh=%d aligned=%d inOff=%llu outOff=%llu",
+                "ZTS model authority=%{public}s seq=%u sample=%llu host=%llu q8=%u rate=%.2f fresh=%d aligned=%d inOff=%llu outOff=%llu",
                 ClockAuthorityName(model.clockAuthority),
                 model.transportSeq,
                 outSampleTime,
                 outHostTime,
                 outQ8,
+                SampleRateFromQ8(outQ8),
                 model.transportFresh,
                 model.startupAligned,
                 model.inputSampleOffset,
@@ -330,6 +342,14 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
     const uint64_t framesSent = state.ioMetrics->totalFramesSent.load(std::memory_order_relaxed);
     const uint64_t callbacks = state.ioMetrics->callbackCount.load(std::memory_order_relaxed);
     const uint64_t underruns = state.ioMetrics->underruns.load(std::memory_order_relaxed);
+    const uint64_t outputCallbacks =
+        state.ioMetrics->outputCallbackCount.load(std::memory_order_relaxed);
+    const uint64_t outputRequested =
+        state.ioMetrics->outputFramesRequested.load(std::memory_order_relaxed);
+    const uint64_t outputWritten =
+        state.ioMetrics->outputFramesWritten.load(std::memory_order_relaxed);
+    const uint64_t outputShortWrites =
+        state.ioMetrics->outputShortWriteCount.load(std::memory_order_relaxed);
     const uint32_t lastIoBufferFrameSize =
         state.ioMetrics->lastIoBufferFrameSize.load(std::memory_order_relaxed);
     const int64_t lastCallbackSampleDelta =
@@ -340,6 +360,12 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
         state.ioMetrics->lastTxQueueFillFrames.load(std::memory_order_relaxed);
     const uint32_t lastAssemblerFillFrames =
         state.ioMetrics->lastAssemblerFillFrames.load(std::memory_order_relaxed);
+    const uint32_t lastOutputRequested =
+        state.ioMetrics->lastOutputFramesRequested.load(std::memory_order_relaxed);
+    const uint32_t lastOutputWritten =
+        state.ioMetrics->lastOutputFramesWritten.load(std::memory_order_relaxed);
+    const uint32_t lastOutputShortfall =
+        state.ioMetrics->lastOutputWriteShortfall.load(std::memory_order_relaxed);
 
     uint32_t ringFillLevel = lastAssemblerFillFrames;
     uint64_t ringUnderruns = 0;
@@ -363,6 +389,31 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
     const double dt = elapsedSec - state.encodingMetrics->lastLogElapsedSec;
     const uint64_t dp = state.encodingMetrics->packetsGenerated - state.encodingMetrics->lastLogPackets;
     const double packetsPerSec = (dt > 0.0) ? static_cast<double>(dp) / dt : 0.0;
+
+    if (outputCallbacks > 0 || ringUnderruns > 0 || underruns > 0) {
+        const uint32_t txFill = state.txQueueValid ? state.txQueueWriter->FillLevelFrames() : 0;
+        const auto& model = state.clockSync->timingModel;
+        ASFW_LOG(Audio,
+                 "IO-TX: %.1fs cb=%llu outCb=%llu outReq=%llu outWrote=%llu short=%llu last(req=%u wrote=%u short=%u) rxFill=%u txFill=%u asmFill=%u ringUnd=%llu q8=%u rate=%.2f authority=%{public}s align(in=%llu out=%llu)",
+                 elapsedSec,
+                 callbacks,
+                 outputCallbacks,
+                 outputRequested,
+                 outputWritten,
+                 outputShortWrites,
+                 lastOutputRequested,
+                 lastOutputWritten,
+                 lastOutputShortfall,
+                 rxFill,
+                 txFill,
+                 ringFillLevel,
+                 ringUnderruns,
+                 q8,
+                 SampleRateFromQ8(q8),
+                 ClockAuthorityName(model.clockAuthority),
+                 model.inputSampleOffset,
+                 model.outputSampleOffset);
+    }
 
     if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
         ASFW_LOG(Audio,
@@ -442,6 +493,44 @@ void DrainLocalEncoding(AudioClockEngineState& state) {
 
 } // namespace detail
 
+uint32_t LegacyTxStartupPrefillTargetFrames(uint32_t capacityFrames) noexcept {
+    if (capacityFrames == 0) {
+        return 0;
+    }
+
+    const uint32_t halfCapacity = capacityFrames / 2;
+    uint32_t target = (halfCapacity < detail::kLegacyTxStartupPrefillMaxFrames)
+                    ? halfCapacity
+                    : detail::kLegacyTxStartupPrefillMaxFrames;
+
+    if (target == 0) {
+        target = capacityFrames;
+    } else if (target < detail::kLegacyTxStartupPrefillMinFrames &&
+               capacityFrames >= detail::kLegacyTxStartupPrefillMinFrames) {
+        target = detail::kLegacyTxStartupPrefillMinFrames;
+    }
+
+    return (target <= capacityFrames) ? target : capacityFrames;
+}
+
+uint32_t PrimeLegacyTxQueueForTransportStart(ASFW::Shared::TxSharedQueueSPSC& queue) noexcept {
+    if (!queue.IsValid()) {
+        return 0;
+    }
+
+    const uint32_t dropped = queue.ProducerDropQueuedFrames();
+    const uint32_t target = LegacyTxStartupPrefillTargetFrames(queue.CapacityFrames());
+    const uint32_t written = queue.WriteSilence(target);
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: Primed legacy TX queue with silence target=%u wrote=%u dropped=%u fill=%u cap=%u",
+             target,
+             written,
+             dropped,
+             queue.FillLevelFrames(),
+             queue.CapacityFrames());
+    return written;
+}
+
 void PrepareClockEngineForStart(AudioClockEngineState& state) {
     if (!state.audioDevice || !state.timestampTimer || !state.clockSync ||
         !state.hostTicksPerBuffer || !state.ioMetrics || !state.metricsLogCounter ||
@@ -453,6 +542,10 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.ioMetrics->totalFramesSent.store(0, std::memory_order_relaxed);
     state.ioMetrics->callbackCount.store(0, std::memory_order_relaxed);
     state.ioMetrics->underruns.store(0, std::memory_order_relaxed);
+    state.ioMetrics->outputCallbackCount.store(0, std::memory_order_relaxed);
+    state.ioMetrics->outputFramesRequested.store(0, std::memory_order_relaxed);
+    state.ioMetrics->outputFramesWritten.store(0, std::memory_order_relaxed);
+    state.ioMetrics->outputShortWriteCount.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastIoBufferFrameSize.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackSampleTime.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackSampleDelta.store(0, std::memory_order_relaxed);
@@ -460,6 +553,9 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.ioMetrics->lastRxQueueFillFrames.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastTxQueueFillFrames.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastAssemblerFillFrames.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastOutputFramesRequested.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastOutputFramesWritten.store(0, std::memory_order_relaxed);
+    state.ioMetrics->lastOutputWriteShortfall.store(0, std::memory_order_relaxed);
     state.ioMetrics->startTime = mach_absolute_time();
     *state.metricsLogCounter = 0;
 
@@ -483,7 +579,7 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.clockSync->currentTicksPerBuffer = hostTicksPerBuffer;
     detail::ResetClockSync(*state.clockSync);
 
-    if (state.txQueueValid && state.txQueueWriter) {
+    if (state.txQueueValid && state.txQueueWriter && state.zeroCopyEnabled) {
         state.txQueueWriter->ProducerSetZeroCopyPhaseFrames(0);
         state.txQueueWriter->ProducerRequestConsumerResync();
     }
@@ -496,7 +592,8 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            state.clockSync->targetFillLevel = 64;
+            const uint32_t capacity = state.txQueueWriter ? state.txQueueWriter->CapacityFrames() : 0;
+            state.clockSync->targetFillLevel = LegacyTxStartupPrefillTargetFrames(capacity);
         }
     } else {
         state.clockSync->targetFillLevel = 2048;

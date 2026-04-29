@@ -78,6 +78,51 @@ TEST(TxSharedQueueSPSC, SupportsMaxPcmChannels) {
                                                                     kQueueChannels));
 }
 
+TEST(TxSharedQueueSPSC, ProducerDropQueuedFramesResetsFillForStart) {
+    constexpr uint32_t kQueueChannels = 2;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+    std::array<int32_t, 64 * kQueueChannels> payload{};
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+    ASFW::Shared::TxSharedQueueSPSC queue;
+    ASSERT_TRUE(queue.Attach(storage.data(), bytes));
+
+    ASSERT_EQ(queue.Write(payload.data(), 64), 64u);
+    EXPECT_EQ(queue.FillLevelFrames(), 64u);
+    EXPECT_EQ(queue.ProducerDropQueuedFrames(), 64u);
+    EXPECT_EQ(queue.FillLevelFrames(), 0u);
+
+    ASSERT_EQ(queue.Write(payload.data(), 8), 8u);
+    EXPECT_EQ(queue.FillLevelFrames(), 8u);
+}
+
+TEST(TxSharedQueueSPSC, WriteSilencePublishesZeroFrames) {
+    constexpr uint32_t kQueueChannels = 2;
+    constexpr uint32_t kCapacityFrames = 16;
+    const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+    std::array<int32_t, 8 * kQueueChannels> readback{};
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+    ASFW::Shared::TxSharedQueueSPSC queue;
+    ASSERT_TRUE(queue.Attach(storage.data(), bytes));
+
+    EXPECT_EQ(queue.WriteSilence(8), 8u);
+    EXPECT_EQ(queue.FillLevelFrames(), 8u);
+    EXPECT_EQ(queue.Read(readback.data(), 8), 8u);
+    for (const int32_t sample : readback) {
+        EXPECT_EQ(sample, 0);
+    }
+}
+
 TEST(IsochTransmitContext, ConfigureFailsOnRequestedChannelMismatch) {
     constexpr uint32_t kQueueChannels = 4;
     constexpr uint32_t kRequestedChannels = 6;
@@ -511,4 +556,43 @@ TEST(IsochTransmitContext, FirstDataPacketKeepsSeededSytWhenBridgeAdvancesByWhol
     EXPECT_EQ(pkt0Syt, 0xFFFF);
     EXPECT_EQ(pkt1Syt, 0x54B0);
     EXPECT_EQ(pkt2Syt, 0x68B0);
+}
+
+TEST(IsochTransmitContext, AdaptiveFillRespondsToNearHardwareRingUnderruns) {
+    constexpr uint32_t kQueueChannels = 2;
+    constexpr uint32_t kCapacityFrames = 256;
+    const uint64_t bytes =
+        ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
+    std::vector<uint8_t> storage(bytes);
+
+    ASSERT_TRUE(ASFW::Shared::TxSharedQueueSPSC::InitializeInPlace(storage.data(),
+                                                                    bytes,
+                                                                    kCapacityFrames,
+                                                                    kQueueChannels));
+
+    IsochAudioTxPipeline pipeline;
+    pipeline.SetSharedTxQueue(storage.data(), bytes);
+    ASSERT_EQ(pipeline.Configure(/*sid=*/0x00,
+                                 /*streamModeRaw=*/1u,
+                                 /*requestedChannels=*/kQueueChannels,
+                                 /*requestedAm824Slots=*/kQueueChannels,
+                                 AudioWireFormat::kAM824),
+              kIOReturnSuccess);
+    pipeline.ResetForStart();
+
+    const uint32_t initialTarget = pipeline.CurrentFillTarget();
+    int32_t scratch[8 * kQueueChannels]{};
+
+    // The production near-HW injection path reads the assembler ring directly.
+    // Adaptive fill must react to that ring underrun counter, not only to
+    // PacketAssembler's assembleNext() diagnostics.
+    EXPECT_EQ(pipeline.RingBuffer().read(scratch, 8), 0u);
+    EXPECT_EQ(pipeline.RingBuffer().read(scratch, 8), 0u);
+    EXPECT_EQ(pipeline.RingBuffer().read(scratch, 8), 0u);
+
+    for (uint32_t tick = 0; tick < 1000; ++tick) {
+        pipeline.OnPollTick1ms();
+    }
+
+    EXPECT_GT(pipeline.CurrentFillTarget(), initialTarget);
 }

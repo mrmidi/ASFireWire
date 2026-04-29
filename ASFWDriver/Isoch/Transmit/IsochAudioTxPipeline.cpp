@@ -496,9 +496,8 @@ void IsochAudioTxPipeline::AdvanceAdaptiveFillWindow() noexcept {
     ++adaptiveFill_.windowTickCount;
 
     const uint64_t curZeroRefills = counters_.exitZeroRefill.load(std::memory_order_relaxed);
-    const uint64_t curAssemblerUnderruns =
-        assembler_.underrunDiag().underrunCount.load(std::memory_order_relaxed);
-    const uint64_t combinedUnderruns = curZeroRefills + curAssemblerUnderruns;
+    const uint64_t curRingUnderruns = assembler_.underrunCount();
+    const uint64_t combinedUnderruns = curZeroRefills + curRingUnderruns;
     if (combinedUnderruns > adaptiveFill_.lastCombinedUnderruns) {
         adaptiveFill_.underrunsInWindow +=
             static_cast<uint32_t>(combinedUnderruns - adaptiveFill_.lastCombinedUnderruns);

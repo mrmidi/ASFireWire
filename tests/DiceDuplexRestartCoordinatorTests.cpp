@@ -544,6 +544,24 @@ protected:
         return coordinator_.GetSession(kTestGuid);
     }
 
+    [[nodiscard]] bool WaitForPendingClockReason(DiceRestartReason reason) const {
+        constexpr auto timeout = std::chrono::seconds(2);
+        constexpr auto poll = std::chrono::milliseconds(1);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto session = GetSession();
+            if (session.has_value() &&
+                session->hasPendingClockRequest &&
+                session->pendingReason == reason) {
+                return true;
+            }
+            std::this_thread::sleep_for(poll);
+        }
+
+        return false;
+    }
+
     [[nodiscard]] std::vector<std::string> LogSnapshot() const {
         return log_.Snapshot();
     }
@@ -795,10 +813,13 @@ TEST_F(DiceDuplexRestartCoordinatorTests, LatestPendingClockRequestWinsDuringRes
         secondPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kRecoverAfterTimingLoss));
     });
+    ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kRecoverAfterTimingLoss));
+
     std::thread thirdThread([&] {
         thirdPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kBusResetRebind));
     });
+    ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kBusResetRebind));
 
     protocol_->SetHoldPrepare(false);
 

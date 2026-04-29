@@ -364,6 +364,14 @@ TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
     EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+
+    caps = {};
+    EXPECT_TRUE(TryGetKnownDICEProfile(0x000595U, 0x000000U, caps));
+    EXPECT_EQ(caps.sampleRateHz, 48000U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 14U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 2U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 14U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 2U);
 }
 
 } // namespace

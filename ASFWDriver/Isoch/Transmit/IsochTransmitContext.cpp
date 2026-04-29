@@ -340,8 +340,22 @@ void IsochTransmitContext::Poll() noexcept {
         const uint64_t underrunDelta = underrunNow - lastUnderrunCount_;
         lastUnderrunCount_ = underrunNow;
         if (underrunDelta > 0) {
-            ASFW_LOG(Isoch, "IT: UNDERRUN %llu frames (total=%llu) rbFill=%u txFill=%u",
-                     underrunDelta, underrunNow, rbFill, txFill);
+            const auto& audioC = audio_.RTCounters();
+            ASFW_LOG(Isoch,
+                     "IT: UNDERRUN %llu frames (total=%llu) rbFill=%u txFill=%u target=%u base=%u max=%u peakRb=%u peakTx=%u pumpMoved=%llu pumpSkip=%llu silenced=%llu zeroExit=%llu",
+                     underrunDelta,
+                     underrunNow,
+                     rbFill,
+                     txFill,
+                     audio_.CurrentFillTarget(),
+                     audio_.BaseFillTarget(),
+                     audio_.MaxFillTarget(),
+                     audioC.peakAssemblerFill.load(std::memory_order_relaxed),
+                     audioC.peakSharedTxFill.load(std::memory_order_relaxed),
+                     audioC.legacyPumpMovedFrames.load(std::memory_order_relaxed),
+                     audioC.legacyPumpSkipped.load(std::memory_order_relaxed),
+                     audioC.underrunSilencedPackets.load(std::memory_order_relaxed),
+                     audioC.exitZeroRefill.load(std::memory_order_relaxed));
         }
 
         if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {

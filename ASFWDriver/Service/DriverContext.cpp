@@ -1,6 +1,6 @@
 #include "DriverContext.hpp"
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>
+#include "ASFWDriver.h"
 
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 

@@ -5,14 +5,66 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     static let shared = DriverInstallManager()
     private override init() {}
 
-    private let extensionIdentifier = "net.mrmidi.ASFW.ASFWDriver" // matches driver bundle id
+    private let extensionIdentifier: String = {
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "ASFWDriverBundleIdentifier") as? String,
+           !configured.isEmpty {
+            return configured
+        }
+        if let appIdentifier = Bundle.main.bundleIdentifier,
+           !appIdentifier.isEmpty {
+            return "\(appIdentifier).ASFWDriver"
+        }
+        return "net.mrmidi.ASFW.ASFWDriver"
+    }() // matches driver bundle id
 
-    enum ActivationError: Error { case unknown, rejected, requiresUserApproval }
+    var extensionBundleIdentifier: String { extensionIdentifier }
+    var appBundlePath: String { Bundle.main.bundleURL.standardizedFileURL.path }
+    var isRunningFromApplications: Bool {
+        let path = appBundlePath
+        return path == "/Applications" || path.hasPrefix("/Applications/")
+    }
+
+    enum ActivationError: LocalizedError {
+        case unknown
+        case rejected
+        case requiresUserApproval
+        case hostAppNotInApplications(currentPath: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .unknown:
+                return "The system extension request failed for an unknown reason."
+            case .rejected:
+                return "The system extension request was rejected."
+            case .requiresUserApproval:
+                return "System extension approval is required in System Settings."
+            case .hostAppNotInApplications(let currentPath):
+                return "Move ASFW to /Applications before installing the driver. Current location: \(currentPath)"
+            }
+        }
+
+        var recoverySuggestion: String? {
+            switch self {
+            case .requiresUserApproval:
+                return "Open System Settings and approve the ASFW system extension, then return to ASFW."
+            case .hostAppNotInApplications:
+                return "Copy the built app to /Applications, launch that copy, then install again."
+            case .unknown, .rejected:
+                return nil
+            }
+        }
+    }
+
     enum OperationKind { case activation, deactivation }
     private var currentOp: OperationKind = .activation
     private var completion: ((Result<String, Error>) -> Void)?
 
     func activate(completion: @escaping (Result<String, Error>) -> Void) {
+        guard isRunningFromApplications else {
+            logBundleScan()
+            completion(.failure(ActivationError.hostAppNotInApplications(currentPath: appBundlePath)))
+            return
+        }
         submit(kind: .activation, request: OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main), completion: completion)
         logBundleScan()
     }

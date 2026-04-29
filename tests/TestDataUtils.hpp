@@ -10,12 +10,28 @@
 
 namespace ASFW::Tests {
 
+enum class ReferenceDataLoadStatus {
+    kLoaded,
+    kMissingFile,
+    kError,
+};
+
 inline std::filesystem::path ResolveRepoRoot() {
     auto path = std::filesystem::absolute(std::filesystem::path(__FILE__));
     for (int i = 0; i < 3; ++i) {
         path = path.parent_path();
     }
     return path;
+}
+
+inline std::filesystem::path ResolveRepoFile(std::string_view relativePath) {
+    return ResolveRepoRoot() / std::filesystem::path(std::string(relativePath));
+}
+
+inline std::string MissingExternalReferenceMessage(const std::filesystem::path& filePath) {
+    return "Optional external Linux reference fixture is missing: " + filePath.string() +
+           ". Check out FirWireDriver next to ASFireWire, or place the fixture at that path, "
+           "to run this reference-data test.";
 }
 
 inline bool LoadHexArrayFromCFile(const std::filesystem::path& filePath,
@@ -95,8 +111,28 @@ inline bool LoadHexArrayFromRepoFile(std::string_view relativePath,
                                      std::string_view arrayName,
                                      std::vector<uint32_t>& outWords,
                                      std::string* errorMessage) {
-    const auto absolutePath = ResolveRepoRoot() / std::filesystem::path(relativePath);
+    const auto absolutePath = ResolveRepoFile(relativePath);
     return LoadHexArrayFromCFile(absolutePath, arrayName, outWords, errorMessage);
+}
+
+inline ReferenceDataLoadStatus LoadOptionalHexArrayFromRepoFile(std::string_view relativePath,
+                                                                std::string_view arrayName,
+                                                                std::vector<uint32_t>& outWords,
+                                                                std::string* errorMessage) {
+    const auto absolutePath = ResolveRepoFile(relativePath);
+    if (!std::filesystem::exists(absolutePath)) {
+        outWords.clear();
+        if (errorMessage) {
+            *errorMessage = MissingExternalReferenceMessage(absolutePath);
+        }
+        return ReferenceDataLoadStatus::kMissingFile;
+    }
+
+    if (LoadHexArrayFromCFile(absolutePath, arrayName, outWords, errorMessage)) {
+        return ReferenceDataLoadStatus::kLoaded;
+    }
+
+    return ReferenceDataLoadStatus::kError;
 }
 
 } // namespace ASFW::Tests

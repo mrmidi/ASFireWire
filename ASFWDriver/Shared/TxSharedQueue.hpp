@@ -259,6 +259,17 @@ public:
         hdr_->readIndexFrames.v.store(w, std::memory_order_release);
     }
 
+    // Producer-side start reset. Only use while the consumer is stopped.
+    // It discards stale producer data without changing the consumer-owned index.
+    uint32_t ProducerDropQueuedFrames() {
+        if (!IsValid()) return 0;
+        const uint32_t r = hdr_->readIndexFrames.v.load(std::memory_order_acquire);
+        const uint32_t w = hdr_->writeIndexFrames.v.load(std::memory_order_relaxed);
+        const uint32_t dropped = uint32_t(w - r);
+        hdr_->writeIndexFrames.v.store(r, std::memory_order_release);
+        return dropped;
+    }
+
     // Producer-only: publish newly written frames without copying payload.
     // Useful when audio samples live in a separate shared zero-copy buffer.
     uint32_t PublishFrames(uint32_t frames) {
@@ -318,6 +329,35 @@ public:
         }
 
         // Publish data then bump index
+        hdr_->writeIndexFrames.v.store(w + n, std::memory_order_release);
+        return n;
+    }
+
+    // Producer: append silent interleaved frames.
+    // Returns number of frames actually written.
+    uint32_t WriteSilence(uint32_t frames) {
+        if (!IsValid() || frames == 0) return 0;
+
+        const uint32_t ch = hdr_->channels;
+        const uint32_t w = hdr_->writeIndexFrames.v.load(std::memory_order_relaxed);
+        const uint32_t r = hdr_->readIndexFrames.v.load(std::memory_order_acquire);
+
+        const uint32_t used = uint32_t(w - r);
+        const uint32_t free = capacity_ - used;
+        const uint32_t n = (frames <= free) ? frames : free;
+        if (n == 0) return 0;
+
+        const uint32_t idx = w & mask_;
+        const uint32_t first = std::min(n, capacity_ - idx);
+        const uint32_t second = n - first;
+        const size_t firstSamples = static_cast<size_t>(first) * static_cast<size_t>(ch);
+        const size_t secondSamples = static_cast<size_t>(second) * static_cast<size_t>(ch);
+
+        std::memset(&data_[static_cast<size_t>(idx) * ch], 0, firstSamples * sizeof(int32_t));
+        if (second) {
+            std::memset(&data_[0], 0, secondSamples * sizeof(int32_t));
+        }
+
         hdr_->writeIndexFrames.v.store(w + n, std::memory_order_release);
         return n;
     }

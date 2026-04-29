@@ -15,6 +15,18 @@ class DriverViewModel: ObservableObject {
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
+
+    var driverBundleIdentifier: String {
+        DriverInstallManager.shared.extensionBundleIdentifier
+    }
+
+    var appBundlePath: String {
+        DriverInstallManager.shared.appBundlePath
+    }
+
+    var isRunningFromApplications: Bool {
+        DriverInstallManager.shared.isRunningFromApplications
+    }
     
     struct LogEntry: Identifiable, Equatable {
         let id = UUID()
@@ -82,8 +94,9 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = message
                     self.log(message, source: .app, level: .success)
                 case .failure(let error):
-                    self.activationStatus = "Error: \(error.localizedDescription)"
-                    self.log(error.localizedDescription, source: .app, level: .error)
+                    let message = Self.errorMessage(for: error)
+                    self.activationStatus = "Error: \(message)"
+                    self.log(message, source: .app, level: .error)
                 }
             }
         }
@@ -103,10 +116,22 @@ class DriverViewModel: ObservableObject {
                     self.activationStatus = message
                     self.log(message, source: .app, level: .success)
                 case .failure(let error):
-                    self.activationStatus = "Error: \(error.localizedDescription)"
-                    self.log(error.localizedDescription, source: .app, level: .error)
+                    let message = Self.errorMessage(for: error)
+                    self.activationStatus = "Error: \(message)"
+                    self.log(message, source: .app, level: .error)
                 }
             }
         }
+    }
+
+    private static func errorMessage(for error: Error) -> String {
+        if let localized = error as? LocalizedError {
+            let description = localized.errorDescription ?? error.localizedDescription
+            if let suggestion = localized.recoverySuggestion {
+                return "\(description) \(suggestion)"
+            }
+            return description
+        }
+        return error.localizedDescription
     }
 }

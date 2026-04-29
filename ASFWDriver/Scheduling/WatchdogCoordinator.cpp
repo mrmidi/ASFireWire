@@ -2,7 +2,7 @@
 
 #include <DriverKit/IOLib.h>
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriver.h>
+#include "ASFWDriver.h"
 
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"

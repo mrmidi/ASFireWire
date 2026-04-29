@@ -5,7 +5,7 @@
 
 #include "../../Common/DriverKitOwnership.hpp"
 
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include "ASFWAudioNub.h"
 #include <utility>
 
 namespace ASFW::Audio {

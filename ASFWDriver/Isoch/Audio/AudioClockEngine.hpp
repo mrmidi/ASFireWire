@@ -16,6 +16,10 @@ struct IOMetricsState {
     std::atomic<uint64_t> totalFramesSent{0};
     std::atomic<uint64_t> callbackCount{0};
     std::atomic<uint64_t> underruns{0};
+    std::atomic<uint64_t> outputCallbackCount{0};
+    std::atomic<uint64_t> outputFramesRequested{0};
+    std::atomic<uint64_t> outputFramesWritten{0};
+    std::atomic<uint64_t> outputShortWriteCount{0};
     std::atomic<uint32_t> lastIoBufferFrameSize{0};
     std::atomic<uint64_t> lastCallbackSampleTime{0};
     std::atomic<int64_t> lastCallbackSampleDelta{0};
@@ -23,6 +27,9 @@ struct IOMetricsState {
     std::atomic<uint32_t> lastRxQueueFillFrames{0};
     std::atomic<uint32_t> lastTxQueueFillFrames{0};
     std::atomic<uint32_t> lastAssemblerFillFrames{0};
+    std::atomic<uint32_t> lastOutputFramesRequested{0};
+    std::atomic<uint32_t> lastOutputFramesWritten{0};
+    std::atomic<uint32_t> lastOutputWriteShortfall{0};
     uint64_t startTime{0};
 };
 
@@ -103,5 +110,8 @@ struct AudioClockEngineState {
 void PrepareClockEngineForStart(AudioClockEngineState& state);
 void PrepareClockEngineForStop(AudioClockEngineState& state);
 void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time);
+
+uint32_t LegacyTxStartupPrefillTargetFrames(uint32_t capacityFrames) noexcept;
+uint32_t PrimeLegacyTxQueueForTransportStart(ASFW::Shared::TxSharedQueueSPSC& queue) noexcept;
 
 } // namespace ASFW::Isoch::Audio

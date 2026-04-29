@@ -172,6 +172,11 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     mockAsync.SimulateReadSuccess(6, {0});
     mockAsync.SimulateReadSuccess(7, {0});
 
+    // Empty root directory headers for both nodes.
+    mockAsync.WaitForPendingReads(10);
+    mockAsync.SimulateReadSuccess(8, {0x00000000});
+    mockAsync.SimulateReadSuccess(9, {0x00000000});
+
     {
         std::unique_lock lock(mtx);
         cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackCount > 0; });
@@ -220,6 +225,8 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
     // First BIB returns not-ready payload (q0 == 0), then retry succeeds.
     mockAsync.SimulateFullBIBSuccess(0, CreateBusyBIB());
     mockAsync.SimulateFullBIBSuccess(4, CreateMinimalBIB());
+    mockAsync.WaitForPendingReads(9);
+    mockAsync.SimulateReadSuccess(8, {0x00000000});
 
     {
         std::unique_lock lock(mtx);

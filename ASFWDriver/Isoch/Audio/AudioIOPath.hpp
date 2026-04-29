@@ -39,6 +39,11 @@ struct AudioIOPathState {
 
     ASFW::Encoding::PacketAssembler* packetAssembler{nullptr};
     uint64_t* encodingOverruns{nullptr};
+
+    // Optional per-callback TX diagnostics, owned by the caller. These are
+    // filled only for IOUserAudioIOOperationWriteEnd.
+    uint32_t* writeEndFramesRequested{nullptr};
+    uint32_t* writeEndFramesWritten{nullptr};
 };
 
 kern_return_t HandleIOOperation(AudioIOPathState& state,

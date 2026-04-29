@@ -176,6 +176,8 @@ TEST(AudioIOPathTests, WriteEndWithTxQueueWrapWritesFirstThenSecondSpan) {
     }
 
     uint64_t overruns = 0;
+    uint32_t requested = 0;
+    uint32_t written = 0;
     AudioIOPathState state{
         .outputBuffer = outputBuffer,
         .outputChannelCount = kChannels,
@@ -184,10 +186,14 @@ TEST(AudioIOPathTests, WriteEndWithTxQueueWrapWritesFirstThenSecondSpan) {
         .txQueueWriter = &txQueue.queue,
         .zeroCopyEnabled = false,
         .encodingOverruns = &overruns,
+        .writeEndFramesRequested = &requested,
+        .writeEndFramesWritten = &written,
     };
 
     ASSERT_EQ(HandleIOOperation(state, IOUserAudioIOOperationWriteEnd, 4, 6), kIOReturnSuccess);
     EXPECT_EQ(overruns, 0u);
+    EXPECT_EQ(requested, 4u);
+    EXPECT_EQ(written, 4u);
 
     std::array<int32_t, 8> readBack{};
     ASSERT_EQ(txQueue.queue.Read(readBack.data(), 4), 4u);
@@ -196,6 +202,47 @@ TEST(AudioIOPathTests, WriteEndWithTxQueueWrapWritesFirstThenSecondSpan) {
         61, 62, 71, 72, 1, 2, 11, 12
     };
     EXPECT_EQ(readBack, expected);
+}
+
+TEST(AudioIOPathTests, WriteEndReportsShortTxQueueWrites) {
+    constexpr uint32_t kChannels = 2;
+    constexpr uint32_t kPeriodFrames = 8;
+
+    QueueFixture txQueue(4, kChannels);
+    ASSERT_TRUE(txQueue.ok);
+
+    const std::array<int32_t, 6> threeFrames = {1, 2, 3, 4, 5, 6};
+    ASSERT_EQ(txQueue.queue.Write(threeFrames.data(), 3), 3u);
+
+    IOBufferMemoryDescriptor* outputBuffer = CreateAudioBuffer(kPeriodFrames, kChannels);
+    ASSERT_NE(outputBuffer, nullptr);
+    int32_t* samples = BufferPtr(outputBuffer);
+    ASSERT_NE(samples, nullptr);
+
+    for (uint32_t frame = 0; frame < kPeriodFrames; ++frame) {
+        samples[frame * kChannels + 0] = static_cast<int32_t>(frame * 10 + 1);
+        samples[frame * kChannels + 1] = static_cast<int32_t>(frame * 10 + 2);
+    }
+
+    uint64_t overruns = 0;
+    uint32_t requested = 0;
+    uint32_t written = 0;
+    AudioIOPathState state{
+        .outputBuffer = outputBuffer,
+        .outputChannelCount = kChannels,
+        .ioBufferPeriodFrames = kPeriodFrames,
+        .txQueueValid = true,
+        .txQueueWriter = &txQueue.queue,
+        .zeroCopyEnabled = false,
+        .encodingOverruns = &overruns,
+        .writeEndFramesRequested = &requested,
+        .writeEndFramesWritten = &written,
+    };
+
+    ASSERT_EQ(HandleIOOperation(state, IOUserAudioIOOperationWriteEnd, 4, 0), kIOReturnSuccess);
+    EXPECT_EQ(requested, 4u);
+    EXPECT_EQ(written, 1u);
+    EXPECT_EQ(overruns, 1u);
 }
 
 TEST(AudioIOPathTests, ZeroCopyPublishTracksDiscontinuityAndPhaseRebase) {

@@ -43,10 +43,62 @@ struct OverviewView: View {
                         statusIndicator
                         Text(viewModel.activationStatus)
                             .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
                         Spacer()
                     }
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+
+                // Install Card
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Driver Install", systemImage: "puzzlepiece.extension")
+                        .font(.headline)
+
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: viewModel.isRunningFromApplications ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(viewModel.isRunningFromApplications ? .green : .orange)
+                            .font(.title3)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(viewModel.isRunningFromApplications ? "Ready to request activation" : "Launch ASFW from /Applications before installing")
+                                .font(.subheadline.weight(.semibold))
+                            Text(viewModel.appBundlePath)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+
+                        Spacer(minLength: 16)
+
+                        HStack(spacing: 8) {
+                            Button {
+                                viewModel.installDriver()
+                            } label: {
+                                Label("Install Driver", systemImage: "arrow.down.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(viewModel.isBusy || !viewModel.isRunningFromApplications)
+
+                            Button(role: .destructive) {
+                                viewModel.uninstallDriver()
+                            } label: {
+                                Label("Uninstall", systemImage: "trash.fill")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isBusy)
+                        }
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+                    Text("Approval may appear in System Settings after macOS accepts the activation request.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -58,7 +110,7 @@ struct OverviewView: View {
                     
                     InfoRow(label: "Target Hardware", value: "pci11c1,5901 (Agere FW800)")
                     InfoRow(label: "Protocol", value: "IEEE 1394 OHCI 1.1")
-                    InfoRow(label: "Bundle ID", value: "net.mrmidi.ASFW.ASFWDriver")
+                    InfoRow(label: "Bundle ID", value: viewModel.driverBundleIdentifier)
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))

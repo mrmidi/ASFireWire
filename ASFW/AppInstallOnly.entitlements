@@ -6,10 +6,5 @@
   <false/>
   <key>com.apple.developer.system-extension.install</key>
   <true/>
-  <key>com.apple.developer.driverkit.userclient-access</key>
-  <array>
-    <string>$(ASFW_DRIVER_BUNDLE_IDENTIFIER)</string>
-    <string>$(ASFW_DRIVER_BUNDLE_IDENTIFIER):ASFWDriverUserClient</string>
-  </array>
 </dict>
 </plist>

@@ -135,9 +135,10 @@ struct ModernContentView: View {
                         Button {
                             driverVM.installDriver()
                         } label: {
-                            Label("Install", systemImage: "arrow.down.circle.fill")
+                            Label("Install Driver", systemImage: "arrow.down.circle.fill")
                         }
                         .disabled(driverVM.isBusy)
+                        .help("Install DriverKit system extension")
                         .keyboardShortcut("i", modifiers: .command)
                         
                         Button {
@@ -146,6 +147,7 @@ struct ModernContentView: View {
                             Label("Uninstall", systemImage: "trash.fill")
                         }
                         .disabled(driverVM.isBusy)
+                        .help("Uninstall DriverKit system extension")
                         .tint(.red)
                         .keyboardShortcut("u", modifiers: .command)
                     }

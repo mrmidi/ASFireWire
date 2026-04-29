@@ -40,6 +40,8 @@ public:
     static constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
     static constexpr uint32_t kApogeeVendorId = 0x0003db;
     static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
+    static constexpr uint32_t kAlesisVendorId = 0x000595;
+    static constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
     static constexpr const char* kFocusriteVendorName = "Focusrite";
     static constexpr const char* kSPro40ModelName = "Saffire Pro 40";
@@ -51,6 +53,8 @@ public:
     static constexpr const char* kSPro40Tcd3070ModelName = "Saffire Pro 40 (TCD3070)";
     static constexpr const char* kApogeeVendorName = "Apogee";
     static constexpr const char* kApogeeDuetModelName = "Duet";
+    static constexpr const char* kAlesisVendorName = "Alesis";
+    static constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
 
     struct KnownIdentity {
         uint32_t vendorId{0};
@@ -102,6 +106,10 @@ public:
         if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
             return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kAVCDriven,
                                      kApogeeVendorName, kApogeeDuetModelName);
+        }
+        if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {
+            return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
+                                     kAlesisVendorName, kAlesisMultiMixModelName);
         }
         return std::nullopt;
     }

@@ -12,7 +12,7 @@
 #include "../Controller/ControllerCore.hpp"
 #include "../Controller/ControllerStateMachine.hpp"
 #include "../Diagnostics/MetricsSink.hpp"
-#include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h>
+#include "ASFWDriverUserClient.h"
 
 namespace ASFW::Driver {
 
