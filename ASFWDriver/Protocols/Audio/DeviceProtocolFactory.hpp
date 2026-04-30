@@ -42,6 +42,8 @@ public:
     static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
     static constexpr uint32_t kAlesisVendorId = 0x000595;
     static constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
+    static constexpr uint32_t kMidasVendorId = 0x10c73f;
+    static constexpr uint32_t kMidasVeniceF32ModelId = 0x000001;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
     static constexpr const char* kFocusriteVendorName = "Focusrite";
     static constexpr const char* kSPro40ModelName = "Saffire Pro 40";
@@ -55,6 +57,9 @@ public:
     static constexpr const char* kApogeeDuetModelName = "Duet";
     static constexpr const char* kAlesisVendorName = "Alesis";
     static constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
+    static constexpr const char* kMidasVendorName = "Midas";
+    static constexpr const char* kMidasVeniceF32ModelName = "Venice F32";
+    static constexpr const char* kMidasVeniceGenericModelName = "Venice DICE";
 
     struct KnownIdentity {
         uint32_t vendorId{0};
@@ -110,6 +115,15 @@ public:
         if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {
             return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
                                      kAlesisVendorName, kAlesisMultiMixModelName);
+        }
+        if (vendorId == kMidasVendorId) {
+            return MakeKnownIdentity(vendorId,
+                                     modelId,
+                                     DeviceIntegrationMode::kHardcodedNub,
+                                     kMidasVendorName,
+                                     modelId == kMidasVeniceF32ModelId
+                                         ? kMidasVeniceF32ModelName
+                                         : kMidasVeniceGenericModelName);
         }
         return std::nullopt;
     }
