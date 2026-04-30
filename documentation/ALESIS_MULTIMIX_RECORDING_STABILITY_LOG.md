@@ -1,6 +1,6 @@
 # Alesis MultiMix Recording Stability Log
 
-Status as of 2026-04-29: v15 is the clean recording checkpoint for the currently connected Alesis MultiMix FireWire unit.
+Status as of 2026-04-30: v15 remains the clean recording checkpoint for the currently connected Alesis MultiMix FireWire unit.
 
 This document records the work done across 2026-04-28 and 2026-04-29 to bring the Alesis MultiMix recording path to a usable/professional baseline before any separate packaging pass for external testers.
 
@@ -12,6 +12,7 @@ This document records the work done across 2026-04-28 and 2026-04-29 to bring th
 - Device exposed to CoreAudio: `Alesis MultiMix Firewire`
 - CoreAudio channel shape: `12 in / 2 out @ 48 kHz`
 - Logic result reported by Chris on 2026-04-29: input 3 microphone and input 4 synth are both clean in Logic.
+- Recovery result on 2026-04-30: a no-reboot controlled refresh cleared a duplicate half-uninstall SystemExtensions state and republished the Alesis device to CoreAudio.
 - Packaging for Lychzord has not been started from this checkpoint.
 
 The v15 checkpoint should be treated as the baseline before creating any separate external-test copy.
@@ -154,6 +155,41 @@ A stale v14 DriverKit user-server remained active after macOS accepted v15. The 
    - verify IORegistry CDHash again
 
 This is now encoded in `tools/debug/refresh_local_driver.sh` and should become an app-side “Driver Refresh / Quiesce Audio” workflow later.
+
+### v15 Restore Checklist
+
+On 2026-04-30 the machine fell out of the known-good v15 runtime state after the app was quit/reopened and the working driver was reinstalled. Before recovery, SystemExtensions showed one active v15 driver plus one identical v15 driver `terminating for uninstall but still running`, and CoreAudio no longer published `Alesis MultiMix Firewire`.
+
+The successful no-reboot recovery was:
+
+1. Capture the baseline state before touching anything:
+   - `tools/debug/hygiene_snapshot.sh --out /tmp/asfw-recovery-v15-before-20260430-015415`
+   - `tools/debug/probe_local_state.sh > /tmp/asfw-recovery-v15-before-20260430-015415/probe.txt`
+2. Quit Logic and `/Applications/ASFWLocal.app`.
+3. Run one controlled refresh:
+   - snapshot output: `/tmp/asfw-recovery-v15-refresh-20260430-015527`
+   - expected CDHash: `e08b9dff83f69254f70363038e3d9d68e5e9f69a`
+4. Reopen `/Applications/ASFWLocal.app`.
+5. Verify:
+   - `systemextensionsctl list` shows only `com.chrisizatt.ASFWLocal.ASFWDriver (1.0/15)` active/enabled, with no stale ASFW terminating entry.
+   - IORegistry reports CDHash `e08b9dff83f69254f70363038e3d9d68e5e9f69a`.
+   - CoreAudio reports `Alesis MultiMix Firewire`, `12 in / 2 out @ 48 kHz`.
+
+The useful mechanism was refresh, not another reinstall: terminate the stale ASFW DriverKit user-server PIDs, restart `coreaudiod`, wait for macOS to settle on a single active v15 system extension, then let the ASFW audio nub republish into CoreAudio.
+
+For non-technical testers, the plain checklist is:
+
+1. Open the app from `/Applications/ASFWLocal.app` only.
+2. Do not open copies from Xcode, DerivedData, Downloads, or private test folders.
+3. Do not reinstall repeatedly if the audio device disappears.
+4. If the device disappears, quit Logic or any other audio app, then quit ASFWLocal.
+5. Run one Repair Driver / Refresh Audio action. Today this is `tools/debug/refresh_local_driver.sh`; later it should be an app button.
+6. Reopen `/Applications/ASFWLocal.app`.
+7. Check Audio MIDI Setup, System Settings, or Logic for `Alesis MultiMix Firewire`, `12 in / 2 out @ 48 kHz`.
+8. If it is still missing, power-cycle or unplug/replug the MultiMix/FireWire adapter once.
+9. If it is still missing, or if SystemExtensions shows a driver `terminating for uninstall but still running`, reboot before trying another install.
+
+`tools/debug/refresh_local_driver.sh` was also made compatible with macOS's system `/bin/bash` by removing `mapfile`, which is not available in the Bash 3.2 shipped by macOS.
 
 ## Pause Boundary
 

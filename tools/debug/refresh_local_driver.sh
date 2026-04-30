@@ -73,7 +73,11 @@ if [[ -d "$APP_PATH" ]]; then
   pkill -TERM -f "${APP_PATH}/Contents/MacOS/ASFW" 2>/dev/null || true
 fi
 
-mapfile -t PIDS < <(driver_pids)
+# macOS still ships Bash 3.2, so avoid mapfile/readarray here.
+PIDS=()
+while IFS= read -r pid; do
+  [[ -n "$pid" ]] && PIDS+=("$pid")
+done < <(driver_pids)
 KILL_CMD="/usr/bin/true"
 if [[ ${#PIDS[@]} -gt 0 ]]; then
   KILL_CMD="/bin/kill -TERM ${PIDS[*]} || true"
