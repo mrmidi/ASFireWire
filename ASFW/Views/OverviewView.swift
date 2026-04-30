@@ -274,7 +274,7 @@ struct OverviewView: View {
                     Label("Information", systemImage: "info.circle")
                         .font(.headline)
                     
-                    InfoRow(label: "Target Hardware", value: "pci11c1,5901 (Agere FW800)")
+                    InfoRow(label: "Target Hardware", value: "FireWire OHCI controller")
                     InfoRow(label: "Protocol", value: "IEEE 1394 OHCI 1.1")
                     InfoRow(label: "Bundle ID", value: viewModel.driverBundleIdentifier)
 

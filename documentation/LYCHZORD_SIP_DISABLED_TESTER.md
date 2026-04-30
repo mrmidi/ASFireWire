@@ -24,6 +24,7 @@ The script defaults to:
 - architecture: `arm64`
 - signing: ad-hoc / Sign to Run Locally style
 - maintenance health: driver-only by default, so the app does not require an Alesis CoreAudio device before reporting a clean refresh
+- OHCI provider matching: FireWire OHCI PCI class `0x0c001000` / `pciclass,0c0010`, not only Chris's local Agere `pci11c1,5901` controller
 
 If Lychzord has already installed an earlier tester build with the same System
 Extension version, build the replacement with a higher bundle version so
@@ -70,6 +71,32 @@ open /Applications/ASFWLychzord.app
 ```
 
 In the app, use `Install / Update Driver` once and approve any System Settings prompt.
+
+After install, `systemextensionsctl list` only proves the system extension was
+approved. It does not prove the DriverKit service attached. The next check is:
+
+```sh
+systemextensionsctl list
+ps -ax | grep -i ASFW
+ioreg -l -r -c ASFWDriver
+ioreg -l -r -c ASFWAudioNub
+```
+
+Expected minimum state is:
+
+```text
+com.lychzord.ASFWTest.ASFWDriver (1.0/<version>) ... [activated enabled]
+```
+
+and an ASFWDriver/DriverKit process in `ps`. If the system extension is active
+but there is no ASFWDriver process, the driver installed but did not attach to
+the FireWire OHCI PCI provider. Do not use Repair for that state; collect:
+
+```sh
+system_profiler SPPCIDataType -detailLevel full | egrep -A12 -B4 'IEEE 1394|FireWire|Open HCI|pci'
+system_profiler SPFireWireDataType
+log show --last 15m --style compact --predicate 'process == "sysextd" OR eventMessage CONTAINS "ASFW" OR eventMessage CONTAINS "com.lychzord.ASFWTest.ASFWDriver" OR eventMessage CONTAINS "IOPCIClassMatch"'
+```
 
 If the app reports `Repair needed: ASFW driver CDHash does not match the staged
 driver` immediately after replacing the app, macOS is probably still running an

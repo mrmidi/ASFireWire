@@ -132,6 +132,18 @@ if [[ -d "$SYS_EXT_DIR" ]]; then
 fi
 [[ -d "$EXPECTED_DEXT_PATH" ]] || { echo "error: embedded dext missing: $EXPECTED_DEXT_PATH" >&2; exit 1; }
 
+DEXT_INFO_PLIST="$EXPECTED_DEXT_PATH/Contents/Info.plist"
+[[ -f "$DEXT_INFO_PLIST" ]] || DEXT_INFO_PLIST="$EXPECTED_DEXT_PATH/Info.plist"
+[[ -f "$DEXT_INFO_PLIST" ]] || { echo "error: embedded dext Info.plist missing: $EXPECTED_DEXT_PATH" >&2; exit 1; }
+
+# The main local test path originally matched Chris's Agere/Lucent FW800 PCI ID
+# exactly. The SIP-disabled tester lane needs to attach to whichever OHCI bridge
+# the tester Mac exposes, so match the FireWire OHCI PCI class instead.
+/usr/libexec/PlistBuddy -c "Delete :IOKitPersonalities:ASFWDriverService:IOPCIMatch" "$DEXT_INFO_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :IOKitPersonalities:ASFWDriverService:IOPCIClassMatch" "$DEXT_INFO_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :IOKitPersonalities:ASFWDriverService:IOPCIClassMatch string 0x0c001000" "$DEXT_INFO_PLIST"
+echo "Configured embedded dext for FireWire OHCI class match: IOPCIClassMatch=0x0c001000"
+
 /usr/libexec/PlistBuddy -c "Delete :ASFWRequireCoreAudioDevice" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :ASFWRequireCoreAudioDevice bool $REQUIRE_CORE_AUDIO_DEVICE" "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :ASFWExpectedCoreAudioDeviceName" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
@@ -237,6 +249,8 @@ This is a local testing build for macOS $MACOS_DEPLOYMENT_TARGET+ with SIP disab
 It is not notarised and is not intended for normal end users.
 This package uses driver-only maintenance health, so it does not wait for an
 Alesis CoreAudio device before considering the driver refresh complete.
+This package matches FireWire OHCI PCI controllers by class (pciclass,0c0010),
+not only Chris's local Agere pci11c1,5901 controller.
 
 Install on the tester Mac:
 
@@ -263,6 +277,17 @@ Install on the tester Mac:
 
 8. If the Midas still does not appear, do not keep pressing Repair Driver.
    Capture diagnostics and send the snapshot path/logs back.
+
+After install, the minimum expected driver state is:
+  systemextensionsctl list
+    -> $DRIVER_BUNDLE_ID ($VERSION) activated enabled
+  ps -ax | grep -i ASFW
+    -> an ASFWDriver/DriverKit process should be present, not only the app/helper.
+
+If the system extension is active but no ASFWDriver process appears, collect:
+  system_profiler SPPCIDataType -detailLevel full | egrep -A12 -B4 'IEEE 1394|FireWire|Open HCI|pci'
+  system_profiler SPFireWireDataType
+  log show --last 15m --style compact --predicate 'process == "sysextd" OR eventMessage CONTAINS "ASFW" OR eventMessage CONTAINS "$DRIVER_BUNDLE_ID" OR eventMessage CONTAINS "IOPCIClassMatch"'
 
 If the app reports "Repair needed: ASFW driver CDHash does not match the staged
 driver" immediately after replacing the app, macOS is probably still running an
