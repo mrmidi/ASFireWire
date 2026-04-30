@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "../ResponseCode.hpp"
@@ -26,7 +27,26 @@ public:
     /// Skips transmission for broadcast requests (destID=0xFFFF).
     void SendWriteResponse(const ARPacketView& request, ResponseCode rcode) noexcept;
 
+    /// Build and transmit a Read Quadlet Response (tCode 0x6).
+    void SendReadQuadletResponse(const ARPacketView& request,
+                                 ResponseCode rcode,
+                                 uint32_t quadletData) noexcept;
+
+    /// Build and transmit a Read Block Response (tCode 0x7).
+    void SendReadBlockResponse(const ARPacketView& request,
+                               ResponseCode rcode,
+                               uint64_t payloadDeviceAddress,
+                               uint32_t payloadLength) noexcept;
+
 private:
+    void SendResponse(const ARPacketView& request,
+                      ResponseCode rcode,
+                      uint8_t responseTCode,
+                      const uint32_t* header,
+                      std::size_t headerBytes,
+                      uint64_t payloadDeviceAddress,
+                      std::size_t payloadLength) noexcept;
+
     DescriptorBuilder& builder_;
     Tx::Submitter& submitter_;
     Engine::ContextManager& ctxMgr_;

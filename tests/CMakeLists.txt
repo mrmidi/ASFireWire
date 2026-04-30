@@ -1439,3 +1439,44 @@ target_compile_definitions(ROMScanNodeStateMachineTests
 target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScanNodeStateMachineTests)
+
+add_executable(AddressSpaceManagerTests
+    "${ASFW_TESTS_DIR}/AddressSpaceManagerTests.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+)
+
+target_link_libraries(AddressSpaceManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AddressSpaceManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AddressSpaceManagerTests)
+
+add_executable(SBP2ORBTests
+    "${ASFW_TESTS_DIR}/SBP2ORBTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SBP2ORBTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SBP2ORBTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SBP2ORBTests)

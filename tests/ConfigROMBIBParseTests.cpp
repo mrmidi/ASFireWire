@@ -72,3 +72,36 @@ TEST(ConfigROMBIBParseTests, CRC_Mismatch_IsWarning_NotFailure) {
     EXPECT_EQ(bibRes->computed.value(), 0xEABFu);
     EXPECT_EQ(bibRes->bib.crc, 0xEABEu);
 }
+
+TEST(ConfigROMParserTests, SBP2ManagementAgentOffsetUsesCombinedCSRKey54) {
+    const std::array<uint32_t, 5> unitDirectoryWire = {
+        WireU32FromBENumeric(0x00040000u),
+        WireU32FromBENumeric(0x1200609Eu),
+        WireU32FromBENumeric(0x13010483u),
+        WireU32FromBENumeric(0x5400C000u),
+        WireU32FromBENumeric(0x14060000u),
+    };
+
+    auto entries = ASFW::Discovery::ConfigROMParser::ParseRootDirectory(
+        std::span{unitDirectoryWire},
+        static_cast<uint32_t>(unitDirectoryWire.size()));
+    ASSERT_TRUE(entries.has_value());
+
+    bool foundManagementAgent = false;
+    bool foundLun = false;
+    for (const auto& entry : *entries) {
+        if (entry.key == ASFW::Discovery::CfgKey::Management_Agent_Offset) {
+            foundManagementAgent = true;
+            EXPECT_EQ(entry.value, 0x00C000u);
+            EXPECT_EQ(entry.entryType, 1u);
+        }
+        if (entry.key == ASFW::Discovery::CfgKey::Logical_Unit_Number) {
+            foundLun = true;
+            EXPECT_EQ(entry.value, 0x060000u);
+            EXPECT_EQ(entry.entryType, 0u);
+        }
+    }
+
+    EXPECT_TRUE(foundManagementAgent);
+    EXPECT_TRUE(foundLun);
+}

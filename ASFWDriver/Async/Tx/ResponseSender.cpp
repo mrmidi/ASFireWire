@@ -6,10 +6,34 @@
 #include "../Tx/Submitter.hpp"
 #include "../../Bus/GenerationTracker.hpp"
 #include "../../Logging/Logging.hpp"
+
 #include <DriverKit/IOReturn.h>
 #include <utility>
 
 namespace ASFW::Async {
+
+namespace {
+
+constexpr uint8_t kSrcBusID = 0;
+constexpr uint8_t kSpeedS400 = 0x02;
+constexpr uint8_t kRetryX = 1;
+constexpr uint8_t kPriority = 0;
+
+uint32_t BuildQ0(uint8_t tLabel, uint8_t tCode) {
+    return (static_cast<uint32_t>(kSrcBusID & 0x01) << 23) |
+           (static_cast<uint32_t>(kSpeedS400 & 0x07) << 16) |
+           (static_cast<uint32_t>(tLabel & 0x3F) << 10) |
+           (static_cast<uint32_t>(kRetryX) << 8) |
+           (static_cast<uint32_t>(tCode & 0x0F) << 4) |
+           (static_cast<uint32_t>(kPriority) & 0x0F);
+}
+
+uint32_t BuildQ1(uint16_t destID, ResponseCode rcode) {
+    return (static_cast<uint32_t>(destID) << 16) |
+           (static_cast<uint32_t>(static_cast<uint8_t>(rcode) & 0x0F) << 12);
+}
+
+} // namespace
 
 ResponseSender::ResponseSender(DescriptorBuilder& builder,
                                Tx::Submitter& submitter,
@@ -20,87 +44,140 @@ ResponseSender::ResponseSender(DescriptorBuilder& builder,
     , ctxMgr_(ctxMgr)
     , generationTracker_(generationTracker) {}
 
-void ResponseSender::SendWriteResponse(const ARPacketView& request, ResponseCode rcode) noexcept {
+void ResponseSender::SendResponse(const ARPacketView& request,
+                                  ResponseCode rcode,
+                                  uint8_t responseTCode,
+                                  const uint32_t* header,
+                                  std::size_t headerBytes,
+                                  uint64_t payloadDeviceAddress,
+                                  std::size_t payloadLength) noexcept {
     // Per IEEE 1394, broadcast requests (destID=0xFFFF) do not get responses.
     if (request.destID == 0xFFFF) {
-        ASFW_LOG_V3(Async, "ResponseSender: skip WrResp for broadcast destID=0xFFFF");
+        ASFW_LOG_V3(Async, "ResponseSender: skip response for broadcast destID=0xFFFF");
         return;
     }
 
+    auto* atRspCtx = ctxMgr_.GetAtResponseContext();
+    if (!atRspCtx) {
+        ASFW_LOG_ERROR(Async, "ResponseSender: ATResponseContext unavailable, cannot send response");
+        return;
+    }
+
+    auto chain = builder_.BuildTransactionChain(
+        header,
+        headerBytes,
+        payloadDeviceAddress,
+        payloadLength,
+        /*needsFlush*/ false);
+    if (chain.Empty()) {
+        ASFW_LOG_ERROR(
+            Async,
+            "ResponseSender: failed to build response chain (tCode=0x%x payload=%zu)",
+            responseTCode,
+            payloadLength);
+        return;
+    }
+
+    const auto submitRes = submitter_.submit_tx_chain(atRspCtx, std::move(chain));
+    if (submitRes.kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(
+            Async,
+            "ResponseSender: submit_tx_chain failed (tCode=0x%x kr=0x%x)",
+            responseTCode,
+            submitRes.kr);
+        return;
+    }
+
+    ASFW_LOG_V2(
+        Async,
+        "ResponseSender: response queued (tCode=0x%x tLabel=%u dst=0x%04x rcode=0x%x payload=%zu)",
+        responseTCode,
+        static_cast<unsigned>(request.tLabel & 0x3F),
+        request.sourceID,
+        static_cast<unsigned>(rcode),
+        payloadLength);
+}
+
+void ResponseSender::SendWriteResponse(const ARPacketView& request, ResponseCode rcode) noexcept {
     // Only write requests (quadlet/block) receive a WrResp.
     if (request.tCode != 0x0 && request.tCode != 0x1) {
         ASFW_LOG_V3(Async, "ResponseSender: skip WrResp for non-write tCode=0x%x", request.tCode);
         return;
     }
 
-    auto* atRspCtx = ctxMgr_.GetAtResponseContext();
-    if (!atRspCtx) {
-        ASFW_LOG_ERROR(Async, "ResponseSender: ATResponseContext unavailable, cannot send WrResp");
-        return;
-    }
-
-    // Get local node ID from GenerationTracker (explicitly set, not relying on OHCI auto-fill)
-    const auto busState = generationTracker_.GetCurrentState();
-    const uint16_t localNodeID = busState.localNodeID;
-    
-    // Destination: respond back to the request initiator
-    // Source: our local node ID (typically 0xFFC0)
-    const uint16_t destID = request.sourceID;
-    const uint16_t srcID  = localNodeID;
-    const uint8_t  tLabel = static_cast<uint8_t>(request.tLabel & 0x3F);
-
-    // Build WRITE_RESPONSE header in OHCI AT Data format (NOT IEEE 1394 wire format!)
-    // 
-    // OHCI AT Data format (host byte order, per Linux ohci.h):
-    // Quadlet 0: [srcBusID:1][unused:5][speed:3][tLabel:6][rt:2][tCode:4][pri:4]
-    //            bit[23]     [22:19]    [18:16]  [15:10]  [9:8]  [7:4]   [3:0]
-    // Quadlet 1: [destinationId:16][rCode:4][reserved:12]
-    //            bits[31:16]        [15:12]   [11:0]
-    // Quadlet 2: [reserved:32] (for responses)
-    //
-    // The OHCI controller converts this to IEEE 1394 wire format during transmission.
-    
     uint32_t header[3]{};
-    constexpr uint8_t kSrcBusID = 0;      // Local bus
-    constexpr uint8_t kSpeedS400 = 0x02;  // Default S400 speed
-    constexpr uint8_t kRetryX = 1;        // Match Linux fw_fill_response() RETRY_1
-    constexpr uint8_t kTCodeWriteResponse = 0x2;
-    constexpr uint8_t kPriority = 0;
-
-    // Quadlet 0: OHCI AT format (same as PacketBuilder uses)
-    header[0] = (static_cast<uint32_t>(kSrcBusID & 0x01) << 23) |  // bit[23]: srcBusID
-                (static_cast<uint32_t>(kSpeedS400 & 0x07) << 16) | // bits[18:16]: speed
-                (static_cast<uint32_t>(tLabel) << 10) |            // bits[15:10]: tLabel
-                (static_cast<uint32_t>(kRetryX) << 8) |            // bits[9:8]: retry
-                (static_cast<uint32_t>(kTCodeWriteResponse) << 4) | // bits[7:4]: tCode
-                (static_cast<uint32_t>(kPriority) & 0xF);          // bits[3:0]: priority
-
-    // Quadlet 1: destinationId + rCode (for responses)
-    header[1] = (static_cast<uint32_t>(destID) << 16) |            // bits[31:16]: destID
-                (static_cast<uint32_t>(static_cast<uint8_t>(rcode)) << 12); // bits[15:12]: rCode
-
-    // Quadlet 2: reserved for responses
+    header[0] = BuildQ0(static_cast<uint8_t>(request.tLabel & 0x3F), /*WrResp*/ 0x2);
+    header[1] = BuildQ1(request.sourceID, rcode);
     header[2] = 0;
 
-    auto chain = builder_.BuildTransactionChain(
-        header,
-        sizeof(header),
-        /*payloadDeviceAddress*/ 0,
-        /*payloadSize*/ 0,
-        /*needsFlush*/ false);
-    if (chain.Empty()) {
-        ASFW_LOG_ERROR(Async, "ResponseSender: failed to build WrResp descriptor chain");
+    SendResponse(request,
+                 rcode,
+                 /*responseTCode*/ 0x2,
+                 header,
+                 sizeof(header),
+                 /*payloadDeviceAddress*/ 0,
+                 /*payloadLength*/ 0);
+}
+
+void ResponseSender::SendReadQuadletResponse(const ARPacketView& request,
+                                             ResponseCode rcode,
+                                             uint32_t quadletData) noexcept {
+    if (request.tCode != 0x4) {
+        ASFW_LOG_V3(Async,
+                    "ResponseSender: skip RdQuadResp for non-read-quadlet tCode=0x%x",
+                    request.tCode);
         return;
     }
 
-    const auto submitRes = submitter_.submit_tx_chain(atRspCtx, std::move(chain));
-    if (submitRes.kr != kIOReturnSuccess) {
-        ASFW_LOG_ERROR(Async, "ResponseSender: submit_tx_chain failed for WrResp (kr=0x%x)", submitRes.kr);
+    uint32_t header[4]{};
+    header[0] = BuildQ0(static_cast<uint8_t>(request.tLabel & 0x3F), /*RdQuadResp*/ 0x6);
+    header[1] = BuildQ1(request.sourceID, rcode);
+    header[2] = 0;
+    header[3] = (rcode == ResponseCode::Complete) ? quadletData : 0;
+
+    SendResponse(request,
+                 rcode,
+                 /*responseTCode*/ 0x6,
+                 header,
+                 sizeof(header),
+                 /*payloadDeviceAddress*/ 0,
+                 /*payloadLength*/ 0);
+}
+
+void ResponseSender::SendReadBlockResponse(const ARPacketView& request,
+                                           ResponseCode rcode,
+                                           uint64_t payloadDeviceAddress,
+                                           uint32_t payloadLength) noexcept {
+    if (request.tCode != 0x5) {
+        ASFW_LOG_V3(Async,
+                    "ResponseSender: skip RdBlockResp for non-read-block tCode=0x%x",
+                    request.tCode);
         return;
     }
 
-    ASFW_LOG_V2(Async, "ResponseSender: WrResp queued (tLabel=%u src=0x%04x dst=0x%04x rcode=0x%x)",
-                tLabel, srcID, destID, static_cast<unsigned>(rcode));
+    uint32_t header[4]{};
+    header[0] = BuildQ0(static_cast<uint8_t>(request.tLabel & 0x3F), /*RdBlockResp*/ 0x7);
+    header[1] = BuildQ1(request.sourceID, rcode);
+    header[2] = 0;
+
+    std::size_t responsePayloadLen = 0;
+    uint64_t responsePayloadAddress = 0;
+
+    if (rcode == ResponseCode::Complete && payloadLength > 0) {
+        header[3] = static_cast<uint32_t>(payloadLength) << 16;
+        responsePayloadLen = payloadLength;
+        responsePayloadAddress = payloadDeviceAddress;
+    } else {
+        header[3] = 0;
+    }
+
+    SendResponse(request,
+                 rcode,
+                 /*responseTCode*/ 0x7,
+                 header,
+                 sizeof(header),
+                 responsePayloadAddress,
+                 responsePayloadLen);
 }
 
 } // namespace ASFW::Async
