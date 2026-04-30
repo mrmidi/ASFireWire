@@ -115,6 +115,11 @@ class ControllerCore {
 
     Async::IAsyncControllerPort& AsyncSubsystem() const;
 
+    // Diagnostic accessors for UserClient handlers
+    HardwareInterface* GetHardware() const;
+    BusResetCoordinator* GetBusResetCoordinator() const;
+    BusManager* GetBusManager() const;
+
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;
     void AttachROMScanner(std::shared_ptr<Discovery::ROMScanner> romScanner);

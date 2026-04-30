@@ -27,7 +27,7 @@ void AsyncSubsystem::OnBusResetBegin(uint8_t nextGen) {
 
     // Step 2: Cancel transactions from OLD generation only
     // Read current generation from tracker (set by previous bus reset)
-    const uint8_t oldGen = generationTracker_ ? generationTracker_->GetCurrentState().generation8 : 0;
+    const uint16_t oldGen = generationTracker_ ? generationTracker_->GetCurrentState().generation16 : 0;
 
     if (tracking_) {
         // Cancel any lingering transactions (all generations) to guarantee label bitmap is clean.

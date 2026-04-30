@@ -116,6 +116,15 @@ void ControllerCore::SetCMPClient(std::shared_ptr<CMP::CMPClient> client) {
     deps_.cmpClient = std::move(client);
 }
 
+// Diagnostic accessors for UserClient handlers
+HardwareInterface* ControllerCore::GetHardware() const { return deps_.hardware.get(); }
+
+BusResetCoordinator* ControllerCore::GetBusResetCoordinator() const {
+    return deps_.busReset.get();
+}
+
+BusManager* ControllerCore::GetBusManager() const { return deps_.busManager.get(); }
+
 // Phase 2: Interface facade accessors
 Async::IFireWireBus& ControllerCore::Bus() {
     if (!busImpl_) {
