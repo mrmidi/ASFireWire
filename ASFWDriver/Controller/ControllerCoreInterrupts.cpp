@@ -91,12 +91,14 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
             "Common causes: Self-ID buffer access, Config ROM mapping, or context register access");
     }
 
-    // Check for cycle timing errors (adapted from Linux irq handler)
+    // Check for cycle timing errors (adapted from Linux irq_handler)
     if ((events & IntEventBits::kCycleTooLong) != 0U) {
         ASFW_LOG(Controller, "⚠️ WARNING: Cycle too long - isochronous cycle overran 125μs budget");
-        ASFW_LOG(Controller,
-                 "This indicates DMA descriptors or system latency causing timing violation");
-        // Per OHCI §6.2.1: cycleTooLong fires when cycle exceeds 125μs nominal
+        // Per OHCI §6.2.1: hardware auto-clears cycleMaster when cycleTooLong fires.
+        // Per Linux irq_handler (ohci.c): re-assert cycleMaster immediately.
+        // Without this, cycle-start packets stop permanently, preventing devices that
+        // depend on them (e.g. Nikon SAA7356HL MCU firmware download) from initializing.
+        hw.SetLinkControlBits(LinkControlBits::kCycleMaster);
     }
 
     // Per Linux irq_handler: postedWriteErr very often pairs with unrecoverableError
