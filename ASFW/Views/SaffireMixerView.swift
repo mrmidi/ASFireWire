@@ -26,7 +26,7 @@ struct SaffireMixerView: View {
                     .font(.title2)
             }
             .toggleStyle(.button)
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.borderedProminent)
             .tint(.red)
             .controlSize(.large)
             

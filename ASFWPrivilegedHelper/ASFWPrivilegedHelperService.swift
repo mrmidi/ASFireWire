@@ -30,7 +30,10 @@ struct ASFWPrivilegedHelperConfig {
     }
 
     var appSigningRequirement: String {
-        #"identifier "\#(appBundleIdentifier)" and anchor apple generic and certificate leaf[subject.OU] = "\#(teamIdentifier)""#
+        if teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return #"identifier "\#(appBundleIdentifier)""#
+        }
+        return #"identifier "\#(appBundleIdentifier)" and anchor apple generic and certificate leaf[subject.OU] = "\#(teamIdentifier)""#
     }
 }
 

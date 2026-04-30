@@ -202,7 +202,10 @@ final class MaintenanceHelperManager: MaintenanceHelperManaging {
     }
 
     private var helperSigningRequirement: String {
-        #"identifier "\#(helperBundleIdentifier)" and anchor apple generic and certificate leaf[subject.OU] = "\#(teamIdentifier)""#
+        if teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return #"identifier "\#(helperBundleIdentifier)""#
+        }
+        return #"identifier "\#(helperBundleIdentifier)" and anchor apple generic and certificate leaf[subject.OU] = "\#(teamIdentifier)""#
     }
 
     static func outcome(from dict: NSDictionary) -> MaintenanceOperationOutcome {
