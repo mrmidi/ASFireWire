@@ -30,7 +30,7 @@ struct BusResetHistoryView: View {
                 ContentUnavailableView(
                     "Not Connected",
                     systemImage: "cable.connector.slash",
-                    description: Text("Connect to the driver to view bus reset history")
+                    description: Text("Connect the debug user-client to view bus reset history")
                 )
             }
         }

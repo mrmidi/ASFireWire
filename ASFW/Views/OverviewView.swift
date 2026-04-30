@@ -53,6 +53,52 @@ struct OverviewView: View {
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
+                // Lifecycle Card
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Audio Lifecycle", systemImage: "checklist")
+                        .font(.headline)
+
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: lifecycleIcon)
+                            .foregroundStyle(lifecycleColor)
+                            .font(.title3)
+                            .frame(width: 28)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(viewModel.lifecycleStatus.summary)
+                                .font(.subheadline.weight(.semibold))
+                            Text(viewModel.lifecycleStatus.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+
+                            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                                lifecycleRow("Driver", yesNo(viewModel.lifecycleStatus.activeDriver))
+                                lifecycleRow("ASFW Audio Nub", yesNo(viewModel.lifecycleStatus.audioNubVisible))
+                                lifecycleRow("CoreAudio Alesis", yesNo(viewModel.lifecycleStatus.coreAudioDeviceVisible))
+                                lifecycleRow("Debug User-Client", viewModel.userClientConnected ? "Connected" : "Unavailable")
+                                lifecycleRow("Action", viewModel.lifecycleStatus.recommendedAction.displayName)
+                                lifecycleRow("CDHash", shortHash(viewModel.lifecycleStatus.activeCDHash))
+                            }
+                            .padding(.top, 4)
+                        }
+
+                        Spacer(minLength: 16)
+
+                        Button {
+                            viewModel.refreshLifecycleStatus()
+                        } label: {
+                            Label("Recheck", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.isBusy)
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+
                 // Install Card
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Driver Install & Repair", systemImage: "puzzlepiece.extension")
@@ -91,7 +137,7 @@ struct OverviewView: View {
                                 Label("Repair Driver", systemImage: "wrench.and.screwdriver.fill")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy || !viewModel.canUseMaintenanceHelper)
+                            .disabled(viewModel.isBusy || !viewModel.canRepairDriver)
 
                             Button(role: .destructive) {
                                 showUninstallConfirmation = true
@@ -165,6 +211,14 @@ struct OverviewView: View {
                             }
                             .buttonStyle(.bordered)
                             .disabled(viewModel.isBusy)
+
+                            Button {
+                                viewModel.captureDiagnostics()
+                            } label: {
+                                Label("Diagnostics", systemImage: "doc.text.magnifyingglass")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isBusy || !viewModel.canUseMaintenanceHelper)
                         }
                     }
                     .padding()
@@ -196,7 +250,7 @@ struct OverviewView: View {
                         InfoRow(label: "Built", value: version.buildTimestamp)
                         InfoRow(label: "Host", value: version.buildHost)
                         if version.gitDirty {
-                            Text("⚠️ Built with uncommitted changes")
+                            Text("Built with uncommitted changes")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
@@ -206,7 +260,7 @@ struct OverviewView: View {
                 }
                 
                 // Help Text
-                Text("💡 You may need to allow the system extension in **System Settings > Privacy & Security** after first activation.")
+                Text("You may need to allow the system extension in **System Settings > Privacy & Security** after first activation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding()
@@ -263,5 +317,45 @@ struct OverviewView: View {
         case .failed, .notFound: return .red
         case .notRegistered, .unknown: return .secondary
         }
+    }
+
+    private var lifecycleIcon: String {
+        switch viewModel.lifecycleStatus.health {
+        case .clean: return "checkmark.circle.fill"
+        case .repairNeeded: return "wrench.and.screwdriver.fill"
+        case .rebootRequired: return "restart.circle.fill"
+        case .uninstalled: return "arrow.down.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
+        }
+    }
+
+    private var lifecycleColor: Color {
+        switch viewModel.lifecycleStatus.health {
+        case .clean: return .green
+        case .repairNeeded: return .orange
+        case .rebootRequired: return .red
+        case .uninstalled, .unknown: return .secondary
+        }
+    }
+
+    private func lifecycleRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+        }
+    }
+
+    private func yesNo(_ value: Bool) -> String {
+        value ? "Yes" : "No"
+    }
+
+    private func shortHash(_ hash: String?) -> String {
+        guard let hash, !hash.isEmpty else { return "Unknown" }
+        if hash.count <= 12 { return hash }
+        return "\(hash.prefix(12))..."
     }
 }

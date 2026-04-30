@@ -44,7 +44,7 @@ final class DuetControlViewModel: ObservableObject {
                     self.refresh()
                 } else {
                     self.duetGUID = nil
-                    self.errorMessage = "Driver not connected"
+                    self.errorMessage = "Debug user-client not connected"
                 }
             }
             .store(in: &cancellables)
@@ -63,7 +63,7 @@ final class DuetControlViewModel: ObservableObject {
 
     func refresh() {
         guard connector.isConnected else {
-            errorMessage = "Driver not connected"
+            errorMessage = "Debug user-client not connected"
             return
         }
 

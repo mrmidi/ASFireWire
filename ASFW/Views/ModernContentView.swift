@@ -45,6 +45,7 @@ struct ModernContentView: View {
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
         case audio = "Core Audio"
+        case alesis = "Alesis"
         case saffire = "Saffire"
         case duet = "Duet"
 
@@ -66,6 +67,7 @@ struct ModernContentView: View {
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
             case .audio: return "hifispeaker.fill"
+            case .alesis: return "waveform.badge.mic"
             case .saffire: return "slider.vertical.3"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             }
@@ -116,6 +118,8 @@ struct ModernContentView: View {
                     LoggingSettingsView(connector: debugVM.connector)
                 case .audio:
                     AudioDebugView()
+                case .alesis:
+                    AlesisStatusView(connector: debugVM.connector, driverViewModel: driverVM)
                 case .saffire:
                     SaffireMixerView(connector: debugVM.connector)
                 case .duet:
@@ -147,7 +151,7 @@ struct ModernContentView: View {
                         } label: {
                             Label("Repair Driver", systemImage: "wrench.and.screwdriver.fill")
                         }
-                        .disabled(driverVM.isBusy || !driverVM.canUseMaintenanceHelper)
+                        .disabled(driverVM.isBusy || !driverVM.canRepairDriver)
                         .help("Refresh ASFW DriverKit and CoreAudio state")
                         .keyboardShortcut("r", modifiers: .command)
                         
@@ -330,7 +334,7 @@ struct AsyncCommandView: View {
                 .foregroundStyle(.secondary)
 
             if !viewModel.isConnected {
-                Label("Driver not connected", systemImage: "cable.connector.slash")
+                Label("Debug user-client not connected", systemImage: "cable.connector.slash")
                     .foregroundStyle(.orange)
             }
         }

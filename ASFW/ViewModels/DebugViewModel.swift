@@ -31,6 +31,7 @@ class DebugViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
                 self?.isConnected = connected
+                self?.driverViewModel?.setUserClientConnected(connected)
                 if !connected {
                     self?.sharedStatus = nil
                     self?.driverViewModel?.driverVersion = nil
@@ -52,6 +53,7 @@ class DebugViewModel: ObservableObject {
     
     func setDriverViewModel(_ viewModel: DriverViewModel) {
         self.driverViewModel = viewModel
+        viewModel.setUserClientConnected(isConnected)
     }
     
     private func observeConnectorLogs() {

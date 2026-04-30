@@ -165,7 +165,7 @@ struct ReadWriteView: View {
                         Label("Connected to driver", systemImage: "checkmark.circle.fill")
                             .foregroundColor(.green)
                     } else {
-                        Label("Driver not connected", systemImage: "exclamationmark.triangle.fill")
+                        Label("Debug user-client not connected", systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
                     }
 

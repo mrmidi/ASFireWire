@@ -91,6 +91,8 @@ class MetricsViewModel: ObservableObject {
 
 struct MetricsView: View {
     @StateObject private var viewModel: MetricsViewModel
+    @State private var pendingReceiveAction: ReceiveAction?
+    @State private var showReceiveConfirmation = false
     
     init(connector: ASFWDriverConnector) {
         _viewModel = StateObject(wrappedValue: MetricsViewModel(connector: connector))
@@ -108,11 +110,8 @@ struct MetricsView: View {
                 
                 // Start/Stop Button
                 Button(action: {
-                    if viewModel.isReceiving {
-                        viewModel.stopReceive()
-                    } else {
-                        viewModel.startReceive()
-                    }
+                    pendingReceiveAction = viewModel.isReceiving ? .stop : .start
+                    showReceiveConfirmation = true
                 }) {
                     HStack {
                         Image(systemName: viewModel.isReceiving ? "stop.fill" : "play.fill")
@@ -271,6 +270,46 @@ struct MetricsView: View {
         }
         .onDisappear {
             viewModel.stopPolling()
+        }
+        .confirmationDialog("Debug Receive May Interrupt Audio",
+                            isPresented: $showReceiveConfirmation,
+                            titleVisibility: .visible) {
+            if let action = pendingReceiveAction {
+                Button(action.buttonTitle, role: .destructive) {
+                    switch action {
+                    case .start:
+                        viewModel.startReceive()
+                    case .stop:
+                        viewModel.stopReceive()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(pendingReceiveAction?.message ?? "This debug receive action may disturb live audio.")
+        }
+    }
+
+    private enum ReceiveAction: String, Identifiable {
+        case start
+        case stop
+
+        var id: String { rawValue }
+
+        var buttonTitle: String {
+            switch self {
+            case .start: return "Start Debug Receive"
+            case .stop: return "Stop Debug Receive"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .start:
+                return "This starts a debug isochronous receive path and may disturb live audio."
+            case .stop:
+                return "This stops the debug isochronous receive path and may disturb live audio."
+            }
         }
     }
     

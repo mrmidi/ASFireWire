@@ -18,6 +18,9 @@ class DriverViewModel: ObservableObject {
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
+    @Published var lifecycleStatus: MaintenanceLifecycleStatus = .unknown
+    @Published var userClientConnected: Bool = false
+    @Published var repairAttemptedSinceLastHealthyCheck: Bool = false
 
     private let maintenanceHelper: MaintenanceHelperManaging
     private var disconnectDriverClient: (() -> Void)?
@@ -42,6 +45,13 @@ class DriverViewModel: ObservableObject {
 
     var canUseMaintenanceHelper: Bool {
         helperStatus == .enabled
+    }
+
+    var canRepairDriver: Bool {
+        canUseMaintenanceHelper
+        && lifecycleStatus.health != .clean
+        && lifecycleStatus.health != .rebootRequired
+        && !repairAttemptedSinceLastHealthyCheck
     }
     
     struct LogEntry: Identifiable, Equatable {
@@ -102,6 +112,11 @@ class DriverViewModel: ObservableObject {
         reconnectDriverClient = reconnect
     }
 
+    func setUserClientConnected(_ connected: Bool) {
+        userClientConnected = connected
+        lifecycleStatus.userClientConnected = connected
+    }
+
     func refreshHelperStatus() {
         helperStatus = maintenanceHelper.helperStatus
         switch helperStatus {
@@ -117,6 +132,32 @@ class DriverViewModel: ObservableObject {
             maintenanceStatus = "Maintenance helper failed."
         case .unknown:
             maintenanceStatus = "Maintenance helper state is unknown."
+        }
+        refreshLifecycleStatus()
+    }
+
+    func refreshLifecycleStatus() {
+        let driverID = driverBundleIdentifier
+        let expectedCDHash = maintenanceHelper.stagedDriverCDHash(driverBundleID: driverID)
+        let runningFromApplications = isRunningFromApplications
+        let helper = helperStatus
+        let userConnected = userClientConnected
+
+        DispatchQueue.global(qos: .utility).async {
+            let inputs = MaintenanceLocalProbe.collect(
+                isRunningFromApplications: runningFromApplications,
+                helperStatus: helper,
+                userClientConnected: userConnected,
+                driverBundleID: driverID,
+                expectedCDHash: expectedCDHash
+            )
+            let status = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs)
+            Task { @MainActor in
+                self.lifecycleStatus = status
+                if status.isCleanForAudio {
+                    self.repairAttemptedSinceLastHealthyCheck = false
+                }
+            }
         }
     }
 
@@ -203,9 +244,24 @@ class DriverViewModel: ObservableObject {
             log(activationStatus, source: .app, level: .warning)
             return
         }
+        guard canRepairDriver else {
+            let message: String
+            if lifecycleStatus.health == .clean {
+                message = "Repair is not needed while the ASFW audio path looks healthy."
+            } else if lifecycleStatus.health == .rebootRequired {
+                message = "Reboot is required before another repair attempt."
+            } else {
+                message = "Repair was already attempted for this state. Reboot or capture diagnostics before trying again."
+            }
+            activationStatus = message
+            maintenanceStatus = message
+            log(message, source: .app, level: .warning)
+            return
+        }
 
         isBusy = true
         activationStatus = "Repairing driver state..."
+        repairAttemptedSinceLastHealthyCheck = true
         log("Repair Driver requested. Close Logic or other audio apps before repair.", source: .app, level: .warning)
         let expectedCDHash = maintenanceHelper.stagedDriverCDHash(driverBundleID: driverBundleIdentifier)
         disconnectDriverClient?()
@@ -219,11 +275,37 @@ class DriverViewModel: ObservableObject {
         }
     }
 
+    func captureDiagnostics() {
+        guard canUseMaintenanceHelper else {
+            refreshHelperStatus()
+            activationStatus = "Enable the maintenance helper before capturing diagnostics."
+            log(activationStatus, source: .app, level: .warning)
+            return
+        }
+
+        isBusy = true
+        activationStatus = "Capturing diagnostics..."
+        maintenanceHelper.captureHygieneSnapshot { [weak self] outcome in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.isBusy = false
+                self.lastMaintenanceSnapshotPath = outcome.snapshotPath
+                self.maintenanceStatus = outcome.message
+                self.activationStatus = outcome.message
+                self.log(outcome.message,
+                         source: .app,
+                         level: outcome.snapshotPath == nil ? .warning : .success)
+                self.refreshLifecycleStatus()
+            }
+        }
+    }
+
     private func runPostActivationRefresh() {
         refreshHelperStatus()
         guard canUseMaintenanceHelper else {
             isBusy = false
             maintenanceStatus = "Activation was submitted. Enable the maintenance helper if the driver does not publish cleanly."
+            refreshLifecycleStatus()
             return
         }
 
@@ -244,6 +326,7 @@ class DriverViewModel: ObservableObject {
         guard canUseMaintenanceHelper else {
             isBusy = false
             maintenanceStatus = "Deactivation was submitted. Enable the maintenance helper for reliable cleanup."
+            refreshLifecycleStatus()
             return
         }
 
@@ -279,6 +362,7 @@ class DriverViewModel: ObservableObject {
             maintenanceStatus = message
             log(message, source: .app, level: .error)
         }
+        refreshLifecycleStatus()
     }
 
     private static func errorMessage(for error: Error) -> String {

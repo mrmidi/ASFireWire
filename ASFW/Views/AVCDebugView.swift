@@ -12,6 +12,8 @@ struct AVCDebugView: View {
     @ObservedObject var viewModel: DebugViewModel
     @State private var isRefreshing = false
     @State private var lastRefresh: Date?
+    @State private var pendingDebugAction: DebugInterruptingAction?
+    @State private var showDebugActionConfirmation = false
     
     var body: some View {
         ScrollView {
@@ -32,7 +34,13 @@ struct AVCDebugView: View {
                 )
                 .padding(.horizontal)
                 
-                if viewModel.avcUnits.isEmpty {
+                if !viewModel.isConnected {
+                    EmptyStateView(
+                        title: "Debug User-Client Unavailable",
+                        description: "Audio can still be available through CoreAudio. AV/C debug actions require the user-client connection.",
+                        systemImage: "cable.connector.slash"
+                    )
+                } else if viewModel.avcUnits.isEmpty {
                     EmptyStateView()
                 } else {
                     LazyVStack(spacing: 16) {
@@ -56,6 +64,18 @@ struct AVCDebugView: View {
             if connected {
                 refreshAVCUnits()
             }
+        }
+        .confirmationDialog("Debug Action May Interrupt Audio",
+                            isPresented: $showDebugActionConfirmation,
+                            titleVisibility: .visible) {
+            if let action = pendingDebugAction {
+                Button(action.buttonTitle, role: .destructive) {
+                    performDebugAction(action)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(pendingDebugAction?.message ?? "This debug action may disturb live audio.")
         }
     }
     
@@ -88,37 +108,88 @@ struct AVCDebugView: View {
     
     // Phase 0.5: IRM allocation test
     private func triggerIRMTest() {
-        guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testIRMAllocation()
+        confirm(.irmAllocate)
     }
     
     // Phase 0.5: IRM release test
     private func triggerIRMRelease() {
-        guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testIRMRelease()
+        confirm(.irmRelease)
     }
     
     // Phase 0.5: CMP connect oPCR test
     private func triggerCMPConnectOPCR() {
-        guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testCMPConnectOPCR()
+        confirm(.cmpConnectOPCR)
     }
     
     // Phase 0.5: CMP disconnect oPCR test
     private func triggerCMPDisconnectOPCR() {
-        guard viewModel.isConnected else { return }
-        _ = viewModel.connector.testCMPDisconnectOPCR()
+        confirm(.cmpDisconnectOPCR)
     }
     
     // Phase 1.5: IT DMA allocation (no CMP)
     private func triggerITDMAAllocate() {
-        guard viewModel.isConnected else { return }
-        _ = viewModel.connector.allocateITDMA(channel: 1)
+        confirm(.itDMAAllocate)
     }
     
     private func triggerITDMADeallocate() {
+        confirm(.itDMADeallocate)
+    }
+
+    private func confirm(_ action: DebugInterruptingAction) {
         guard viewModel.isConnected else { return }
-        _ = viewModel.connector.deallocateITDMA()
+        pendingDebugAction = action
+        showDebugActionConfirmation = true
+    }
+
+    private func performDebugAction(_ action: DebugInterruptingAction) {
+        guard viewModel.isConnected else { return }
+        switch action {
+        case .irmAllocate:
+            _ = viewModel.connector.testIRMAllocation()
+        case .irmRelease:
+            _ = viewModel.connector.testIRMRelease()
+        case .cmpConnectOPCR:
+            _ = viewModel.connector.testCMPConnectOPCR()
+        case .cmpDisconnectOPCR:
+            _ = viewModel.connector.testCMPDisconnectOPCR()
+        case .itDMAAllocate:
+            _ = viewModel.connector.allocateITDMA(channel: 1)
+        case .itDMADeallocate:
+            _ = viewModel.connector.deallocateITDMA()
+        }
+    }
+
+    private enum DebugInterruptingAction: String, Identifiable {
+        case irmAllocate
+        case irmRelease
+        case cmpConnectOPCR
+        case cmpDisconnectOPCR
+        case itDMAAllocate
+        case itDMADeallocate
+
+        var id: String { rawValue }
+
+        var buttonTitle: String {
+            switch self {
+            case .irmAllocate: return "Allocate IRM"
+            case .irmRelease: return "Release IRM"
+            case .cmpConnectOPCR: return "Connect oPCR"
+            case .cmpDisconnectOPCR: return "Disconnect oPCR"
+            case .itDMAAllocate: return "Allocate IT DMA"
+            case .itDMADeallocate: return "Deallocate IT DMA"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .irmAllocate, .irmRelease:
+                return "This changes FireWire isochronous resource state and may disturb live audio."
+            case .cmpConnectOPCR, .cmpDisconnectOPCR:
+                return "This changes CMP plug state and can start or stop the device-to-host stream."
+            case .itDMAAllocate, .itDMADeallocate:
+                return "This changes debug DMA allocation and may disturb live audio testing."
+            }
+        }
     }
 }
 
@@ -139,7 +210,7 @@ struct StatusHeaderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(isConnected ? "Connected" : "Disconnected", 
+                Label(isConnected ? "Debug Connected" : "Debug Disconnected",
                       systemImage: isConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundColor(isConnected ? .green : .orange)
                     .font(.headline)
@@ -168,26 +239,26 @@ struct StatusHeaderView: View {
                 
                 // Phase 0.5: CMP test buttons
                 Button(action: onCMPConnectOPCR) {
-                    Label("🔌 oPCR", systemImage: "arrow.right.circle")
+                    Label("Connect oPCR", systemImage: "arrow.right.circle")
                 }
                 .disabled(!isConnected || isRefreshing)
                 .help("CMP Connect oPCR[0] - starts device→host stream")
                 
                 Button(action: onCMPDisconnectOPCR) {
-                    Label("⏏ oPCR", systemImage: "arrow.left.circle")
+                    Label("Disconnect oPCR", systemImage: "arrow.left.circle")
                 }
                 .disabled(!isConnected || isRefreshing)
                 .help("CMP Disconnect oPCR[0] - stops device→host stream")
                 
                 // Phase 1.5: IT DMA allocation buttons (no CMP)
                 Button(action: onITDMAAllocate) {
-                    Label("📤 IT DMA", systemImage: "square.and.arrow.up")
+                    Label("Alloc IT DMA", systemImage: "square.and.arrow.up")
                 }
                 .disabled(!isConnected || isRefreshing)
                 .help("Allocate IT DMA (~2MB) - DMA only, NO CMP iPCR")
                 
                 Button(action: onITDMADeallocate) {
-                    Label("🗑️ IT DMA", systemImage: "trash")
+                    Label("Free IT DMA", systemImage: "trash")
                 }
                 .disabled(!isConnected || isRefreshing)
                 .help("Deallocate IT DMA")
@@ -221,15 +292,19 @@ struct StatusHeaderView: View {
 
 
 struct EmptyStateView: View {
+    var title = "No AV/C Units Found"
+    var description = "Connect a FireWire device to see it here."
+    var systemImage = "music.note.list"
+
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "music.note.list")
+            Image(systemName: systemImage)
                 .font(.system(size: 48))
                 .foregroundColor(.secondary.opacity(0.5))
-            Text("No AV/C Units Found")
+            Text(title)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("Connect a FireWire device to see it here.")
+            Text(description)
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

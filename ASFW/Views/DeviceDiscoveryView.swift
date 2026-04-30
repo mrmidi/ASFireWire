@@ -48,9 +48,9 @@ struct DeviceDiscoveryView: View {
 
             if !viewModel.isConnected {
                 ContentUnavailableView(
-                    "Driver Not Connected",
+                    "Debug User-Client Not Connected",
                     systemImage: "cable.connector.slash",
-                    description: Text("Connect to the driver to see discovered devices")
+                    description: Text("Audio can still be available through CoreAudio. Connect the debug user-client to inspect FireWire discovery.")
                 )
             } else if devices.isEmpty {
                 ContentUnavailableView(

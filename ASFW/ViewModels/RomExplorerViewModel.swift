@@ -142,7 +142,7 @@ final class RomExplorerViewModel: ObservableObject {
 
     func loadROMFromNode(_ node: TopologyNode) {
         guard let connector = connector else {
-            error = "Driver not connected"
+            error = "Debug user-client not connected"
             return
         }
         guard let gen = topologyGeneration else {
@@ -190,7 +190,7 @@ final class RomExplorerViewModel: ObservableObject {
 
     func triggerROMRead(nodeId: UInt8) {
         guard let connector = connector else {
-            error = "Driver not connected"
+            error = "Debug user-client not connected"
             return
         }
 

@@ -191,6 +191,35 @@ For non-technical testers, the plain checklist is:
 
 `tools/debug/refresh_local_driver.sh` was also made compatible with macOS's system `/bin/bash` by removing `mapfile`, which is not available in the Bash 3.2 shipped by macOS.
 
+### v16 Lifecycle and Alesis Status Pass
+
+On 2026-04-30 the app-side lifecycle pass moved the working refresh pattern into normal UX without changing the proven Alesis audio transport path.
+
+What changed:
+
+- Added typed lifecycle status for active driver, staged driver, CDHash match, CoreAudio Alesis visibility, ASFW audio nub visibility, debug user-client connection, maintenance helper state, and stale uninstall state.
+- Changed disconnected debug copy so "debug user-client unavailable" no longer implies that audio is unavailable.
+- Added one-attempt repair guardrails: if repair cannot cleanly restore state, the app reports reboot required instead of encouraging repeated install/uninstall loops.
+- Added a read-only Alesis tab showing CoreAudio status, ASFW lifecycle state, and read-only DICE/discovery details when the debug user-client is available.
+- Added explicit confirmation before debug receive, IRM/CMP, and IT DMA controls that may interrupt live audio.
+
+Validation after the pass:
+
+- Focused Swift tests for lifecycle and Alesis parsing passed.
+- Full host CTest suite passed: `519/519`, with only the known reference-fixture skips.
+- Safe local v16 build passed with the helper, launchd plist, and embedded dext present and signed.
+- Live runtime stayed healthy after the app-side build:
+  - `systemextensionsctl list` showed one active `com.chrisizatt.ASFWLocal.ASFWDriver (1.0/16)`.
+  - IORegistry reported ASFW CDHash `c399525140b9b15e3775dc979ae2fdc95397ee9c`.
+  - IORegistry showed `ASFWAudioNub` for `Alesis MultiMix Firewire`.
+  - CoreAudio showed `Alesis MultiMix Firewire`, `12 in / 2 out @ 48 kHz`.
+- The ASFW app was quit and the driver/CoreAudio state remained published, confirming enumeration is not dependent on the visible app process in this runtime state.
+
+Useful evidence:
+
+- Before-pass hygiene snapshot: `/tmp/asfw-lifecycle-before-20260430-043712`
+- After-pass hygiene snapshot: `/tmp/asfw-lifecycle-after-20260430-050313`
+
 ## Pause Boundary
 
 Do not begin the Lychzord packaging/private-test-copy pass from an uncommitted working tree.

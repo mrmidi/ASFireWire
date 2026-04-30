@@ -7,6 +7,8 @@ protocol MaintenanceHelperManaging {
     func registerHelper() throws -> MaintenanceHelperApprovalState
     func openApprovalSettings()
     func stagedDriverCDHash(driverBundleID: String) -> String?
+    func probeMaintenanceState(completion: @escaping (MaintenanceOperationOutcome) -> Void)
+    func captureHygieneSnapshot(completion: @escaping (MaintenanceOperationOutcome) -> Void)
     func refreshDriver(expectedCDHash: String?,
                        driverBundleID: String,
                        completion: @escaping (MaintenanceOperationOutcome) -> Void)
