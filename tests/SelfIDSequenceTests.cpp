@@ -14,21 +14,28 @@ using ASFW::Driver::SelfIDSequenceEnumerator;
 
 namespace {
 
-std::vector<uint32_t> LoadSequenceArray(std::string_view arrayName) {
-    std::vector<uint32_t> words;
+constexpr std::string_view kSelfIDReferencePath =
+    "FirWireDriver/firewire/self-id-sequence-helper-test.c";
+
+bool LoadSequenceArray(std::string_view arrayName, std::vector<uint32_t>& words) {
+    if (!ASFW::Tests::RepoReferenceFileExists(kSelfIDReferencePath)) {
+        return false;
+    }
+
     std::string error;
     bool ok = ASFW::Tests::LoadHexArrayFromRepoFile(
-        "FirWireDriver/firewire/self-id-sequence-helper-test.c", arrayName, words, &error);
-    if (!ok) {
-        ADD_FAILURE() << "Failed to load array '" << arrayName << "': " << error;
-    }
-    return words;
+        kSelfIDReferencePath, arrayName, words, &error);
+    EXPECT_TRUE(ok) << "Failed to load array '" << arrayName << "': " << error;
+    return ok;
 }
 
 } // namespace
 
 TEST(SelfIDSequenceEnumeratorTests, EnumeratesValidSequencesFromLinuxFixtures) {
-    auto valid = LoadSequenceArray("valid_sequences");
+    std::vector<uint32_t> valid;
+    if (!LoadSequenceArray("valid_sequences", valid)) {
+        GTEST_SKIP() << "Missing external Linux reference data: " << kSelfIDReferencePath;
+    }
     ASSERT_FALSE(valid.empty());
 
     SelfIDSequenceEnumerator enumerator;
@@ -54,7 +61,10 @@ TEST(SelfIDSequenceEnumeratorTests, EnumeratesValidSequencesFromLinuxFixtures) {
 }
 
 TEST(SelfIDSequenceEnumeratorTests, FlagsInvalidSequenceFromLinuxFixtures) {
-    auto invalid = LoadSequenceArray("invalid_sequences");
+    std::vector<uint32_t> invalid;
+    if (!LoadSequenceArray("invalid_sequences", invalid)) {
+        GTEST_SKIP() << "Missing external Linux reference data: " << kSelfIDReferencePath;
+    }
     ASSERT_FALSE(invalid.empty());
 
     SelfIDSequenceEnumerator enumerator;
@@ -66,7 +76,10 @@ TEST(SelfIDSequenceEnumeratorTests, FlagsInvalidSequenceFromLinuxFixtures) {
 }
 
 TEST(SelfIDSequenceEnumeratorTests, RecognisesChainedPacketsAndExtendedQuads) {
-    auto valid = LoadSequenceArray("valid_sequences");
+    std::vector<uint32_t> valid;
+    if (!LoadSequenceArray("valid_sequences", valid)) {
+        GTEST_SKIP() << "Missing external Linux reference data: " << kSelfIDReferencePath;
+    }
     ASSERT_GE(valid.size(), static_cast<size_t>(5));
 
     // Sequence starting at index 1 should contain two quadlets with more-bit chaining
