@@ -5,6 +5,7 @@ struct ASFWPrivilegedHelperConfig {
     var helperBundleIdentifier: String
     var machServiceName: String
     var teamIdentifier: String
+    var expectedCoreAudioDeviceName: String?
 
     static var current: ASFWPrivilegedHelperConfig {
         let bundle = Bundle.main
@@ -21,11 +22,14 @@ struct ASFWPrivilegedHelperConfig {
         let serviceName = environment["ASFW_HELPER_MACH_SERVICE_NAME"]
             ?? bundle.object(forInfoDictionaryKey: "ASFWHelperMachServiceName") as? String
             ?? "\(appID).PrivilegedHelper"
+        let expectedCoreAudioDeviceName = Self.expectedCoreAudioDeviceName(environment: environment,
+                                                                           bundle: bundle)
         return ASFWPrivilegedHelperConfig(
             appBundleIdentifier: appID,
             helperBundleIdentifier: helperID,
             machServiceName: serviceName,
-            teamIdentifier: teamID
+            teamIdentifier: teamID,
+            expectedCoreAudioDeviceName: expectedCoreAudioDeviceName
         )
     }
 
@@ -34,6 +38,31 @@ struct ASFWPrivilegedHelperConfig {
             return #"identifier "\#(appBundleIdentifier)""#
         }
         return #"identifier "\#(appBundleIdentifier)" and anchor apple generic and certificate leaf[subject.OU] = "\#(teamIdentifier)""#
+    }
+
+    private static func expectedCoreAudioDeviceName(environment: [String: String],
+                                                    bundle: Bundle) -> String? {
+        if let required = environment["ASFW_REQUIRE_CORE_AUDIO_DEVICE"],
+           ["0", "false", "no"].contains(required.lowercased()) {
+            return nil
+        }
+        if let value = environment["ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME"] {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        if let required = bundle.object(forInfoDictionaryKey: "ASFWRequireCoreAudioDevice") as? Bool,
+           required == false {
+            return nil
+        }
+        if let value = bundle.object(forInfoDictionaryKey: "ASFWExpectedCoreAudioDeviceName") as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && !trimmed.hasPrefix("$(") {
+                return trimmed
+            }
+        }
+        return "Alesis MultiMix Firewire"
     }
 }
 
@@ -188,11 +217,13 @@ final class ASFWPrivilegedHelperService: NSObject, ASFWPrivilegedHelperProtocol 
         let systemExtensions = runner.run("/usr/bin/systemextensionsctl", arguments: ["list"], timeout: 10).stdout
         let ioreg = runner.run("/usr/sbin/ioreg", arguments: ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWDriver"], timeout: 10).stdout
         let coreAudio = runner.run("/usr/sbin/system_profiler", arguments: ["SPAudioDataType"], timeout: 20).stdout
+        let expectedDevice = ASFWPrivilegedHelperConfig.current.expectedCoreAudioDeviceName
         return HelperProbe(systemExtensions: systemExtensions,
                            ioreg: ioreg,
                            coreAudio: coreAudio,
                            driverBundleID: driverBundleID,
-                           expectedCDHash: expectedCDHash)
+                           expectedCDHash: expectedCDHash,
+                           expectedCoreAudioDeviceName: expectedDevice)
     }
 
     private func defaultDriverBundleID() -> String {
@@ -234,6 +265,7 @@ private struct HelperProbe {
     var coreAudio: String
     var driverBundleID: String
     var expectedCDHash: String
+    var expectedCoreAudioDeviceName: String?
 
     var activeDriver: Bool {
         systemExtensions
@@ -255,19 +287,46 @@ private struct HelperProbe {
     }
 
     var activeCDHash: String {
+        if !driverBundleID.isEmpty {
+            let driverBlocks = ioreg.components(separatedBy: "+-o ASFWDriver").dropFirst()
+            for rawBlock in driverBlocks {
+                let block = "+-o ASFWDriver" + rawBlock
+                let matchesBundle =
+                    block.contains(#""CFBundleIdentifier" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOUserServerName" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOPersonalityPublisher" = "\#(driverBundleID)""#)
+                if matchesBundle {
+                    return Self.firstCDHash(in: block)
+                }
+            }
+
+            if ioreg.contains(#""CFBundleIdentifier" = ""#)
+                || ioreg.contains(#""IOUserServerName" = ""#) {
+                return ""
+            }
+        }
+
+        return Self.firstCDHash(in: ioreg)
+    }
+
+    private static func firstCDHash(in text: String) -> String {
         let pattern = #""IOUserServerCDHash"\s*=\s*"([^"]+)""#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return "" }
-        let range = NSRange(ioreg.startIndex..<ioreg.endIndex, in: ioreg)
-        guard let match = regex.firstMatch(in: ioreg, range: range),
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
               match.numberOfRanges > 1,
-              let hashRange = Range(match.range(at: 1), in: ioreg) else {
+              let hashRange = Range(match.range(at: 1), in: text) else {
             return ""
         }
-        return String(ioreg[hashRange])
+        return String(text[hashRange])
     }
 
     var coreAudioVisible: Bool {
-        coreAudio.localizedCaseInsensitiveContains("Alesis MultiMix Firewire")
+        guard let expectedCoreAudioDeviceName,
+              !expectedCoreAudioDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return true
+        }
+        return coreAudio.localizedCaseInsensitiveContains(expectedCoreAudioDeviceName)
     }
 
     var ok: Bool {
@@ -295,13 +354,16 @@ private struct HelperProbe {
             return "ASFW driver is terminating for uninstall. Reboot before another install attempt."
         }
         if ok {
-            return "ASFW driver refresh completed and CoreAudio can see the Alesis device."
+            if expectedCoreAudioDeviceName == nil {
+                return "ASFW driver refresh completed. CoreAudio publication is not required for this tester build."
+            }
+            return "ASFW driver refresh completed and CoreAudio can see \(expectedCoreAudioDeviceName ?? "the expected device")."
         }
         if cdHashMismatch {
             return "ASFW driver CDHash does not match the staged driver."
         }
         if activeDriver && !coreAudioVisible {
-            return "ASFW driver is active, but CoreAudio does not currently publish the Alesis device."
+            return "ASFW driver is active, but CoreAudio does not currently publish \(expectedCoreAudioDeviceName ?? "the expected device")."
         }
         if !activeDriver {
             return "ASFW driver is not active."
@@ -315,7 +377,8 @@ private struct HelperProbe {
             "staleTerminatingDriver": NSNumber(value: staleTerminatingDriver),
             "coreAudioVisible": NSNumber(value: coreAudioVisible),
             "activeCDHash": activeCDHash,
-            "expectedCDHash": expectedCDHash
+            "expectedCDHash": expectedCDHash,
+            "expectedCoreAudioDeviceName": expectedCoreAudioDeviceName ?? ""
         ]
     }
 }

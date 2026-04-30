@@ -55,7 +55,7 @@ struct OverviewView: View {
 
                 // Lifecycle Card
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Audio Lifecycle", systemImage: "checklist")
+                    Label(lifecycleTitle, systemImage: "checklist")
                         .font(.headline)
 
                     HStack(alignment: .top, spacing: 12) {
@@ -75,7 +75,7 @@ struct OverviewView: View {
                             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
                                 lifecycleRow("Driver", yesNo(viewModel.lifecycleStatus.activeDriver))
                                 lifecycleRow("ASFW Audio Nub", yesNo(viewModel.lifecycleStatus.audioNubVisible))
-                                lifecycleRow("CoreAudio Alesis", yesNo(viewModel.lifecycleStatus.coreAudioDeviceVisible))
+                                lifecycleRow(coreAudioLifecycleLabel, coreAudioLifecycleValue)
                                 lifecycleRow("Debug User-Client", viewModel.userClientConnected ? "Connected" : "Unavailable")
                                 lifecycleRow("Action", viewModel.lifecycleStatus.recommendedAction.displayName)
                                 lifecycleRow("CDHash", shortHash(viewModel.lifecycleStatus.activeCDHash))
@@ -172,7 +172,7 @@ struct OverviewView: View {
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-                    Text("Close Logic or other audio apps before Repair or Uninstall. Do one repair attempt before rebooting; do not repeatedly reinstall.")
+                    Text(repairGuidance)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -398,6 +398,31 @@ struct OverviewView: View {
         case .reconnectDevice: return "cable.connector"
         case .captureDiagnostics, .sendDiagnostics: return "doc.text.magnifyingglass"
         }
+    }
+
+    private var lifecycleTitle: String {
+        viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil ? "Driver Lifecycle" : "Audio Lifecycle"
+    }
+
+    private var coreAudioLifecycleLabel: String {
+        if let deviceName = viewModel.lifecycleStatus.expectedCoreAudioDeviceName,
+           !deviceName.isEmpty {
+            return "CoreAudio \(deviceName)"
+        }
+        return "CoreAudio device check"
+    }
+
+    private var coreAudioLifecycleValue: String {
+        viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil
+            ? "Not required"
+            : yesNo(viewModel.lifecycleStatus.coreAudioDeviceVisible)
+    }
+
+    private var repairGuidance: String {
+        if viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil {
+            return "Repair only fixes ASFW driver lifecycle problems. If a test device is missing in Audio MIDI Setup, capture diagnostics instead of repeatedly repairing or reinstalling."
+        }
+        return "Close Logic or other audio apps before Repair or Uninstall. Do one repair attempt before rebooting; do not repeatedly reinstall."
     }
 
     private func lifecycleRow(_ label: String, _ value: String) -> some View {

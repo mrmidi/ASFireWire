@@ -96,6 +96,34 @@ struct ASFWMaintenanceParser {
     }
 
     static func activeCDHash(ioregOutput: String) -> String? {
+        activeCDHash(ioregOutput: ioregOutput, driverBundleID: nil)
+    }
+
+    static func activeCDHash(ioregOutput: String, driverBundleID: String?) -> String? {
+        if let driverBundleID,
+           !driverBundleID.isEmpty {
+            let driverBlocks = ioregOutput.components(separatedBy: "+-o ASFWDriver").dropFirst()
+            for rawBlock in driverBlocks {
+                let block = "+-o ASFWDriver" + rawBlock
+                let matchesBundle =
+                    block.contains(#""CFBundleIdentifier" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOUserServerName" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOPersonalityPublisher" = "\#(driverBundleID)""#)
+                if matchesBundle {
+                    return firstCDHash(in: block)
+                }
+            }
+
+            if ioregOutput.contains(#""CFBundleIdentifier" = ""#)
+                || ioregOutput.contains(#""IOUserServerName" = ""#) {
+                return nil
+            }
+        }
+
+        return firstCDHash(in: ioregOutput)
+    }
+
+    private static func firstCDHash(in ioregOutput: String) -> String? {
         let pattern = #""IOUserServerCDHash"\s*=\s*"([^"]+)""#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(ioregOutput.startIndex..<ioregOutput.endIndex, in: ioregOutput)
@@ -108,19 +136,31 @@ struct ASFWMaintenanceParser {
     }
 
     static func coreAudioContainsDevice(systemProfilerOutput: String,
+                                        deviceName: String?) -> Bool {
+        guard let deviceName,
+              !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return true
+        }
+        return systemProfilerOutput.localizedCaseInsensitiveContains(deviceName)
+    }
+
+    static func coreAudioContainsDevice(systemProfilerOutput: String,
                                         deviceName: String = "Alesis MultiMix Firewire") -> Bool {
-        systemProfilerOutput.localizedCaseInsensitiveContains(deviceName)
+        coreAudioContainsDevice(systemProfilerOutput: systemProfilerOutput,
+                                deviceName: Optional(deviceName))
     }
 
     static func summarize(systemExtensions: String,
                           ioregOutput: String,
                           coreAudioOutput: String,
                           expectedCDHash: String?,
-                          driverBundleID: String) -> MaintenanceStateSummary {
+                          driverBundleID: String,
+                          expectedCoreAudioDeviceName: String? = "Alesis MultiMix Firewire") -> MaintenanceStateSummary {
         let active = hasActiveDriver(systemExtensions: systemExtensions, driverBundleID: driverBundleID)
         let stale = hasStaleTerminatingDriver(systemExtensions: systemExtensions, driverBundleID: driverBundleID)
-        let cdHash = activeCDHash(ioregOutput: ioregOutput)
-        let coreAudioVisible = coreAudioContainsDevice(systemProfilerOutput: coreAudioOutput)
+        let cdHash = activeCDHash(ioregOutput: ioregOutput, driverBundleID: driverBundleID)
+        let coreAudioVisible = coreAudioContainsDevice(systemProfilerOutput: coreAudioOutput,
+                                                       deviceName: expectedCoreAudioDeviceName)
         let expected = expectedCDHash?.isEmpty == false ? expectedCDHash : nil
         let cdHashMismatch = expected != nil && cdHash != expected
 
@@ -171,4 +211,3 @@ struct ASFWMaintenanceParser {
         )
     }
 }
-

@@ -55,6 +55,24 @@ struct MaintenanceStateTests {
         #expect(summary.expectedCDHash == "newhash")
     }
 
+    @Test func cdHashParserFiltersByDriverBundleID() {
+        let ioreg = """
+        +-o ASFWDriver  <class IOUserService>
+          | {
+          |   "CFBundleIdentifier" = "com.old.ASFW.ASFWDriver"
+          |   "IOUserServerCDHash" = "oldhash"
+          | }
+        +-o ASFWDriver  <class IOUserService>
+          | {
+          |   "CFBundleIdentifier" = "com.chrisizatt.ASFWLocal.ASFWDriver"
+          |   "IOUserServerCDHash" = "newhash"
+          | }
+        """
+
+        #expect(ASFWMaintenanceParser.activeCDHash(ioregOutput: ioreg, driverBundleID: driverID) == "newhash")
+        #expect(ASFWMaintenanceParser.activeCDHash(ioregOutput: ioreg, driverBundleID: "com.missing.ASFWDriver") == nil)
+    }
+
     @Test func missingDriverAndAudioLooksUninstalled() {
         let summary = ASFWMaintenanceParser.summarize(systemExtensions: "2 extension(s)",
                                                       ioregOutput: "",
@@ -83,6 +101,22 @@ struct MaintenanceStateTests {
         #expect(status.audioNubVisible)
         #expect(status.coreAudioDeviceVisible)
         #expect(!status.userClientConnected)
+    }
+
+    @Test func driverOnlyTesterHealthDoesNotRequireAlesisCoreAudio() {
+        let status = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "abc123""#,
+            audioNubIoreg: "",
+            coreAudioOutput: "Built-in Output",
+            expectedCDHash: "abc123",
+            expectedCoreAudioDeviceName: nil
+        ))
+
+        #expect(status.health == .clean)
+        #expect(status.recommendedAction == .none)
+        #expect(status.coreAudioDeviceVisible)
+        #expect(status.summary == "ASFW driver is active.")
     }
 
     @Test func lifecycleMapsCoreAudioMissingToRepairWhenAudioNubExists() {
@@ -278,7 +312,8 @@ struct MaintenanceStateTests {
                         expectedCDHash: String?,
                         helperStatus: MaintenanceHelperApprovalState = .enabled,
                         userClientConnected: Bool = true,
-                        stagedDriverPresent: Bool = true) -> MaintenanceLifecycleInputs {
+                        stagedDriverPresent: Bool = true,
+                        expectedCoreAudioDeviceName: String? = "Alesis MultiMix Firewire") -> MaintenanceLifecycleInputs {
         MaintenanceLifecycleInputs(
             isRunningFromApplications: isRunningFromApplications,
             helperStatus: helperStatus,
@@ -288,6 +323,7 @@ struct MaintenanceStateTests {
             audioNubIoreg: audioNubIoreg,
             coreAudioOutput: coreAudioOutput,
             expectedCDHash: expectedCDHash,
+            expectedCoreAudioDeviceName: expectedCoreAudioDeviceName,
             stagedDriverPresent: stagedDriverPresent,
             driverBundleID: driverID
         )

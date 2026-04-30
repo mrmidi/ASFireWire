@@ -256,7 +256,9 @@ class DriverViewModel: ObservableObject {
         guard canRepairDriver else {
             let message: String
             if lifecycleStatus.health == .clean {
-                message = "Repair is not needed while the ASFW audio path looks healthy."
+                message = lifecycleStatus.expectedCoreAudioDeviceName == nil
+                    ? "Repair is not needed while the ASFW driver lifecycle looks healthy. Capture diagnostics if the test device is missing."
+                    : "Repair is not needed while the ASFW audio path looks healthy."
             } else if lifecycleStatus.health == .rebootRequired {
                 message = "Reboot is required before another repair attempt."
             } else {
@@ -371,7 +373,7 @@ class DriverViewModel: ObservableObject {
         refreshHelperStatus()
         guard canUseMaintenanceHelper else {
             isBusy = false
-            maintenanceStatus = "Activation was submitted. Enable the maintenance helper if the driver does not publish cleanly."
+            maintenanceStatus = "Activation was submitted. Enable the maintenance helper if the driver lifecycle does not settle cleanly."
             refreshLifecycleStatus()
             return
         }

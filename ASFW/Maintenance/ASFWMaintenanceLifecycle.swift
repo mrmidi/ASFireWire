@@ -66,6 +66,7 @@ struct MaintenanceLifecycleInputs: Equatable {
     var audioNubIoreg: String
     var coreAudioOutput: String
     var expectedCDHash: String?
+    var expectedCoreAudioDeviceName: String?
     var stagedDriverPresent: Bool
     var driverBundleID: String
 }
@@ -83,6 +84,7 @@ struct MaintenanceLifecycleStatus: Equatable {
     var stagedDriverPresent: Bool
     var activeCDHash: String?
     var expectedCDHash: String?
+    var expectedCoreAudioDeviceName: String?
 
     static let unknown = MaintenanceLifecycleStatus(
         health: .unknown,
@@ -96,7 +98,8 @@ struct MaintenanceLifecycleStatus: Equatable {
         userClientConnected: false,
         stagedDriverPresent: false,
         activeCDHash: nil,
-        expectedCDHash: nil
+        expectedCDHash: nil,
+        expectedCoreAudioDeviceName: "Alesis MultiMix Firewire"
     )
 
     var isCleanForAudio: Bool {
@@ -110,7 +113,8 @@ struct MaintenanceLifecycleStatus: Equatable {
             "Recommended action: \(recommendedAction.displayName)",
             "Active driver: \(activeDriver ? "yes" : "no")",
             "ASFW audio nub: \(audioNubVisible ? "yes" : "no")",
-            "CoreAudio Alesis: \(coreAudioDeviceVisible ? "yes" : "no")",
+            "Expected CoreAudio device: \(expectedCoreAudioDeviceName ?? "not required")",
+            "CoreAudio expected device visible: \(expectedCoreAudioDeviceName == nil ? "not required" : (coreAudioDeviceVisible ? "yes" : "no"))",
             "Debug user-client: \(userClientConnected ? "connected" : "unavailable")",
             "Stale uninstall: \(staleTerminatingDriver ? "yes" : "no")",
             "Active CDHash: \(activeCDHash ?? "unknown")",
@@ -126,7 +130,8 @@ struct ASFWMaintenanceLifecycleEvaluator {
             ioregOutput: inputs.driverIoreg,
             coreAudioOutput: inputs.coreAudioOutput,
             expectedCDHash: inputs.expectedCDHash,
-            driverBundleID: inputs.driverBundleID
+            driverBundleID: inputs.driverBundleID,
+            expectedCoreAudioDeviceName: inputs.expectedCoreAudioDeviceName
         )
         let audioNubVisible = ASFWMaintenanceParser.hasAudioNub(
             driverIoregOutput: inputs.driverIoreg,
@@ -151,7 +156,8 @@ struct ASFWMaintenanceLifecycleEvaluator {
                 userClientConnected: inputs.userClientConnected,
                 stagedDriverPresent: inputs.stagedDriverPresent,
                 activeCDHash: summary.activeCDHash,
-                expectedCDHash: expected
+                expectedCDHash: expected,
+                expectedCoreAudioDeviceName: inputs.expectedCoreAudioDeviceName
             )
         }
 
@@ -200,14 +206,14 @@ struct ASFWMaintenanceLifecycleEvaluator {
         if !inputs.userClientConnected {
             return status(.clean,
                           .none,
-                          "Audio path is healthy; debug connection is unavailable.",
-                          "CoreAudio can see Alesis. Some debug tabs need the user-client entitlement/connection, but audio can continue without it.")
+                          inputs.expectedCoreAudioDeviceName == nil ? "ASFW driver is active; debug connection is unavailable." : "Audio path is healthy; debug connection is unavailable.",
+                          inputs.expectedCoreAudioDeviceName == nil ? "This tester build does not require a specific CoreAudio device for maintenance health. Use diagnostics/logs for device-specific Midas results." : "CoreAudio can see Alesis. Some debug tabs need the user-client entitlement/connection, but audio can continue without it.")
         }
 
         return status(.clean,
                       .none,
-                      "ASFW audio path looks healthy.",
-                      "The active driver, ASFW audio nub, and CoreAudio Alesis device are all visible.")
+                      inputs.expectedCoreAudioDeviceName == nil ? "ASFW driver is active." : "ASFW audio path looks healthy.",
+                      inputs.expectedCoreAudioDeviceName == nil ? "The active driver matches the staged driver. This tester build does not require CoreAudio publication before collecting device logs." : "The active driver, ASFW audio nub, and CoreAudio Alesis device are all visible.")
     }
 
     private static func helperAction(for helperStatus: MaintenanceHelperApprovalState,
@@ -252,6 +258,7 @@ struct MaintenanceLocalProbe {
             audioNubIoreg: run("/usr/sbin/ioreg", ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWAudioNub"], timeout: 10),
             coreAudioOutput: run("/usr/sbin/system_profiler", ["SPAudioDataType"], timeout: 20),
             expectedCDHash: expectedCDHash,
+            expectedCoreAudioDeviceName: MaintenanceCoreAudioExpectation.currentDeviceName,
             stagedDriverPresent: stagedDriverPresent,
             driverBundleID: driverBundleID
         )
@@ -281,5 +288,22 @@ struct MaintenanceLocalProbe {
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
+enum MaintenanceCoreAudioExpectation {
+    static var currentDeviceName: String? {
+        let bundle = Bundle.main
+        if let required = bundle.object(forInfoDictionaryKey: "ASFWRequireCoreAudioDevice") as? Bool,
+           required == false {
+            return nil
+        }
+        if let value = bundle.object(forInfoDictionaryKey: "ASFWExpectedCoreAudioDeviceName") as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && !trimmed.hasPrefix("$(") {
+                return trimmed
+            }
+        }
+        return "Alesis MultiMix Firewire"
     }
 }

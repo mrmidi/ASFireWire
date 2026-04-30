@@ -12,6 +12,8 @@ VERSION="${CURRENT_PROJECT_VERSION:-16}"
 MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.5}"
 DRIVERKIT_TARGET="${DRIVERKIT_DEPLOYMENT_TARGET:-24.0}"
 ARCHS_VALUE="${ARCHS_VALUE:-arm64}"
+REQUIRE_CORE_AUDIO_DEVICE="${ASFW_REQUIRE_CORE_AUDIO_DEVICE:-false}"
+EXPECTED_CORE_AUDIO_DEVICE_NAME="${ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME:-}"
 CLEAN=true
 SETTINGS_ONLY=false
 
@@ -42,6 +44,8 @@ Environment overrides:
   MACOSX_DEPLOYMENT_TARGET=15.5
   DRIVERKIT_DEPLOYMENT_TARGET=24.0
   ARCHS_VALUE=arm64
+  ASFW_REQUIRE_CORE_AUDIO_DEVICE=false
+  ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME="Midas Venice"
 EOF
 }
 
@@ -128,6 +132,24 @@ if [[ -d "$SYS_EXT_DIR" ]]; then
 fi
 [[ -d "$EXPECTED_DEXT_PATH" ]] || { echo "error: embedded dext missing: $EXPECTED_DEXT_PATH" >&2; exit 1; }
 
+/usr/libexec/PlistBuddy -c "Delete :ASFWRequireCoreAudioDevice" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :ASFWRequireCoreAudioDevice bool $REQUIRE_CORE_AUDIO_DEVICE" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Delete :ASFWExpectedCoreAudioDeviceName" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+if [[ -n "$EXPECTED_CORE_AUDIO_DEVICE_NAME" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :ASFWExpectedCoreAudioDeviceName string $EXPECTED_CORE_AUDIO_DEVICE_NAME" "$APP_PATH/Contents/Info.plist"
+else
+  /usr/libexec/PlistBuddy -c "Add :ASFWExpectedCoreAudioDeviceName string" "$APP_PATH/Contents/Info.plist"
+fi
+
+/usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:ASFW_REQUIRE_CORE_AUDIO_DEVICE" "$DAEMON_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ASFW_REQUIRE_CORE_AUDIO_DEVICE string $REQUIRE_CORE_AUDIO_DEVICE" "$DAEMON_PLIST"
+/usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME" "$DAEMON_PLIST" 2>/dev/null || true
+if [[ -n "$EXPECTED_CORE_AUDIO_DEVICE_NAME" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME string $EXPECTED_CORE_AUDIO_DEVICE_NAME" "$DAEMON_PLIST"
+else
+  /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME string" "$DAEMON_PLIST"
+fi
+
 WORK_DIR="$OUTPUT_DIR/work"
 PKG_DIR="$OUTPUT_DIR/package"
 /bin/rm -rf "$WORK_DIR" "$PKG_DIR"
@@ -211,6 +233,8 @@ ASFW Lychzord SIP-disabled tester build
 
 This is a local testing build for macOS $MACOS_DEPLOYMENT_TARGET+ with SIP disabled.
 It is not notarised and is not intended for normal end users.
+This package uses driver-only maintenance health, so it does not wait for an
+Alesis CoreAudio device before considering the driver refresh complete.
 
 Install on the tester Mac:
 
@@ -234,6 +258,14 @@ Install on the tester Mac:
    open /Applications/$APP_NAME
 
 7. Use Install / Update Driver once. Approve any System Settings prompt.
+
+8. If the Midas still does not appear, do not keep pressing Repair Driver.
+   Capture diagnostics and send the snapshot path/logs back.
+
+If the app reports "Repair needed: ASFW driver CDHash does not match the staged
+driver" immediately after replacing the app, macOS is probably still running an
+older same-version dext. Use a package with a higher CURRENT_PROJECT_VERSION, or
+uninstall, reboot, then install once from the new package.
 
 Do not run:
   sudo codesign --force --deep --sign - /Applications/$APP_NAME

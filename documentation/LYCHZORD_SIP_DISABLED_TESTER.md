@@ -23,6 +23,15 @@ The script defaults to:
 - DriverKit deployment target: `24.0`
 - architecture: `arm64`
 - signing: ad-hoc / Sign to Run Locally style
+- maintenance health: driver-only by default, so the app does not require an Alesis CoreAudio device before reporting a clean refresh
+
+If Lychzord has already installed an earlier tester build with the same System
+Extension version, build the replacement with a higher bundle version so
+macOS will treat the dext as an update:
+
+```sh
+CURRENT_PROJECT_VERSION=17 ./tools/lychzord/build_sip_disabled_tester.sh
+```
 
 Useful checks:
 
@@ -62,6 +71,16 @@ open /Applications/ASFWLychzord.app
 
 In the app, use `Install / Update Driver` once and approve any System Settings prompt.
 
+If the app reports `Repair needed: ASFW driver CDHash does not match the staged
+driver` immediately after replacing the app, macOS is probably still running an
+older same-version dext. Use a higher-version package, or uninstall, reboot,
+then install once from the new package.
+
+For Midas testing, do not keep pressing `Repair Driver` just because no Midas
+device appears in the app. The direct debug UI can still be unavailable in this
+SIP-disabled lane. If the Midas does not publish in Audio MIDI Setup, capture
+diagnostics and send the snapshot/log output back.
+
 Do not re-sign the delivered app:
 
 ```sh
@@ -75,6 +94,7 @@ That command replaces the entitlements embedded by the package script and can pr
 - This is a SIP-disabled development/testing path, not a normal-user distribution path.
 - It may still require a reboot after first driver approval or a stuck SystemExtensions state.
 - The maintenance helper is ad-hoc signed and uses a relaxed bundle-identifier XPC signing requirement only when the build has an empty Team ID.
+- Maintenance health is intentionally driver-only in this package. A missing Midas CoreAudio device is a device-support/logging result, not automatically a repair/install failure.
 - Midas Venice audio is not expected to be fully implemented yet. First-pass success is discovery, ROM/DICE logging, and clear failure classification.
 - Do not hot-unplug the FireWire device during driver initialisation; current driver teardown/init handling is not yet robust enough for that test.
 
