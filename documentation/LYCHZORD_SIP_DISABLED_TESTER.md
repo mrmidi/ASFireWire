@@ -76,6 +76,17 @@ driver` immediately after replacing the app, macOS is probably still running an
 older same-version dext. Use a higher-version package, or uninstall, reboot,
 then install once from the new package.
 
+If the UI uninstall path reports success but `systemextensionsctl list` still
+shows the old empty-Team-ID tester dext after a reboot, use the terminal fallback
+on the tester Mac:
+
+```sh
+systemextensionsctl list
+sudo systemextensionsctl uninstall - com.lychzord.ASFWTest.ASFWDriver
+sudo systemextensionsctl gc
+sudo reboot
+```
+
 For Midas testing, do not keep pressing `Repair Driver` just because no Midas
 device appears in the app. The direct debug UI can still be unavailable in this
 SIP-disabled lane. If the Midas does not publish in Audio MIDI Setup, capture

@@ -167,6 +167,8 @@ cat >"$APP_ENTITLEMENTS" <<EOF
   <false/>
   <key>com.apple.developer.system-extension.install</key>
   <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
   <key>com.apple.developer.driverkit.userclient-access</key>
   <array>
     <string>$DRIVER_BUNDLE_ID</string>
@@ -266,6 +268,12 @@ If the app reports "Repair needed: ASFW driver CDHash does not match the staged
 driver" immediately after replacing the app, macOS is probably still running an
 older same-version dext. Use a package with a higher CURRENT_PROJECT_VERSION, or
 uninstall, reboot, then install once from the new package.
+
+Terminal fallback for a stuck empty-Team-ID tester dext:
+  systemextensionsctl list
+  sudo systemextensionsctl uninstall - $DRIVER_BUNDLE_ID
+  sudo systemextensionsctl gc
+  sudo reboot
 
 Do not run:
   sudo codesign --force --deep --sign - /Applications/$APP_NAME
