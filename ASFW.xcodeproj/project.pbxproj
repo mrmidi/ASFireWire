@@ -10,8 +10,6 @@
 		3A1693F02E808765000BD368 /* DriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693EF2E808765000BD368 /* DriverKit.framework */; };
 		3A1693F92E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */; };
-		3A27C5302ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
-		3A27C5322ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
 		3ABA31132EF8564A0046405D /* AudioDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABA31122EF8564A0046405D /* AudioDriverKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -29,6 +27,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 3A1693D72E808727000BD368;
 			remoteInfo = ASFW;
+		};
+		3AF001002F0000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3A1693D02E808727000BD368 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3AF001002F0000000000000A;
+			remoteInfo = ASFWPrivilegedHelper;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -55,14 +60,25 @@
 		3AB4713F2EE31CF0003A4E2A /* ASFWTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ASFWTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3AB471482EE31E7A003A4E2A /* ASFW.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = ASFW.xctestplan; sourceTree = "<group>"; };
 		3ABA31122EF8564A0046405D /* AudioDriverKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioDriverKit.framework; path = Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.1.sdk/System/DriverKit/System/Library/Frameworks/AudioDriverKit.framework; sourceTree = DEVELOPER_DIR; };
+		3AF001002F00000000000001 /* ASFWPrivilegedHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ASFWPrivilegedHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		ASFWAPPENTITLEMENTS /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		ASFWDRIVERENTITLEMENTS /* ASFWDriver.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ASFWDriver.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		3AF001112F00000000000001 /* Exceptions for "ASFW" folder in "ASFW" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3A1693D72E808727000BD368 /* ASFW */;
+		};
 		3A1693FA2E808765000BD368 /* Exceptions for "ASFWDriver" folder in "ASFWDriver" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Bus/IEEE1394-BusReset.md.bak,
+				Bus/IEEE1394-BusReset.md.bak2,
+				fixlog.sh,
 				Info.plist,
 			);
 			target = 3A1693EC2E808765000BD368 /* ASFWDriver */;
@@ -72,6 +88,9 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3A1693DA2E808727000BD368 /* ASFW */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				3AF001112F00000000000001 /* Exceptions for "ASFW" folder in "ASFW" target */,
+			);
 			path = ASFW;
 			sourceTree = "<group>";
 		};
@@ -86,6 +105,11 @@
 		3AB471402EE31CF0003A4E2A /* ASFWTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ASFWTests;
+			sourceTree = "<group>";
+		};
+		3AF001002F00000000000002 /* ASFWPrivilegedHelper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ASFWPrivilegedHelper;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -115,6 +139,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3AF001002F00000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -124,6 +155,7 @@
 				3AB471482EE31E7A003A4E2A /* ASFW.xctestplan */,
 				3A1693DA2E808727000BD368 /* ASFW */,
 				3A1693F12E808765000BD368 /* ASFWDriver */,
+				3AF001002F00000000000002 /* ASFWPrivilegedHelper */,
 				3AB471402EE31CF0003A4E2A /* ASFWTests */,
 				3A1693EE2E808765000BD368 /* Frameworks */,
 				3A1693D92E808727000BD368 /* Products */,
@@ -138,6 +170,7 @@
 			children = (
 				3A1693D82E808727000BD368 /* ASFW.app */,
 				3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */,
+				3AF001002F00000000000001 /* ASFWPrivilegedHelper */,
 				3AB4713F2EE31CF0003A4E2A /* ASFWTests.xctest */,
 			);
 			name = Products;
@@ -180,6 +213,7 @@
 			);
 			dependencies = (
 				3A1693F82E808765000BD368 /* PBXTargetDependency */,
+				3AF001002F0000000000000C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3A1693DA2E808727000BD368 /* ASFW */,
@@ -234,6 +268,25 @@
 			productReference = 3AB4713F2EE31CF0003A4E2A /* ASFWTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		3AF001002F0000000000000A /* ASFWPrivilegedHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3AF001002F0000000000000F /* Build configuration list for PBXNativeTarget "ASFWPrivilegedHelper" */;
+			buildPhases = (
+				3AF001002F00000000000006 /* Sources */,
+				3AF001002F00000000000007 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				3AF001002F00000000000002 /* ASFWPrivilegedHelper */,
+			);
+			name = ASFWPrivilegedHelper;
+			productName = ASFWPrivilegedHelper;
+			productReference = 3AF001002F00000000000001 /* ASFWPrivilegedHelper */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -255,6 +308,9 @@
 						CreatedOnToolsVersion = 26.1.1;
 						TestTargetID = 3A1693D72E808727000BD368;
 					};
+					3AF001002F0000000000000A = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
 				};
 			};
 			buildConfigurationList = 3A1693D32E808727000BD368 /* Build configuration list for PBXProject "ASFW" */;
@@ -273,6 +329,7 @@
 			targets = (
 				3A1693D72E808727000BD368 /* ASFW */,
 				3A1693EC2E808765000BD368 /* ASFWDriver */,
+				3AF001002F0000000000000A /* ASFWPrivilegedHelper */,
 				3AB4713E2EE31CF0003A4E2A /* ASFWTests */,
 			);
 		};
@@ -283,7 +340,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A27C5302ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -291,7 +347,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A27C5322ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,21 +362,25 @@
 /* Begin PBXShellScriptBuildPhase section */
 		3A27C5372ECDECB0009CA664 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/ASFWPrivilegedHelper",
 			);
+			name = "Embed Privileged Helper";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/Helpers/ASFWPrivilegedHelper",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchDaemons/$(ASFW_APP_BUNDLE_IDENTIFIER).PrivilegedHelper.plist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "
-";
+			shellScript = "set -eu\nHELPER_SRC=\"${BUILT_PRODUCTS_DIR}/ASFWPrivilegedHelper\"\nHELPERS_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/Helpers\"\nDAEMONS_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Library/LaunchDaemons\"\nHELPER_DST=\"${HELPERS_DIR}/ASFWPrivilegedHelper\"\nLABEL=\"${ASFW_APP_BUNDLE_IDENTIFIER}.PrivilegedHelper\"\nPLIST=\"${DAEMONS_DIR}/${LABEL}.plist\"\nif [ ! -x \"$HELPER_SRC\" ]; then\n  echo \"Missing ASFWPrivilegedHelper at $HELPER_SRC\" >&2\n  exit 1\nfi\nmkdir -p \"$HELPERS_DIR\" \"$DAEMONS_DIR\"\ncp -f \"$HELPER_SRC\" \"$HELPER_DST\"\nchmod 755 \"$HELPER_DST\"\nrm -f \"$PLIST\"\n/usr/bin/plutil -create xml1 \"$PLIST\"\n/usr/bin/plutil -insert Label -string \"$LABEL\" \"$PLIST\"\n/usr/bin/plutil -insert BundleProgram -string \"Contents/Library/Helpers/ASFWPrivilegedHelper\" \"$PLIST\"\n/usr/bin/plutil -insert MachServices -xml \"<dict><key>${LABEL}</key><true/></dict>\" \"$PLIST\"\n/usr/bin/plutil -insert EnvironmentVariables -xml \"<dict><key>ASFW_APP_BUNDLE_IDENTIFIER</key><string>${ASFW_APP_BUNDLE_IDENTIFIER}</string><key>ASFW_HELPER_BUNDLE_IDENTIFIER</key><string>${ASFW_APP_BUNDLE_IDENTIFIER}.PrivilegedHelper</string><key>ASFW_HELPER_MACH_SERVICE_NAME</key><string>${LABEL}</string><key>ASFW_TEAM_IDENTIFIER</key><string>${DEVELOPMENT_TEAM}</string></dict>\" \"$PLIST\"\n/usr/bin/plutil -insert RunAtLoad -bool NO \"$PLIST\"\n/usr/bin/plutil -insert KeepAlive -bool NO \"$PLIST\"\n";
 		};
 		3A27C5392ECDED18009CA664 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -365,6 +424,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		3AF001002F00000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -377,6 +443,11 @@
 			isa = PBXTargetDependency;
 			target = 3A1693D72E808727000BD368 /* ASFW */;
 			targetProxy = 3AB471432EE31CF0003A4E2A /* PBXContainerItemProxy */;
+		};
+		3AF001002F0000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3AF001002F0000000000000A /* ASFWPrivilegedHelper */;
+			targetProxy = 3AF001002F0000000000000B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -506,24 +577,25 @@
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_APP_BUNDLE_IDENTIFIER = net.mrmidi.ASFW;
+				ASFW_APP_CODE_SIGN_STYLE = Automatic;
 				ASFW_APP_ENTITLEMENTS = ASFW/App.entitlements;
+				ASFW_APP_PROVISIONING_PROFILE_SPECIFIER = "";
 				ASFW_DRIVER_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
 				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_APP_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_STYLE = "$(ASFW_APP_CODE_SIGN_STYLE)";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ASFWDriverBundleIdentifier = "$(ASFW_DRIVER_BUNDLE_IDENTIFIER)";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ASFW/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -531,6 +603,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ASFW_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(ASFW_APP_PROVISIONING_PROFILE_SPECIFIER)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -546,24 +619,25 @@
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_APP_BUNDLE_IDENTIFIER = net.mrmidi.ASFW;
+				ASFW_APP_CODE_SIGN_STYLE = Automatic;
 				ASFW_APP_ENTITLEMENTS = ASFW/App.entitlements;
+				ASFW_APP_PROVISIONING_PROFILE_SPECIFIER = "";
 				ASFW_DRIVER_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
 				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_APP_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_STYLE = "$(ASFW_APP_CODE_SIGN_STYLE)";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ASFWDriverBundleIdentifier = "$(ASFW_DRIVER_BUNDLE_IDENTIFIER)";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ASFW/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -571,6 +645,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ASFW_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(ASFW_APP_PROVISIONING_PROFILE_SPECIFIER)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -586,13 +661,15 @@
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_DRIVER_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
+				ASFW_DRIVER_CODE_SIGN_STYLE = Automatic;
 				ASFW_DRIVER_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
+				ASFW_DRIVER_PROVISIONING_PROFILE_SPECIFIER = "";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DRIVER_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CODE_SIGN_STYLE = "$(ASFW_DRIVER_CODE_SIGN_STYLE)";
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -607,6 +684,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ASFW_DRIVER_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = net.mrmidi.ASFW.ASFWDriver;
+				PROVISIONING_PROFILE_SPECIFIER = "$(ASFW_DRIVER_PROVISIONING_PROFILE_SPECIFIER)";
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SDKROOT = driverkit;
 				SKIP_INSTALL = YES;
@@ -622,13 +700,15 @@
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASFW_DRIVER_BUNDLE_IDENTIFIER = net.mrmidi.ASFW.ASFWDriver;
+				ASFW_DRIVER_CODE_SIGN_STYLE = Automatic;
 				ASFW_DRIVER_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
+				ASFW_DRIVER_PROVISIONING_PROFILE_SPECIFIER = "";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = "$(ASFW_DRIVER_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CODE_SIGN_STYLE = "$(ASFW_DRIVER_CODE_SIGN_STYLE)";
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -643,6 +723,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(ASFW_DRIVER_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = net.mrmidi.ASFW.ASFWDriver;
+				PROVISIONING_PROFILE_SPECIFIER = "$(ASFW_DRIVER_PROVISIONING_PROFILE_SPECIFIER)";
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SDKROOT = driverkit;
 				SKIP_INSTALL = YES;
@@ -657,7 +738,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -678,7 +759,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -691,6 +772,65 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ASFW.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ASFW";
+			};
+			name = Release;
+		};
+		3AF001002F0000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				ASFW_APP_BUNDLE_IDENTIFIER = net.mrmidi.ASFW;
+				ASFW_HELPER_CODE_SIGN_STYLE = Automatic;
+				ASFW_HELPER_PROVISIONING_PROFILE_SPECIFIER = "";
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = "$(ASFW_HELPER_CODE_SIGN_STYLE)";
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ASFWPrivilegedHelper/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASFW_APP_BUNDLE_IDENTIFIER).PrivilegedHelper";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(ASFW_HELPER_PROVISIONING_PROFILE_SPECIFIER)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		3AF001002F0000000000000E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				ASFW_APP_BUNDLE_IDENTIFIER = net.mrmidi.ASFW;
+				ASFW_HELPER_CODE_SIGN_STYLE = Automatic;
+				ASFW_HELPER_PROVISIONING_PROFILE_SPECIFIER = "";
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = "$(ASFW_HELPER_CODE_SIGN_STYLE)";
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ASFWPrivilegedHelper/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(ASFW_APP_BUNDLE_IDENTIFIER).PrivilegedHelper";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(ASFW_HELPER_PROVISIONING_PROFILE_SPECIFIER)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
 		};
@@ -729,6 +869,15 @@
 			buildConfigurations = (
 				3AB471452EE31CF0003A4E2A /* Debug */,
 				3AB471462EE31CF0003A4E2A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3AF001002F0000000000000F /* Build configuration list for PBXNativeTarget "ASFWPrivilegedHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3AF001002F0000000000000D /* Debug */,
+				3AF001002F0000000000000E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

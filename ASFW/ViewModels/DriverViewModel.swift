@@ -12,9 +12,21 @@ import SwiftUI
 @MainActor
 class DriverViewModel: ObservableObject {
     @Published var activationStatus: String = "Idle"
+    @Published var helperStatus: MaintenanceHelperApprovalState = .unknown
+    @Published var maintenanceStatus: String = "Maintenance helper has not been checked yet."
+    @Published var lastMaintenanceSnapshotPath: String?
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
+
+    private let maintenanceHelper: MaintenanceHelperManaging
+    private var disconnectDriverClient: (() -> Void)?
+    private var reconnectDriverClient: (() -> Void)?
+
+    init(maintenanceHelper: MaintenanceHelperManaging = MaintenanceHelperManager.shared) {
+        self.maintenanceHelper = maintenanceHelper
+        self.helperStatus = maintenanceHelper.helperStatus
+    }
 
     var driverBundleIdentifier: String {
         DriverInstallManager.shared.extensionBundleIdentifier
@@ -26,6 +38,10 @@ class DriverViewModel: ObservableObject {
 
     var isRunningFromApplications: Bool {
         DriverInstallManager.shared.isRunningFromApplications
+    }
+
+    var canUseMaintenanceHelper: Bool {
+        helperStatus == .enabled
     }
     
     struct LogEntry: Identifiable, Equatable {
@@ -79,21 +95,76 @@ class DriverViewModel: ObservableObject {
             logMessages.removeFirst(logMessages.count - 200)
         }
     }
+
+    func setMaintenanceConnectionHandlers(disconnect: @escaping () -> Void,
+                                          reconnect: @escaping () -> Void) {
+        disconnectDriverClient = disconnect
+        reconnectDriverClient = reconnect
+    }
+
+    func refreshHelperStatus() {
+        helperStatus = maintenanceHelper.helperStatus
+        switch helperStatus {
+        case .enabled:
+            maintenanceStatus = "Maintenance helper is enabled."
+        case .requiresApproval:
+            maintenanceStatus = "Maintenance helper is registered but needs approval in System Settings."
+        case .notRegistered:
+            maintenanceStatus = "Maintenance helper is not registered."
+        case .notFound:
+            maintenanceStatus = "Maintenance helper is missing from the app bundle."
+        case .failed:
+            maintenanceStatus = "Maintenance helper failed."
+        case .unknown:
+            maintenanceStatus = "Maintenance helper state is unknown."
+        }
+    }
+
+    func enableMaintenanceHelper() {
+        isBusy = true
+        activationStatus = "Registering maintenance helper..."
+        log("Maintenance helper registration requested", source: .app, level: .info)
+
+        do {
+            helperStatus = try maintenanceHelper.registerHelper()
+            refreshHelperStatus()
+            isBusy = false
+            if helperStatus == .requiresApproval {
+                activationStatus = "Maintenance helper needs approval in System Settings."
+                log("Maintenance helper registered; approval required in System Settings", source: .app, level: .warning)
+            } else {
+                activationStatus = "Maintenance helper \(helperStatus.displayName.lowercased())."
+                log(maintenanceStatus, source: .app, level: helperStatus == .enabled ? .success : .info)
+            }
+        } catch {
+            isBusy = false
+            helperStatus = .failed
+            let message = Self.errorMessage(for: error)
+            activationStatus = "Error: \(message)"
+            maintenanceStatus = message
+            log(message, source: .app, level: .error)
+        }
+    }
+
+    func openMaintenanceApprovalSettings() {
+        maintenanceHelper.openApprovalSettings()
+    }
     
     func installDriver() {
         isBusy = true
-        activationStatus = "Requesting activation..."
-        log("Activation request submitted", source: .app, level: .info)
+        activationStatus = "Requesting activation/update..."
+        log("Activation/update request submitted", source: .app, level: .info)
         
         DriverInstallManager.shared.activate { [weak self] result in
             guard let self = self else { return }
             Task { @MainActor in
-                self.isBusy = false
                 switch result {
                 case .success(let message):
                     self.activationStatus = message
                     self.log(message, source: .app, level: .success)
+                    self.runPostActivationRefresh()
                 case .failure(let error):
+                    self.isBusy = false
                     let message = Self.errorMessage(for: error)
                     self.activationStatus = "Error: \(message)"
                     self.log(message, source: .app, level: .error)
@@ -110,17 +181,103 @@ class DriverViewModel: ObservableObject {
         DriverInstallManager.shared.deactivate { [weak self] result in
             guard let self = self else { return }
             Task { @MainActor in
-                self.isBusy = false
                 switch result {
                 case .success(let message):
                     self.activationStatus = message
                     self.log(message, source: .app, level: .success)
+                    self.runPostUninstallCleanup()
                 case .failure(let error):
+                    self.isBusy = false
                     let message = Self.errorMessage(for: error)
                     self.activationStatus = "Error: \(message)"
                     self.log(message, source: .app, level: .error)
                 }
             }
+        }
+    }
+
+    func repairDriver() {
+        guard canUseMaintenanceHelper else {
+            refreshHelperStatus()
+            activationStatus = "Enable the maintenance helper before repairing the driver."
+            log(activationStatus, source: .app, level: .warning)
+            return
+        }
+
+        isBusy = true
+        activationStatus = "Repairing driver state..."
+        log("Repair Driver requested. Close Logic or other audio apps before repair.", source: .app, level: .warning)
+        let expectedCDHash = maintenanceHelper.stagedDriverCDHash(driverBundleID: driverBundleIdentifier)
+        disconnectDriverClient?()
+
+        maintenanceHelper.refreshDriver(expectedCDHash: expectedCDHash, driverBundleID: driverBundleIdentifier) { [weak self] outcome in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.reconnectDriverClient?()
+                self.applyMaintenanceOutcome(outcome, successPrefix: "Repair completed")
+            }
+        }
+    }
+
+    private func runPostActivationRefresh() {
+        refreshHelperStatus()
+        guard canUseMaintenanceHelper else {
+            isBusy = false
+            maintenanceStatus = "Activation was submitted. Enable the maintenance helper if the driver does not publish cleanly."
+            return
+        }
+
+        activationStatus = "Refreshing driver after activation..."
+        let expectedCDHash = maintenanceHelper.stagedDriverCDHash(driverBundleID: driverBundleIdentifier)
+        disconnectDriverClient?()
+        maintenanceHelper.refreshDriver(expectedCDHash: expectedCDHash, driverBundleID: driverBundleIdentifier) { [weak self] outcome in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.reconnectDriverClient?()
+                self.applyMaintenanceOutcome(outcome, successPrefix: "Driver activation/update refreshed")
+            }
+        }
+    }
+
+    private func runPostUninstallCleanup() {
+        refreshHelperStatus()
+        guard canUseMaintenanceHelper else {
+            isBusy = false
+            maintenanceStatus = "Deactivation was submitted. Enable the maintenance helper for reliable cleanup."
+            return
+        }
+
+        activationStatus = "Cleaning up after deactivation..."
+        disconnectDriverClient?()
+        maintenanceHelper.cleanupAfterUninstall(driverBundleID: driverBundleIdentifier) { [weak self] outcome in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.applyMaintenanceOutcome(outcome, successPrefix: "Driver uninstall cleanup completed")
+            }
+        }
+    }
+
+    private func applyMaintenanceOutcome(_ outcome: MaintenanceOperationOutcome, successPrefix: String) {
+        isBusy = false
+        lastMaintenanceSnapshotPath = outcome.snapshotPath
+
+        switch outcome {
+        case .succeeded(let message, _):
+            activationStatus = "\(successPrefix): \(message)"
+            maintenanceStatus = message
+            log(message, source: .app, level: .success)
+        case .repairNeeded(let message, _):
+            activationStatus = "Repair needed: \(message)"
+            maintenanceStatus = message
+            log(message, source: .app, level: .warning)
+        case .rebootRequired(let message, _):
+            activationStatus = "Reboot required: \(message)"
+            maintenanceStatus = message
+            log(message, source: .app, level: .error)
+        case .failed(let message, _):
+            activationStatus = "Error: \(message)"
+            maintenanceStatus = message
+            log(message, source: .app, level: .error)
         }
     }
 

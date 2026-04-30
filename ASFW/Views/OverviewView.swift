@@ -9,6 +9,7 @@ import SwiftUI
 
 struct OverviewView: View {
     @ObservedObject var viewModel: DriverViewModel
+    @State private var showUninstallConfirmation = false
     
     var body: some View {
         ScrollView {
@@ -54,7 +55,7 @@ struct OverviewView: View {
 
                 // Install Card
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Driver Install", systemImage: "puzzlepiece.extension")
+                    Label("Driver Install & Repair", systemImage: "puzzlepiece.extension")
                         .font(.headline)
 
                     HStack(alignment: .top, spacing: 12) {
@@ -79,13 +80,21 @@ struct OverviewView: View {
                             Button {
                                 viewModel.installDriver()
                             } label: {
-                                Label("Install Driver", systemImage: "arrow.down.circle.fill")
+                                Label("Install / Update Driver", systemImage: "arrow.down.circle.fill")
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(viewModel.isBusy || !viewModel.isRunningFromApplications)
 
+                            Button {
+                                viewModel.repairDriver()
+                            } label: {
+                                Label("Repair Driver", systemImage: "wrench.and.screwdriver.fill")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isBusy || !viewModel.canUseMaintenanceHelper)
+
                             Button(role: .destructive) {
-                                viewModel.uninstallDriver()
+                                showUninstallConfirmation = true
                             } label: {
                                 Label("Uninstall", systemImage: "trash.fill")
                             }
@@ -96,9 +105,70 @@ struct OverviewView: View {
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-                    Text("Approval may appear in System Settings after macOS accepts the activation request.")
+                    Text("Close Logic or other audio apps before Repair or Uninstall. Do one repair attempt before rebooting; do not repeatedly reinstall.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+
+                // Maintenance Helper Card
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Maintenance Helper", systemImage: "lock.shield")
+                        .font(.headline)
+
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: maintenanceHelperIcon)
+                            .foregroundStyle(maintenanceHelperColor)
+                            .font(.title3)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Helper: \(viewModel.helperStatus.displayName)")
+                                .font(.subheadline.weight(.semibold))
+                            Text(viewModel.maintenanceStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            if let path = viewModel.lastMaintenanceSnapshotPath {
+                                Text(path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+
+                        Spacer(minLength: 16)
+
+                        HStack(spacing: 8) {
+                            Button {
+                                viewModel.enableMaintenanceHelper()
+                            } label: {
+                                Label("Enable Helper", systemImage: "key.fill")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isBusy || viewModel.helperStatus == .enabled)
+
+                            Button {
+                                viewModel.openMaintenanceApprovalSettings()
+                            } label: {
+                                Label("Approve", systemImage: "gearshape.fill")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isBusy || viewModel.helperStatus != .requiresApproval)
+
+                            Button {
+                                viewModel.refreshHelperStatus()
+                            } label: {
+                                Label("Recheck", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isBusy)
+                        }
+                    }
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -145,6 +215,19 @@ struct OverviewView: View {
             .padding()
         }
         .navigationTitle("Overview")
+        .onAppear {
+            viewModel.refreshHelperStatus()
+        }
+        .confirmationDialog("Uninstall ASFW Driver?",
+                            isPresented: $showUninstallConfirmation,
+                            titleVisibility: .visible) {
+            Button("Uninstall Driver", role: .destructive) {
+                viewModel.uninstallDriver()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Close Logic or other audio apps first. If macOS reports the driver is terminating for uninstall, reboot before trying another install.")
+        }
     }
     
     @ViewBuilder
@@ -162,5 +245,23 @@ struct OverviewView: View {
                     .opacity(viewModel.isBusy ? 0 : 1)
                     .animation(viewModel.isBusy ? .easeInOut(duration: 1.0).repeatForever(autoreverses: true) : .default, value: viewModel.isBusy)
             )
+    }
+
+    private var maintenanceHelperIcon: String {
+        switch viewModel.helperStatus {
+        case .enabled: return "checkmark.shield.fill"
+        case .requiresApproval: return "exclamationmark.triangle.fill"
+        case .failed, .notFound: return "xmark.octagon.fill"
+        case .notRegistered, .unknown: return "lock.shield"
+        }
+    }
+
+    private var maintenanceHelperColor: Color {
+        switch viewModel.helperStatus {
+        case .enabled: return .green
+        case .requiresApproval: return .orange
+        case .failed, .notFound: return .red
+        case .notRegistered, .unknown: return .secondary
+        }
     }
 }

@@ -15,6 +15,7 @@ struct ModernContentView: View {
     @StateObject private var romExplorerVM: RomExplorerViewModel
     @State private var selectedSection: SidebarSection? = .overview
     @State private var loggingPreset: LoggingPreset = .standard
+    @State private var showUninstallConfirmation = false
 
     init() {
         let driverViewModel = DriverViewModel()
@@ -135,14 +136,23 @@ struct ModernContentView: View {
                         Button {
                             driverVM.installDriver()
                         } label: {
-                            Label("Install Driver", systemImage: "arrow.down.circle.fill")
+                            Label("Install / Update Driver", systemImage: "arrow.down.circle.fill")
                         }
                         .disabled(driverVM.isBusy)
-                        .help("Install DriverKit system extension")
+                        .help("Install or update the DriverKit system extension")
                         .keyboardShortcut("i", modifiers: .command)
+
+                        Button {
+                            driverVM.repairDriver()
+                        } label: {
+                            Label("Repair Driver", systemImage: "wrench.and.screwdriver.fill")
+                        }
+                        .disabled(driverVM.isBusy || !driverVM.canUseMaintenanceHelper)
+                        .help("Refresh ASFW DriverKit and CoreAudio state")
+                        .keyboardShortcut("r", modifiers: .command)
                         
                         Button {
-                            driverVM.uninstallDriver()
+                            showUninstallConfirmation = true
                         } label: {
                             Label("Uninstall", systemImage: "trash.fill")
                         }
@@ -169,6 +179,11 @@ struct ModernContentView: View {
         }
         .onAppear {
             debugVM.setDriverViewModel(driverVM)
+            driverVM.setMaintenanceConnectionHandlers(
+                disconnect: { [weak debugVM] in debugVM?.disconnect() },
+                reconnect: { [weak debugVM] in debugVM?.connect() }
+            )
+            driverVM.refreshHelperStatus()
             debugVM.connect()
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
@@ -181,6 +196,16 @@ struct ModernContentView: View {
         .onChange(of: topologyVM.topology?.generation) { _, _ in
             // Update available nodes when topology generation changes
             romExplorerVM.refreshAvailableNodes()
+        }
+        .confirmationDialog("Uninstall ASFW Driver?",
+                            isPresented: $showUninstallConfirmation,
+                            titleVisibility: .visible) {
+            Button("Uninstall Driver", role: .destructive) {
+                driverVM.uninstallDriver()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Close Logic or other audio apps first. If macOS reports the driver is terminating for uninstall, reboot before trying another install.")
         }
     }
     

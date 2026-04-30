@@ -12,6 +12,7 @@ if [[ ! -d "$SOURCE_APP" ]]; then
   exit 1
 fi
 
+/bin/rm -rf "$DEST_APP"
 /usr/bin/ditto "$SOURCE_APP" "$DEST_APP"
 
 renamed=0
