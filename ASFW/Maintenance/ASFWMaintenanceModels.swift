@@ -31,6 +31,7 @@ enum MaintenanceHealthState: String, Equatable {
 struct MaintenanceStateSummary: Equatable {
     var health: MaintenanceHealthState
     var activeDriver: Bool
+    var driverServiceLoaded: Bool
     var staleTerminatingDriver: Bool
     var coreAudioDeviceVisible: Bool
     var activeCDHash: String?
@@ -40,6 +41,7 @@ struct MaintenanceStateSummary: Equatable {
     static let unknown = MaintenanceStateSummary(
         health: .unknown,
         activeDriver: false,
+        driverServiceLoaded: false,
         staleTerminatingDriver: false,
         coreAudioDeviceVisible: false,
         activeCDHash: nil,
@@ -97,6 +99,28 @@ struct ASFWMaintenanceParser {
 
     static func activeCDHash(ioregOutput: String) -> String? {
         activeCDHash(ioregOutput: ioregOutput, driverBundleID: nil)
+    }
+
+    static func hasDriverService(ioregOutput: String, driverBundleID: String?) -> Bool {
+        if let driverBundleID,
+           !driverBundleID.isEmpty {
+            let driverBlocks = ioregOutput.components(separatedBy: "+-o ASFWDriver").dropFirst()
+            for rawBlock in driverBlocks {
+                let block = "+-o ASFWDriver" + rawBlock
+                if block.contains(#""CFBundleIdentifier" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOUserServerName" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOPersonalityPublisher" = "\#(driverBundleID)""#) {
+                    return true
+                }
+            }
+
+            if ioregOutput.contains(#""CFBundleIdentifier" = ""#)
+                || ioregOutput.contains(#""IOUserServerName" = ""#) {
+                return false
+            }
+        }
+
+        return ioregOutput.contains("ASFWDriver") || firstCDHash(in: ioregOutput) != nil
     }
 
     static func activeCDHash(ioregOutput: String, driverBundleID: String?) -> String? {
@@ -158,16 +182,18 @@ struct ASFWMaintenanceParser {
                           expectedCoreAudioDeviceName: String? = "Alesis MultiMix Firewire") -> MaintenanceStateSummary {
         let active = hasActiveDriver(systemExtensions: systemExtensions, driverBundleID: driverBundleID)
         let stale = hasStaleTerminatingDriver(systemExtensions: systemExtensions, driverBundleID: driverBundleID)
+        let serviceLoaded = hasDriverService(ioregOutput: ioregOutput, driverBundleID: driverBundleID)
         let cdHash = activeCDHash(ioregOutput: ioregOutput, driverBundleID: driverBundleID)
         let coreAudioVisible = coreAudioContainsDevice(systemProfilerOutput: coreAudioOutput,
                                                        deviceName: expectedCoreAudioDeviceName)
         let expected = expectedCDHash?.isEmpty == false ? expectedCDHash : nil
-        let cdHashMismatch = expected != nil && cdHash != expected
+        let cdHashMismatch = expected != nil && cdHash != nil && cdHash != expected
 
         if stale {
             return MaintenanceStateSummary(
                 health: .rebootRequired,
                 activeDriver: active,
+                driverServiceLoaded: serviceLoaded,
                 staleTerminatingDriver: true,
                 coreAudioDeviceVisible: coreAudioVisible,
                 activeCDHash: cdHash,
@@ -176,10 +202,24 @@ struct ASFWMaintenanceParser {
             )
         }
 
-        if active && !cdHashMismatch && coreAudioVisible {
+        if active && !serviceLoaded {
+            return MaintenanceStateSummary(
+                health: .repairNeeded,
+                activeDriver: true,
+                driverServiceLoaded: false,
+                staleTerminatingDriver: false,
+                coreAudioDeviceVisible: coreAudioVisible,
+                activeCDHash: nil,
+                expectedCDHash: expected,
+                message: "ASFW system extension is installed, but the driver service is not loaded."
+            )
+        }
+
+        if active && serviceLoaded && !cdHashMismatch && coreAudioVisible {
             return MaintenanceStateSummary(
                 health: .clean,
                 activeDriver: true,
+                driverServiceLoaded: true,
                 staleTerminatingDriver: false,
                 coreAudioDeviceVisible: true,
                 activeCDHash: cdHash,
@@ -192,6 +232,7 @@ struct ASFWMaintenanceParser {
             return MaintenanceStateSummary(
                 health: .uninstalled,
                 activeDriver: false,
+                driverServiceLoaded: false,
                 staleTerminatingDriver: false,
                 coreAudioDeviceVisible: false,
                 activeCDHash: nil,
@@ -203,6 +244,7 @@ struct ASFWMaintenanceParser {
         return MaintenanceStateSummary(
             health: .repairNeeded,
             activeDriver: active,
+            driverServiceLoaded: serviceLoaded,
             staleTerminatingDriver: false,
             coreAudioDeviceVisible: coreAudioVisible,
             activeCDHash: cdHash,

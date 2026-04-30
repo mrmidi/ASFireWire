@@ -55,6 +55,21 @@ struct MaintenanceStateTests {
         #expect(summary.expectedCDHash == "newhash")
     }
 
+    @Test func activeSystemExtensionWithoutLoadedDriverServiceIsNotCdHashMismatch() {
+        let summary = ASFWMaintenanceParser.summarize(systemExtensions: activeSystemExtension,
+                                                      ioregOutput: "",
+                                                      coreAudioOutput: "Built-in Output",
+                                                      expectedCDHash: "newhash",
+                                                      driverBundleID: driverID,
+                                                      expectedCoreAudioDeviceName: nil)
+
+        #expect(summary.health == .repairNeeded)
+        #expect(summary.activeDriver)
+        #expect(!summary.driverServiceLoaded)
+        #expect(summary.activeCDHash == nil)
+        #expect(summary.message == "ASFW system extension is installed, but the driver service is not loaded.")
+    }
+
     @Test func cdHashParserFiltersByDriverBundleID() {
         let ioreg = """
         +-o ASFWDriver  <class IOUserService>
@@ -117,6 +132,24 @@ struct MaintenanceStateTests {
         #expect(status.recommendedAction == .none)
         #expect(status.coreAudioDeviceVisible)
         #expect(status.summary == "ASFW driver is active.")
+    }
+
+    @Test func lifecycleMapsInstalledButNotLoadedDriverToReconnectNotRepair() {
+        let status = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: "",
+            audioNubIoreg: "",
+            coreAudioOutput: "Built-in Output",
+            expectedCDHash: "abc123",
+            expectedCoreAudioDeviceName: nil
+        ))
+
+        #expect(status.health == .repairNeeded)
+        #expect(status.recommendedAction == .reconnectDevice)
+        #expect(status.activeDriver)
+        #expect(!status.driverServiceLoaded)
+        #expect(status.activeCDHash == nil)
+        #expect(status.summary == "ASFW system extension is installed, but the driver service is not loaded.")
     }
 
     @Test func lifecycleMapsCoreAudioMissingToRepairWhenAudioNubExists() {

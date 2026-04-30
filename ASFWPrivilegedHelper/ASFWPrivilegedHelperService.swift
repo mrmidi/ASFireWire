@@ -286,6 +286,27 @@ private struct HelperProbe {
             }
     }
 
+    var driverServiceLoaded: Bool {
+        if !driverBundleID.isEmpty {
+            let driverBlocks = ioreg.components(separatedBy: "+-o ASFWDriver").dropFirst()
+            for rawBlock in driverBlocks {
+                let block = "+-o ASFWDriver" + rawBlock
+                if block.contains(#""CFBundleIdentifier" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOUserServerName" = "\#(driverBundleID)""#)
+                    || block.contains(#""IOPersonalityPublisher" = "\#(driverBundleID)""#) {
+                    return true
+                }
+            }
+
+            if ioreg.contains(#""CFBundleIdentifier" = ""#)
+                || ioreg.contains(#""IOUserServerName" = ""#) {
+                return false
+            }
+        }
+
+        return ioreg.contains("ASFWDriver") || !Self.firstCDHash(in: ioreg).isEmpty
+    }
+
     var activeCDHash: String {
         if !driverBundleID.isEmpty {
             let driverBlocks = ioreg.components(separatedBy: "+-o ASFWDriver").dropFirst()
@@ -330,7 +351,7 @@ private struct HelperProbe {
     }
 
     var ok: Bool {
-        activeDriver && !staleTerminatingDriver && !cdHashMismatch && coreAudioVisible
+        activeDriver && driverServiceLoaded && !staleTerminatingDriver && !cdHashMismatch && coreAudioVisible
     }
 
     var rebootRequired: Bool {
@@ -342,11 +363,11 @@ private struct HelperProbe {
     }
 
     var isHealthyEnoughForRefresh: Bool {
-        !staleTerminatingDriver && activeDriver && !cdHashMismatch && coreAudioVisible
+        !staleTerminatingDriver && activeDriver && driverServiceLoaded && !cdHashMismatch && coreAudioVisible
     }
 
     var cdHashMismatch: Bool {
-        !expectedCDHash.isEmpty && activeCDHash != expectedCDHash
+        !expectedCDHash.isEmpty && !activeCDHash.isEmpty && activeCDHash != expectedCDHash
     }
 
     var message: String {
@@ -358,6 +379,9 @@ private struct HelperProbe {
                 return "ASFW driver refresh completed. CoreAudio publication is not required for this tester build."
             }
             return "ASFW driver refresh completed and CoreAudio can see \(expectedCoreAudioDeviceName ?? "the expected device")."
+        }
+        if activeDriver && !driverServiceLoaded {
+            return "ASFW system extension is installed, but ASFWDriver is not loaded. Reconnect the FireWire adapter or reboot; Repair cannot compare a missing active driver service."
         }
         if cdHashMismatch {
             return "ASFW driver CDHash does not match the staged driver."
@@ -374,6 +398,7 @@ private struct HelperProbe {
     var dictionary: [String: Any] {
         [
             "activeDriver": NSNumber(value: activeDriver),
+            "driverServiceLoaded": NSNumber(value: driverServiceLoaded),
             "staleTerminatingDriver": NSNumber(value: staleTerminatingDriver),
             "coreAudioVisible": NSNumber(value: coreAudioVisible),
             "activeCDHash": activeCDHash,

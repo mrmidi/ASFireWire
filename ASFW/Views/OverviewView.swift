@@ -74,6 +74,7 @@ struct OverviewView: View {
 
                             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
                                 lifecycleRow("Driver", yesNo(viewModel.lifecycleStatus.activeDriver))
+                                lifecycleRow("Driver Service", viewModel.lifecycleStatus.driverServiceLoaded ? "Loaded" : "Not loaded")
                                 lifecycleRow("ASFW Audio Nub", yesNo(viewModel.lifecycleStatus.audioNubVisible))
                                 lifecycleRow(coreAudioLifecycleLabel, coreAudioLifecycleValue)
                                 lifecycleRow("Debug User-Client", viewModel.userClientConnected ? "Connected" : "Unavailable")

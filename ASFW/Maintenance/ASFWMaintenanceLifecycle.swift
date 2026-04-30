@@ -77,6 +77,7 @@ struct MaintenanceLifecycleStatus: Equatable {
     var summary: String
     var detail: String
     var activeDriver: Bool
+    var driverServiceLoaded: Bool
     var staleTerminatingDriver: Bool
     var coreAudioDeviceVisible: Bool
     var audioNubVisible: Bool
@@ -92,6 +93,7 @@ struct MaintenanceLifecycleStatus: Equatable {
         summary: "Driver state has not been checked yet.",
         detail: "Open the app from Applications and refresh status.",
         activeDriver: false,
+        driverServiceLoaded: false,
         staleTerminatingDriver: false,
         coreAudioDeviceVisible: false,
         audioNubVisible: false,
@@ -112,6 +114,7 @@ struct MaintenanceLifecycleStatus: Equatable {
             "Detail: \(detail)",
             "Recommended action: \(recommendedAction.displayName)",
             "Active driver: \(activeDriver ? "yes" : "no")",
+            "ASFW driver service: \(driverServiceLoaded ? "loaded" : "not loaded")",
             "ASFW audio nub: \(audioNubVisible ? "yes" : "no")",
             "Expected CoreAudio device: \(expectedCoreAudioDeviceName ?? "not required")",
             "CoreAudio expected device visible: \(expectedCoreAudioDeviceName == nil ? "not required" : (coreAudioDeviceVisible ? "yes" : "no"))",
@@ -138,7 +141,7 @@ struct ASFWMaintenanceLifecycleEvaluator {
             audioNubIoregOutput: inputs.audioNubIoreg
         )
         let expected = inputs.expectedCDHash?.isEmpty == false ? inputs.expectedCDHash : nil
-        let cdHashMismatch = expected != nil && summary.activeCDHash != expected
+        let cdHashMismatch = expected != nil && summary.activeCDHash != nil && summary.activeCDHash != expected
 
         func status(_ health: MaintenanceHealthState,
                     _ action: MaintenanceRecommendedAction,
@@ -150,6 +153,7 @@ struct ASFWMaintenanceLifecycleEvaluator {
                 summary: title,
                 detail: detail,
                 activeDriver: summary.activeDriver,
+                driverServiceLoaded: summary.driverServiceLoaded,
                 staleTerminatingDriver: summary.staleTerminatingDriver,
                 coreAudioDeviceVisible: summary.coreAudioDeviceVisible,
                 audioNubVisible: audioNubVisible,
@@ -180,6 +184,13 @@ struct ASFWMaintenanceLifecycleEvaluator {
                           .installOrUpdateDriver,
                           "ASFW driver is not active.",
                           inputs.stagedDriverPresent ? "Install or update the driver from this app." : "The staged driver is missing from the app bundle.")
+        }
+
+        if !summary.driverServiceLoaded {
+            return status(.repairNeeded,
+                          .reconnectDevice,
+                          "ASFW system extension is installed, but the driver service is not loaded.",
+                          "Reconnect or power-cycle the FireWire adapter once, then reboot if this stays unchanged. Repair cannot compare a CDHash when no ASFWDriver service is loaded.")
         }
 
         if cdHashMismatch {
