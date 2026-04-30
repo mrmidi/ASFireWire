@@ -105,6 +105,103 @@ struct AlesisSystemProfilerStatus: Equatable {
     }
 }
 
+struct AlesisPublishedDiceStatus: Equatable {
+    var protocolName: String
+    var capsSource: String
+    var hostInputPcmChannels: Int
+    var hostOutputPcmChannels: Int
+    var deviceToHostAm824Slots: Int
+    var hostToDeviceAm824Slots: Int
+    var sampleRateHz: Int
+    var deviceToHostIsoChannel: Int
+    var hostToDeviceIsoChannel: Int
+
+    var channelSummary: String {
+        "\(hostInputPcmChannels) in / \(hostOutputPcmChannels) out"
+    }
+
+    var slotSummary: String {
+        "\(deviceToHostAm824Slots) capture / \(hostToDeviceAm824Slots) playback"
+    }
+
+    var isoSummary: String {
+        "TX \(isoLabel(deviceToHostIsoChannel)), RX \(isoLabel(hostToDeviceIsoChannel))"
+    }
+
+    nonisolated static func parse(_ ioregOutput: String) -> AlesisPublishedDiceStatus? {
+        guard let protocolName = stringProperty("ASFWDICEProtocol", in: ioregOutput),
+              let capsSource = stringProperty("ASFWDICECapsSource", in: ioregOutput),
+              boolProperty("ASFWDICERuntimeCapsValid", in: ioregOutput) != false,
+              let hostInput = intProperty("ASFWDICEHostInputPcmChannels", in: ioregOutput),
+              let hostOutput = intProperty("ASFWDICEHostOutputPcmChannels", in: ioregOutput),
+              let d2hSlots = intProperty("ASFWDICEDeviceToHostAm824Slots", in: ioregOutput),
+              let h2dSlots = intProperty("ASFWDICEHostToDeviceAm824Slots", in: ioregOutput),
+              let sampleRate = intProperty("ASFWDICESampleRateHz", in: ioregOutput),
+              let d2hIso = intProperty("ASFWDICEDeviceToHostIsoChannel", in: ioregOutput),
+              let h2dIso = intProperty("ASFWDICEHostToDeviceIsoChannel", in: ioregOutput) else {
+            return nil
+        }
+
+        return AlesisPublishedDiceStatus(
+            protocolName: protocolName,
+            capsSource: capsSource,
+            hostInputPcmChannels: hostInput,
+            hostOutputPcmChannels: hostOutput,
+            deviceToHostAm824Slots: d2hSlots,
+            hostToDeviceAm824Slots: h2dSlots,
+            sampleRateHz: sampleRate,
+            deviceToHostIsoChannel: d2hIso,
+            hostToDeviceIsoChannel: h2dIso
+        )
+    }
+
+    nonisolated private func isoLabel(_ value: Int) -> String {
+        value == 0xFF ? "inactive" : "\(value)"
+    }
+
+    nonisolated private static func stringProperty(_ key: String, in output: String) -> String? {
+        let escaped = NSRegularExpression.escapedPattern(for: key)
+        let pattern = #"""# + escaped + #""\s*=\s*"([^"]+)""#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        return String(output[valueRange])
+    }
+
+    nonisolated private static func intProperty(_ key: String, in output: String) -> Int? {
+        let escaped = NSRegularExpression.escapedPattern(for: key)
+        let pattern = #"""# + escaped + #""\s*=\s*([0-9]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        return Int(output[valueRange])
+    }
+
+    nonisolated private static func boolProperty(_ key: String, in output: String) -> Bool? {
+        let escaped = NSRegularExpression.escapedPattern(for: key)
+        let pattern = #"""# + escaped + #""\s*=\s*(Yes|No|true|false)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        guard let match = regex.firstMatch(in: output, range: range),
+              match.numberOfRanges > 1,
+              let valueRange = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        let value = output[valueRange].lowercased()
+        return value == "yes" || value == "true"
+    }
+}
+
 struct AlesisDiscoveredIdentity: Equatable {
     var guid: UInt64
     var nodeID: UInt8

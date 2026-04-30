@@ -215,6 +215,25 @@ Validation after the pass:
   - CoreAudio showed `Alesis MultiMix Firewire`, `12 in / 2 out @ 48 kHz`.
 - The ASFW app was quit and the driver/CoreAudio state remained published, confirming enumeration is not dependent on the visible app process in this runtime state.
 
+### DICE IORegistry Publication Plan
+
+After the v16 lifecycle checkpoint, the next safe DICE abstraction step is to publish facts the driver already discovered onto `ASFWAudioNub`. This avoids using the debug user-client entitlement for basic status display.
+
+The intended properties are read-only IORegistry state:
+
+- `ASFWDICEProtocol`
+- `ASFWDICECapsSource`
+- `ASFWDICERuntimeCapsValid`
+- `ASFWDICEHostInputPcmChannels`
+- `ASFWDICEHostOutputPcmChannels`
+- `ASFWDICEDeviceToHostAm824Slots`
+- `ASFWDICEHostToDeviceAm824Slots`
+- `ASFWDICESampleRateHz`
+- `ASFWDICEDeviceToHostIsoChannel`
+- `ASFWDICEHostToDeviceIsoChannel`
+
+These are copied from existing runtime caps during `ASFWAudioNub` publication. They do not add extra FireWire reads, do not perform DICE writes, and do not start or stop streams. The Alesis tab reads these properties from IORegistry first, then falls back to debug-user-client DICE reads only when that connection exists.
+
 Useful evidence:
 
 - Before-pass hygiene snapshot: `/tmp/asfw-lifecycle-before-20260430-043712`

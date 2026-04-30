@@ -32,6 +32,19 @@ struct BoolControlOverride {
     bool initialValue{false};
 };
 
+struct DICEPublishedRuntimeInfo {
+    bool valid{false};
+    std::string protocolName{"TCAT DICE"};
+    std::string capsSource{"unknown"};
+    uint32_t hostInputPcmChannels{0};
+    uint32_t hostOutputPcmChannels{0};
+    uint32_t deviceToHostAm824Slots{0};
+    uint32_t hostToDeviceAm824Slots{0};
+    uint32_t sampleRateHz{0};
+    uint32_t deviceToHostIsoChannel{0xFF};
+    uint32_t hostToDeviceIsoChannel{0xFF};
+};
+
 struct ASFWAudioDevice {
     uint64_t guid{0};
     uint32_t vendorId{0};
@@ -49,6 +62,7 @@ struct ASFWAudioDevice {
     uint32_t phantomSupportedMask{0};
     uint32_t phantomInitialMask{0};
     std::vector<BoolControlOverride> boolControlOverrides{};
+    DICEPublishedRuntimeInfo diceRuntimeInfo{};
 
     // Populate properties consumed by ASFWAudioDriver.
     // Returns false only if required objects could not be created.
@@ -132,6 +146,46 @@ struct ASFWAudioDevice {
         properties->setObject("ASFWPhantomSupportedMask", phantomSupportedMaskNum.get());
         properties->setObject("ASFWPhantomInitialMask", phantomInitialMaskNum.get());
         properties->setObject("ASFWBoolControlOverrides", boolControlOverridesArray.get());
+
+        if (diceRuntimeInfo.valid) {
+            auto diceProtocolNameStr = OSSharedPtr(
+                OSString::withCString(diceRuntimeInfo.protocolName.c_str()), OSNoRetain);
+            auto diceCapsSourceStr = OSSharedPtr(
+                OSString::withCString(diceRuntimeInfo.capsSource.c_str()), OSNoRetain);
+            auto diceRuntimeCapsValidBool = OSSharedPtr(kOSBooleanTrue, OSNoRetain);
+            auto diceHostInputPcmChannelsNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.hostInputPcmChannels, 32), OSNoRetain);
+            auto diceHostOutputPcmChannelsNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.hostOutputPcmChannels, 32), OSNoRetain);
+            auto diceDeviceToHostAm824SlotsNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.deviceToHostAm824Slots, 32), OSNoRetain);
+            auto diceHostToDeviceAm824SlotsNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.hostToDeviceAm824Slots, 32), OSNoRetain);
+            auto diceSampleRateHzNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.sampleRateHz, 32), OSNoRetain);
+            auto diceDeviceToHostIsoChannelNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.deviceToHostIsoChannel, 32), OSNoRetain);
+            auto diceHostToDeviceIsoChannelNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.hostToDeviceIsoChannel, 32), OSNoRetain);
+
+            if (!diceProtocolNameStr || !diceCapsSourceStr || !diceRuntimeCapsValidBool ||
+                !diceHostInputPcmChannelsNum || !diceHostOutputPcmChannelsNum ||
+                !diceDeviceToHostAm824SlotsNum || !diceHostToDeviceAm824SlotsNum ||
+                !diceSampleRateHzNum || !diceDeviceToHostIsoChannelNum || !diceHostToDeviceIsoChannelNum) {
+                return false;
+            }
+
+            properties->setObject("ASFWDICEProtocol", diceProtocolNameStr.get());
+            properties->setObject("ASFWDICECapsSource", diceCapsSourceStr.get());
+            properties->setObject("ASFWDICERuntimeCapsValid", diceRuntimeCapsValidBool.get());
+            properties->setObject("ASFWDICEHostInputPcmChannels", diceHostInputPcmChannelsNum.get());
+            properties->setObject("ASFWDICEHostOutputPcmChannels", diceHostOutputPcmChannelsNum.get());
+            properties->setObject("ASFWDICEDeviceToHostAm824Slots", diceDeviceToHostAm824SlotsNum.get());
+            properties->setObject("ASFWDICEHostToDeviceAm824Slots", diceHostToDeviceAm824SlotsNum.get());
+            properties->setObject("ASFWDICESampleRateHz", diceSampleRateHzNum.get());
+            properties->setObject("ASFWDICEDeviceToHostIsoChannel", diceDeviceToHostIsoChannelNum.get());
+            properties->setObject("ASFWDICEHostToDeviceIsoChannel", diceHostToDeviceIsoChannelNum.get());
+        }
 
         return true;
     }

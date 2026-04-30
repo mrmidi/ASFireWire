@@ -102,6 +102,33 @@ struct AlesisModelsTests {
         #expect(status?.sampleRate == 48_000)
     }
 
+    @Test func publishedDiceStatusParsesAudioNubProperties() {
+        let output = """
+        +-o ASFWAudioNub  <class IOUserService>
+          | {
+          |   "ASFWDICEProtocol" = "TCAT DICE"
+          |   "ASFWDICECapsSource" = "runtime-discovery"
+          |   "ASFWDICERuntimeCapsValid" = Yes
+          |   "ASFWDICEHostInputPcmChannels" = 12
+          |   "ASFWDICEHostOutputPcmChannels" = 2
+          |   "ASFWDICEDeviceToHostAm824Slots" = 12
+          |   "ASFWDICEHostToDeviceAm824Slots" = 2
+          |   "ASFWDICESampleRateHz" = 48000
+          |   "ASFWDICEDeviceToHostIsoChannel" = 1
+          |   "ASFWDICEHostToDeviceIsoChannel" = 0
+          | }
+        """
+
+        let status = AlesisPublishedDiceStatus.parse(output)
+
+        #expect(status?.protocolName == "TCAT DICE")
+        #expect(status?.capsSource == "runtime-discovery")
+        #expect(status?.channelSummary == "12 in / 2 out")
+        #expect(status?.slotSummary == "12 capture / 2 playback")
+        #expect(status?.isoSummary == "TX 1, RX 0")
+        #expect(status?.sampleRateHz == 48_000)
+    }
+
     private func appendBE32(_ value: UInt32, to data: inout Data) {
         data.append(UInt8((value >> 24) & 0xFF))
         data.append(UInt8((value >> 16) & 0xFF))

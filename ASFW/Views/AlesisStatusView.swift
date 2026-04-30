@@ -162,6 +162,24 @@ struct AlesisStatusView: View {
         VStack(alignment: .leading, spacing: 12) {
             sectionTitle("DICE / Discovery", systemImage: "memorychip")
 
+            if let published = viewModel.publishedDiceStatus {
+                Label("Published by ASFWAudioNub", systemImage: "checkmark.seal.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.green)
+                statusGrid(rows: [
+                    ("Protocol", published.protocolName),
+                    ("Caps Source", published.capsSource),
+                    ("PCM Channels", published.channelSummary),
+                    ("AM824 Slots", published.slotSummary),
+                    ("Sample Rate", "\(published.sampleRateHz) Hz"),
+                    ("Iso Channels", published.isoSummary)
+                ])
+                Divider()
+            } else {
+                unavailable("This active driver has not published DICE IORegistry state yet.",
+                            systemImage: "info.circle")
+            }
+
             if let identity = viewModel.discoveredIdentity {
                 statusGrid(rows: [
                     ("Name", identity.displayName),

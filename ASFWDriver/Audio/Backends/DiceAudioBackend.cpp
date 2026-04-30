@@ -353,6 +353,18 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
 
     // DICE family policy: 48k uses blocking cadence (NDDD).
     dev.streamMode = Model::StreamMode::kBlocking;
+    dev.diceRuntimeInfo = Model::DICEPublishedRuntimeInfo{
+        .valid = true,
+        .protocolName = record->protocol ? record->protocol->GetName() : "TCAT DICE",
+        .capsSource = usedKnownProfile ? "known-profile" : "runtime-discovery",
+        .hostInputPcmChannels = caps.hostInputPcmChannels,
+        .hostOutputPcmChannels = caps.hostOutputPcmChannels,
+        .deviceToHostAm824Slots = caps.deviceToHostAm824Slots,
+        .hostToDeviceAm824Slots = caps.hostToDeviceAm824Slots,
+        .sampleRateHz = caps.sampleRateHz,
+        .deviceToHostIsoChannel = caps.deviceToHostIsoChannel,
+        .hostToDeviceIsoChannel = caps.hostToDeviceIsoChannel,
+    };
 
     (void)publisher_.EnsureNub(guid, dev, "DICE");
 
