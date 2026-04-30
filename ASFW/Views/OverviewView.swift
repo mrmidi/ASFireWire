@@ -85,13 +85,34 @@ struct OverviewView: View {
 
                         Spacer(minLength: 16)
 
-                        Button {
-                            viewModel.refreshLifecycleStatus()
-                        } label: {
-                            Label("Recheck", systemImage: "arrow.clockwise")
+                        VStack(alignment: .trailing, spacing: 8) {
+                            Button {
+                                viewModel.performRecommendedAction()
+                            } label: {
+                                Label(viewModel.lifecycleStatus.recommendedAction.buttonTitle,
+                                      systemImage: recommendedActionIcon)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!viewModel.canPerformRecommendedAction)
+
+                            HStack(spacing: 8) {
+                                Button {
+                                    viewModel.refreshLifecycleStatus()
+                                } label: {
+                                    Label("Recheck", systemImage: "arrow.clockwise")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isBusy)
+
+                                Button {
+                                    viewModel.copyLifecycleSummary()
+                                } label: {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.lifecycleStatus.health == .unknown)
+                            }
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(viewModel.isBusy)
                     }
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -187,38 +208,58 @@ struct OverviewView: View {
 
                         Spacer(minLength: 16)
 
-                        HStack(spacing: 8) {
-                            Button {
-                                viewModel.enableMaintenanceHelper()
-                            } label: {
-                                Label("Enable Helper", systemImage: "key.fill")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy || viewModel.helperStatus == .enabled)
+                        VStack(alignment: .trailing, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Button {
+                                    viewModel.enableMaintenanceHelper()
+                                } label: {
+                                    Label("Enable Helper", systemImage: "key.fill")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isBusy || viewModel.helperStatus == .enabled)
 
-                            Button {
-                                viewModel.openMaintenanceApprovalSettings()
-                            } label: {
-                                Label("Approve", systemImage: "gearshape.fill")
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy || viewModel.helperStatus != .requiresApproval)
+                                Button {
+                                    viewModel.openMaintenanceApprovalSettings()
+                                } label: {
+                                    Label("Approve", systemImage: "gearshape.fill")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isBusy || viewModel.helperStatus != .requiresApproval)
 
-                            Button {
-                                viewModel.refreshHelperStatus()
-                            } label: {
-                                Label("Recheck", systemImage: "arrow.clockwise")
+                                Button {
+                                    viewModel.refreshHelperStatus()
+                                } label: {
+                                    Label("Recheck", systemImage: "arrow.clockwise")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isBusy)
                             }
-                            .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy)
 
-                            Button {
-                                viewModel.captureDiagnostics()
-                            } label: {
-                                Label("Diagnostics", systemImage: "doc.text.magnifyingglass")
+                            HStack(spacing: 8) {
+                                Button {
+                                    viewModel.captureDiagnostics()
+                                } label: {
+                                    Label("Diagnostics", systemImage: "doc.text.magnifyingglass")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isBusy || !viewModel.canUseMaintenanceHelper)
+
+                                Button {
+                                    viewModel.openLastMaintenanceSnapshot()
+                                } label: {
+                                    Label("Open Snapshot", systemImage: "folder")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.lastMaintenanceSnapshotPath == nil)
+
+                                Button {
+                                    viewModel.copyLastMaintenanceSnapshotPath()
+                                } label: {
+                                    Label("Copy Path", systemImage: "doc.on.doc")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.lastMaintenanceSnapshotPath == nil)
                             }
-                            .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy || !viewModel.canUseMaintenanceHelper)
                         }
                     }
                     .padding()
@@ -235,6 +276,13 @@ struct OverviewView: View {
                     InfoRow(label: "Target Hardware", value: "pci11c1,5901 (Agere FW800)")
                     InfoRow(label: "Protocol", value: "IEEE 1394 OHCI 1.1")
                     InfoRow(label: "Bundle ID", value: viewModel.driverBundleIdentifier)
+
+                    Button {
+                        viewModel.openAudioMIDISetup()
+                    } label: {
+                        Label("Open Audio MIDI Setup", systemImage: "speaker.wave.2.fill")
+                    }
+                    .buttonStyle(.bordered)
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -335,6 +383,20 @@ struct OverviewView: View {
         case .repairNeeded: return .orange
         case .rebootRequired: return .red
         case .uninstalled, .unknown: return .secondary
+        }
+    }
+
+    private var recommendedActionIcon: String {
+        switch viewModel.lifecycleStatus.recommendedAction {
+        case .none: return "checkmark.circle"
+        case .moveAppToApplications: return "folder"
+        case .installOrUpdateDriver: return "arrow.down.circle.fill"
+        case .enableHelper: return "key.fill"
+        case .approveHelper: return "gearshape.fill"
+        case .repairOnce: return "wrench.and.screwdriver.fill"
+        case .reboot: return "restart.circle.fill"
+        case .reconnectDevice: return "cable.connector"
+        case .captureDiagnostics, .sendDiagnostics: return "doc.text.magnifyingglass"
         }
     }
 

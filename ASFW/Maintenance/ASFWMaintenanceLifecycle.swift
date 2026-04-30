@@ -26,6 +26,35 @@ enum MaintenanceRecommendedAction: String, Equatable {
         case .sendDiagnostics: return "Send Diagnostics"
         }
     }
+
+    var buttonTitle: String {
+        switch self {
+        case .none: return "No Action Needed"
+        case .moveAppToApplications: return "Open Applications"
+        case .installOrUpdateDriver: return "Install / Update"
+        case .enableHelper: return "Enable Helper"
+        case .approveHelper: return "Approve Helper"
+        case .repairOnce: return "Repair Once"
+        case .reboot: return "Reboot Required"
+        case .reconnectDevice: return "Reconnect Device"
+        case .captureDiagnostics, .sendDiagnostics: return "Capture Diagnostics"
+        }
+    }
+
+    var isDirectlyActionableInApp: Bool {
+        switch self {
+        case .moveAppToApplications,
+             .installOrUpdateDriver,
+             .enableHelper,
+             .approveHelper,
+             .repairOnce,
+             .captureDiagnostics,
+             .sendDiagnostics:
+            return true
+        case .none, .reboot, .reconnectDevice:
+            return false
+        }
+    }
 }
 
 struct MaintenanceLifecycleInputs: Equatable {
@@ -72,6 +101,21 @@ struct MaintenanceLifecycleStatus: Equatable {
 
     var isCleanForAudio: Bool {
         health == .clean && activeDriver && coreAudioDeviceVisible && audioNubVisible
+    }
+
+    var copySummary: String {
+        [
+            "ASFW lifecycle: \(summary)",
+            "Detail: \(detail)",
+            "Recommended action: \(recommendedAction.displayName)",
+            "Active driver: \(activeDriver ? "yes" : "no")",
+            "ASFW audio nub: \(audioNubVisible ? "yes" : "no")",
+            "CoreAudio Alesis: \(coreAudioDeviceVisible ? "yes" : "no")",
+            "Debug user-client: \(userClientConnected ? "connected" : "unavailable")",
+            "Stale uninstall: \(staleTerminatingDriver ? "yes" : "no")",
+            "Active CDHash: \(activeCDHash ?? "unknown")",
+            "Expected CDHash: \(expectedCDHash ?? "unknown")"
+        ].joined(separator: "\n")
     }
 }
 

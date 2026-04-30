@@ -49,24 +49,42 @@ struct AlesisStatusView: View {
 
             Spacer(minLength: 20)
 
-            if let lastUpdated = viewModel.lastUpdated {
-                Text("Updated \(lastUpdated.formatted(date: .omitted, time: .standard))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            VStack(alignment: .trailing, spacing: 8) {
+                if let lastUpdated = viewModel.lastUpdated {
+                    Text("Updated \(lastUpdated.formatted(date: .omitted, time: .standard))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            Button {
-                driverViewModel.refreshLifecycleStatus()
-                viewModel.refresh()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.bordered)
-            .disabled(viewModel.isRefreshing || driverViewModel.isBusy)
+                HStack(spacing: 8) {
+                    Button {
+                        driverViewModel.openAudioMIDISetup()
+                    } label: {
+                        Label("Audio MIDI", systemImage: "speaker.wave.2.fill")
+                    }
+                    .buttonStyle(.bordered)
 
-            if viewModel.isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
+                    Button {
+                        viewModel.copyStatusSummary(lifecycle: driverViewModel.lifecycleStatus)
+                    } label: {
+                        Label("Copy Status", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        driverViewModel.refreshLifecycleStatus()
+                        viewModel.refresh()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.isRefreshing || driverViewModel.isBusy)
+
+                    if viewModel.isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
             }
         }
         .padding()
@@ -137,6 +155,14 @@ struct AlesisStatusView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(driverViewModel.isBusy || !driverViewModel.canUseMaintenanceHelper)
+
+                    Button {
+                        driverViewModel.copyLifecycleSummary()
+                    } label: {
+                        Label("Copy Lifecycle", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(driverViewModel.lifecycleStatus.health == .unknown)
                 }
             }
 

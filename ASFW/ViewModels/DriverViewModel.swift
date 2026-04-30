@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import AppKit
 
 @MainActor
 class DriverViewModel: ObservableObject {
@@ -52,6 +53,14 @@ class DriverViewModel: ObservableObject {
         && lifecycleStatus.health != .clean
         && lifecycleStatus.health != .rebootRequired
         && !repairAttemptedSinceLastHealthyCheck
+    }
+
+    var canPerformRecommendedAction: Bool {
+        lifecycleStatus.recommendedAction.isDirectlyActionableInApp
+        && !isBusy
+        && !(lifecycleStatus.recommendedAction == .repairOnce && !canRepairDriver)
+        && !(lifecycleStatus.recommendedAction == .captureDiagnostics && !canUseMaintenanceHelper)
+        && !(lifecycleStatus.recommendedAction == .sendDiagnostics && !canUseMaintenanceHelper)
     }
     
     struct LogEntry: Identifiable, Equatable {
@@ -298,6 +307,64 @@ class DriverViewModel: ObservableObject {
                 self.refreshLifecycleStatus()
             }
         }
+    }
+
+    func performRecommendedAction() {
+        switch lifecycleStatus.recommendedAction {
+        case .none:
+            activationStatus = "No action needed."
+        case .moveAppToApplications:
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
+        case .installOrUpdateDriver:
+            installDriver()
+        case .enableHelper:
+            enableMaintenanceHelper()
+        case .approveHelper:
+            openMaintenanceApprovalSettings()
+        case .repairOnce:
+            repairDriver()
+        case .reboot:
+            activationStatus = "Reboot is required before another repair or install attempt."
+            log(activationStatus, source: .app, level: .warning)
+        case .reconnectDevice:
+            activationStatus = "Reconnect or power-cycle the FireWire device once, then recheck."
+            log(activationStatus, source: .app, level: .warning)
+        case .captureDiagnostics, .sendDiagnostics:
+            captureDiagnostics()
+        }
+    }
+
+    func copyLifecycleSummary() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(lifecycleStatus.copySummary, forType: .string)
+        activationStatus = "Lifecycle summary copied."
+        log(activationStatus, source: .app, level: .info)
+    }
+
+    func copyLastMaintenanceSnapshotPath() {
+        guard let path = lastMaintenanceSnapshotPath else {
+            activationStatus = "No diagnostics snapshot path to copy."
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
+        activationStatus = "Diagnostics path copied."
+        log(activationStatus, source: .app, level: .info)
+    }
+
+    func openLastMaintenanceSnapshot() {
+        guard let path = lastMaintenanceSnapshotPath else {
+            activationStatus = "No diagnostics snapshot to open."
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    func openAudioMIDISetup() {
+        let url = URL(fileURLWithPath: "/System/Applications/Utilities/Audio MIDI Setup.app", isDirectory: true)
+        NSWorkspace.shared.open(url)
     }
 
     private func runPostActivationRefresh() {

@@ -163,6 +163,15 @@ struct MaintenanceStateTests {
         #expect(status.stagedDriverPresent)
     }
 
+    @Test func recommendedActionMetadataSeparatesAppActionsFromManualSteps() {
+        #expect(MaintenanceRecommendedAction.repairOnce.buttonTitle == "Repair Once")
+        #expect(MaintenanceRecommendedAction.captureDiagnostics.buttonTitle == "Capture Diagnostics")
+        #expect(MaintenanceRecommendedAction.repairOnce.isDirectlyActionableInApp)
+        #expect(MaintenanceRecommendedAction.approveHelper.isDirectlyActionableInApp)
+        #expect(!MaintenanceRecommendedAction.reboot.isDirectlyActionableInApp)
+        #expect(!MaintenanceRecommendedAction.reconnectDevice.isDirectlyActionableInApp)
+    }
+
     @Test func helperOutcomeMapsRebootBeforeRepair() {
         let dict: NSDictionary = [
             "ok": NSNumber(value: false),
@@ -239,6 +248,19 @@ struct MaintenanceStateTests {
         #expect(viewModel.activationStatus == "snapshot captured")
         #expect(viewModel.maintenanceStatus == "snapshot captured")
         #expect(viewModel.lastMaintenanceSnapshotPath == "/Users/Shared/ASFW/Diagnostics/snap")
+        #expect(!viewModel.isBusy)
+    }
+
+    @Test @MainActor func recommendedDiagnosticsActionUsesHelperSnapshot() async {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        helper.snapshotOutcome = .succeeded(message: "snapshot captured", snapshotPath: "/Users/Shared/ASFW/Diagnostics/recommended")
+        let viewModel = DriverViewModel(maintenanceHelper: helper)
+
+        viewModel.performRecommendedAction()
+        await Task.yield()
+
+        #expect(viewModel.activationStatus == "snapshot captured")
+        #expect(viewModel.lastMaintenanceSnapshotPath == "/Users/Shared/ASFW/Diagnostics/recommended")
         #expect(!viewModel.isBusy)
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 @MainActor
 final class AlesisStatusViewModel: ObservableObject {
@@ -59,6 +60,33 @@ final class AlesisStatusViewModel: ObservableObject {
 
     func captureDiagnostics(using driverViewModel: DriverViewModel) {
         driverViewModel.captureDiagnostics()
+    }
+
+    func copyStatusSummary(lifecycle: MaintenanceLifecycleStatus) {
+        var lines = [
+            "Alesis MultiMix Firewire status",
+            "CoreAudio: \(coreAudioStatus?.channelSummary ?? "not visible")",
+            "Sample rate: \(coreAudioStatus?.sampleRateSummary ?? "unknown")",
+            "ASFW lifecycle: \(lifecycle.summary)",
+            "Debug user-client: \(userClientAvailable ? "connected" : "unavailable")"
+        ]
+
+        if let publishedDiceStatus {
+            lines.append("Published DICE: \(publishedDiceStatus.protocolName), \(publishedDiceStatus.channelSummary), \(publishedDiceStatus.slotSummary), \(publishedDiceStatus.isoSummary)")
+        } else {
+            lines.append("Published DICE: unavailable")
+        }
+
+        if let discoveredIdentity {
+            lines.append("Discovery: \(discoveredIdentity.displayName), GUID \(discoveredIdentity.guidHex)")
+        } else {
+            lines.append("Discovery: unavailable")
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(lines.joined(separator: "\n"), forType: .string)
+        statusMessage = "Alesis status copied."
     }
 
     private static func findCoreAudioStatus() -> AlesisCoreAudioStatus? {
