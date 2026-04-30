@@ -289,6 +289,28 @@ If the system extension is active but no ASFWDriver process appears, collect:
   system_profiler SPFireWireDataType
   log show --last 15m --style compact --predicate 'process == "sysextd" OR eventMessage CONTAINS "ASFW" OR eventMessage CONTAINS "$DRIVER_BUNDLE_ID" OR eventMessage CONTAINS "IOPCIClassMatch"'
 
+On macOS 15.x, Apple's built-in FireWire stack may attach first. If:
+  ioreg -p IOService -l -w0 | grep -i -A40 -B10 'pciclass,0c0010'
+shows IODEXTMatchCount = 1 but the child service is AppleFWOHCI, ASFW is
+installed and matching, but it is not the active OHCI driver. This is not a
+Midas/DICE failure and Repair will not fix it.
+
+Try one clean boot/hotplug pass:
+  - Leave this package installed.
+  - Quit ASFWLychzord.
+  - Power off the Midas and unplug the Thunderbolt/FireWire adapter.
+  - Reboot with the adapter unplugged.
+  - Open /Applications/$APP_NAME.
+  - Plug in the adapter alone first, with the Midas still off/unconnected.
+  - Run:
+      ps -ax | grep -i ASFW
+      ioreg -l -r -c ASFWDriver
+      ioreg -p IOService -l -w0 | grep -i -A40 -B10 'pciclass,0c0010'
+
+If AppleFWOHCI still owns the controller after that sequence, further Midas
+protocol changes are not being exercised on that machine yet. The blocker is
+the native macOS FireWire stack owning the OHCI provider.
+
 If the app reports "Repair needed: ASFW driver CDHash does not match the staged
 driver" immediately after replacing the app, macOS is probably still running an
 older same-version dext. Use a package with a higher CURRENT_PROJECT_VERSION, or
