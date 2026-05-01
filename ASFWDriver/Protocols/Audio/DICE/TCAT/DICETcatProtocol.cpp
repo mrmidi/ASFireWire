@@ -12,6 +12,40 @@
 
 namespace ASFW::Audio::DICE::TCAT {
 
+namespace {
+
+[[nodiscard]] bool HasUsableRuntimeCaps(const AudioStreamRuntimeCaps& caps) noexcept {
+    return caps.sampleRateHz != 0 &&
+        caps.hostInputPcmChannels != 0 &&
+        caps.hostOutputPcmChannels != 0;
+}
+
+void LogRuntimeCaps(const char* source, const AudioStreamRuntimeCaps& caps) {
+    ASFW_LOG(DICE,
+             "DICETcatProtocol: runtime caps source=%{public}s rate=%u in=%u out=%u d2hSlots=%u h2dSlots=%u usable=%u",
+             source,
+             caps.sampleRateHz,
+             caps.hostInputPcmChannels,
+             caps.hostOutputPcmChannels,
+             caps.deviceToHostAm824Slots,
+             caps.hostToDeviceAm824Slots,
+             HasUsableRuntimeCaps(caps) ? 1U : 0U);
+}
+
+void LogStreamConfigSummary(const char* label, const StreamConfig& config) {
+    ASFW_LOG(DICE,
+             "DICETcatProtocol: %{public}s stream summary count=%u pcm=%u midi=%u am824=%u entrySize=%u parsedEntrySize=%u",
+             label,
+             config.numStreams,
+             config.TotalPcmChannels(),
+             config.TotalMidiPorts(),
+             config.TotalAm824Slots(),
+             config.entrySizeBytes,
+             config.parsedEntrySizeBytes);
+}
+
+} // namespace
+
 DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
                                    Protocols::Ports::FireWireBusInfo& busInfo,
                                    uint16_t nodeId,
@@ -232,12 +266,23 @@ void DICETcatProtocol::EnsureSectionsLoaded(VoidCallback callback) {
 
     diceReader_.ReadGeneralSections([this, callback = std::move(callback)](IOReturn status, GeneralSections sections) mutable {
         if (status != kIOReturnSuccess) {
+            ASFW_LOG(DICE, "DICETcatProtocol: failed to read general sections: 0x%x", status);
             callback(status);
             return;
         }
 
         sections_ = sections;
         sectionsLoaded_ = true;
+        ASFW_LOG(DICE,
+                 "DICETcatProtocol: loaded sections global=%u/%u tx=%u/%u rx=%u/%u ext=%u/%u",
+                 sections_.global.offset,
+                 sections_.global.size,
+                 sections_.txStreamFormat.offset,
+                 sections_.txStreamFormat.size,
+                 sections_.rxStreamFormat.offset,
+                 sections_.rxStreamFormat.size,
+                 sections_.extSync.offset,
+                 sections_.extSync.size);
         callback(kIOReturnSuccess);
     });
 }
@@ -270,30 +315,49 @@ void DICETcatProtocol::EnsureRuntimeCapsLoaded(VoidCallback callback) {
             sections_,
             [this, state, callback = std::move(callback)](IOReturn globalStatus, GlobalState global) mutable {
                 if (globalStatus != kIOReturnSuccess) {
+                    ASFW_LOG(DICE, "DICETcatProtocol: failed to read global state: 0x%x", globalStatus);
                     callback(globalStatus);
                     return;
                 }
 
                 state->global = global;
+                ASFW_LOG(DICE,
+                         "DICETcatProtocol: global state rate=%u clockSelect=0x%08x status=0x%08x extStatus=0x%08x notification=0x%08x",
+                         global.sampleRate,
+                         global.clockSelect,
+                         global.status,
+                         global.extStatus,
+                         global.notification);
                 diceReader_.ReadTxStreamConfig(
                     sections_,
                     [this, state, callback = std::move(callback)](IOReturn txStatus, StreamConfig tx) mutable {
                         if (txStatus != kIOReturnSuccess) {
+                            ASFW_LOG(DICE, "DICETcatProtocol: failed to read TX stream config: 0x%x", txStatus);
                             callback(txStatus);
                             return;
                         }
 
                         state->tx = tx;
+                        LogStreamConfigSummary("TX", state->tx);
                         diceReader_.ReadRxStreamConfig(
                             sections_,
                             [this, state, callback = std::move(callback)](IOReturn rxStatus, StreamConfig rx) mutable {
                                 if (rxStatus != kIOReturnSuccess) {
+                                    ASFW_LOG(DICE, "DICETcatProtocol: failed to read RX stream config: 0x%x", rxStatus);
                                     callback(rxStatus);
                                     return;
                                 }
 
                                 state->rx = rx;
+                                LogStreamConfigSummary("RX", state->rx);
                                 CacheRuntimeCaps(state->global, state->tx, state->rx);
+                                AudioStreamRuntimeCaps caps{};
+                                (void)GetRuntimeAudioStreamCaps(caps);
+                                LogRuntimeCaps("standard-dice", caps);
+                                if (!HasUsableRuntimeCaps(caps)) {
+                                    ASFW_LOG(DICE,
+                                             "DICETcatProtocol: standard DICE discovery produced zero or partial caps; audio publication should fail closed");
+                                }
                                 callback(kIOReturnSuccess);
                             });
                     });
@@ -320,6 +384,7 @@ void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noex
     hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);
     runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_relaxed);
     runtimeCapsValid_.store(true, std::memory_order_release);
+    LogRuntimeCaps("cache", caps);
 }
 
 void DICETcatProtocol::ResetRuntimeCaps() noexcept {
