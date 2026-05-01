@@ -10,6 +10,8 @@
 namespace ASFW::Audio {
 
 struct AudioStreamRuntimeCaps {
+    static constexpr uint8_t kInvalidIsoChannel = 0xFF;
+
     // Host-facing channel counts (PCM only).
     uint32_t hostInputPcmChannels{0};   // Device -> host capture channels
     uint32_t hostOutputPcmChannels{0};  // Host -> device playback channels
@@ -19,6 +21,10 @@ struct AudioStreamRuntimeCaps {
     uint32_t hostToDeviceAm824Slots{0}; // DICE RX stream slots (playback wire format)
 
     uint32_t sampleRateHz{0};
+
+    // Active DICE isochronous channels when discovered from stream entries.
+    uint8_t deviceToHostIsoChannel{kInvalidIsoChannel}; // DICE TX / host IR
+    uint8_t hostToDeviceIsoChannel{kInvalidIsoChannel}; // DICE RX / host IT
 };
 
 struct AudioDuplexChannels {

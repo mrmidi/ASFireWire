@@ -92,6 +92,8 @@ private:
     std::atomic<uint32_t> hostOutputPcmChannels_{0};
     std::atomic<uint32_t> deviceToHostAm824Slots_{0};
     std::atomic<uint32_t> hostToDeviceAm824Slots_{0};
+    std::atomic<uint32_t> deviceToHostIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
+    std::atomic<uint32_t> hostToDeviceIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
     std::atomic<bool> runtimeCapsValid_{false};
 };
 
