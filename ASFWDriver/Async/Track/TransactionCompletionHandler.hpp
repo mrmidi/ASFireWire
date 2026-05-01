@@ -85,9 +85,6 @@ public:
                 return;
             }
 
-            // Store ACK code in transaction for timeout handler
-            txn->SetAckCode(comp.ackCode);
-
             // PHY packets complete on AT path only (no AR response expected).
             if (txn->GetCompletionStrategy() == CompletionStrategy::CompleteOnPHY) {
                 ASFW_LOG(Async, "  → Completed (PHY, AT-only) ackCode=0x%X event=0x%02X",
@@ -348,7 +345,46 @@ private:
     void HandleAckCompletion(Transaction& txn,
                              const TxCompletion& comp,
                              ATPostResult& postResult) noexcept {
-        const uint8_t ackCode = comp.ackCode;
+        uint8_t ackCode = comp.ackCode;
+        const uint8_t rawAckCode = ackCode;
+        switch (comp.eventCode) {
+            case OHCIEventCode::kAckComplete:
+                ackCode = 0x0;
+                break;
+            case OHCIEventCode::kAckPending:
+                ackCode = 0x1;
+                break;
+            case OHCIEventCode::kAckBusyX:
+                ackCode = 0x4;
+                break;
+            case OHCIEventCode::kAckBusyA:
+                ackCode = 0x5;
+                break;
+            case OHCIEventCode::kAckBusyB:
+                ackCode = 0x6;
+                break;
+            case OHCIEventCode::kAckTardy:
+                ackCode = 0xC;
+                break;
+            case OHCIEventCode::kAckDataError:
+                ackCode = 0xD;
+                break;
+            case OHCIEventCode::kAckTypeError:
+                ackCode = 0xE;
+                break;
+            default:
+                break;
+        }
+
+        if (ackCode != rawAckCode) {
+            ASFW_LOG_V2(Async,
+                        "  ℹ️  Normalized ackCode 0x%X -> 0x%X from event=0x%02X",
+                        rawAckCode,
+                        ackCode,
+                        static_cast<uint8_t>(comp.eventCode));
+        }
+        txn.SetAckCode(ackCode);
+
         const auto strategy = txn.GetCompletionStrategy();
         const bool needsARData = txn.IsReadOperation() || strategy == CompletionStrategy::CompleteOnAR;
 
@@ -382,6 +418,23 @@ private:
                 ASFW_LOG_V2(Async, "  → Busy (0x%X), extending deadline for retry", ackCode);
                 txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: busy");
                 txn.SetDeadline(Engine::NowUs() + 200000);
+                break;
+
+            case 0x8:
+                if (needsARData) {
+                    ASFW_LOG_V2(Async, "  → AwaitingAR (legacy ackCode=0x8, data required)");
+                    txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: legacy_ack8");
+                    txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: legacy_ack8");
+                    break;
+                }
+                if (txn.TryMarkCompleted()) {
+                    ASFW_LOG_V1(Async, "  → Completed (legacy ackCode=0x8, AT path won)");
+                    postResult.action = ATPostAction::kCompleteSuccess;
+                    postResult.transitionTag1 = "OnATCompletion: legacy_ack8";
+                    postResult.transitionTag2 = "OnATCompletion: legacy_ack8";
+                } else {
+                    ASFW_LOG_V3(Async, "  → legacy ackCode=0x8 but AR already completed, ignoring");
+                }
                 break;
 
             case 0xC:

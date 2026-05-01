@@ -4,7 +4,7 @@ ASFireWire keeps a generated metadata library for FireWire audio/music
 devices. The library is used for identification, logging, and read-only UI
 diagnostics.
 
-Recognition is not support. Most imported records are metadata-only and must
+Recognition does not mean support. Most imported records are metadata-only and must
 not publish CoreAudio devices or start protocol handlers until ASFireWire has a
 tested binding path for that protocol/device.
 

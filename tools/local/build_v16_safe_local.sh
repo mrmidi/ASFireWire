@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Private/local signing example for Chris's Mac Studio. The script name is
+# historical; ASFW_CURRENT_PROJECT_VERSION controls the actual bundle version.
+# See documentation/LOCAL_SIGNING_EXAMPLE_CHRIS.md.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 ARCH_NAME="${ARCH_NAME:-arm64}"

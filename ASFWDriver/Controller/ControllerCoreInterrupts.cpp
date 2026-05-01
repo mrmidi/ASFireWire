@@ -51,7 +51,7 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     const uint32_t currentMask = deps_.interrupts ? deps_.interrupts->EnabledMask() : 0xFFFFFFFF;
     const uint32_t events = rawEvents & currentMask;
     LogInterruptContext(snapshot, rawEvents, currentMask, events);
-    HandleFaultInterrupts(events);
+    HandleFaultInterrupts(events, hw);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     DispatchAsyncInterrupts(events);
     LogBusResetCompletionEvents(events, snapshot.timestamp);
@@ -95,7 +95,7 @@ void ControllerCore::LogInterruptContext(const InterruptSnapshot& snapshot,
     ASFW_LOG_V3(Controller, "%{public}s", eventDecode.c_str());
 }
 
-void ControllerCore::HandleFaultInterrupts(uint32_t events) {
+void ControllerCore::HandleFaultInterrupts(uint32_t events, HardwareInterface& hw) {
     if ((events & IntEventBits::kUnrecoverableError) != 0U) {
         ASFW_LOG_V0(Controller,
                     "❌ CRITICAL: UnrecoverableError interrupt - hardware fault detected!");
@@ -113,6 +113,9 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
 
     if ((events & IntEventBits::kCycleTooLong) != 0U) {
         ASFW_LOG(Controller, "⚠️ WARNING: Cycle too long - isochronous cycle overran 125μs budget");
+        // OHCI auto-clears cycleMaster when cycleTooLong fires; Linux reasserts it
+        // immediately so cycle-start packets do not stop permanently.
+        hw.SetLinkControlBits(LinkControlBits::kCycleMaster);
         ASFW_LOG(Controller,
                  "This indicates DMA descriptors or system latency causing timing violation");
     }

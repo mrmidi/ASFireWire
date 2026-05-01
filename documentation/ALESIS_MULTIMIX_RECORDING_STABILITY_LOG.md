@@ -1,6 +1,9 @@
 # Alesis MultiMix Recording Stability Log
 
-Status as of 2026-04-30: v15 remains the clean recording checkpoint for the currently connected Alesis MultiMix FireWire unit.
+Historical note: v15 was the first clean recording checkpoint for the
+currently connected Alesis MultiMix FireWire unit. The active reconciliation
+branch has since moved to the v28 unified local/tester lane while preserving the
+same Alesis audio behavior.
 
 This document records the work done across 2026-04-28 and 2026-04-29 to bring the Alesis MultiMix recording path to a usable/professional baseline before any separate packaging pass for external testers.
 

@@ -638,7 +638,7 @@ std::optional<TransactionContext> AsyncSubsystem::PrepareTransactionContext() {
 
     // Step 4: Query current generation from GenerationTracker
     const auto busState = generationTracker_->GetCurrentState();
-    const uint8_t currentGeneration = busState.generation8;
+    const uint16_t currentGeneration = busState.generation16;
 
     // Step 5: Resolve speed code. TODO(ASFW-Topology): query TopologyManager instead of using the
     // compatibility S100 default.

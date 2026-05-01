@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Private/local signing example for Chris's Mac Studio. Override profile and
+# signing environment variables before reusing on another developer account.
+# See documentation/LOCAL_SIGNING_EXAMPLE_CHRIS.md.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DRIVER_PROFILE="${ASFW_FULL_DEBUG_DRIVER_PROFILE:-/Users/chrisizatt/Downloads/ASFWDriver_Chris_MaciOS-2.provisionprofile}"
 

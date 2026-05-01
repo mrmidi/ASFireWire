@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 /path/to/ASFW.app" >&2
-  echo "Refusing to stage from a stale DerivedData default. Use tools/local/build_v16_safe_local.sh --stage-app or pass an explicit app path." >&2
+  echo "Refusing to stage from a stale DerivedData default. Use tools/local/build_full_debug_local.sh --stage-app or pass an explicit app path." >&2
   exit 2
 fi
 

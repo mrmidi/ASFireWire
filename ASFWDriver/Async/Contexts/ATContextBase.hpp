@@ -341,6 +341,7 @@ private:
                                               size_t capacity) noexcept;
     [[nodiscard]] bool LoadScanState(ScanState& state) noexcept;
     void FetchScanDescriptor(const ScanState& state) noexcept;
+    [[nodiscard]] bool TryAdvancePastCompletedPrecursor(const ScanState& state) noexcept;
     void HandlePendingDescriptor(const ScanState& state) noexcept;
     [[nodiscard]] bool IsOrphanedDescriptor(const ScanState& state,
                                             uint32_t& commandPtrAddr,
@@ -596,6 +597,9 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
         }
 
         if (state.xferStatus == 0) {
+            if (TryAdvancePastCompletedPrecursor(state)) {
+                continue;
+            }
             HandlePendingDescriptor(state);
             unlock();
             return std::nullopt;
@@ -814,6 +818,47 @@ void ATContextBase<Derived, Tag>::FetchScanDescriptor(const ScanState& state) no
         ASFW_LOG(Async,
                  "  🔍 ScanCompletion: ReadBarrier DISABLED (uncached device memory, DSB sufficient)");
     }
+}
+
+template<typename Derived, ContextRole Tag>
+bool ATContextBase<Derived, Tag>::TryAdvancePastCompletedPrecursor(const ScanState& state) noexcept {
+    const uint16_t controlHi = static_cast<uint16_t>(
+        state.desc->control >> HW::OHCIDescriptor::kControlHighShift);
+    const uint8_t command = static_cast<uint8_t>(
+        (controlHi >> HW::OHCIDescriptor::kCmdShift) & 0xF);
+    if (command == HW::OHCIDescriptor::kCmdOutputLast) {
+        return false;
+    }
+
+    const uint8_t key = static_cast<uint8_t>(
+        (controlHi >> HW::OHCIDescriptor::kKeyShift) & 0x7);
+    const uint8_t blocks = (key == HW::OHCIDescriptor::kKeyImmediate) ? 2 : 1;
+    const size_t nextIndex = (state.headIndex + blocks) % state.capacity;
+    HW::OHCIDescriptor* nextDesc = ring_->At(nextIndex);
+    if (!nextDesc) {
+        return false;
+    }
+
+    if (dmaManager_) {
+        const bool nextIsImmediate = HW::IsImmediate(*nextDesc);
+        dmaManager_->FetchRange(nextDesc,
+                                nextIsImmediate ? sizeof(HW::OHCIDescriptorImmediate)
+                                                : sizeof(HW::OHCIDescriptor));
+    }
+
+    const uint16_t nextStatus = HW::AT_xferStatus(*nextDesc);
+    if (nextStatus == 0) {
+        return false;
+    }
+
+    ASFW_LOG_V2(Async,
+                "ScanCompletion: advancing past completed precursor head=%zu -> %zu (next status=0x%04x)",
+                state.headIndex,
+                nextIndex,
+                nextStatus);
+    ClearDescriptorBlocks(state.headIndex, blocks, state.capacity);
+    ring_->SetHead(nextIndex);
+    return true;
 }
 
 template<typename Derived, ContextRole Tag>

@@ -74,7 +74,7 @@ struct DeviceLibraryView: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("Recognition is not support. Metadata-only profiles are for identification, logging, and diagnostics.")
+                Text("Recognition does not mean support. Metadata-only profiles are for identification, logging, and diagnostics.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

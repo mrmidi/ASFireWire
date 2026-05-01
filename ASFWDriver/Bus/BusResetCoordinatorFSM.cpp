@@ -8,6 +8,7 @@
 #endif
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
+#include "../Hardware/HardwareInterface.hpp"
 #include "BusManager.hpp"
 #include "Logging.hpp"
 #include "TopologyManager.hpp"
@@ -172,6 +173,14 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRearming() {
     if (!G_NodeIDValid()) {
         YieldAndReschedule(kDeferredPollMs, "Waiting for NodeID valid");
         return StepResult::Yield;
+    }
+
+    // Per Linux bus_reset_work(): re-assert cycleMaster after bus reset.
+    // The OHCI hardware may have auto-cleared it if cycleTooLong fired during
+    // the reset sequence. Without cycle-start packets, devices like the Nikon
+    // SAA7356HL cannot complete MCU firmware download.
+    if (hardware_ != nullptr) {
+        hardware_->SetLinkControlBits(LinkControlBits::kCycleMaster);
     }
 
     EnableFilters();

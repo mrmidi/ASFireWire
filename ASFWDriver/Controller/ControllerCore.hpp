@@ -117,6 +117,11 @@ class ControllerCore {
 
     Async::IAsyncControllerPort& AsyncSubsystem() const;
 
+    // Diagnostic accessors for UserClient handlers
+    HardwareInterface* GetHardware() const;
+    BusResetCoordinator* GetBusResetCoordinator() const;
+    BusManager* GetBusManager() const;
+
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;
     void AttachROMScanner(std::shared_ptr<Discovery::ROMScanner> romScanner);
@@ -147,7 +152,7 @@ class ControllerCore {
                              uint32_t rawEvents,
                              uint32_t currentMask,
                              uint32_t events) const;
-    void HandleFaultInterrupts(uint32_t events);
+    void HandleFaultInterrupts(uint32_t events, HardwareInterface& hw);
     void NotifyBusResetCoordinator(uint32_t events, uint64_t timestamp) const;
     void DispatchAsyncInterrupts(uint32_t events) const;
     void LogBusResetCompletionEvents(uint32_t events, uint64_t timestamp) const;

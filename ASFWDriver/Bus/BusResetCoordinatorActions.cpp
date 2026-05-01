@@ -523,6 +523,12 @@ void BusResetCoordinator::RecordRecoveryReason(std::string reason) {
     metrics_.lastFailureReason = *cycle_.recoveryReason;
 }
 
+void BusResetCoordinator::RequestUserReset(bool shortReset) {
+    RequestSoftwareReset({ResetRequestKind::ManualBusManager,
+                          shortReset ? ResetFlavor::Short : ResetFlavor::Long, std::nullopt,
+                          "UserClient-initiated", std::nullopt});
+}
+
 void BusResetCoordinator::ResetDelegationRetryCounter() {
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;

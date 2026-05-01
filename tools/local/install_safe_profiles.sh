@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Private/local profile installer for Chris's Mac Studio. Override the profile
+# paths and expected identifiers before reusing on another developer account.
+# See documentation/LOCAL_SIGNING_EXAMPLE_CHRIS.md.
+
 APP_PROFILE="${ASFW_SAFE_APP_PROFILE:-/Users/chrisizatt/Downloads/ASFW_Chris_Mac_Studio(1).provisionprofile}"
 DRIVER_PROFILE="${ASFW_SAFE_DRIVER_PROFILE:-/Users/chrisizatt/Downloads/ASFWDriver_Chris_MaciOS.provisionprofile}"
 DEST_DIR="${HOME}/Library/MobileDevice/Provisioning Profiles"

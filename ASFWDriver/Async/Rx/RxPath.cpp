@@ -9,6 +9,7 @@
 #include "../../Common/DMASafeCopy.hpp"
 #include "../../Common/FWCommon.hpp"
 #include "../ResponseCode.hpp"
+#include "../../Common/FWCommon.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <array>

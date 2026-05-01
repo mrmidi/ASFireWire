@@ -140,6 +140,9 @@ class BusResetCoordinator {
      */
     void EscalateDiscoveryDelay();
 
+    /// Request a user-initiated bus reset (short or long).
+    void RequestUserReset(bool shortReset);
+
   private:
 #ifdef ASFW_HOST_TEST
     friend class BusResetCoordinatorTestPeer;

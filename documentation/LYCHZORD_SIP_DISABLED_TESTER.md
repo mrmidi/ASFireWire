@@ -1,8 +1,11 @@
 # Lychzord SIP-Disabled Tester Lane
 
-This lane packages ASFW for a technical tester who has SIP disabled and system extension developer mode enabled. It does not use Chris provisioning profiles, Developer ID notarisation, or Apple-approved DriverKit entitlement profiles.
+This lane packages ASFW for a technical tester who has SIP disabled and system
+extension developer mode enabled. It does not use Chris provisioning profiles,
+Developer ID notarisation, or Apple-approved DriverKit entitlement profiles.
 
-It is separate from the normal Chris-signed v16 local lane.
+It is separate from the Chris-signed local development lane and is intended for
+Tahoe/macOS 26 testing only.
 
 ## Build
 
@@ -18,20 +21,20 @@ The script defaults to:
 - app bundle ID: `com.lychzord.ASFWTest`
 - driver bundle ID: `com.lychzord.ASFWTest.ASFWDriver`
 - app package name: `ASFWLychzord.app`
-- bundle version: `16`
-- macOS deployment target: `15.5`
-- DriverKit deployment target: `24.0`
+- bundle version: `28` unless `CURRENT_PROJECT_VERSION` is overridden
+- macOS deployment target: `26.0`
+- DriverKit deployment target: `25.0`
 - architecture: `arm64`
 - signing: ad-hoc / Sign to Run Locally style
 - maintenance health: driver-only by default, so the app does not require an Alesis CoreAudio device before reporting a clean refresh
 - OHCI provider matching: FireWire OHCI PCI class `0x0c001000` / `pciclass,0c0010`, not only Chris's local Agere `pci11c1,5901` controller
 
 If Lychzord has already installed an earlier tester build with the same System
-Extension version, build the replacement with a higher bundle version so
-macOS will treat the dext as an update:
+Extension version, build the replacement with a higher bundle version so macOS
+will treat the dext as an update:
 
 ```sh
-CURRENT_PROJECT_VERSION=17 ./tools/lychzord/build_sip_disabled_tester.sh
+CURRENT_PROJECT_VERSION=29 ./tools/lychzord/build_sip_disabled_tester.sh
 ```
 
 Useful checks:
@@ -49,8 +52,8 @@ build/lychzord-sip/
 The deliverable is:
 
 ```text
-ASFWLychzordSIP-v16-<stamp>.zip
-ASFWLychzordSIP-v16-<stamp>.zip.sha256
+ASFWLychzordSIP-v28-<stamp>.zip
+ASFWLychzordSIP-v28-<stamp>.zip.sha256
 ```
 
 ## Tester Install Steps
@@ -98,27 +101,10 @@ system_profiler SPFireWireDataType
 log show --last 15m --style compact --predicate 'process == "sysextd" OR eventMessage CONTAINS "ASFW" OR eventMessage CONTAINS "com.lychzord.ASFWTest.ASFWDriver" OR eventMessage CONTAINS "IOPCIClassMatch"'
 ```
 
-On macOS 15.x, the built-in Apple FireWire stack may attach first. If
-`ioreg -p IOService -l -w0 | grep -i -A40 -B10 'pciclass,0c0010'` shows
-`IODEXTMatchCount = 1` on the OHCI controller but the child service is
-`AppleFWOHCI`, ASFW is installed and matching, but it is not the active OHCI
-driver. This is not a Midas/DICE failure and Repair will not fix it. Try one
-clean boot/hotplug pass before changing packages:
-
-```sh
-# Leave the current ASFWLychzord package installed.
-# Quit ASFWLychzord, power off the Midas, and unplug the Thunderbolt/FireWire adapter.
-# Reboot with the adapter unplugged.
-open /Applications/ASFWLychzord.app
-# Plug in the adapter alone first, with the Midas still off/unconnected.
-ps -ax | grep -i ASFW
-ioreg -l -r -c ASFWDriver
-ioreg -p IOService -l -w0 | grep -i -A40 -B10 'pciclass,0c0010'
-```
-
-If `AppleFWOHCI` still owns the controller after that sequence, further Midas
-protocol changes are not being exercised on that machine yet. The blocker is
-the native macOS FireWire stack owning the OHCI provider.
+Sequoia/macOS 15.x is not a supported Lychzord tester target. Earlier failures
+showed AppleFWOHCI could own the OHCI provider while the ASFW System Extension
+was merely activated. That state is historical diagnostic context, not a path we
+expect testers to use.
 
 If the app reports `Repair needed: ASFW driver CDHash does not match the staged
 driver` immediately after replacing the app, macOS is probably still running an
