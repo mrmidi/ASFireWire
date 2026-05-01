@@ -171,4 +171,89 @@ void AudioNubPublisher::TerminateNub(uint64_t guid, const char* reasonTag) noexc
     }
 }
 
+bool AudioNubPublisher::PublishDICEDiagnostic(const Model::DICEBackendDiagnostic& diagnostic,
+                                              const char* sourceTag) noexcept {
+    if (!driver_) {
+        return false;
+    }
+
+    auto properties = OSSharedPtr(OSDictionary::withCapacity(24), OSNoRetain);
+    auto guidNum = OSSharedPtr(OSNumber::withNumber(diagnostic.guid, 64), OSNoRetain);
+    auto vendorNum = OSSharedPtr(OSNumber::withNumber(diagnostic.vendorId, 32), OSNoRetain);
+    auto modelNum = OSSharedPtr(OSNumber::withNumber(diagnostic.modelId, 32), OSNoRetain);
+    auto deviceName = OSSharedPtr(OSString::withCString(diagnostic.deviceName.c_str()), OSNoRetain);
+    auto protocolName = OSSharedPtr(OSString::withCString(diagnostic.protocolName.c_str()), OSNoRetain);
+    auto profileSource = OSSharedPtr(OSString::withCString(diagnostic.profileSource.c_str()), OSNoRetain);
+    auto probeState = OSSharedPtr(OSString::withCString(diagnostic.probeState.c_str()), OSNoRetain);
+    auto failReason = OSSharedPtr(OSString::withCString(diagnostic.failReason.c_str()), OSNoRetain);
+    auto capsSource = OSSharedPtr(OSString::withCString(diagnostic.capsSource.c_str()), OSNoRetain);
+    auto hostIn = OSSharedPtr(OSNumber::withNumber(diagnostic.hostInputPcmChannels, 32), OSNoRetain);
+    auto hostOut = OSSharedPtr(OSNumber::withNumber(diagnostic.hostOutputPcmChannels, 32), OSNoRetain);
+    auto d2hSlots = OSSharedPtr(OSNumber::withNumber(diagnostic.deviceToHostAm824Slots, 32), OSNoRetain);
+    auto h2dSlots = OSSharedPtr(OSNumber::withNumber(diagnostic.hostToDeviceAm824Slots, 32), OSNoRetain);
+    auto d2hStreams = OSSharedPtr(OSNumber::withNumber(diagnostic.deviceToHostActiveStreams, 32), OSNoRetain);
+    auto h2dStreams = OSSharedPtr(OSNumber::withNumber(diagnostic.hostToDeviceActiveStreams, 32), OSNoRetain);
+    auto sampleRate = OSSharedPtr(OSNumber::withNumber(diagnostic.sampleRateHz, 32), OSNoRetain);
+    auto d2hIso = OSSharedPtr(OSNumber::withNumber(diagnostic.deviceToHostIsoChannel, 32), OSNoRetain);
+    auto h2dIso = OSSharedPtr(OSNumber::withNumber(diagnostic.hostToDeviceIsoChannel, 32), OSNoRetain);
+    auto attempt = OSSharedPtr(OSNumber::withNumber(diagnostic.attempt, 32), OSNoRetain);
+    auto maxAttempts = OSSharedPtr(OSNumber::withNumber(diagnostic.maxAttempts, 32), OSNoRetain);
+    auto status = OSSharedPtr(OSNumber::withNumber(diagnostic.status, 32), OSNoRetain);
+
+    if (!properties || !guidNum || !vendorNum || !modelNum || !deviceName || !protocolName ||
+        !profileSource || !probeState || !failReason || !capsSource || !hostIn || !hostOut ||
+        !d2hSlots || !h2dSlots || !d2hStreams || !h2dStreams || !sampleRate || !d2hIso ||
+        !h2dIso || !attempt || !maxAttempts || !status) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioNubPublisher[%{public}s]: Failed to allocate DICE diagnostic properties (GUID=%llx)",
+                       sourceTag ? sourceTag : "unknown",
+                       diagnostic.guid);
+        return false;
+    }
+
+    properties->setObject("ASFWDICELastProbeGUID", guidNum.get());
+    properties->setObject("ASFWDICELastProbeVendorID", vendorNum.get());
+    properties->setObject("ASFWDICELastProbeModelID", modelNum.get());
+    properties->setObject("ASFWDICELastProbeDeviceName", deviceName.get());
+    properties->setObject("ASFWDICELastProbeProtocol", protocolName.get());
+    properties->setObject("ASFWDICELastProbeProfileSource", profileSource.get());
+    properties->setObject("ASFWDICELastProbeState", probeState.get());
+    properties->setObject("ASFWDICELastProbeFailReason", failReason.get());
+    properties->setObject("ASFWDICELastProbeCapsSource", capsSource.get());
+    properties->setObject("ASFWDICELastProbeHostInputPcmChannels", hostIn.get());
+    properties->setObject("ASFWDICELastProbeHostOutputPcmChannels", hostOut.get());
+    properties->setObject("ASFWDICELastProbeDeviceToHostAm824Slots", d2hSlots.get());
+    properties->setObject("ASFWDICELastProbeHostToDeviceAm824Slots", h2dSlots.get());
+    properties->setObject("ASFWDICELastProbeDeviceToHostActiveStreams", d2hStreams.get());
+    properties->setObject("ASFWDICELastProbeHostToDeviceActiveStreams", h2dStreams.get());
+    properties->setObject("ASFWDICELastProbeSampleRateHz", sampleRate.get());
+    properties->setObject("ASFWDICELastProbeDeviceToHostIsoChannel", d2hIso.get());
+    properties->setObject("ASFWDICELastProbeHostToDeviceIsoChannel", h2dIso.get());
+    properties->setObject("ASFWDICELastProbeAttempt", attempt.get());
+    properties->setObject("ASFWDICELastProbeMaxAttempts", maxAttempts.get());
+    properties->setObject("ASFWDICELastProbeStatus", status.get());
+
+    const kern_return_t kr = driver_->SetProperties(properties.get());
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioNubPublisher[%{public}s]: Failed to publish DICE diagnostic properties (GUID=%llx kr=0x%x)",
+                       sourceTag ? sourceTag : "unknown",
+                       diagnostic.guid,
+                       kr);
+        return false;
+    }
+
+    ASFW_LOG(Audio,
+             "AudioNubPublisher[%{public}s]: DICE diagnostic state=%{public}s reason=%{public}s GUID=%llx in=%u out=%u d2hStreams=%u h2dStreams=%u",
+             sourceTag ? sourceTag : "unknown",
+             diagnostic.probeState.c_str(),
+             diagnostic.failReason.c_str(),
+             diagnostic.guid,
+             diagnostic.hostInputPcmChannels,
+             diagnostic.hostOutputPcmChannels,
+             diagnostic.deviceToHostActiveStreams,
+             diagnostic.hostToDeviceActiveStreams);
+    return true;
+}
+
 } // namespace ASFW::Audio

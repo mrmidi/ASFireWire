@@ -20,6 +20,8 @@ class DebugViewModel: ObservableObject {
     @Published var sharedStatus: DriverStatus?
     @Published var topologyCache: TopologySnapshot?
     @Published var avcUnits: [ASFWDriverConnector.AVCUnitInfo] = []
+    @Published var userClientAccessState: DriverUserClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+    @Published var userClientLastError: String?
 
     let connector = ASFWDriverConnector()  // Internal access for TopologyViewModel
     private var driverViewModel: DriverViewModel?
@@ -30,6 +32,7 @@ class DebugViewModel: ObservableObject {
         connector.$isConnected
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
+                self?.refreshUserClientAccessState()
                 self?.isConnected = connected
                 self?.driverViewModel?.setUserClientConnected(connected)
                 if !connected {
@@ -38,6 +41,13 @@ class DebugViewModel: ObservableObject {
                 } else {
                     self?.fetchDriverVersion()
                 }
+            }
+            .store(in: &cancellables)
+
+        connector.$lastError
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] error in
+                self?.userClientLastError = error
             }
             .store(in: &cancellables)
         
@@ -78,6 +88,11 @@ class DebugViewModel: ObservableObject {
     }
     
     func connect() {
+        refreshUserClientAccessState()
+        guard userClientAccessState.canAttemptConnection else {
+            connector.log(userClientAccessState.message, level: .warning)
+            return
+        }
         connector.connect(forceAttempt: false)
     }
     
@@ -89,6 +104,19 @@ class DebugViewModel: ObservableObject {
     func manualRefresh() {
         fetchLatestSnapshots()
         fetchAVCUnits()
+    }
+
+    func refreshUserClientAccessState() {
+        userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+    }
+
+    var userClientUnavailableTitle: String {
+        userClientAccessState.title
+    }
+
+    var userClientUnavailableMessage: String {
+        ASFWDriverConnector.userClientUnavailableMessage(accessState: userClientAccessState,
+                                                         lastError: userClientLastError)
     }
 
     private func handleStatusUpdate(_ status: DriverStatus) {

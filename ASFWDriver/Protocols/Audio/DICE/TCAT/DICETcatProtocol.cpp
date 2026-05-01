@@ -65,11 +65,17 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     outCaps.hostOutputPcmChannels = hostOutputPcmChannels_.load(std::memory_order_relaxed);
     outCaps.deviceToHostAm824Slots = deviceToHostAm824Slots_.load(std::memory_order_relaxed);
     outCaps.hostToDeviceAm824Slots = hostToDeviceAm824Slots_.load(std::memory_order_relaxed);
+    outCaps.deviceToHostActiveStreams = deviceToHostActiveStreams_.load(std::memory_order_relaxed);
+    outCaps.hostToDeviceActiveStreams = hostToDeviceActiveStreams_.load(std::memory_order_relaxed);
     outCaps.deviceToHostIsoChannel =
         static_cast<uint8_t>(deviceToHostIsoChannel_.load(std::memory_order_relaxed));
     outCaps.hostToDeviceIsoChannel =
         static_cast<uint8_t>(hostToDeviceIsoChannel_.load(std::memory_order_relaxed));
     return true;
+}
+
+void DICETcatProtocol::RefreshRuntimeAudioStreamCaps(VoidCallback callback) {
+    EnsureRuntimeCapsLoaded(std::move(callback));
 }
 
 void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
@@ -313,6 +319,8 @@ void DICETcatProtocol::CacheRuntimeCaps(const GlobalState& global,
         .hostOutputPcmChannels = rx.ActivePcmChannels(),
         .deviceToHostAm824Slots = tx.ActiveAm824Slots(),
         .hostToDeviceAm824Slots = rx.ActiveAm824Slots(),
+        .deviceToHostActiveStreams = tx.ActiveStreamCount(),
+        .hostToDeviceActiveStreams = rx.ActiveStreamCount(),
         .sampleRateHz = global.sampleRate,
         .deviceToHostIsoChannel = tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
         .hostToDeviceIsoChannel = rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel),
@@ -324,6 +332,8 @@ void DICETcatProtocol::CacheRuntimeCaps(const AudioStreamRuntimeCaps& caps) noex
     deviceToHostAm824Slots_.store(caps.deviceToHostAm824Slots, std::memory_order_relaxed);
     hostOutputPcmChannels_.store(caps.hostOutputPcmChannels, std::memory_order_relaxed);
     hostToDeviceAm824Slots_.store(caps.hostToDeviceAm824Slots, std::memory_order_relaxed);
+    deviceToHostActiveStreams_.store(caps.deviceToHostActiveStreams, std::memory_order_relaxed);
+    hostToDeviceActiveStreams_.store(caps.hostToDeviceActiveStreams, std::memory_order_relaxed);
     runtimeSampleRateHz_.store(caps.sampleRateHz, std::memory_order_relaxed);
     deviceToHostIsoChannel_.store(caps.deviceToHostIsoChannel, std::memory_order_relaxed);
     hostToDeviceIsoChannel_.store(caps.hostToDeviceIsoChannel, std::memory_order_relaxed);
@@ -337,6 +347,8 @@ void DICETcatProtocol::ResetRuntimeCaps() noexcept {
     hostOutputPcmChannels_.store(0, std::memory_order_relaxed);
     deviceToHostAm824Slots_.store(0, std::memory_order_relaxed);
     hostToDeviceAm824Slots_.store(0, std::memory_order_relaxed);
+    deviceToHostActiveStreams_.store(0, std::memory_order_relaxed);
+    hostToDeviceActiveStreams_.store(0, std::memory_order_relaxed);
     deviceToHostIsoChannel_.store(AudioStreamRuntimeCaps::kInvalidIsoChannel, std::memory_order_relaxed);
     hostToDeviceIsoChannel_.store(AudioStreamRuntimeCaps::kInvalidIsoChannel, std::memory_order_relaxed);
 }

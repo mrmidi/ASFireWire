@@ -44,6 +44,7 @@ public:
     const Audio::DICE::IDICEDuplexProtocol* AsDiceDuplexProtocol() const noexcept override { return this; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    void RefreshRuntimeAudioStreamCaps(VoidCallback callback) override;
 
     void PrepareDuplex(const AudioDuplexChannels& channels,
                        const DiceDesiredClockConfig& desiredClock,
@@ -92,6 +93,8 @@ private:
     std::atomic<uint32_t> hostOutputPcmChannels_{0};
     std::atomic<uint32_t> deviceToHostAm824Slots_{0};
     std::atomic<uint32_t> hostToDeviceAm824Slots_{0};
+    std::atomic<uint32_t> deviceToHostActiveStreams_{0};
+    std::atomic<uint32_t> hostToDeviceActiveStreams_{0};
     std::atomic<uint32_t> deviceToHostIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
     std::atomic<uint32_t> hostToDeviceIsoChannel_{AudioStreamRuntimeCaps::kInvalidIsoChannel};
     std::atomic<bool> runtimeCapsValid_{false};

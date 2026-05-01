@@ -54,23 +54,32 @@ struct AVCCommandView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 GroupBox {
-                    HStack {
-                        if viewModel.isConnected {
-                            Label("Connected to driver", systemImage: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                        } else {
-                            Label("Debug user-client not connected", systemImage: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            if viewModel.isConnected {
+                                Label("Connected to driver", systemImage: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                            } else {
+                                Label(viewModel.userClientUnavailableTitle, systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                refreshUnits()
+                            } label: {
+                                Label("Refresh Units", systemImage: "arrow.clockwise")
+                            }
+                            .disabled(!viewModel.isConnected)
                         }
 
-                        Spacer()
-
-                        Button {
-                            refreshUnits()
-                        } label: {
-                            Label("Refresh Units", systemImage: "arrow.clockwise")
+                        if !viewModel.isConnected {
+                            Text(viewModel.userClientUnavailableMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .disabled(!viewModel.isConnected)
                     }
                 } label: {
                     Label("Status", systemImage: "info.circle")

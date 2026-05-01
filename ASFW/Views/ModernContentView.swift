@@ -45,7 +45,9 @@ struct ModernContentView: View {
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
         case audio = "Core Audio"
+        case deviceLibrary = "Device Library"
         case alesis = "Alesis"
+        case midas = "Midas"
         case saffire = "Saffire"
         case duet = "Duet"
 
@@ -67,7 +69,9 @@ struct ModernContentView: View {
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
             case .audio: return "hifispeaker.fill"
+            case .deviceLibrary: return "books.vertical"
             case .alesis: return "waveform.badge.mic"
+            case .midas: return "slider.horizontal.3"
             case .saffire: return "slider.vertical.3"
             case .duet: return "slider.horizontal.below.square.filled.and.square"
             }
@@ -118,8 +122,12 @@ struct ModernContentView: View {
                     LoggingSettingsView(connector: debugVM.connector)
                 case .audio:
                     AudioDebugView()
+                case .deviceLibrary:
+                    DeviceLibraryView(connector: debugVM.connector)
                 case .alesis:
                     AlesisStatusView(connector: debugVM.connector, driverViewModel: driverVM)
+                case .midas:
+                    MidasStatusView(connector: debugVM.connector, driverViewModel: driverVM)
                 case .saffire:
                     SaffireMixerView(connector: debugVM.connector)
                 case .duet:
@@ -142,7 +150,7 @@ struct ModernContentView: View {
                         } label: {
                             Label("Install / Update Driver", systemImage: "arrow.down.circle.fill")
                         }
-                        .disabled(driverVM.isBusy)
+                        .disabled(!driverVM.canInstallOrUpdateDriver)
                         .help("Install or update the DriverKit system extension")
                         .keyboardShortcut("i", modifiers: .command)
 
@@ -160,7 +168,7 @@ struct ModernContentView: View {
                         } label: {
                             Label("Uninstall", systemImage: "trash.fill")
                         }
-                        .disabled(driverVM.isBusy)
+                        .disabled(!driverVM.canUninstallDriver)
                         .help("Uninstall DriverKit system extension")
                         .tint(.red)
                         .keyboardShortcut("u", modifiers: .command)
@@ -334,8 +342,12 @@ struct AsyncCommandView: View {
                 .foregroundStyle(.secondary)
 
             if !viewModel.isConnected {
-                Label("Debug user-client not connected", systemImage: "cable.connector.slash")
+                Label(viewModel.userClientUnavailableTitle, systemImage: "cable.connector.slash")
                     .foregroundStyle(.orange)
+                Text(viewModel.userClientUnavailableMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

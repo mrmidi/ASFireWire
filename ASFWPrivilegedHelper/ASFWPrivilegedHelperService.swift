@@ -101,21 +101,25 @@ final class ASFWPrivilegedHelperService: NSObject, ASFWPrivilegedHelperProtocol 
             return
         }
 
-        let snapshot = captureSnapshot(label: "refresh-before")
+        let snapshot = captureSnapshot(label: "refresh-before", includeCoreAudio: false)
         terminateDriverProcesses(driverBundleID: driverBundleID)
         _ = runner.run("/usr/bin/killall", arguments: ["coreaudiod"], timeout: 5)
 
-        var finalProbe = probe(driverBundleID: driverBundleID, expectedCDHash: expectedCDHash)
-        let deadline = Date().addingTimeInterval(45)
+        var finalProbe = probe(driverBundleID: driverBundleID,
+                               expectedCDHash: expectedCDHash,
+                               includeCoreAudio: false)
+        let deadline = Date().addingTimeInterval(30)
         while Date() < deadline {
-            finalProbe = probe(driverBundleID: driverBundleID, expectedCDHash: expectedCDHash)
+            finalProbe = probe(driverBundleID: driverBundleID,
+                               expectedCDHash: expectedCDHash,
+                               includeCoreAudio: false)
             if finalProbe.isHealthyEnoughForRefresh {
                 break
             }
             Thread.sleep(forTimeInterval: 1)
         }
 
-        let afterSnapshot = captureSnapshot(label: "refresh-after") ?? snapshot
+        let afterSnapshot = captureSnapshot(label: "refresh-after", includeCoreAudio: false) ?? snapshot
         reply(result(ok: finalProbe.ok,
                      rebootRequired: finalProbe.rebootRequired,
                      repairNeeded: finalProbe.repairNeeded,
@@ -167,30 +171,80 @@ final class ASFWPrivilegedHelperService: NSObject, ASFWPrivilegedHelperProtocol 
         let pgrep = runner.run("/usr/bin/pgrep", arguments: ["-f", pattern], timeout: 5)
         let pids = pgrep.stdout
             .split(whereSeparator: \.isNewline)
-            .compactMap { token -> String? in
+            .compactMap { token -> Int32? in
                 let pid = String(token)
-                return pid.allSatisfy(\.isNumber) ? pid : nil
+                return pid.allSatisfy(\.isNumber) ? Int32(pid) : nil
+            }
+            .filter { pid in
+                isASFWDriverProcess(pid: pid, driverBundleID: driverBundleID)
             }
         guard !pids.isEmpty else { return }
-        _ = runner.run("/bin/kill", arguments: ["-TERM"] + pids, timeout: 5)
+        _ = runner.run("/bin/kill", arguments: ["-TERM"] + pids.map(String.init), timeout: 5)
     }
 
-    private func captureSnapshot(label: String) -> String? {
+    private func isASFWDriverProcess(pid: Int32, driverBundleID: String) -> Bool {
+        let output = runner.run("/bin/ps",
+                                arguments: ["-p", String(pid), "-o", "pid=,ppid=,stat=,args="],
+                                timeout: 5).stdout
+        return output.contains("/Library/SystemExtensions/")
+            && output.contains("/\(driverBundleID).dext/")
+    }
+
+    private func captureSnapshot(label: String, includeCoreAudio: Bool = true) -> String? {
         let stamp = Self.timestamp()
         let dir = diagnosticsRoot.appendingPathComponent("asfw-\(label)-\(stamp)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try write("ASFW maintenance snapshot\nCreated: \(Date())\nLabel: \(label)\n", to: dir.appendingPathComponent("README.txt"))
             writeCommand("/bin/ps", ["-axo", "pid,ppid,stat,%cpu,%mem,etime,comm,args"], to: dir.appendingPathComponent("top_processes.txt"))
+            writeCommand("/usr/bin/awk", ["$3 ~ /Z/ {print}", dir.appendingPathComponent("top_processes.txt").path], to: dir.appendingPathComponent("zombies.txt"))
             writeCommand("/usr/bin/pgrep", ["-fl", "ASFW|ASFWDriver|coreaudiod|com.apple.audio.DriverHelper"], to: dir.appendingPathComponent("asfw_related_processes.txt"))
             writeCommand("/usr/bin/systemextensionsctl", ["list"], to: dir.appendingPathComponent("systemextensions.txt"))
             writeCommand("/usr/sbin/ioreg", ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWDriver"], to: dir.appendingPathComponent("ioreg_asfw_driver.txt"))
             writeCommand("/usr/sbin/ioreg", ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWAudioNub"], to: dir.appendingPathComponent("ioreg_asfw_audio_nub.txt"))
-            writeCommand("/usr/sbin/system_profiler", ["SPAudioDataType"], to: dir.appendingPathComponent("coreaudio.txt"))
+            writeCommand("/usr/sbin/ioreg", ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWAudioDriver"], to: dir.appendingPathComponent("ioreg_asfw_audio_driver.txt"))
+            if includeCoreAudio {
+                writeCommand("/usr/sbin/system_profiler", ["SPAudioDataType"], to: dir.appendingPathComponent("coreaudio.txt"))
+            } else {
+                try write("Skipped during time-sensitive driver refresh. Use Diagnostics for a full CoreAudio snapshot.\n",
+                          to: dir.appendingPathComponent("coreaudio.txt"))
+            }
+            try write(snapshotSummary(label: label, dir: dir, includeCoreAudio: includeCoreAudio), to: dir.appendingPathComponent("summary.txt"))
             return dir.path
         } catch {
             return nil
         }
+    }
+
+    private func snapshotSummary(label: String, dir: URL, includeCoreAudio: Bool = true) -> String {
+        let probe = probe(driverBundleID: defaultDriverBundleID(),
+                          expectedCDHash: "",
+                          includeCoreAudio: includeCoreAudio)
+        let zombies = readText(dir.appendingPathComponent("zombies.txt"))
+            .split(whereSeparator: \.isNewline)
+            .filter { !$0.hasPrefix("Command:") && !$0.hasPrefix("Exit:") && !$0.hasPrefix("stdout:") && !$0.hasPrefix("stderr:") }
+        return """
+        ASFW maintenance summary
+        Label: \(label)
+        Path: \(dir.path)
+
+        Active driver: \(probe.activeDriver ? "yes" : "no")
+        Driver service loaded: \(probe.driverServiceLoaded ? "yes" : "no")
+        ASFW audio nub: \(probe.audioNubVisible ? "yes" : "no")
+        CoreAudio expected device visible: \(probe.coreAudioVisible ? "yes" : "no")
+        Stale uninstall: \(probe.staleTerminatingDriver ? "yes" : "no")
+        Active CDHash: \(probe.activeCDHash.isEmpty ? "unknown" : probe.activeCDHash)
+        Expected CoreAudio device: \(probe.expectedCoreAudioDeviceName ?? "not required")
+        Zombie process lines: \(zombies.count)
+
+        Message:
+        \(probe.message)
+        """
+    }
+
+    private func readText(_ url: URL) -> String {
+        guard let data = try? Data(contentsOf: url) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     private func writeCommand(_ executable: String, _ arguments: [String], to url: URL) {
@@ -213,13 +267,21 @@ final class ASFWPrivilegedHelperService: NSObject, ASFWPrivilegedHelperProtocol 
         try string.data(using: .utf8)?.write(to: url, options: .atomic)
     }
 
-    private func probe(driverBundleID: String, expectedCDHash: String) -> HelperProbe {
+    private func probe(driverBundleID: String,
+                       expectedCDHash: String,
+                       includeCoreAudio: Bool = true) -> HelperProbe {
         let systemExtensions = runner.run("/usr/bin/systemextensionsctl", arguments: ["list"], timeout: 10).stdout
         let ioreg = runner.run("/usr/sbin/ioreg", arguments: ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWDriver"], timeout: 10).stdout
-        let coreAudio = runner.run("/usr/sbin/system_profiler", arguments: ["SPAudioDataType"], timeout: 20).stdout
-        let expectedDevice = ASFWPrivilegedHelperConfig.current.expectedCoreAudioDeviceName
+        let audioNubIoreg = runner.run("/usr/sbin/ioreg", arguments: ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWAudioNub"], timeout: 10).stdout
+        let coreAudio = includeCoreAudio
+            ? runner.run("/usr/sbin/system_profiler", arguments: ["SPAudioDataType"], timeout: 20).stdout
+            : ""
+        let expectedDevice = includeCoreAudio
+            ? ASFWPrivilegedHelperConfig.current.expectedCoreAudioDeviceName
+            : nil
         return HelperProbe(systemExtensions: systemExtensions,
                            ioreg: ioreg,
+                           audioNubIoreg: audioNubIoreg,
                            coreAudio: coreAudio,
                            driverBundleID: driverBundleID,
                            expectedCDHash: expectedCDHash,
@@ -262,6 +324,7 @@ final class ASFWPrivilegedHelperService: NSObject, ASFWPrivilegedHelperProtocol 
 private struct HelperProbe {
     var systemExtensions: String
     var ioreg: String
+    var audioNubIoreg: String
     var coreAudio: String
     var driverBundleID: String
     var expectedCDHash: String
@@ -271,7 +334,7 @@ private struct HelperProbe {
         systemExtensions
             .split(separator: "\n")
             .contains { line in
-                line.contains(driverBundleID)
+                Self.lineMatchesDriverBundle(line, driverBundleID: driverBundleID)
                 && line.contains("[activated enabled]")
                 && !line.localizedCaseInsensitiveContains("terminating for uninstall")
             }
@@ -281,8 +344,16 @@ private struct HelperProbe {
         systemExtensions
             .split(separator: "\n")
             .contains { line in
-                line.contains(driverBundleID)
+                Self.lineMatchesDriverBundle(line, driverBundleID: driverBundleID)
                 && line.localizedCaseInsensitiveContains("terminating for uninstall")
+            }
+    }
+
+    private static func lineMatchesDriverBundle(_ line: Substring, driverBundleID: String) -> Bool {
+        guard !driverBundleID.isEmpty else { return false }
+        return line.split(whereSeparator: \.isWhitespace)
+            .contains { token in
+                String(token) == driverBundleID || String(token) == "\(driverBundleID),"
             }
     }
 
@@ -350,8 +421,22 @@ private struct HelperProbe {
         return coreAudio.localizedCaseInsensitiveContains(expectedCoreAudioDeviceName)
     }
 
+    var audioNubVisible: Bool {
+        ioreg.contains("ASFWAudioNub") || audioNubIoreg.contains("ASFWAudioNub")
+    }
+
+    var audioNubRequired: Bool {
+        guard let expectedCoreAudioDeviceName else { return false }
+        return !expectedCoreAudioDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var ok: Bool {
-        activeDriver && driverServiceLoaded && !staleTerminatingDriver && !cdHashMismatch && coreAudioVisible
+        activeDriver
+        && driverServiceLoaded
+        && !staleTerminatingDriver
+        && !cdHashMismatch
+        && coreAudioVisible
+        && (!audioNubRequired || audioNubVisible)
     }
 
     var rebootRequired: Bool {
@@ -363,7 +448,12 @@ private struct HelperProbe {
     }
 
     var isHealthyEnoughForRefresh: Bool {
-        !staleTerminatingDriver && activeDriver && driverServiceLoaded && !cdHashMismatch && coreAudioVisible
+        !staleTerminatingDriver
+        && activeDriver
+        && driverServiceLoaded
+        && !cdHashMismatch
+        && coreAudioVisible
+        && (!audioNubRequired || audioNubVisible)
     }
 
     var cdHashMismatch: Bool {
@@ -376,15 +466,18 @@ private struct HelperProbe {
         }
         if ok {
             if expectedCoreAudioDeviceName == nil {
-                return "ASFW driver refresh completed. CoreAudio publication is not required for this tester build."
+                return "ASFW driver service refresh completed. CoreAudio will be checked by the app."
             }
             return "ASFW driver refresh completed and CoreAudio can see \(expectedCoreAudioDeviceName ?? "the expected device")."
         }
         if activeDriver && !driverServiceLoaded {
-            return "ASFW system extension is installed, but ASFWDriver is not loaded. Reconnect the FireWire adapter or reboot; Repair cannot compare a missing active driver service."
+            return "ASFW system extension is installed, but ASFWDriver is not loaded. Wait for the bus to settle, reconnect the FireWire adapter once, then reboot if this stays unchanged."
         }
         if cdHashMismatch {
             return "ASFW driver CDHash does not match the staged driver."
+        }
+        if audioNubRequired && coreAudioVisible && !audioNubVisible {
+            return "CoreAudio still lists the expected device, but ASFWAudioNub is not attached."
         }
         if activeDriver && !coreAudioVisible {
             return "ASFW driver is active, but CoreAudio does not currently publish \(expectedCoreAudioDeviceName ?? "the expected device")."
@@ -400,6 +493,7 @@ private struct HelperProbe {
             "activeDriver": NSNumber(value: activeDriver),
             "driverServiceLoaded": NSNumber(value: driverServiceLoaded),
             "staleTerminatingDriver": NSNumber(value: staleTerminatingDriver),
+            "audioNubVisible": NSNumber(value: audioNubVisible),
             "coreAudioVisible": NSNumber(value: coreAudioVisible),
             "activeCDHash": activeCDHash,
             "expectedCDHash": expectedCDHash,

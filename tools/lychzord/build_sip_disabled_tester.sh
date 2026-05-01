@@ -8,9 +8,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/build/lychzord-sip}"
 APP_BUNDLE_ID="${ASFW_APP_BUNDLE_IDENTIFIER:-com.lychzord.ASFWTest}"
 DRIVER_BUNDLE_ID="${ASFW_DRIVER_BUNDLE_IDENTIFIER:-$APP_BUNDLE_ID.ASFWDriver}"
 APP_NAME="${APP_NAME:-ASFWLychzord.app}"
-VERSION="${CURRENT_PROJECT_VERSION:-16}"
-MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.5}"
-DRIVERKIT_TARGET="${DRIVERKIT_DEPLOYMENT_TARGET:-24.0}"
+VERSION="${CURRENT_PROJECT_VERSION:-28}"
+MACOS_DEPLOYMENT_TARGET="${ASFW_MACOSX_DEPLOYMENT_TARGET:-26.0}"
+DRIVERKIT_TARGET="${DRIVERKIT_DEPLOYMENT_TARGET:-25.0}"
 ARCHS_VALUE="${ARCHS_VALUE:-arm64}"
 REQUIRE_CORE_AUDIO_DEVICE="${ASFW_REQUIRE_CORE_AUDIO_DEVICE:-false}"
 EXPECTED_CORE_AUDIO_DEVICE_NAME="${ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME:-}"
@@ -40,9 +40,9 @@ Environment overrides:
   ASFW_APP_BUNDLE_IDENTIFIER=com.example.App
   ASFW_DRIVER_BUNDLE_IDENTIFIER=com.example.App.ASFWDriver
   APP_NAME=ASFWLychzord.app
-  CURRENT_PROJECT_VERSION=16
-  MACOSX_DEPLOYMENT_TARGET=15.5
-  DRIVERKIT_DEPLOYMENT_TARGET=24.0
+  CURRENT_PROJECT_VERSION=28
+  ASFW_MACOSX_DEPLOYMENT_TARGET=26.0
+  DRIVERKIT_DEPLOYMENT_TARGET=25.0
   ARCHS_VALUE=arm64
   ASFW_REQUIRE_CORE_AUDIO_DEVICE=false
   ASFW_EXPECTED_CORE_AUDIO_DEVICE_NAME="Midas Venice"
@@ -60,6 +60,11 @@ done
 
 cd "$ROOT_DIR"
 
+# Keep the macOS deployment target scoped to app/helper targets. If this
+# environment key reaches DriverKit's IIG phase, it conflicts with
+# DRIVERKIT_DEPLOYMENT_TARGET and the dext build falls back to the wrong SDK.
+unset MACOSX_DEPLOYMENT_TARGET
+
 COMMON_BUILD_SETTINGS=(
   DEVELOPMENT_TEAM=
   ASFW_APP_BUNDLE_IDENTIFIER="$APP_BUNDLE_ID"
@@ -76,7 +81,7 @@ COMMON_BUILD_SETTINGS=(
   AD_HOC_CODE_SIGNING_ALLOWED=YES
   CODE_SIGN_IDENTITY=-
   CURRENT_PROJECT_VERSION="$VERSION"
-  MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
+  ASFW_MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
   DRIVERKIT_DEPLOYMENT_TARGET="$DRIVERKIT_TARGET"
   ARCHS="$ARCHS_VALUE"
   ONLY_ACTIVE_ARCH=NO
@@ -245,7 +250,7 @@ cat >"$PACKAGE_ROOT/README-LYCHZORD-SIP.txt" <<EOF
 ASFW Lychzord SIP-disabled tester build
 ======================================
 
-This is a local testing build for macOS $MACOS_DEPLOYMENT_TARGET+ with SIP disabled.
+This is a local testing build for macOS Tahoe $MACOS_DEPLOYMENT_TARGET+ with SIP disabled.
 It is not notarised and is not intended for normal end users.
 This package uses driver-only maintenance health, so it does not wait for an
 Alesis CoreAudio device before considering the driver refresh complete.
@@ -275,8 +280,11 @@ Install on the tester Mac:
 
 7. Use Install / Update Driver once. Approve any System Settings prompt.
 
-8. If the Midas still does not appear, do not keep pressing Repair Driver.
-   Capture diagnostics and send the snapshot path/logs back.
+8. If the Midas still does not appear in Audio MIDI Setup, do not keep pressing
+   Repair Driver. Open the Midas tab, use Copy Status, then capture diagnostics
+   and send both back. This build publishes the last DICE probe result so we can
+   tell factory, caps, geometry, stream-start, and CoreAudio-publication failures
+   apart.
 
 After install, the minimum expected driver state is:
   systemextensionsctl list
@@ -289,27 +297,10 @@ If the system extension is active but no ASFWDriver process appears, collect:
   system_profiler SPFireWireDataType
   log show --last 15m --style compact --predicate 'process == "sysextd" OR eventMessage CONTAINS "ASFW" OR eventMessage CONTAINS "$DRIVER_BUNDLE_ID" OR eventMessage CONTAINS "IOPCIClassMatch"'
 
-On macOS 15.x, Apple's built-in FireWire stack may attach first. If:
-  ioreg -p IOService -l -w0 | grep -i -A40 -B10 'pciclass,0c0010'
-shows IODEXTMatchCount = 1 but the child service is AppleFWOHCI, ASFW is
-installed and matching, but it is not the active OHCI driver. This is not a
-Midas/DICE failure and Repair will not fix it.
-
-Try one clean boot/hotplug pass:
-  - Leave this package installed.
-  - Quit ASFWLychzord.
-  - Power off the Midas and unplug the Thunderbolt/FireWire adapter.
-  - Reboot with the adapter unplugged.
-  - Open /Applications/$APP_NAME.
-  - Plug in the adapter alone first, with the Midas still off/unconnected.
-  - Run:
-      ps -ax | grep -i ASFW
-      ioreg -l -r -c ASFWDriver
-      ioreg -p IOService -l -w0 | grep -i -A40 -B10 'pciclass,0c0010'
-
-If AppleFWOHCI still owns the controller after that sequence, further Midas
-protocol changes are not being exercised on that machine yet. The blocker is
-the native macOS FireWire stack owning the OHCI provider.
+macOS 15.x / Sequoia is intentionally unsupported for this tester package. The
+previous Sequoia failure mode was AppleFWOHCI owning the OHCI provider before
+ASFW could load. Do not try to unload or move Apple FireWire kexts as part of
+this package test.
 
 If the app reports "Repair needed: ASFW driver CDHash does not match the staged
 driver" immediately after replacing the app, macOS is probably still running an

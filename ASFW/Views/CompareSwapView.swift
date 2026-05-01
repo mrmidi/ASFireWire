@@ -225,8 +225,13 @@ struct CompareSwapView: View {
                             Label("Connected to driver", systemImage: "checkmark.circle.fill")
                                 .foregroundColor(.green)
                         } else {
-                            Label("Debug user-client not connected", systemImage: "exclamationmark.triangle.fill")
+                            Label(userClientAccessState.title, systemImage: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
+                            Text(ASFWDriverConnector.userClientUnavailableMessage(accessState: userClientAccessState,
+                                                                                   lastError: connector.lastError))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         if let handle = lastHandle {
@@ -380,6 +385,10 @@ struct CompareSwapView: View {
                 self.lastError = connector.lastError ?? "Unknown error"
             }
         }
+    }
+
+    private var userClientAccessState: DriverUserClientAccessState {
+        ASFWDriverConnector.evaluateUserClientAccessState()
     }
 
     // MARK: - Hex Parsing Helpers

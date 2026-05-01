@@ -1,8 +1,53 @@
 import Foundation
 import Combine
 import IOKit
+import Security
 import SystemExtensions
 import Darwin.Mach
+
+enum DriverUserClientAccessState: Equatable {
+    case granted(values: [String])
+    case driverAllowsAnyUserClient(expectedDriverBundleID: String)
+    case missing(expectedDriverBundleID: String)
+    case unexpected(values: [String], expectedDriverBundleID: String)
+    case unavailable(reason: String)
+
+    var canAttemptConnection: Bool {
+        switch self {
+        case .granted, .driverAllowsAnyUserClient:
+            return true
+        case .missing, .unexpected, .unavailable:
+            return false
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .granted, .driverAllowsAnyUserClient, .unexpected:
+            return "Debug User-Client Not Connected"
+        case .missing:
+            return "Full-Debug Signing Required"
+        case .unavailable:
+            return "Debug Signing State Unknown"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .granted:
+            return "Audio can still be available through CoreAudio. Connect the debug user-client to inspect FireWire discovery, topology, ROM, AV/C, and low-level metrics."
+        case .driverAllowsAnyUserClient(let expectedDriverBundleID):
+            return "Audio can still be available through CoreAudio. This full-debug build expects \(expectedDriverBundleID) to be signed with com.apple.developer.driverkit.allow-any-userclient-access, so ASFW can inspect FireWire discovery, topology, ROM, AV/C, and low-level metrics."
+        case .missing(let expectedDriverBundleID):
+            return "Audio is running through CoreAudio. This app build can install, repair, and monitor the driver, but FireWire discovery, topology, ROM, AV/C, and low-level metrics require a full-debug build signed with com.apple.developer.driverkit.userclient-access for \(expectedDriverBundleID)."
+        case .unexpected(let values, let expectedDriverBundleID):
+            let formatted = values.isEmpty ? "none" : values.joined(separator: ", ")
+            return "This app has a DriverKit user-client entitlement, but it does not list \(expectedDriverBundleID). Current entitlement values: \(formatted)."
+        case .unavailable(let reason):
+            return "Audio can still be available through CoreAudio, but ASFW could not inspect the app's debug user-client entitlement: \(reason)"
+        }
+    }
+}
 
 final class ASFWDriverConnector: ObservableObject {
     // MARK: - Types
@@ -202,6 +247,74 @@ final class ASFWDriverConnector: ObservableObject {
         }
     }
 
+    static var expectedDriverBundleIdentifier: String {
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "ASFWDriverBundleIdentifier") as? String,
+           !configured.isEmpty {
+            return configured
+        }
+        if let appIdentifier = Bundle.main.bundleIdentifier,
+           !appIdentifier.isEmpty {
+            return "\(appIdentifier).ASFWDriver"
+        }
+        return "net.mrmidi.ASFW.ASFWDriver"
+    }
+
+    static func evaluateUserClientAccessState() -> DriverUserClientAccessState {
+        let entitlementKey = "com.apple.developer.driverkit.userclient-access"
+        let expectedDriverID = expectedDriverBundleIdentifier
+        let expectedUserClientID = "\(expectedDriverID):ASFWDriverUserClient"
+
+        if allowAnyUserClientDriverBuild {
+            return .driverAllowsAnyUserClient(expectedDriverBundleID: expectedDriverID)
+        }
+
+        guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault) else {
+            return .unavailable(reason: "SecTaskCreateFromSelf failed")
+        }
+
+        guard let rawValue = SecTaskCopyValueForEntitlement(task,
+                                                            entitlementKey as CFString,
+                                                            nil) else {
+            return .missing(expectedDriverBundleID: expectedDriverID)
+        }
+
+        let values: [String]
+        if let array = rawValue as? [String] {
+            values = array
+        } else if let string = rawValue as? String {
+            values = [string]
+        } else {
+            return .unavailable(reason: "unexpected entitlement value \(String(describing: rawValue))")
+        }
+
+        if values.contains(expectedDriverID) || values.contains(expectedUserClientID) {
+            return .granted(values: values)
+        }
+        return .unexpected(values: values, expectedDriverBundleID: expectedDriverID)
+    }
+
+    private static var allowAnyUserClientDriverBuild: Bool {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "ASFWAllowAnyUserClientDriverBuild") else {
+            return false
+        }
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let string = value as? String {
+            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return ["1", "true", "yes"].contains(normalized)
+        }
+        return false
+    }
+
+    static func userClientUnavailableMessage(accessState: DriverUserClientAccessState,
+                                             lastError: String? = nil) -> String {
+        guard let lastError, !lastError.isEmpty else {
+            return accessState.message
+        }
+        return "\(accessState.message)\n\nLast connection error: \(lastError)"
+    }
+
     func kernResultString(_ kr: kern_return_t) -> String {
         if let cString = mach_error_string(kr) {
             return String(cString: cString)
@@ -210,4 +323,3 @@ final class ASFWDriverConnector: ObservableObject {
     }
 
 }
-    

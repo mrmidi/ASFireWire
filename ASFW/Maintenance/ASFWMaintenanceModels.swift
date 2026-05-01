@@ -82,7 +82,7 @@ struct ASFWMaintenanceParser {
         systemExtensions
             .split(separator: "\n")
             .contains { line in
-                line.contains(driverBundleID)
+                lineMatchesDriverBundle(line, driverBundleID: driverBundleID)
                 && line.contains("[activated enabled]")
                 && !line.contains("terminating for uninstall")
             }
@@ -92,8 +92,16 @@ struct ASFWMaintenanceParser {
         systemExtensions
             .split(separator: "\n")
             .contains { line in
-                line.contains(driverBundleID)
+                lineMatchesDriverBundle(line, driverBundleID: driverBundleID)
                 && line.localizedCaseInsensitiveContains("terminating for uninstall")
+            }
+    }
+
+    private static func lineMatchesDriverBundle(_ line: Substring, driverBundleID: String) -> Bool {
+        guard !driverBundleID.isEmpty else { return false }
+        return line.split(whereSeparator: \.isWhitespace)
+            .contains { token in
+                String(token) == driverBundleID || String(token) == "\(driverBundleID),"
             }
     }
 

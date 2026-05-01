@@ -59,7 +59,7 @@ extension Data {
 
 func queryDriverVersion() -> DriverVersionInfo? {
     // Find the ASFWDriver service
-    let matchingDict = IOServiceMatching("net_mrmidi_ASFW_ASFWDriver")
+    let matchingDict = IOServiceNameMatching("ASFWDriver")
     var iterator: io_iterator_t = 0
     
     let kr = IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator)

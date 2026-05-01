@@ -80,6 +80,7 @@ struct MaintenanceLifecycleStatus: Equatable {
     var driverServiceLoaded: Bool
     var staleTerminatingDriver: Bool
     var coreAudioDeviceVisible: Bool
+    var coreAudioProbeUnavailable: Bool
     var audioNubVisible: Bool
     var userClientConnected: Bool
     var stagedDriverPresent: Bool
@@ -96,6 +97,7 @@ struct MaintenanceLifecycleStatus: Equatable {
         driverServiceLoaded: false,
         staleTerminatingDriver: false,
         coreAudioDeviceVisible: false,
+        coreAudioProbeUnavailable: false,
         audioNubVisible: false,
         userClientConnected: false,
         stagedDriverPresent: false,
@@ -105,7 +107,36 @@ struct MaintenanceLifecycleStatus: Equatable {
     )
 
     var isCleanForAudio: Bool {
-        health == .clean && activeDriver && coreAudioDeviceVisible && audioNubVisible
+        health == .clean && activeDriver && audioNubVisible && (coreAudioDeviceVisible || coreAudioProbeUnavailable)
+    }
+
+    var driverMismatchSignature: String? {
+        guard activeDriver,
+              driverServiceLoaded,
+              let activeCDHash,
+              let expectedCDHash,
+              activeCDHash != expectedCDHash else {
+            return nil
+        }
+        return "\(activeCDHash)|\(expectedCDHash)"
+    }
+
+    var isDriverMismatchRepairCandidate: Bool {
+        health == .repairNeeded && driverMismatchSignature != nil
+    }
+
+    var installedDriverMatchesApp: Bool? {
+        guard activeDriver, driverServiceLoaded else { return nil }
+        guard let activeCDHash, let expectedCDHash else { return nil }
+        return activeCDHash == expectedCDHash
+    }
+
+    var unconfirmedDriverMismatchStatus: MaintenanceLifecycleStatus {
+        var copy = self
+        copy.recommendedAction = .none
+        copy.summary = "Driver update may not have settled yet."
+        copy.detail = "ASFW is rechecking before suggesting Repair. Do not reinstall while this check is running."
+        return copy
     }
 
     var copySummary: String {
@@ -118,6 +149,7 @@ struct MaintenanceLifecycleStatus: Equatable {
             "ASFW audio nub: \(audioNubVisible ? "yes" : "no")",
             "Expected CoreAudio device: \(expectedCoreAudioDeviceName ?? "not required")",
             "CoreAudio expected device visible: \(expectedCoreAudioDeviceName == nil ? "not required" : (coreAudioDeviceVisible ? "yes" : "no"))",
+            "CoreAudio probe unavailable: \(coreAudioProbeUnavailable ? "yes" : "no")",
             "Debug user-client: \(userClientConnected ? "connected" : "unavailable")",
             "Stale uninstall: \(staleTerminatingDriver ? "yes" : "no")",
             "Active CDHash: \(activeCDHash ?? "unknown")",
@@ -142,6 +174,8 @@ struct ASFWMaintenanceLifecycleEvaluator {
         )
         let expected = inputs.expectedCDHash?.isEmpty == false ? inputs.expectedCDHash : nil
         let cdHashMismatch = expected != nil && summary.activeCDHash != nil && summary.activeCDHash != expected
+        let coreAudioProbeUnavailable = inputs.expectedCoreAudioDeviceName != nil
+            && ASFWMaintenanceParser.probeOutputUnavailable(inputs.coreAudioOutput)
 
         func status(_ health: MaintenanceHealthState,
                     _ action: MaintenanceRecommendedAction,
@@ -156,6 +190,7 @@ struct ASFWMaintenanceLifecycleEvaluator {
                 driverServiceLoaded: summary.driverServiceLoaded,
                 staleTerminatingDriver: summary.staleTerminatingDriver,
                 coreAudioDeviceVisible: summary.coreAudioDeviceVisible,
+                coreAudioProbeUnavailable: coreAudioProbeUnavailable,
                 audioNubVisible: audioNubVisible,
                 userClientConnected: inputs.userClientConnected,
                 stagedDriverPresent: inputs.stagedDriverPresent,
@@ -190,21 +225,35 @@ struct ASFWMaintenanceLifecycleEvaluator {
             return status(.repairNeeded,
                           .reconnectDevice,
                           "ASFW system extension is installed, but the driver service is not loaded.",
-                          "Reconnect or power-cycle the FireWire adapter once, then reboot if this stays unchanged. Repair cannot compare a CDHash when no ASFWDriver service is loaded.")
+                          "Wait for the bus to settle, then reconnect the FireWire adapter once and recheck. If this stays unchanged, capture diagnostics or reboot; Repair cannot compare a missing ASFWDriver service.")
         }
 
         if cdHashMismatch {
             return status(.repairNeeded,
                           helperAction(for: inputs.helperStatus, fallback: .repairOnce),
-                          "Active driver does not match the staged driver.",
-                          "Use one Repair Driver attempt. If the mismatch remains, reboot before another install.")
+                          "Driver update may not have settled yet.",
+                          "Recheck once. If ASFW still asks after that, use one Repair Driver attempt before rebooting.")
         }
 
         if !audioNubVisible && !summary.coreAudioDeviceVisible {
             return status(.repairNeeded,
                           .reconnectDevice,
                           "Driver is active, but no ASFW audio device is attached.",
-                          "Reconnect or power-cycle the FireWire device once, then recheck status.")
+                          "Wait for the bus to settle, then reconnect the FireWire device once and recheck status.")
+        }
+
+        if inputs.expectedCoreAudioDeviceName != nil && !audioNubVisible {
+            return status(.repairNeeded,
+                          .reconnectDevice,
+                          "CoreAudio still lists Alesis, but ASFW's audio device is not attached.",
+                          "This can be stale CoreAudio state. Wait for the bus to settle, reconnect the FireWire device once, then recheck or capture diagnostics.")
+        }
+
+        if audioNubVisible && coreAudioProbeUnavailable {
+            return status(.clean,
+                          .none,
+                          "ASFW audio is attached; CoreAudio check is delayed.",
+                          "The active driver matches the app and ASFW's audio device is attached. CoreAudio device enumeration did not return a live confirmation during this check, so use Audio MIDI Setup or Logic for final confirmation.")
         }
 
         if audioNubVisible && !summary.coreAudioDeviceVisible {
@@ -223,7 +272,7 @@ struct ASFWMaintenanceLifecycleEvaluator {
 
         return status(.clean,
                       .none,
-                      inputs.expectedCoreAudioDeviceName == nil ? "ASFW driver is active." : "ASFW audio path looks healthy.",
+                      inputs.expectedCoreAudioDeviceName == nil ? "ASFW driver is working." : "ASFW audio is working.",
                       inputs.expectedCoreAudioDeviceName == nil ? "The active driver matches the staged driver. This tester build does not require CoreAudio publication before collecting device logs." : "The active driver, ASFW audio nub, and CoreAudio Alesis device are all visible.")
     }
 
@@ -246,6 +295,13 @@ extension ASFWMaintenanceParser {
     static func hasAudioNub(driverIoregOutput: String, audioNubIoregOutput: String) -> Bool {
         driverIoregOutput.contains("ASFWAudioNub") || audioNubIoregOutput.contains("ASFWAudioNub")
     }
+
+    static let probeTimeoutMarker = "__ASFW_PROBE_TIMED_OUT__"
+
+    static func probeOutputUnavailable(_ output: String) -> Bool {
+        output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || output.contains(probeTimeoutMarker)
+    }
 }
 
 struct MaintenanceLocalProbe {
@@ -260,6 +316,8 @@ struct MaintenanceLocalProbe {
             .path
         let stagedDriverPresent = FileManager.default.fileExists(atPath: stagedDextPath)
 
+        let expectedCoreAudioDeviceName = MaintenanceCoreAudioExpectation.currentDeviceName
+
         return MaintenanceLifecycleInputs(
             isRunningFromApplications: isRunningFromApplications,
             helperStatus: helperStatus,
@@ -267,12 +325,37 @@ struct MaintenanceLocalProbe {
             systemExtensions: run("/usr/bin/systemextensionsctl", ["list"], timeout: 10),
             driverIoreg: run("/usr/sbin/ioreg", ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWDriver"], timeout: 10),
             audioNubIoreg: run("/usr/sbin/ioreg", ["-p", "IOService", "-l", "-w0", "-r", "-c", "ASFWAudioNub"], timeout: 10),
-            coreAudioOutput: run("/usr/sbin/system_profiler", ["SPAudioDataType"], timeout: 20),
+            coreAudioOutput: coreAudioDeviceSnapshot(expectedDeviceName: expectedCoreAudioDeviceName),
             expectedCDHash: expectedCDHash,
-            expectedCoreAudioDeviceName: MaintenanceCoreAudioExpectation.currentDeviceName,
+            expectedCoreAudioDeviceName: expectedCoreAudioDeviceName,
             stagedDriverPresent: stagedDriverPresent,
             driverBundleID: driverBundleID
         )
+    }
+
+    private static func coreAudioDeviceSnapshot(expectedDeviceName: String?) -> String {
+        guard let expectedDeviceName,
+              !expectedDeviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ""
+        }
+
+        let devices = AudioSystem.shared.devices
+        let lines = devices.map { device in
+            [
+                "Device: \(device.name)",
+                "UID: \(device.uid)",
+                "Input channels: \(device.inputChannelCount)",
+                "Output channels: \(device.outputChannelCount)",
+                "Sample rate: \(Int(device.sampleRate))",
+                "Transport: \(device.transportType.name)"
+            ].joined(separator: "\n")
+        }
+
+        if lines.isEmpty {
+            return "\(ASFWMaintenanceParser.probeTimeoutMarker): CoreAudio returned no devices for \(expectedDeviceName)"
+        }
+
+        return lines.joined(separator: "\n\n")
     }
 
     private static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval) -> String {
@@ -295,6 +378,9 @@ struct MaintenanceLocalProbe {
         if finished.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
             _ = finished.wait(timeout: .now() + 1)
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return "\(output)\n\(ASFWMaintenanceParser.probeTimeoutMarker): \(executable)"
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()

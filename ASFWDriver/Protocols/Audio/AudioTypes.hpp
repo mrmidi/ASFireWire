@@ -20,6 +20,10 @@ struct AudioStreamRuntimeCaps {
     uint32_t deviceToHostAm824Slots{0}; // DICE TX stream slots (capture wire format)
     uint32_t hostToDeviceAm824Slots{0}; // DICE RX stream slots (playback wire format)
 
+    // Active DICE stream counts. Values of zero mean unknown for older/fallback callers.
+    uint32_t deviceToHostActiveStreams{0}; // DICE TX streams (capture)
+    uint32_t hostToDeviceActiveStreams{0}; // DICE RX streams (playback)
+
     uint32_t sampleRateHz{0};
 
     // Active DICE isochronous channels when discovered from stream entries.

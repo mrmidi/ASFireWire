@@ -57,6 +57,21 @@ final class RomExplorerViewModel: ObservableObject {
         selectedNode != nil && connector != nil
     }
 
+    var isDebugUserClientConnected: Bool {
+        connector?.isConnected ?? false
+    }
+
+    var userClientUnavailableTitle: String {
+        topologyViewModel?.userClientUnavailableTitle ?? ASFWDriverConnector.evaluateUserClientAccessState().title
+    }
+
+    var userClientUnavailableMessage: String {
+        if let topologyViewModel {
+            return topologyViewModel.userClientUnavailableMessage
+        }
+        return ASFWDriverConnector.evaluateUserClientAccessState().message
+    }
+
     init(connector: ASFWDriverConnector? = nil, topologyViewModel: TopologyViewModel? = nil) {
         self.connector = connector
         self.topologyViewModel = topologyViewModel
@@ -142,7 +157,7 @@ final class RomExplorerViewModel: ObservableObject {
 
     func loadROMFromNode(_ node: TopologyNode) {
         guard let connector = connector else {
-            error = "Debug user-client not connected"
+            error = userClientUnavailableTitle
             return
         }
         guard let gen = topologyGeneration else {
@@ -190,7 +205,7 @@ final class RomExplorerViewModel: ObservableObject {
 
     func triggerROMRead(nodeId: UInt8) {
         guard let connector = connector else {
-            error = "Debug user-client not connected"
+            error = userClientUnavailableTitle
             return
         }
 

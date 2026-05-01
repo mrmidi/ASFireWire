@@ -118,6 +118,23 @@ struct MaintenanceStateTests {
         #expect(!status.userClientConnected)
     }
 
+    @Test func timedOutCoreAudioProbeDoesNotTriggerRepairWhenAudioNubExists() {
+        let status = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "abc123""#,
+            audioNubIoreg: "ASFWAudioNub",
+            coreAudioOutput: ASFWMaintenanceParser.probeTimeoutMarker,
+            expectedCDHash: "abc123",
+            helperStatus: .enabled
+        ))
+
+        #expect(status.health == .clean)
+        #expect(status.recommendedAction == .none)
+        #expect(status.coreAudioProbeUnavailable)
+        #expect(!status.coreAudioDeviceVisible)
+        #expect(status.isCleanForAudio)
+    }
+
     @Test func driverOnlyTesterHealthDoesNotRequireAlesisCoreAudio() {
         let status = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
             systemExtensions: activeSystemExtension,
@@ -131,7 +148,7 @@ struct MaintenanceStateTests {
         #expect(status.health == .clean)
         #expect(status.recommendedAction == .none)
         #expect(status.coreAudioDeviceVisible)
-        #expect(status.summary == "ASFW driver is active.")
+        #expect(status.summary == "ASFW driver is working.")
     }
 
     @Test func lifecycleMapsInstalledButNotLoadedDriverToReconnectNotRepair() {
@@ -166,6 +183,22 @@ struct MaintenanceStateTests {
         #expect(status.recommendedAction == .repairOnce)
         #expect(status.audioNubVisible)
         #expect(!status.coreAudioDeviceVisible)
+    }
+
+    @Test func lifecycleDoesNotTreatStaleCoreAudioAsHealthyWhenAudioNubMissing() {
+        let status = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "abc123""#,
+            audioNubIoreg: "",
+            coreAudioOutput: "Alesis MultiMix Firewire",
+            expectedCDHash: "abc123",
+            helperStatus: .enabled
+        ))
+
+        #expect(status.health == .repairNeeded)
+        #expect(status.recommendedAction == .reconnectDevice)
+        #expect(!status.audioNubVisible)
+        #expect(status.coreAudioDeviceVisible)
     }
 
     @Test func lifecycleMapsStaleUninstallToReboot() {
@@ -270,7 +303,19 @@ struct MaintenanceStateTests {
         let helper = FakeMaintenanceHelper(status: .enabled)
         helper.stagedHash = "expected-hash"
         helper.refreshOutcome = .succeeded(message: "clean", snapshotPath: "/Users/Shared/ASFW/Diagnostics/clean")
-        let viewModel = DriverViewModel(maintenanceHelper: helper)
+        let repairStatus = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "expected-hash" ASFWAudioNub"#,
+            audioNubIoreg: "ASFWAudioNub",
+            coreAudioOutput: "Mac Studio Speakers",
+            expectedCDHash: "expected-hash",
+            helperStatus: .enabled
+        ))
+        let sequence = LifecycleProbeSequence([.init(status: repairStatus, delay: 0)])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.01)
+        viewModel.lifecycleStatus = repairStatus
         var disconnected = false
         var reconnected = false
         viewModel.setMaintenanceConnectionHandlers {
@@ -280,10 +325,11 @@ struct MaintenanceStateTests {
         }
 
         viewModel.repairDriver()
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 80_000_000)
 
         #expect(disconnected)
         #expect(reconnected)
+        #expect(helper.refreshCallCount == 1)
         #expect(helper.lastExpectedCDHash == "expected-hash")
         #expect(viewModel.activationStatus == "Repair completed: clean")
         #expect(viewModel.lastMaintenanceSnapshotPath == "/Users/Shared/ASFW/Diagnostics/clean")
@@ -293,15 +339,44 @@ struct MaintenanceStateTests {
     @Test @MainActor func repairFailureReportsRebootRequired() async {
         let helper = FakeMaintenanceHelper(status: .enabled)
         helper.refreshOutcome = .rebootRequired(message: "stale uninstall", snapshotPath: "/Users/Shared/ASFW/Diagnostics/stale")
-        let viewModel = DriverViewModel(maintenanceHelper: helper)
+        let repairStatus = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "abc123" ASFWAudioNub"#,
+            audioNubIoreg: "ASFWAudioNub",
+            coreAudioOutput: "Mac Studio Speakers",
+            expectedCDHash: "abc123",
+            helperStatus: .enabled
+        ))
+        let sequence = LifecycleProbeSequence([.init(status: repairStatus, delay: 0)])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.01)
+        viewModel.lifecycleStatus = repairStatus
 
         viewModel.repairDriver()
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 80_000_000)
 
         #expect(viewModel.activationStatus == "Reboot required: stale uninstall")
         #expect(viewModel.maintenanceStatus == "stale uninstall")
         #expect(viewModel.lastMaintenanceSnapshotPath == "/Users/Shared/ASFW/Diagnostics/stale")
         #expect(!viewModel.isBusy)
+    }
+
+    @Test @MainActor func repairIsDisabledForReconnectOnlyState() {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        let viewModel = DriverViewModel(maintenanceHelper: helper)
+        viewModel.lifecycleStatus = ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: "",
+            audioNubIoreg: "",
+            coreAudioOutput: "Built-in Output",
+            expectedCDHash: "abc123",
+            helperStatus: .enabled,
+            expectedCoreAudioDeviceName: nil
+        ))
+
+        #expect(viewModel.lifecycleStatus.recommendedAction == .reconnectDevice)
+        #expect(!viewModel.canRepairDriver)
     }
 
     @Test @MainActor func diagnosticsCaptureUsesHelperSnapshotPath() async {
@@ -329,6 +404,104 @@ struct MaintenanceStateTests {
         #expect(viewModel.activationStatus == "snapshot captured")
         #expect(viewModel.lastMaintenanceSnapshotPath == "/Users/Shared/ASFW/Diagnostics/recommended")
         #expect(!viewModel.isBusy)
+    }
+
+    @Test @MainActor func staleOlderLifecycleProbeCannotOverwriteCleanResult() async {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        let sequence = LifecycleProbeSequence([
+            .init(status: mismatchStatus(), delay: 0.12),
+            .init(status: cleanStatus(), delay: 0)
+        ])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.01)
+
+        viewModel.refreshLifecycleStatus()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        viewModel.refreshLifecycleStatus()
+        try? await Task.sleep(nanoseconds: 180_000_000)
+
+        #expect(viewModel.lifecycleStatus.health == .clean)
+        #expect(viewModel.lifecycleStatus.summary == "ASFW audio is working.")
+        #expect(!viewModel.canRepairDriver)
+        #expect(sequence.callCount == 2)
+    }
+
+    @Test @MainActor func firstDriverMismatchConfirmsBeforeEnablingRepair() async {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        let sequence = LifecycleProbeSequence([
+            .init(status: mismatchStatus(), delay: 0),
+            .init(status: cleanStatus(), delay: 0)
+        ])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.2)
+        viewModel.lifecycleStatus = cleanStatus()
+
+        viewModel.refreshLifecycleStatus()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        #expect(viewModel.lifecycleStatus.health == .clean)
+        #expect(viewModel.isConfirmingDriverMismatch)
+        #expect(!viewModel.canRepairDriver)
+    }
+
+    @Test @MainActor func confirmedDriverMismatchEnablesRepair() async {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        helper.stagedHash = "newhash"
+        let sequence = LifecycleProbeSequence([
+            .init(status: mismatchStatus(), delay: 0),
+            .init(status: mismatchStatus(), delay: 0)
+        ])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.01)
+
+        viewModel.refreshLifecycleStatus()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(viewModel.lifecycleStatus.health == .repairNeeded)
+        #expect(viewModel.lifecycleStatus.summary == "Driver update may not have settled yet.")
+        #expect(viewModel.canRepairDriver)
+    }
+
+    @Test @MainActor func repairRechecksAndCancelsWhenStateBecameHealthy() async {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        helper.stagedHash = "abc123"
+        let sequence = LifecycleProbeSequence([
+            .init(status: cleanStatus(), delay: 0)
+        ])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.01)
+        viewModel.lifecycleStatus = coreAudioMissingRepairStatus()
+
+        viewModel.repairDriver()
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(viewModel.lifecycleStatus.health == .clean)
+        #expect(viewModel.activationStatus == "Audio path is already healthy.")
+        #expect(helper.refreshCallCount == 0)
+        #expect(!viewModel.isBusy)
+    }
+
+    @Test @MainActor func recoveredHelperErrorDoesNotRemainTopLevelFailure() async {
+        let helper = FakeMaintenanceHelper(status: .enabled)
+        helper.stagedHash = "abc123"
+        let sequence = LifecycleProbeSequence([
+            .init(status: cleanStatus(), delay: 0)
+        ])
+        let viewModel = DriverViewModel(maintenanceHelper: helper,
+                                        lifecycleProbe: sequence.probe,
+                                        mismatchConfirmationDelay: 0.01)
+        viewModel.activationStatus = "Error: Couldn't communicate with a helper application."
+
+        viewModel.refreshLifecycleStatus()
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        #expect(viewModel.lifecycleStatus.health == .clean)
+        #expect(viewModel.activationStatus == "Driver is active.")
+        #expect(viewModel.maintenanceStatus.contains("Helper-only maintenance actions"))
     }
 
     private var activeSystemExtension: String {
@@ -361,6 +534,39 @@ struct MaintenanceStateTests {
             driverBundleID: driverID
         )
     }
+
+    private func cleanStatus() -> MaintenanceLifecycleStatus {
+        ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "abc123" ASFWAudioNub"#,
+            audioNubIoreg: "ASFWAudioNub",
+            coreAudioOutput: "Alesis MultiMix Firewire",
+            expectedCDHash: "abc123",
+            helperStatus: .enabled
+        ))
+    }
+
+    private func mismatchStatus() -> MaintenanceLifecycleStatus {
+        ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "oldhash" ASFWAudioNub"#,
+            audioNubIoreg: "ASFWAudioNub",
+            coreAudioOutput: "Alesis MultiMix Firewire",
+            expectedCDHash: "newhash",
+            helperStatus: .enabled
+        ))
+    }
+
+    private func coreAudioMissingRepairStatus() -> MaintenanceLifecycleStatus {
+        ASFWMaintenanceLifecycleEvaluator.evaluate(inputs(
+            systemExtensions: activeSystemExtension,
+            driverIoreg: #""IOUserServerCDHash" = "abc123" ASFWAudioNub"#,
+            audioNubIoreg: "ASFWAudioNub",
+            coreAudioOutput: "Mac Studio Speakers",
+            expectedCDHash: "abc123",
+            helperStatus: .enabled
+        ))
+    }
 }
 
 private final class FakeMaintenanceHelper: MaintenanceHelperManaging {
@@ -373,6 +579,7 @@ private final class FakeMaintenanceHelper: MaintenanceHelperManaging {
     var snapshotOutcome: MaintenanceOperationOutcome = .succeeded(message: "snapshot", snapshotPath: nil)
     var lastExpectedCDHash: String?
     var lastDriverBundleID: String?
+    var refreshCallCount = 0
 
     init(status: MaintenanceHelperApprovalState) {
         self.helperStatus = status
@@ -401,6 +608,7 @@ private final class FakeMaintenanceHelper: MaintenanceHelperManaging {
     func refreshDriver(expectedCDHash: String?,
                        driverBundleID: String,
                        completion: @escaping (MaintenanceOperationOutcome) -> Void) {
+        refreshCallCount += 1
         lastExpectedCDHash = expectedCDHash
         lastDriverBundleID = driverBundleID
         completion(refreshOutcome)
@@ -410,5 +618,38 @@ private final class FakeMaintenanceHelper: MaintenanceHelperManaging {
                                completion: @escaping (MaintenanceOperationOutcome) -> Void) {
         lastDriverBundleID = driverBundleID
         completion(cleanupOutcome)
+    }
+}
+
+private final class LifecycleProbeSequence {
+    struct Step {
+        var status: MaintenanceLifecycleStatus
+        var delay: TimeInterval
+    }
+
+    private let lock = NSLock()
+    private var steps: [Step]
+    private(set) var callCount = 0
+
+    init(_ steps: [Step]) {
+        self.steps = steps
+    }
+
+    func probe(_ isRunningFromApplications: Bool,
+               _ helperStatus: MaintenanceHelperApprovalState,
+               _ userClientConnected: Bool,
+               _ driverBundleID: String,
+               _ expectedCDHash: String?) -> MaintenanceLifecycleStatus {
+        lock.lock()
+        callCount += 1
+        let step = steps.isEmpty
+            ? Step(status: MaintenanceLifecycleStatus.unknown, delay: 0)
+            : steps.removeFirst()
+        lock.unlock()
+
+        if step.delay > 0 {
+            Thread.sleep(forTimeInterval: step.delay)
+        }
+        return step.status
     }
 }

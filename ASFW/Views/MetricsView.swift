@@ -15,16 +15,43 @@ import Combine
 class MetricsViewModel: ObservableObject {
     @Published var metrics: IsochRxMetrics?
     @Published var isReceiving = false
+    @Published var isConnected = false
+    @Published var userClientAccessState: DriverUserClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+    @Published var userClientLastError: String?
     @Published var packetsPerSecond: Double = 0
     @Published var history: [Double] = []  // Last 30 seconds of pkts/sec
     
     private var connector: ASFWDriverConnector
     private var timer: Timer?
+    private var cancellables = Set<AnyCancellable>()
     private var lastPacketCount: UInt64 = 0
     private var lastTimestamp = Date()
     
     init(connector: ASFWDriverConnector) {
         self.connector = connector
+        self.isConnected = connector.isConnected
+        connector.$isConnected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] connected in
+                self?.isConnected = connected
+                self?.userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+            }
+            .store(in: &cancellables)
+        connector.$lastError
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] error in
+                self?.userClientLastError = error
+            }
+            .store(in: &cancellables)
+    }
+
+    var userClientUnavailableTitle: String {
+        userClientAccessState.title
+    }
+
+    var userClientUnavailableMessage: String {
+        ASFWDriverConnector.userClientUnavailableMessage(accessState: userClientAccessState,
+                                                         lastError: userClientLastError)
     }
     
     func startPolling() {
@@ -41,6 +68,7 @@ class MetricsViewModel: ObservableObject {
     }
     
     func fetchMetrics() {
+        guard connector.isConnected else { return }
         guard let m = connector.getIsochRxMetrics() else { return }
         
         // Calculate packets per second
@@ -63,18 +91,21 @@ class MetricsViewModel: ObservableObject {
     }
     
     func startReceive(channel: UInt8 = 0) {
+        guard connector.isConnected else { return }
         if connector.startIsochReceive(channel: channel) {
             isReceiving = true
         }
     }
     
     func stopReceive() {
+        guard connector.isConnected else { return }
         if connector.stopIsochReceive() {
             isReceiving = false
         }
     }
     
     func resetMetrics() -> Bool {
+        guard connector.isConnected else { return false }
         let success = connector.resetIsochRxMetrics()
         if success {
             fetchMetrics()
@@ -123,6 +154,7 @@ struct MetricsView: View {
                     .foregroundColor(.white)
                     .cornerRadius(8)
                 }
+                .disabled(!viewModel.isConnected)
                 
                 // Reset Stats Button
                 Button(action: {
@@ -136,8 +168,18 @@ struct MetricsView: View {
                 .foregroundColor(.white)
                 .cornerRadius(8)
                 .help("Reset Metrics")
+                .disabled(!viewModel.isConnected)
             }
             .padding(.horizontal)
+
+            if !viewModel.isConnected {
+                DebugUserClientUnavailableView(
+                    title: viewModel.userClientUnavailableTitle,
+                    message: viewModel.userClientUnavailableMessage
+                )
+                .frame(minHeight: 220)
+                .padding(.horizontal)
+            }
             
             // Stats Cards Row
             HStack(spacing: 16) {

@@ -2,7 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE_APP="${1:-"$ROOT_DIR/build/DerivedDataLocalSignedInstallOnly/Build/Products/Debug/ASFW.app"}"
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 /path/to/ASFW.app" >&2
+  echo "Refusing to stage from a stale DerivedData default. Use tools/local/build_v16_safe_local.sh --stage-app or pass an explicit app path." >&2
+  exit 2
+fi
+
+SOURCE_APP="$1"
 DEST_APP="${ASFW_LOCAL_APP_DEST:-/Applications/ASFWLocal.app}"
 APP_ENTITLEMENTS="${ASFW_LOCAL_APP_ENTITLEMENTS:-"$ROOT_DIR/build/DerivedDataLocalSignedInstallOnly/Build/Intermediates.noindex/ASFW.build/Debug/ASFW.build/ASFW.app.xcent"}"
 

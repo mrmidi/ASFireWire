@@ -60,6 +60,12 @@ public:
 
     using VoidCallback = std::function<void(IOReturn)>;
 
+    /// Optional read-only runtime capability refresh.
+    /// Generic DICE uses this to load stream geometry without programming streaming state.
+    virtual void RefreshRuntimeAudioStreamCaps(VoidCallback callback) {
+        callback(kIOReturnUnsupported);
+    }
+
     /// Optional bring-up hook to prepare device-side duplex state at 48kHz.
     /// Drivers can call this before any IRM reservation or host IR/IT startup.
     /// Implementations should be idempotent.

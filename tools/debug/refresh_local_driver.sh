@@ -51,11 +51,23 @@ done
 
 active_cdhash() {
   ioreg -p IOService -l -w0 -r -c ASFWDriver 2>/dev/null |
-    awk -F'"' '/IOUserServerCDHash/ {print $4; exit}'
+    awk -F'"' -v id="$DRIVER_ID" '
+      /CFBundleIdentifier|IOUserServerName|IOPersonalityPublisher/ && index($0, id) { matched = 1 }
+      matched && /IOUserServerCDHash/ { print $4; found = 1; exit }
+      END { if (!found) exit 1 }
+    ' || ioreg -p IOService -l -w0 -r -c ASFWDriver 2>/dev/null |
+      awk -F'"' '/IOUserServerCDHash/ {print $4; exit}'
 }
 
 driver_pids() {
-  pgrep -f "/Library/SystemExtensions/.*/${DRIVER_ID}\\.dext/" 2>/dev/null || true
+  local pid args
+  pgrep -f '/Library/SystemExtensions/' 2>/dev/null | while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    if [[ "$args" == *"/Library/SystemExtensions/"* && "$args" == *"/${DRIVER_ID}.dext/"* ]]; then
+      echo "$pid"
+    fi
+  done
 }
 
 snapshot() {

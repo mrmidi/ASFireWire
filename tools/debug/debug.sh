@@ -17,11 +17,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mode="manual"
 kill_all=false
+force_kill=false
+DRIVER_ID="${ASFW_DRIVER_ID:-com.chrisizatt.ASFWLocal.ASFWDriver}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --killall|-k)
       kill_all=true
+      shift
+      ;;
+    --force)
+      force_kill=true
       shift
       ;;
     packet|buffer|dequeue|ue|irq|it|manual)
@@ -35,8 +41,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+driver_pids() {
+  local pid args
+  pgrep -f '/Library/SystemExtensions/' 2>/dev/null | while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    if [[ "$args" == *"/Library/SystemExtensions/"* && "$args" == *"/${DRIVER_ID}.dext/"* ]]; then
+      echo "$pid"
+    fi
+  done
+}
+
 if [[ "$kill_all" == true ]]; then
-  pids_to_kill="$(pgrep -f 'net\.mrmidi\.ASFW\.ASFWDriver' || true)"
+  pids_to_kill="$(driver_pids || true)"
   if [[ -z "$pids_to_kill" ]]; then
     echo "✅ No ASFWDriver processes found to kill."
     exit 0
@@ -44,8 +61,11 @@ if [[ "$kill_all" == true ]]; then
 
   echo "🧹 Killing ASFWDriver processes: $pids_to_kill"
   for pid in $pids_to_kill; do
-    # Force kill to ensure hung DriverKit processes are removed
-    sudo kill -9 "$pid" || true
+    if [[ "$force_kill" == true ]]; then
+      sudo kill -9 "$pid" || true
+    else
+      sudo kill -TERM "$pid" || true
+    fi
   done
 
   # After cleanup, exit without starting LLDB
@@ -66,7 +86,7 @@ trap _on_exit SIGINT
 
 echo "⏳ Waiting for ASFWDriver process (press Ctrl+C to quit)..."
 while [[ -z "$DRIVER_PID" ]]; do
-  DRIVER_PID="$(pgrep -n 'net\.mrmidi\.ASFW\.ASFWDriver' || true)"
+  DRIVER_PID="$(driver_pids | tail -1 || true)"
   [[ -z "$DRIVER_PID" ]] && sleep 1
 done
 

@@ -35,9 +35,9 @@ struct OverviewView: View {
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 
-                // Status Card
+                // Last action card
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Driver Status", systemImage: "circle.hexagonpath")
+                    Label("Last Driver Action", systemImage: "clock.badge.checkmark")
                         .font(.headline)
                     
                     HStack {
@@ -49,6 +49,10 @@ struct OverviewView: View {
                     }
                     .padding()
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+                    if let progress = viewModel.driverOperationProgress {
+                        driverOperationProgressView(progress)
+                    }
                 }
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -73,13 +77,15 @@ struct OverviewView: View {
                                 .textSelection(.enabled)
 
                             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                                lifecycleRow("Status", lifecyclePlainStatus)
                                 lifecycleRow("Driver", yesNo(viewModel.lifecycleStatus.activeDriver))
                                 lifecycleRow("Driver Service", viewModel.lifecycleStatus.driverServiceLoaded ? "Loaded" : "Not loaded")
                                 lifecycleRow("ASFW Audio Nub", yesNo(viewModel.lifecycleStatus.audioNubVisible))
                                 lifecycleRow(coreAudioLifecycleLabel, coreAudioLifecycleValue)
-                                lifecycleRow("Debug User-Client", viewModel.userClientConnected ? "Connected" : "Unavailable")
+                                lifecycleRow("Debug Tools", viewModel.userClientConnected ? "Connected" : "Not connected")
                                 lifecycleRow("Action", viewModel.lifecycleStatus.recommendedAction.displayName)
-                                lifecycleRow("CDHash", shortHash(viewModel.lifecycleStatus.activeCDHash))
+                                lifecycleRow("Installed driver matches app", installedDriverMatchesAppText)
+                                lifecycleRow("Checked", lifecycleCheckedText)
                             }
                             .padding(.top, 4)
                         }
@@ -87,14 +93,17 @@ struct OverviewView: View {
                         Spacer(minLength: 16)
 
                         VStack(alignment: .trailing, spacing: 8) {
-                            Button {
-                                viewModel.performRecommendedAction()
-                            } label: {
-                                Label(viewModel.lifecycleStatus.recommendedAction.buttonTitle,
-                                      systemImage: recommendedActionIcon)
+                            if viewModel.isLifecycleRefreshing {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text(viewModel.isConfirmingDriverMismatch ? "Confirming driver state..." : "Checking driver state...")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(!viewModel.canPerformRecommendedAction)
+
+                            recommendedActionControl
 
                             HStack(spacing: 8) {
                                 Button {
@@ -103,7 +112,7 @@ struct OverviewView: View {
                                     Label("Recheck", systemImage: "arrow.clockwise")
                                 }
                                 .buttonStyle(.bordered)
-                                .disabled(viewModel.isBusy)
+                                .disabled(viewModel.isBusy || viewModel.isLifecycleRefreshing)
 
                                 Button {
                                     viewModel.copyLifecycleSummary()
@@ -134,6 +143,9 @@ struct OverviewView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(viewModel.isRunningFromApplications ? "Ready to request activation" : "Launch ASFW from /Applications before installing")
                                 .font(.subheadline.weight(.semibold))
+                            Text(driverInstallPurposeText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             Text(viewModel.appBundlePath)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
@@ -151,7 +163,7 @@ struct OverviewView: View {
                                 Label("Install / Update Driver", systemImage: "arrow.down.circle.fill")
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(viewModel.isBusy || !viewModel.isRunningFromApplications)
+                            .disabled(!viewModel.canInstallOrUpdateDriver)
 
                             Button {
                                 viewModel.repairDriver()
@@ -159,7 +171,7 @@ struct OverviewView: View {
                                 Label("Repair Driver", systemImage: "wrench.and.screwdriver.fill")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy || !viewModel.canRepairDriver)
+                            .disabled(viewModel.isBusy || viewModel.isLifecycleRefreshing || !viewModel.canRepairDriver)
 
                             Button(role: .destructive) {
                                 showUninstallConfirmation = true
@@ -167,7 +179,7 @@ struct OverviewView: View {
                                 Label("Uninstall", systemImage: "trash.fill")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(viewModel.isBusy)
+                            .disabled(!viewModel.canUninstallDriver)
                         }
                     }
                     .padding()
@@ -309,7 +321,7 @@ struct OverviewView: View {
                 }
                 
                 // Help Text
-                Text("You may need to allow the system extension in **System Settings > Privacy & Security** after first activation.")
+                Text("You may need to allow the system extension in **System Settings > Privacy & Security** after first activation. After the driver is installed, ASFW can be closed; audio does not require the app to stay open. Closing the app only disconnects debug tabs.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding()
@@ -335,15 +347,27 @@ struct OverviewView: View {
     
     @ViewBuilder
     private var statusIndicator: some View {
-        let isActive = viewModel.activationStatus.contains("result: 0")
         let isError = viewModel.activationStatus.contains("Error")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("reboot required")
+        let isWarning = viewModel.activationStatus.localizedCaseInsensitiveContains("approval required")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("repair needed")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("reconnect")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("required")
+        let isComplete = viewModel.activationStatus.localizedCaseInsensitiveContains("completed")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("accepted")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("active")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("working")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("copied")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("captured")
+            || viewModel.activationStatus.localizedCaseInsensitiveContains("refreshed")
+        let color: Color = viewModel.isBusy ? .orange : (isError ? .red : (isWarning ? .orange : (isComplete ? .green : .gray)))
         
         Circle()
-            .fill(viewModel.isBusy ? Color.orange : (isError ? Color.red : (isActive ? Color.green : Color.gray)))
+            .fill(color)
             .frame(width: 12, height: 12)
             .overlay(
                 Circle()
-                    .stroke(viewModel.isBusy ? Color.orange : (isError ? Color.red : (isActive ? Color.green : Color.gray)), lineWidth: 2)
+                    .stroke(color, lineWidth: 2)
                     .scaleEffect(viewModel.isBusy ? 1.3 : 1.0)
                     .opacity(viewModel.isBusy ? 0 : 1)
                     .animation(viewModel.isBusy ? .easeInOut(duration: 1.0).repeatForever(autoreverses: true) : .default, value: viewModel.isBusy)
@@ -369,6 +393,9 @@ struct OverviewView: View {
     }
 
     private var lifecycleIcon: String {
+        if viewModel.isLifecycleRefreshing {
+            return "arrow.triangle.2.circlepath"
+        }
         switch viewModel.lifecycleStatus.health {
         case .clean: return "checkmark.circle.fill"
         case .repairNeeded: return "wrench.and.screwdriver.fill"
@@ -379,6 +406,9 @@ struct OverviewView: View {
     }
 
     private var lifecycleColor: Color {
+        if viewModel.isLifecycleRefreshing && viewModel.lifecycleStatus.health != .clean {
+            return .blue
+        }
         switch viewModel.lifecycleStatus.health {
         case .clean: return .green
         case .repairNeeded: return .orange
@@ -401,6 +431,58 @@ struct OverviewView: View {
         }
     }
 
+    @ViewBuilder
+    private var recommendedActionControl: some View {
+        if viewModel.isConfirmingDriverMismatch {
+            Label("Checking", systemImage: "arrow.clockwise")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        } else if viewModel.lifecycleStatus.recommendedAction.isDirectlyActionableInApp {
+            Button {
+                viewModel.performRecommendedAction()
+            } label: {
+                Label(viewModel.lifecycleStatus.recommendedAction.buttonTitle,
+                      systemImage: recommendedActionIcon)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!viewModel.canPerformRecommendedAction)
+        } else if viewModel.lifecycleStatus.recommendedAction != .none {
+            VStack(alignment: .trailing, spacing: 6) {
+                Label(viewModel.lifecycleStatus.recommendedAction.displayName,
+                      systemImage: recommendedActionIcon)
+                    .font(.subheadline.weight(.semibold))
+                Text(manualActionText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 240, alignment: .trailing)
+            }
+        } else {
+            Label(viewModel.lifecycleStatus.health == .clean ? "Working" : "No Action Needed",
+                  systemImage: recommendedActionIcon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.green)
+        }
+    }
+
+    private var manualActionText: String {
+        switch viewModel.lifecycleStatus.recommendedAction {
+        case .reboot:
+            return "Restart the Mac, reopen ASFW from Applications, then Recheck."
+        case .reconnectDevice:
+            return "Wait for the bus to settle, reconnect the FireWire device once, then Recheck."
+        case .none,
+             .moveAppToApplications,
+             .installOrUpdateDriver,
+             .enableHelper,
+             .approveHelper,
+             .repairOnce,
+             .captureDiagnostics,
+             .sendDiagnostics:
+            return ""
+        }
+    }
+
     private var lifecycleTitle: String {
         viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil ? "Driver Lifecycle" : "Audio Lifecycle"
     }
@@ -414,16 +496,65 @@ struct OverviewView: View {
     }
 
     private var coreAudioLifecycleValue: String {
-        viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil
+        if viewModel.lifecycleStatus.coreAudioProbeUnavailable {
+            return "Probe delayed"
+        }
+        return viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil
             ? "Not required"
             : yesNo(viewModel.lifecycleStatus.coreAudioDeviceVisible)
     }
 
+    private var lifecyclePlainStatus: String {
+        if viewModel.isLifecycleRefreshing && viewModel.lifecycleStatus.health != .clean {
+            return "Checking"
+        }
+        switch viewModel.lifecycleStatus.health {
+        case .clean:
+            return "Working"
+        case .uninstalled:
+            return "Not installed"
+        case .repairNeeded:
+            return "Needs attention"
+        case .rebootRequired:
+            return "Reboot required"
+        case .unknown:
+            return "Not checked"
+        }
+    }
+
+    private var installedDriverMatchesAppText: String {
+        if viewModel.isLifecycleRefreshing || viewModel.isConfirmingDriverMismatch {
+            return "Checking"
+        }
+        switch viewModel.lifecycleStatus.installedDriverMatchesApp {
+        case .some(true):
+            return "Yes"
+        case .some(false):
+            return "No"
+        case .none:
+            return "Unknown"
+        }
+    }
+
+    private var lifecycleCheckedText: String {
+        guard let date = viewModel.lastLifecycleCheckDate else {
+            return viewModel.isLifecycleRefreshing ? "Checking" : "Not yet"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let suffix = viewModel.isLifecycleRefreshing ? " (checking)" : ""
+        return "\(formatter.string(from: date))\(suffix)"
+    }
+
+    private var driverInstallPurposeText: String {
+        "Install / Update is for first install or version changes. Repair is only enabled when ASFW asks for it after Recheck."
+    }
+
     private var repairGuidance: String {
         if viewModel.lifecycleStatus.expectedCoreAudioDeviceName == nil {
-            return "Repair only fixes ASFW driver lifecycle problems. If a test device is missing in Audio MIDI Setup, capture diagnostics instead of repeatedly repairing or reinstalling."
+            return "Repair only fixes stale ASFW/CoreAudio lifecycle problems. If a test device is missing in Audio MIDI Setup, capture diagnostics instead of repeatedly repairing or reinstalling."
         }
-        return "Close Logic or other audio apps before Repair or Uninstall. Do one repair attempt before rebooting; do not repeatedly reinstall."
+        return "Close Logic or other audio apps before disruptive actions. Use Repair once only if ASFW asks for it after Recheck. Uninstall removes the driver and is not normal troubleshooting."
     }
 
     private func lifecycleRow(_ label: String, _ value: String) -> some View {
@@ -441,9 +572,45 @@ struct OverviewView: View {
         value ? "Yes" : "No"
     }
 
-    private func shortHash(_ hash: String?) -> String {
-        guard let hash, !hash.isEmpty else { return "Unknown" }
-        if hash.count <= 12 { return hash }
-        return "\(hash.prefix(12))..."
+    private func driverOperationProgressView(_ progress: DriverViewModel.DriverOperationProgress) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                if progress.isComplete {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(progress.phase)
+                        .font(.subheadline.weight(.semibold))
+                    Text(progress.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(progress.stepText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    Text(viewModel.driverOperationElapsedText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ProgressView(value: progress.fraction)
+                .progressViewStyle(.linear)
+                .accessibilityLabel(progress.title)
+                .accessibilityValue("\(Int(progress.fraction * 100)) percent")
+        }
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
+
 }

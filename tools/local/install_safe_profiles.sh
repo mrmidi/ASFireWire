@@ -47,6 +47,17 @@ install_profile() {
   [[ "$app_id" == "$expected_app_id" ]] || die "$label profile app id mismatch: expected '$expected_app_id', got '$app_id'"
 
   /bin/mkdir -p "$DEST_DIR"
+  for existing in "$DEST_DIR"/*.provisionprofile; do
+    [[ -f "$existing" ]] || continue
+    local existing_plist existing_name existing_app_id
+    existing_plist="$tmp/existing-$(/usr/bin/basename "$existing").plist"
+    decode_profile "$existing" "$existing_plist" 2>/dev/null || continue
+    existing_name="$(plist_read "$existing_plist" Name)"
+    existing_app_id="$(plist_read "$existing_plist" Entitlements:com.apple.application-identifier)"
+    if [[ "$existing_name" == "$expected_name" && "$existing_app_id" == "$expected_app_id" ]]; then
+      /bin/rm -f "$existing"
+    fi
+  done
   /bin/cp -f "$profile" "$DEST_DIR/${uuid}.provisionprofile"
 
   echo "$label profile installed:"

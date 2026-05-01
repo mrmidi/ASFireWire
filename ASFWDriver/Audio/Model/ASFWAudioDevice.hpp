@@ -40,9 +40,35 @@ struct DICEPublishedRuntimeInfo {
     uint32_t hostOutputPcmChannels{0};
     uint32_t deviceToHostAm824Slots{0};
     uint32_t hostToDeviceAm824Slots{0};
+    uint32_t deviceToHostActiveStreams{0};
+    uint32_t hostToDeviceActiveStreams{0};
     uint32_t sampleRateHz{0};
     uint32_t deviceToHostIsoChannel{0xFF};
     uint32_t hostToDeviceIsoChannel{0xFF};
+};
+
+struct DICEBackendDiagnostic {
+    uint64_t guid{0};
+    uint32_t vendorId{0};
+    uint32_t modelId{0};
+    std::string deviceName{"DICE Audio"};
+    std::string protocolName{"TCAT DICE"};
+    std::string profileSource{"unknown"};
+    std::string probeState{"unknown"};
+    std::string failReason{"unknown"};
+    std::string capsSource{"unknown"};
+    uint32_t hostInputPcmChannels{0};
+    uint32_t hostOutputPcmChannels{0};
+    uint32_t deviceToHostAm824Slots{0};
+    uint32_t hostToDeviceAm824Slots{0};
+    uint32_t deviceToHostActiveStreams{0};
+    uint32_t hostToDeviceActiveStreams{0};
+    uint32_t sampleRateHz{0};
+    uint32_t deviceToHostIsoChannel{0xFF};
+    uint32_t hostToDeviceIsoChannel{0xFF};
+    uint32_t attempt{0};
+    uint32_t maxAttempts{0};
+    uint32_t status{0};
 };
 
 struct ASFWAudioDevice {
@@ -161,6 +187,10 @@ struct ASFWAudioDevice {
                 OSNumber::withNumber(diceRuntimeInfo.deviceToHostAm824Slots, 32), OSNoRetain);
             auto diceHostToDeviceAm824SlotsNum = OSSharedPtr(
                 OSNumber::withNumber(diceRuntimeInfo.hostToDeviceAm824Slots, 32), OSNoRetain);
+            auto diceDeviceToHostActiveStreamsNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.deviceToHostActiveStreams, 32), OSNoRetain);
+            auto diceHostToDeviceActiveStreamsNum = OSSharedPtr(
+                OSNumber::withNumber(diceRuntimeInfo.hostToDeviceActiveStreams, 32), OSNoRetain);
             auto diceSampleRateHzNum = OSSharedPtr(
                 OSNumber::withNumber(diceRuntimeInfo.sampleRateHz, 32), OSNoRetain);
             auto diceDeviceToHostIsoChannelNum = OSSharedPtr(
@@ -171,6 +201,7 @@ struct ASFWAudioDevice {
             if (!diceProtocolNameStr || !diceCapsSourceStr || !diceRuntimeCapsValidBool ||
                 !diceHostInputPcmChannelsNum || !diceHostOutputPcmChannelsNum ||
                 !diceDeviceToHostAm824SlotsNum || !diceHostToDeviceAm824SlotsNum ||
+                !diceDeviceToHostActiveStreamsNum || !diceHostToDeviceActiveStreamsNum ||
                 !diceSampleRateHzNum || !diceDeviceToHostIsoChannelNum || !diceHostToDeviceIsoChannelNum) {
                 return false;
             }
@@ -182,6 +213,8 @@ struct ASFWAudioDevice {
             properties->setObject("ASFWDICEHostOutputPcmChannels", diceHostOutputPcmChannelsNum.get());
             properties->setObject("ASFWDICEDeviceToHostAm824Slots", diceDeviceToHostAm824SlotsNum.get());
             properties->setObject("ASFWDICEHostToDeviceAm824Slots", diceHostToDeviceAm824SlotsNum.get());
+            properties->setObject("ASFWDICEDeviceToHostActiveStreams", diceDeviceToHostActiveStreamsNum.get());
+            properties->setObject("ASFWDICEHostToDeviceActiveStreams", diceHostToDeviceActiveStreamsNum.get());
             properties->setObject("ASFWDICESampleRateHz", diceSampleRateHzNum.get());
             properties->setObject("ASFWDICEDeviceToHostIsoChannel", diceDeviceToHostIsoChannelNum.get());
             properties->setObject("ASFWDICEHostToDeviceIsoChannel", diceHostToDeviceIsoChannelNum.get());

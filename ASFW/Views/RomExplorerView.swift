@@ -67,18 +67,36 @@ struct ROMExplorerView: View {
             Divider()
 
             if viewModel.availableNodes.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "network")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text("No topology nodes available")
-                        .foregroundStyle(.secondary)
-                    Button("Refresh Topology") {
-                        viewModel.refreshTopology()
+                if viewModel.isDebugUserClientConnected {
+                    VStack(spacing: 10) {
+                        Image(systemName: "network")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("No topology nodes available")
+                            .foregroundStyle(.secondary)
+                        Button("Refresh Topology") {
+                            viewModel.refreshTopology()
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "cable.connector.slash")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text(viewModel.userClientUnavailableTitle)
+                            .font(.headline)
+                            .multilineTextAlignment(.center)
+                        Text(viewModel.userClientUnavailableMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
             } else {
                 List(viewModel.availableNodes, id: \.nodeId, selection: $selectedNodeId) { node in
                     ROMNodeRow(node: node,

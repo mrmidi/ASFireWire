@@ -8,6 +8,11 @@ namespace {
 
 using ASFW::Audio::DeviceIntegrationMode;
 using ASFW::Audio::DeviceProtocolFactory;
+using ASFW::Audio::FireWireProfileSupportStatus;
+using ASFW::Audio::FireWireProtocolFamily;
+using ASFW::Audio::IsKnownFireWireAudioDevice;
+using ASFW::Audio::LookupBestProfile;
+using ASFW::Audio::Normalize24;
 
 constexpr uint64_t MakeFocusriteGuidWithModelField(uint32_t modelField) {
     return (static_cast<uint64_t>(DeviceProtocolFactory::kFocusriteVendorId) << 40U) |
@@ -68,13 +73,18 @@ TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
                   DeviceProtocolFactory::kMidasVendorId,
                   0x000024),
-              DeviceIntegrationMode::kHardcodedNub);
+              DeviceIntegrationMode::kNone);
 }
 
 TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
     EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(0x00ABCDEF, 0x00001234),
               DeviceIntegrationMode::kNone);
     EXPECT_FALSE(DeviceProtocolFactory::IsKnownDevice(0x00ABCDEF, 0x00001234));
+}
+
+TEST(DeviceProtocolFactoryTests, NormalizesTwentyFourBitIds) {
+    EXPECT_EQ(Normalize24(0x0010c73fU), 0x10c73fU);
+    EXPECT_EQ(Normalize24(0xff10c73fU), 0x10c73fU);
 }
 
 TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
@@ -118,7 +128,7 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
         DeviceProtocolFactory::kMidasVendorId,
         DeviceProtocolFactory::kMidasVeniceF32ModelId));
 
-    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+    EXPECT_FALSE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kMidasVendorId,
         0x000024));
 }
@@ -175,7 +185,7 @@ TEST(DeviceProtocolFactoryTests, RecognizesAlesisMultiMixDiceProfile) {
     EXPECT_STREQ(multiMix->modelName, DeviceProtocolFactory::kAlesisMultiMixModelName);
 }
 
-TEST(DeviceProtocolFactoryTests, RecognizesMidasVeniceDiceProfilesWithoutChannelFallbacks) {
+TEST(DeviceProtocolFactoryTests, RecognizesSourcedMidasVeniceF32Only) {
     const auto f32 = DeviceProtocolFactory::LookupKnownIdentity(
         DeviceProtocolFactory::kMidasVendorId, DeviceProtocolFactory::kMidasVeniceF32ModelId);
     ASSERT_TRUE(f32.has_value());
@@ -185,10 +195,60 @@ TEST(DeviceProtocolFactoryTests, RecognizesMidasVeniceDiceProfilesWithoutChannel
 
     const auto unknownVenice = DeviceProtocolFactory::LookupKnownIdentity(
         DeviceProtocolFactory::kMidasVendorId, 0x000024);
-    ASSERT_TRUE(unknownVenice.has_value());
-    EXPECT_EQ(unknownVenice->integrationMode, DeviceIntegrationMode::kHardcodedNub);
-    EXPECT_STREQ(unknownVenice->vendorName, DeviceProtocolFactory::kMidasVendorName);
-    EXPECT_STREQ(unknownVenice->modelName, DeviceProtocolFactory::kMidasVeniceGenericModelName);
+    EXPECT_FALSE(unknownVenice.has_value());
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(DeviceProtocolFactory::kMidasVendorId, 0x000024),
+              DeviceIntegrationMode::kNone);
+}
+
+TEST(DeviceProtocolFactoryTests, ImportsTargetFamiliesAsMetadata) {
+    struct ExpectedMetadata {
+        uint32_t vendor;
+        uint32_t model;
+        uint32_t unitSpec;
+        uint32_t unitVersion;
+        FireWireProtocolFamily family;
+        const char* modelName;
+    };
+
+    constexpr ExpectedMetadata cases[] = {
+        {0x00022eU, 0x000000U, 0x00022eU, 0x800000U, FireWireProtocolFamily::kUnknown, "FW-1884"},
+        {0x0004c4U, 0x000000U, 0x0004c4U, 0x000001U, FireWireProtocolFamily::kDICE, "Zed R16"},
+        {0x000ff2U, 0x010065U, 0x00a02dU, 0x010001U, FireWireProtocolFamily::kUnknown, "Mackie Onyx FireWire"},
+        {0x000d6cU, 0x010081U, 0x00a02dU, 0x010001U, FireWireProtocolFamily::kBeBoB, "NRV10"},
+        {0x000d6cU, 0x000010U, 0x000d6cU, 0x0100c1U, FireWireProtocolFamily::kDICE, "ProFire 2626"},
+        {0x001564U, 0x00fc22U, 0x00a02dU, 0x010001U, FireWireProtocolFamily::kOxford, "FCA202"},
+        {0x001486U, 0x000af2U, 0x00a02dU, 0x010000U, FireWireProtocolFamily::kFireWorks, "AudioFire2"},
+        {0x0040abU, 0x010049U, 0x00a02dU, 0x010001U, FireWireProtocolFamily::kBeBoB, "FA-66"},
+    };
+
+    for (const auto& expected : cases) {
+        const auto* profile = LookupBestProfile(expected.vendor,
+                                                expected.model,
+                                                expected.unitSpec,
+                                                expected.unitVersion);
+        ASSERT_NE(profile, nullptr) << expected.modelName;
+        EXPECT_EQ(profile->supportStatus, FireWireProfileSupportStatus::kMetadataOnly) << expected.modelName;
+        EXPECT_EQ(profile->integrationMode, DeviceIntegrationMode::kNone) << expected.modelName;
+        EXPECT_EQ(profile->protocolFamily, expected.family) << expected.modelName;
+        EXPECT_STREQ(profile->modelName, expected.modelName);
+        EXPECT_TRUE(IsKnownFireWireAudioDevice(expected.vendor,
+                                              expected.model,
+                                              expected.unitSpec,
+                                              expected.unitVersion));
+    }
+}
+
+TEST(DeviceProtocolFactoryTests, MetadataOnlyProfilesDoNotBecomeKnownByWeakVendorModelWhenUnitIsRequired) {
+    EXPECT_FALSE(DeviceProtocolFactory::IsKnownDevice(0x00022eU, 0x000000U));
+
+    const auto tascam = DeviceProtocolFactory::LookupKnownIdentity(0x00022eU,
+                                                                   0x000000U,
+                                                                   0x00022eU,
+                                                                   0x800000U);
+    ASSERT_TRUE(tascam.has_value());
+    EXPECT_EQ(tascam->supportStatus, FireWireProfileSupportStatus::kMetadataOnly);
+    EXPECT_EQ(tascam->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(tascam->modelName, "FW-1884");
 }
 
 } // namespace

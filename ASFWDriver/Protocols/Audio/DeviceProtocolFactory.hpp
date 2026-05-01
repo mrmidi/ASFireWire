@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "FireWireAudioDeviceProfiles.hpp"
 #include "IDeviceProtocol.hpp"
 #include "../Ports/FireWireBusPort.hpp"
 #include <cstdint>
@@ -16,13 +17,6 @@ class IRMClient;
 }
 
 namespace ASFW::Audio {
-
-/// Integration mode for a recognized device profile.
-enum class DeviceIntegrationMode : uint8_t {
-    kNone = 0,
-    kHardcodedNub,  // Legacy path using hardcoded ASFWAudioDevice profile.
-    kAVCDriven,     // AV/C discovery path with vendor extension controls.
-};
 
 /// Factory for creating device-specific protocol handlers
 ///
@@ -42,8 +36,13 @@ public:
     static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
     static constexpr uint32_t kAlesisVendorId = 0x000595;
     static constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
+    // systemd ieee1394 hwdb and FFADO both identify Midas 0x10c73f / 0x000001
+    // as an audio-capable Venice F-series/F32 DICE device. Keep this exact
+    // until Config ROM captures prove other Venice model IDs.
     static constexpr uint32_t kMidasVendorId = 0x10c73f;
     static constexpr uint32_t kMidasVeniceF32ModelId = 0x000001;
+    static constexpr uint32_t kMidasVeniceFUnitSpecifierId = 0x10c73f;
+    static constexpr uint32_t kMidasVeniceFUnitVersion = 0x000001;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
     static constexpr const char* kFocusriteVendorName = "Focusrite";
     static constexpr const char* kSPro40ModelName = "Saffire Pro 40";
@@ -59,71 +58,47 @@ public:
     static constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
     static constexpr const char* kMidasVendorName = "Midas";
     static constexpr const char* kMidasVeniceF32ModelName = "Venice F32";
-    static constexpr const char* kMidasVeniceGenericModelName = "Venice DICE";
 
     struct KnownIdentity {
         uint32_t vendorId{0};
         uint32_t modelId{0};
+        uint32_t unitSpecifierId{0};
+        uint32_t unitVersion{0};
         DeviceIntegrationMode integrationMode{DeviceIntegrationMode::kNone};
+        FireWireProtocolFamily protocolFamily{FireWireProtocolFamily::kUnknown};
+        FireWireProfileSupportStatus supportStatus{FireWireProfileSupportStatus::kMetadataOnly};
+        uint32_t flags{0};
         const char* vendorName{nullptr};
         const char* modelName{nullptr};
+        const char* mixerHint{nullptr};
+        const char* source{nullptr};
     };
 
-    static constexpr KnownIdentity MakeKnownIdentity(uint32_t vendorId,
-                                                     uint32_t modelId,
-                                                     DeviceIntegrationMode integrationMode,
-                                                     const char* vendorName,
-                                                     const char* modelName) noexcept {
-        return KnownIdentity{vendorId, modelId, integrationMode, vendorName, modelName};
+    static constexpr KnownIdentity MakeKnownIdentity(const FireWireAudioDeviceProfile& profile) noexcept {
+        return KnownIdentity{
+            profile.vendorId,
+            profile.modelId,
+            profile.unitSpecifierId,
+            profile.unitVersion,
+            profile.integrationMode,
+            profile.protocolFamily,
+            profile.supportStatus,
+            profile.flags,
+            profile.vendorName,
+            profile.modelName,
+            profile.mixerHint,
+            profile.source
+        };
     }
 
     static constexpr std::optional<KnownIdentity> LookupKnownIdentity(
         uint32_t vendorId,
-        uint32_t modelId
+        uint32_t modelId,
+        uint32_t unitSpecifierId = 0,
+        uint32_t unitVersion = 0
     ) noexcept {
-        if (vendorId == kFocusriteVendorId) {
-            switch (modelId) {
-                case kSPro14ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                             kFocusriteVendorName, kSPro14ModelName);
-                case kSPro24ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                             kFocusriteVendorName, kSPro24ModelName);
-                case kSPro24DspModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                             kFocusriteVendorName, kSPro24DspModelName);
-                case kSPro40ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kSPro40ModelName);
-                case kLiquidS56ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kLiquidS56ModelName);
-                case kSPro26ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kSPro26ModelName);
-                case kSPro40Tcd3070ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kSPro40Tcd3070ModelName);
-                default:
-                    break;
-            }
-        }
-        if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
-            return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kAVCDriven,
-                                     kApogeeVendorName, kApogeeDuetModelName);
-        }
-        if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {
-            return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                     kAlesisVendorName, kAlesisMultiMixModelName);
-        }
-        if (vendorId == kMidasVendorId) {
-            return MakeKnownIdentity(vendorId,
-                                     modelId,
-                                     DeviceIntegrationMode::kHardcodedNub,
-                                     kMidasVendorName,
-                                     modelId == kMidasVeniceF32ModelId
-                                         ? kMidasVeniceF32ModelName
-                                         : kMidasVeniceGenericModelName);
+        if (const auto* profile = LookupBestProfile(vendorId, modelId, unitSpecifierId, unitVersion)) {
+            return MakeKnownIdentity(*profile);
         }
         return std::nullopt;
     }
@@ -154,17 +129,22 @@ public:
     /// Resolve integration mode for a known vendor/model pair.
     static constexpr DeviceIntegrationMode LookupIntegrationMode(
         uint32_t vendorId,
-        uint32_t modelId
+        uint32_t modelId,
+        uint32_t unitSpecifierId = 0,
+        uint32_t unitVersion = 0
     ) noexcept {
-        if (const auto known = LookupKnownIdentity(vendorId, modelId); known.has_value()) {
+        if (const auto known = LookupKnownIdentity(vendorId, modelId, unitSpecifierId, unitVersion); known.has_value()) {
             return known->integrationMode;
         }
         return DeviceIntegrationMode::kNone;
     }
 
     /// Check if a device identity is recognized by the factory.
-    static constexpr bool IsKnownDevice(uint32_t vendorId, uint32_t modelId) noexcept {
-        return LookupKnownIdentity(vendorId, modelId).has_value();
+    static constexpr bool IsKnownDevice(uint32_t vendorId,
+                                        uint32_t modelId,
+                                        uint32_t unitSpecifierId = 0,
+                                        uint32_t unitVersion = 0) noexcept {
+        return LookupKnownIdentity(vendorId, modelId, unitSpecifierId, unitVersion).has_value();
     }
 
     /// Create a protocol handler for the given vendor/model

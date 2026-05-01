@@ -21,6 +21,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 12;
         outCaps.deviceToHostAm824Slots = 9;
         outCaps.hostToDeviceAm824Slots = 13;
+        outCaps.deviceToHostActiveStreams = 1;
+        outCaps.hostToDeviceActiveStreams = 1;
         outCaps.deviceToHostIsoChannel = 1;
         outCaps.hostToDeviceIsoChannel = 0;
         return true;
@@ -33,6 +35,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 8;
         outCaps.deviceToHostAm824Slots = 17;
         outCaps.hostToDeviceAm824Slots = 9;
+        outCaps.deviceToHostActiveStreams = 1;
+        outCaps.hostToDeviceActiveStreams = 1;
         outCaps.deviceToHostIsoChannel = 1;
         outCaps.hostToDeviceIsoChannel = 0;
         return true;
@@ -45,6 +49,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 8;
         outCaps.deviceToHostAm824Slots = 17;
         outCaps.hostToDeviceAm824Slots = 9;
+        outCaps.deviceToHostActiveStreams = 1;
+        outCaps.hostToDeviceActiveStreams = 1;
         outCaps.deviceToHostIsoChannel = 1;
         outCaps.hostToDeviceIsoChannel = 0;
         return true;
@@ -60,6 +66,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 2;
         outCaps.deviceToHostAm824Slots = 12;
         outCaps.hostToDeviceAm824Slots = 2;
+        outCaps.deviceToHostActiveStreams = 1;
+        outCaps.hostToDeviceActiveStreams = 1;
         outCaps.deviceToHostIsoChannel = 1;
         outCaps.hostToDeviceIsoChannel = 0;
         return true;

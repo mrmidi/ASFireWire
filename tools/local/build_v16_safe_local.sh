@@ -5,7 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-Debug}"
 ARCH_NAME="${ARCH_NAME:-arm64}"
 DERIVED_DATA="${DERIVED_DATA:-$ROOT_DIR/build/DerivedDataSafeLocalV16}"
+ASFW_CURRENT_PROJECT_VERSION="${ASFW_CURRENT_PROJECT_VERSION:-28}"
 ASFW_CODE_SIGN_IDENTITY="${ASFW_CODE_SIGN_IDENTITY:-Apple Development: boggspa@hotmail.co.uk (QWB2SUQVJ3)}"
+ASFW_APP_ENTITLEMENTS_PATH="${ASFW_APP_ENTITLEMENTS_PATH:-ASFW/AppInstallOnly.entitlements}"
+ASFW_DRIVER_ENTITLEMENTS_PATH="${ASFW_DRIVER_ENTITLEMENTS_PATH:-ASFWDriver/ASFWDriver.entitlements}"
+ASFW_ALLOW_ANY_USERCLIENT_DRIVER="${ASFW_ALLOW_ANY_USERCLIENT_DRIVER:-NO}"
+ASFW_APP_PROFILE_SPECIFIER="${ASFW_APP_PROFILE_SPECIFIER:-ASFW Chris Mac Studio}"
+ASFW_DRIVER_PROFILE_SPECIFIER="${ASFW_DRIVER_PROFILE_SPECIFIER:-ASFWDriver Chris Mac/iOS}"
 INSTALL_PROFILES=true
 SETTINGS_ONLY=false
 STAGE_APP=false
@@ -15,7 +21,7 @@ usage() {
   cat <<EOF
 Usage: $0 [--settings-only] [--stage-app] [--skip-profile-install] [--no-clean]
 
-Builds ASFW v16 for Chris's Mac Studio using the safe local profiles:
+Builds ASFW for Chris's Mac Studio using the safe local profiles:
   app:    ASFW Chris Mac Studio
   driver: ASFWDriver Chris Mac/iOS
 
@@ -26,6 +32,7 @@ required for this local install/update/repair build.
 Environment overrides:
   CONFIGURATION=Debug|Release
   ARCH_NAME=arm64
+  ASFW_CURRENT_PROJECT_VERSION=28
   DERIVED_DATA=/path/to/DerivedData
 EOF
 }
@@ -51,13 +58,16 @@ COMMON_BUILD_SETTINGS=(
   DEVELOPMENT_TEAM=8CZML8FK2D
   ASFW_APP_BUNDLE_IDENTIFIER=com.chrisizatt.ASFWLocal
   ASFW_DRIVER_BUNDLE_IDENTIFIER=com.chrisizatt.ASFWLocal.ASFWDriver
-  ASFW_APP_ENTITLEMENTS=ASFW/AppInstallOnly.entitlements
+  ASFW_APP_ENTITLEMENTS="$ASFW_APP_ENTITLEMENTS_PATH"
+  ASFW_DRIVER_ENTITLEMENTS="$ASFW_DRIVER_ENTITLEMENTS_PATH"
+  ASFW_ALLOW_ANY_USERCLIENT_DRIVER="$ASFW_ALLOW_ANY_USERCLIENT_DRIVER"
   ASFW_APP_CODE_SIGN_STYLE=Manual
   ASFW_DRIVER_CODE_SIGN_STYLE=Manual
   ASFW_HELPER_CODE_SIGN_STYLE=Manual
-  "ASFW_APP_PROVISIONING_PROFILE_SPECIFIER=ASFW Chris Mac Studio"
-  "ASFW_DRIVER_PROVISIONING_PROFILE_SPECIFIER=ASFWDriver Chris Mac/iOS"
+  "ASFW_APP_PROVISIONING_PROFILE_SPECIFIER=$ASFW_APP_PROFILE_SPECIFIER"
+  "ASFW_DRIVER_PROVISIONING_PROFILE_SPECIFIER=$ASFW_DRIVER_PROFILE_SPECIFIER"
   ASFW_HELPER_PROVISIONING_PROFILE_SPECIFIER=
+  CURRENT_PROJECT_VERSION="$ASFW_CURRENT_PROJECT_VERSION"
   "CODE_SIGN_IDENTITY=$ASFW_CODE_SIGN_IDENTITY"
   RUN_CLANG_STATIC_ANALYZER=NO
 )
@@ -134,11 +144,13 @@ fi
 /usr/bin/codesign --verify --strict --deep --verbose=2 "$APP_PATH"
 
 echo
-echo "Built safe local v16 app:"
+echo "Built safe local app:"
 echo "  app: $APP_PATH"
 echo "  app bundle id: $APP_ID"
+echo "  current project version: $ASFW_CURRENT_PROJECT_VERSION"
 echo "  driver: $DEXT_PATH"
 echo "  helper: $HELPER_PATH"
+echo "  staged driver CDHash: $(/usr/bin/codesign -dv --verbose=4 "$DEXT_PATH" 2>&1 | /usr/bin/sed -n 's/^CDHash=//p' | /usr/bin/head -n 1)"
 echo
 echo "App entitlements:"
 /usr/bin/codesign -d --entitlements :- "$APP_PATH" 2>/dev/null

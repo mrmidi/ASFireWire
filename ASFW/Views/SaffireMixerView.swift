@@ -15,22 +15,31 @@ struct SaffireMixerView: View {
     }
     
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            
-            Toggle(isOn: Binding(
-                get: { viewModel.outputState.muteEnabled },
-                set: { viewModel.setMasterMute($0) }
-            )) {
-                Label("Master Mute", systemImage: "speaker.slash.fill")
-                    .font(.title2)
+        Group {
+            if viewModel.isConnected {
+                VStack(spacing: 24) {
+                    Spacer()
+
+                    Toggle(isOn: Binding(
+                        get: { viewModel.outputState.muteEnabled },
+                        set: { viewModel.setMasterMute($0) }
+                    )) {
+                        Label("Master Mute", systemImage: "speaker.slash.fill")
+                            .font(.title2)
+                    }
+                    .toggleStyle(.button)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.large)
+
+                    Spacer()
+                }
+            } else {
+                DebugUserClientUnavailableView(
+                    title: viewModel.userClientUnavailableTitle,
+                    message: viewModel.userClientUnavailableMessage
+                )
             }
-            .toggleStyle(.button)
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .controlSize(.large)
-            
-            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Saffire")

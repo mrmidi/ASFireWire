@@ -18,6 +18,65 @@
 
 namespace ASFW::Audio {
 
+namespace {
+
+[[nodiscard]] bool HasInvalidCaptureIso(const AudioStreamRuntimeCaps& caps) noexcept {
+    return caps.hostInputPcmChannels > 0 &&
+        caps.deviceToHostIsoChannel == AudioStreamRuntimeCaps::kInvalidIsoChannel;
+}
+
+[[nodiscard]] bool HasInvalidPlaybackIso(const AudioStreamRuntimeCaps& caps) noexcept {
+    return caps.hostOutputPcmChannels > 0 &&
+        caps.hostToDeviceIsoChannel == AudioStreamRuntimeCaps::kInvalidIsoChannel;
+}
+
+[[nodiscard]] Model::DICEBackendDiagnostic MakeDICEDiagnostic(
+    const Discovery::DeviceRecord& record,
+    const char* probeState,
+    const char* failReason,
+    const AudioStreamRuntimeCaps* caps = nullptr,
+    const char* capsSource = "unknown",
+    uint32_t attempt = 0,
+    uint32_t maxAttempts = 0,
+    IOReturn status = kIOReturnSuccess
+) noexcept {
+    const auto known = DeviceProtocolFactory::LookupKnownIdentity(record.vendorId,
+                                                                  record.modelId,
+                                                                  record.unitSpecId.value_or(0),
+                                                                  record.unitSwVersion.value_or(0));
+    Model::DICEBackendDiagnostic diagnostic{};
+    diagnostic.guid = record.guid;
+    diagnostic.vendorId = record.vendorId;
+    diagnostic.modelId = record.modelId;
+    diagnostic.deviceName = !record.vendorName.empty() && !record.modelName.empty()
+        ? (record.vendorName + " " + record.modelName)
+        : std::string(record.protocol ? record.protocol->GetName() : "DICE Audio");
+    diagnostic.protocolName = record.protocol ? record.protocol->GetName() : "TCAT DICE";
+    diagnostic.profileSource = (known.has_value() && known->source) ? known->source : "unknown";
+    diagnostic.probeState = probeState ? probeState : "unknown";
+    diagnostic.failReason = failReason ? failReason : "unknown";
+    diagnostic.capsSource = capsSource ? capsSource : "unknown";
+    diagnostic.attempt = attempt;
+    diagnostic.maxAttempts = maxAttempts;
+    diagnostic.status = static_cast<uint32_t>(status);
+
+    if (caps) {
+        diagnostic.hostInputPcmChannels = caps->hostInputPcmChannels;
+        diagnostic.hostOutputPcmChannels = caps->hostOutputPcmChannels;
+        diagnostic.deviceToHostAm824Slots = caps->deviceToHostAm824Slots;
+        diagnostic.hostToDeviceAm824Slots = caps->hostToDeviceAm824Slots;
+        diagnostic.deviceToHostActiveStreams = caps->deviceToHostActiveStreams;
+        diagnostic.hostToDeviceActiveStreams = caps->hostToDeviceActiveStreams;
+        diagnostic.sampleRateHz = caps->sampleRateHz;
+        diagnostic.deviceToHostIsoChannel = caps->deviceToHostIsoChannel;
+        diagnostic.hostToDeviceIsoChannel = caps->hostToDeviceIsoChannel;
+    }
+
+    return diagnostic;
+}
+
+} // namespace
+
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    Driver::IsochService& isoch,
@@ -259,6 +318,12 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     }
 
     if (!record->protocol) {
+        auto diagnostic = MakeDICEDiagnostic(*record,
+                                             "failed",
+                                             "protocol_missing",
+                                             nullptr,
+                                             "none");
+        (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
         return;
     }
 
@@ -293,24 +358,101 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             }
 
             if (outstanding) {
+                auto diagnostic = MakeDICEDiagnostic(*record,
+                                                     "refresh_pending",
+                                                     "runtime_caps_refresh_already_pending",
+                                                     nullptr,
+                                                     "runtime-discovery",
+                                                     attempt,
+                                                     kCapsRetryMaxAttempts);
+                (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
                 return;
             }
 
             if (shouldRetry && workQueue_) {
                 ASFW_LOG(Audio,
-                         "DiceAudioBackend: runtime caps not ready for GUID=%llx; retry %u/%u in %u ms",
+                         "DiceAudioBackend: runtime caps not ready for GUID=%llx; read-only DICE caps refresh %u/%u",
                          guid,
                          attempt,
-                         kCapsRetryMaxAttempts,
-                         kCapsRetryDelayMs);
+                         kCapsRetryMaxAttempts);
+                auto diagnostic = MakeDICEDiagnostic(*record,
+                                                     "refreshing",
+                                                     "runtime_caps_not_ready",
+                                                     nullptr,
+                                                     "runtime-discovery",
+                                                     attempt,
+                                                     kCapsRetryMaxAttempts);
+                (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
                 workQueue_->DispatchAsync(^{
-                    IOSleep(kCapsRetryDelayMs);
-                    if (lock_) {
-                        IOLockLock(lock_);
-                        retryOutstanding_.erase(guid);
-                        IOLockUnlock(lock_);
+                    const auto* refreshRecord = registry_.FindByGuid(guid);
+                    if (!refreshRecord || !refreshRecord->protocol) {
+                        if (lock_) {
+                            IOLockLock(lock_);
+                            retryOutstanding_.erase(guid);
+                            IOLockUnlock(lock_);
+                        }
+                        return;
                     }
-                    EnsureNubForGuid(guid);
+
+                    refreshRecord->protocol->RefreshRuntimeAudioStreamCaps(
+                        [this, guid](IOReturn status) mutable {
+                            if (status == kIOReturnUnsupported) {
+                                ASFW_LOG_ERROR(Audio,
+                                               "DiceAudioBackend: protocol does not support runtime caps refresh GUID=%llx",
+                                               guid);
+                                if (const auto* diagRecord = registry_.FindByGuid(guid)) {
+                                    auto diagnostic = MakeDICEDiagnostic(*diagRecord,
+                                                                         "failed",
+                                                                         "runtime_caps_refresh_unsupported",
+                                                                         nullptr,
+                                                                         "runtime-discovery",
+                                                                         0,
+                                                                         kCapsRetryMaxAttempts,
+                                                                         status);
+                                    (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
+                                }
+                                if (lock_) {
+                                    IOLockLock(lock_);
+                                    retryOutstanding_.erase(guid);
+                                    IOLockUnlock(lock_);
+                                }
+                                return;
+                            }
+
+                            if (status != kIOReturnSuccess) {
+                                ASFW_LOG_WARNING(Audio,
+                                                 "DiceAudioBackend: runtime caps refresh failed GUID=%llx kr=0x%x",
+                                                 guid,
+                                                 status);
+                                if (const auto* diagRecord = registry_.FindByGuid(guid)) {
+                                    auto diagnostic = MakeDICEDiagnostic(*diagRecord,
+                                                                         "failed",
+                                                                         "runtime_caps_refresh_failed",
+                                                                         nullptr,
+                                                                         "runtime-discovery",
+                                                                         0,
+                                                                         kCapsRetryMaxAttempts,
+                                                                         status);
+                                    (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
+                                }
+                            }
+
+                            auto retry = ^{
+                                IOSleep(kCapsRetryDelayMs);
+                                if (lock_) {
+                                    IOLockLock(lock_);
+                                    retryOutstanding_.erase(guid);
+                                    IOLockUnlock(lock_);
+                                }
+                                EnsureNubForGuid(guid);
+                            };
+
+                            if (workQueue_) {
+                                workQueue_->DispatchAsync(retry);
+                            } else {
+                                retry();
+                            }
+                        });
                 });
                 return;
             }
@@ -318,19 +460,71 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
             ASFW_LOG_ERROR(Audio,
                            "DiceAudioBackend: runtime caps not ready for GUID=%llx; refusing to publish a lying nub",
                            guid);
+            auto diagnostic = MakeDICEDiagnostic(*record,
+                                                 "failed",
+                                                 "runtime_caps_not_ready",
+                                                 nullptr,
+                                                 "runtime-discovery",
+                                                 kCapsRetryMaxAttempts,
+                                                 kCapsRetryMaxAttempts);
+            (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
             return;
         }
     }
 
+    if (caps.deviceToHostActiveStreams > 1 || caps.hostToDeviceActiveStreams > 1) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: DICE multi-stream geometry unsupported GUID=%llx d2hStreams=%u h2dStreams=%u in=%u out=%u; refusing CoreAudio publication",
+                       guid,
+                       caps.deviceToHostActiveStreams,
+                       caps.hostToDeviceActiveStreams,
+                       caps.hostInputPcmChannels,
+                       caps.hostOutputPcmChannels);
+        auto diagnostic = MakeDICEDiagnostic(*record,
+                                             "failed",
+                                             "unsupported_multi_stream_geometry",
+                                             &caps,
+                                             usedKnownProfile ? "known-profile" : "runtime-discovery");
+        (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
+        return;
+    }
+
+    if (caps.sampleRateHz == 0 || caps.hostInputPcmChannels == 0 || caps.hostOutputPcmChannels == 0 ||
+        HasInvalidCaptureIso(caps) || HasInvalidPlaybackIso(caps)) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: invalid DICE runtime caps GUID=%llx rate=%u in=%u out=%u d2hIso=%u h2dIso=%u; refusing CoreAudio publication",
+                       guid,
+                       caps.sampleRateHz,
+                       caps.hostInputPcmChannels,
+                       caps.hostOutputPcmChannels,
+                       caps.deviceToHostIsoChannel,
+                       caps.hostToDeviceIsoChannel);
+        auto diagnostic = MakeDICEDiagnostic(*record,
+                                             "failed",
+                                             "invalid_runtime_caps",
+                                             &caps,
+                                             usedKnownProfile ? "known-profile" : "runtime-discovery");
+        (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
+        return;
+    }
+
     ASFW_LOG(Audio,
-             "DiceAudioBackend: publishing DICE caps for GUID=%llx source=%{public}s rate=%u in=%u out=%u d2hSlots=%u h2dSlots=%u",
+             "DiceAudioBackend: publishing DICE caps for GUID=%llx source=%{public}s rate=%u in=%u out=%u d2hStreams=%u h2dStreams=%u d2hSlots=%u h2dSlots=%u",
              guid,
              usedKnownProfile ? "known-profile" : "runtime-discovery",
              caps.sampleRateHz,
              caps.hostInputPcmChannels,
              caps.hostOutputPcmChannels,
+             caps.deviceToHostActiveStreams,
+             caps.hostToDeviceActiveStreams,
              caps.deviceToHostAm824Slots,
              caps.hostToDeviceAm824Slots);
+    auto diagnostic = MakeDICEDiagnostic(*record,
+                                         "published",
+                                         "coreaudio_publication_allowed",
+                                         &caps,
+                                         usedKnownProfile ? "known-profile" : "runtime-discovery");
+    (void)publisher_.PublishDICEDiagnostic(diagnostic, "DICE");
 
     Model::ASFWAudioDevice dev{};
     dev.guid = record->guid;
@@ -361,6 +555,8 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         .hostOutputPcmChannels = caps.hostOutputPcmChannels,
         .deviceToHostAm824Slots = caps.deviceToHostAm824Slots,
         .hostToDeviceAm824Slots = caps.hostToDeviceAm824Slots,
+        .deviceToHostActiveStreams = caps.deviceToHostActiveStreams,
+        .hostToDeviceActiveStreams = caps.hostToDeviceActiveStreams,
         .sampleRateHz = caps.sampleRateHz,
         .deviceToHostIsoChannel = caps.deviceToHostIsoChannel,
         .hostToDeviceIsoChannel = caps.hostToDeviceIsoChannel,

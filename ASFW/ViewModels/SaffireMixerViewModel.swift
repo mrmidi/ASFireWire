@@ -17,6 +17,9 @@ class SaffireMixerViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var lastUpdateTime: Date?
+    @Published var isConnected: Bool = false
+    @Published var userClientAccessState: DriverUserClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+    @Published var userClientLastError: String?
 
     // Resolved device target (runtime, from discovery).
     @Published var deviceGUID: UInt64?
@@ -35,6 +38,7 @@ class SaffireMixerViewModel: ObservableObject {
     
     init(connector: ASFWDriverConnector) {
         self.connector = connector
+        self.isConnected = connector.isConnected
         setupObservers()
     }
     
@@ -50,6 +54,8 @@ class SaffireMixerViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] connected in
                 guard let self else { return }
+                self.isConnected = connected
+                self.userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
                 if connected {
                     self.resolveTargetIfNeeded()
                     self.refresh()
@@ -59,6 +65,22 @@ class SaffireMixerViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        connector.$lastError
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] error in
+                self?.userClientLastError = error
+            }
+            .store(in: &cancellables)
+    }
+
+    var userClientUnavailableTitle: String {
+        userClientAccessState.title
+    }
+
+    var userClientUnavailableMessage: String {
+        ASFWDriverConnector.userClientUnavailableMessage(accessState: userClientAccessState,
+                                                         lastError: userClientLastError)
     }
 
     private func resolveTargetIfNeeded() {

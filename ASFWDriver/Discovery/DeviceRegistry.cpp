@@ -40,7 +40,10 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
 
 void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
     if (const auto known =
-            Audio::DeviceProtocolFactory::LookupKnownIdentity(device.vendorId, device.modelId);
+            Audio::DeviceProtocolFactory::LookupKnownIdentity(device.vendorId,
+                                                              device.modelId,
+                                                              device.unitSpecId.value_or(0),
+                                                              device.unitSwVersion.value_or(0));
         known.has_value()) {
         if (device.vendorName.empty() && known->vendorName) {
             device.vendorName = known->vendorName;
@@ -169,14 +172,24 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     // Known device profiles can choose their integration mode:
     // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
     // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
-    const auto integrationMode = Audio::DeviceProtocolFactory::LookupIntegrationMode(device.vendorId, device.modelId);
+    const auto knownIdentity = Audio::DeviceProtocolFactory::LookupKnownIdentity(device.vendorId,
+                                                                                 device.modelId,
+                                                                                 device.unitSpecId.value_or(0),
+                                                                                 device.unitSwVersion.value_or(0));
+    const auto integrationMode = knownIdentity.has_value()
+        ? knownIdentity->integrationMode
+        : Audio::DeviceIntegrationMode::kNone;
 
     if (integrationMode != Audio::DeviceIntegrationMode::kNone) {
         ASFW_LOG(Discovery,
-                 "Known device profile available for vendor=0x%06x model=0x%06x integration=%u",
+                 "Known device profile available for vendor=0x%06x model=0x%06x unit=0x%06x/0x%06x integration=%u family=%{public}s source=%{public}s",
                  device.vendorId,
                  device.modelId,
-                 static_cast<unsigned>(integrationMode));
+                 device.unitSpecId.value_or(0),
+                 device.unitSwVersion.value_or(0),
+                 static_cast<unsigned>(integrationMode),
+                 knownIdentity.has_value() ? Audio::ToString(knownIdentity->protocolFamily) : "Unknown",
+                 (knownIdentity.has_value() && knownIdentity->source) ? knownIdentity->source : "unknown");
         if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
@@ -185,6 +198,20 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             device.isAudioCandidate = IsAudioCandidate(rom);
         }
         MaybeCreateKnownProtocol(device, guid, rom.nodeId, operationalNodeId, busOps, busInfo, irmClient);
+    } else if (knownIdentity.has_value()) {
+        ASFW_LOG(Discovery,
+                 "Known FireWire audio metadata only for vendor=0x%06x(%{public}s) model=0x%06x(%{public}s) unit=0x%06x/0x%06x family=%{public}s support=%{public}s source=%{public}s; no ASFW audio binding enabled",
+                 device.vendorId,
+                 knownIdentity->vendorName ? knownIdentity->vendorName : "",
+                 device.modelId,
+                 knownIdentity->modelName ? knownIdentity->modelName : "",
+                 device.unitSpecId.value_or(0),
+                 device.unitSwVersion.value_or(0),
+                 Audio::ToString(knownIdentity->protocolFamily),
+                 Audio::ToString(knownIdentity->supportStatus),
+                 knownIdentity->source ? knownIdentity->source : "unknown");
+        device.kind = ClassifyDevice(rom);
+        device.isAudioCandidate = IsAudioCandidate(rom);
     } else {
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);

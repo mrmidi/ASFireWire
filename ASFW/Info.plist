@@ -4,6 +4,8 @@
 <dict>
 	<key>ASFWDriverBundleIdentifier</key>
 	<string>$(ASFW_DRIVER_BUNDLE_IDENTIFIER)</string>
+	<key>ASFWAllowAnyUserClientDriverBuild</key>
+	<string>$(ASFW_ALLOW_ANY_USERCLIENT_DRIVER)</string>
 	<key>ASFWTeamIdentifier</key>
 	<string>$(DEVELOPMENT_TEAM)</string>
 	<key>CFBundleDevelopmentRegion</key>

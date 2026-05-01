@@ -35,11 +35,11 @@ struct AVCDebugView: View {
                 .padding(.horizontal)
                 
                 if !viewModel.isConnected {
-                    EmptyStateView(
-                        title: "Debug User-Client Unavailable",
-                        description: "Audio can still be available through CoreAudio. AV/C debug actions require the user-client connection.",
-                        systemImage: "cable.connector.slash"
+                    DebugUserClientUnavailableView(
+                        title: viewModel.userClientUnavailableTitle,
+                        message: viewModel.userClientUnavailableMessage
                     )
+                    .frame(minHeight: 320)
                 } else if viewModel.avcUnits.isEmpty {
                     EmptyStateView()
                 } else {

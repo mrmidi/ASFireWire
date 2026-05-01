@@ -38,6 +38,10 @@ bool SPro24DspProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCap
     return tcat_.GetRuntimeAudioStreamCaps(outCaps);
 }
 
+void SPro24DspProtocol::RefreshRuntimeAudioStreamCaps(VoidCallback callback) {
+    tcat_.RefreshRuntimeAudioStreamCaps(std::move(callback));
+}
+
 IOReturn SPro24DspProtocol::Initialize() {
     InitializeAsync([](IOReturn status) {
         if (status != kIOReturnSuccess) {

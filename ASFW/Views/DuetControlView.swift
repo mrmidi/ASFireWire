@@ -15,8 +15,8 @@ struct DuetControlView: View {
                 headerSection
 
                 if !viewModel.isConnected {
-                    stateCard(title: "Debug User-Client Not Connected",
-                              message: "Connect to ASFWDriver to control Duet settings.")
+                    stateCard(title: viewModel.userClientUnavailableTitle,
+                              message: viewModel.userClientUnavailableMessage)
                 } else if viewModel.duetGUID == nil {
                     stateCard(title: "No Apogee Duet Found",
                               message: "Discover a Duet AV/C unit, then refresh this page.")

@@ -13,17 +13,43 @@ class TopologyViewModel: ObservableObject {
     @Published var topology: TopologySnapshot?
     @Published var isLoading = false
     @Published var error: String?
+    @Published var isConnected = false
+    @Published var userClientAccessState: DriverUserClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+    @Published var userClientLastError: String?
     
     private var connector: ASFWDriverConnector
     private var statusCancellable: AnyCancellable?
+    private var connectionCancellable: AnyCancellable?
+    private var errorCancellable: AnyCancellable?
     
     init(connector: ASFWDriverConnector) {
         self.connector = connector
+        self.isConnected = connector.isConnected
         statusCancellable = connector.statusPublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refresh()
             }
+        connectionCancellable = connector.$isConnected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] connected in
+                self?.isConnected = connected
+                self?.userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+            }
+        errorCancellable = connector.$lastError
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] error in
+                self?.userClientLastError = error
+            }
+    }
+
+    var userClientUnavailableTitle: String {
+        userClientAccessState.title
+    }
+
+    var userClientUnavailableMessage: String {
+        ASFWDriverConnector.userClientUnavailableMessage(accessState: userClientAccessState,
+                                                         lastError: userClientLastError)
     }
     
     func startAutoRefresh(interval: TimeInterval = 1.0) {
@@ -40,6 +66,15 @@ class TopologyViewModel: ObservableObject {
     }
     
     func refresh() {
+        guard connector.isConnected else {
+            userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+            selfIDCapture = nil
+            topology = nil
+            error = nil
+            isLoading = false
+            return
+        }
+
         guard !isLoading else { 
             print("[TopologyVM] 🔄 Refresh already in progress, skipping")
             return 
@@ -78,5 +113,7 @@ class TopologyViewModel: ObservableObject {
     
     deinit {
         statusCancellable = nil
+        connectionCancellable = nil
+        errorCancellable = nil
     }
 }

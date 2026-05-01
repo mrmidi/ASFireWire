@@ -47,10 +47,9 @@ struct DeviceDiscoveryView: View {
             Divider()
 
             if !viewModel.isConnected {
-                ContentUnavailableView(
-                    "Debug User-Client Not Connected",
-                    systemImage: "cable.connector.slash",
-                    description: Text("Audio can still be available through CoreAudio. Connect the debug user-client to inspect FireWire discovery.")
+                DebugUserClientUnavailableView(
+                    title: viewModel.userClientUnavailableTitle,
+                    message: viewModel.userClientUnavailableMessage
                 )
             } else if devices.isEmpty {
                 ContentUnavailableView(
@@ -113,6 +112,20 @@ struct DeviceDiscoveryView: View {
     private func stopAutoRefresh() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+    }
+}
+
+struct DebugUserClientUnavailableView: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView(
+            title,
+            systemImage: "cable.connector.slash",
+            description: Text(message)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

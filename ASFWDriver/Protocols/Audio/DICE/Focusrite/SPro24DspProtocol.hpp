@@ -70,6 +70,7 @@ public:
     bool HasDsp() const override { return true; }
 
     bool GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps) const override;
+    void RefreshRuntimeAudioStreamCaps(VoidCallback callback) override;
     
     /// Configure device for 48kHz duplex streaming (TX ch0 / RX ch1).
     void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;

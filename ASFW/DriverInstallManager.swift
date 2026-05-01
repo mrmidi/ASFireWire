@@ -59,6 +59,13 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     private var currentOp: OperationKind = .activation
     private var completion: ((Result<String, Error>) -> Void)?
 
+    static func isUserApprovalRequired(_ error: Error) -> Bool {
+        if case ActivationError.requiresUserApproval = error {
+            return true
+        }
+        return false
+    }
+
     func activate(completion: @escaping (Result<String, Error>) -> Void) {
         guard isRunningFromApplications else {
             logBundleScan()
@@ -82,8 +89,14 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     // MARK: OSSystemExtensionRequestDelegate
     func request(_ request: OSSystemExtensionRequest, didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        let op = (currentOp == .activation ? "Activation" : "Deactivation")
-        completion?(.success("\(op) finished with result: \(result.rawValue)"))
+        let message: String
+        switch currentOp {
+        case .activation:
+            message = "macOS accepted the install/update request. Approval, reconnect, or reboot may still be required."
+        case .deactivation:
+            message = "macOS accepted the uninstall request. Cleanup or reboot may still be required."
+        }
+        completion?(.success(message))
         completion = nil
     }
 
@@ -94,6 +107,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         completion?(.failure(ActivationError.requiresUserApproval))
+        completion = nil
     }
 
     func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension replacement: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {

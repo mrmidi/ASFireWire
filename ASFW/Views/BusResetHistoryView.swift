@@ -27,10 +27,9 @@ struct BusResetHistoryView: View {
                     }
                 }
             } else {
-                ContentUnavailableView(
-                    "Not Connected",
-                    systemImage: "cable.connector.slash",
-                    description: Text("Connect the debug user-client to view bus reset history")
+                DebugUserClientUnavailableView(
+                    title: viewModel.userClientUnavailableTitle,
+                    message: viewModel.userClientUnavailableMessage
                 )
             }
         }

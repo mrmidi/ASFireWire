@@ -7,6 +7,8 @@ final class DuetControlViewModel: ObservableObject {
     @Published var isApplying: Bool = false
     @Published var errorMessage: String?
     @Published var infoMessage: String?
+    @Published var userClientAccessState: DriverUserClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+    @Published var userClientLastError: String?
 
     @Published var duetGUID: UInt64?
 
@@ -40,12 +42,20 @@ final class DuetControlViewModel: ObservableObject {
             .sink { [weak self] connected in
                 guard let self else { return }
                 self.isConnected = connected
+                self.userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
                 if connected {
                     self.refresh()
                 } else {
                     self.duetGUID = nil
-                    self.errorMessage = "Debug user-client not connected"
+                    self.errorMessage = self.userClientUnavailableTitle
                 }
+            }
+            .store(in: &cancellables)
+
+        connector.$lastError
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] error in
+                self?.userClientLastError = error
             }
             .store(in: &cancellables)
 
@@ -61,9 +71,19 @@ final class DuetControlViewModel: ObservableObject {
         selectedOutputBank.rawValue
     }
 
+    var userClientUnavailableTitle: String {
+        userClientAccessState.title
+    }
+
+    var userClientUnavailableMessage: String {
+        ASFWDriverConnector.userClientUnavailableMessage(accessState: userClientAccessState,
+                                                         lastError: userClientLastError)
+    }
+
     func refresh() {
         guard connector.isConnected else {
-            errorMessage = "Debug user-client not connected"
+            userClientAccessState = ASFWDriverConnector.evaluateUserClientAccessState()
+            errorMessage = userClientUnavailableTitle
             return
         }
 

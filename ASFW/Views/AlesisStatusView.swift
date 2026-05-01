@@ -170,7 +170,7 @@ struct AlesisStatusView: View {
                 ("Active Driver", yesNo(driverViewModel.lifecycleStatus.activeDriver)),
                 ("ASFW Audio Nub", yesNo(driverViewModel.lifecycleStatus.audioNubVisible)),
                 ("CoreAudio Alesis", yesNo(driverViewModel.lifecycleStatus.coreAudioDeviceVisible)),
-                ("Debug User-Client", driverViewModel.userClientConnected ? "Connected" : "Unavailable"),
+                ("Debug Tools", driverViewModel.userClientConnected ? "Connected" : "Not connected; audio can still work through CoreAudio"),
                 ("Helper", driverViewModel.helperStatus.displayName),
                 ("Staged Driver", yesNo(driverViewModel.lifecycleStatus.stagedDriverPresent)),
                 ("Active CDHash", shortHash(driverViewModel.lifecycleStatus.activeCDHash)),

@@ -42,6 +42,12 @@ public:
     /// Terminate and forget a nub if present.
     void TerminateNub(uint64_t guid, const char* reasonTag) noexcept;
 
+    /// Publish latest DICE probe/publication state on the driver service itself.
+    /// This remains visible even when CoreAudio publication is refused and no
+    /// ASFWAudioNub exists.
+    bool PublishDICEDiagnostic(const Model::DICEBackendDiagnostic& diagnostic,
+                               const char* sourceTag) noexcept;
+
 private:
     [[nodiscard]] bool ReserveGuidLocked(uint64_t guid) noexcept;
 

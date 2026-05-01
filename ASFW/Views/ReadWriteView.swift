@@ -165,8 +165,12 @@ struct ReadWriteView: View {
                         Label("Connected to driver", systemImage: "checkmark.circle.fill")
                             .foregroundColor(.green)
                     } else {
-                        Label("Debug user-client not connected", systemImage: "exclamationmark.triangle.fill")
+                        Label(viewModel.userClientUnavailableTitle, systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
+                        Text(viewModel.userClientUnavailableMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if let handle = lastHandle {

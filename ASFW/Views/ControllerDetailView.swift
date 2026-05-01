@@ -43,7 +43,7 @@ struct ControllerDetailView: View {
                     .foregroundStyle(viewModel.isConnected ? .green : .red)
                     .imageScale(.large)
                 
-                Text(viewModel.isConnected ? "UserClient Connected" : "UserClient Disconnected")
+                Text(viewModel.isConnected ? "UserClient Connected" : viewModel.userClientUnavailableTitle)
                     .font(.headline)
                 
                 Spacer()
@@ -52,11 +52,19 @@ struct ControllerDetailView: View {
                     viewModel.connect()
                 }
                 .buttonStyle(.bordered)
+                .disabled(!viewModel.isConnected && !viewModel.userClientAccessState.canAttemptConnection)
 
                 Button("Debug Snapshot") {
                     viewModel.dumpDebugSnapshot()
                 }
                 .buttonStyle(.borderless)
+            }
+
+            if !viewModel.isConnected {
+                Text(viewModel.userClientUnavailableMessage)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let status = viewModel.sharedStatus {

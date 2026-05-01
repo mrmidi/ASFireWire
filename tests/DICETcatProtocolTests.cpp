@@ -8,6 +8,7 @@
 #include "Protocols/Audio/DICE/TCAT/DICEKnownProfiles.hpp"
 #include "Protocols/Audio/DICE/TCAT/DICETcatProtocol.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -54,6 +55,10 @@ constexpr uint32_t kDiceBaseLo = static_cast<uint32_t>(
     ASFW::Audio::DICE::DICEAbsoluteAddress(0) & 0xFFFFFFFFULL);
 constexpr uint32_t kGlobalBaseLo = static_cast<uint32_t>(
     ASFW::Audio::DICE::DICEAbsoluteAddress(0x28) & 0xFFFFFFFFULL);
+constexpr uint32_t kTxStreamBaseLo = static_cast<uint32_t>(
+    ASFW::Audio::DICE::DICEAbsoluteAddress(0x1A4) & 0xFFFFFFFFULL);
+constexpr uint32_t kRxStreamBaseLo = static_cast<uint32_t>(
+    ASFW::Audio::DICE::DICEAbsoluteAddress(0x3DC) & 0xFFFFFFFFULL);
 constexpr uint32_t kAppSectionQuadletOffset = 0x1FU;
 constexpr uint32_t kAppSectionBaseLo = kExtensionBaseLo + (kAppSectionQuadletOffset * 4U);
 constexpr uint32_t kGlobalReadBytes = 104U;
@@ -115,6 +120,26 @@ std::array<uint8_t, kGlobalReadBytes> MakeGlobalStateWire(uint32_t clockSelect,
     return bytes;
 }
 
+std::vector<uint8_t> MakeStreamConfigWire(bool rxLayout,
+                                          int32_t iso,
+                                          uint32_t pcmChannels,
+                                          uint32_t midiPorts) {
+    std::vector<uint8_t> bytes(24, 0);
+    PutBe32(bytes.data() + 0x00, 1U); // streams
+    PutBe32(bytes.data() + 0x04, 4U); // entry size in quadlets
+    PutBe32(bytes.data() + 0x08, static_cast<uint32_t>(iso));
+    if (rxLayout) {
+        PutBe32(bytes.data() + 0x0C, 0U); // seqStart
+        PutBe32(bytes.data() + 0x10, pcmChannels);
+        PutBe32(bytes.data() + 0x14, midiPorts);
+    } else {
+        PutBe32(bytes.data() + 0x0C, pcmChannels);
+        PutBe32(bytes.data() + 0x10, midiPorts);
+        PutBe32(bytes.data() + 0x14, 2U); // S400
+    }
+    return bytes;
+}
+
 class CountingFireWireBus final : public IFireWireBus {
 public:
     AsyncHandle ReadBlock(Generation generation,
@@ -142,6 +167,14 @@ public:
             ++globalReadCount;
             const auto bytes = MakeGlobalStateWire(clockSelect_, status_, extStatus_, sampleRate_, notification_);
             payload.assign(bytes.begin(), bytes.end());
+        } else if (address.addressHi == 0xFFFFU && address.addressLo == kTxStreamBaseLo) {
+            ++txStreamReadCount;
+            const auto bytes = MakeStreamConfigWire(false, 1, txPcmChannels_, txMidiPorts_);
+            std::copy(bytes.begin(), bytes.end(), payload.begin());
+        } else if (address.addressHi == 0xFFFFU && address.addressLo == kRxStreamBaseLo) {
+            ++rxStreamReadCount;
+            const auto bytes = MakeStreamConfigWire(true, 0, rxPcmChannels_, rxMidiPorts_);
+            std::copy(bytes.begin(), bytes.end(), payload.begin());
         } else if (address.addressHi == 0xFFFFU && address.addressLo == kExtensionBaseLo &&
             length >= ExtensionSections::kWireSize) {
             ++extensionReadCount;
@@ -219,6 +252,8 @@ public:
     int lockCount{0};
     int generalReadCount{0};
     int globalReadCount{0};
+    int txStreamReadCount{0};
+    int rxStreamReadCount{0};
     int extensionReadCount{0};
     int appQuadReadCount{0};
     uint32_t clockSelect_{kClockSelect48kInternal};
@@ -226,6 +261,10 @@ public:
     uint32_t extStatus_{0};
     uint32_t sampleRate_{48000};
     uint32_t notification_{0x20};
+    uint32_t txPcmChannels_{16};
+    uint32_t txMidiPorts_{1};
+    uint32_t rxPcmChannels_{8};
+    uint32_t rxMidiPorts_{1};
 
 private:
     AsyncHandle NextHandle() {
@@ -280,8 +319,39 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateActiveConfiguredStreams) {
     EXPECT_EQ(caps.sampleRateHz, 48000U);
     EXPECT_EQ(caps.hostInputPcmChannels, 10U);
     EXPECT_EQ(caps.deviceToHostAm824Slots, 11U);
+    EXPECT_EQ(caps.deviceToHostActiveStreams, 1U);
     EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+    EXPECT_EQ(caps.hostToDeviceActiveStreams, 1U);
+}
+
+TEST(DICETcatProtocolTests, RefreshRuntimeCapsLoadsReadOnlyStreamGeometry) {
+    CountingFireWireBus bus;
+    DICETcatProtocol protocol(bus, bus, 2, nullptr);
+    ASSERT_EQ(protocol.Initialize(), kIOReturnSuccess);
+
+    IOReturn refreshStatus = kIOReturnError;
+    protocol.RefreshRuntimeAudioStreamCaps([&](IOReturn status) {
+        refreshStatus = status;
+    });
+
+    EXPECT_EQ(refreshStatus, kIOReturnSuccess);
+
+    AudioStreamRuntimeCaps caps{};
+    ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
+    EXPECT_EQ(caps.sampleRateHz, 48000U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+    EXPECT_EQ(caps.deviceToHostActiveStreams, 1U);
+    EXPECT_EQ(caps.hostToDeviceActiveStreams, 1U);
+    EXPECT_EQ(caps.deviceToHostIsoChannel, 1U);
+    EXPECT_EQ(caps.hostToDeviceIsoChannel, 0U);
+    EXPECT_EQ(bus.generalReadCount, 1);
+    EXPECT_EQ(bus.globalReadCount, 1);
+    EXPECT_EQ(bus.txStreamReadCount, 1);
+    EXPECT_EQ(bus.rxStreamReadCount, 1);
 }
 
 TEST(DICETcatProtocolTests, ReadDuplexHealthReturnsCurrentGlobalLockState) {
@@ -354,6 +424,8 @@ TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     EXPECT_EQ(caps.hostOutputPcmChannels, 12U);
     EXPECT_EQ(caps.deviceToHostAm824Slots, 9U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
+    EXPECT_EQ(caps.deviceToHostActiveStreams, 1U);
+    EXPECT_EQ(caps.hostToDeviceActiveStreams, 1U);
 
     caps = {};
     EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000007U, caps));
@@ -362,6 +434,8 @@ TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
     EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+    EXPECT_EQ(caps.deviceToHostActiveStreams, 1U);
+    EXPECT_EQ(caps.hostToDeviceActiveStreams, 1U);
 
     caps = {};
     EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000008U, caps));
@@ -370,6 +444,8 @@ TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
     EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+    EXPECT_EQ(caps.deviceToHostActiveStreams, 1U);
+    EXPECT_EQ(caps.hostToDeviceActiveStreams, 1U);
 
     caps = {};
     EXPECT_TRUE(TryGetKnownDICEProfile(0x000595U, 0x000000U, caps));
@@ -378,10 +454,15 @@ TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
     EXPECT_EQ(caps.hostOutputPcmChannels, 2U);
     EXPECT_EQ(caps.deviceToHostAm824Slots, 12U);
     EXPECT_EQ(caps.hostToDeviceAm824Slots, 2U);
+    EXPECT_EQ(caps.deviceToHostActiveStreams, 1U);
+    EXPECT_EQ(caps.hostToDeviceActiveStreams, 1U);
 
     caps = {};
     EXPECT_FALSE(TryGetKnownDICEProfile(0x10c73fU, 0x000001U, caps));
     EXPECT_FALSE(TryGetKnownDICEProfile(0x10c73fU, 0x000024U, caps));
+    EXPECT_FALSE(TryGetKnownDICEProfile(0x000d6cU, 0x000010U, caps)); // M-Audio ProFire 2626
+    EXPECT_FALSE(TryGetKnownDICEProfile(0x000ff2U, 0x000006U, caps)); // Mackie Onyx-i DICE
+    EXPECT_FALSE(TryGetKnownDICEProfile(0x0004c4U, 0x000000U, caps)); // Allen & Heath Zed R16
 }
 
 } // namespace

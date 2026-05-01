@@ -36,7 +36,12 @@ struct TopologyView: View {
             .padding()
             .background(Color(NSColor.controlBackgroundColor))
             
-            if let error = viewModel.error {
+            if !viewModel.isConnected {
+                DebugUserClientUnavailableView(
+                    title: viewModel.userClientUnavailableTitle,
+                    message: viewModel.userClientUnavailableMessage
+                )
+            } else if let error = viewModel.error {
                 ContentUnavailableView(
                     "No Topology Data",
                     systemImage: "network.slash",

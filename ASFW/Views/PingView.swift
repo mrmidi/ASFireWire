@@ -75,15 +75,24 @@ struct PingView: View {
     }
 
     private var statusRow: some View {
-        HStack {
-            if viewModel.isConnected {
-                Label("Connected to driver", systemImage: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-            } else {
-                Label("Debug user-client not connected", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                if viewModel.isConnected {
+                    Label("Connected to driver", systemImage: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                } else {
+                    Label(viewModel.userClientUnavailableTitle, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                }
+                Spacer()
             }
-            Spacer()
+
+            if !viewModel.isConnected {
+                Text(viewModel.userClientUnavailableMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
