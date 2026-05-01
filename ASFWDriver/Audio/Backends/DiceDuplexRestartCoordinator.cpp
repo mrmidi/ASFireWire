@@ -48,6 +48,10 @@ constexpr uint32_t kBlockingStreamModeRaw = static_cast<uint32_t>(Model::StreamM
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kWaitPollMs = 10;
 
+[[nodiscard]] bool IsValidIsoChannel(uint8_t channel) noexcept {
+    return channel <= 0x3F;
+}
+
 enum class DiceRecoveryDisposition : uint8_t {
     kIgnore,
     kRestart,
@@ -99,6 +103,31 @@ struct DiceRecoveryDecision {
     }
 
     return DiceRestartState::kStarting;
+}
+
+[[nodiscard]] AudioDuplexChannels ResolveDuplexChannelsForRecord(
+    const Discovery::DeviceRecord& record) noexcept {
+    AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = kDefaultIrChannel,
+        .hostToDeviceIsoChannel = kDefaultItChannel,
+    };
+
+    AudioStreamRuntimeCaps caps{};
+    bool haveCaps = record.protocol && record.protocol->GetRuntimeAudioStreamCaps(caps);
+    if (!haveCaps) {
+        haveCaps = DICE::TCAT::TryGetKnownDICEProfile(record.vendorId, record.modelId, caps);
+    }
+
+    if (haveCaps) {
+        if (IsValidIsoChannel(caps.deviceToHostIsoChannel)) {
+            channels.deviceToHostIsoChannel = caps.deviceToHostIsoChannel;
+        }
+        if (IsValidIsoChannel(caps.hostToDeviceIsoChannel)) {
+            channels.hostToDeviceIsoChannel = caps.hostToDeviceIsoChannel;
+        }
+    }
+
+    return channels;
 }
 
 [[nodiscard]] constexpr const char* ToString(DiceRestartReason reason) noexcept {
@@ -1076,10 +1105,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     const DiceDesiredClockConfig& desiredClock,
     DiceRestartReason reason) noexcept {
     const FW::Generation topologyGeneration = record.gen;
-    const AudioDuplexChannels channels{
-        .deviceToHostIsoChannel = kDefaultIrChannel,
-        .hostToDeviceIsoChannel = kDefaultItChannel,
-    };
+    const AudioDuplexChannels channels = ResolveDuplexChannelsForRecord(record);
     const uint64_t restartId = AllocateRestartId();
 
     auto finalizeFailure = [&](IOReturn failureStatus,
@@ -1231,6 +1257,11 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
                 session.state,
                 session.phase,
                 reason);
+    ASFW_LOG(Audio,
+             "DiceDuplexRestartCoordinator: using DICE iso channels d2h=%u h2d=%u GUID=%llx",
+             channels.deviceToHostIsoChannel,
+             channels.hostToDeviceIsoChannel,
+             guid);
 
     const kern_return_t claimStatus = hostTransport_.BeginSplitDuplex(guid);
     if (claimStatus != kIOReturnSuccess) {

@@ -21,6 +21,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 12;
         outCaps.deviceToHostAm824Slots = 9;
         outCaps.hostToDeviceAm824Slots = 13;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 
@@ -31,6 +33,8 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 8;
         outCaps.deviceToHostAm824Slots = 17;
         outCaps.hostToDeviceAm824Slots = 9;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 
@@ -41,6 +45,23 @@ namespace ASFW::Audio::DICE::TCAT {
         outCaps.hostOutputPcmChannels = 8;
         outCaps.deviceToHostAm824Slots = 17;
         outCaps.hostToDeviceAm824Slots = 9;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
+        return true;
+    }
+
+    // Alesis MultiMix FireWire recording-stability profile observed on local hardware.
+    // The DICE table exposes one active 12-channel device-to-host stream; a
+    // second 2-channel stream is disabled with iso=-1 and must not be published
+    // to CoreAudio as capture capacity.
+    if (vendorId == 0x000595U && modelId == 0x000000U) {
+        outCaps.sampleRateHz = 48000;
+        outCaps.hostInputPcmChannels = 12;
+        outCaps.hostOutputPcmChannels = 2;
+        outCaps.deviceToHostAm824Slots = 12;
+        outCaps.hostToDeviceAm824Slots = 2;
+        outCaps.deviceToHostIsoChannel = 1;
+        outCaps.hostToDeviceIsoChannel = 0;
         return true;
     }
 
