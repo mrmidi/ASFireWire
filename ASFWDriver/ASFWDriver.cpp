@@ -250,6 +250,8 @@ kern_return_t IMPL(ASFWDriver, Start) {
         }
     }
 
+    DriverWiring::EnsureSbp2Deps(ctx);
+
     if (ctx.deps.speedPolicy) {
         if (!ctx.deps.romScanner) {
             OSSharedPtr<IODispatchQueue> discoveryQueue = nullptr;

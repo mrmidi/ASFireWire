@@ -30,6 +30,11 @@ jobs:
           # BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          if [[ -z "$BUILD_CERTIFICATE_BASE64" || -z "$P12_PASSWORD" || -z "$KEYCHAIN_PASSWORD" ]]; then
+            echo "Signing secrets are unavailable; skipping certificate import."
+            exit 0
+          fi
+
           # create variables
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           PP_PATH=$RUNNER_TEMP/build_pp.provisionprofile
@@ -54,16 +59,27 @@ jobs:
           # cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles      
       
       - name: Generate Compilation Database
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.CERT_BASE_64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           chmod +x bump.sh
           ls -l bump.sh
           set -o pipefail
+          CODE_SIGN_ARGS=()
+          if [[ -z "$BUILD_CERTIFICATE_BASE64" || -z "$P12_PASSWORD" || -z "$KEYCHAIN_PASSWORD" ]]; then
+            echo "Signing secrets are unavailable; building without code signing."
+            CODE_SIGN_ARGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO)
+          fi
+
           xcodebuild -project ASFW.xcodeproj \
             -scheme ASFW \
             -configuration Debug \
             -arch arm64 \
             -derivedDataPath build/DerivedData \
             clean build \
+            "${CODE_SIGN_ARGS[@]}" \
             | tee xcodebuild.log \
             | xcpretty -r json-compilation-database --output compile_commands.json || {
               echo "::error::Build failed! Showing last 100 lines of log:"
@@ -112,10 +128,11 @@ jobs:
 
       - name: Install Sonar Build Wrapper (optional for C/C++ analysis)
         uses: SonarSource/sonarqube-scan-action/install-build-wrapper@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.SONAR_TOKEN != ''
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7
+        if: env.SONAR_TOKEN != ''
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
