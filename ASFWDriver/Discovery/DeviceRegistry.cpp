@@ -8,6 +8,12 @@ namespace ASFW::Discovery {
 
 constexpr uint32_t kUnitSpecId_TA = 0x00A02D;
 constexpr uint32_t kUnitSpecId_AVC = 0x00A02D;
+constexpr uint32_t kUnitSpecId_SBP2 = 0x00609E; // SBP-2 Unit_Spec_Id
+constexpr uint32_t kUnitSwVersion_SBP2 = 0x010483; // SBP-2 Unit_Sw_Version
+
+[[nodiscard]] constexpr bool IsSBP2Unit(const UnitDirectory& unit) noexcept {
+    return unit.unitSpecId == kUnitSpecId_SBP2 && unit.unitSwVersion == kUnitSwVersion_SBP2;
+}
 
 DeviceRegistry::DeviceRegistry() = default;
 
@@ -238,6 +244,9 @@ DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
     for (const auto& unit : rom.unitDirectories) {
         if (unit.unitSpecId == kUnitSpecId_TA) {
             return DeviceKind::TA_61883;
+        }
+        if (IsSBP2Unit(unit)) {
+            return DeviceKind::Storage;
         }
     }
     
