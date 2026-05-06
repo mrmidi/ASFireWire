@@ -27,6 +27,22 @@ class ASFWDriver {
 
 namespace ASFW::UserClient {
 
+namespace {
+
+constexpr uint32_t kUnitSpecIdSBP2 = 0x00609E;
+constexpr uint32_t kUnitSwVersionSBP2 = 0x010483;
+
+[[nodiscard]] bool HasSBP2Unit(const ASFW::Discovery::ConfigROM& rom) noexcept {
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId == kUnitSpecIdSBP2 && unit.unitSwVersion == kUnitSwVersionSBP2) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 ConfigROMHandler::ConfigROMHandler(ASFWDriver* driver) : driver_(driver) {}
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity) - UserClient argument plumbing.
@@ -106,8 +122,12 @@ kern_return_t ConfigROMHandler::ExportConfigROM(IOUserClientMethodArguments* arg
         return kIOReturnNoMemory;
     }
 
-    ASFW_LOG(UserClient, "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u",
-             rom->rawQuadlets.size(), dataSize, nodeId, resolvedGen.value);
+    ASFW_LOG(UserClient,
+             "ExportConfigROM: returning %zu quadlets (%zu bytes) for node=%u gen=%u "
+             "state=%u rootEntries=%zu unitDirs=%zu hasSBP2=%d requestedGen=%u",
+             rom->rawQuadlets.size(), dataSize, nodeId, resolvedGen.value,
+             static_cast<uint8_t>(rom->state), rom->rootDirMinimal.size(),
+             rom->unitDirectories.size(), HasSBP2Unit(*rom) ? 1 : 0, requestedGen.value);
 
     if (args->scalarOutput != nullptr && args->scalarOutputCount >= 1) {
         args->scalarOutput[0] = static_cast<uint64_t>(resolvedGen.value & 0xFFFFU);

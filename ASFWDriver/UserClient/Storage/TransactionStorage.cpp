@@ -10,7 +10,6 @@
 
 #include <DriverKit/IOLib.h>
 #include <algorithm>
-#include <cstring>
 
 namespace ASFW::UserClient {
 
@@ -51,11 +50,13 @@ bool TransactionStorage::StoreResult(uint16_t handle, uint32_t status, uint8_t r
     result.handle = handle;
     result.status = status;
     result.responseCode = responseCode;
-    result.dataLength = (responseLength > 512) ? 512 : responseLength;
+    result.data.clear();
 
-    if (responsePayload && responseLength > 0 && result.dataLength > 0) {
-        std::memcpy(result.data, responsePayload, result.dataLength);
+    if (responsePayload && responseLength > 0) {
+        const auto* bytes = static_cast<const uint8_t*>(responsePayload);
+        result.data.assign(bytes, bytes + responseLength);
     }
+    result.dataLength = static_cast<uint32_t>(result.data.size());
 
     completedHead_ = nextHead;
 

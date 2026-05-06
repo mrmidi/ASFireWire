@@ -4,6 +4,7 @@
 // Converts scatter-gather DMA segments into SBP-2 Page Table Entries (PTEs)
 // or a single direct-address descriptor when possible.
 //
+// Ported from Apple IOFireWireSBP2ORB::setCommandBuffers.
 // Ref: SBP-2 §5.1.2 (Page Table Entry format)
 
 #include "AddressSpaceManager.hpp"
@@ -111,7 +112,7 @@ public:
             owner_, 0xFFFF, ptSize,
             &pageTableHandle_, &pageTableMeta_);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "SBP2PageTable: failed to allocate page table: 0x%08x", kr);
+            ASFW_LOG(SBP2, "SBP2PageTable: failed to allocate page table: 0x%08x", kr);
             return false;
         }
 
@@ -120,7 +121,7 @@ public:
             reinterpret_cast<const uint8_t*>(ptes.data()), ptSize);
         kr = addrMgr_.WriteLocalData(owner_, pageTableHandle_, 0, pteSpan);
         if (kr != kIOReturnSuccess) {
-            ASFW_LOG(Async, "SBP2PageTable: failed to write page table: 0x%08x", kr);
+            ASFW_LOG(SBP2, "SBP2PageTable: failed to write page table: 0x%08x", kr);
             Clear();
             return false;
         }
@@ -132,7 +133,7 @@ public:
         result_.options = Wire::Options::kPageTableUnrestricted;
         result_.isDirect = false;
 
-        ASFW_LOG(Async, "SBP2PageTable: built %u PTEs (%u bytes) at %04x:%08x",
+        ASFW_LOG(SBP2, "SBP2PageTable: built %u PTEs (%u bytes) at %04x:%08x",
                  pteCount_, ptSize, pageTableMeta_.addressHi, pageTableMeta_.addressLo);
         return true;
     }

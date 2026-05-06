@@ -10,6 +10,7 @@ class ROMScanNodeStateMachine {
     enum class State : uint8_t {
         Idle,
         ReadingBIB,
+        WaitingRepublish,
         VerifyingIRM_Read,
         VerifyingIRM_Lock,
         ReadingRootDir,
@@ -34,12 +35,19 @@ class ROMScanNodeStateMachine {
     [[nodiscard]] State CurrentState() const { return state_; }
     [[nodiscard]] FwSpeed CurrentSpeed() const { return currentSpeed_; }
     [[nodiscard]] uint8_t RetriesLeft() const { return retriesLeft_; }
+    [[nodiscard]] uint8_t SlowPublishRetriesLeft() const { return slowPublishRetriesLeft_; }
 
     void SetCurrentSpeed(FwSpeed speed) { currentSpeed_ = speed; }
     void SetRetriesLeft(uint8_t retries) { retriesLeft_ = retries; }
+    void SetSlowPublishRetriesLeft(uint8_t retries) { slowPublishRetriesLeft_ = retries; }
     void DecrementRetries() {
         if (retriesLeft_ > 0) {
             --retriesLeft_;
+        }
+    }
+    void DecrementSlowPublishRetries() {
+        if (slowPublishRetriesLeft_ > 0) {
+            --slowPublishRetriesLeft_;
         }
     }
 
@@ -71,15 +79,18 @@ class ROMScanNodeStateMachine {
         case Idle:
             return next == ReadingBIB || next == Failed;
         case ReadingBIB:
-            return next == VerifyingIRM_Read || next == ReadingRootDir || next == Complete ||
-                   next == Idle || next == Failed;
+            return next == WaitingRepublish || next == VerifyingIRM_Read ||
+                   next == ReadingRootDir || next == Complete || next == Idle || next == Failed;
+        case WaitingRepublish:
+            return next == Idle || next == ReadingRootDir || next == Failed;
         case VerifyingIRM_Read:
             return next == VerifyingIRM_Lock || next == ReadingRootDir || next == Complete ||
                    next == Failed;
         case VerifyingIRM_Lock:
             return next == ReadingRootDir || next == Complete || next == Failed;
         case ReadingRootDir:
-            return next == ReadingDetails || next == Complete || next == Failed || next == Idle;
+            return next == WaitingRepublish || next == ReadingDetails || next == Complete ||
+                   next == Failed || next == Idle;
         case ReadingDetails:
             return next == Complete || next == Failed;
         case Complete:
@@ -115,6 +126,7 @@ class ROMScanNodeStateMachine {
         irmIsBad_ = false;
         irmBitBucket_ = 0xFFFFFFFF;
         bibInProgress_ = false;
+        slowPublishRetriesLeft_ = 0;
     }
 
   private:
@@ -131,6 +143,7 @@ class ROMScanNodeStateMachine {
     uint32_t irmBitBucket_{0xFFFFFFFF};
 
     bool bibInProgress_{false};
+    uint8_t slowPublishRetriesLeft_{0};
 };
 
 } // namespace ASFW::Discovery

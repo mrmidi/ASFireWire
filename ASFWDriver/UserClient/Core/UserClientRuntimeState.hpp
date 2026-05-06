@@ -7,6 +7,7 @@
 #include "../Handlers/BusResetHandler.hpp"
 #include "../Handlers/ConfigROMHandler.hpp"
 #include "../Handlers/ControllerCoreAccess.hpp"
+#include "../Handlers/DiagnosticsHandler.hpp"
 #include "../Handlers/DeviceDiscoveryHandler.hpp"
 #include "../Handlers/IsochHandler.hpp"
 #include "../Handlers/SBP2Handler.hpp"
@@ -51,15 +52,18 @@ class UserClientRuntimeState final {
 
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
-        auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
+        auto* sbp2Mgr = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
+        auto* sbp2Registry = controllerCore ? controllerCore->GetSBP2SessionRegistry() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(driver);
-        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager);
+        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Mgr, sbp2Registry);
+        diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
 
         return HandlersReady();
     }
 
     void ResetHandlers() noexcept {
+        diagnosticsHandler_.reset();
         sbp2Handler_.reset();
         isochHandler_.reset();
         avcHandler_.reset();
@@ -72,7 +76,10 @@ class UserClientRuntimeState final {
     }
 
     void ReleaseOwner(void* owner) noexcept {
-        if (owner != nullptr && sbp2Handler_ != nullptr) {
+        if (owner == nullptr) {
+            return;
+        }
+        if (sbp2Handler_ != nullptr) {
             sbp2Handler_->ReleaseOwner(owner);
         }
     }
@@ -82,7 +89,8 @@ class UserClientRuntimeState final {
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&
                configRomHandler_ != nullptr && deviceDiscoveryHandler_ != nullptr &&
                avcHandler_ != nullptr && isochHandler_ != nullptr &&
-               sbp2Handler_ != nullptr;
+               sbp2Handler_ != nullptr &&
+               diagnosticsHandler_ != nullptr;
     }
 
     [[nodiscard]] TransactionStorage& TransactionResults() noexcept { return transactionStorage_; }
@@ -98,6 +106,7 @@ class UserClientRuntimeState final {
     [[nodiscard]] AVCHandler& AVC() noexcept { return *avcHandler_; }
     [[nodiscard]] IsochHandler& Isoch() noexcept { return *isochHandler_; }
     [[nodiscard]] SBP2Handler& SBP2() noexcept { return *sbp2Handler_; }
+    [[nodiscard]] DiagnosticsHandler& Diagnostics() noexcept { return *diagnosticsHandler_; }
 
   private:
     TransactionStorage transactionStorage_{};
@@ -110,6 +119,7 @@ class UserClientRuntimeState final {
     std::unique_ptr<AVCHandler> avcHandler_{};
     std::unique_ptr<IsochHandler> isochHandler_{};
     std::unique_ptr<SBP2Handler> sbp2Handler_{};
+    std::unique_ptr<DiagnosticsHandler> diagnosticsHandler_{};
 };
 
 template <typename ClientLike>

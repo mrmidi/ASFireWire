@@ -42,6 +42,8 @@
 				<true/>
 				<key>ASFWLogStatistics</key>
 				<true/>
+				<key>ASFWExperimentalHostCycleMasterBringup</key>
+				<true/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>

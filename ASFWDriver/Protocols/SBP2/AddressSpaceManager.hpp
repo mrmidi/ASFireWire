@@ -2,10 +2,10 @@
 
 #include <algorithm>
 #include <atomic>
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <limits>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -272,9 +272,10 @@ public:
 
             offset = static_cast<uint32_t>(address - range->meta.address);
             ASFW_ADDRSPACE_LOG(
-                "AddressSpaceManager[%p] remote write addr=0x%012llx len=%zu src=%p "
+                "AddressSpaceManager[%p] remote write label=%s addr=0x%012llx len=%zu src=%p "
                 "handle=0x%llx rangeAddr=0x%012llx off=%u buf=%p mapped=%p backing=%u",
                 this,
+                range->debugLabel,
                 static_cast<unsigned long long>(address),
                 payload.size(),
                 payload.data(),
@@ -328,6 +329,18 @@ public:
         outSlice->payloadDeviceAddress = payloadAddress;
         outSlice->payloadLength = length;
 
+        ASFW_ADDRSPACE_LOG(
+            "AddressSpaceManager[%p] remote read-block label=%s addr=0x%012llx len=%u "
+            "handle=0x%llx rangeAddr=0x%012llx off=%llu dma=0x%08x",
+            this,
+            range->debugLabel,
+            static_cast<unsigned long long>(address),
+            length,
+            static_cast<unsigned long long>(range->meta.handle),
+            static_cast<unsigned long long>(range->meta.address),
+            static_cast<unsigned long long>(offset),
+            static_cast<unsigned>(payloadAddress));
+
         IOLockUnlock(lock_);
         return Async::ResponseCode::Complete;
     }
@@ -348,6 +361,17 @@ public:
         std::memcpy(outValue,
                     range->buffer.data() + static_cast<std::size_t>(offset),
                     sizeof(uint32_t));
+
+        ASFW_ADDRSPACE_LOG(
+            "AddressSpaceManager[%p] remote read-quadlet label=%s addr=0x%012llx "
+            "handle=0x%llx rangeAddr=0x%012llx off=%u value=0x%08x",
+            this,
+            range->debugLabel,
+            static_cast<unsigned long long>(address),
+            static_cast<unsigned long long>(range->meta.handle),
+            static_cast<unsigned long long>(range->meta.address),
+            offset,
+            *outValue);
 
         IOLockUnlock(lock_);
         return Async::ResponseCode::Complete;
@@ -392,6 +416,19 @@ public:
         IOLockUnlock(lock_);
     }
 
+    void SetDebugLabel(uint64_t handle, const char* label) {
+        if (!lock_ || handle == 0) {
+            return;
+        }
+
+        IOLockLock(lock_);
+        auto it = ranges_.find(handle);
+        if (it != ranges_.end()) {
+            it->second.debugLabel = label != nullptr ? label : "unlabeled";
+        }
+        IOLockUnlock(lock_);
+    }
+
     void ClearAll() {
         if (!lock_) {
             return;
@@ -416,6 +453,7 @@ private:
         void* owner{nullptr};
         std::vector<uint8_t> buffer;
         RemoteWriteCallback onRemoteWrite;
+        const char* debugLabel{"unlabeled"};
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};
@@ -485,8 +523,9 @@ private:
         for (const auto& entry : ranges_) {
             const auto& range = entry.second;
             ASFW_ADDRSPACE_LOG(
-                "AddressSpaceManager[%p] range handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
+                "AddressSpaceManager[%p] range label=%s handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
                 this,
+                range.debugLabel,
                 static_cast<unsigned long long>(range.meta.handle),
                 range.owner,
                 static_cast<unsigned long long>(range.meta.address),

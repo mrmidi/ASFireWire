@@ -14,7 +14,6 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     func activate(completion: @escaping (Result<String, Error>) -> Void) {
         submit(kind: .activation, request: OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: extensionIdentifier, queue: .main), completion: completion)
-        logBundleScan()
     }
 
     func deactivate(completion: @escaping (Result<String, Error>) -> Void) {
@@ -25,6 +24,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
         currentOp = kind
         request.delegate = self
         self.completion = completion
+        logBundleScan()
         OSSystemExtensionManager.shared.submitRequest(request)
     }
 
@@ -36,7 +36,7 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        completion?(.failure(error))
+        completion?(.failure(describe(error: error)))
         completion = nil
     }
 
@@ -46,6 +46,50 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension replacement: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
         return .replace
+    }
+
+    private func describe(error: Error) -> NSError {
+        let nsError = error as NSError
+        guard nsError.domain == OSSystemExtensionErrorDomain,
+              let code = OSSystemExtensionError.Code(rawValue: nsError.code) else {
+            return nsError
+        }
+
+        let message: String
+        switch code {
+        case .unknown:
+            message = "Unknown system extension error"
+        case .missingEntitlement:
+            message = "Missing required system extension entitlement"
+        case .unsupportedParentBundleLocation:
+            message = "App must be launched from a supported bundle location"
+        case .extensionNotFound:
+            message = "System extension not found inside the running app bundle"
+        case .extensionMissingIdentifier:
+            message = "System extension bundle identifier is missing"
+        case .duplicateExtensionIdentifer:
+            message = "Duplicate system extension identifier found in app bundle"
+        case .unknownExtensionCategory:
+            message = "Unknown system extension category"
+        case .codeSignatureInvalid:
+            message = "System extension code signature is invalid"
+        case .validationFailed:
+            message = "System extension validation failed"
+        case .forbiddenBySystemPolicy:
+            message = "System policy blocked the system extension"
+        case .requestCanceled:
+            message = "System extension request was canceled"
+        case .requestSuperseded:
+            message = "System extension request was superseded by a newer request"
+        case .authorizationRequired:
+            message = "System extension authorization is required"
+        @unknown default:
+            message = nsError.localizedDescription
+        }
+
+        return NSError(domain: nsError.domain,
+                       code: nsError.code,
+                       userInfo: [NSLocalizedDescriptionKey: "\(message) (\(nsError.domain) error \(nsError.code))"])
     }
 
     private func logBundleScan() {

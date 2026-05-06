@@ -9,6 +9,7 @@ import SwiftUI
 
 struct DeviceDiscoveryView: View {
     @ObservedObject var viewModel: DebugViewModel
+    var onOpenSBP2Device: ((ASFWDriverConnector.FWDeviceInfo) -> Void)? = nil
     @State private var devices: [ASFWDriverConnector.FWDeviceInfo] = []
     @State private var selectedDeviceId: UInt64?
     @State private var autoRefreshEnabled = true
@@ -71,7 +72,7 @@ struct DeviceDiscoveryView: View {
 
                     // Right: Device details
                     if let selectedDevice = devices.first(where: { $0.id == selectedDeviceId }) {
-                        DeviceDetailView(device: selectedDevice)
+                        DeviceDetailView(device: selectedDevice, onOpenSBP2Device: onOpenSBP2Device)
                     } else {
                         ContentUnavailableView(
                             "Select a Device",
@@ -160,6 +161,7 @@ struct DeviceRowView: View {
 
 struct DeviceDetailView: View {
     let device: ASFWDriverConnector.FWDeviceInfo
+    var onOpenSBP2Device: ((ASFWDriverConnector.FWDeviceInfo) -> Void)? = nil
 
     var body: some View {
         ScrollView {
@@ -207,8 +209,31 @@ struct DeviceDetailView: View {
                             Text(String(format: "0x%06X", device.modelId))
                                 .monospaced()
                         }
+                        GridRow {
+                            Text("Kind:")
+                                .fontWeight(.medium)
+                            Text(device.hasSBP2Unit ? "SBP-2 Device" : (device.isStorage ? "Storage" : "Other"))
+                        }
                     }
                     .padding()
+                }
+
+                if device.hasSBP2Unit, let onOpenSBP2Device {
+                    GroupBox("SBP-2 Debug") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("This device exposes at least one SBP-2 unit.")
+                                .foregroundStyle(.secondary)
+
+                            Button {
+                                onOpenSBP2Device(device)
+                            } label: {
+                                Label("Open SBP-2 Debug", systemImage: "externaldrive.badge.questionmark")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                    }
                 }
 
                 // Units Section
@@ -269,6 +294,38 @@ struct UnitCardView: View {
                         .foregroundStyle(.secondary)
                     Text(String(format: "%d quadlets", unit.romOffset))
                         .monospaced()
+                }
+                if let managementAgentOffset = unit.managementAgentOffset {
+                    GridRow {
+                        Text("Mgmt Agent:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%08X", managementAgentOffset))
+                            .monospaced()
+                    }
+                }
+                if let lun = unit.lun {
+                    GridRow {
+                        Text("LUN:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%02X", lun))
+                            .monospaced()
+                    }
+                }
+                if let unitCharacteristics = unit.unitCharacteristics {
+                    GridRow {
+                        Text("Unit Chars:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%08X", unitCharacteristics))
+                            .monospaced()
+                    }
+                }
+                if let fastStart = unit.fastStart {
+                    GridRow {
+                        Text("Fast Start:")
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "0x%08X", fastStart))
+                            .monospaced()
+                    }
                 }
 
                 if let vendorName = unit.vendorName, !vendorName.isEmpty {

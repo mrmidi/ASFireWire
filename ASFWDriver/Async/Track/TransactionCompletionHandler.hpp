@@ -376,7 +376,23 @@ public:
 
         Transaction* txn = txnMgr_->FindByMatchKey(key);
         if (!txn) {
-            ASFW_LOG(Async, "⚠️  OnARResponse: No transaction for key");
+            // DIAGNOSTIC: Log detailed key info for unmatched AR response
+            ASFW_LOG(Async,
+                     "[DIAG] OnARResponse: NO MATCH — key{node=0x%04X gen=%u tLabel=%u} "
+                     "rcode=0x%X dataLen=%zu",
+                     key.node.value, key.generation.value, key.label.value,
+                     rcode, data.size());
+            // Dump all active transactions for comparison
+            if (txnMgr_) {
+                txnMgr_->ForEachTransaction([&](const Transaction* t) {
+                    if (!t) return;
+                    ASFW_LOG(Async,
+                             "[DIAG]   active: tLabel=%u node=0x%04X gen=%u state=%s",
+                             t->label().value, t->GetMatchKey().node.value,
+                             t->GetMatchKey().generation.value,
+                             ToString(t->state()));
+                });
+            }
             return;
         }
 
@@ -388,6 +404,10 @@ public:
             state == TransactionState::Failed ||
             state == TransactionState::Cancelled ||
             state == TransactionState::TimedOut) {
+            ASFW_LOG(Async,
+                     "[DIAG] OnARResponse: LATE ARRIVAL — tLabel=%u state=%s "
+                     "(AR arrived after terminal state)",
+                     key.label.value, ToString(state));
             ASFW_LOG_V3(Async, "OnARResponse: AR for terminal txn (state=%{public}s) – ignoring",
                         ToString(state));
             return;
@@ -559,6 +579,13 @@ public:
         auto txnPtr = txnMgr_->Extract(label);
         if (txnPtr) {
             txnPtr->TransitionTo(TransactionState::TimedOut, "OnTimeout");
+
+            // DIAGNOSTIC: Log timeout details
+            ASFW_LOG(Async,
+                     "[DIAG] OnTimeout: tLabel=%u node=0x%04X gen=%u — "
+                     "AR response never arrived, completing with timeout",
+                     label.value, txnPtr->GetMatchKey().node.value,
+                     txnPtr->GetMatchKey().generation.value);
             
             // Invoke callback
             txnPtr->InvokeResponseHandler(kIOReturnTimeout, 0xFF, {});

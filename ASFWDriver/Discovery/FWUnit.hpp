@@ -32,6 +32,10 @@ public:
     std::optional<uint32_t> GetLUN() const { return logicalUnitNumber_; }
     uint32_t GetDirectoryOffset() const { return directoryOffset_; }
 
+    std::optional<uint32_t> GetManagementAgentOffset() const { return managementAgentOffset_; }
+    std::optional<uint32_t> GetUnitCharacteristics() const { return unitCharacteristics_; }
+    std::optional<uint32_t> GetFastStart() const { return fastStart_; }
+
     std::string_view GetVendorName() const { return vendorName_; }
     std::string_view GetProductName() const { return productName_; }
 
@@ -64,6 +68,11 @@ private:
     uint32_t unitSwVersion_{0};
     uint32_t modelId_{0};
     std::optional<uint32_t> logicalUnitNumber_;
+
+    // SBP-2 specific metadata
+    std::optional<uint32_t> managementAgentOffset_;
+    std::optional<uint32_t> unitCharacteristics_;
+    std::optional<uint32_t> fastStart_;
 
     std::string vendorName_;
     std::string productName_;

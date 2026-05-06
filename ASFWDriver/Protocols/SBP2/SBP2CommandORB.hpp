@@ -3,6 +3,7 @@
 // SBP-2 Normal Command ORB.
 // Represents a single SCSI command submitted to the device after login.
 //
+// Ported from Apple IOFireWireSBP2ORB.
 // Ref: SBP-2 §5.1.1 (Normal Command ORB format)
 
 #include "AddressSpaceManager.hpp"
@@ -53,31 +54,36 @@ public:
     void SetFlags(uint32_t flags) noexcept { flags_ = flags; }
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
     void SetTimeout(uint32_t ms) noexcept { timeoutDuration_ = ms; }
-    void SetCompletionCallback(CompletionCallback cb) noexcept { completionCallback_ = std::move(cb); }
+    void SetCompletionCallback(CompletionCallback cb) noexcept {
+        completionCallback_ = std::move(cb);
+        timerState_->completionCallback = completionCallback_;
+    }
 
     // Bind page table result from SBP2PageTable::Build.
     void SetDataDescriptor(const SBP2PageTable::Result& ptResult) noexcept {
         dataDescriptor_ = ptResult;
     }
 
-    // Internal: called by the session layer before submission.
-    void PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
-                             uint16_t maxPayloadLog) noexcept;
+    // Internal: called by SBP2LoginSession before submission.
+    [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID,
+                                                    FW::FwSpeed speed,
+                                                    uint16_t maxPayloadLog) noexcept;
 
     // Internal: ORB address for fetch agent / chaining.
     [[nodiscard]] Async::FWAddress GetORBAddress() const noexcept;
 
     // Internal: set the next ORB pointer (big-endian values).
-    void SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
+    [[nodiscard]] kern_return_t SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
 
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
-    void SetToDummy() noexcept;
+    [[nodiscard]] kern_return_t SetToDummy() noexcept;
 
     // Internal: timer management.
-    void StartTimer(IODispatchQueue* queue) noexcept;
+    void StartTimer(IODispatchQueue* completionQueue, IODispatchQueue* timeoutQueue) noexcept;
     void CancelTimer() noexcept;
 
     // State tracking.
+    [[nodiscard]] bool IsValid() const noexcept { return isValid_; }
     [[nodiscard]] bool IsAppended() const noexcept { return isAppended_; }
     void SetAppended(bool state) noexcept { isAppended_ = state; }
 
@@ -88,9 +94,15 @@ public:
     [[nodiscard]] CompletionCallback& GetCompletionCallback() noexcept { return completionCallback_; }
 
 private:
+    struct TimerState {
+        std::atomic<bool> inProgress{false};
+        std::atomic<uint64_t> generation{0};
+        CompletionCallback completionCallback{};
+    };
+
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
-    void WriteORBToAddressSpace() noexcept;
+    [[nodiscard]] kern_return_t WriteORBToAddressSpace() noexcept;
 
     AddressSpaceManager& addrMgr_;
     void* owner_;
@@ -110,14 +122,14 @@ private:
     SBP2PageTable::Result dataDescriptor_{};
 
     // State.
+    bool isValid_{false};
     bool isAppended_{false};
-    std::atomic<bool> inProgress_{false};
     uint32_t fetchAgentWriteRetries_{20};
 
     // Timer.
+    IODispatchQueue* completionQueue_{nullptr};
     IODispatchQueue* timerQueue_{nullptr};
-    std::atomic<uint64_t> timerGeneration_{0};
-    std::shared_ptr<int> lifetimeToken_{std::make_shared<int>(0)};
+    std::shared_ptr<TimerState> timerState_{std::make_shared<TimerState>()};
 };
 
 } // namespace ASFW::Protocols::SBP2

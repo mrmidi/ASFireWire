@@ -19,6 +19,7 @@ struct ControllerConfig {
     VendorInfo vendor;
     uint64_t localGuid{0};
     bool enableVerboseLogging{false};
+    bool experimentalHostCycleMasterBringup{false};
     bool allowCycleMasterEligibility{false};
     std::vector<uint32_t> supportedSpeeds;
 
@@ -26,4 +27,3 @@ struct ControllerConfig {
 };
 
 } // namespace ASFW::Driver
-

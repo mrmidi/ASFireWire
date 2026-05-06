@@ -253,6 +253,7 @@ gtest_discover_tests(SelfIDCaptureTests)
 add_executable(BusManagerGapOptimizationTests
     "${ASFW_TESTS_DIR}/BusManagerGapOptimizationTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -338,6 +339,29 @@ target_compile_definitions(FireWireIOReturnTests
 target_include_directories(FireWireIOReturnTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(FireWireIOReturnTests)
+
+# =============================================================================
+# Transaction Storage Tests - async user-client result retention
+# =============================================================================
+add_executable(TransactionStorageTests
+    "${ASFW_TESTS_DIR}/TransactionStorageTests.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Storage/TransactionStorage.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(TransactionStorageTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TransactionStorageTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TransactionStorageTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TransactionStorageTests)
 
 # =============================================================================
 # DMA Memory Tests - FakeDMAMemory unit tests
@@ -1228,6 +1252,101 @@ target_include_directories(SimITEngineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SimITEngineTests)
 
+# SBP-2 Address Space Manager Tests
+add_executable(AddressSpaceManagerTests
+    "${ASFW_TESTS_DIR}/AddressSpaceManagerTests.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+)
+
+target_link_libraries(AddressSpaceManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AddressSpaceManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AddressSpaceManagerTests)
+
+# SBP-2 Login Session Tests
+add_executable(SBP2LoginSessionTests
+    "${ASFW_TESTS_DIR}/SBP2LoginSessionTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SBP2LoginSessionTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SBP2LoginSessionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SBP2LoginSessionTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SBP2LoginSessionTests)
+
+# SBP-2 ORB timer tests
+add_executable(SBP2ORBTests
+    "${ASFW_TESTS_DIR}/SBP2ORBTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SBP2ORBTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SBP2ORBTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SBP2ORBTests)
+
+# SBP-2 Session Registry / command tests
+add_executable(SBP2SessionRegistryTests
+    "${ASFW_TESTS_DIR}/SBP2SessionRegistryTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2SessionRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SBP2SessionRegistryTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SBP2SessionRegistryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SBP2SessionRegistryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SBP2SessionRegistryTests)
+
 # Device protocol factory routing tests
 add_executable(DeviceProtocolFactoryTests
     "${ASFW_TESTS_DIR}/DeviceProtocolFactoryTests.cpp"
@@ -1422,6 +1541,24 @@ target_include_directories(ROMScannerDetailsDiscoveryTests PRIVATE ${ASFW_COMMON
 
 gtest_discover_tests(ROMScannerDetailsDiscoveryTests)
 
+add_executable(DiscoveryConvergenceTests
+    "${ASFW_TESTS_DIR}/DiscoveryConvergenceTests.cpp"
+)
+
+target_link_libraries(DiscoveryConvergenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiscoveryConvergenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiscoveryConvergenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DiscoveryConvergenceTests)
+
 add_executable(ROMScanNodeStateMachineTests
     "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"
 )
@@ -1440,43 +1577,3 @@ target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_IN
 
 gtest_discover_tests(ROMScanNodeStateMachineTests)
 
-add_executable(AddressSpaceManagerTests
-    "${ASFW_TESTS_DIR}/AddressSpaceManagerTests.cpp"
-    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
-)
-
-target_link_libraries(AddressSpaceManagerTests
-    PRIVATE
-        GTest::gtest_main
-)
-
-target_compile_definitions(AddressSpaceManagerTests
-    PRIVATE
-        ASFW_HOST_TEST
-)
-
-target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
-
-gtest_discover_tests(AddressSpaceManagerTests)
-
-add_executable(SBP2ORBTests
-    "${ASFW_TESTS_DIR}/SBP2ORBTests.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
-    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
-    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
-    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
-)
-
-target_link_libraries(SBP2ORBTests
-    PRIVATE
-        GTest::gtest_main
-)
-
-target_compile_definitions(SBP2ORBTests
-    PRIVATE
-        ASFW_HOST_TEST
-)
-
-target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
-
-gtest_discover_tests(SBP2ORBTests)

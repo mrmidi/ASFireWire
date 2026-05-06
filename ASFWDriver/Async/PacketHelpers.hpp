@@ -20,10 +20,10 @@ namespace ASFW::Async {
 ///
 /// Per IEEE 1394-1995 §6.2.1, destination_offset is at bytes 8-13 (48-bit).
 ///
-/// @param header Packet header bytes (big-endian, minimum 16 bytes)
+/// @param header Packet header bytes (big-endian, minimum 12 bytes)
 /// @return Destination offset (48-bit address), or 0 if header too short
 inline uint64_t ExtractDestOffset(std::span<const uint8_t> header) {
-    if (header.size() < 16) {
+    if (header.size() < 12) {
         return 0;
     }
 
@@ -65,20 +65,28 @@ inline uint64_t ExtractDestOffset(std::span<const uint8_t> header) {
     return (offset_high << 32) | offset_low;
 }
 
-/// Extract data length from block write/read packet header
+/// Extract data length from an OHCI AR DMA block packet header.
 ///
-/// Per IEEE 1394-1995 §6.2.4, data_length is at bytes 14-15 (16-bit).
+/// IEEE 1394 wire format stores Q3 as:
+///   [data_length:16][extended_tcode:16]
 ///
-/// @param header Packet header bytes (big-endian, minimum 16 bytes)
+/// OHCI AR DMA writes each quadlet to memory in little-endian host order, so
+/// Q3 appears in memory as:
+///   [extended_tcode_lo][extended_tcode_hi][data_length_lo][data_length_hi]
+///
+/// That means data_length lives in header[14:15] as a little-endian 16-bit
+/// value, not a big-endian wire-order value.
+///
+/// @param header Packet header bytes in OHCI AR DMA memory order
 /// @return Data length in bytes, or 0 if header too short
 inline uint16_t ExtractDataLength(std::span<const uint8_t> header) {
     if (header.size() < 16) {
         return 0;
     }
 
-    // Data length: bytes 14-15 (16-bit big-endian)
-    return (static_cast<uint16_t>(header[14]) << 8) |
-           static_cast<uint16_t>(header[15]);
+    // Q3 is stored little-endian in the AR DMA buffer.
+    return static_cast<uint16_t>(header[14]) |
+           (static_cast<uint16_t>(header[15]) << 8);
 }
 
 /// Extract extended transaction code from packet header

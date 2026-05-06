@@ -75,8 +75,8 @@ class DebugViewModel: ObservableObject {
             .store(in: &cancellables)
     }
     
-    func connect() {
-        connector.connect(forceAttempt: false)
+    func connect(forceAttempt: Bool = false) {
+        connector.connect(forceAttempt: forceAttempt)
     }
     
     func disconnect() {
@@ -154,9 +154,7 @@ class DebugViewModel: ObservableObject {
     }
     
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
-        return await Task.detached {
-            return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
-        }.value
+        return await self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
 

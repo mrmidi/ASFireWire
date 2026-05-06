@@ -61,7 +61,10 @@ void LogStateTransition(ASFW::Driver::BusResetCoordinator::State previousState,
 
 namespace ASFW::Driver {
 
-BusResetCoordinator::BusResetCoordinator() = default;
+std::atomic<uint32_t> BusResetCoordinator::nextDiagnosticsInstanceId_{1};
+
+BusResetCoordinator::BusResetCoordinator()
+    : diagnosticsInstanceId_(nextDiagnosticsInstanceId_.fetch_add(1, std::memory_order_relaxed)) {}
 BusResetCoordinator::~BusResetCoordinator() = default;
 
 void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispatchQueue> workQueue,
@@ -104,6 +107,7 @@ void BusResetCoordinator::OnIrq(uint32_t intEvent, uint64_t timestamp) {
         cycle_.timing.lastBusResetEdgeNs = timestamp;
         pendingBusResetEdge_ = true;
         relevant = true;
+        ++busResetIrqCount_;
         LogBusResetEdgeLatched(timestamp);
     }
 
@@ -132,6 +136,23 @@ void BusResetCoordinator::OnIrq(uint32_t intEvent, uint64_t timestamp) {
 
 void BusResetCoordinator::BindCallbacks(TopologyReadyCallback onTopology) {
     topologyCallback_ = std::move(onTopology);
+}
+
+BusResetCoordinator::ResetDiagnostics BusResetCoordinator::Diagnostics() const {
+    return ResetDiagnostics{
+        .driverStartId = diagnosticsInstanceId_,
+        .resetEpoch = resetEpoch_,
+        .manualResetEpoch = manualResetEpoch_,
+        .softwareResetIssuedCount = softwareResetIssuedCount_,
+        .busResetIrqCount = busResetIrqCount_,
+        .lastAcceptedGeneration = lastAcceptedGeneration_,
+        .lastTopologyNodeCount = lastTopologyNodeCount_,
+        .readyForDiscoveryFailureBits = readyForDiscoveryFailureBits_,
+        .lastRecoveryReasonCode = lastRecoveryReasonCode_,
+        .lastResetKind = static_cast<uint8_t>(lastResetKind_),
+        .recoveryResetAttempts = manualRecoveryResetAttempts_,
+        .discoveryCallbackCount = discoveryCallbackCount_,
+    };
 }
 
 uint64_t BusResetCoordinator::MonotonicNow() {

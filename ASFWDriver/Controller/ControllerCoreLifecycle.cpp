@@ -32,6 +32,7 @@
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
+#include "BringupOverrides.hpp"
 #include "ControllerStateMachine.hpp"
 #include "Logging.hpp"
 
@@ -80,6 +81,8 @@ kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
                  "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
         return kIOReturnNoResources;
     }
+
+    ApplyBringupOverrides(config_, deps_.busManager.get());
 
     auto workQueue = deps_.scheduler->Queue();
     ASFW_LOG(Controller, "Initializing BusResetCoordinator");
@@ -331,6 +334,12 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // auto-allocation behavior
     if (isOHCI_1_1_OrLater) {
         hw.WriteAndFlush(Register32::kInitialChannelsAvailableHi, 0xFFFFFFFE);
+        hw.WriteAndFlush(Register32::kInitialChannelsAvailableLo, 0xFFFFFFFF);
+        // Initialize BandwidthAvailable to maximum isochronous bandwidth.
+        // Per Linux ohci_enable(): reg_write(ohci, OHCI1394_BandwidthAvailable, 4915)
+        // Value 4915 (0x1333) ≈ S1600 full-cycle bandwidth. Without this, the IRM
+        // reports zero available bandwidth and devices may consider bus management inactive.
+        hw.WriteAndFlush(Register32::kInitialBandwidthAvailable, 4915);
     }
 
     // Step 4: Clear noByteSwapData - enable byte-swapping for data phases per OHCI spec
@@ -385,66 +394,22 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
             ASFW_LOG(Hardware, "PHY probe failed after retry; relying on firmware defaults");
         } else {
             uint8_t reg1Value = phyId.value();
-            ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x)", reg1Value);
+            ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x, gap_count=%u)",
+                         reg1Value, reg1Value & ASFW::Driver::kPhyGapCountMask);
 
-            // --- FIX START: Force Gap Count to 0x3F ---
-            // Problem: Some PHYs report the strapped value over the register interface
-            //          but require a write to latch it into the active core after reset.
-            // Fix:     Always write register 1 so the latch is triggered even if the
-            //          desired value already appears to be programmed.
-            const uint8_t kTargetGap = ASFW::Driver::kPhyGapCountMask;
-            const uint8_t newReg1 = (reg1Value & 0xC0U) | kTargetGap;
-
-            ASFW_LOG_PHY("Forcing PHY Gap Count write (Reg 1): 0x%02x -> 0x%02x", reg1Value,
-                         newReg1);
-
-            constexpr int kMaxPhyWriteAttempts = 3;
-            bool wroteOk = false;
-            for (int attempt = 0; attempt < kMaxPhyWriteAttempts; ++attempt) {
-                if (!hw.WritePhyRegister(1, newReg1)) {
-                    ASFW_LOG_PHY("PHY write attempt %d failed (writePhyRegister returned false)",
-                                 attempt + 1);
-                    // Short delay before retry
-                    IOSleep(1);
-                    continue;
-                }
-
-                // Give PHY time to latch the value (some parts need an explicit delay)
-                IODelay(2000);
-
-                // Read-back verification
-                auto verify = hw.ReadPhyRegister(1);
-                if (verify && ((*verify & ASFW::Driver::kPhyGapCountMask) == kTargetGap)) {
-                    ASFW_LOG_PHY("✅ PHY Gap Count confirmed: 0x%02x -> 0x%02x (attempt %d)",
-                                 reg1Value, *verify, attempt + 1);
-                    wroteOk = true;
-                    break;
-                }
-
-                // Toggle LPS to try to force PHY latch, then small pause and retry
-                ASFW_LOG_PHY("PHY gap write verify failed on attempt %d (readback=0x%02x)",
-                             attempt + 1, verify.value_or(0));
-                hw.ClearHCControlBits(HCControlBits::kLPS);
-                IODelay(5);
-                hw.SetHCControlBits(HCControlBits::kLPS);
-                IOSleep(5);
-            }
-
-            if (!wroteOk) {
-                ASFW_LOG(Hardware,
-                         "Failed to reliably write PHY Register 1 (gap count) after %d attempts",
-                         kMaxPhyWriteAttempts);
-            }
-            // --- FIX END ---
+            // Note: We do NOT force gap count during init, unlike previous code.
+            // Linux ohci_enable() uses the PHY's default gap count and only
+            // optimizes it later after topology discovery (see GapCountOptimizer).
+            // Forcing gap count = 63 at init could cause communication issues
+            // with devices that expect the standard default (5).
 
             // Step 4: Configure PHY register 4 (Link Active + Contender)
             // Use constants from IEEE1394.hpp
             // (kPhyReg4Address, kPhyLinkActive, kPhyContender)
             //
-            // CRITICAL FIX: Only set Contender bit if allowCycleMasterEligibility is true
-            // - This matches Apple's behavior (conditional PHY reg 4 setup)
-            // - Prevents two-contender bus topology issues with devices like Apogee Duet
-            // - Default config has allowCycleMasterEligibility=false (delegate mode)
+            // Per Linux firewire_ohci and Apple IOFireWireController:
+            // Always set Contender bit. ApplyBringupOverrides ensures
+            // allowCycleMasterEligibility=true (matching Linux/Apple defaults).
 
             const uint8_t phyReg4Bits =
                 config_.allowCycleMasterEligibility
@@ -465,14 +430,17 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
                 ASFW_LOG(Hardware, "Failed to configure PHY register 4");
             }
 
-            // Enable PHY accelerated arbitration (IEEE 1394a reg5 bit6) before linkEnable.
+            // Enable PHY accelerated arbitration + multi-speed packet concatenation
+            // (IEEE 1394a reg5 bit6 + bit5) before linkEnable.
+            // Per Linux configure_1394a_enhancements(): both bits are set together.
             if (phyConfigOk) {
                 const bool accelEnabled =
-                    hw.UpdatePhyRegister(kPhyReg5Address, 0, kPhyEnableAcceleration);
+                    hw.UpdatePhyRegister(kPhyReg5Address, 0,
+                                         kPhyEnableAcceleration | kPhyEnableMulti);
                 if (accelEnabled) {
-                    ASFW_LOG_PHY("PHY reg5 configured: Enab_accel=1 (gap writes will stick)");
+                    ASFW_LOG_PHY("PHY reg5 configured: Enab_accel=1 Enab_multi=1");
                 } else {
-                    ASFW_LOG(Hardware, "Failed to enable PHY accelerated arbitration (reg5 bit6)");
+                    ASFW_LOG(Hardware, "Failed to enable PHY 1394a enhancements (reg5)");
                     phyConfigOk = false;
                 }
             }
@@ -533,14 +501,23 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
         return configRomStatus;
     }
 
-    // Step 7: Set Physical Upper Bound (256MB CSR address range)
-    // TODO(ASFW-DMA): Confirm whether remote DMA still requires this register programming.
-    // Per Linux ohci_enable(): Don't pre-write NodeID; bus reset will assign it from Self-ID
-    // The kProvisionalNodeId value would be immediately overwritten anyway
+    // Step 7: Set Physical Upper Bound (OHCI §5.5.5)
+    // Per Linux ohci_enable() (ohci.c:2346):
+    //   reg_write(ohci, OHCI1394_PhyUpperBound, FW_MAX_PHYSICAL_RANGE >> 16);
+    // FW_MAX_PHYSICAL_RANGE = 1ULL << 32, >> 16 = 0x10000 (4GB physical DMA range)
+    // This MUST be set before linkEnable to ensure proper physical address routing.
+    // Without this, CSR high-address space (e.g. ConfigROM at 0xF0000800+) may
+    // return RCODE_ADDRESS_ERROR on some controllers.
+    hw.WriteAndFlush(Register32::kPhyUpperBound, 0x10000u);
+    ASFW_LOG(Hardware, "PhyUpperBound set to 0x10000 (4GB physical DMA range)");
+
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
-             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable (cycleMaster deferred)");
+             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable | cycleMaster");
     hw.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
+    hw.WriteAndFlush(Register32::kAsReqFilterLoSet, 0xFFFFFFFF);
+    ASFW_LOG(Hardware, "AsReqFilter: Hi=0x%08x Lo=0xFFFFFFFF (accept all async requests)",
+             ASFW::Driver::kAsReqAcceptAllMask);
 
     // Build full 32-bit value explicitly per OHCI spec:
     // [31:24]=reserved(0), [23:16]=cycleLimit, [15:8]=maxPhys, [7:4]=maxResp, [3:0]=maxReq
@@ -550,9 +527,25 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     hw.WriteAndFlush(Register32::kATRetries, atRetriesVal);
     // Force readback to flush write pipeline
     const uint32_t atRetriesReadback = hw.Read(Register32::kATRetries);
-    ASFW_LOG(Hardware, "ATRetries configured: maxReq=3 maxResp=3 maxPhys=3 cycleLimit=200");
     ASFW_LOG(Hardware, "ATRetries write/readback: 0x%08x / 0x%08x", atRetriesVal,
              atRetriesReadback);
+
+    // FairnessControl (0x0DC): Probe for priority budget support, then clear.
+    // Per Linux ohci_enable() (firewire/ohci.c):
+    //   reg_write(ohci, OHCI1394_FairnessControl, 0x3f);
+    //   if (reg_read(ohci, OHCI1394_FairnessControl) == 0x3f)
+    //       reg_write(ohci, OHCI1394_FairnessControl, 0);
+    // Some controllers implement priority arbitration; clearing the register
+    // ensures standard fairness (equal access for all nodes on the bus).
+    hw.WriteAndFlush(Register32::kFairnessControl, 0x3F);
+    const uint32_t fcReadback = hw.Read(Register32::kFairnessControl);
+    if (fcReadback == 0x3F) {
+        hw.WriteAndFlush(Register32::kFairnessControl, 0);
+        ASFW_LOG(Hardware, "FairnessControl: priority-budget capable, cleared to 0");
+    } else {
+        ASFW_LOG(Hardware, "FairnessControl: readback=0x%08x (no priority-budget support)",
+                 fcReadback);
+    }
 
     // Bus timing state: mark cycle timer as inactive during init
     // Linux: ohci->bus_time_running = false;
@@ -634,16 +627,7 @@ kern_return_t ControllerCore::EnableInterruptsAndStartBus() {
     ASFW_LOG(Hardware,
              "Setting linkEnable + BIBimageValid atomically - will trigger auto bus reset");
     hw.SetHCControlBits(HCControlBits::kLinkEnable | HCControlBits::kBibImageValid);
-
-    if (phyProgramSupported_ && phyConfigOk_) {
-        ASFW_LOG(Hardware, "Forcing bus reset via PHY to guarantee Config ROM shadow activation");
-        const bool forced = hw.InitiateBusReset(false);
-        if (!forced) {
-            ASFW_LOG(Hardware, "WARNING: Forced bus reset failed; will rely on auto reset");
-        }
-    } else {
-        ASFW_LOG(Hardware, "Skipping forced reset; relying on auto reset from linkEnable");
-    }
+    ASFW_LOG(Hardware, "Relying on linkEnable auto reset for Config ROM shadow activation");
 
     if (deps_.asyncController) {
         const kern_return_t armStatus = deps_.asyncController->ArmARContextsOnly();

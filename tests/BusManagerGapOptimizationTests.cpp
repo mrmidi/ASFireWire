@@ -4,6 +4,8 @@
 #include <vector>
 
 #include "ASFWDriver/Bus/BusManager.hpp"
+#include "ASFWDriver/Controller/ControllerConfig.hpp"
+#include "ASFWDriver/Controller/BringupOverrides.hpp"
 
 using namespace ASFW::Driver;
 
@@ -31,7 +33,68 @@ TopologySnapshot MakeTopology(const std::optional<uint8_t> localNodeId,
     return topology;
 }
 
+TopologyNode MakeNode(const uint8_t nodeId, const bool contender, const bool linkActive = true) {
+    TopologyNode node{};
+    node.nodeId = nodeId;
+    node.isIRMCandidate = contender;
+    node.linkActive = linkActive;
+    return node;
+}
+
 } // namespace
+
+TEST(BusManagerGapOptimizationTests, ControllerConfigDefaultsPreserveDelegatedMode) {
+    ControllerConfig config{};
+    EXPECT_FALSE(config.allowCycleMasterEligibility);
+    EXPECT_FALSE(config.experimentalHostCycleMasterBringup);
+
+    const ControllerConfig defaultConfig = ControllerConfig::MakeDefault();
+    EXPECT_FALSE(defaultConfig.allowCycleMasterEligibility);
+    EXPECT_FALSE(defaultConfig.experimentalHostCycleMasterBringup);
+}
+
+TEST(BusManagerGapOptimizationTests, DefaultBringupDelegatesRootToPeerContender) {
+    BusManager busManager;
+
+    TopologySnapshot topology{};
+    topology.localNodeId = 1U;
+    topology.rootNodeId = 1U;
+    topology.irmNodeId = 1U;
+    topology.nodes = {
+        MakeNode(0U, true),
+        MakeNode(1U, true),
+    };
+
+    const auto command = busManager.AssignCycleMaster(topology, {});
+    ASSERT_TRUE(command.has_value());
+    ASSERT_TRUE(command->forceRootNodeID.has_value());
+    ASSERT_TRUE(command->setContender.has_value());
+    EXPECT_EQ(*command->forceRootNodeID, 0U);
+    EXPECT_FALSE(*command->setContender);
+}
+
+TEST(BusManagerGapOptimizationTests, ExperimentalHostCycleMasterBringupDisablesDelegation) {
+    ControllerConfig config{};
+    config.experimentalHostCycleMasterBringup = true;
+
+    BusManager busManager;
+    ApplyBringupOverrides(config, &busManager);
+
+    EXPECT_TRUE(config.allowCycleMasterEligibility);
+    EXPECT_FALSE(busManager.GetConfig().delegateCycleMaster);
+
+    TopologySnapshot topology{};
+    topology.localNodeId = 1U;
+    topology.rootNodeId = 1U;
+    topology.irmNodeId = 1U;
+    topology.nodes = {
+        MakeNode(0U, true),
+        MakeNode(1U, true),
+    };
+
+    const auto command = busManager.AssignCycleMaster(topology, {});
+    EXPECT_FALSE(command.has_value());
+}
 
 TEST(BusManagerGapOptimizationTests, InconsistentObservedBaseGapsForceConservative63) {
     BusManager busManager;
@@ -60,9 +123,42 @@ TEST(BusManagerGapOptimizationTests, ObservedZeroGapRetoolsToCurrentTargetGap) {
     EXPECT_EQ(decision->gapCount, 10U);
 }
 
-TEST(BusManagerGapOptimizationTests, ObservedGapsMatchingPreviousGapNeedNoAction) {
+TEST(BusManagerGapOptimizationTests, ObservedDefault63GapWithUnknownHistoryRetoolsToCurrentTargetGap) {
     BusManager busManager;
     busManager.SetGapOptimizationEnabled(true);
+
+    const auto topology = MakeTopology(0U, 0U, 4U);
+    const auto decision =
+        busManager.EvaluateGapPolicy(topology,
+                                     {MakeBaseSelfID(0U, 63U), MakeBaseSelfID(1U, 63U)});
+
+    ASSERT_TRUE(decision.has_value());
+    EXPECT_EQ(decision->reason, BusManager::GapDecisionReason::TargetGap);
+    EXPECT_EQ(decision->gapCount, 10U);
+}
+
+TEST(BusManagerGapOptimizationTests, TwoNodeLocalRootSkipsTargetGapOptimization) {
+    BusManager busManager;
+    busManager.SetGapOptimizationEnabled(true);
+
+    auto topology = MakeTopology(1U, 1U, 1U);
+    topology.rootNodeId = 1U;
+    topology.nodes = {
+        MakeNode(0U, true),
+        MakeNode(1U, true),
+    };
+
+    const auto decision =
+        busManager.EvaluateGapPolicy(topology,
+                                     {MakeBaseSelfID(0U, 63U), MakeBaseSelfID(1U, 63U)});
+
+    EXPECT_FALSE(decision.has_value());
+}
+
+TEST(BusManagerGapOptimizationTests, ObservedGapsMatchingConfirmedGapNeedNoAction) {
+    BusManager busManager;
+    busManager.SetGapOptimizationEnabled(true);
+    busManager.NoteStableGapObserved(63U);
 
     const auto topology = MakeTopology(0U, 0U, 4U);
     const auto decision =

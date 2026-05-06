@@ -417,6 +417,14 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     if (info.tCode == 0x6) {  // kTCodeReadQuadletResponse
         payloadPtr = info.packetStart + 12; // q3 (offset 12-15)
         payloadLen = 4;
+
+        // DIAGNOSTIC: Log raw bytes of read quadlet response data
+        ASFW_LOG(Async,
+                 "[DIAG] RxPath ReadQuadletResp: src=0x%04X tLabel=%u rCode=0x%X "
+                 "raw=[%02X %02X %02X %02X] gen=%u",
+                 sourceID, tLabel, rCode,
+                 payloadPtr[0], payloadPtr[1], payloadPtr[2], payloadPtr[3],
+                 currentGen);
     }
 
     // CRITICAL: DMA buffers are mapped as device memory (kIOMemoryMapCacheModeInhibit).

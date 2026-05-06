@@ -104,8 +104,14 @@ void ControllerCore::SetFCPResponseRouter(
     deps_.fcpResponseRouter = std::move(fcpResponseRouter);
 }
 
+IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
+
 Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager() const {
     return deps_.sbp2AddressSpaceManager.get();
+}
+
+Protocols::SBP2::SBP2SessionRegistry* ControllerCore::GetSBP2SessionRegistry() const {
+    return deps_.sbp2SessionRegistry.get();
 }
 
 void ControllerCore::SetSbp2AddressSpaceManager(
@@ -113,7 +119,10 @@ void ControllerCore::SetSbp2AddressSpaceManager(
     deps_.sbp2AddressSpaceManager = std::move(sbp2AddressSpaceManager);
 }
 
-IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
+void ControllerCore::SetSBP2SessionRegistry(
+    std::shared_ptr<Protocols::SBP2::SBP2SessionRegistry> sbp2SessionRegistry) {
+    deps_.sbp2SessionRegistry = std::move(sbp2SessionRegistry);
+}
 
 void ControllerCore::SetIRMClient(std::shared_ptr<IRM::IRMClient> client) {
     deps_.irmClient = std::move(client);

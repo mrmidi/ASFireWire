@@ -50,6 +50,7 @@ Plugins/VersionGeneratorPlugin
 # LLM Tools
 
 .claude/
+.zread/
 opencode.json
 
 # Xcode per-user state

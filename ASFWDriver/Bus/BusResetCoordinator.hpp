@@ -110,6 +110,33 @@ class BusResetCoordinator {
     const char* StateString() const;
     static const char* StateString(State state);
 
+    enum class RecoveryReasonCode : uint8_t {
+        None = 0,
+        SelfIDDecodeFailed = 1,
+        SelfIDTimeout = 2,
+        TopologyBuildFailed = 3,
+        SoftwareResetDispatchFailed = 4,
+        ReadyForDiscoveryFailed = 5,
+        ManualResetWatchdog = 6,
+    };
+
+    struct ResetDiagnostics {
+        uint32_t driverStartId{0};
+        uint32_t resetEpoch{0};
+        uint32_t manualResetEpoch{0};
+        uint32_t softwareResetIssuedCount{0};
+        uint32_t busResetIrqCount{0};
+        uint32_t lastAcceptedGeneration{0};
+        uint8_t lastTopologyNodeCount{0};
+        uint8_t readyForDiscoveryFailureBits{0};
+        RecoveryReasonCode lastRecoveryReasonCode{RecoveryReasonCode::None};
+        uint8_t lastResetKind{0};
+        uint8_t recoveryResetAttempts{0};
+        uint8_t discoveryCallbackCount{0};
+    };
+
+    ResetDiagnostics Diagnostics() const;
+
     /**
      * Reset delegation retry counter (Linux pattern for emergency bypass).
      *
@@ -236,13 +263,16 @@ class BusResetCoordinator {
     bool DispatchSoftwareReset(const ResetRequest& request);
     void ClearDelegationAttempt();
     void RecordRecoveryReason(std::string reason);
+    void RecordRecoveryReasonCode(RecoveryReasonCode code);
+    void ScheduleManualResetWatchdog(uint32_t manualEpoch, uint32_t resetEpoch);
+    void MaybeRecoverMissingManualResetIrq(uint32_t manualEpoch, uint32_t resetEpoch);
 
     bool G_ATInactive();
     bool HasSelfIDCompletion() const;
     bool CanAttemptSelfIDDecode() const;
     bool G_NodeIDValid() const;
 
-    bool ReadyForDiscovery(Discovery::Generation gen) const;
+    bool ReadyForDiscovery(Discovery::Generation gen);
 
     static uint64_t MonotonicNow();
 
@@ -290,6 +320,20 @@ class BusResetCoordinator {
     static constexpr uint32_t kMaxDiscoveryDelayMs = 10000; // 10s cap
     uint32_t currentDiscoveryDelayMs_{0};
     bool previousScanHadBusyNodes_{false};
+
+    static std::atomic<uint32_t> nextDiagnosticsInstanceId_;
+    uint32_t diagnosticsInstanceId_{0};
+    uint32_t resetEpoch_{0};
+    uint32_t manualResetEpoch_{0};
+    uint32_t softwareResetIssuedCount_{0};
+    uint32_t busResetIrqCount_{0};
+    uint32_t lastAcceptedGeneration_{0};
+    uint8_t lastTopologyNodeCount_{0};
+    uint8_t readyForDiscoveryFailureBits_{0};
+    RecoveryReasonCode lastRecoveryReasonCode_{RecoveryReasonCode::None};
+    ResetRequestKind lastResetKind_{ResetRequestKind::Recovery};
+    uint8_t manualRecoveryResetAttempts_{0};
+    uint8_t discoveryCallbackCount_{0};
 };
 
 } // namespace ASFW::Driver

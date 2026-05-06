@@ -249,7 +249,7 @@ DeviceKind DeviceRegistry::ClassifyDevice(const ConfigROM& rom) const {
             return DeviceKind::Storage;
         }
     }
-    
+
     return DeviceKind::Unknown;
 }
 

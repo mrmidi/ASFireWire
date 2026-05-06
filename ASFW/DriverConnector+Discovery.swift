@@ -23,11 +23,42 @@ extension ASFWDriverConnector {
         print("[Connector] 📦 Received \(wireData.count) bytes of wire format data")
 
         // Parse wire format
-        return parseDeviceDiscoveryWire(wireData)
+        return Self.parseDeviceDiscoveryWire(wireData)
     }
 
     /// Parse wire format data from driver
-    private func parseDeviceDiscoveryWire(_ data: Data) -> [FWDeviceInfo]? {
+    static func parseDeviceDiscoveryWire(_ data: Data) -> [FWDeviceInfo]? {
+        @inline(__always)
+        func readUInt8(at offset: Int) -> UInt8 {
+            data[data.startIndex + offset]
+        }
+
+        @inline(__always)
+        func readUInt32(at offset: Int) -> UInt32 {
+            var value: UInt32 = 0
+            for i in 0..<4 {
+                value |= UInt32(data[data.startIndex + offset + i]) << (i * 8)
+            }
+            return value
+        }
+
+        @inline(__always)
+        func readUInt64(at offset: Int) -> UInt64 {
+            var value: UInt64 = 0
+            for i in 0..<8 {
+                value |= UInt64(data[data.startIndex + offset + i]) << (i * 8)
+            }
+            return value
+        }
+
+        func readCString(at offset: Int, length: Int) -> String {
+            let start = data.startIndex + offset
+            let end = start + length
+            let bytes = data[start..<end]
+            let trimmed = bytes.prefix { $0 != 0 }
+            return String(decoding: trimmed, as: UTF8.self)
+        }
+
         var offset = 0
 
         // Read header
@@ -36,7 +67,7 @@ extension ASFWDriverConnector {
             return nil
         }
 
-        let deviceCount = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt32.self) }
+        let deviceCount = readUInt32(at: offset)
         offset += 8  // deviceCount + padding
 
         print("[Connector] 📋 Device count: \(deviceCount)")
@@ -50,21 +81,16 @@ extension ASFWDriverConnector {
                 return nil
             }
 
-            let guid = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt64.self) }
-            let vendorId = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 8, as: UInt32.self) }
-            let modelId = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 12, as: UInt32.self) }
-            let generation = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 16, as: UInt32.self) }
-            let nodeId = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 20, as: UInt8.self) }
-            let stateRaw = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 21, as: UInt8.self) }
-            let unitCount = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 22, as: UInt8.self) }
-
-            // Read vendor name (64 bytes at offset 24)
-            let vendorNameData = data.subdata(in: (offset + 24)..<(offset + 88))
-            let vendorName = String(cString: vendorNameData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
-
-            // Read model name (64 bytes at offset 88)
-            let modelNameData = data.subdata(in: (offset + 88)..<(offset + 152))
-            let modelName = String(cString: modelNameData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
+            let guid = readUInt64(at: offset)
+            let vendorId = readUInt32(at: offset + 8)
+            let modelId = readUInt32(at: offset + 12)
+            let generation = readUInt32(at: offset + 16)
+            let nodeId = readUInt8(at: offset + 20)
+            let stateRaw = readUInt8(at: offset + 21)
+            let unitCount = readUInt8(at: offset + 22)
+            let deviceKind = readUInt8(at: offset + 23)
+            let vendorName = readCString(at: offset + 24, length: 64)
+            let modelName = readCString(at: offset + 88, length: 64)
 
             let state = FWDeviceState(rawValue: stateRaw) ?? .created
 
@@ -73,23 +99,21 @@ extension ASFWDriverConnector {
             // Read units
             var units: [FWUnitInfo] = []
             for _ in 0..<unitCount {
-                guard offset + 144 <= data.count else {  // sizeof(FWUnitWire) = 144
+                guard offset + 160 <= data.count else {  // sizeof(FWUnitWire) = 160
                     print("[Connector] ❌ Data truncated while reading unit")
                     return nil
                 }
 
-                let specId = data.withUnsafeBytes { $0.load(fromByteOffset: offset, as: UInt32.self) }
-                let swVersion = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 4, as: UInt32.self) }
-                let romOffset = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 8, as: UInt32.self) }
-                let unitStateRaw = data.withUnsafeBytes { $0.load(fromByteOffset: offset + 12, as: UInt8.self) }
-
-                // Read unit vendor name (64 bytes at offset 16)
-                let unitVendorData = data.subdata(in: (offset + 16)..<(offset + 80))
-                let unitVendorName = String(cString: unitVendorData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
-
-                // Read unit product name (64 bytes at offset 80)
-                let unitProductData = data.subdata(in: (offset + 80)..<(offset + 144))
-                let unitProductName = String(cString: unitProductData.withUnsafeBytes { $0.bindMemory(to: CChar.self).baseAddress! })
+                let specId = readUInt32(at: offset)
+                let swVersion = readUInt32(at: offset + 4)
+                let romOffset = readUInt32(at: offset + 8)
+                let unitStateRaw = readUInt8(at: offset + 12)
+                let managementAgentOffset = readUInt32(at: offset + 16)
+                let lun = readUInt32(at: offset + 20)
+                let unitCharacteristics = readUInt32(at: offset + 24)
+                let fastStart = readUInt32(at: offset + 28)
+                let unitVendorName = readCString(at: offset + 32, length: 64)
+                let unitProductName = readCString(at: offset + 96, length: 64)
 
                 let unitState = FWUnitState(rawValue: unitStateRaw) ?? .created
 
@@ -98,11 +122,15 @@ extension ASFWDriverConnector {
                     swVersion: swVersion,
                     state: unitState,
                     romOffset: romOffset,
+                    managementAgentOffset: managementAgentOffset == 0 ? nil : managementAgentOffset,
+                    lun: lun == 0 ? nil : lun,
+                    unitCharacteristics: unitCharacteristics == 0 ? nil : unitCharacteristics,
+                    fastStart: fastStart == 0 ? nil : fastStart,
                     vendorName: unitVendorName.isEmpty ? nil : unitVendorName,
                     productName: unitProductName.isEmpty ? nil : unitProductName
                 ))
 
-                offset += 144  // sizeof(FWUnitWire)
+                offset += 160  // sizeof(FWUnitWire)
             }
 
             devices.append(FWDeviceInfo(
@@ -115,7 +143,8 @@ extension ASFWDriverConnector {
                 nodeId: nodeId,
                 generation: generation,
                 state: state,
-                units: units
+                units: units,
+                deviceKind: deviceKind
             ))
         }
 
