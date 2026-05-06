@@ -104,15 +104,6 @@ void ControllerCore::SetFCPResponseRouter(
     deps_.fcpResponseRouter = std::move(fcpResponseRouter);
 }
 
-Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager() const {
-    return deps_.sbp2AddressSpaceManager.get();
-}
-
-void ControllerCore::SetSbp2AddressSpaceManager(
-    std::shared_ptr<Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager) {
-    deps_.sbp2AddressSpaceManager = std::move(sbp2AddressSpaceManager);
-}
-
 IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
 
 Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager() const {
