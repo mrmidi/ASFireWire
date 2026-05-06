@@ -99,4 +99,8 @@ inline bool LoadHexArrayFromRepoFile(std::string_view relativePath,
     return LoadHexArrayFromCFile(absolutePath, arrayName, outWords, errorMessage);
 }
 
+inline bool RepoReferenceFileExists(std::string_view relativePath) {
+    return std::filesystem::exists(ResolveRepoRoot() / std::filesystem::path(relativePath));
+}
+
 } // namespace ASFW::Tests
