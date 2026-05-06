@@ -29,8 +29,9 @@ class MetricsViewModel: ObservableObject {
     
     func startPolling() {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
             Task { @MainActor in
-                self?.fetchMetrics()
+                self.fetchMetrics()
             }
         }
     }
