@@ -222,21 +222,6 @@ Dotykaj tylko tego, co musisz: - Nie „poprawiaj" sąsiedniego kodu bez pytania
 Gdy Twoje zmiany tworzą „osierocone" elementy: - Usuń importy/zmienne/funkcje, które stały się nieużywane przez Twoje zmiany - Nie usuwaj sam wcześniej istniejącego martwego kodu (Poinformuj o nim wyraźnie), usuń wtedy gdy zostaniesz o to poproszony
 
 
-## Current Implementation Status
-
-| Subsystem | Status | Notes |
-|-----------|--------|-------|
-| OHCI init & bus reset | ✅ Working | Self-ID, topology, gap count |
-| Async TX/RX (quadlet read) | ✅ Working | Block read/write, lock, PHY partially done |
-| Config ROM reading | ✅ Working | Full scanner with multi-node FSM |
-| AV/C / FCP | 🚧 In progress | Music Subunit, PCR space |
-| IRM | 🚧 Partial | Election and channel alloc |
-| Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence, tested on hardware |
-| Isoch Receive (IR) | 🚧 WIP | `IsochReceiveContext`, `IsochRxDmaRing` exist; pipeline works but needs hardware validation |
-| AudioDriverKit integration | 🚧 In progress | `ASFWAudioDriver`, `ASFWAudioNub` wired up |
-
-**Primary goal:** get IR receive working end-to-end for MOTU 828 MK3 (IEC 61883-6 / AM824 stereo audio).
-
 ## Test Stub Quirk — DMA Alignment
 
 `HardwareInterface::AllocateDMA` in `tests/HardwareInterfaceStub.cpp` allocates the virtual buffer with **at least 4096-byte (page) alignment** (`effectiveAlign = max(4096, requested)`). This is intentional: the mock IOVA counter starts at `0x20000000` (page-aligned), so `DMAMemoryManager::AlignCursorToIOVA(4096)` only produces correct virtual-address alignment if `slabVirt_` is also page-aligned. Without this, the IOVA cursor aligns but the VA does not, breaking `IsochDMAMemoryManagerTest.PayloadSlicingAndPageAlignment`.

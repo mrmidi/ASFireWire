@@ -1507,3 +1507,29 @@ target_compile_definitions(SBP2ORBTests
 target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SBP2ORBTests)
+
+# =============================================================================
+# Etap 3: StreamProcessor / AM824 Tests
+# IEC 61883-6 packet parsing, DBC continuity, AM824 decoding
+# No hardware required — StreamProcessor and AM824Decoder are header-only.
+# =============================================================================
+
+add_executable(StreamProcessorTests
+    "${ASFW_TESTS_DIR}/StreamProcessorTests.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(StreamProcessorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(StreamProcessorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_compile_features(StreamProcessorTests PRIVATE cxx_std_23)
+target_include_directories(StreamProcessorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(StreamProcessorTests)
