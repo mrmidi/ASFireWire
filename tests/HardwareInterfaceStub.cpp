@@ -244,7 +244,11 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
                                                                            uint64_t options,
                                                                            size_t alignment) {
     IOBufferMemoryDescriptor* buffer = nullptr;
-    if (IOBufferMemoryDescriptor::Create(options, length, alignment, &buffer) != kIOReturnSuccess) {
+    // Allocate with at least page (4096-byte) alignment so that slabVirt_ and slabIOVA_
+    // (which starts at 0x20000000, a page boundary) share the same page offset.
+    // This makes AlignCursorToIOVA() produce correct virtual-address alignment in tests.
+    const size_t effectiveAlign = std::max(size_t{4096}, alignment > 0 ? alignment : size_t{16});
+    if (IOBufferMemoryDescriptor::Create(options, length, effectiveAlign, &buffer) != kIOReturnSuccess) {
         return std::nullopt;
     }
 

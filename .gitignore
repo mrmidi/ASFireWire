@@ -51,6 +51,7 @@ Plugins/VersionGeneratorPlugin
 
 .claude/
 opencode.json
+.codegraph/
 
 # Xcode per-user state
 **/xcuserdata/

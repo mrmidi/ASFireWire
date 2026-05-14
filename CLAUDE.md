@@ -169,3 +169,74 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 ## Swift App (ASFW/)
 
 Uses Swift 6 strict concurrency. All cross-actor data must be `Sendable`. Use `actor` isolation correctly. The app is required to install DriverKit extensions via `systemextensionsctl`.
+
+## Development Environment (macOS Sequoia, no Tahoe)
+
+Tests run on macOS Sequoia — no Tahoe machine available. Hardware testing requires a separate setup (Tahoe + TB3→FW adapter + MOTU device).
+
+**cmake** is installed via Homebrew and NOT on the default PATH. Always prefix or export:
+```bash
+export PATH="/opt/homebrew/bin:$PATH"
+cmake -S tests -B build/tests_build
+cmake --build build/tests_build -- -j$(sysctl -n hw.ncpu)
+ctest --test-dir build/tests_build
+```
+
+**Running a single test suite:**
+```bash
+ctest --test-dir build/tests_build -V -R IsochRxDmaRing
+```
+
+## CodeGraph MCP
+
+The project is indexed with CodeGraph (local SQLite graph of all symbols). Index lives in `.codegraph/codegraph.db`. The MCP server is configured in `../.mcp.json` (one level above ASFireWire, in the FireWire project root).
+
+**Always query CodeGraph before reading files.** Use `codegraph_search` to find symbol locations, `codegraph_context` for task-level context. This avoids reading dozens of files to locate a class or function.
+
+**Re-index after adding/moving files:**
+```bash
+export PATH="$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:$PATH"
+NODE_OPTIONS="--max-old-space-size=4096" codegraph index -f -q .
+```
+
+**Current index stats:** 601 files · 11 161 nodes · 20 430 edges (495 C++, 66 Swift).
+
+
+Wytyczne Behawioralne
+Kompromis: Niniejsze wytyczne stawiają ostrożność i precyzję ponad szybkość. Przy trywialnych zadaniach — kieruj się własnym osądem.
+
+1. Pomyśl, zanim zaczniesz kodować
+
+Nie zakładaj. Nie ukrywaj dezorientacji. Przed implementacją: - Jasno określ założenia. Jeśli masz wątpliwości — zapytaj. - Jeśli istnieje wiele interpretacji — przedstaw je, nie dokonuj wyboru po cichu. - Jeśli istnieje prostsze podejście — powiedz o tym. Sprzeciwiaj się, gdy jest to uzasadnione. - Jeśli coś jest niejasne — zatrzymaj się. Nazwij to. Zapytaj.
+
+2. Prostota przede wszystkim
+
+Minimalna ilość kodu, która rozwiązuje problem. Żadnych spekulacji: - Brak funkcji wykraczających poza to, o co proszono - Brak abstrakcji dla kodu jednorazowego użytku - Żadnej „elastyczności" ani „konfigurowalności", o którą nie proszono - Żadnej obsługi błędów dla niemożliwych scenariuszy - Jeśli napisałeś 200 linii, a wystarczyłoby 50 — napisz od nowa
+
+Zadaj sobie pytanie: „Czy doświadczony inżynier (senior) uznałby to za zbyt skomplikowane?" — jeśli tak, uprość.
+
+3. Zmiany chirurgiczne
+
+Dotykaj tylko tego, co musisz: - Nie „poprawiaj" sąsiedniego kodu bez pytania - Dopasuj się do istniejącego stylu - Niepowiązany martwy kod: wspomnij — nie usuwaj
+
+Gdy Twoje zmiany tworzą „osierocone" elementy: - Usuń importy/zmienne/funkcje, które stały się nieużywane przez Twoje zmiany - Nie usuwaj sam wcześniej istniejącego martwego kodu (Poinformuj o nim wyraźnie), usuń wtedy gdy zostaniesz o to poproszony
+
+
+## Current Implementation Status
+
+| Subsystem | Status | Notes |
+|-----------|--------|-------|
+| OHCI init & bus reset | ✅ Working | Self-ID, topology, gap count |
+| Async TX/RX (quadlet read) | ✅ Working | Block read/write, lock, PHY partially done |
+| Config ROM reading | ✅ Working | Full scanner with multi-node FSM |
+| AV/C / FCP | 🚧 In progress | Music Subunit, PCR space |
+| IRM | 🚧 Partial | Election and channel alloc |
+| Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence, tested on hardware |
+| Isoch Receive (IR) | 🚧 WIP | `IsochReceiveContext`, `IsochRxDmaRing` exist; pipeline works but needs hardware validation |
+| AudioDriverKit integration | 🚧 In progress | `ASFWAudioDriver`, `ASFWAudioNub` wired up |
+
+**Primary goal:** get IR receive working end-to-end for MOTU 828 MK3 (IEC 61883-6 / AM824 stereo audio).
+
+## Test Stub Quirk — DMA Alignment
+
+`HardwareInterface::AllocateDMA` in `tests/HardwareInterfaceStub.cpp` allocates the virtual buffer with **at least 4096-byte (page) alignment** (`effectiveAlign = max(4096, requested)`). This is intentional: the mock IOVA counter starts at `0x20000000` (page-aligned), so `DMAMemoryManager::AlignCursorToIOVA(4096)` only produces correct virtual-address alignment if `slabVirt_` is also page-aligned. Without this, the IOVA cursor aligns but the VA does not, breaking `IsochDMAMemoryManagerTest.PayloadSlicingAndPageAlignment`.
