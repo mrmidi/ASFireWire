@@ -70,9 +70,13 @@ Porównać z `docs/IOFireWireAVC/` i `docs/linux/` jako referencją. Zidentyfiko
 
 ## Status
 
-| Etap | Status |
-|------|--------|
-| 1 — Testy IR Receive | ⬜ Do zrobienia |
-| 2 — Async Block/Lock | ⬜ Do zrobienia |
-| 3 — StreamProcessor testy | ⬜ Do zrobienia |
-| 4 — Analiza MOTU path | ⬜ Do zrobienia |
+| Etap | Status | Testy |
+|------|--------|-------|
+| 1 — Testy IR Receive | ✅ Zrobione | +12 testów (IsochRxDmaRing + IsochReceiveContext) |
+| 2 — Async Block/Lock | ✅ Zrobione | +11 testów (AsyncCommandBuilder) + PayloadContextStub |
+| 3 — StreamProcessor testy | ✅ Zrobione | +17 testów (StreamProcessor + AM824Decoder) |
+| 4 — Analiza MOTU path | ⬜ Do zrobienia | — |
+
+**Łącznie testów w projekcie: 469/469 ✅**
+
+**Git:** 4 commity czekają na push (brak dostępu collaboratora do `mrmidi/ASFireWire`)
