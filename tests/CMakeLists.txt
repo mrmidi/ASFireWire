@@ -76,6 +76,33 @@ target_compile_definitions(ASFWPacketTests
 
 target_include_directories(ASFWPacketTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
+# AsyncCommandBuilder Tests — routing logic in Read/Write/LockCommand::BuildHeader
+add_executable(AsyncCommandBuilderTests
+    "${ASFW_TESTS_DIR}/AsyncCommandBuilderTests.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Commands/ReadCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Commands/WriteCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Commands/LockCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Commands/PhyCommand.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Tx/PacketBuilder.cpp"
+    "${ASFW_TESTS_DIR}/PayloadContextStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(AsyncCommandBuilderTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AsyncCommandBuilderTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_compile_features(AsyncCommandBuilderTests PRIVATE cxx_std_23)
+target_include_directories(AsyncCommandBuilderTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AsyncCommandBuilderTests)
+
 # TLabel Matching Tests - Critical bug fix verification
 add_executable(TLabelMatchingTests
     "${ASFW_TESTS_DIR}/TLabelMatchingTests.cpp"

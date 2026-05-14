@@ -107,6 +107,60 @@ TEST(AsyncPacketSerDesLinuxCompat, ReadQuadletRequestMatchesLinuxVector) {
     EXPECT_EQ(hostWords[2], params.addressLow);
 }
 
+TEST(AsyncPacketSerDesLinuxCompat, ReadBlockRequestMatchesLinuxVector) {
+    // ReadBlock uses tCode=0x5, 4-quadlet header with dataLength in Q3.
+    PacketBuilder builder;
+
+    ReadParams params{};
+    params.destinationID = 0xFFC0;
+    params.addressHigh = 0xFFFF;
+    params.addressLow = 0xF0000984;
+    params.length = 0x0100;  // 256 bytes — forces block read
+
+    const PacketContext context = MakeDefaultContext(/*sourceNodeID=*/0xFFC1, /*speedCode=*/0x02);
+    constexpr uint8_t kLabel = 0x3C;
+
+    std::array<uint8_t, sizeof(uint32_t) * 4> buffer{};
+    const std::size_t bytes =
+        builder.BuildReadBlock(params, kLabel, context, buffer.data(), buffer.size());
+
+    ASSERT_EQ(bytes, sizeof(uint32_t) * 4);  // Block read = 4 quadlets (16 bytes)
+
+    const auto hostWords = LoadHostQuadlets<4>(buffer.data());
+
+    // Q0: tLabel, speed, tCode
+    EXPECT_EQ((hostWords[0] >> 10) & 0x3Fu, kLabel);                           // tLabel at bits[15:10]
+    EXPECT_EQ((hostWords[0] >> 16) & 0x7u, context.speedCode & 0x7u);          // speed at bits[18:16]
+    EXPECT_EQ((hostWords[0] >> 8) & 0x3u, 0x01u);                              // retry at bits[9:8]
+    EXPECT_EQ((hostWords[0] >> 4) & 0xFu, HW::AsyncRequestHeader::kTcodeReadBlock); // tCode=0x5
+
+    // Q1: destID + addressHigh
+    const uint16_t destID = static_cast<uint16_t>(hostWords[1] >> 16);
+    EXPECT_EQ(destID, MakeDestinationID(context.sourceNodeID, params.destinationID));
+    EXPECT_EQ(static_cast<uint16_t>(hostWords[1] & 0xFFFFu),
+              static_cast<uint16_t>(params.addressHigh));
+
+    // Q2: addressLow
+    EXPECT_EQ(hostWords[2], params.addressLow);
+
+    // Q3: dataLength in bits[31:16], extendedTCode=0 in bits[15:0]
+    EXPECT_EQ((hostWords[3] >> 16) & 0xFFFFu, params.length);
+    EXPECT_EQ(hostWords[3] & 0xFFFFu, 0u);
+}
+
+TEST(AsyncPacketSerDesLinuxCompat, ReadBlock_RejectsZeroLength) {
+    PacketBuilder builder;
+    ReadParams params{};
+    params.destinationID = 0xFFC0;
+    params.addressHigh = 0xFFFF;
+    params.addressLow = 0x0;
+    params.length = 0;  // Invalid for block read
+
+    const PacketContext context = MakeDefaultContext(0xFFC1, 0x02);
+    std::array<uint8_t, 16> buffer{};
+    EXPECT_EQ(builder.BuildReadBlock(params, 0, context, buffer.data(), buffer.size()), 0u);
+}
+
 TEST(AsyncPacketSerDesLinuxCompat, WriteQuadletRequestMatchesLinuxVector) {
     PacketBuilder builder;
 
