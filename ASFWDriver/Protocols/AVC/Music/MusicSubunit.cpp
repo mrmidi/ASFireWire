@@ -393,15 +393,21 @@ void MusicSubunit::ParsePlugNames(AVCUnit& unit, std::function<void(bool)> compl
 }
 
 bool MusicSubunit::HasCompleteDescriptorParse() const noexcept {
+    // Descriptor must have been successfully read and contain at least one parseable block.
     if (!statusDescriptorReadOk_ || !statusDescriptorParsedOk_) {
         return false;
     }
 
-    if (!statusDescriptorHasRouting_ || !statusDescriptorHasPlugs_) {
+    // Audio capability block (0x8101) is the minimum required to build a valid
+    // ASFWAudioDevice. Routing (0x8108) and plug (0x8109) blocks improve channel
+    // count accuracy but are not present in all firmware versions.
+    if (!capabilities_.hasAudioCapability) {
         return false;
     }
 
-    if (statusDescriptorExpectedPlugCount_ > 0 &&
+    // If routing was found and declared a plug count, all plugs must be present.
+    if (statusDescriptorHasRouting_ &&
+        statusDescriptorExpectedPlugCount_ > 0 &&
         plugs_.size() < statusDescriptorExpectedPlugCount_) {
         return false;
     }

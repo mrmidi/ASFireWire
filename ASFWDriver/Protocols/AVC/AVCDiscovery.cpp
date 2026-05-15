@@ -440,121 +440,118 @@ void AVCDiscovery::HandleInitializedUnit(uint64_t guid, const std::shared_ptr<AV
         }
     }
 
+    // Lambda that builds and publishes the audio config once the sample rate is settled.
+    // Called either from the rate-change command callback or directly when no switch needed.
+    // Captures by value so it is safe to call from an async FCP callback.
+    auto finishAndPublish = [this, guid, avcUnit, device, musicSubunit,
+                              plugSummary, channelCount, deviceName](uint32_t finalRateHz) {
+        auto& caps = const_cast<Music::MusicSubunitCapabilities&>(musicSubunit->GetCapabilities());
+        caps.currentSampleRate = static_cast<double>(finalRateHz);
+
+        // Build sample rates list — final rate first so CoreAudio HAL selects it.
+        std::vector<uint32_t> sampleRates;
+        sampleRates.push_back(finalRateHz);
+        for (double rate : caps.supportedSampleRates) {
+            uint32_t rateHz = static_cast<uint32_t>(rate);
+            if (rateHz != finalRateHz) {
+                sampleRates.push_back(rateHz);
+            }
+        }
+
+        auto* devicePtr = device.get();
+        const uint32_t vendorId = devicePtr->GetVendorID();
+        const uint32_t modelId  = devicePtr->GetModelID();
+        const char* streamModeReason = "default-nonblocking";
+        const auto streamMode = ResolveStreamMode(caps, vendorId, modelId, streamModeReason);
+
+        ASFW_LOG(Audio,
+                 "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
+                 vendorId, modelId,
+                 ASFW::Audio::Quirks::StreamModeToString(streamMode),
+                 streamModeReason);
+        ASFW_LOG(Audio,
+                 "AVCDiscovery: Publishing audio config GUID=%llx: %{public}s, %u ch, %zu rates, rate=%u Hz",
+                 guid, deviceName.c_str(), channelCount, sampleRates.size(), finalRateHz);
+
+        ASFW::Audio::Model::ASFWAudioDevice audioDeviceConfig;
+        audioDeviceConfig.guid             = guid;
+        audioDeviceConfig.vendorId         = vendorId;
+        audioDeviceConfig.modelId          = modelId;
+        audioDeviceConfig.deviceName       = deviceName;
+        audioDeviceConfig.channelCount     = channelCount;
+        audioDeviceConfig.inputChannelCount =
+            (plugSummary.outputAudioMaxChannels > 0) ? plugSummary.outputAudioMaxChannels : channelCount;
+        audioDeviceConfig.outputChannelCount =
+            (plugSummary.inputAudioMaxChannels > 0) ? plugSummary.inputAudioMaxChannels : channelCount;
+        audioDeviceConfig.sampleRates      = sampleRates;
+        audioDeviceConfig.currentSampleRate = finalRateHz;
+        audioDeviceConfig.inputPlugName    = caps.inputPlugName;
+        audioDeviceConfig.outputPlugName   = caps.outputPlugName;
+        audioDeviceConfig.streamMode       = streamMode;
+
+        if (IsApogeeDuet(*devicePtr)) {
+            ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
+            ASFW_LOG(Audio,
+                     "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config",
+                     guid);
+            PrefetchDuetStateAndCreateNub(guid, avcUnit, audioDeviceConfig);
+            return;
+        }
+
+        if (!audioConfigListener_) {
+            ASFW_LOG_ERROR(Audio,
+                           "AVCDiscovery: no audio config listener; dropping config for GUID=%llx",
+                           guid);
+            return;
+        }
+
+        audioConfigListener_->OnAVCAudioConfigurationReady(guid, audioDeviceConfig);
+    };
+
     if (supports48k && mutableCaps.currentSampleRate != kTargetSampleRate) {
-        ASFW_LOG(Audio, "AVCDiscovery: Switching sample rate from %.0f Hz to %.0f Hz (fire-and-forget)",
+        ASFW_LOG(Audio, "AVCDiscovery: Switching sample rate from %.0f Hz to %.0f Hz",
                  mutableCaps.currentSampleRate, kTargetSampleRate);
 
-        // Use Unit Plug Signal Format (Oxford/Linux style) - opcode 0x19
-        // This sets the format on Unit Plug 0 which controls both input and output
         using namespace ASFW::Protocols::AVC;
 
-        // Build AV/C CDB for INPUT PLUG SIGNAL FORMAT (0x19) CONTROL command
-        // Subunit 0xFF = Unit level (not Music Subunit)
+        // INPUT PLUG SIGNAL FORMAT (0x19) CONTROL — Unit level, Plug 0, AM824, 48kHz
         AVCCdb cdb;
-        cdb.ctype = static_cast<uint8_t>(AVCCommandType::kControl);
-        cdb.subunit = 0xFF;  // Unit level (not Music Subunit 0x60)
-        cdb.opcode = 0x19;   // INPUT PLUG SIGNAL FORMAT (Oxford/Linux style)
-        cdb.operands[0] = 0x00;  // Plug 0
-        cdb.operands[1] = 0x90;  // AM824 format
-        cdb.operands[2] = 0x02;  // 48kHz (SFC code per IEC 61883-6)
-        cdb.operands[3] = 0xFF;  // Padding/Sync
-        cdb.operands[4] = 0xFF;  // Padding/Sync
+        cdb.ctype        = static_cast<uint8_t>(AVCCommandType::kControl);
+        cdb.subunit      = 0xFF;  // Unit level
+        cdb.opcode       = 0x19;
+        cdb.operands[0]  = 0x00;  // Plug 0
+        cdb.operands[1]  = 0x90;  // AM824
+        cdb.operands[2]  = 0x02;  // 48kHz SFC
+        cdb.operands[3]  = 0xFF;
+        cdb.operands[4]  = 0xFF;
         cdb.operandLength = 5;
 
-        // Create command with shared ownership (required by AVCCommand)
-        auto setRateCmd = std::make_shared<AVCCommand>(
-            avcUnit->GetFCPTransport(),
-            cdb
-        );
+        const uint32_t originalRateHz = static_cast<uint32_t>(mutableCaps.currentSampleRate);
 
-        // Fire-and-forget: Submit and assume success
-        // Don't wait - the device will switch asynchronously
-        // The callback just logs the result
-        setRateCmd->Submit([setRateCmd](AVCResult result, const AVCCdb&) {
-            // Capture setRateCmd to keep it alive until completion
+        auto setRateCmd = std::make_shared<AVCCommand>(avcUnit->GetFCPTransport(), cdb);
+        setRateCmd->Submit([setRateCmd, finishAndPublish, originalRateHz](AVCResult result, const AVCCdb&) {
             if (IsSuccess(result)) {
-                ASFW_LOG(Audio, "✅ AVCDiscovery: Sample rate change command accepted");
+                ASFW_LOG(Audio, "✅ AVCDiscovery: Sample rate 48kHz accepted by device");
+                finishAndPublish(48000u);
             } else {
-                ASFW_LOG_WARNING(Audio, "AVCDiscovery: Sample rate change command response: %d",
-                                 static_cast<int>(result));
+                ASFW_LOG_WARNING(Audio,
+                                 "AVCDiscovery: Sample rate change rejected (result=%d), keeping %u Hz",
+                                 static_cast<int>(result), originalRateHz);
+                finishAndPublish(originalRateHz);
             }
         });
+        // Return here — finishAndPublish will be called from the command callback.
+        return;
+    }
 
-        // Assume success - set to 48kHz
-        // The device typically switches within milliseconds
-        mutableCaps.currentSampleRate = kTargetSampleRate;
-        ASFW_LOG(Audio, "AVCDiscovery: Assuming 48kHz - nub will use this rate");
-
-    } else if (!supports48k) {
+    if (!supports48k) {
         ASFW_LOG(Audio, "AVCDiscovery: Device does not support 48kHz, using %.0f Hz",
                  mutableCaps.currentSampleRate);
     } else {
         ASFW_LOG(Audio, "AVCDiscovery: Device already at 48kHz");
     }
 
-    // Build sample rates vector for OSArray (need uint32_t for OSNumber)
-    // IMPORTANT: Put the current/target sample rate FIRST so CoreAudio HAL selects it
-    std::vector<uint32_t> sampleRates;
-
-    // First, add the current sample rate (48kHz if we switched)
-    uint32_t currentRate = static_cast<uint32_t>(mutableCaps.currentSampleRate);
-    sampleRates.push_back(currentRate);
-
-    // Then add other supported rates (excluding the one already added)
-    for (double rate : mutableCaps.supportedSampleRates) {
-        uint32_t rateHz = static_cast<uint32_t>(rate);
-        if (rateHz != currentRate) {
-            sampleRates.push_back(rateHz);
-        }
-    }
-
-    const uint32_t vendorId = devicePtr->GetVendorID();
-    const uint32_t modelId = devicePtr->GetModelID();
-    const char* streamModeReason = "default-nonblocking";
-    const auto streamMode = ResolveStreamMode(mutableCaps, vendorId, modelId, streamModeReason);
-
-    ASFW_LOG(Audio,
-             "AVCDiscovery: stream mode selected vendor=0x%06x model=0x%06x mode=%{public}s reason=%{public}s",
-             vendorId, modelId,
-             ASFW::Audio::Quirks::StreamModeToString(streamMode),
-             streamModeReason);
-    ASFW_LOG(Audio,
-             "AVCDiscovery: Publishing audio configuration for GUID=%llx: %{public}s, %u channels, %zu sample rates",
-             guid, deviceName.c_str(), channelCount, sampleRates.size());
-
-    ASFW::Audio::Model::ASFWAudioDevice audioDeviceConfig;
-    audioDeviceConfig.guid = guid;
-    audioDeviceConfig.vendorId = vendorId;
-    audioDeviceConfig.modelId = modelId;
-    audioDeviceConfig.deviceName = deviceName;
-    audioDeviceConfig.channelCount = channelCount;
-    audioDeviceConfig.inputChannelCount =
-        (plugSummary.outputAudioMaxChannels > 0) ? plugSummary.outputAudioMaxChannels : channelCount;
-    audioDeviceConfig.outputChannelCount =
-        (plugSummary.inputAudioMaxChannels > 0) ? plugSummary.inputAudioMaxChannels : channelCount;
-    audioDeviceConfig.sampleRates = sampleRates;
-    audioDeviceConfig.currentSampleRate = currentRate;
-    audioDeviceConfig.inputPlugName = mutableCaps.inputPlugName;
-    audioDeviceConfig.outputPlugName = mutableCaps.outputPlugName;
-    audioDeviceConfig.streamMode = streamMode;
-
-    if (IsApogeeDuet(*devicePtr)) {
-        ConfigureDuetPhantomOverrides(audioDeviceConfig, std::nullopt);
-        ASFW_LOG(Audio,
-                 "AVCDiscovery: Apogee Duet detected (GUID=%llx) - prefetching vendor config before publishing config",
-                 guid);
-        PrefetchDuetStateAndCreateNub(guid, avcUnit, audioDeviceConfig);
-        return;
-    }
-
-    if (!audioConfigListener_) {
-        ASFW_LOG_ERROR(Audio,
-                       "AVCDiscovery: no audio config listener; dropping config for GUID=%llx",
-                       guid);
-        return;
-    }
-
-    audioConfigListener_->OnAVCAudioConfigurationReady(guid, audioDeviceConfig);
+    finishAndPublish(static_cast<uint32_t>(mutableCaps.currentSampleRate));
 }
 
 void AVCDiscovery::PrefetchDuetStateAndCreateNub(
@@ -751,8 +748,8 @@ void AVCDiscovery::ScheduleRescan(uint64_t guid, const std::shared_ptr<AVCUnit>&
         return;
     }
 
-    constexpr uint8_t kMaxAutoRescanAttempts = 1;
-    constexpr uint32_t kRescanDelayMs = 250;
+    constexpr uint8_t kMaxAutoRescanAttempts = 3;
+    constexpr uint32_t kRescanDelayMs = 300;
 
     uint8_t attempt = 0;
     IOLockLock(lock_);
