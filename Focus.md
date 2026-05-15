@@ -58,13 +58,27 @@ Dane referencyjne dostępne w `tools/parse_amdtp.py` i plikach `.bin` w `tools/`
 
 **Cel:** Ustalić dokładnie co musi się wydarzyć żeby MOTU zaczął streamować audio.
 
-Przeanalizować:
-1. Sekwencja AV/C: jakie komendy muszą pójść do urządzenia (SET_SIGNAL_FORMAT, PLUG_INFO itp.)
-2. IRM: alokacja kanału isochronous i pasma
-3. PCR space: ustawienie oPCR (output Plug Control Register) na urządzeniu
-4. Uruchomienie IR context na właściwym kanale
+Analiza zakończona — szczegóły w `MOTU_828_MK3_BringUp.md`.
 
-Porównać z `docs/IOFireWireAVC/` i `docs/linux/` jako referencją. Zidentyfikować gap w aktualnym kodzie.
+### Zidentyfikowane gapy (2 krytyczne)
+
+**GAP 1 — `CMPClient::ConnectOPCR` nie wpisuje kanału do oPCR** (krytyczny)
+- Plik: `ASFWDriver/Protocols/AVC/CMP/CMPClient.cpp`
+- `ConnectOPCR(plug, callback)` wywołuje `PerformConnect(..., setChannel=nullopt, ...)` — inkrementuje p2p ale nie ustawia pola `channel` w oPCR
+- Per IEC 61883-1 §10.4.2: kontroler MUSI wpisać kanał do oPCR przy p2p connect (tak jak robi `ConnectIPCR`)
+- **Fix:** dodać parametr `uint8_t channel` do `ConnectOPCR`, przekazać jako `setChannel`
+
+**GAP 2 — IRM nie jest wywoływany z `AVCAudioBackend::StartStreaming`** (krytyczny)
+- Plik: `ASFWDriver/Audio/Backends/AVCAudioBackend.cpp/.hpp`
+- Kanały hardcoded: `kDefaultIrChannel=0`, `kDefaultItChannel=1` — bez `IRMClient::AllocateResources`
+- `AVCAudioBackend` nie ma pola `IRMClient*` — brak ścieżki injection
+- Bandwidth dla MOTU 48kHz 18ch ≈ 146 units (S400) nigdy nie rezerwowany
+- **Fix:** dodać `SetIRMClient(IRMClient*)`, wywołać `AllocateResources(ch, bw, cb)` przed `StartReceive`, przekazać dynamiczny kanał
+
+### Sekwencja po naprawie
+```
+AllocateResources(ch, bw) → StartReceive(ch) → ConnectOPCR(0, ch) → StartTransmit(ch+1) → ConnectIPCR(0, ch+1)
+```
 
 ---
 
@@ -75,7 +89,7 @@ Porównać z `docs/IOFireWireAVC/` i `docs/linux/` jako referencją. Zidentyfiko
 | 1 — Testy IR Receive | ✅ Zrobione | +12 testów (IsochRxDmaRing + IsochReceiveContext) |
 | 2 — Async Block/Lock | ✅ Zrobione | +11 testów (AsyncCommandBuilder) + PayloadContextStub |
 | 3 — StreamProcessor testy | ✅ Zrobione | +17 testów (StreamProcessor + AM824Decoder) |
-| 4 — Analiza MOTU path | ⬜ Do zrobienia | — |
+| 4 — Analiza MOTU path | ✅ Zrobione | `MOTU_828_MK3_BringUp.md` — 2 krytyczne gapy |
 
 **Łącznie testów w projekcie: 469/469 ✅**
 
