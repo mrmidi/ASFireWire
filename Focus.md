@@ -109,8 +109,8 @@ AllocateResources(ch, bw) → StartReceive(ch) → ConnectOPCR(0, ch) → StartT
 | 2 — Async Block/Lock | ✅ Zrobione | +11 testów (AsyncCommandBuilder) + PayloadContextStub |
 | 3 — StreamProcessor testy | ✅ Zrobione | +17 testów (StreamProcessor + AM824Decoder) |
 | 4 — Analiza MOTU path | ✅ Zrobione | `MOTU_828_MK3_BringUp.md` — 2 krytyczne gapy |
-| 5 — IRM + ConnectOPCR fix | ⬜ Do zrobienia | — |
+| 5 — IRM + ConnectOPCR fix | ✅ Zrobione | +16 testów (CMPClientTests + IRMClientTests) |
 
-**Łącznie testów w projekcie: 469/469 ✅**
+**Łącznie testów w projekcie: 485/485 ✅**
 
-**Git:** 6 commitów czeka na push (brak dostępu collaboratora do `mrmidi/ASFireWire`)
+**Git:** 7 commitów czeka na push (brak dostępu collaboratora do `mrmidi/ASFireWire`)

@@ -1533,3 +1533,51 @@ target_compile_features(StreamProcessorTests PRIVATE cxx_std_23)
 target_include_directories(StreamProcessorTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(StreamProcessorTests)
+
+# =============================================================================
+# Etap 5: GAP 1 — CMPClient channel-in-CAS tests (IEC 61883-1 §10.4.2)
+# =============================================================================
+
+add_executable(CMPClientTests
+    "${ASFW_TESTS_DIR}/CMPClientTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/AVC/CMP/CMPClient.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(CMPClientTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CMPClientTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CMPClientTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CMPClientTests)
+
+# =============================================================================
+# Etap 5: GAP 2 — IRMClient allocation/rollback tests
+# =============================================================================
+
+add_executable(IRMClientTests
+    "${ASFW_TESTS_DIR}/IRMClientTests.cpp"
+    "${ASFW_DRIVER_DIR}/IRM/IRMClient.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(IRMClientTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(IRMClientTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IRMClientTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IRMClientTests)
