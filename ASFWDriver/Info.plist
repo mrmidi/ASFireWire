@@ -46,8 +46,8 @@
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>
 			<string>IOUserService</string>
-			<key>IOPCIMatch</key>
-			<string>0x590111c1</string>
+			<key>IOPCIClassMatch</key>
+			<string>0x0c001000&amp;0xffffff00</string>
 			<key>IOPCITunnelCompatible</key>
 			<true/>
 			<key>IOProbeScore</key>
