@@ -818,8 +818,10 @@ void AVCDiscovery::OnUnitResumed(std::shared_ptr<Discovery::FWUnit> unit) {
         os_log_info(log_,
                     "AVCDiscovery: AV/C unit resumed: GUID=%llx",
                     guid);
-        // Unit is now available again
     }
+    // Reset rescan counter so the device gets fresh discovery attempts
+    // if re-discovery is needed after bus reset.
+    rescanAttempts_.erase(guid);
     IOLockUnlock(lock_);
 
     // Rebuild node ID map (resumed units back in routing)
