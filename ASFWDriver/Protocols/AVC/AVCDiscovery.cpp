@@ -852,6 +852,85 @@ void AVCDiscovery::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     (void)device;
 }
 
+// IEC 61883-6 Table 5 — Sample Frequency Code mapping.
+static uint8_t RateHzToSFC(uint32_t rateHz) noexcept {
+    switch (rateHz) {
+        case 32000:  return 0x00;
+        case 44100:  return 0x01;
+        case 48000:  return 0x02;
+        case 88200:  return 0x03;
+        case 96000:  return 0x04;
+        case 176400: return 0x05;
+        case 192000: return 0x06;
+        default:     return 0xFF; // unsupported
+    }
+}
+
+void AVCDiscovery::SendSampleRateCommand(uint64_t guid,
+                                         uint32_t rateHz,
+                                         std::function<void(bool)> callback) noexcept {
+    if (guid == 0 || !callback) {
+        if (callback) callback(false);
+        return;
+    }
+
+    const uint8_t sfc = RateHzToSFC(rateHz);
+    if (sfc == 0xFF) {
+        os_log_error(log_,
+                     "AVCDiscovery::SendSampleRateCommand: unsupported rate %u Hz (GUID=%llx)",
+                     rateHz, guid);
+        callback(false);
+        return;
+    }
+
+    std::shared_ptr<AVCUnit> avcUnit;
+    if (lock_) {
+        IOLockLock(lock_);
+        auto it = units_.find(guid);
+        if (it != units_.end()) {
+            avcUnit = it->second;
+        }
+        IOLockUnlock(lock_);
+    }
+
+    if (!avcUnit) {
+        os_log_error(log_,
+                     "AVCDiscovery::SendSampleRateCommand: no AVCUnit for GUID=%llx",
+                     guid);
+        callback(false);
+        return;
+    }
+
+    // AV/C INPUT PLUG SIGNAL FORMAT (0x19) CONTROL — Unit level, Plug 0, AM824.
+    // operands[1]=0x90 = AM824 format marker (same encoding as HandleInitializedUnit).
+    // operands[2]=SFC code per IEC 61883-6 Table 5.
+    AVCCdb cdb;
+    cdb.ctype        = static_cast<uint8_t>(AVCCommandType::kControl);
+    cdb.subunit      = 0xFF;  // Unit level
+    cdb.opcode       = 0x19;
+    cdb.operands[0]  = 0x00;  // Plug 0
+    cdb.operands[1]  = 0x90;  // AM824
+    cdb.operands[2]  = sfc;
+    cdb.operands[3]  = 0xFF;
+    cdb.operands[4]  = 0xFF;
+    cdb.operandLength = 5;
+
+    auto cmd = std::make_shared<AVCCommand>(avcUnit->GetFCPTransport(), cdb);
+    cmd->Submit([cmd, callback, rateHz, guid](AVCResult result, const AVCCdb&) {
+        const bool ok = IsSuccess(result);
+        if (ok) {
+            ASFW_LOG(Audio,
+                     "AVCDiscovery::SendSampleRateCommand: %u Hz accepted (GUID=%llx)",
+                     rateHz, guid);
+        } else {
+            ASFW_LOG_WARNING(Audio,
+                             "AVCDiscovery::SendSampleRateCommand: %u Hz rejected result=%d (GUID=%llx)",
+                             rateHz, static_cast<int>(result), guid);
+        }
+        callback(ok);
+    });
+}
+
 void AVCDiscovery::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     (void)device;
 }

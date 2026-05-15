@@ -28,6 +28,9 @@ public:
     MOCK_METHOD(std::vector<AVCUnit*>, GetAllAVCUnits, (), (override));
     MOCK_METHOD(void, ReScanAllUnits, (), (override));
     MOCK_METHOD(FCPTransport*, GetFCPTransportForNodeID, (uint16_t nodeID), (override));
+    MOCK_METHOD(void, SendSampleRateCommand,
+                (uint64_t guid, uint32_t rateHz, std::function<void(bool)> callback),
+                (noexcept, override));
 };
 
 // Test Fixture

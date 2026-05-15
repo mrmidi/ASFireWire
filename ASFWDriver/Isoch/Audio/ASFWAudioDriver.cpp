@@ -8,6 +8,7 @@
 
 #include "ASFWAudioDriver.h"
 #include "ASFWAudioNub.h"
+#include "ASFWIOUserAudioDevice.h"
 #include "ASFWProtocolBooleanControl.h"
 #include "AudioControlBuilder.hpp"
 #include "AudioClockEngine.hpp"
@@ -388,16 +389,23 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     auto modelUID = OSSharedPtr(OSString::withCString(ivars->device.deviceName), OSNoRetain);
     auto manufacturerUID = OSSharedPtr(OSString::withCString("ASFireWire"), OSNoRetain);
     
-    ivars->audioDevice = IOUserAudioDevice::Create(this,
-                                                    false,  // no prewarming
-                                                    deviceUID.get(),
-                                                    modelUID.get(),
-                                                    manufacturerUID.get(),
-                                                    ASFW::Isoch::Config::kAudioIoPeriodFrames);
-    if (!ivars->audioDevice) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
+    // Create custom device subclass so HandleChangeSampleRate can send AV/C
+    // rate commands and restart the isoch stream at the new rate.
+    auto* asfwDevice = ASFWIOUserAudioDevice::Create(this,
+                                                      false,  // no prewarming
+                                                      deviceUID.get(),
+                                                      modelUID.get(),
+                                                      manufacturerUID.get(),
+                                                      ASFW::Isoch::Config::kAudioIoPeriodFrames);
+    if (!asfwDevice) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create ASFWIOUserAudioDevice");
         return kIOReturnNoMemory;
     }
+
+    // Wire nub + guid so HandleChangeSampleRate can access coordinator/discovery.
+    asfwDevice->SetStreamingContext(ivars->device.audioNub, ivars->device.guid);
+
+    ivars->audioDevice.reset(asfwDevice, OSNoRetain);
     
     // Set up IO operation handler -- the real-time audio callback
     // IMPORTANT: This runs in a real-time context. No allocations, no locks, minimal logging.

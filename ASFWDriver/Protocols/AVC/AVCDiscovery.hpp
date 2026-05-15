@@ -72,6 +72,10 @@ public:
 
     void SetTransmitRingBufferOnNubs(void* ringBuffer);
 
+    void SendSampleRateCommand(uint64_t guid,
+                               uint32_t rateHz,
+                               std::function<void(bool)> callback) noexcept override;
+
 private:
     struct DuetPrefetchState {
         std::optional<Audio::Oxford::Apogee::InputParams> inputParams;

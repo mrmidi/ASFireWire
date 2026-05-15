@@ -191,7 +191,21 @@ ctest --test-dir build/tests_build -V -R IsochRxDmaRing
 
 The project is indexed with CodeGraph (local SQLite graph of all symbols). Index lives in `.codegraph/codegraph.db`. The MCP server is configured in `../.mcp.json` (one level above ASFireWire, in the FireWire project root).
 
-**Always query CodeGraph before reading files.** Use `codegraph_search` to find symbol locations, `codegraph_context` for task-level context. This avoids reading dozens of files to locate a class or function.
+## ⛔ BEZWZGLĘDNY ZAKAZ: grep / find / Bash do szukania kodu
+
+**NIGDY nie używaj `grep`, `find`, ani Bash do eksploracji kodu.** To jest bezwzględna reguła bez wyjątków.
+
+Jedyne dozwolone narzędzia do lokalizacji symboli i plików:
+- `codegraph_search` — znajdź klasy, metody, pliki po nazwie
+- `codegraph_context` — kontekst dla zadania (entry points + related symbols)
+- `codegraph_callers` — kto wywołuje dany symbol
+- `codegraph_callees` — co wywołuje dany symbol
+- `codegraph_node` — pełny kod konkretnego węzła
+- `codegraph_impact` — co zostanie dotknięte zmianą symbolu
+
+`grep`/`find`/Bash są dopuszczalne **wyłącznie** gdy CodeGraph nie zwróci wyniku po 2 próbach, i tylko z wyraźną adnotacją `# fallback: CodeGraph nie znalazł`.
+
+**ZAWSZE CodeGraph jako pierwszy krok.** Czytanie pliku bez wcześniejszego `codegraph_search` / `codegraph_context` = błąd procesu.
 
 **WAŻNE — zawsze przekazuj `projectPath`:** MCP serwer jest skonfigurowany w `../.mcp.json` (katalog `FireWire/`), więc jego CWD to `FireWire/`, nie `ASFireWire/`. Bez explicit `projectPath` CodeGraph szuka bazy w złym katalogu i zwraca "not initialized". Każde wywołanie musi mieć:
 ```

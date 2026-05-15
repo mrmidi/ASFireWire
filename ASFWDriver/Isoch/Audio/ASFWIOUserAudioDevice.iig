@@ -1,0 +1,42 @@
+//
+// ASFWIOUserAudioDevice.iig
+// ASFWDriver
+//
+// Custom IOUserAudioDevice subclass that overrides HandleChangeSampleRate.
+// When CoreAudio HAL requests a sample rate change, this class:
+//   1. Stops active isoch streaming (AudioCoordinator::StopStreaming)
+//   2. Sends AV/C INPUT PLUG SIGNAL FORMAT (0x19) CONTROL to the FireWire device
+//   3. Waits synchronously for AV/C response (≤500 ms)
+//   4. Calls super::HandleChangeSampleRate to update HAL device rate
+//   5. Restarts isoch streaming (AudioCoordinator::StartStreaming)
+//
+
+#ifndef ASFWIOUserAudioDevice_h
+#define ASFWIOUserAudioDevice_h
+
+#include <Availability.h>
+#include <AudioDriverKit/IOUserAudioDevice.iig>
+
+class ASFWAudioNub;
+
+class ASFWIOUserAudioDevice : public IOUserAudioDevice
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+
+    // Called by ASFWAudioDriver::Start right after Create() to wire streaming context.
+    // nub    — the ASFWAudioNub this driver matched on (unretained, lives for driver lifetime).
+    // guid   — GUID of the FireWire audio device being streamed.
+    kern_return_t SetStreamingContext(ASFWAudioNub* nub, uint64_t guid) LOCALONLY;
+
+    // Override: stop → AVC rate change → super (update HAL) → start.
+    virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override;
+};
+
+struct ASFWIOUserAudioDevice_IVars {
+    ASFWAudioNub* nub{nullptr};   // unretained
+    uint64_t      guid{0};
+};
+
+#endif /* ASFWIOUserAudioDevice_h */
