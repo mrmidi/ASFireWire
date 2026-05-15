@@ -729,6 +729,29 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         if (startKr != kIOReturnSuccess) {
             ASFW_LOG(Audio, "ASFWAudioDriver: StartAudioStreaming failed: 0x%x", startKr);
         }
+
+        // StartAudioStreaming creates the rx queue in the nub (CreateRxQueue).
+        // MapRxQueueFromNub in Start() failed if the queue didn't exist yet — re-map now.
+        if (!ivars->shared.rxQueueValid) {
+            const kern_return_t rxErr = ASFW::Isoch::Audio::MapRxQueueFromNub(
+                *ivars->device.audioNub,
+                ivars->shared.rxQueueMem,
+                ivars->shared.rxQueueMap,
+                ivars->shared.rxQueueBytes,
+                ivars->shared.rxQueueReader,
+                ivars->shared.rxQueueValid);
+            if (rxErr == kIOReturnSuccess && ivars->shared.rxQueueValid) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDriver: RX queue re-mapped at StartDevice: %llu bytes ch=%u",
+                         ivars->shared.rxQueueBytes,
+                         ivars->shared.rxQueueReader.Channels());
+                ivars->device.inputChannelCount = ivars->shared.rxQueueReader.Channels();
+            } else {
+                ASFW_LOG_WARNING(Audio,
+                                 "ASFWAudioDriver: RX queue re-map failed at StartDevice: 0x%x",
+                                 rxErr);
+            }
+        }
     }
 
     ASFW::Isoch::Audio::AudioClockEngineState clockState{
