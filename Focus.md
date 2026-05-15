@@ -82,6 +82,25 @@ AllocateResources(ch, bw) → StartReceive(ch) → ConnectOPCR(0, ch) → StartT
 
 ---
 
+## Etap 5 — Implementacja gapów IRM + CMP ✏️
+
+**Pliki:** `ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp/.cpp`, `ASFWDriver/Audio/Backends/AVCAudioBackend.hpp/.cpp`
+
+### GAP 1 — `ConnectOPCR` z kanałem
+- Dodać `uint8_t channel` do `ConnectOPCR(plug, channel, callback)`
+- Zaktualizować `PerformConnect(…, setChannel=channel, …)`
+- Zaktualizować wszystkich callerów (AVCAudioBackend, IsochHandler test)
+- Testy jednostkowe
+
+### GAP 2 — IRM w AVCAudioBackend
+- Dodać `IRMClient* irmClient_` + `SetIRMClient(IRMClient*)`
+- W `StartStreaming`: `AllocateResources(ch, bw, cb)` async przed `StartReceive`
+- W `StopStreaming`: `ReleaseResources(ch, bw)` po `StopReceive`
+- Bandwidth: 146 units dla 48kHz S400 (parametryzować przez kanałów)
+- Testy jednostkowe
+
+---
+
 ## Status
 
 | Etap | Status | Testy |
@@ -90,7 +109,8 @@ AllocateResources(ch, bw) → StartReceive(ch) → ConnectOPCR(0, ch) → StartT
 | 2 — Async Block/Lock | ✅ Zrobione | +11 testów (AsyncCommandBuilder) + PayloadContextStub |
 | 3 — StreamProcessor testy | ✅ Zrobione | +17 testów (StreamProcessor + AM824Decoder) |
 | 4 — Analiza MOTU path | ✅ Zrobione | `MOTU_828_MK3_BringUp.md` — 2 krytyczne gapy |
+| 5 — IRM + ConnectOPCR fix | ⬜ Do zrobienia | — |
 
 **Łącznie testów w projekcie: 469/469 ✅**
 
-**Git:** 4 commity czekają na push (brak dostępu collaboratora do `mrmidi/ASFireWire`)
+**Git:** 6 commitów czeka na push (brak dostępu collaboratora do `mrmidi/ASFireWire`)

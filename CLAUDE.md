@@ -193,13 +193,18 @@ The project is indexed with CodeGraph (local SQLite graph of all symbols). Index
 
 **Always query CodeGraph before reading files.** Use `codegraph_search` to find symbol locations, `codegraph_context` for task-level context. This avoids reading dozens of files to locate a class or function.
 
+**WAŻNE — zawsze przekazuj `projectPath`:** MCP serwer jest skonfigurowany w `../.mcp.json` (katalog `FireWire/`), więc jego CWD to `FireWire/`, nie `ASFireWire/`. Bez explicit `projectPath` CodeGraph szuka bazy w złym katalogu i zwraca "not initialized". Każde wywołanie musi mieć:
+```
+projectPath: "/Users/cube666/Documents/FireWire/ASFireWire"
+```
+
 **Re-index after adding/moving files:**
 ```bash
 export PATH="$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:$PATH"
 NODE_OPTIONS="--max-old-space-size=4096" codegraph index -f -q .
 ```
 
-**Current index stats:** 601 files · 11 161 nodes · 20 430 edges (495 C++, 66 Swift).
+**Current index stats:** 603 files · 11 209 nodes · 20 570 edges (497 C++, 66 Swift).
 
 
 Wytyczne Behawioralne

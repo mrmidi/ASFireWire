@@ -12,9 +12,12 @@
 
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
+#include "../../IRM/IRMClient.hpp"
+#include "../../IRM/IRMTypes.hpp"
 #include "../../Isoch/IsochService.hpp"
 #include "../../Protocols/AVC/CMP/CMPClient.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <unordered_map>
 
@@ -34,6 +37,7 @@ public:
     [[nodiscard]] const char* Name() const noexcept override { return "AV/C"; }
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept { cmpClient_ = client; }
+    void SetIRMClient(ASFW::IRM::IRMClient* client) noexcept { irmClient_ = client; }
 
     void OnAudioConfigurationReady(uint64_t guid, const Model::ASFWAudioDevice& config) noexcept;
     void OnDeviceRemoved(uint64_t guid) noexcept;
@@ -46,12 +50,32 @@ private:
                                   std::atomic<ASFW::CMP::CMPStatus>& status,
                                   uint32_t timeoutMs) noexcept;
 
+    [[nodiscard]] bool WaitForIRM(std::atomic<bool>& done,
+                                  std::atomic<ASFW::IRM::AllocationStatus>& status,
+                                  uint32_t timeoutMs) noexcept;
+
+    [[nodiscard]] IOReturn AllocateIRMResources(uint8_t irChannel,
+                                                uint8_t itChannel,
+                                                uint32_t irBandwidth,
+                                                uint32_t itBandwidth) noexcept;
+
+    void ReleaseIRMResources() noexcept;
+
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
     Driver::IsochService& isoch_;
     Driver::HardwareInterface& hardware_;
 
     ASFW::CMP::CMPClient* cmpClient_{nullptr};
+    ASFW::IRM::IRMClient* irmClient_{nullptr};
+
+    struct AllocatedResources {
+        uint8_t  irChannel{0xFF};
+        uint8_t  itChannel{0xFF};
+        uint32_t irBandwidth{0};
+        uint32_t itBandwidth{0};
+        bool     valid{false};
+    } allocated_{};
 
     IOLock* lock_{nullptr};
     std::unordered_map<uint64_t, Model::ASFWAudioDevice> configByGuid_{};

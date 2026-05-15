@@ -291,6 +291,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
 
     if (ctx.audioCoordinator) {
         ctx.audioCoordinator->SetCMPClient(ctx.deps.cmpClient.get());
+        ctx.audioCoordinator->SetIRMClient(ctx.deps.irmClient.get());
     }
 
     ASFW::LogConfig::Shared().Initialize(this);

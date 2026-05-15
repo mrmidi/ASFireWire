@@ -160,17 +160,12 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
         return kIOReturnNotReady;
 
     constexpr uint8_t kTestPlug = 0;
-    ASFW_LOG(UserClient, "TestCMPConnectOPCR: Connecting oPCR[%u]", kTestPlug);
-
-    // Use weak ptr or capture 'this' carefully? 'this' is IsochHandler, owned by UserClient.
-    // UserClient keeps driver alive? No, UserClient holds OSSharedPtr<ASFWDriver> typically.
-    // The callback might outlive the UserClient request if async?
-    // CMPClient callbacks are generally executed on WorkLoop.
-    // We capture driver pointer.
+    constexpr uint8_t kTestChannel = 0;
+    ASFW_LOG(UserClient, "TestCMPConnectOPCR: Connecting oPCR[%u] channel=%u", kTestPlug, kTestChannel);
 
     auto* driver = driver_;
 
-    cmpClient->ConnectOPCR(kTestPlug, [driver](ASFW::CMP::CMPStatus status) {
+    cmpClient->ConnectOPCR(kTestPlug, kTestChannel, [driver](ASFW::CMP::CMPStatus status) {
         if (status == ASFW::CMP::CMPStatus::Success) {
             ASFW_LOG(UserClient, "✅ CMP oPCR connect succeeded!");
 

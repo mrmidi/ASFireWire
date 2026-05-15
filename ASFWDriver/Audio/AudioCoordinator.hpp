@@ -8,6 +8,7 @@
 #pragma once
 
 #include "IAVCAudioConfigListener.hpp"
+#include "../IRM/IRMClient.hpp"
 #include "AudioNubPublisher.hpp"
 #include "Backends/AVCAudioBackend.hpp"
 #include "Backends/DiceAudioBackend.hpp"
@@ -39,6 +40,7 @@ public:
     AudioCoordinator& operator=(const AudioCoordinator&) = delete;
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept;
+    void SetIRMClient(ASFW::IRM::IRMClient* client) noexcept;
 
     // IDeviceObserver
     void OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) override;

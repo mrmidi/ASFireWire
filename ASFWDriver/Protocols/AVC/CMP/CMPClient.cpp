@@ -146,15 +146,20 @@ void CMPClient::ReadOPCR(uint8_t plugNum, PCRReadCallback callback) {
     ReadPCRQuadlet(PCRRegisters::GetOPCRAddress(plugNum), callback);
 }
 
-void CMPClient::ConnectOPCR(uint8_t plugNum, CMPCallback callback) {
+void CMPClient::ConnectOPCR(uint8_t plugNum, uint8_t channel, CMPCallback callback) {
     if (plugNum > 30) {
         ASFW_LOG(CMP, "CMPClient: Invalid oPCR plug number %u", plugNum);
         callback(CMPStatus::Failed);
         return;
     }
-    
-    ASFW_LOG(CMP, "CMPClient: Connecting oPCR[%u]", plugNum);
-    PerformConnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum, std::nullopt, callback);
+    if (channel > 63) {
+        ASFW_LOG(CMP, "CMPClient: Invalid channel %u for oPCR", channel);
+        callback(CMPStatus::Failed);
+        return;
+    }
+
+    ASFW_LOG(CMP, "CMPClient: Connecting oPCR[%u] channel=%u", plugNum, channel);
+    PerformConnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum, channel, callback);
 }
 
 void CMPClient::DisconnectOPCR(uint8_t plugNum, CMPCallback callback) {
