@@ -286,6 +286,36 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         }
     }
 
+    // Read-back oPCR[0] to confirm the channel was written correctly (per Apple IOFireWireAVC pattern).
+    {
+        std::atomic<bool> done{false};
+        std::atomic<bool> readOk{false};
+        std::atomic<uint32_t> opcrValue{0};
+        cmpClient_->ReadOPCR(0, [&done, &readOk, &opcrValue](bool success, uint32_t value) {
+            readOk.store(success, std::memory_order_release);
+            opcrValue.store(value, std::memory_order_release);
+            done.store(true, std::memory_order_release);
+        });
+
+        constexpr uint32_t kPollMs = 5;
+        for (uint32_t waited = 0; waited < 250u && !done.load(std::memory_order_acquire); waited += kPollMs) {
+            IOSleep(kPollMs);
+        }
+
+        if (done.load(std::memory_order_acquire) && readOk.load(std::memory_order_acquire)) {
+            const uint8_t confirmedCh = ASFW::CMP::PCRBits::GetChannel(opcrValue.load(std::memory_order_acquire));
+            if (confirmedCh != irChannel) {
+                ASFW_LOG_WARNING(Audio,
+                    "AVCAudioBackend: oPCR[0] channel mismatch: expected=%u actual=%u",
+                    irChannel, confirmedCh);
+            } else {
+                ASFW_LOG(Audio, "AVCAudioBackend: oPCR[0] read-back confirmed channel=%u", confirmedCh);
+            }
+        } else {
+            ASFW_LOG_WARNING(Audio, "AVCAudioBackend: oPCR[0] read-back failed or timed out (continuing)");
+        }
+    }
+
     // Start IT transport (host->device) and then connect iPCR[0].
     {
         const uint8_t sid = ReadLocalSid(hardware_);

@@ -273,3 +273,85 @@ TEST(CMPClientTests, ConnectIPCR_ChannelTooLarge_ImmediateFailed) {
     EXPECT_EQ(result, ASFW::CMP::CMPStatus::Failed);
     EXPECT_TRUE(bus.lockOperands.empty());
 }
+
+// ============================================================================
+// GAP 3 — ReadOPCR read-back after ConnectOPCR
+// ============================================================================
+
+TEST(CMPClientTests, ReadOPCR_ReturnsChannelFromDevice) {
+    SyncMockBus bus;
+    ASFW::CMP::CMPClient cmp(bus);
+    cmp.SetDeviceNode(5, ASFW::IRM::Generation{3});
+
+    constexpr uint8_t kExpectedChannel = 7;
+    bus.readResponses.push_back(BEBytes(MakePCR(true, 1, kExpectedChannel)));
+
+    bool callbackCalled = false;
+    bool readOk = false;
+    uint32_t opcrValue = 0;
+    cmp.ReadOPCR(0, [&](bool success, uint32_t value) {
+        callbackCalled = true;
+        readOk = success;
+        opcrValue = value;
+    });
+
+    ASSERT_TRUE(callbackCalled);
+    ASSERT_TRUE(readOk);
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetChannel(opcrValue), kExpectedChannel);
+    EXPECT_EQ(ASFW::CMP::PCRBits::GetP2P(opcrValue), 1u);
+    EXPECT_TRUE(ASFW::CMP::PCRBits::IsOnline(opcrValue));
+}
+
+TEST(CMPClientTests, ReadOPCR_BusFailure_CallbackSuccessFalse) {
+    struct FailBus : public ASFW::Async::IFireWireBusOps {
+        ASFW::Async::AsyncHandle ReadBlock(ASFW::FW::Generation, ASFW::FW::NodeId,
+                                           ASFW::Async::FWAddress, uint32_t,
+                                           ASFW::FW::FwSpeed,
+                                           ASFW::Async::InterfaceCompletionCallback cb) override {
+            cb(ASFW::Async::AsyncStatus::kHardwareError, {});
+            return ASFW::Async::AsyncHandle{0};
+        }
+        ASFW::Async::AsyncHandle WriteBlock(ASFW::FW::Generation, ASFW::FW::NodeId,
+                                             ASFW::Async::FWAddress, std::span<const uint8_t>,
+                                             ASFW::FW::FwSpeed,
+                                             ASFW::Async::InterfaceCompletionCallback cb) override {
+            cb(ASFW::Async::AsyncStatus::kSuccess, {}); return ASFW::Async::AsyncHandle{0};
+        }
+        ASFW::Async::AsyncHandle Lock(ASFW::FW::Generation, ASFW::FW::NodeId,
+                                      ASFW::Async::FWAddress, ASFW::FW::LockOp,
+                                      std::span<const uint8_t>, uint32_t, ASFW::FW::FwSpeed,
+                                      ASFW::Async::InterfaceCompletionCallback cb) override {
+            cb(ASFW::Async::AsyncStatus::kSuccess, {}); return ASFW::Async::AsyncHandle{0};
+        }
+        bool Cancel(ASFW::Async::AsyncHandle) override { return false; }
+    } failBus;
+
+    ASFW::CMP::CMPClient cmp(failBus);
+    cmp.SetDeviceNode(1, ASFW::IRM::Generation{1});
+
+    bool callbackCalled = false;
+    bool readOk = true;
+    cmp.ReadOPCR(0, [&](bool success, uint32_t) {
+        callbackCalled = true;
+        readOk = success;
+    });
+
+    ASSERT_TRUE(callbackCalled);
+    EXPECT_FALSE(readOk);
+}
+
+TEST(CMPClientTests, ReadOPCR_InvalidPlug_ImmediateFailure) {
+    SyncMockBus bus;
+    ASFW::CMP::CMPClient cmp(bus);
+
+    bool callbackCalled = false;
+    bool readOk = true;
+    cmp.ReadOPCR(31, [&](bool success, uint32_t) {
+        callbackCalled = true;
+        readOk = success;
+    });
+
+    ASSERT_TRUE(callbackCalled);
+    EXPECT_FALSE(readOk);
+    EXPECT_TRUE(bus.readResponses.empty()) << "No bus op should be issued for invalid plug";
+}
