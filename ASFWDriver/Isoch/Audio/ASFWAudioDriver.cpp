@@ -730,8 +730,9 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
             ASFW_LOG(Audio, "ASFWAudioDriver: StartAudioStreaming failed: 0x%x", startKr);
         }
 
-        // StartAudioStreaming creates the rx queue in the nub (CreateRxQueue).
-        // MapRxQueueFromNub in Start() failed if the queue didn't exist yet — re-map now.
+        // StartAudioStreaming creates the rx/tx queues lazily (CreateRxQueue / CreateTxQueue).
+        // MapRxQueueFromNub / MapTxQueueFromNub in Start() fail when the queues don't
+        // exist yet — re-map here now that they've been created.
         if (!ivars->shared.rxQueueValid) {
             const kern_return_t rxErr = ASFW::Isoch::Audio::MapRxQueueFromNub(
                 *ivars->device.audioNub,
@@ -750,6 +751,27 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                 ASFW_LOG_WARNING(Audio,
                                  "ASFWAudioDriver: RX queue re-map failed at StartDevice: 0x%x",
                                  rxErr);
+            }
+        }
+
+        if (!ivars->shared.txQueueValid) {
+            const kern_return_t txErr = ASFW::Isoch::Audio::MapTxQueueFromNub(
+                *ivars->device.audioNub,
+                ivars->shared.txQueueMem,
+                ivars->shared.txQueueMap,
+                ivars->shared.txQueueBytes,
+                ivars->shared.txQueueWriter,
+                ivars->shared.txQueueValid);
+            if (txErr == kIOReturnSuccess && ivars->shared.txQueueValid) {
+                ASFW_LOG(Audio,
+                         "ASFWAudioDriver: TX queue re-mapped at StartDevice: %llu bytes ch=%u",
+                         ivars->shared.txQueueBytes,
+                         ivars->shared.txQueueWriter.Channels());
+                ivars->device.outputChannelCount = ivars->shared.txQueueWriter.Channels();
+            } else {
+                ASFW_LOG_WARNING(Audio,
+                                 "ASFWAudioDriver: TX queue re-map failed at StartDevice: 0x%x",
+                                 txErr);
             }
         }
     }
