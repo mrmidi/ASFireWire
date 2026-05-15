@@ -21,6 +21,7 @@
 #include <DriverKit/IOLib.h>
 #include <cstdint>
 #include <optional>
+#include <unordered_set>
 
 class IOService;
 
@@ -72,6 +73,7 @@ private:
 
     IOLock* lock_{nullptr};
     uint64_t activeGuid_{0};
+    std::unordered_set<uint64_t> suspendedGuids_;
 };
 
 } // namespace ASFW::Audio

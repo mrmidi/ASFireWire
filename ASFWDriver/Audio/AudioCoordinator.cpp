@@ -50,13 +50,60 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
 
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
-    dice_.OnDeviceRecordUpdated(device->GetGUID());
+    const uint64_t guid = device->GetGUID();
+
+    dice_.OnDeviceRecordUpdated(guid);
+
+    bool shouldRestart = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        auto it = suspendedGuids_.find(guid);
+        if (it != suspendedGuids_.end()) {
+            suspendedGuids_.erase(it);
+            shouldRestart = true;
+        }
+        IOLockUnlock(lock_);
+    }
+
+    if (!shouldRestart) return;
+
+    ASFW_LOG(Audio,
+             "AudioCoordinator: Restarting streaming after bus reset GUID=0x%016llx",
+             guid);
+    const IOReturn kr = StartStreaming(guid);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: Restart after bus reset failed GUID=0x%016llx kr=0x%x",
+                         guid, kr);
+    }
 }
 
 void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> device) {
-    (void)device;
-    // No-op for now: bus resets can suspend devices transiently and we don't yet have a robust
-    // "stop+restart while CoreAudio is running" pipeline here.
+    if (!device) return;
+    const uint64_t guid = device->GetGUID();
+
+    bool wasStreaming = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ == guid) {
+            activeGuid_ = 0;
+            suspendedGuids_.insert(guid);
+            wasStreaming = true;
+        }
+        IOLockUnlock(lock_);
+    }
+
+    if (!wasStreaming) return;
+
+    // Bus reset terminates all isochronous connections per IEEE 1394 §8.3.
+    // Stop IR/IT and release IRM/CMP resources so they can be reallocated on resume.
+    ASFW_LOG(Audio,
+             "AudioCoordinator: Bus reset during streaming GUID=0x%016llx — stopping backend",
+             guid);
+    auto* backend = BackendForGuid(guid);
+    if (backend) {
+        (void)backend->StopStreaming(guid);
+    }
 }
 
 void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
