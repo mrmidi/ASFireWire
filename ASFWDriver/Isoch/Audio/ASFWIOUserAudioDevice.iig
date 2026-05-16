@@ -7,7 +7,7 @@
 //   1. Stops active isoch streaming (AudioCoordinator::StopStreaming)
 //   2. Sends AV/C INPUT PLUG SIGNAL FORMAT (0x19) CONTROL to the FireWire device
 //   3. Waits synchronously for AV/C response (≤500 ms)
-//   4. Calls super::HandleChangeSampleRate to update HAL device rate
+//   4. Calls SetSampleRate() to confirm new rate to HAL
 //   5. Restarts isoch streaming (AudioCoordinator::StartStreaming)
 //
 
@@ -47,8 +47,8 @@ public:
     // guid — GUID of the FireWire audio device being streamed.
     kern_return_t SetStreamingContext(ASFWAudioNub* nub, uint64_t guid) LOCALONLY;
 
-    // Override: stop → AVC rate change → super (update HAL) → start.
-    virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override;
+    // Override: stop → AVC rate change → confirm rate to HAL → start.
+    kern_return_t HandleChangeSampleRate(double in_sample_rate) override;
 };
 
 struct ASFWIOUserAudioDevice_IVars {
