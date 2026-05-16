@@ -24,7 +24,7 @@ class ASFWIOUserAudioDevice : public IOUserAudioDevice
 public:
     // Factory (LOCALONLY) — IIG class methods are not inherited; must be declared per-class.
     static OSSharedPtr<ASFWIOUserAudioDevice> Create(
-        IOService* ownerDriver,
+        IOUserAudioDriver* ownerDriver,
         bool       inPrewarm,
         OSString*  inDeviceUID,
         OSString*  inModelUID,
@@ -33,7 +33,7 @@ public:
 
     // Custom initializer (LOCALONLY) — different overload from parent's init(), so no override.
     bool init(
-        IOService* ownerDriver,
+        IOUserAudioDriver* ownerDriver,
         bool       inPrewarm,
         OSString*  inDeviceUID,
         OSString*  inModelUID,

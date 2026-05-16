@@ -13,6 +13,7 @@
 #include "../../Audio/AudioCoordinator.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Service/DriverContext.hpp"
+#include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 
@@ -22,7 +23,7 @@
 #include <atomic>
 
 OSSharedPtr<ASFWIOUserAudioDevice> ASFWIOUserAudioDevice::Create(
-    IOService* ownerDriver,
+    IOUserAudioDriver* ownerDriver,
     bool       inPrewarm,
     OSString*  inDeviceUID,
     OSString*  inModelUID,
@@ -43,7 +44,7 @@ OSSharedPtr<ASFWIOUserAudioDevice> ASFWIOUserAudioDevice::Create(
 }
 
 bool ASFWIOUserAudioDevice::init(
-    IOService* ownerDriver,
+    IOUserAudioDriver* ownerDriver,
     bool       inPrewarm,
     OSString*  inDeviceUID,
     OSString*  inModelUID,
