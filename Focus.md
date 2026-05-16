@@ -13,7 +13,7 @@ Cel końcowy: MOTU 828 MK3 działający na macOS Tahoe przez sterownik DriverKit
 | IRM | 🚧 Częściowo | Elekcja i alokacja kanału |
 | Isoch Transmit (IT) | ✅ Działa | AM824 + SYT + cadence, testowane na hardware |
 | Isoch Receive (IR) | 🚧 WIP | Pipeline istnieje, wymaga walidacji na hardware |
-| AudioDriverKit | 🚧 W toku | `ASFWAudioDriver` + `ASFWAudioNub` podłączone |
+| AudioDriverKit | 🚧 W toku | `ASFWAudioDriver` + `ASFWAudioNub` podłączone; `HandleChangeSampleRate` + AV/C 0x19 zaimplementowane |
 
 ---
 
