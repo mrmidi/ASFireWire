@@ -12,14 +12,50 @@
 #include "ASFWDriver.h"
 #include "../../Audio/AudioCoordinator.hpp"
 #include "../../Controller/ControllerCore.hpp"
-#include "../../Protocols/AVC/IAVCDiscovery.hpp"
 #include "../../Service/DriverContext.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
+#include <DriverKit/OSMetaClass.h>
 #include <atomic>
+
+OSSharedPtr<ASFWIOUserAudioDevice> ASFWIOUserAudioDevice::Create(
+    IOService* ownerDriver,
+    bool       inPrewarm,
+    OSString*  inDeviceUID,
+    OSString*  inModelUID,
+    OSString*  inManufacturerUID,
+    uint32_t   inZeroTimestampPeriod)
+{
+    auto* device = OSTypeAlloc(ASFWIOUserAudioDevice);
+    if (!device) {
+        return nullptr;
+    }
+
+    if (!device->init(ownerDriver, inPrewarm, inDeviceUID, inModelUID, inManufacturerUID, inZeroTimestampPeriod)) {
+        device->release();
+        return nullptr;
+    }
+
+    return OSSharedPtr(device, OSNoRetain);
+}
+
+bool ASFWIOUserAudioDevice::init(
+    IOService* ownerDriver,
+    bool       inPrewarm,
+    OSString*  inDeviceUID,
+    OSString*  inModelUID,
+    OSString*  inManufacturerUID,
+    uint32_t   inZeroTimestampPeriod)
+{
+    if (!super::init(ownerDriver, inPrewarm, inDeviceUID, inModelUID, inManufacturerUID, inZeroTimestampPeriod)) {
+        return false;
+    }
+    ivars = IONewZero(ASFWIOUserAudioDevice_IVars, 1);
+    return ivars != nullptr;
+}
 
 void ASFWIOUserAudioDevice::free()
 {
@@ -31,10 +67,7 @@ void ASFWIOUserAudioDevice::free()
 
 kern_return_t ASFWIOUserAudioDevice::SetStreamingContext(ASFWAudioNub* nub, uint64_t guid)
 {
-    if (!ivars) {
-        ivars = IONewZero(ASFWIOUserAudioDevice_IVars, 1);
-        if (!ivars) return kIOReturnNoMemory;
-    }
+    if (!ivars) return kIOReturnNotReady;
     ivars->nub  = nub;
     ivars->guid = guid;
     return kIOReturnSuccess;
@@ -78,7 +111,6 @@ kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
     }
 
     // ── 1. Stop isoch streaming ────────────────────────────────────────────
-    // Bus reset recovery already handles GUID tracking; stop is best-effort.
     (void)coordinator->StopStreaming(ivars->guid);
 
     // ── 2. Send AV/C INPUT PLUG SIGNAL FORMAT (0x19) ──────────────────────
@@ -95,8 +127,8 @@ kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
         });
 
     // Poll ≤ 500 ms (AV/C FCP round-trip is typically < 50 ms).
-    constexpr uint32_t kPollMs     = 5;
-    constexpr uint32_t kTimeoutMs  = 500;
+    constexpr uint32_t kPollMs    = 5;
+    constexpr uint32_t kTimeoutMs = 500;
     for (uint32_t waited = 0; waited < kTimeoutMs; waited += kPollMs) {
         if (avcDone.load(std::memory_order_acquire)) break;
         IOSleep(kPollMs);
@@ -106,28 +138,24 @@ kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
         ASFW_LOG_WARNING(Audio,
                          "ASFWIOUserAudioDevice: AV/C rate change timed out (%.0f Hz, GUID=0x%016llx)",
                          in_sample_rate, captureGuid);
-        // Proceed anyway — restart with whatever rate was accepted.
     } else if (!avcAccepted.load(std::memory_order_acquire)) {
         ASFW_LOG_WARNING(Audio,
                          "ASFWIOUserAudioDevice: device rejected rate %.0f Hz (GUID=0x%016llx)",
                          in_sample_rate, captureGuid);
-        // Restart at previous rate; HAL will notice mismatch and roll back.
     }
 
     // ── 3. Tell HAL / CoreAudio the new rate ──────────────────────────────
     kern_return_t kr = HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio,
-                         "ASFWIOUserAudioDevice: super::HandleChangeSampleRate failed kr=0x%x",
-                         kr);
+                         "ASFWIOUserAudioDevice: super::HandleChangeSampleRate failed kr=0x%x", kr);
     }
 
     // ── 4. Restart isoch streaming at new rate ────────────────────────────
     const kern_return_t startKr = coordinator->StartStreaming(captureGuid);
     if (startKr != kIOReturnSuccess) {
         ASFW_LOG_WARNING(Audio,
-                         "ASFWIOUserAudioDevice: StartStreaming failed after rate change kr=0x%x",
-                         startKr);
+                         "ASFWIOUserAudioDevice: StartStreaming failed after rate change kr=0x%x", startKr);
     }
 
     ASFW_LOG(Audio,

@@ -22,11 +22,29 @@ class ASFWAudioNub;
 class ASFWIOUserAudioDevice : public IOUserAudioDevice
 {
 public:
-    virtual void free() override;
+    // Factory (LOCALONLY) — IIG class methods are not inherited; must be declared per-class.
+    static OSSharedPtr<ASFWIOUserAudioDevice> Create(
+        IOService* ownerDriver,
+        bool       inPrewarm,
+        OSString*  inDeviceUID,
+        OSString*  inModelUID,
+        OSString*  inManufacturerUID,
+        uint32_t   inZeroTimestampPeriod) LOCALONLY;
 
-    // Called by ASFWAudioDriver::Start right after Create() to wire streaming context.
-    // nub    — the ASFWAudioNub this driver matched on (unretained, lives for driver lifetime).
-    // guid   — GUID of the FireWire audio device being streamed.
+    // Custom initializer (LOCALONLY) — different overload from parent's init(), so no override.
+    bool init(
+        IOService* ownerDriver,
+        bool       inPrewarm,
+        OSString*  inDeviceUID,
+        OSString*  inModelUID,
+        OSString*  inManufacturerUID,
+        uint32_t   inZeroTimestampPeriod) LOCALONLY;
+
+    void free() override;
+
+    // Wire streaming context after creation.
+    // nub  — the ASFWAudioNub this driver matched on (unretained, lives for driver lifetime).
+    // guid — GUID of the FireWire audio device being streamed.
     kern_return_t SetStreamingContext(ASFWAudioNub* nub, uint64_t guid) LOCALONLY;
 
     // Override: stop → AVC rate change → super (update HAL) → start.

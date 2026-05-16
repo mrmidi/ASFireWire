@@ -391,12 +391,12 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     
     // Create custom device subclass so HandleChangeSampleRate can send AV/C
     // rate commands and restart the isoch stream at the new rate.
-    auto* asfwDevice = ASFWIOUserAudioDevice::Create(this,
-                                                      false,  // no prewarming
-                                                      deviceUID.get(),
-                                                      modelUID.get(),
-                                                      manufacturerUID.get(),
-                                                      ASFW::Isoch::Config::kAudioIoPeriodFrames);
+    auto asfwDevice = ASFWIOUserAudioDevice::Create(this,
+                                                     false,  // no prewarming
+                                                     deviceUID.get(),
+                                                     modelUID.get(),
+                                                     manufacturerUID.get(),
+                                                     ASFW::Isoch::Config::kAudioIoPeriodFrames);
     if (!asfwDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create ASFWIOUserAudioDevice");
         return kIOReturnNoMemory;
@@ -405,7 +405,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     // Wire nub + guid so HandleChangeSampleRate can access coordinator/discovery.
     asfwDevice->SetStreamingContext(ivars->device.audioNub, ivars->device.guid);
 
-    ivars->audioDevice.reset(asfwDevice, OSNoRetain);
+    ivars->audioDevice.reset(static_cast<IOUserAudioDevice*>(asfwDevice.detach()), OSNoRetain);
     
     // Set up IO operation handler -- the real-time audio callback
     // IMPORTANT: This runs in a real-time context. No allocations, no locks, minimal logging.
