@@ -9,8 +9,8 @@ Cel końcowy: MOTU 828 MK3 działający na macOS Tahoe przez sterownik DriverKit
 | OHCI init & bus reset | ✅ Działa | Self-ID, topology, gap count |
 | Async TX/RX (quadlet read) | ✅ Działa | Block read/write, lock, PHY — częściowo |
 | Config ROM reading | ✅ Działa | Pełny scanner z FSM multi-node |
-| AV/C / FCP | 🚧 W toku | Music Subunit, PCR space |
-| IRM | 🚧 Częściowo | Elekcja i alokacja kanału |
+| AV/C / FCP | ✅ Działa | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) |
+| IRM | ✅ Działa | Elekcja, alokacja kanału + bandwidth (Etap 5) |
 | Isoch Transmit (IT) | ✅ Działa | AM824 + SYT + cadence, testowane na hardware |
 | Isoch Receive (IR) | 🚧 WIP | Pipeline istnieje, wymaga walidacji na hardware |
 | AudioDriverKit | 🚧 W toku | `ASFWAudioDriver` + `ASFWAudioNub` podłączone; `HandleChangeSampleRate` + AV/C 0x19 zaimplementowane |
