@@ -22,7 +22,6 @@ class ASFWAudioNub;
 class ASFWIOUserAudioDevice : public IOUserAudioDevice
 {
 public:
-    virtual bool init() override;
     virtual void free() override;
 
     // Called by ASFWAudioDriver::Start right after Create() to wire streaming context.

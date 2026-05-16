@@ -21,15 +21,6 @@
 #include <DriverKit/IOLib.h>
 #include <atomic>
 
-bool ASFWIOUserAudioDevice::init()
-{
-    if (!super::init()) {
-        return false;
-    }
-    ivars = IONewZero(ASFWIOUserAudioDevice_IVars, 1);
-    return ivars != nullptr;
-}
-
 void ASFWIOUserAudioDevice::free()
 {
     if (ivars) {
@@ -40,7 +31,10 @@ void ASFWIOUserAudioDevice::free()
 
 kern_return_t ASFWIOUserAudioDevice::SetStreamingContext(ASFWAudioNub* nub, uint64_t guid)
 {
-    if (!ivars) return kIOReturnNotReady;
+    if (!ivars) {
+        ivars = IONewZero(ASFWIOUserAudioDevice_IVars, 1);
+        if (!ivars) return kIOReturnNoMemory;
+    }
     ivars->nub  = nub;
     ivars->guid = guid;
     return kIOReturnSuccess;
