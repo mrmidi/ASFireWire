@@ -160,6 +160,9 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 - `IMPL(ClassName, Method)` is only for methods **defined in that class's own `.iig`** — it generates `ClassName_Method_Args` which IIG only emits for the defining class.
 - **Overriding a parent's method** uses plain C++ (`kern_return_t ClassName::Method(...)`), never `IMPL`.
 - **No `SUPERDISPATCH`** in child overrides — call the equivalent setter directly (e.g. `SetSampleRate()`, `SetControlValue()`) to confirm the change to the HAL.
+- **No `virtual` keyword** in override declarations in `.iig` — use `kern_return_t Foo() override;` not `virtual kern_return_t Foo() override;`.
+- **`init()` first param type matters** — check the SDK header: `IOUserAudioDevice::init()` takes `IOUserAudioDriver*`, not `IOService*`. Wrong type → compile error in `super::init()` call.
+- **Forward declarations are not enough** — if `ControllerCore.hpp` only forward-declares `IAVCDiscovery`, calling any method on it requires the full `#include "Protocols/AVC/IAVCDiscovery.hpp"` in the `.cpp`.
 
 **Test isolation:** All C++ tests compile with `ASFW_HOST_TEST` defined, which stubs out DriverKit APIs. Logic tested this way cannot cover actual hardware interaction.
 
