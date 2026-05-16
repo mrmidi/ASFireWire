@@ -301,13 +301,15 @@ systemextensionsctl install \
 
 ### Krok 6 — Podłączenie sprzętu i monitoring logów
 
-Podłącz TB adapter → MOTU 828 MK3. Następnie obserwuj logi:
+**Najpierw uruchom logi w osobnym oknie Terminala** (przed podłączeniem MOTU):
 
 ```bash
 log stream --predicate 'subsystem == "net.mrmidi.ASFW"' --level debug
 ```
 
-Oczekiwana sekwencja sukcesu:
+Następnie podłącz TB adapter → MOTU 828 MK3.
+
+Oczekiwana sekwencja sukcesu w logach:
 ```
 OHCI init ✓
 Bus reset + Self-ID ✓
@@ -322,6 +324,9 @@ clockEstablished = true ✓
 ```
 
 MOTU powinien pojawić się w **Audio MIDI Setup** jako urządzenie audio.
+
+**Jeśli coś nie działa** — skopiuj logi i wklej do nowej sesji Claude Code lub na claude.ai.
+Napisz: *"Kontynuujemy projekt ASFireWire — oto logi z Mac Studio:"*
 
 ---
 
