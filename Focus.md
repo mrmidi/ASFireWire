@@ -216,4 +216,127 @@ W `StartDevice`, po `nub->StartAudioStreaming()`:
 
 **Łącznie testów w projekcie: 488/488 ✅**
 
-**Git:** 13 commitów czeka na push (brak dostępu collaboratora do `mrmidi/ASFireWire`)
+**Git:** 16 commitów wypchnięte do `github.com/cube666999/ASFireWire-by-cube666999`
+
+---
+
+## Instrukcja testowania na Mac Studio (Tahoe, Apple Silicon)
+
+### Wymagania sprzętowe
+- Mac Studio (Apple Silicon) z macOS Tahoe
+- Adapter Thunderbolt → FireWire 800 (Apple oryginalny lub OWC)
+- MOTU 828 MK3 podłączony kablem FireWire 800
+
+### Wymagania software
+- Xcode zainstalowany na Mac Studio
+- Projekt dostępny lokalnie (np. przez iCloud Drive)
+
+---
+
+### Krok 1 — Jednorazowe przygotowanie systemu (Recovery Mode)
+
+Wyłącz Mac Studio. Przytrzymaj przycisk zasilania aż pojawi się "Loading startup options".
+
+**Options → Terminal:**
+```bash
+csrutil disable
+```
+
+**Options → Startup Security Utility:**
+- Wybierz "Reduced Security"
+- Zaznacz: "Allow user management of kernel extensions from identified developers"
+
+Uruchom ponownie normalnie.
+
+---
+
+### Krok 2 — Boot args i developer mode (jednorazowo po Recovery)
+
+```bash
+sudo nvram boot-args="amfi_get_out_of_my_way=1"
+sudo systemextensionsctl developer on
+```
+
+Uruchom ponownie (boot args wymagają restartu).
+
+---
+
+### Krok 3 — Pobranie projektu z iCloud
+
+```bash
+# Upewnij się że projekt jest pobrany lokalnie (nie tylko w chmurze)
+# W Finderze: kliknij prawym na folder → "Download Now" jeśli widać ikonę chmurki
+cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/ASFireWire
+# lub gdziekolwiek jest w iCloud
+```
+
+---
+
+### Krok 4 — Budowanie w Xcode
+
+1. Otwórz `ASFireWire.xcodeproj` w Xcode
+2. W nawigatorze wybierz projekt → **Signing & Capabilities**
+3. Ustaw **Team** na swoje Apple ID (darmowe wystarczy z wyłączonym SIP)
+4. Wybierz schemat **ASFWDriver** → **My Mac**
+5. **Product → Build** (`⌘B`)
+
+Zbudowane pliki będą w:
+```
+~/Library/Developer/Xcode/DerivedData/ASFireWire-.../Build/Products/Debug/
+```
+
+---
+
+### Krok 5 — Instalacja sterownika
+
+Uruchom aplikację **ASFW** (Swift companion app) z Xcode — ona zainstaluje dext automatycznie przez `systemextensionsctl`.
+
+Alternatywnie ręcznie:
+```bash
+systemextensionsctl install \
+  ~/Library/Developer/Xcode/DerivedData/ASFireWire-.../ASFWDriver.dext
+```
+
+---
+
+### Krok 6 — Podłączenie sprzętu i monitoring logów
+
+Podłącz TB adapter → MOTU 828 MK3. Następnie obserwuj logi:
+
+```bash
+log stream --predicate 'subsystem == "net.mrmidi.ASFW"' --level debug
+```
+
+Oczekiwana sekwencja sukcesu:
+```
+OHCI init ✓
+Bus reset + Self-ID ✓
+Config ROM scan → MOTU 828 MK3 ✓
+AVCDiscovery → Music Subunit ✓
+Sample rate → 48kHz via AV/C 0x19 ✓
+IRM AllocateResources ✓
+CMP ConnectOPCR + ConnectIPCR ✓
+ASFWAudioNub published ✓
+ASFWAudioDriver matched ✓
+clockEstablished = true ✓
+```
+
+MOTU powinien pojawić się w **Audio MIDI Setup** jako urządzenie audio.
+
+---
+
+### Krok 7 — Odinstalowanie (jeśli potrzebne)
+
+```bash
+systemextensionsctl uninstall net.mrmidi.ASFW net.mrmidi.ASFW.ASFWDriver
+```
+
+---
+
+### Przywrócenie pełnego SIP po testach
+
+Boot do Recovery → Terminal:
+```bash
+csrutil enable
+sudo nvram -d boot-args
+```
