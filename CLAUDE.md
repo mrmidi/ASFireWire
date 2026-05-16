@@ -155,6 +155,12 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 
 **IIG files:** `.iig` interface files require Xcode's IIG preprocessor to generate `.iig.cpp`. CMake builds exclude these; production builds must use Xcode.
 
+**IIG subclassing rules:**
+- `Create()` and `init()` are **not inherited** — each subclass must declare its own as `LOCALONLY`.
+- `IMPL(ClassName, Method)` is only for methods **defined in that class's own `.iig`** — it generates `ClassName_Method_Args` which IIG only emits for the defining class.
+- **Overriding a parent's method** uses plain C++ (`kern_return_t ClassName::Method(...)`), never `IMPL`.
+- **No `SUPERDISPATCH`** in child overrides — call the equivalent setter directly (e.g. `SetSampleRate()`, `SetControlValue()`) to confirm the change to the HAL.
+
 **Test isolation:** All C++ tests compile with `ASFW_HOST_TEST` defined, which stubs out DriverKit APIs. Logic tested this way cannot cover actual hardware interaction.
 
 ## Code Patterns

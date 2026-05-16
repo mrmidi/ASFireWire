@@ -73,11 +73,15 @@ kern_return_t ASFWIOUserAudioDevice::SetStreamingContext(ASFWAudioNub* nub, uint
     return kIOReturnSuccess;
 }
 
-kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
+// IIG rule: overrides of parent methods use plain C++ — never IMPL/SUPERDISPATCH.
+// Confirm new rate to HAL via SetSampleRate (same pattern as
+// ASFWProtocolBooleanControl calling SetControlValue after applying the change).
+kern_return_t ASFWIOUserAudioDevice::HandleChangeSampleRate(double in_sample_rate)
 {
     if (!ivars || !ivars->nub || ivars->guid == 0) {
         ASFW_LOG_WARNING(Audio, "ASFWIOUserAudioDevice: HandleChangeSampleRate called before SetStreamingContext");
-        return HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
+        SetSampleRate(in_sample_rate);
+        return kIOReturnSuccess;
     }
 
     const auto rateHz = static_cast<uint32_t>(in_sample_rate);
@@ -89,25 +93,29 @@ kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
     ASFWDriver* parentDriver = ivars->nub->GetParentDriver();
     if (!parentDriver) {
         ASFW_LOG_WARNING(Audio, "ASFWIOUserAudioDevice: no parent driver — skipping AV/C rate change");
-        return HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
+        SetSampleRate(in_sample_rate);
+        return kIOReturnSuccess;
     }
 
     auto* ctx = static_cast<ServiceContext*>(parentDriver->GetServiceContext());
     if (!ctx || !ctx->audioCoordinator) {
         ASFW_LOG_WARNING(Audio, "ASFWIOUserAudioDevice: no AudioCoordinator — skipping AV/C rate change");
-        return HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
+        SetSampleRate(in_sample_rate);
+        return kIOReturnSuccess;
     }
     ASFW::Audio::AudioCoordinator* coordinator = ctx->audioCoordinator.get();
 
     auto* core = static_cast<ASFW::Driver::ControllerCore*>(parentDriver->GetControllerCore());
     if (!core) {
         ASFW_LOG_WARNING(Audio, "ASFWIOUserAudioDevice: no ControllerCore — skipping AV/C rate change");
-        return HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
+        SetSampleRate(in_sample_rate);
+        return kIOReturnSuccess;
     }
     ASFW::Protocols::AVC::IAVCDiscovery* discovery = core->GetAVCDiscovery();
     if (!discovery) {
         ASFW_LOG_WARNING(Audio, "ASFWIOUserAudioDevice: no IAVCDiscovery — skipping AV/C rate change");
-        return HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
+        SetSampleRate(in_sample_rate);
+        return kIOReturnSuccess;
     }
 
     // ── 1. Stop isoch streaming ────────────────────────────────────────────
@@ -144,12 +152,8 @@ kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
                          in_sample_rate, captureGuid);
     }
 
-    // ── 3. Tell HAL / CoreAudio the new rate ──────────────────────────────
-    kern_return_t kr = HandleChangeSampleRate(in_sample_rate, SUPERDISPATCH);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG_WARNING(Audio,
-                         "ASFWIOUserAudioDevice: super::HandleChangeSampleRate failed kr=0x%x", kr);
-    }
+    // ── 3. Confirm new rate to HAL ────────────────────────────────────────
+    SetSampleRate(in_sample_rate);
 
     // ── 4. Restart isoch streaming at new rate ────────────────────────────
     const kern_return_t startKr = coordinator->StartStreaming(captureGuid);
@@ -161,5 +165,5 @@ kern_return_t IMPL(ASFWIOUserAudioDevice, HandleChangeSampleRate)
     ASFW_LOG(Audio,
              "ASFWIOUserAudioDevice: sample rate change to %.0f Hz complete (GUID=0x%016llx)",
              in_sample_rate, captureGuid);
-    return kr;
+    return kIOReturnSuccess;
 }
