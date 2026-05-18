@@ -218,7 +218,7 @@ Jedyne dozwolone narzędzia do lokalizacji symboli i plików:
 
 **WAŻNE — zawsze przekazuj `projectPath`:** MCP serwer jest skonfigurowany w `../.mcp.json` (katalog `FireWire/`), więc jego CWD to `FireWire/`, nie `ASFireWire/`. Bez explicit `projectPath` CodeGraph szuka bazy w złym katalogu i zwraca "not initialized". Każde wywołanie musi mieć:
 ```
-projectPath: "/Users/cube666/Documents/FireWire/ASFireWire"
+projectPath: "/Users/kuba/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
 ```
 
 **Re-index after adding/moving files:**

@@ -340,8 +340,16 @@ systemextensionsctl uninstall net.mrmidi.ASFW net.mrmidi.ASFW.ASFWDriver
 
 ### Przywrócenie pełnego SIP po testach
 
-Boot do Recovery → Terminal:
+**W normalnym systemie (przed Recovery):**
+```bash
+sudo systemextensionsctl developer off
+sudo nvram -d boot-args
+sudo reboot
+```
+
+**Po restarcie — boot do Recovery → Terminal:**
 ```bash
 csrutil enable
-sudo nvram -d boot-args
 ```
+
+Restart. Gotowe — SIP włączony, AMFI aktywny, developer mode wyłączony.
