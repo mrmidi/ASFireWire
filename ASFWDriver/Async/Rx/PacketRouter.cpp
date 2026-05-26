@@ -1,12 +1,42 @@
 #include "PacketRouter.hpp"
 
+#include <array>
 #include <cstring>
 
+#include "../../Common/FWCommon.hpp"
 #include "ARPacketParser.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Tx/ResponseSender.hpp"
 
 namespace ASFW::Async {
+
+namespace {
+
+std::span<const uint8_t> CopyAlignedPayload(std::span<const uint8_t> source,
+                                            std::array<uint8_t, ASFW::FW::MaxPayload::kS800>& scratch) {
+    if (source.empty()) {
+        return {};
+    }
+
+    if (source.size() > scratch.size()) {
+        return {};
+    }
+
+    std::size_t index = 0;
+    for (; index + sizeof(uint32_t) <= source.size(); index += sizeof(uint32_t)) {
+        uint32_t quadlet = 0;
+        __builtin_memcpy(&quadlet, source.data() + index, sizeof(uint32_t));
+        __builtin_memcpy(scratch.data() + index, &quadlet, sizeof(uint32_t));
+    }
+
+    for (; index < source.size(); ++index) {
+        scratch[index] = source[index];
+    }
+
+    return std::span<const uint8_t>(scratch.data(), source.size());
+}
+
+} // namespace
 
 void PacketRouter::RegisterRequestHandler(uint8_t tCode, PacketHandler handler) {
     if (tCode >= 16) {
@@ -56,12 +86,26 @@ void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_
         const size_t headerLen = packetInfo.headerLength;
         const size_t dataLen = packetInfo.dataLength;
         const uint8_t tCode = packetInfo.tCode;
+        alignas(8) std::array<uint8_t, ASFW::FW::MaxPayload::kS800> payloadScratch{};
 
         // Build zero-copy view over header and payload
         ARPacketView view;
         view.tCode = tCode;
         view.header = std::span<const uint8_t>(packetStart, headerLen);
-        view.payload = std::span<const uint8_t>(packetStart + headerLen, dataLen);
+        if (dataLen > 0) {
+            const auto payloadBytes = std::span<const uint8_t>(packetStart + headerLen, dataLen);
+            view.payload = CopyAlignedPayload(payloadBytes, payloadScratch);
+            if (view.payload.empty()) {
+                ASFW_LOG(Async,
+                         "PacketRouter: payload %zu exceeds aligned scratch buffer for tCode=0x%x",
+                         dataLen,
+                         tCode);
+                offset += packetInfo.totalLength;
+                continue;
+            }
+        } else {
+            view.payload = {};
+        }
 
         // Trailer fields – use low 16 bits for xferStatus/timeStamp
         view.xferStatus = static_cast<uint16_t>(packetInfo.xferStatus & 0xFFFF);

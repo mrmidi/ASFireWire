@@ -6,13 +6,32 @@
 
 namespace ASFW::Driver {
 
-bool BusResetCoordinator::ReadyForDiscovery(Discovery::Generation gen) const {
+bool BusResetCoordinator::ReadyForDiscovery(Discovery::Generation gen) {
     const bool nodeValid = G_NodeIDValid();
     const bool genMatch = (gen == lastGeneration_);
     const bool hasTopo = cycle_.acceptedTopology.has_value();
     const bool ready = nodeValid && filtersEnabled_ && atArmed_ && hasTopo && genMatch;
 
+    uint8_t failureBits = 0;
+    if (!nodeValid) {
+        failureBits |= 1U << 0U;
+    }
+    if (!filtersEnabled_) {
+        failureBits |= 1U << 1U;
+    }
+    if (!atArmed_) {
+        failureBits |= 1U << 2U;
+    }
+    if (!hasTopo) {
+        failureBits |= 1U << 3U;
+    }
+    if (!genMatch) {
+        failureBits |= 1U << 4U;
+    }
+    readyForDiscoveryFailureBits_ = failureBits;
+
     if (!ready) {
+        RecordRecoveryReasonCode(RecoveryReasonCode::ReadyForDiscoveryFailed);
         ASFW_LOG(BusReset,
                  "ReadyForDiscovery(gen=%u): NOT READY — nodeValid=%d filters=%d at=%d "
                  "topo=%d genMatch=%d(last=%u)",

@@ -59,6 +59,9 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void StartBIBRead(ROMScanNodeStateMachine& node);
     void HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result);
     void ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId);
+    [[nodiscard]] bool ShouldDelayMinimalROMCompletion(const ROMScanNodeStateMachine& node) const;
+    void ScheduleMinimalROMRetry(ROMScanNodeStateMachine& node);
+    void CompleteMinimalROM(ROMScanNodeStateMachine& node, const char* reason);
 
     void StartIRMRead(ROMScanNodeStateMachine& node);
     void HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_t valueHostOrder);
@@ -78,6 +81,7 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void RetryWithFallback(ROMScanNodeStateMachine& node);
 
     void DispatchAsync(std::function<void()> work);
+    void DispatchDelayed(std::function<void()> work, uint64_t delayNs);
 
     Async::IFireWireBus& bus_;
     SpeedPolicy& speedPolicy_;

@@ -6,6 +6,12 @@ namespace ASFW::Discovery {
 
 SpeedPolicy::SpeedPolicy() = default;
 
+namespace {
+uint32_t SpeedMbps(FwSpeed speed) {
+    return 100u << static_cast<uint8_t>(speed);
+}
+} // namespace
+
 LinkPolicy SpeedPolicy::ForNode(uint8_t nodeId) const {
     LinkPolicy policy{};
     
@@ -13,7 +19,7 @@ LinkPolicy SpeedPolicy::ForNode(uint8_t nodeId) const {
     if (it != nodeStates_.end()) {
         policy.localToNode = it->second.currentSpeed;
     } else {
-        policy.localToNode = FwSpeed::S100;
+        policy.localToNode = FwSpeed::S400;
     }
     
     policy.maxPayloadBytes = ComputeMaxPayload(policy.localToNode);
@@ -30,32 +36,27 @@ void SpeedPolicy::RecordSuccess(uint8_t nodeId, FwSpeed speed) {
     state.timeoutCount = 0;
     
     // Rate-limited success logging
-    // Fix speed display: S100=0→100, S200=1→200, S400=2→400, S800=3→800
     ASFW_LOG_RL(Discovery, "speed_success", 5000, OS_LOG_TYPE_DEBUG,
-                "Node %u: Success at S%u00 (total=%u)",
-                nodeId, (static_cast<uint32_t>(speed) * 2) + 1, state.successCount);
+                "Node %u: Success at S%u (total=%u)",
+                nodeId, SpeedMbps(speed), state.successCount);
 }
 
 void SpeedPolicy::RecordTimeout(uint8_t nodeId, FwSpeed speed) {
     auto& state = nodeStates_[nodeId];
+    state.currentSpeed = speed;
     state.timeoutCount++;
     
-    // Fix speed display: S100=0→100, S200=1→200, S400=2→400, S800=3→800
-    ASFW_LOG(Discovery, "Node %u: Timeout at S%u00 (count=%u)",
-             nodeId, (static_cast<uint32_t>(speed) * 2) + 1, state.timeoutCount);
+    ASFW_LOG(Discovery, "Node %u: Timeout at S%u (count=%u)",
+             nodeId, SpeedMbps(speed), state.timeoutCount);
     
-    // After multiple timeouts at current speed, downgrade
-    if (state.timeoutCount >= 2) {
-        FwSpeed downgraded = DowngradeSpeed(speed);
-        if (downgraded != speed) {
-            state.currentSpeed = downgraded;
-            state.timeoutCount = 0;  // Reset counter after downgrade
-            // Fix speed display: S100=0→100, S200=1→200, S400=2→400, S800=3→800
-            ASFW_LOG(Discovery, "Node %u: Downgraded S%u00 → S%u00",
-                     nodeId,
-                     (static_cast<uint32_t>(speed) * 2) + 1,
-                     (static_cast<uint32_t>(downgraded) * 2) + 1);
-        }
+    // ROMScanSession calls this only after the per-step retry budget is exhausted.
+    // Downgrade one tier immediately so discovery really follows S400→S200→S100.
+    FwSpeed downgraded = DowngradeSpeed(speed);
+    if (downgraded != speed) {
+        state.currentSpeed = downgraded;
+        state.timeoutCount = 0;
+        ASFW_LOG(Discovery, "Node %u: Downgraded S%u → S%u",
+                 nodeId, SpeedMbps(speed), SpeedMbps(downgraded));
     }
 }
 
@@ -95,4 +96,3 @@ FwSpeed SpeedPolicy::DowngradeSpeed(FwSpeed current) const {
 }
 
 } // namespace ASFW::Discovery
-
