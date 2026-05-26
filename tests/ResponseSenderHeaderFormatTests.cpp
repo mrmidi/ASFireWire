@@ -37,6 +37,8 @@ constexpr uint32_t OHCI_AT_Q1_RCODE_SHIFT = 12;
 
 // Transaction codes
 constexpr uint8_t TCODE_WRITE_RESPONSE = 0x2;
+constexpr uint8_t TCODE_READ_QUADLET_RESPONSE = 0x6;
+constexpr uint8_t TCODE_READ_BLOCK_RESPONSE = 0x7;
 
 // Speed codes
 constexpr uint8_t SPEED_S400 = 0x02;
@@ -82,6 +84,54 @@ void BuildWriteResponseHeader_OHCIFormat(
 
     // Q2: reserved for responses
     header[2] = 0;
+}
+
+void BuildReadQuadletResponseHeader_OHCIFormat(
+    uint16_t destID,
+    uint8_t tLabel,
+    uint8_t rcode,
+    uint32_t quadletData,
+    uint32_t header[4])
+{
+    constexpr uint8_t kSrcBusID = 0;
+    constexpr uint8_t kSpeed = SPEED_S400;
+    constexpr uint8_t kRetry = RETRY_X;
+    constexpr uint8_t kPriority = 0;
+
+    header[0] = (static_cast<uint32_t>(kSrcBusID & 0x01) << OHCI_AT_Q0_SRCBUSID_SHIFT) |
+                (static_cast<uint32_t>(kSpeed & 0x07) << OHCI_AT_Q0_SPEED_SHIFT) |
+                (static_cast<uint32_t>(tLabel & 0x3F) << OHCI_AT_Q0_TLABEL_SHIFT) |
+                (static_cast<uint32_t>(kRetry & 0x03) << OHCI_AT_Q0_RETRY_SHIFT) |
+                (static_cast<uint32_t>(TCODE_READ_QUADLET_RESPONSE & 0x0F) << OHCI_AT_Q0_TCODE_SHIFT) |
+                (static_cast<uint32_t>(kPriority) & OHCI_AT_Q0_PRIORITY_MASK);
+    header[1] = (static_cast<uint32_t>(destID) << OHCI_AT_Q1_DESTID_SHIFT) |
+                (static_cast<uint32_t>(rcode & 0x0F) << OHCI_AT_Q1_RCODE_SHIFT);
+    header[2] = 0;
+    header[3] = quadletData;
+}
+
+void BuildReadBlockResponseHeader_OHCIFormat(
+    uint16_t destID,
+    uint8_t tLabel,
+    uint8_t rcode,
+    uint16_t dataLength,
+    uint32_t header[4])
+{
+    constexpr uint8_t kSrcBusID = 0;
+    constexpr uint8_t kSpeed = SPEED_S400;
+    constexpr uint8_t kRetry = RETRY_X;
+    constexpr uint8_t kPriority = 0;
+
+    header[0] = (static_cast<uint32_t>(kSrcBusID & 0x01) << OHCI_AT_Q0_SRCBUSID_SHIFT) |
+                (static_cast<uint32_t>(kSpeed & 0x07) << OHCI_AT_Q0_SPEED_SHIFT) |
+                (static_cast<uint32_t>(tLabel & 0x3F) << OHCI_AT_Q0_TLABEL_SHIFT) |
+                (static_cast<uint32_t>(kRetry & 0x03) << OHCI_AT_Q0_RETRY_SHIFT) |
+                (static_cast<uint32_t>(TCODE_READ_BLOCK_RESPONSE & 0x0F) << OHCI_AT_Q0_TCODE_SHIFT) |
+                (static_cast<uint32_t>(kPriority) & OHCI_AT_Q0_PRIORITY_MASK);
+    header[1] = (static_cast<uint32_t>(destID) << OHCI_AT_Q1_DESTID_SHIFT) |
+                (static_cast<uint32_t>(rcode & 0x0F) << OHCI_AT_Q1_RCODE_SHIFT);
+    header[2] = 0;
+    header[3] = static_cast<uint32_t>(dataLength) << 16;
 }
 
 /**
@@ -264,4 +314,39 @@ TEST_F(ResponseSenderHeaderFormatTest, Regression_TCode_AtCorrectPosition) {
     uint8_t tCode = (header[0] >> 4) & 0x0F;
     EXPECT_EQ(TCODE_WRITE_RESPONSE, tCode)
         << "tCode should be WRITE_RESPONSE (0x2) at Q0 bits[7:4]";
+}
+
+TEST_F(ResponseSenderHeaderFormatTest, ReadQuadletResponse_HasExpectedTCodeAndData) {
+    uint32_t header[4]{};
+    constexpr uint32_t kQuadletData = 0xA1B2C3D4;
+    BuildReadQuadletResponseHeader_OHCIFormat(
+        kRemoteNodeID,
+        kTLabel,
+        kRCodeComplete,
+        kQuadletData,
+        header);
+
+    const uint8_t tCode = (header[0] >> 4) & 0x0F;
+    const uint8_t rCode = (header[1] >> 12) & 0x0F;
+    EXPECT_EQ(TCODE_READ_QUADLET_RESPONSE, tCode);
+    EXPECT_EQ(kRCodeComplete, rCode);
+    EXPECT_EQ(kQuadletData, header[3]);
+}
+
+TEST_F(ResponseSenderHeaderFormatTest, ReadBlockResponse_HasExpectedTCodeAndLength) {
+    uint32_t header[4]{};
+    constexpr uint16_t kDataLength = 32;
+    BuildReadBlockResponseHeader_OHCIFormat(
+        kRemoteNodeID,
+        kTLabel,
+        kRCodeComplete,
+        kDataLength,
+        header);
+
+    const uint8_t tCode = (header[0] >> 4) & 0x0F;
+    const uint8_t rCode = (header[1] >> 12) & 0x0F;
+    const uint16_t dataLength = static_cast<uint16_t>((header[3] >> 16) & 0xFFFF);
+    EXPECT_EQ(TCODE_READ_BLOCK_RESPONSE, tCode);
+    EXPECT_EQ(kRCodeComplete, rCode);
+    EXPECT_EQ(kDataLength, dataLength);
 }

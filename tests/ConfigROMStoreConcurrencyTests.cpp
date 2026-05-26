@@ -20,6 +20,18 @@ ASFW::Discovery::ConfigROM MakeROM(ASFW::Discovery::Generation gen,
     return rom;
 }
 
+ASFW::Discovery::ConfigROM MakeSBP2ROM(ASFW::Discovery::Generation gen,
+                                       uint8_t nodeId,
+                                       ASFW::Discovery::Guid64 guid) {
+    auto rom = MakeROM(gen, nodeId, guid);
+    ASFW::Discovery::UnitDirectory unit{};
+    unit.unitSpecId = 0x00609E;
+    unit.unitSwVersion = 0x010483;
+    rom.unitDirectories.push_back(unit);
+    rom.rawQuadlets.resize(34, 0);
+    return rom;
+}
+
 } // namespace
 
 TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
@@ -55,4 +67,39 @@ TEST(ConfigROMStoreConcurrencyTests, ConcurrentInsertAndLookupDoesNotCrash) {
     for (auto& thread : threads) {
         thread.join();
     }
+}
+
+TEST(ConfigROMStoreConcurrencyTests, LatestLookupPrefersPreviousProfileOverNewerPartialROM) {
+    ASFW::Discovery::ConfigROMStore store;
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;
+
+    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kGuid));
+    store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kGuid));
+
+    const auto* latest = store.FindLatestForNode(0);
+    ASSERT_NE(latest, nullptr);
+    EXPECT_EQ(latest->gen.value, 2u);
+    EXPECT_EQ(latest->unitDirectories.size(), 1u);
+
+    const auto* byGuid = store.FindByGuid(kGuid);
+    ASSERT_NE(byGuid, nullptr);
+    EXPECT_EQ(byGuid->gen.value, 2u);
+    EXPECT_EQ(byGuid->unitDirectories.size(), 1u);
+}
+
+TEST(ConfigROMStoreConcurrencyTests, LatestLookupUsesNewerProfileWhenItCompletes) {
+    ASFW::Discovery::ConfigROMStore store;
+    constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;
+
+    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kGuid));
+    store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kGuid));
+    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{4}, 0, kGuid));
+
+    const auto* latest = store.FindLatestForNode(0);
+    ASSERT_NE(latest, nullptr);
+    EXPECT_EQ(latest->gen.value, 4u);
+
+    const auto* byGuid = store.FindByGuid(kGuid);
+    ASSERT_NE(byGuid, nullptr);
+    EXPECT_EQ(byGuid->gen.value, 4u);
 }
