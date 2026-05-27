@@ -88,7 +88,7 @@ void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_
         const uint8_t tCode = packetInfo.tCode;
         alignas(8) std::array<uint8_t, ASFW::FW::MaxPayload::kS800> payloadScratch{};
 
-        // Build zero-copy view over header and payload
+        // Build a dispatch view over the header and aligned payload bytes.
         ARPacketView view;
         view.tCode = tCode;
         view.header = std::span<const uint8_t>(packetStart, headerLen);
