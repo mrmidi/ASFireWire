@@ -158,7 +158,8 @@ const ConfigROM* ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
         }
     }
 
-    if (latestWithUnitProfile != nullptr && latest != latestWithUnitProfile) {
+    if (latestWithUnitProfile != nullptr && latest != latestWithUnitProfile &&
+        latest != nullptr && latestWithUnitProfile->bib.guid == latest->bib.guid) {
         ASFW_LOG_V2(ConfigROM,
                     "ConfigROMStore::FindLatestForNode: node=%u using gen=%u with unit profile "
                     "instead of partial gen=%u",
