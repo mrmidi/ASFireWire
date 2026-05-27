@@ -101,7 +101,7 @@ jobs:
       - name: Run Tests
         run: |
           cd build/tests
-          ctest --output-on-failure -j$(sysctl -n hw.ncpu)
+          LLVM_PROFILE_FILE="$PWD/%p-%m.profraw" ctest --output-on-failure -j$(sysctl -n hw.ncpu)
 
       - name: Process C++ Coverage
         run: |
