@@ -41,7 +41,7 @@ struct SBP2SessionRecord {
     void* owner{nullptr};
     uint64_t guid{0};
     uint32_t romOffset{0};
-    std::unique_ptr<SBP2LoginSession> session;
+    std::shared_ptr<SBP2LoginSession> session;
     SBP2SessionState state{};
 
     std::optional<SCSI::CommandRequest> activeCommandRequest;

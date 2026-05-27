@@ -417,6 +417,37 @@ TEST(SBP2LoginSessionTests, ImmediateORBRetryStaysBoundToOriginalORBAndQueuesNex
     EXPECT_EQ(firstAddressLo, retryAddressLo);
 }
 
+TEST(SBP2LoginSessionTests, SubmittedImmediateORBStartsTimeoutAfterFetchAgentWriteSucceeds) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+
+    SBP2CommandORB orb(rig.addressManager, &rig.session, 16);
+    orb.SetFlags(SBP2CommandORB::kImmediate);
+    orb.SetTimeout(25);
+
+    int callbackStatus = 99;
+    int callbackCount = 0;
+    orb.SetCompletionCallback([&](int status, uint8_t) {
+        ++callbackCount;
+        callbackStatus = status;
+    });
+
+    const size_t pendingTimersBeforeSubmit = rig.timeoutQueue.PendingTaskCountForTesting();
+
+    ASSERT_TRUE(rig.session.SubmitORB(&orb));
+    EXPECT_EQ(pendingTimersBeforeSubmit, rig.timeoutQueue.PendingTaskCountForTesting());
+
+    ASSERT_TRUE(rig.bus.CompleteNextWrite(ASFW::Async::AsyncStatus::kSuccess));
+    EXPECT_EQ(pendingTimersBeforeSubmit + 1U, rig.timeoutQueue.PendingTaskCountForTesting());
+
+    rig.AdvanceMs(24);
+    EXPECT_EQ(0, callbackCount);
+
+    rig.AdvanceMs(1);
+    EXPECT_EQ(1, callbackCount);
+    EXPECT_EQ(-1, callbackStatus);
+}
+
 TEST(SBP2LoginSessionTests, SolicitedStatusCompletesORBMatchingByORBAddress) {
     SessionRig rig;
     rig.LoginSuccessfully();

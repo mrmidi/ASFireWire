@@ -406,6 +406,7 @@ private:
 
     /// Write ORB address to fetch agent (CBA + kORBPointer).
     bool AppendORBImmediate(SBP2CommandORB* orb) noexcept;
+    void StartSubmittedORBTimer(SBP2CommandORB* orb) noexcept;
     void FailActiveCommandIfPresent(int transportStatus, uint8_t sbpStatus) noexcept;
     void FailSubmittedORB(SBP2CommandORB* orb,
                           int transportStatus,

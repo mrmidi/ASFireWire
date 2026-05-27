@@ -1303,6 +1303,9 @@ bool SBP2LoginSession::SubmitORB(SBP2CommandORB* orb) noexcept {
             return false;
         }
         RingDoorbell();
+        if (activeFetchAgentORB_ != orb) {
+            StartSubmittedORBTimer(orb);
+        }
     }
 
     return true;
@@ -1356,8 +1359,17 @@ bool SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
     return true;
 }
 
+void SBP2LoginSession::StartSubmittedORBTimer(SBP2CommandORB* orb) noexcept {
+    if (orb == nullptr) {
+        return;
+    }
+
+    IODispatchQueue* timeoutQueue = timeoutQueue_ != nullptr ? timeoutQueue_ : workQueue_;
+    orb->StartTimer(workQueue_, timeoutQueue);
+}
+
 void SBP2LoginSession::FailActiveCommandIfPresent(int transportStatus,
-                                                 uint8_t sbpStatus) noexcept {
+                                                  uint8_t sbpStatus) noexcept {
     if (activeFetchAgentORB_ == nullptr) {
         return;
     }
@@ -1500,7 +1512,8 @@ void SBP2LoginSession::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
         return;
     }
 
-    // Fetch agent write succeeded. Submit deferred ORB if any.
+    // Fetch agent write succeeded. The target can now fetch this ORB.
+    StartSubmittedORBTimer(activeFetchAgentORB_);
     activeFetchAgentORB_ = nullptr;
 
     if (!pendingImmediateORBs_.empty()) {

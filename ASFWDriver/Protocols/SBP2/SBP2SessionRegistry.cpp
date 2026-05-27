@@ -90,15 +90,17 @@ SBP2SessionRegistry::SBP2SessionRegistry(Async::IFireWireBus& bus,
 }
 
 SBP2SessionRegistry::~SBP2SessionRegistry() {
-    IOLockGuard lock(lock_);
-    for (auto& [handle, record] : sessions_) {
-        if (record.session && record.session->State() == LoginState::LoggedIn) {
-            (void)record.session->Logout();
+    {
+        IOLockGuard lock(lock_);
+        for (auto& [handle, record] : sessions_) {
+            if (record.session && record.session->State() == LoginState::LoggedIn) {
+                (void)record.session->Logout();
+            }
+            CleanupCommandResources(record);
+            CleanupManagementResources(record);
         }
-        CleanupCommandResources(record);
-        CleanupManagementResources(record);
+        sessions_.clear();
     }
-    sessions_.clear();
 
     if (lock_ != nullptr) {
         IOLockFree(lock_);
@@ -134,7 +136,7 @@ std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
         return std::unexpected(kIOReturnUnsupported);
     }
 
-    auto session = std::make_unique<SBP2LoginSession>(bus_, busInfo_, addrSpaceMgr_);
+    auto session = std::make_shared<SBP2LoginSession>(bus_, busInfo_, addrSpaceMgr_);
     session->Configure(targetInfo);
     session->SetWorkQueue(workQueue_);
 
@@ -242,146 +244,161 @@ std::optional<std::vector<uint8_t>> SBP2SessionRegistry::GetInquiryResult(uint64
 }
 
 bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request) {
-    IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
-    if (!record || !record->session || request.cdb.empty()) {
-        return false;
-    }
+    std::shared_ptr<SBP2LoginSession> session;
+    SBP2CommandORB* submittedORB = nullptr;
 
-    if (record->session->State() != LoginState::LoggedIn || record->commandInFlight) {
-        return false;
-    }
-
-    if (request.transferLength > 0 && request.direction == SCSI::DataDirection::None) {
-        return false;
-    }
-    if (request.direction == SCSI::DataDirection::FromTarget && !request.outgoingPayload.empty()) {
-        return false;
-    }
-    if (request.direction == SCSI::DataDirection::ToTarget &&
-        request.outgoingPayload.size() != request.transferLength) {
-        return false;
-    }
-
-    const uint16_t maxCDB = record->session->TargetInfo().maxCommandBlockSize;
-    if (maxCDB < request.cdb.size()) {
-        return false;
-    }
-
-    uint64_t bufferHandle = 0;
-    AddressSpaceManager::AddressRangeMeta bufferMeta{};
-    if (request.transferLength > 0) {
-        const kern_return_t kr = addrSpaceMgr_.AllocateAddressRangeAuto(
-            record->owner, 0xFFFF, request.transferLength, &bufferHandle, &bufferMeta);
-        if (kr != kIOReturnSuccess) {
-            ASFW_LOG(SBP2, "SBP2SessionRegistry: failed to allocate command buffer: 0x%08x", kr);
+    {
+        IOLockGuard lock(lock_);
+        auto* record = FindByHandle(handle);
+        if (!record || !record->session || request.cdb.empty()) {
             return false;
         }
-    }
 
-    std::unique_ptr<SBP2PageTable> pageTable;
-    if (request.transferLength > 0) {
-        if (request.direction == SCSI::DataDirection::ToTarget) {
-            const kern_return_t writeKr = addrSpaceMgr_.WriteLocalData(
-                record->owner,
-                bufferHandle,
-                0,
-                std::span<const uint8_t>{request.outgoingPayload.data(), request.outgoingPayload.size()});
-            if (writeKr != kIOReturnSuccess) {
+        if (record->session->State() != LoginState::LoggedIn || record->commandInFlight) {
+            return false;
+        }
+
+        if (request.transferLength > 0 && request.direction == SCSI::DataDirection::None) {
+            return false;
+        }
+        if (request.direction == SCSI::DataDirection::FromTarget && !request.outgoingPayload.empty()) {
+            return false;
+        }
+        if (request.direction == SCSI::DataDirection::ToTarget &&
+            request.outgoingPayload.size() != request.transferLength) {
+            return false;
+        }
+
+        const uint16_t maxCDB = record->session->TargetInfo().maxCommandBlockSize;
+        if (maxCDB < request.cdb.size()) {
+            return false;
+        }
+
+        uint64_t bufferHandle = 0;
+        AddressSpaceManager::AddressRangeMeta bufferMeta{};
+        if (request.transferLength > 0) {
+            const kern_return_t kr = addrSpaceMgr_.AllocateAddressRangeAuto(
+                record->owner, 0xFFFF, request.transferLength, &bufferHandle, &bufferMeta);
+            if (kr != kIOReturnSuccess) {
+                ASFW_LOG(SBP2, "SBP2SessionRegistry: failed to allocate command buffer: 0x%08x", kr);
+                return false;
+            }
+        }
+
+        std::unique_ptr<SBP2PageTable> pageTable;
+        if (request.transferLength > 0) {
+            if (request.direction == SCSI::DataDirection::ToTarget) {
+                const kern_return_t writeKr = addrSpaceMgr_.WriteLocalData(
+                    record->owner,
+                    bufferHandle,
+                    0,
+                    std::span<const uint8_t>{request.outgoingPayload.data(), request.outgoingPayload.size()});
+                if (writeKr != kIOReturnSuccess) {
+                    addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
+                    return false;
+                }
+            }
+
+            pageTable = std::make_unique<SBP2PageTable>(addrSpaceMgr_, record->owner);
+            SBP2PageTable::Segment segment{bufferMeta.address, request.transferLength};
+            if (!pageTable->Build(std::span<const SBP2PageTable::Segment>(&segment, 1),
+                                  busInfo_.GetLocalNodeID().value)) {
                 addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
                 return false;
             }
         }
 
-        pageTable = std::make_unique<SBP2PageTable>(addrSpaceMgr_, record->owner);
-        SBP2PageTable::Segment segment{bufferMeta.address, request.transferLength};
-        if (!pageTable->Build(std::span<const SBP2PageTable::Segment>(&segment, 1),
-                              busInfo_.GetLocalNodeID().value)) {
-            addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
-            return false;
-        }
-    }
-
-    auto orb = std::make_unique<SBP2CommandORB>(addrSpaceMgr_, record->owner, maxCDB);
-    orb->SetCommandBlock(std::span<const uint8_t>{request.cdb.data(), request.cdb.size()});
-    orb->SetFlags(BuildCommandFlags(request.direction));
-    orb->SetMaxPayloadSize(record->session->MaxPayloadSize());
-    orb->SetTimeout(request.timeoutMs > 0
-        ? request.timeoutMs
-        : record->session->TargetInfo().managementTimeoutMs);
-    if (pageTable) {
-        orb->SetDataDescriptor(pageTable->GetResult());
-    }
-
-    const uint64_t captureHandle = handle;
-    orb->SetCompletionCallback([this, captureHandle](int transportStatus, uint8_t sbpStatus) {
-        IOLockGuard cbLock(lock_);
-        auto* rec = FindByHandle(captureHandle);
-        if (rec == nullptr) {
-            return;
-        }
-        if (!rec->commandInFlight) {
-            return;
+        auto orb = std::make_unique<SBP2CommandORB>(addrSpaceMgr_, record->owner, maxCDB);
+        orb->SetCommandBlock(std::span<const uint8_t>{request.cdb.data(), request.cdb.size()});
+        orb->SetFlags(BuildCommandFlags(request.direction));
+        orb->SetMaxPayloadSize(record->session->MaxPayloadSize());
+        orb->SetTimeout(request.timeoutMs > 0
+            ? request.timeoutMs
+            : record->session->TargetInfo().managementTimeoutMs);
+        if (pageTable) {
+            orb->SetDataDescriptor(pageTable->GetResult());
         }
 
-        rec->commandInFlight = false;
-        rec->commandReady = true;
-        rec->lastCompletedCommandOpcode = rec->activeCommandOpcode;
-        rec->activeCommandOpcode.reset();
-
-        SCSI::CommandResult result{};
-        result.transportStatus = transportStatus;
-        result.sbpStatus = sbpStatus;
-
-        if (transportStatus == 0 &&
-            sbpStatus == Wire::SBPStatus::kNoAdditionalInfo &&
-            rec->activeCommandRequest.has_value() &&
-            rec->activeCommandRequest->direction == SCSI::DataDirection::FromTarget &&
-            rec->activeCommandRequest->transferLength > 0 &&
-            rec->commandBufferHandle != 0) {
-            std::vector<uint8_t> payload;
-            const kern_return_t readKr = addrSpaceMgr_.ReadIncomingData(
-                rec->owner,
-                rec->commandBufferHandle,
-                0,
-                rec->activeCommandRequest->transferLength,
-                &payload);
-            if (readKr == kIOReturnSuccess) {
-                result.payload = std::move(payload);
-            } else {
-                result.transportStatus = static_cast<int>(readKr);
+        const uint64_t captureHandle = handle;
+        orb->SetCompletionCallback([this, captureHandle](int transportStatus, uint8_t sbpStatus) {
+            IOLockGuard cbLock(lock_);
+            auto* rec = FindByHandle(captureHandle);
+            if (rec == nullptr) {
+                return;
             }
-        }
+            if (!rec->commandInFlight) {
+                return;
+            }
 
-        if (rec->activeCommandRequest.has_value() && rec->activeCommandRequest->captureSenseData) {
-            result.senseData = result.payload;
-        }
+            rec->commandInFlight = false;
+            rec->commandReady = true;
+            rec->lastCompletedCommandOpcode = rec->activeCommandOpcode;
+            rec->activeCommandOpcode.reset();
 
-        rec->state.lastError = static_cast<int32_t>(result.transportStatus);
-        if (result.transportStatus == 0 && result.sbpStatus == Wire::SBPStatus::kNoAdditionalInfo) {
-            rec->state.lastError = 0;
-        }
-        rec->pendingCommandResult = std::move(result);
-        rec->activeCommandRequest.reset();
-        CleanupCommandResources(*rec);
-    });
+            SCSI::CommandResult result{};
+            result.transportStatus = transportStatus;
+            result.sbpStatus = sbpStatus;
 
-    if (!record->session->SubmitORB(orb.get())) {
-        if (bufferHandle != 0) {
-            addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
-        }
-        return false;
+            if (transportStatus == 0 &&
+                sbpStatus == Wire::SBPStatus::kNoAdditionalInfo &&
+                rec->activeCommandRequest.has_value() &&
+                rec->activeCommandRequest->direction == SCSI::DataDirection::FromTarget &&
+                rec->activeCommandRequest->transferLength > 0 &&
+                rec->commandBufferHandle != 0) {
+                std::vector<uint8_t> payload;
+                const kern_return_t readKr = addrSpaceMgr_.ReadIncomingData(
+                    rec->owner,
+                    rec->commandBufferHandle,
+                    0,
+                    rec->activeCommandRequest->transferLength,
+                    &payload);
+                if (readKr == kIOReturnSuccess) {
+                    result.payload = std::move(payload);
+                } else {
+                    result.transportStatus = static_cast<int>(readKr);
+                }
+            }
+
+            if (rec->activeCommandRequest.has_value() && rec->activeCommandRequest->captureSenseData) {
+                result.senseData = result.payload;
+            }
+
+            rec->state.lastError = static_cast<int32_t>(result.transportStatus);
+            if (result.transportStatus == 0 && result.sbpStatus == Wire::SBPStatus::kNoAdditionalInfo) {
+                rec->state.lastError = 0;
+            }
+            rec->pendingCommandResult = std::move(result);
+            rec->activeCommandRequest.reset();
+            CleanupCommandResources(*rec);
+        });
+
+        record->commandInFlight = true;
+        record->commandReady = false;
+        record->pendingCommandResult.reset();
+        record->activeCommandRequest = request;
+        record->activeCommandOpcode = request.cdb.front();
+        record->commandBufferHandle = bufferHandle;
+        record->commandORB = std::move(orb);
+        record->commandPageTable = std::move(pageTable);
+        session = record->session;
+        submittedORB = record->commandORB.get();
     }
 
-    record->commandInFlight = true;
-    record->commandReady = false;
-    record->pendingCommandResult.reset();
-    record->activeCommandRequest = request;
-    record->activeCommandOpcode = request.cdb.front();
-    record->commandBufferHandle = bufferHandle;
-    record->commandORB = std::move(orb);
-    record->commandPageTable = std::move(pageTable);
-    return true;
+    if (session->SubmitORB(submittedORB)) {
+        return true;
+    }
+
+    IOLockGuard lock(lock_);
+    auto* record = FindByHandle(handle);
+    if (record != nullptr && record->commandORB.get() == submittedORB) {
+        record->commandInFlight = false;
+        record->commandReady = false;
+        record->pendingCommandResult.reset();
+        record->activeCommandRequest.reset();
+        record->activeCommandOpcode.reset();
+        CleanupCommandResources(*record);
+    }
+    return false;
 }
 
 std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetCommandResult(uint64_t handle) {
