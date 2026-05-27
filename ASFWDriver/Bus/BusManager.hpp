@@ -49,8 +49,11 @@ public:
      * @brief Gap-reset state tracked across generations.
      *
      * `lastConfirmedGap` is the most recent stable packet-0 gap observed on an
-     * accepted topology. `inFlight` is populated only after the coordinator has
-     * successfully dispatched a corrective reset carrying a gap update.
+     * accepted topology. It remains `0xFF` until the first stable topology is
+     * accepted so the optimizer can distinguish "unknown previous gap" from a
+     * real confirmed `gap_count = 63`. `inFlight` is populated only after the
+     * coordinator has successfully dispatched a corrective reset carrying a gap
+     * update.
      */
     struct GapState {
         struct InFlightReset {
@@ -58,7 +61,7 @@ public:
             GapDecisionReason reason{GapDecisionReason::MismatchForce63};
         };
 
-        uint8_t lastConfirmedGap{0x3F};
+        uint8_t lastConfirmedGap{0xFF};
         std::optional<InFlightReset> inFlight;
     };
 
@@ -73,7 +76,7 @@ public:
         RootPolicy rootPolicy = RootPolicy::Delegate;
         uint8_t forcedRootNodeID = 0xFF;
         bool delegateCycleMaster = true;
-        bool enableGapOptimization = false;
+        bool enableGapOptimization = true;
         uint8_t forcedGapCount = 0;
         bool forcedGapFlag = false;
     };
