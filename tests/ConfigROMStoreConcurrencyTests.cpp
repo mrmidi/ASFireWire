@@ -87,6 +87,21 @@ TEST(ConfigROMStoreConcurrencyTests, LatestLookupPrefersPreviousProfileOverNewer
     EXPECT_EQ(byGuid->unitDirectories.size(), 1u);
 }
 
+TEST(ConfigROMStoreConcurrencyTests, LatestLookupDoesNotReuseProfileAcrossDifferentGuid) {
+    ASFW::Discovery::ConfigROMStore store;
+    constexpr ASFW::Discovery::Guid64 kOldGuid = 0x0090b54001ffffffULL;
+    constexpr ASFW::Discovery::Guid64 kNewGuid = 0x00a0c91002000000ULL;
+
+    store.Insert(MakeSBP2ROM(ASFW::Discovery::Generation{2}, 0, kOldGuid));
+    store.Insert(MakeROM(ASFW::Discovery::Generation{3}, 0, kNewGuid));
+
+    const auto* latest = store.FindLatestForNode(0);
+    ASSERT_NE(latest, nullptr);
+    EXPECT_EQ(latest->gen.value, 3u);
+    EXPECT_EQ(latest->bib.guid, kNewGuid);
+    EXPECT_TRUE(latest->unitDirectories.empty());
+}
+
 TEST(ConfigROMStoreConcurrencyTests, LatestLookupUsesNewerProfileWhenItCompletes) {
     ASFW::Discovery::ConfigROMStore store;
     constexpr ASFW::Discovery::Guid64 kGuid = 0x0090b54001ffffffULL;
