@@ -98,6 +98,7 @@ os_log_t AVC();
 os_log_t Isoch();
 os_log_t Audio();
 os_log_t DICE();
+os_log_t SBP2();
 } // namespace ASFW::Driver::Logging
 
 // ----- time helpers (header-only, safe in DriverKit) -----

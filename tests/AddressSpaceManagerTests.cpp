@@ -261,6 +261,41 @@ TEST(AddressSpaceManagerTests, AutoAllocationReusesFreedGap) {
     EXPECT_EQ(firstMeta.addressLo, thirdMeta.addressLo);
 }
 
+TEST(AddressSpaceManagerTests, ClearingRemoteWriteCallbackStopsFurtherNotifications) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    uint64_t handle = 0;
+    ASFW::Protocols::SBP2::AddressSpaceManager::AddressRangeMeta meta{};
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRange(reinterpret_cast<void*>(0xC),
+                                           0xFFFF,
+                                           0x0050'0000,
+                                           8,
+                                           &handle,
+                                           &meta));
+
+    int callbackCount = 0;
+    manager.SetRemoteWriteCallback(
+        handle,
+        [&callbackCount](uint64_t, uint32_t, std::span<const uint8_t>) {
+            ++callbackCount;
+        });
+
+    const std::array<uint8_t, 4> payload{0xDE, 0xAD, 0xBE, 0xEF};
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              manager.ApplyRemoteWrite(
+                  ComposeAddress(meta.addressHi, meta.addressLo),
+                  std::span<const uint8_t>(payload.data(), payload.size())));
+    EXPECT_EQ(1, callbackCount);
+
+    manager.SetRemoteWriteCallback(handle, {});
+    EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+              manager.ApplyRemoteWrite(
+                  ComposeAddress(meta.addressHi, meta.addressLo),
+                  std::span<const uint8_t>(payload.data(), payload.size())));
+    EXPECT_EQ(1, callbackCount);
+}
+
 TEST(AddressSpaceManagerTests, AutoAllocationRejectsRequestLargerThanWindow) {
     ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
 

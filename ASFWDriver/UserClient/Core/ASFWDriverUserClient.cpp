@@ -58,6 +58,16 @@ enum {
     kMethodDeallocateAddressRange = 47,
     kMethodReadIncomingData = 48,
     kMethodWriteLocalData = 49,
+    // SBP-2 session management
+    kMethodCreateSBP2Session = 53,
+    kMethodStartSBP2Login = 54,
+    kMethodGetSBP2SessionState = 55,
+    kMethodSubmitSBP2Inquiry = 56,
+    kMethodGetSBP2InquiryResult = 57,
+    kMethodReleaseSBP2Session = 58,
+    kMethodSubmitSBP2Command = 59,
+    kMethodGetSBP2CommandResult = 60,
+    kMethodSubmitSBP2TaskManagement = 61,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -205,6 +215,8 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
         ivars->driver = nullptr;
     }
     if (auto* runtimeState = ASFW::UserClient::GetRuntimeState(this); runtimeState != nullptr) {
+        // Release owner-bound SBP-2 resources before handler teardown so
+        // abrupt client exit cannot strand address ranges inside the driver.
         runtimeState->ReleaseOwner(this);
         runtimeState->ResetHandlers();
     }
@@ -493,6 +505,34 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
 
     case kMethodStopIsochTransmit:
         return runtimeState->Isoch().StopIsochTransmit(arguments);
+
+    // SBP-2 session management (53-61)
+    case kMethodCreateSBP2Session:
+        return runtimeState->SBP2().CreateSBP2Session(arguments, this);
+
+    case kMethodStartSBP2Login:
+        return runtimeState->SBP2().StartSBP2Login(arguments);
+
+    case kMethodGetSBP2SessionState:
+        return runtimeState->SBP2().GetSBP2SessionState(arguments);
+
+    case kMethodSubmitSBP2Inquiry:
+        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments);
+
+    case kMethodGetSBP2InquiryResult:
+        return runtimeState->SBP2().GetSBP2InquiryResult(arguments);
+
+    case kMethodReleaseSBP2Session:
+        return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
+
+    case kMethodSubmitSBP2Command:
+        return runtimeState->SBP2().SubmitSBP2Command(arguments);
+
+    case kMethodGetSBP2CommandResult:
+        return runtimeState->SBP2().GetSBP2CommandResult(arguments);
+
+    case kMethodSubmitSBP2TaskManagement:
+        return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments);
 
     default:
         return kIOReturnBadArgument;

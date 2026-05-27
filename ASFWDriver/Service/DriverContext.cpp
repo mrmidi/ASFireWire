@@ -25,8 +25,10 @@
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Hardware/InterruptManager.hpp"
 #include "../Logging/Logging.hpp"
+#include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
+#include "../Protocols/SBP2/SBP2SessionRegistry.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
 void ServiceContext::Reset() {
@@ -44,12 +46,13 @@ void ServiceContext::Reset() {
     deps.configRomStager.reset();
     deps.interrupts.reset();
     deps.topology.reset();
-    deps.fcpResponseRouter.reset(); // Clean up FCP router
+    deps.fcpResponseRouter.reset();  // Clean up FCP router
     deps.sbp2AddressSpaceManager.reset();
-    deps.avcDiscovery.reset();      // Clean up AV/C discovery
-    deps.irmClient.reset();         // Clean up IRM client
+    deps.sbp2SessionRegistry.reset();
+    deps.avcDiscovery.reset();       // Clean up AV/C discovery
+    deps.irmClient.reset();          // Clean up IRM client
     deps.asyncController.reset();
-    deps.asyncSubsystem.reset(); // Stop and cleanup asyncSubsystem
+    deps.asyncSubsystem.reset();     // Stop and cleanup asyncSubsystem
     statusPublisher.Reset();
     watchdog.Reset();
 #ifndef ASFW_HOST_TEST
@@ -137,116 +140,185 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
 void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
     auto& d = ctx.deps;
 
+    if (!d.fcpResponseRouter && d.avcDiscovery && ctx.controller) {
+        auto& bus = ctx.controller->Bus();
+        d.fcpResponseRouter = std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(
+            *d.avcDiscovery,
+            bus
+        );
+        ASFW_LOG(Controller, "[Controller] FCPResponseRouter initialized");
+    }
+
     if (!d.sbp2AddressSpaceManager && d.hardware) {
-        d.sbp2AddressSpaceManager =
-            std::make_shared<ASFW::Protocols::SBP2::AddressSpaceManager>(d.hardware.get());
+        d.sbp2AddressSpaceManager = std::make_shared<ASFW::Protocols::SBP2::AddressSpaceManager>(
+            d.hardware.get());
         ASFW_LOG(Controller, "[Controller] SBP2 AddressSpaceManager initialized");
+    }
+
+    if (!d.sbp2SessionRegistry && ctx.controller && d.deviceManager && d.sbp2AddressSpaceManager) {
+        auto& bus = ctx.controller->Bus();
+        d.sbp2SessionRegistry =
+            std::make_shared<ASFW::Protocols::SBP2::SBP2SessionRegistry>(
+                bus,
+                bus,
+                *d.sbp2AddressSpaceManager,
+                *d.deviceManager,
+                ctx.workQueue.get());
+        ASFW_LOG(Controller, "[Controller] SBP2 SessionRegistry initialized");
     }
 
     if (ctx.controller) {
         ctx.controller->SetSbp2AddressSpaceManager(d.sbp2AddressSpaceManager);
+        ctx.controller->SetSBP2SessionRegistry(d.sbp2SessionRegistry);
     }
 
-    if (!d.asyncSubsystem) {
-        return;
-    }
+    if (d.asyncSubsystem) {
+        if (auto* router = d.asyncSubsystem->GetPacketRouter()) {
+            auto* sbp2Manager = d.sbp2AddressSpaceManager.get();
+            auto* fcpRouter = d.fcpResponseRouter.get();
+            auto* responder = router->GetResponseSender();
 
-    auto* router = d.asyncSubsystem->GetPacketRouter();
-    if (!router) {
-        return;
-    }
+            // Quadlet write requests (tCode 0x0): direct address-space writes.
+            router->RegisterRequestHandler(
+                0x0,
+                [sbp2Manager](const ASFW::Async::ARPacketView& packet) {
+                    uint64_t destOffset = 0;
+                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
+                    if (!sbp2Manager || packet.header.size() < 16) {
+                        return ASFW::Async::ResponseCode::AddressError;
+                    }
 
-    auto* sbp2Manager = d.sbp2AddressSpaceManager.get();
-    auto* fcpRouter = d.fcpResponseRouter.get();
-    auto* responder = router->GetResponseSender();
+                    destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                    const auto quadletData =
+                        std::span<const uint8_t>(packet.header.data() + 12, 4);
+                    result = sbp2Manager->ApplyRemoteWrite(destOffset, quadletData);
+                    ASFW_LOG_V2(
+                        Async,
+                        "SBP2 AR write-quadlet req: src=0x%04x offset=0x%012llx len=4 -> rcode=0x%x",
+                        packet.sourceID,
+                        static_cast<unsigned long long>(destOffset),
+                        static_cast<unsigned>(result));
+                    return result;
+                });
 
-    router->RegisterRequestHandler(
-        0x0,
-        [sbp2Manager](const ASFW::Async::ARPacketView& packet) {
-            if (!sbp2Manager || packet.header.size() < 16) {
-                return ASFW::Async::ResponseCode::AddressError;
-            }
+            // Block write requests (tCode 0x1): SBP-2 first, then FCP fallback.
+            router->RegisterRequestHandler(
+                0x1,
+                [sbp2Manager, fcpRouter](const ASFW::Async::ARPacketView& packet) {
+                    uint64_t destOffset = 0;
+                    if (sbp2Manager && packet.header.size() >= 16 && !packet.payload.empty()) {
+                        destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                        const auto sbp2Result =
+                            sbp2Manager->ApplyRemoteWrite(destOffset, packet.payload);
+                        ASFW_LOG_V2(
+                            Async,
+                            "SBP2 AR write-block req: src=0x%04x offset=0x%012llx len=%zu -> rcode=0x%x",
+                            packet.sourceID,
+                            static_cast<unsigned long long>(destOffset),
+                            packet.payload.size(),
+                            static_cast<unsigned>(sbp2Result));
+                        if (sbp2Result != ASFW::Async::ResponseCode::AddressError) {
+                            return sbp2Result;
+                        }
+                    }
 
-            const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-            const auto quadletData = std::span<const uint8_t>(packet.header.data() + 12, 4);
-            return sbp2Manager->ApplyRemoteWrite(destOffset, quadletData);
-        });
+                    if (fcpRouter) {
+                        const Protocols::Ports::BlockWriteRequestView request{
+                            .sourceID = packet.sourceID,
+                            .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
+                            .payload = packet.payload,
+                        };
+                        const auto disposition = fcpRouter->RouteBlockWrite(request);
+                        if (disposition ==
+                            Protocols::Ports::BlockWriteDisposition::kAddressError) {
+                            return ASFW::Async::ResponseCode::AddressError;
+                        }
+                        return ASFW::Async::ResponseCode::Complete;
+                    }
 
-    router->RegisterRequestHandler(
-        0x1,
-        [sbp2Manager, fcpRouter](const ASFW::Async::ARPacketView& packet) {
-            if (sbp2Manager && packet.header.size() >= 16 && !packet.payload.empty()) {
-                const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                const auto sbp2Result =
-                    sbp2Manager->ApplyRemoteWrite(destOffset, packet.payload);
-                if (sbp2Result != ASFW::Async::ResponseCode::AddressError) {
-                    return sbp2Result;
-                }
-            }
-
-            if (fcpRouter) {
-                const ASFW::Protocols::Ports::BlockWriteRequestView request{
-                    .sourceID = packet.sourceID,
-                    .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
-                    .payload = packet.payload,
-                };
-                const auto disposition = fcpRouter->RouteBlockWrite(request);
-                if (disposition == ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
                     return ASFW::Async::ResponseCode::AddressError;
-                }
-                return ASFW::Async::ResponseCode::Complete;
-            }
+                });
 
-            return ASFW::Async::ResponseCode::AddressError;
-        });
+            // Read quadlet requests (tCode 0x4): active read response from address-space manager.
+            router->RegisterRequestHandler(
+                0x4,
+                [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
+                    uint32_t quadlet = 0;
+                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
 
-    router->RegisterRequestHandler(
-        0x4,
-        [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
-            uint32_t quadlet = 0;
-            auto result = ASFW::Async::ResponseCode::AddressError;
+                    if (sbp2Manager && packet.header.size() >= 12) {
+                        const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                        result = sbp2Manager->ReadQuadlet(destOffset, &quadlet);
+                    }
 
-            if (sbp2Manager && packet.header.size() >= 12) {
-                const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                result = sbp2Manager->ReadQuadlet(destOffset, &quadlet);
-            }
+                    if (responder) {
+                        responder->SendReadQuadletResponse(packet, result, quadlet);
+                    }
+                    return ASFW::Async::ResponseCode::NoResponse;
+                });
 
-            if (responder) {
-                responder->SendReadQuadletResponse(packet, result, quadlet);
-            }
-            return ASFW::Async::ResponseCode::NoResponse;
-        });
+            // Read block requests (tCode 0x5): active read response from address-space manager.
+            router->RegisterRequestHandler(
+                0x5,
+                [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
+                    ASFW::Async::ResponseCode result = ASFW::Async::ResponseCode::AddressError;
+                    ASFW::Protocols::SBP2::AddressSpaceManager::ReadSlice slice{};
+                    uint64_t destOffset = 0;
+                    uint32_t readLength = 0;
 
-    router->RegisterRequestHandler(
-        0x5,
-        [sbp2Manager, responder](const ASFW::Async::ARPacketView& packet) {
-            auto result = ASFW::Async::ResponseCode::AddressError;
-            ASFW::Protocols::SBP2::AddressSpaceManager::ReadSlice slice{};
+                    if (sbp2Manager && packet.header.size() >= 16) {
+                        destOffset = ASFW::Async::ExtractDestOffset(packet.header);
+                        readLength =
+                            static_cast<uint32_t>(ASFW::Async::ExtractDataLength(packet.header));
+                        if (readLength > 0) {
+                            result = sbp2Manager->ResolveReadSlice(destOffset, readLength, &slice);
+                        } else {
+                            result = ASFW::Async::ResponseCode::DataError;
+                        }
+                    }
 
-            if (sbp2Manager && packet.header.size() >= 16) {
-                const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-                const auto readLength =
-                    static_cast<uint32_t>(ASFW::Async::ExtractDataLength(packet.header));
-                if (readLength > 0) {
-                    result = sbp2Manager->ResolveReadSlice(destOffset, readLength, &slice);
-                } else {
-                    result = ASFW::Async::ResponseCode::DataError;
-                }
-            }
+                    if (result == ASFW::Async::ResponseCode::Complete) {
+                        ASFW_LOG_V2(
+                            Async,
+                            "SBP2 AR read-block req: src=0x%04x offset=0x%012llx len=%u -> "
+                            "rcode=0x%x payload=0x%08x/%u",
+                            packet.sourceID,
+                            static_cast<unsigned long long>(destOffset),
+                            readLength,
+                            static_cast<unsigned>(result),
+                            static_cast<unsigned>(slice.payloadDeviceAddress),
+                            slice.payloadLength);
+                    } else {
+                        ASFW_LOG_V2(
+                            Async,
+                            "SBP2 AR read-block req: src=0x%04x offset=0x%012llx len=%u -> "
+                            "rcode=0x%x",
+                            packet.sourceID,
+                            static_cast<unsigned long long>(destOffset),
+                            readLength,
+                            static_cast<unsigned>(result));
+                    }
 
-            if (responder) {
-                if (result == ASFW::Async::ResponseCode::Complete) {
-                    responder->SendReadBlockResponse(
-                        packet, result, slice.payloadDeviceAddress, slice.payloadLength);
-                } else {
-                    responder->SendReadBlockResponse(packet, result, 0, 0);
-                }
-            }
-            return ASFW::Async::ResponseCode::NoResponse;
-        });
+                    if (responder) {
+                        if (result == ASFW::Async::ResponseCode::Complete) {
+                            responder->SendReadBlockResponse(
+                                packet,
+                                result,
+                                slice.payloadDeviceAddress,
+                                slice.payloadLength);
+                        } else {
+                            responder->SendReadBlockResponse(packet, result, 0, 0);
+                        }
+                    }
 
-    ASFW_LOG(Controller,
-             "[Controller] PacketRouter wired for SBP2 address spaces (tCode 0x0/0x1/0x4/0x5)");
+                    return ASFW::Async::ResponseCode::NoResponse;
+                });
+
+            ASFW_LOG(
+                Controller,
+                "[Controller] PacketRouter wired for SBP2/FCP handlers (tCode 0x0/0x1/0x4/0x5)");
+        }
+    }
 }
 
 kern_return_t DriverWiring::PrepareQueue(ASFWDriver& service, ::ServiceContext& ctx) {
