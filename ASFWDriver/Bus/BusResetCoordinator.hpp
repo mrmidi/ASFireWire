@@ -110,6 +110,9 @@ class BusResetCoordinator {
     const char* StateString() const;
     static const char* StateString(State state);
 
+    // ASFW-defined diagnostics codes for BusResetCoordinator recovery paths.
+    // These are not OHCI/IEEE 1394 wire or register values. They label the
+    // coordinator FSM branch that most recently recorded a recovery trigger.
     enum class RecoveryReasonCode : uint8_t {
         None = 0,
         SelfIDDecodeFailed = 1,
