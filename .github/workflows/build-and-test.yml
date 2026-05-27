@@ -13,6 +13,7 @@ jobs:
     runs-on: macos-26
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/build/tests/%p-%m.profraw
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,7 +102,7 @@ jobs:
       - name: Run Tests
         run: |
           cd build/tests
-          LLVM_PROFILE_FILE="$PWD/%p-%m.profraw" ctest --output-on-failure -j$(sysctl -n hw.ncpu)
+          ctest --output-on-failure -j$(sysctl -n hw.ncpu)
 
       - name: Process C++ Coverage
         run: |
