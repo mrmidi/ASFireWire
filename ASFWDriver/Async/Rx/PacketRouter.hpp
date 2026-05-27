@@ -13,17 +13,19 @@ namespace ASFW::Async {
 class ResponseSender;
 
 /**
- * \brief Zero-copy view of an AR packet for handler dispatch.
+ * \brief Dispatch view of an AR packet for handler callbacks.
  *
- * Provides read-only access to packet header and payload without copying data.
- * All multi-byte fields are in BIG-ENDIAN (IEEE 1394 wire format).
+ * Provides read-only access to packet header and payload during RoutePacket().
+ * Header bytes are in OHCI AR DMA memory order; decoded scalar fields are in
+ * host order. Payload may point at an aligned scratch copy for handlers that
+ * need stable byte access.
  */
 struct ARPacketView {
     std::span<const uint8_t> header;   ///< Packet header (12-16 bytes depending on tCode)
     std::span<const uint8_t> payload;  ///< Packet payload (0-N bytes depending on packet type)
     uint8_t tCode;                     ///< Transaction code (extracted from header first byte)
-    uint16_t sourceID;                 ///< Source node ID (big-endian)
-    uint16_t destID;                   ///< Destination node ID (big-endian)
+    uint16_t sourceID;                 ///< Decoded source node ID (host order)
+    uint16_t destID;                   ///< Decoded destination node ID (host order)
     uint8_t tLabel;                    ///< Transaction label (6 bits)
 
     // New: OHCI trailer fields (raw)
@@ -43,7 +45,7 @@ enum class ARContextType : uint8_t {
  * \brief Packet handler callback type.
  *
  * Invoked by PacketRouter when packet with matching tCode is received.
- * Handler receives zero-copy view of packet data.
+ * Handler receives an ARPacketView valid for the duration of the callback.
  *
  * **Thread Safety**
  * Handlers are invoked from interrupt context. Must complete quickly and
@@ -77,7 +79,7 @@ using PacketHandler = std::function<ResponseCode(const ARPacketView&)>;
  * - 0xE: PHY packet
  *
  * **Design Rationale**
- * - **Zero-copy**: Uses std::span to avoid copying packet data
+ * - **Span-based dispatch**: Uses std::span views and an aligned payload scratch buffer
  * - **Functional handlers**: std::function allows lambdas and captures
  * - **Separate request/response tables**: Different tCode space for each context
  * - **Single-threaded**: No locking (caller must serialize)
@@ -92,7 +94,7 @@ using PacketHandler = std::function<ResponseCode(const ARPacketView&)>;
  * See drivers/firewire/ohci.c handle_ar_packet():
  * - Switch on tCode (lines 1680-1710)
  * - Dispatches to fw_core_handle_request() or fw_core_handle_response()
- * - Zero-copy packet forwarding to core layer
+ * - Packet forwarding to core layer without reparsing full packet streams
  *
  * **Usage Example**
  * \code
@@ -170,7 +172,7 @@ public:
      * 1. Use ARPacketParser::ParseNext() to extract packets from buffer
      * 2. For each packet:
      *    a. Extract tCode from header first byte (bits[7:4])
-     *    b. Build ARPacketView with zero-copy spans
+     *    b. Build ARPacketView from header span and aligned payload bytes
      *    c. Lookup handler in requestHandlers_ or responseHandlers_
      *    d. Invoke handler(view) if registered, else log warning
      * 3. Continue until buffer exhausted
@@ -218,7 +220,7 @@ private:
     /**
      * \brief Extract tCode from packet header first byte (Phase 2.2: std::span).
      *
-     * \param header Packet header bytes (big-endian)
+     * \param header Packet header bytes in OHCI AR DMA memory order
      * \return tCode value (4 bits, range 0-15)
      *
      * **IEEE 1394 Wire Format**
@@ -236,8 +238,8 @@ private:
     /**
      * \brief Extract source ID from packet header (Phase 2.2: std::span).
      *
-     * \param header Packet header bytes (big-endian)
-     * \return Source node ID (16 bits, big-endian)
+     * \param header Packet header bytes in OHCI AR DMA memory order
+     * \return Source node ID (16 bits, host order)
      *
      * **IEEE 1394 Wire Format**
      * sourceID is at bytes [4-5] of async packet header (OHCI Figure 8-7).
@@ -247,8 +249,8 @@ private:
     /**
      * \brief Extract destination ID from packet header (Phase 2.2: std::span).
      *
-     * \param header Packet header bytes (big-endian)
-     * \return Destination node ID (16 bits, big-endian)
+     * \param header Packet header bytes in OHCI AR DMA memory order
+     * \return Destination node ID (16 bits, host order)
      *
      * **IEEE 1394 Wire Format**
      * destinationID is at bytes [0-1] of async packet header.
@@ -258,7 +260,7 @@ private:
     /**
      * \brief Extract transaction label from packet header (Phase 2.2: std::span).
      *
-     * \param header Packet header bytes (big-endian)
+     * \param header Packet header bytes in OHCI AR DMA memory order
      * \return tLabel value (6 bits, range 0-63)
      *
      * **IEEE 1394 Wire Format**
