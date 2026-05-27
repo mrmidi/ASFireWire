@@ -376,7 +376,9 @@ public:
 
         Transaction* txn = txnMgr_->FindByMatchKey(key);
         if (!txn) {
-            ASFW_LOG(Async, "⚠️  OnARResponse: No transaction for key");
+            ASFW_LOG(Async,
+                     "OnARResponse: no transaction for key node=0x%04X gen=%u tLabel=%u",
+                     key.node.value, key.generation.value, key.label.value);
             return;
         }
 

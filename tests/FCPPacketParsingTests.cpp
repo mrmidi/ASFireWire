@@ -95,6 +95,23 @@ TEST_F(FCPPacketParsingTest, RealPacket_FCPResponse_SubunitInfo) {
         << "ASFW and Linux implementations should produce identical results";
 }
 
+TEST_F(FCPPacketParsingTest, RealPacket_FCPResponse_DataLengthUsesOHCILittleEndianOrder) {
+    // Same real FCP packet as above. Q3 bytes in AR DMA memory are:
+    //   00 00 08 00
+    // which represents data_length=8, extended_tcode=0.
+    const uint8_t realPacket[] = {
+        0x10, 0x7D, 0xC0, 0xFF,
+        0xFF, 0xFF, 0xC2, 0xFF,
+        0x00, 0x0D, 0x00, 0xF0,
+        0x00, 0x00, 0x08, 0x00,
+    };
+
+    std::span<const uint8_t> header(realPacket, 16);
+    EXPECT_EQ(8u, ExtractDataLength(header))
+        << "OHCI AR DMA stores Q3 little-endian in memory, so block data_length "
+           "must decode to 8 bytes for the real FCP packet";
+}
+
 TEST_F(FCPPacketParsingTest, RealPacket_FCPResponse_Retry1) {
     // Second FCP response from logs (timestamp 13:34:48.266683+0100)
     // Same SUBUNIT_INFO response, different tLabel

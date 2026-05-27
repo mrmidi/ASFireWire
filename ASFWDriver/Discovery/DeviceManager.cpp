@@ -3,6 +3,28 @@
 
 namespace ASFW::Discovery {
 
+namespace {
+
+constexpr uint32_t kSBP2UnitSpecId = 0x00609E;
+constexpr uint32_t kSBP2UnitSwVersion = 0x010483;
+constexpr uint8_t kSBP2MissingTerminateThreshold = 2;
+
+bool HasSBP2Unit(const std::shared_ptr<FWDevice>& device)
+{
+    if (!device) {
+        return false;
+    }
+
+    for (const auto& unit : device->GetUnits()) {
+        if (unit && unit->Matches(kSBP2UnitSpecId, kSBP2UnitSwVersion)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 DeviceManager::DeviceManager() : mutex_(IOLockAlloc()) {
     if (!mutex_) {
         // Handle allocation failure - in DriverKit, this might panic or we need to handle it
@@ -267,6 +289,7 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
     IOLockLock(mutex_);
     Guid64 guid = record.guid;
     auto it = devicesByGuid_.find(guid);
+    missingScanCounts_.erase(guid);
 
     if (it != devicesByGuid_.end()) {
         // Device exists - resume it
@@ -329,9 +352,53 @@ std::shared_ptr<FWDevice> DeviceManager::UpsertDevice(
 
 void DeviceManager::MarkDeviceLost(Guid64 guid)
 {
-    // Immediate-unplug policy for audio stability/cleanup.
-    // TODO: check suspend+timeout policy if needed
-    TerminateDevice(guid);
+    IOLockLock(mutex_);
+    auto it = devicesByGuid_.find(guid);
+    if (it == devicesByGuid_.end()) {
+        IOLockUnlock(mutex_);
+        return;
+    }
+
+    auto device = it->second;
+    if (!device || device->IsTerminated()) {
+        IOLockUnlock(mutex_);
+        return;
+    }
+
+    if (!HasSBP2Unit(device)) {
+        missingScanCounts_.erase(guid);
+        IOLockUnlock(mutex_);
+        TerminateDevice(guid);
+        return;
+    }
+
+    const uint8_t missingCount = ++missingScanCounts_[guid];
+    if (missingCount >= kSBP2MissingTerminateThreshold) {
+        IOLockUnlock(mutex_);
+        TerminateDevice(guid);
+        return;
+    }
+
+    if (device->IsReady()) {
+        device->Suspend();
+        NotifyDeviceSuspended(device);
+        for (const auto& unit : device->GetUnits()) {
+            if (unit && unit->IsSuspended()) {
+                NotifyUnitSuspended(unit);
+            }
+        }
+    }
+
+    auto genNodeIt = genNodeToGuid_.begin();
+    while (genNodeIt != genNodeToGuid_.end()) {
+        if (genNodeIt->second == guid) {
+            genNodeIt = genNodeToGuid_.erase(genNodeIt);
+        } else {
+            ++genNodeIt;
+        }
+    }
+
+    IOLockUnlock(mutex_);
 }
 
 void DeviceManager::TerminateDevice(Guid64 guid)
@@ -345,6 +412,7 @@ void DeviceManager::TerminateDevice(Guid64 guid)
 
     auto device = it->second;
     if (!device) {
+        missingScanCounts_.erase(guid);
         IOLockUnlock(mutex_);
         return;
     }
@@ -374,6 +442,7 @@ void DeviceManager::TerminateDevice(Guid64 guid)
 
     // Remove from primary map
     devicesByGuid_.erase(it);
+    missingScanCounts_.erase(guid);
 
     IOLockUnlock(mutex_);
 }

@@ -92,6 +92,7 @@ private:
     using GenNodeKey = uint32_t;
     static GenNodeKey MakeKey(Generation gen, uint8_t nodeId);
     std::map<GenNodeKey, Guid64> genNodeToGuid_;
+    std::map<Guid64, uint8_t> missingScanCounts_;
 
     std::set<IDeviceObserver*> deviceObservers_;
     std::set<IUnitObserver*> unitObservers_;
