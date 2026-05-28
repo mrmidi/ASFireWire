@@ -161,6 +161,63 @@ TEST(BusOptionsFieldsTests, SetGeneration_ClampTo4Bits) {
 }
 
 // =============================================================================
+// NormalizeLocalBusOptions (FW-11)
+//
+// ASFW does not implement 1394a BUS_MANAGER_ID election, so it must NOT advertise
+// Bus Manager Capable (bmc). Normalization clears bmc and preserves every other
+// field UNCHANGED from hardware (including irmc — whether to advertise irmc given
+// ASFW only has an IRM client, not a server, is an open question deferred to the
+// RoleCoordinator work; see CSRSpace.hpp).
+// =============================================================================
+
+TEST(BusOptionsFieldsTests, NormalizeLocal_ClearsBMC_WhenHardwareSetsIt) {
+    // Hardware default with bmc=1 (common on OHCI controllers).
+    constexpr uint32_t kHwWithBMC =
+        kTA1999027BusOptions | ASFW::FW::BusOptionsFields::kBMCMask;
+    ASSERT_TRUE(ASFW::FW::DecodeBusOptions(kHwWithBMC).bmc);
+
+    const uint32_t local = ASFW::FW::NormalizeLocalBusOptions(kHwWithBMC);
+    const auto d = ASFW::FW::DecodeBusOptions(local);
+
+    EXPECT_FALSE(d.bmc); // cleared
+
+    // Every other field preserved from the TA example.
+    EXPECT_TRUE(d.irmc);
+    EXPECT_TRUE(d.cmc);
+    EXPECT_TRUE(d.isc);
+    EXPECT_FALSE(d.pmc);
+    EXPECT_EQ(d.cycClkAcc,  0x64u);
+    EXPECT_EQ(d.maxRec,     0x6u);
+    EXPECT_EQ(d.maxRom,     0x1u);
+    EXPECT_EQ(d.generation, 0x0u);
+    EXPECT_EQ(d.linkSpd,    0x2u);
+
+    // Exactly the bmc bit differs from the hardware value — nothing else moved.
+    EXPECT_EQ(kHwWithBMC ^ local, ASFW::FW::BusOptionsFields::kBMCMask);
+}
+
+TEST(BusOptionsFieldsTests, NormalizeLocal_NoOp_WhenBMCAlreadyClear) {
+    // TA example already has bmc=0 → value must be unchanged.
+    EXPECT_EQ(ASFW::FW::NormalizeLocalBusOptions(kTA1999027BusOptions), kTA1999027BusOptions);
+}
+
+TEST(BusOptionsFieldsTests, NormalizeLocal_PreservesReservedBits) {
+    constexpr uint32_t kWithReserved =
+        kTA1999027BusOptions | ASFW::FW::BusOptionsFields::kBMCMask | 0x00000C08u;
+    const uint32_t local = ASFW::FW::NormalizeLocalBusOptions(kWithReserved);
+    EXPECT_FALSE(ASFW::FW::DecodeBusOptions(local).bmc);
+    EXPECT_EQ(local & 0x00000C08u, 0x00000C08u); // reserved [11:10] + [3] intact
+}
+
+TEST(BusOptionsFieldsTests, NormalizeLocal_Idempotent) {
+    constexpr uint32_t kHwWithBMC =
+        kTA1999027BusOptions | ASFW::FW::BusOptionsFields::kBMCMask;
+    const uint32_t once  = ASFW::FW::NormalizeLocalBusOptions(kHwWithBMC);
+    const uint32_t twice = ASFW::FW::NormalizeLocalBusOptions(once);
+    EXPECT_EQ(once, twice);
+}
+
+// =============================================================================
 // Field bit-position regression guards
 //
 // These catch a regression to the old BIBFields namespace where positions were
