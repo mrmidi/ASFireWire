@@ -117,8 +117,6 @@ public:
     using LoginCallback = std::function<void(const LoginCompleteParams&)>;
     using LogoutCallback = std::function<void(const LogoutCompleteParams&)>;
     using StatusCallback = std::function<void(const Wire::StatusBlock&, uint32_t length)>;
-    using ActiveCommandFailureCallback =
-        std::function<void(int transportStatus, uint8_t sbpStatus)>;
 
     SBP2LoginSession(Async::IFireWireBus& bus,
                      Async::IFireWireBusInfo& busInfo,
@@ -143,11 +141,6 @@ public:
 
     /// Set status block notification callback (receives solicited + unsolicited status).
     void SetStatusCallback(StatusCallback cb) noexcept { statusCallback_ = std::move(cb); }
-
-    /// Set callback for unrecoverable active command failure in fetch-agent path.
-    void SetActiveCommandFailureCallback(ActiveCommandFailureCallback cb) noexcept {
-        activeCommandFailureCallback_ = std::move(cb);
-    }
 
     /// Bind the IODispatchQueue used for delayed callbacks (timers).
     /// Must be called before Login() for timeout/retry support.
@@ -376,7 +369,6 @@ private:
     LoginCallback loginCallback_;
     LogoutCallback logoutCallback_;
     StatusCallback statusCallback_;
-    ActiveCommandFailureCallback activeCommandFailureCallback_;
     uint32_t testFetchAgentWriteRetries_{20};
 
     // -----------------------------------------------------------------------
@@ -408,7 +400,6 @@ private:
     /// Write ORB address to fetch agent (CBA + kORBPointer).
     bool AppendORBImmediate(SBP2CommandORB* orb) noexcept;
     void StartSubmittedORBTimer(SBP2CommandORB* orb) noexcept;
-    void FailActiveCommandIfPresent(int transportStatus, uint8_t sbpStatus) noexcept;
     void FailSubmittedORB(SBP2CommandORB* orb,
                           int transportStatus,
                           uint8_t sbpStatus) noexcept;

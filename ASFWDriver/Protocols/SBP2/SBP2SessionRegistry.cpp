@@ -143,15 +143,6 @@ std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
 
     IOLockGuard lock(lock_);
     const uint64_t handle = nextHandle_++;
-    session->SetActiveCommandFailureCallback([this, handle](int transportStatus, uint8_t sbpStatus) {
-        IOLockGuard cbLock(lock_);
-        auto* rec = FindByHandle(handle);
-        if (rec == nullptr) {
-            return;
-        }
-
-        FailActiveCommandLocked(*rec, transportStatus, sbpStatus, false);
-    });
 
     SBP2SessionRecord record{};
     record.handle = handle;
@@ -579,16 +570,14 @@ void SBP2SessionRegistry::OnBusReset(uint16_t newGeneration) {
         if (record.commandInFlight || record.commandORB) {
             FailActiveCommandLocked(record,
                                    static_cast<int>(kIOReturnAborted),
-                                   Wire::SBPStatus::kRequestAborted,
-                                   true);
+                                   Wire::SBPStatus::kRequestAborted);
         }
     }
 }
 
 void SBP2SessionRegistry::FailActiveCommandLocked(SBP2SessionRecord& record,
                                                  int transportStatus,
-                                                 uint8_t sbpStatus,
-                                                 bool keepSessionTracking) noexcept {
+                                                 uint8_t sbpStatus) noexcept {
     if (!record.commandInFlight) {
         return;
     }
@@ -615,9 +604,6 @@ void SBP2SessionRegistry::FailActiveCommandLocked(SBP2SessionRecord& record,
     }
     if (record.commandORB) {
         record.commandORB->SetAppended(false);
-    }
-    if (!keepSessionTracking) {
-        return;
     }
 
     CleanupCommandResources(record);

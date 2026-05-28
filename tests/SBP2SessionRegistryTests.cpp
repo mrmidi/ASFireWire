@@ -301,6 +301,7 @@ TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaust
     ASSERT_TRUE(rig.registry.SubmitCommand(handle, request));
     const auto fetchAgentWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     ASSERT_EQ(8u, fetchAgentWrite.data.size());
+    const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(fetchAgentWrite.data);
 
     ASSERT_TRUE(rig.bus.CompleteWrite(fetchAgentWrite.handle, ASFW::Async::AsyncStatus::kTimeout));
     rig.AdvanceMs(1000);
@@ -323,6 +324,10 @@ TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaust
     ASSERT_TRUE(rig.bus.CompleteWrite(agentResetWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
     while (rig.queue.DrainReadyForTesting() > 0U) {
     }
+
+    uint32_t ignored = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(commandOrbAddress, &ignored));
 }
 
 TEST(SBP2SessionRegistryTests, SubmitTaskManagementWritesLogicalUnitResetORB) {

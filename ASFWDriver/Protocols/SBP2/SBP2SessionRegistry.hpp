@@ -120,8 +120,7 @@ private:
     const SBP2SessionRecord* FindByHandle(uint64_t handle) const;
     void FailActiveCommandLocked(SBP2SessionRecord& record,
                                 int transportStatus,
-                                uint8_t sbpStatus,
-                                bool keepSessionTracking) noexcept;
+                                uint8_t sbpStatus) noexcept;
 
     std::shared_ptr<Discovery::FWUnit> ResolveUnit(uint64_t guid, uint32_t romOffset) const;
 

@@ -1136,7 +1136,7 @@ void SBP2LoginSession::ProcessStatusBlock(const Wire::StatusBlock& block,
     outstandingORBs_.erase(it);
     if (orb != nullptr) {
         orb->CancelTimer();
-        auto& cb = orb->GetCompletionCallback();
+        auto cb = orb->GetCompletionCallback();
         if (cb) {
             cb(0, block.sbpStatus);
         }
@@ -1478,17 +1478,6 @@ void SBP2LoginSession::StartSubmittedORBTimer(SBP2CommandORB* orb) noexcept {
     orb->StartTimer(workQueue_, timeoutQueue);
 }
 
-void SBP2LoginSession::FailActiveCommandIfPresent(int transportStatus,
-                                                  uint8_t sbpStatus) noexcept {
-    if (activeFetchAgentORB_ == nullptr) {
-        return;
-    }
-
-    if (activeCommandFailureCallback_) {
-        activeCommandFailureCallback_(transportStatus, sbpStatus);
-    }
-}
-
 void SBP2LoginSession::FailSubmittedORB(SBP2CommandORB* orb,
                                         int transportStatus,
                                         uint8_t sbpStatus) noexcept {
@@ -1510,7 +1499,7 @@ void SBP2LoginSession::FailSubmittedORB(SBP2CommandORB* orb,
     orb->CancelTimer();
     orb->SetAppended(false);
 
-    auto& cb = orb->GetCompletionCallback();
+    auto cb = orb->GetCompletionCallback();
     if (cb) {
         cb(transportStatus, sbpStatus);
     }
@@ -1618,7 +1607,6 @@ void SBP2LoginSession::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
             // Retries exhausted — report failure
             SBP2CommandORB* failedORB = activeFetchAgentORB_;
             if (failedORB != nullptr) {
-                FailActiveCommandIfPresent(-1, Wire::SBPStatus::kUnspecifiedError);
                 FailSubmittedORB(failedORB, -1, Wire::SBPStatus::kUnspecifiedError);
             }
             FailPendingImmediateORBs(-1, Wire::SBPStatus::kUnspecifiedError);
