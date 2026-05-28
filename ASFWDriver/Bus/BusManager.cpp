@@ -164,6 +164,23 @@ struct CycleMasterInputs {
     return MakePhyConfigCommand(inputs.localNodeID, true);
 }
 
+[[nodiscard]] bool IsTwoNodeLocalRootTopology(const TopologySnapshot& topology) {
+    if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
+        return false;
+    }
+    if (*topology.localNodeId != *topology.rootNodeId) {
+        return false;
+    }
+
+    uint8_t remoteActiveNodes = 0;
+    for (const auto& node : topology.nodes) {
+        if (node.linkActive && node.nodeId != *topology.localNodeId) {
+            ++remoteActiveNodes;
+        }
+    }
+    return remoteActiveNodes == 1U;
+}
+
 } // namespace
 
 // ============================================================================
@@ -316,6 +333,12 @@ std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
     }
 
     if (AnyObservedGapNeedsRetool(observedGaps, gapState_.lastConfirmedGap, targetGap)) {
+        if (IsTwoNodeLocalRootTopology(topology)) {
+            ASFW_LOG(BusManager,
+                     "Skipping target gap optimization for two-node local-root topology");
+            return std::nullopt;
+        }
+
         ASFW_LOG(BusManager, "Retooling gap count to %u (confirmed=%u)", targetGap,
                  gapState_.lastConfirmedGap);
         return GapDecision{targetGap, GapDecisionReason::TargetGap};

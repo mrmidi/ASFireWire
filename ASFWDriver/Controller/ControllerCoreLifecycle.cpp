@@ -32,6 +32,7 @@
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
+#include "BringupOverrides.hpp"
 #include "ControllerStateMachine.hpp"
 #include "Logging.hpp"
 
@@ -339,6 +340,8 @@ kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
                  "❌ CRITICAL: Missing dependencies for BusResetCoordinator initialization");
         return kIOReturnNoResources;
     }
+
+    ApplyBringupOverrides(config_, deps_.busManager.get());
 
     auto workQueue = deps_.scheduler->Queue();
     ASFW_LOG(Controller, "Initializing BusResetCoordinator");
@@ -687,7 +690,7 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
         (static_cast<uint64_t>(guidHi) << 32) | static_cast<uint64_t>(guidLo);
     const uint64_t effectiveGuid = (config_.localGuid != 0) ? config_.localGuid : hardwareGuid;
 
-    builder->Build(busOptions, effectiveGuid, ASFW::Driver::kDefaultNodeCapabilities,
+    builder->Build(busOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
                    config_.vendor.vendorName);
     if (builder->QuadletCount() < 5) {
         ASFW_LOG(Hardware, "Config ROM builder produced insufficient quadlets (%zu)",

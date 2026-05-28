@@ -55,6 +55,11 @@ enum {
     kMethodGetAudioAutoStart = 43,
     kMethodAsyncBlockRead = 44,
     kMethodAsyncBlockWrite = 45,
+    // SBP2 address space management
+    kMethodAllocateAddressRange = 46,
+    kMethodDeallocateAddressRange = 47,
+    kMethodReadIncomingData = 48,
+    kMethodWriteLocalData = 49,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -414,6 +419,7 @@ void ASFWDriverUserClient::free() {
             auto runtimeState =
                 std::unique_ptr<ASFW::UserClient::UserClientRuntimeState>(
                     static_cast<ASFW::UserClient::UserClientRuntimeState*>(ivars->runtimeState));
+            runtimeState->ReleaseOwner(this);
             ivars->runtimeState = nullptr;
         }
         IOSafeDeleteNULL(ivars, ASFWDriverUserClient_IVars, 1);
@@ -477,6 +483,7 @@ kern_return_t IMPL(ASFWDriverUserClient, Stop) {
         ivars->driver = nullptr;
     }
     if (auto* runtimeState = ASFW::UserClient::GetRuntimeState(this); runtimeState != nullptr) {
+        runtimeState->ReleaseOwner(this);
         runtimeState->ResetHandlers();
     }
 
@@ -528,6 +535,21 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
     }
     if (auto result = DispatchIsochMethods(*runtimeState, arguments, selector)) {
         return *result;
+    }
+
+    // main's SBP2 address-space management methods (46-49), wired into DICE's
+    // dispatch-helper ExternalMethod.
+    switch (selector) {
+    case kMethodAllocateAddressRange:
+        return runtimeState->SBP2().AllocateAddressRange(arguments, this);
+    case kMethodDeallocateAddressRange:
+        return runtimeState->SBP2().DeallocateAddressRange(arguments, this);
+    case kMethodReadIncomingData:
+        return runtimeState->SBP2().ReadIncomingData(arguments, this);
+    case kMethodWriteLocalData:
+        return runtimeState->SBP2().WriteLocalData(arguments, this);
+    default:
+        break;
     }
 
     return kIOReturnBadArgument;

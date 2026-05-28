@@ -40,7 +40,7 @@ public:
      * Called from ATContextBase::ScanCompletion when AT descriptor completes.
      * Extracts ACK code from xferStatus and transitions transaction state.
      *
-     * \param comp TxCompletion from OHCI driver
+     * \param rawComp TxCompletion from OHCI driver (ackCode normalized from eventCode here)
      *
      * \par State Transitions
      * - ackCode==0x1 (pending): ATCompleted → AwaitingAR (wait for AR response)
@@ -55,10 +55,19 @@ public:
      * - ack_complete (0x0): Unified transaction, done immediately
      * - ack_busy_X/A/B (0x4-0x6): Retry after backoff
      */
-    void OnATCompletion(const TxCompletion& comp) noexcept {
+    void OnATCompletion(const TxCompletion& rawComp) noexcept {
         if (!txnMgr_) {
             return;
         }
+
+        // eventCode is authoritative for AT completions. Validated with Linux —
+        // refs: ohci.c (handle_at_packet): the acknowledge is carried in the event-code
+        // field, so derive the internal ack scheme from it here at the point of
+        // consumption. This makes the handler robust to controllers that surface a
+        // raw/packed ack value (e.g. 0x8, the ContextControl RUN bit) in the
+        // descriptor's ack nibble regardless of how the TxCompletion was produced.
+        TxCompletion comp = rawComp;
+        comp.ackCode = NormalizeAckFromEvent(comp.eventCode, comp.ackCode);
 
         // AT Response context completions correspond to WrResp acks we send back
         // to devices. They are not tracked as transactions; skip quietly.
@@ -345,6 +354,26 @@ private:
         return false;
     }
 
+    // Map the OHCI event code to this driver's internal ack scheme (complete=0x0,
+    // pending=0x1, busy=0x4/0x5/0x6, tardy=0xC, dataError=0xD, typeError=0xE).
+    // Non-ack event codes keep the raw nibble for the hardware-event / default paths.
+    // Validated with Linux — refs: ohci.c (handle_at_packet): ack == evt - 0x10 for the
+    // 0x11..0x1e range carried in the event-code field.
+    [[nodiscard]] static uint8_t NormalizeAckFromEvent(OHCIEventCode eventCode,
+                                                       uint8_t rawAckCode) noexcept {
+        switch (eventCode) {
+            case OHCIEventCode::kAckComplete:  return 0x0;
+            case OHCIEventCode::kAckPending:   return 0x1;
+            case OHCIEventCode::kAckBusyX:     return 0x4;
+            case OHCIEventCode::kAckBusyA:     return 0x5;
+            case OHCIEventCode::kAckBusyB:     return 0x6;
+            case OHCIEventCode::kAckTardy:     return 0xC;
+            case OHCIEventCode::kAckDataError: return 0xD;
+            case OHCIEventCode::kAckTypeError: return 0xE;
+            default:                           return rawAckCode;
+        }
+    }
+
     void HandleAckCompletion(Transaction& txn,
                              const TxCompletion& comp,
                              ATPostResult& postResult) noexcept {
@@ -503,8 +532,12 @@ private:
             return false;
         }
 
+        // "Device acknowledged but response is late" set, in the normalized ack
+        // scheme: pending (0x1), ack_complete-needing-AR-data (0x0), and tardy (0xC).
+        // The old 0x8 was the xferStatus[15:12] RUN-bit artifact (see
+        // DecodeCompletionState) and no longer occurs for a real ack_complete.
         const uint8_t ackCode = txn.ackCode();
-        if (ackCode != 0x1 && ackCode != 0x8 && ackCode != 0xC) {
+        if (ackCode != 0x0 && ackCode != 0x1 && ackCode != 0xC) {
             return false;
         }
 

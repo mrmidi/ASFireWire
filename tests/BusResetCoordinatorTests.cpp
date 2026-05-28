@@ -355,7 +355,7 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
         7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
     rig.PrimeCapture(rawCapture, 7U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     EXPECT_EQ(rig.publishedTopologies.front().generation, 7U);
@@ -374,6 +374,25 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
                 operations.end());
 }
 
+TEST(BusResetCoordinatorTests, StableResetDelaysDiscoveryByAppleScanDelay) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.StartResetCycle();
+
+    const auto rawCapture = MakeRawSelfIDCapture(
+        7U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
+    rig.PrimeCapture(rawCapture, 7U);
+    rig.TriggerStickyCompletion();
+
+    rig.AdvanceMs(99U);
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+
+    rig.AdvanceMs(1U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_EQ(rig.publishedTopologies.front().generation, 7U);
+}
+
 TEST(BusResetCoordinatorTests, StickyCompletionOnlyStillCompletesDecodePath) {
     BusResetTestRig rig;
     rig.Initialize();
@@ -384,7 +403,7 @@ TEST(BusResetCoordinatorTests, StickyCompletionOnlyStillCompletesDecodePath) {
         3U, {MakeBaseSelfID(0U, 63U, true, false), MakeBaseSelfID(1U, 63U)});
     rig.PrimeCapture(rawCapture, 3U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     EXPECT_EQ(rig.publishedTopologies.front().generation, 3U);
@@ -439,7 +458,7 @@ TEST(BusResetCoordinatorTests, InvalidTopologyDoesNotReusePreviouslyPublishedSna
         MakeRawSelfIDCapture(12U, {MakeBaseSelfID(0U, 63U, true, true), MakeBaseSelfID(1U, 63U)});
     rig.PrimeCapture(stableCapture, 12U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     rig.ResetHardwareState();
@@ -475,6 +494,40 @@ TEST(BusResetCoordinatorTests, SelfIDTimeoutRequestsShortRecoveryResetAfterDeadl
     ASSERT_TRUE(rig.coordinator.Metrics().lastFailureReason.has_value());
     EXPECT_NE(rig.coordinator.Metrics().lastFailureReason->find("Self-ID timeout"),
               std::string::npos);
+}
+
+TEST(BusResetCoordinatorTests, ManualResetWithoutIrqTriggersOneBoundedRecoveryReset) {
+    BusResetTestRig rig;
+    rig.Initialize();
+
+    rig.coordinator.RequestUserReset(true);
+    rig.DrainReady();
+
+    auto countBusResets = [&rig]() {
+        const auto operations = rig.hardware.CopyTestOperations();
+        return static_cast<size_t>(std::count(operations.begin(), operations.end(),
+                                             HardwareInterface::TestOperation::InitiateBusReset));
+    };
+
+    EXPECT_EQ(countBusResets(), 1U);
+    auto diag = rig.coordinator.Diagnostics();
+    EXPECT_EQ(diag.manualResetEpoch, 1U);
+    EXPECT_EQ(diag.resetEpoch, 0U);
+    EXPECT_EQ(diag.softwareResetIssuedCount, 1U);
+
+    rig.AdvanceMs(499U);
+    EXPECT_EQ(countBusResets(), 1U);
+
+    rig.AdvanceMs(1U);
+    EXPECT_EQ(countBusResets(), 2U);
+    diag = rig.coordinator.Diagnostics();
+    EXPECT_EQ(diag.recoveryResetAttempts, 1U);
+    EXPECT_EQ(diag.softwareResetIssuedCount, 2U);
+    EXPECT_EQ(diag.lastRecoveryReasonCode,
+              BusResetCoordinator::RecoveryReasonCode::ManualResetWatchdog);
+
+    rig.AdvanceMs(1000U);
+    EXPECT_EQ(countBusResets(), 2U);
 }
 
 TEST(BusResetCoordinatorTests, GapMismatchResetIsDeferredThenSentWithPhyConfig) {
@@ -680,7 +733,7 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
                                                 MakeBaseSelfID(1U, 21U, true, false)}),
                      21U);
     rig.TriggerStickyCompletion();
-    rig.AdvanceMs(1U);
+    rig.AdvanceMs(100U);
 
     EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());

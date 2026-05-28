@@ -859,7 +859,6 @@ template<typename Derived, ContextRole Tag>
 bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const noexcept {
     state.eventCodeRaw = static_cast<uint8_t>(state.xferStatus & 0x1F);
     state.ackCount = static_cast<uint8_t>((state.xferStatus >> 5) & 0x07);
-    state.ackCode = static_cast<uint8_t>((state.xferStatus >> 12) & 0x0F);
     state.eventCode = static_cast<OHCIEventCode>(state.eventCodeRaw);
 
     if (state.eventCodeRaw == 0x10 && hw_->HasAgereQuirk()) {
@@ -869,6 +868,13 @@ bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const 
         state.eventCode = OHCIEventCode::kAckComplete;
         state.eventCodeRaw = static_cast<uint8_t>(OHCIEventCode::kAckComplete);
     }
+
+    // Raw ack nibble from xferStatus[15:12]. NOTE: the authoritative acknowledge for
+    // AT completions is the event-code field [4:0] (Validated with Linux — refs:
+    // ohci.c handle_at_packet). xferStatus[15:12] are the RUN(15)/WAKE(12) control
+    // bits and read as 0x8 on a running context, so this value is normalized from
+    // eventCode at the point of consumption (TransactionCompletionHandler::NormalizeAckFromEvent).
+    state.ackCode = static_cast<uint8_t>((state.xferStatus >> 12) & 0x0F);
 
     if (state.eventCode == OHCIEventCode::kEvtNoStatus ||
         state.eventCode == OHCIEventCode::kEvtDescriptorRead) {

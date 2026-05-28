@@ -354,6 +354,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
     RegisterFcpBlockWriteHandler(ctx);
     RegisterDiceNotificationHandler(ctx);
 
+    // main's SBP2 dependency wiring (its only call site landed here); DICE's
+    // EnsureRomScanner replaces the old inline ROMScanner setup, and the FCP
+    // block-write handler is wired above via RegisterFcpBlockWriteHandler(ctx).
+    DriverWiring::EnsureSbp2Deps(ctx);
     EnsureRomScanner(ctx);
 
     kr = ctx.controller->Start(provider);

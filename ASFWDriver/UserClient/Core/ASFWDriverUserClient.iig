@@ -54,6 +54,11 @@ public:
         kMethodGetAudioAutoStart       = 43,
         kMethodAsyncBlockRead          = 44,
         kMethodAsyncBlockWrite         = 45,
+        // SBP2 address space management
+        kMethodAllocateAddressRange    = 46,
+        kMethodDeallocateAddressRange  = 47,
+        kMethodReadIncomingData        = 48,
+        kMethodWriteLocalData          = 49,
         // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
         kMethodTestIRMAllocation       = 26,
         kMethodTestIRMRelease          = 27,

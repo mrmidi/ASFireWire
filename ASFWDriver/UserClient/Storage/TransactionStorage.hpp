@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 // Forward declarations
 struct IOLock;
@@ -22,7 +23,11 @@ struct TransactionResult {
     uint32_t status{0};  // AsyncStatus value
     uint8_t responseCode{0xFF};
     uint32_t dataLength{0};
-    uint8_t data[512]{};  // Max response data size
+    std::vector<uint8_t> data{};
+
+    [[nodiscard]] const uint8_t* Data() const {
+        return data.empty() ? nullptr : data.data();
+    }
 };
 
 // Ring buffer storage for completed transaction results

@@ -1,6 +1,11 @@
 #include "BusResetCoordinator.hpp"
 
+#include <algorithm>
 #include <cstring>
+
+#ifndef ASFW_HOST_TEST
+#include <DriverKit/IOLib.h>
+#endif
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
@@ -17,6 +22,8 @@ namespace {
 
 constexpr uint64_t kRepeatedResetHoldoffNs = 2'000'000'000ULL;
 constexpr uint8_t kConservativeMismatchGapCount = 0x3FU;
+constexpr uint32_t kManualResetWatchdogMs = 500;
+constexpr uint8_t kMaxManualRecoveryResetAttempts = 1;
 
 void MergePhyConfig(ASFW::Driver::BusManager::PhyConfigCommand& base,
                     const ASFW::Driver::BusManager::PhyConfigCommand& addition) {
@@ -162,6 +169,7 @@ bool BusResetCoordinator::BuildTopology() {
     if (!snapshot) {
         RecordRecoveryReason(std::string{"Topology build failed: "} +
                              TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code));
+        RecordRecoveryReasonCode(RecoveryReasonCode::TopologyBuildFailed);
         cycle_.acceptedTopology.reset();
         RequestSoftwareReset({ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt,
                               "Invalid Self-ID topology"});
@@ -172,6 +180,9 @@ bool BusResetCoordinator::BuildTopology() {
     }
 
     cycle_.acceptedTopology = *snapshot;
+    lastAcceptedGeneration_ = snapshot->generation;
+    lastTopologyNodeCount_ =
+        static_cast<uint8_t>(std::min<std::size_t>(snapshot->nodes.size(), 0xFFU));
     cycle_.timing.lastSelfIdCompletionNs = timestamp;
     cycle_.timing.softwareResetBlockedUntilNs = timestamp + kRepeatedResetHoldoffNs;
 
@@ -458,6 +469,7 @@ bool BusResetCoordinator::DispatchSoftwareReset(const ResetRequest& request) {
     ASFW_LOG(BusReset, "Issuing %{public}s %{public}s software reset (%{public}s)",
              resetKindString(request.kind), resetFlavorString(request.flavor),
              request.reason.c_str());
+    lastResetKind_ = request.kind;
 
     if (!ApplySoftwareResetPhyConfig(request, carriesDelegation)) {
         return false;
@@ -465,11 +477,26 @@ bool BusResetCoordinator::DispatchSoftwareReset(const ResetRequest& request) {
 
     if (!hardware_->InitiateBusReset(request.flavor == ResetFlavor::Short)) {
         RecordRecoveryReason(std::string{"Software reset dispatch failed: "} + request.reason);
+        // DICE's ClearSoftwareResetTracking performs the same cleanup main inlined
+        // (ClearInFlightGapReset + ClearDelegationAttempt); additionally record main's
+        // structured recovery reason code.
+        RecordRecoveryReasonCode(RecoveryReasonCode::SoftwareResetDispatchFailed);
         ClearSoftwareResetTracking(request, carriesDelegation);
         return false;
     }
 
     NoteIssuedGapReset(request);
+
+    // Wire main's manual-reset recovery into DICE's DispatchSoftwareReset structure.
+    // main kept this tail inline in its reset-issue path; DICE extracted the gap-reset
+    // note into the void NoteIssuedGapReset helper, so the issued-reset count and the
+    // manual-reset watchdog arming (ScheduleManualResetWatchdog → recovered by
+    // MaybeRecoverMissingManualResetIrq if the manual-reset IRQ goes missing) live here.
+    ++softwareResetIssuedCount_;
+    if (request.kind == ResetRequestKind::ManualBusManager) {
+        ScheduleManualResetWatchdog(manualResetEpoch_, resetEpoch_);
+    }
+
     return true;
 }
 
@@ -521,6 +548,63 @@ void BusResetCoordinator::ClearDelegationAttempt() {
 void BusResetCoordinator::RecordRecoveryReason(std::string reason) {
     cycle_.recoveryReason = reason;
     metrics_.lastFailureReason = *cycle_.recoveryReason;
+}
+
+void BusResetCoordinator::RecordRecoveryReasonCode(RecoveryReasonCode code) {
+    lastRecoveryReasonCode_ = code;
+}
+
+void BusResetCoordinator::ScheduleManualResetWatchdog(uint32_t manualEpoch, uint32_t resetEpoch) {
+    if (workQueue_.get() == nullptr) {
+        return;
+    }
+
+#ifdef ASFW_HOST_TEST
+    if (workQueue_->UsesManualDispatchForTesting()) {
+        workQueue_->DispatchAsyncAfter(static_cast<uint64_t>(kManualResetWatchdogMs) * 1'000'000ULL,
+                                       ^{
+                                         MaybeRecoverMissingManualResetIrq(manualEpoch, resetEpoch);
+                                       });
+        return;
+    }
+#endif
+
+    workQueue_->DispatchAsync(^{
+#ifdef ASFW_HOST_TEST
+      (void)manualEpoch;
+      (void)resetEpoch;
+#else
+      IOSleep(kManualResetWatchdogMs);
+      MaybeRecoverMissingManualResetIrq(manualEpoch, resetEpoch);
+#endif
+    });
+}
+
+void BusResetCoordinator::MaybeRecoverMissingManualResetIrq(uint32_t manualEpoch,
+                                                            uint32_t resetEpoch) {
+    if (manualEpoch != manualResetEpoch_ || resetEpoch != resetEpoch_) {
+        return;
+    }
+
+    if (manualRecoveryResetAttempts_ >= kMaxManualRecoveryResetAttempts) {
+        RecordRecoveryReason("Manual reset watchdog reached bounded recovery limit");
+        RecordRecoveryReasonCode(RecoveryReasonCode::ManualResetWatchdog);
+        return;
+    }
+
+    ++manualRecoveryResetAttempts_;
+    RecordRecoveryReason("Manual reset watchdog did not observe busReset IRQ/topology");
+    RecordRecoveryReasonCode(RecoveryReasonCode::ManualResetWatchdog);
+    RequestSoftwareReset({ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt,
+                          "Manual reset watchdog recovery", std::nullopt});
+}
+
+void BusResetCoordinator::RequestUserReset(bool shortReset) {
+    ++manualResetEpoch_;
+    manualRecoveryResetAttempts_ = 0;
+    RequestSoftwareReset({ResetRequestKind::ManualBusManager,
+                          shortReset ? ResetFlavor::Short : ResetFlavor::Long, std::nullopt,
+                          "UserClient-initiated", std::nullopt});
 }
 
 void BusResetCoordinator::ResetDelegationRetryCounter() {
