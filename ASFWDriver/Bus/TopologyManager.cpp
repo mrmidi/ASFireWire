@@ -21,6 +21,7 @@ constexpr size_t kMaxPorts = 128;
 struct NodeAccumulator {
     uint8_t phyId{0};
     bool haveBase{false};
+    uint32_t baseRaw{0};
     bool linkActive{false};
     bool contender{false};
     bool initiatedReset{false};
@@ -362,6 +363,7 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
 
 void ApplyBaseQuadlet(NodeAccumulator& node, uint32_t raw) {
     node.haveBase = true;
+    node.baseRaw = raw;
     node.linkActive = IsLinkActive(raw);
     node.contender = IsContender(raw);
     node.initiatedReset = IsInitiatedReset(raw);
@@ -558,6 +560,118 @@ void LogTopologySummary(const TopologySnapshot& snapshot) {
              snapshot.maxHopsFromRoot);
 }
 
+[[nodiscard]] std::string OptionalNodeToString(std::optional<uint8_t> nodeId) {
+    return nodeId.has_value() ? std::to_string(*nodeId) : std::string("none");
+}
+
+const char* PortStateCompactString(PortState state) {
+    switch (state) {
+        case PortState::Parent: return "parent";
+        case PortState::Child: return "child";
+        case PortState::NotActive: return "inactive";
+        case PortState::NotPresent:
+        default: return "absent";
+    }
+}
+
+std::string SummarizePortsCompact(const std::vector<PortState>& ports) {
+    std::string summary;
+    for (size_t idx = 0; idx < ports.size(); ++idx) {
+        const PortState state = ports[idx];
+        if (state == PortState::NotPresent) {
+            continue;
+        }
+        if (!summary.empty()) {
+            summary.push_back(' ');
+        }
+        summary.append("p");
+        summary.append(std::to_string(idx));
+        summary.append("=");
+        summary.append(PortStateCompactString(state));
+    }
+    if (summary.empty()) {
+        summary = "none";
+    }
+    return summary;
+}
+
+void LogSelfIDRawSnapshot(const TopologySnapshot& snapshot,
+                          const std::map<uint8_t, NodeAccumulator>& accumulators) {
+    const std::string localStr = OptionalNodeToString(snapshot.localNodeId);
+    const std::string rootStr = OptionalNodeToString(snapshot.rootNodeId);
+    const std::string irmStr = OptionalNodeToString(snapshot.irmNodeId);
+    const std::string busStr = snapshot.busNumber.has_value()
+                                   ? std::to_string(*snapshot.busNumber)
+                                   : std::string("none");
+
+    ASFW_LOG(Topology,
+             "[SelfIDRaw] gen=%u local=%{public}s root=%{public}s irm=%{public}s bus=%{public}s busBase=0x%04x",
+             snapshot.generation,
+             localStr.c_str(),
+             rootStr.c_str(),
+             irmStr.c_str(),
+             busStr.c_str(),
+             snapshot.busBase16);
+
+    for (const auto& topoNode : snapshot.nodes) {
+        const auto accIt = accumulators.find(topoNode.nodeId);
+        if (accIt == accumulators.end()) {
+            continue;
+        }
+
+        const NodeAccumulator& node = accIt->second;
+        const std::string ports = SummarizePortsCompact(node.ports);
+        const bool isLocal = snapshot.localNodeId && topoNode.nodeId == *snapshot.localNodeId;
+        const bool isRoot = snapshot.rootNodeId && topoNode.nodeId == *snapshot.rootNodeId;
+        const bool isIRM = snapshot.irmNodeId && topoNode.nodeId == *snapshot.irmNodeId;
+
+        ASFW_LOG(Topology,
+                 "[SelfIDRaw] node=%u raw=0x%08x link=%d contender=%d speedCode=%u speed=%uMb ports=%u (%{public}s) gap=%u power=%{public}s local=%d root=%d irm=%d reset=%d",
+                 topoNode.nodeId,
+                 node.baseRaw,
+                 node.linkActive ? 1 : 0,
+                 node.contender ? 1 : 0,
+                 node.speedCode,
+                 topoNode.maxSpeedMbps,
+                 topoNode.portCount,
+                 ports.c_str(),
+                 node.gapCount,
+                 PowerClassToString(static_cast<PowerClass>(node.powerClass)),
+                 isLocal ? 1 : 0,
+                 isRoot ? 1 : 0,
+                 isIRM ? 1 : 0,
+                 node.initiatedReset ? 1 : 0);
+    }
+}
+
+void LogIRMElection(const TopologySnapshot& snapshot) {
+    std::string candidates;
+    for (const auto& node : snapshot.nodes) {
+        if (!node.isIRMCandidate) {
+            continue;
+        }
+        if (!candidates.empty()) {
+            candidates.append(",");
+        }
+        candidates.append(std::to_string(node.nodeId));
+    }
+    if (candidates.empty()) {
+        candidates = "none";
+    }
+
+    const std::string chosen = OptionalNodeToString(snapshot.irmNodeId);
+    const char* reason = snapshot.irmNodeId.has_value()
+                             ? "highest Self-ID contender node"
+                             : "no Self-ID contender nodes";
+
+    ASFW_LOG(Topology,
+             "[IRMElection] gen=%u candidates=[%{public}s] chosen=%{public}s reason=%{public}s",
+             snapshot.generation,
+             candidates.c_str(),
+             chosen.c_str(),
+             reason);
+}
+
 unsigned int LogResetInitiators(const TopologySnapshot& snapshot) {
     unsigned int resetInitiators = 0;
     for (const auto& node : snapshot.nodes) {
@@ -586,6 +700,16 @@ void LogTopologyWarnings(const TopologySnapshot& snapshot) {
     }
     if (!snapshot.busNumber.has_value()) {
         ASFW_LOG(Topology, "⚠️  WARNING: Bus number is unknown (NodeID.IDValid=0) — defer async reads until valid");
+    }
+
+    if (snapshot.rootNodeId && snapshot.irmNodeId && snapshot.localNodeId &&
+        *snapshot.rootNodeId != *snapshot.irmNodeId &&
+        *snapshot.irmNodeId == *snapshot.localNodeId &&
+        *snapshot.rootNodeId != *snapshot.localNodeId) {
+        ASFW_LOG(Topology,
+                 "⚠️  SPLIT ROOT/IRM: local node %u is IRM while remote node %u is root. Verify local contender policy or bus-manager duties before blaming ROM speed fallback.",
+                 *snapshot.localNodeId,
+                 *snapshot.rootNodeId);
     }
 
     const unsigned int resetInitiators = LogResetInitiators(snapshot);
@@ -714,6 +838,8 @@ TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result, uint64_t 
 
     // Log topology analysis results with rich context
     LogTopologySummary(snapshot);
+    LogSelfIDRawSnapshot(snapshot, accumulators);
+    LogIRMElection(snapshot);
 
 #if ASFW_DEBUG_TOPOLOGY
     for (const auto& topoNode : snapshot.nodes) {

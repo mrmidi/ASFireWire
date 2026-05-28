@@ -341,6 +341,25 @@ target_include_directories(RoleCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(RoleCoordinatorTests)
 
+add_executable(CycleObserverTests
+    "${ASFW_TESTS_DIR}/CycleObserverTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Role/CycleObserver.cpp"
+)
+
+target_link_libraries(CycleObserverTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CycleObserverTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CycleObserverTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CycleObserverTests)
+
 # PHY Packets Tests - Encoding/decoding validation, gap=0 bug regression
 add_executable(PhyPacketsTests
     "${ASFW_TESTS_DIR}/PhyPacketsTests.cpp"

@@ -278,4 +278,12 @@ bool BusResetCoordinator::G_NodeIDValid() const {
     return ((nodeId & 0x80000000U) != 0U) && ((nodeId & 0x3FU) != 63U);
 }
 
+bool BusResetCoordinator::G_IsRoot() const {
+    if (hardware_ == nullptr) {
+        return false;
+    }
+    // OHCI NodeID.root (bit 30) — set when the PHY reports this controller is root.
+    return (hardware_->Read(Register32::kNodeID) & NodeIDBits::kRoot) != 0U;
+}
+
 } // namespace ASFW::Driver

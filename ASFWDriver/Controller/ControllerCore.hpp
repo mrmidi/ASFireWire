@@ -5,6 +5,8 @@
 #include <memory>
 #include <string_view>
 
+#include "../Bus/Role/CycleObserver.hpp"
+#include "../Bus/Role/RoleCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"
@@ -190,6 +192,15 @@ class ControllerCore {
 
     std::unique_ptr<Async::FireWireBusImpl> busImpl_;
     std::unique_ptr<Async::DMAMemoryImpl> dmaImpl_;
+
+    // FW-6/FW-7: role / cycle-master policy. Fed from OnTopologyReady (topology)
+    // and HandleFaultInterrupts (cycle evidence), both on the single-threaded
+    // controller queue. Behavior-neutral for now: the skeleton policy returns
+    // only None/Defer and executors are null, so no hardware action is taken
+    // until FW-9 wires the executors and fills in EvaluateRolePolicy.
+    Role::RoleCoordinator roleCoordinator_{};
+    Role::CycleObserver cycleObserver_{};
+    uint32_t currentGeneration_{0};
 };
 
 } // namespace ASFW::Driver

@@ -495,6 +495,20 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     ASFW_LOG_V2(Async, "📥 AR/RSP: tCode=0x%X rCode=0x%X tLabel=%u src=0x%04X→dst=0x%04X payload=%zu bytes",
                tCode, rCode, tLabel, sourceID, destinationID, payloadLen);
 
+    // TODO: Temporary topology/ROM triage log. Remove once Saffire init is understood.
+    ASFW_LOG(Async,
+             "[TempRX] gen=%u src=0x%04x dst=0x%04x tLabel=%u tCode=0x%x rCode=0x%x event=0x%02x payloadBytes=%zu q0=0x%08x q1=0x%08x",
+             currentGen,
+             sourceID,
+             destinationID,
+             tLabel,
+             tCode,
+             rCode,
+             static_cast<uint8_t>(eventCode),
+             payloadLen,
+             q0,
+             q1);
+
     // Delegate to Tracking actor
     tracking_.OnRxResponse(rxResponse);
 }

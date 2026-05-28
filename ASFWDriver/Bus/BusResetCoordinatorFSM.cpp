@@ -179,12 +179,21 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRearming() {
         return StepResult::Yield;
     }
 
-    // Per Linux bus_reset_work(): re-assert cycleMaster after bus reset.
-    // The OHCI hardware may have auto-cleared it if cycleTooLong fired during
-    // the reset sequence. Without cycle-start packets, devices like the Nikon
-    // SAA7356HL cannot complete MCU firmware download.
+    // Per Linux bus_reset_work() (ohci.c:2052): re-assert cycleMaster after a
+    // bus reset UNLESS we were root and remain root. The OHCI hardware may have
+    // auto-cleared it if cycleTooLong fired during the reset; refreshing it keeps
+    // cycle-start packets flowing for the isoch clock (DICE audio) and devices
+    // like the Nikon SAA7356HL that need them for MCU firmware download.
+    //
+    // The bit is hardware-gated (OHCI emits cycle starts only when actually root),
+    // so this is NOT role policy — local cycleMaster is intentionally not gated on
+    // RoleCoordinator's view of who should be cycle master (see FW-7).
     if (hardware_ != nullptr) {
-        hardware_->SetLinkControlBits(LinkControlBits::kCycleMaster);
+        const bool isRoot = G_IsRoot();
+        if (ShouldReassertCycleMasterOnRearm(wasRoot_, isRoot)) {
+            hardware_->SetLinkControlBits(LinkControlBits::kCycleMaster);
+        }
+        wasRoot_ = isRoot;
     }
 
     EnableFilters();

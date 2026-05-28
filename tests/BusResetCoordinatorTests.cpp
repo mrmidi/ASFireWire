@@ -584,6 +584,32 @@ TEST(BusResetCoordinatorTests, DelegationResetShortCircuitsGapOptimizationForGen
     EXPECT_TRUE(rig.publishedTopologies.empty());
 }
 
+TEST(BusResetCoordinatorTests, LocalIRMRemoteRootWithoutPeerContenderForcesLocalRoot) {
+    BusResetTestRig rig;
+    rig.Initialize(true);
+    rig.SetLocalNode(0U);
+
+    rig.StartResetCycle();
+    const auto capture = MakeRawSelfIDCapture(
+        16U, {MakeBaseSelfID(0U, 63U, true, true),
+              MakeBaseSelfID(1U, 63U, false, false),
+              MakeBaseSelfID(2U, 63U, true, false)});
+    rig.PrimeCapture(capture, 16U);
+    rig.TriggerStickyCompletion();
+
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+
+    rig.AdvanceMs(2000U);
+
+    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued());
+    EXPECT_TRUE(rig.hardware.TestLastPhyConfigSucceeded());
+    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
+    EXPECT_TRUE(rig.hardware.TestLastBusResetSucceeded());
+    EXPECT_EQ(rig.hardware.TestLastForceRootNode(), 0U);
+    EXPECT_FALSE(rig.hardware.TestLastGapCount().has_value());
+    EXPECT_TRUE(rig.publishedTopologies.empty());
+}
+
 TEST(BusResetCoordinatorTests, ConsumedSelfIDComplete2IsClearedExplicitly) {
     BusResetCoordinator coordinator;
     HardwareInterface hardware;
@@ -636,14 +662,14 @@ TEST(BusResetCoordinatorTests, FailedPhyConfigDispatchSuppressesTopologyAndKeeps
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
     rig.busManager.SetForcedGapCount(21U);
-    rig.SetLocalNode(0U);
+    rig.SetLocalNode(1U);
     rig.SetSendPhyConfigResult(false);
 
     rig.StartResetCycle();
     const auto capture =
-        MakeRawSelfIDCapture(16U, {MakeBaseSelfID(0U, 63U, true, true),
-                                   MakeBaseSelfID(1U, 63U, true, false)});
-    rig.PrimeCapture(capture, 16U);
+        MakeRawSelfIDCapture(17U, {MakeBaseSelfID(0U, 63U, true, false),
+                                   MakeBaseSelfID(1U, 63U, true, true)});
+    rig.PrimeCapture(capture, 17U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
@@ -654,12 +680,12 @@ TEST(BusResetCoordinatorTests, FailedPhyConfigDispatchSuppressesTopologyAndKeeps
 
     rig.ResetHardwareState();
     rig.SetSendPhyConfigResult(true);
-    rig.SetLocalNode(0U);
+    rig.SetLocalNode(1U);
 
     rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(17U, {MakeBaseSelfID(0U, 63U, true, true),
-                                                MakeBaseSelfID(1U, 63U, true, false)}),
-                     17U);
+    rig.PrimeCapture(MakeRawSelfIDCapture(18U, {MakeBaseSelfID(0U, 63U, true, false),
+                                                MakeBaseSelfID(1U, 63U, true, true)}),
+                     18U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
@@ -676,13 +702,13 @@ TEST(BusResetCoordinatorTests, FailedResetInitiationSuppressesTopologyAndKeepsGa
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
     rig.busManager.SetForcedGapCount(21U);
-    rig.SetLocalNode(0U);
+    rig.SetLocalNode(1U);
     rig.SetInitiateBusResetResult(false);
 
     rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(18U, {MakeBaseSelfID(0U, 63U, true, true),
-                                                MakeBaseSelfID(1U, 63U, true, false)}),
-                     18U);
+    rig.PrimeCapture(MakeRawSelfIDCapture(19U, {MakeBaseSelfID(0U, 63U, true, false),
+                                                MakeBaseSelfID(1U, 63U, true, true)}),
+                     19U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
@@ -693,12 +719,12 @@ TEST(BusResetCoordinatorTests, FailedResetInitiationSuppressesTopologyAndKeepsGa
     EXPECT_TRUE(rig.publishedTopologies.empty());
 
     rig.ResetHardwareState();
-    rig.SetLocalNode(0U);
+    rig.SetLocalNode(1U);
 
     rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(19U, {MakeBaseSelfID(0U, 63U, true, true),
-                                                MakeBaseSelfID(1U, 63U, true, false)}),
-                     19U);
+    rig.PrimeCapture(MakeRawSelfIDCapture(20U, {MakeBaseSelfID(0U, 63U, true, false),
+                                                MakeBaseSelfID(1U, 63U, true, true)}),
+                     20U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
@@ -713,12 +739,12 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
     rig.busManager.SetForcedGapCount(21U);
-    rig.SetLocalNode(0U);
+    rig.SetLocalNode(1U);
 
     rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(20U, {MakeBaseSelfID(0U, 63U, true, true),
-                                                MakeBaseSelfID(1U, 63U, true, false)}),
-                     20U);
+    rig.PrimeCapture(MakeRawSelfIDCapture(21U, {MakeBaseSelfID(0U, 63U, true, false),
+                                                MakeBaseSelfID(1U, 63U, true, true)}),
+                     21U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
@@ -726,12 +752,12 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
     EXPECT_TRUE(rig.publishedTopologies.empty());
 
     rig.ResetHardwareState();
-    rig.SetLocalNode(0U);
+    rig.SetLocalNode(1U);
 
     rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(21U, {MakeBaseSelfID(0U, 21U, true, true),
-                                                MakeBaseSelfID(1U, 21U, true, false)}),
-                     21U);
+    rig.PrimeCapture(MakeRawSelfIDCapture(22U, {MakeBaseSelfID(0U, 21U, true, false),
+                                                MakeBaseSelfID(1U, 21U, true, true)}),
+                     22U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(100U);
 
@@ -740,4 +766,16 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     ASSERT_TRUE(rig.publishedTopologies.back().gapCountConsistent);
     EXPECT_EQ(rig.publishedTopologies.back().gapCount, 21U);
+}
+
+// FW-7: cycleMaster re-assert guard (Linux ohci.c:2052). Re-arm on rearm UNLESS
+// we were root and remain root. The bit is hardware-gated, so this is a
+// redundant-write avoidance, not role policy.
+TEST(BusResetCoordinatorCycleMasterGuard, ReassertsUnlessRootStaysRoot) {
+    using BRC = ASFW::Driver::BusResetCoordinator;
+    EXPECT_TRUE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/false, /*isRootNow=*/false));
+    EXPECT_TRUE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/false, /*isRootNow=*/true));
+    EXPECT_TRUE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/true, /*isRootNow=*/false));
+    // The one case we skip the redundant write: was root and still root.
+    EXPECT_FALSE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/true, /*isRootNow=*/true));
 }
