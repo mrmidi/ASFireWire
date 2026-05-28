@@ -212,7 +212,7 @@ bool SBP2SessionRegistry::SubmitInquiry(uint64_t handle, uint8_t allocationLengt
     return SubmitCommand(handle, SCSI::BuildInquiryRequest(allocationLength));
 }
 
-std::optional<std::vector<uint8_t>> SBP2SessionRegistry::GetInquiryResult(uint64_t handle) {
+std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetInquiryResult(uint64_t handle) {
     IOLockGuard lock(lock_);
     auto* record = FindByHandle(handle);
     if (!record || !record->commandReady || !record->pendingCommandResult.has_value() ||
@@ -220,19 +220,11 @@ std::optional<std::vector<uint8_t>> SBP2SessionRegistry::GetInquiryResult(uint64
         return std::nullopt;
     }
 
-    if (record->pendingCommandResult->transportStatus != 0 ||
-        record->pendingCommandResult->sbpStatus != Wire::SBPStatus::kNoAdditionalInfo) {
-        record->pendingCommandResult.reset();
-        record->lastCompletedCommandOpcode.reset();
-        record->commandReady = false;
-        return std::nullopt;
-    }
-
-    auto payload = std::move(record->pendingCommandResult->payload);
+    SCSI::CommandResult result = std::move(*record->pendingCommandResult);
     record->pendingCommandResult.reset();
     record->lastCompletedCommandOpcode.reset();
     record->commandReady = false;
-    return payload;
+    return result;
 }
 
 bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request) {

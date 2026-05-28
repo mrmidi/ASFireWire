@@ -249,8 +249,17 @@ public:
         if (!result.has_value()) {
             return kIOReturnNotFound;
         }
+        if (result->transportStatus != 0) {
+            return result->transportStatus > 0
+                ? static_cast<kern_return_t>(result->transportStatus)
+                : kIOReturnError;
+        }
+        if (result->sbpStatus != ASFW::Protocols::SBP2::Wire::SBPStatus::kNoAdditionalInfo) {
+            return kIOReturnError;
+        }
 
-        OSData* output = OSData::withBytes(result->data(), static_cast<uint32_t>(result->size()));
+        OSData* output = OSData::withBytes(result->payload.data(),
+                                           static_cast<uint32_t>(result->payload.size()));
         if (!output) {
             return kIOReturnNoMemory;
         }

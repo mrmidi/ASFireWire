@@ -288,6 +288,32 @@ TEST(SBP2SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
     EXPECT_EQ(sensePayload, result->senseData);
 }
 
+TEST(SBP2SessionRegistryTests, InquiryFailureResultPreservesSBPStatus) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    ASSERT_TRUE(rig.registry.SubmitInquiry(handle, 36));
+    const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(write.data);
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kRequestAborted;
+    status.orbOffsetHi = ToBE16(static_cast<uint16_t>((commandOrbAddress >> 32) & 0xFFFFu));
+    status.orbOffsetLo = ToBE32(static_cast<uint32_t>(commandOrbAddress & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    auto result = rig.registry.GetInquiryResult(handle);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(0, result->transportStatus);
+    EXPECT_EQ(SBPStatus::kRequestAborted, result->sbpStatus);
+    EXPECT_TRUE(result->payload.empty());
+    EXPECT_FALSE(rig.registry.GetInquiryResult(handle).has_value());
+}
+
 TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaustion) {
     SessionRegistryRig rig;
     const uint64_t handle = rig.CreateSession();

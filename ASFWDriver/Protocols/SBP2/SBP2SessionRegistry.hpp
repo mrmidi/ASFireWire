@@ -86,7 +86,7 @@ public:
     [[nodiscard]] bool SubmitInquiry(uint64_t handle, uint8_t allocationLength = 96);
 
     // Get inquiry result (destructive read). Returns nullopt if not ready.
-    [[nodiscard]] std::optional<std::vector<uint8_t>> GetInquiryResult(uint64_t handle);
+    [[nodiscard]] std::optional<SCSI::CommandResult> GetInquiryResult(uint64_t handle);
 
     // Submit a generic SCSI command. Returns false if not logged in or another command is active.
     [[nodiscard]] bool SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request);
