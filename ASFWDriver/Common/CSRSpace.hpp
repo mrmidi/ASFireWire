@@ -274,6 +274,29 @@ struct GenerationUpdate {
     return cleared | genBits;
 }
 
+// Normalize the controller's hardware BusOptions for advertisement in the local
+// Config ROM Bus_Info_Block. The ONLY capability this asserts a policy on is bmc.
+//
+// OHCI controllers commonly default their BusOptions register to bmc=1 (Bus
+// Manager Capable). ASFW does NOT implement IEEE 1394a BUS_MANAGER_ID
+// compare-swap election, so it must not advertise bmc=1 — other nodes would
+// otherwise expect ASFW to manage the bus.
+//
+// Policy (FW-11):
+//   - bmc : forced to 0. >>> Flip this when BUS_MANAGER_ID election lands. <<<
+//   - irmc / cmc / isc / pmc and all numeric fields (cyc_clk_acc, max_rec,
+//     max_ROM, generation, link_spd): PRESERVED from hardware, UNCHANGED. The
+//     OHCI register is authoritative for physical capability — do not fabricate
+//     (wire-compat). In particular this does NOT touch irmc. Note ASFW currently
+//     has only an IRM *client* (IRMClient allocates from the elected IRM) and
+//     does NOT host the IRM CSR register set as a server, so whether ASFW should
+//     advertise irmc=1 at all is an OPEN question owned by the RoleCoordinator
+//     work (FW-5/FW-9) — not decided here. Preserving the hardware value keeps
+//     existing (working) IRM-election behavior unchanged.
+[[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions) noexcept {
+    return hwBusOptions & ~BusOptionsFields::kBMCMask;
+}
+
 namespace Detail {
 // Local constexpr popcount (avoid <bit> include in this shared header).
 [[nodiscard]] constexpr unsigned Popcount32(uint32_t v) noexcept {
