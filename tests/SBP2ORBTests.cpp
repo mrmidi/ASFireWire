@@ -277,6 +277,38 @@ TEST(SBP2ORBTests, CommandORBDirectDescriptorUsesFullBusNodeId) {
     EXPECT_EQ((static_cast<uint32_t>(expectedNode) << 16) | 0xFFFFu, dataDescriptorHi);
 }
 
+TEST(SBP2ORBTests, PageTableDestructorReleasesAddressRange) {
+    ORBTimerRig rig;
+
+    uint64_t pageTableAddress = 0;
+    {
+        ASFW::Protocols::SBP2::SBP2PageTable pageTable(
+            rig.addressManager, reinterpret_cast<void*>(0x10));
+        ASFW::Protocols::SBP2::SBP2PageTable::Segment segment{
+            .address = 0x2000,
+            .length = 0xF004,
+        };
+
+        ASSERT_TRUE(pageTable.Build(
+            std::span<const ASFW::Protocols::SBP2::SBP2PageTable::Segment>(&segment, 1),
+            0x21));
+        ASSERT_FALSE(pageTable.GetResult().isDirect);
+
+        const uint32_t descriptorHi = FromBE32(pageTable.GetResult().dataDescriptorHi);
+        const uint32_t descriptorLo = FromBE32(pageTable.GetResult().dataDescriptorLo);
+        pageTableAddress = ComposeAddress(static_cast<uint16_t>(descriptorHi & 0xFFFFu),
+                                          descriptorLo);
+
+        uint32_t pteQuadlet = 0;
+        EXPECT_EQ(ASFW::Async::ResponseCode::Complete,
+                  rig.addressManager.ReadQuadlet(pageTableAddress, &pteQuadlet));
+    }
+
+    uint32_t pteQuadlet = 0;
+    EXPECT_EQ(ASFW::Async::ResponseCode::AddressError,
+              rig.addressManager.ReadQuadlet(pageTableAddress, &pteQuadlet));
+}
+
 TEST(SBP2ORBTests, ManagementORBDestructionInvalidatesPendingTimeout) {
     ORBTimerRig rig;
 

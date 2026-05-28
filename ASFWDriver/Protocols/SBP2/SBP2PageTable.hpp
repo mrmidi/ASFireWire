@@ -35,6 +35,10 @@ public:
     explicit SBP2PageTable(AddressSpaceManager& addrMgr, void* owner) noexcept
         : addrMgr_(addrMgr), owner_(owner) {}
 
+    ~SBP2PageTable() noexcept {
+        Clear();
+    }
+
     SBP2PageTable(const SBP2PageTable&) = delete;
     SBP2PageTable& operator=(const SBP2PageTable&) = delete;
 
