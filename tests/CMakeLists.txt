@@ -301,6 +301,46 @@ target_include_directories(BusResetCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUD
 
 gtest_discover_tests(BusResetCoordinatorTests)
 
+# RoleCoordinator (FW-6) — Layer 1 pure policy + Layer 2 thin actor.
+add_executable(RolePolicyTests
+    "${ASFW_TESTS_DIR}/RolePolicyTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Role/RolePolicy.cpp"
+)
+
+target_link_libraries(RolePolicyTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(RolePolicyTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(RolePolicyTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(RolePolicyTests)
+
+add_executable(RoleCoordinatorTests
+    "${ASFW_TESTS_DIR}/RoleCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Role/RolePolicy.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Role/RoleCoordinator.cpp"
+)
+
+target_link_libraries(RoleCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(RoleCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(RoleCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(RoleCoordinatorTests)
+
 # PHY Packets Tests - Encoding/decoding validation, gap=0 bug regression
 add_executable(PhyPacketsTests
     "${ASFW_TESTS_DIR}/PhyPacketsTests.cpp"
