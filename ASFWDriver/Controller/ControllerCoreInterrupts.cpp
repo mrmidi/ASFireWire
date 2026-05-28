@@ -115,6 +115,13 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
         ASFW_LOG(Controller, "⚠️ WARNING: Cycle too long - isochronous cycle overran 125μs budget");
         ASFW_LOG(Controller,
                  "This indicates DMA descriptors or system latency causing timing violation");
+        // Validated with Linux — refs: ohci.c (irq_handler): on cycleTooLong the hardware
+        // auto-clears cycleMaster, so re-assert it via LinkControlSet immediately. Without
+        // this, cycle-start packets stop permanently and devices that depend on them
+        // (e.g. Nikon SAA7356HL MCU firmware download) never initialize.
+        if (deps_.hardware) {
+            deps_.hardware->SetLinkControlBits(LinkControlBits::kCycleMaster);
+        }
     }
 
     if ((events & IntEventBits::kCycleInconsistent) != 0U) {

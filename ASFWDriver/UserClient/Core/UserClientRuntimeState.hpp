@@ -9,6 +9,7 @@
 #include "../Handlers/ControllerCoreAccess.hpp"
 #include "../Handlers/DeviceDiscoveryHandler.hpp"
 #include "../Handlers/IsochHandler.hpp"
+#include "../Handlers/SBP2Handler.hpp"
 #include "../Handlers/StatusHandler.hpp"
 #include "../Handlers/TopologyHandler.hpp"
 #include "../Handlers/TransactionHandler.hpp"
@@ -49,13 +50,16 @@ class UserClientRuntimeState final {
 
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
+        auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(driver);
+        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager);
 
         return HandlersReady();
     }
 
     void ResetHandlers() noexcept {
+        sbp2Handler_.reset();
         isochHandler_.reset();
         avcHandler_.reset();
         deviceDiscoveryHandler_.reset();
@@ -66,11 +70,18 @@ class UserClientRuntimeState final {
         busResetHandler_.reset();
     }
 
+    void ReleaseOwner(void* owner) noexcept {
+        if (owner != nullptr && sbp2Handler_ != nullptr) {
+            sbp2Handler_->ReleaseOwner(owner);
+        }
+    }
+
     [[nodiscard]] bool HandlersReady() const noexcept {
         return busResetHandler_ != nullptr && topologyHandler_ != nullptr &&
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&
                configRomHandler_ != nullptr && deviceDiscoveryHandler_ != nullptr &&
-               avcHandler_ != nullptr && isochHandler_ != nullptr;
+               avcHandler_ != nullptr && isochHandler_ != nullptr &&
+               sbp2Handler_ != nullptr;
     }
 
     [[nodiscard]] TransactionStorage& TransactionResults() noexcept { return transactionStorage_; }
@@ -85,6 +96,7 @@ class UserClientRuntimeState final {
     }
     [[nodiscard]] AVCHandler& AVC() noexcept { return *avcHandler_; }
     [[nodiscard]] IsochHandler& Isoch() noexcept { return *isochHandler_; }
+    [[nodiscard]] SBP2Handler& SBP2() noexcept { return *sbp2Handler_; }
 
   private:
     TransactionStorage transactionStorage_{};
@@ -96,6 +108,7 @@ class UserClientRuntimeState final {
     std::unique_ptr<DeviceDiscoveryHandler> deviceDiscoveryHandler_{};
     std::unique_ptr<AVCHandler> avcHandler_{};
     std::unique_ptr<IsochHandler> isochHandler_{};
+    std::unique_ptr<SBP2Handler> sbp2Handler_{};
 };
 
 template <typename ClientLike>

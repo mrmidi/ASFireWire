@@ -56,6 +56,10 @@ class IAVCDiscovery;
 class FCPResponseRouter;
 } // namespace ASFW::Protocols::AVC
 
+namespace ASFW::Protocols::SBP2 {
+class AddressSpaceManager;
+}
+
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -92,6 +96,7 @@ class ControllerCore {
 
         std::shared_ptr<ASFW::Protocols::AVC::AVCDiscovery> avcDiscovery;
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
+        std::shared_ptr<ASFW::Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager;
 
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
 
@@ -117,6 +122,11 @@ class ControllerCore {
 
     Async::IAsyncControllerPort& AsyncSubsystem() const;
 
+    // Diagnostic accessors for UserClient handlers
+    HardwareInterface* GetHardware() const;
+    BusResetCoordinator* GetBusResetCoordinator() const;
+    BusManager* GetBusManager() const;
+
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;
     void AttachROMScanner(std::shared_ptr<Discovery::ROMScanner> romScanner);
@@ -129,6 +139,9 @@ class ControllerCore {
     Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
     void SetAVCDiscovery(std::shared_ptr<Protocols::AVC::AVCDiscovery> avcDiscovery);
     void SetFCPResponseRouter(std::shared_ptr<Protocols::AVC::FCPResponseRouter> fcpResponseRouter);
+    Protocols::SBP2::AddressSpaceManager* GetSbp2AddressSpaceManager() const;
+    void SetSbp2AddressSpaceManager(
+        std::shared_ptr<Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager);
 
     IRM::IRMClient* GetIRMClient() const;
     void SetIRMClient(std::shared_ptr<IRM::IRMClient> client);

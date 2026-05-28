@@ -29,10 +29,22 @@ TEST(ROMScanNodeStateMachineTests, RejectsInvalidTransition) {
     EXPECT_EQ(node.CurrentState(), ROMScanNodeStateMachine::State::Idle);
 }
 
+TEST(ROMScanNodeStateMachineTests, AcceptsSlowPublishRetryTransitions) {
+    ROMScanNodeStateMachine node(6, Generation{12}, FwSpeed::S100, 2);
+
+    EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingBIB));
+    EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::WaitingRepublish));
+    EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::ReadingRootDir));
+    EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::WaitingRepublish));
+    EXPECT_TRUE(node.TransitionTo(ROMScanNodeStateMachine::State::Idle));
+    EXPECT_EQ(node.CurrentState(), ROMScanNodeStateMachine::State::Idle);
+}
+
 TEST(ROMScanNodeStateMachineTests, ResetForGenerationReinitializesNodeData) {
     ROMScanNodeStateMachine node(6, Generation{12}, FwSpeed::S100, 2);
     node.MutableROM().vendorName = "X";
     node.SetBIBInProgress(true);
+    node.SetSlowPublishRetriesLeft(3);
     node.ForceState(ROMScanNodeStateMachine::State::Failed);
 
     node.ResetForGeneration(Generation{20}, 7, FwSpeed::S200, 4);
@@ -45,4 +57,5 @@ TEST(ROMScanNodeStateMachineTests, ResetForGenerationReinitializesNodeData) {
     EXPECT_EQ(node.ROM().nodeId, 7);
     EXPECT_TRUE(node.ROM().vendorName.empty());
     EXPECT_FALSE(node.BIBInProgress());
+    EXPECT_EQ(node.SlowPublishRetriesLeft(), 0);
 }

@@ -12,6 +12,7 @@
 
 #include "ASFWDriver/ConfigROM/ConfigROMBuilder.hpp"
 #include "ASFWDriver/ConfigROM/ConfigROMTypes.hpp"
+#include "ASFWDriver/Hardware/OHCIConstants.hpp"
 #include "TestDataUtils.hpp"
 
 using ASFW::Driver::ConfigROMBuilder;
@@ -203,6 +204,20 @@ TEST(ConfigROMBuilderTests, UpdateGenerationRefreshesBusInfoAndHeaderCrc) {
     EXPECT_EQ(header & 0xFFFFu, ComputeCRC(native, 1, 4));
 }
 
+TEST(ConfigROMBuilderTests, NodeCapabilitiesDoNotAdvertisePhyEnhanceWhenDisabled) {
+    const uint32_t caps = ASFW::Driver::MakeNodeCapabilities(false);
+
+    EXPECT_EQ(caps, ASFW::Driver::kNodeCapabilitiesBase);
+    EXPECT_EQ(caps & ASFW::Driver::NodeCapabilityBits::kCPhyEnhance, 0u);
+}
+
+TEST(ConfigROMBuilderTests, NodeCapabilitiesAdvertisePhyEnhanceWhenEnabled) {
+    const uint32_t caps = ASFW::Driver::MakeNodeCapabilities(true);
+
+    EXPECT_EQ(caps, ASFW::Driver::kNodeCapabilitiesBase |
+                        ASFW::Driver::NodeCapabilityBits::kCPhyEnhance);
+}
+
 class ConfigROMBuilderLeafCrcTests : public ::testing::TestWithParam<size_t> {};
 
 TEST_P(ConfigROMBuilderLeafCrcTests, LeafHeaderCrcMatchesPolynomial) {
@@ -259,9 +274,16 @@ TEST_P(ConfigROMReferenceCrcTests, ReferenceDataHasValidCrcs) {
     const auto& testCase = GetParam();
     SCOPED_TRACE(testCase.description);
 
+    constexpr std::string_view kDeviceAttributeReferencePath =
+        "FirWireDriver/firewire/device-attribute-test.c";
+    if (!ASFW::Tests::RepoReferenceFileExists(kDeviceAttributeReferencePath)) {
+        GTEST_SKIP() << "Missing external Linux reference data: "
+                     << kDeviceAttributeReferencePath;
+    }
+
     std::vector<uint32_t> words;
     std::string errorMessage;
-    ASSERT_TRUE(ASFW::Tests::LoadHexArrayFromRepoFile("FirWireDriver/firewire/device-attribute-test.c",
+    ASSERT_TRUE(ASFW::Tests::LoadHexArrayFromRepoFile(kDeviceAttributeReferencePath,
                                                       testCase.arrayName,
                                                       words,
                                                       &errorMessage))

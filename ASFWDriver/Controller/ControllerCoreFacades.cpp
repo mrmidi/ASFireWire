@@ -104,6 +104,15 @@ void ControllerCore::SetFCPResponseRouter(
     deps_.fcpResponseRouter = std::move(fcpResponseRouter);
 }
 
+Protocols::SBP2::AddressSpaceManager* ControllerCore::GetSbp2AddressSpaceManager() const {
+    return deps_.sbp2AddressSpaceManager.get();
+}
+
+void ControllerCore::SetSbp2AddressSpaceManager(
+    std::shared_ptr<Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager) {
+    deps_.sbp2AddressSpaceManager = std::move(sbp2AddressSpaceManager);
+}
+
 IRM::IRMClient* ControllerCore::GetIRMClient() const { return deps_.irmClient.get(); }
 
 void ControllerCore::SetIRMClient(std::shared_ptr<IRM::IRMClient> client) {
@@ -115,6 +124,15 @@ CMP::CMPClient* ControllerCore::GetCMPClient() const { return deps_.cmpClient.ge
 void ControllerCore::SetCMPClient(std::shared_ptr<CMP::CMPClient> client) {
     deps_.cmpClient = std::move(client);
 }
+
+// Diagnostic accessors for UserClient handlers
+HardwareInterface* ControllerCore::GetHardware() const { return deps_.hardware.get(); }
+
+BusResetCoordinator* ControllerCore::GetBusResetCoordinator() const {
+    return deps_.busReset.get();
+}
+
+BusManager* ControllerCore::GetBusManager() const { return deps_.busManager.get(); }
 
 // Phase 2: Interface facade accessors
 Async::IFireWireBus& ControllerCore::Bus() {

@@ -30,7 +30,7 @@ public:
 
 private:
     struct NodeSpeedState {
-        FwSpeed currentSpeed{FwSpeed::S100};
+        FwSpeed currentSpeed{FwSpeed::S400};
         uint8_t timeoutCount{0};
         uint8_t successCount{0};
     };
@@ -46,4 +46,3 @@ private:
 };
 
 } // namespace ASFW::Discovery
-

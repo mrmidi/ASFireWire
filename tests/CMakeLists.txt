@@ -253,6 +253,7 @@ gtest_discover_tests(SelfIDCaptureTests)
 add_executable(BusManagerGapOptimizationTests
     "${ASFW_TESTS_DIR}/BusManagerGapOptimizationTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -338,6 +339,29 @@ target_compile_definitions(FireWireIOReturnTests
 target_include_directories(FireWireIOReturnTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(FireWireIOReturnTests)
+
+# =============================================================================
+# Transaction Storage Tests - async user-client result retention
+# =============================================================================
+add_executable(TransactionStorageTests
+    "${ASFW_TESTS_DIR}/TransactionStorageTests.cpp"
+    "${ASFW_DRIVER_DIR}/UserClient/Storage/TransactionStorage.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(TransactionStorageTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TransactionStorageTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TransactionStorageTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TransactionStorageTests)
 
 # =============================================================================
 # DMA Memory Tests - FakeDMAMemory unit tests
@@ -1559,6 +1583,24 @@ target_include_directories(ROMScannerDetailsDiscoveryTests PRIVATE ${ASFW_COMMON
 
 gtest_discover_tests(ROMScannerDetailsDiscoveryTests)
 
+add_executable(DiscoveryConvergenceTests
+    "${ASFW_TESTS_DIR}/DiscoveryConvergenceTests.cpp"
+)
+
+target_link_libraries(DiscoveryConvergenceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiscoveryConvergenceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiscoveryConvergenceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(DiscoveryConvergenceTests)
+
 add_executable(ROMScanNodeStateMachineTests
     "${ASFW_TESTS_DIR}/ROMScanNodeStateMachineTests.cpp"
 )
@@ -1576,3 +1618,44 @@ target_compile_definitions(ROMScanNodeStateMachineTests
 target_include_directories(ROMScanNodeStateMachineTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(ROMScanNodeStateMachineTests)
+
+add_executable(AddressSpaceManagerTests
+    "${ASFW_TESTS_DIR}/AddressSpaceManagerTests.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+)
+
+target_link_libraries(AddressSpaceManagerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AddressSpaceManagerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AddressSpaceManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AddressSpaceManagerTests)
+
+add_executable(SBP2ORBTests
+    "${ASFW_TESTS_DIR}/SBP2ORBTests.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(SBP2ORBTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SBP2ORBTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SBP2ORBTests)

@@ -9,6 +9,9 @@ namespace ASFW::Discovery {
 
 namespace {
 
+constexpr uint32_t kUnitSpecIdSBP2 = 0x00609E;
+constexpr uint32_t kUnitSwVersionSBP2 = 0x010483;
+
 class LockGuard {
   public:
     explicit LockGuard(IOLock* lock) noexcept : lock_(lock) {
@@ -29,6 +32,19 @@ class LockGuard {
   private:
     IOLock* lock_{nullptr};
 };
+
+[[nodiscard]] bool HasSBP2Unit(const ASFW::Discovery::ConfigROM& rom) noexcept {
+    for (const auto& unit : rom.unitDirectories) {
+        if (unit.unitSpecId == kUnitSpecIdSBP2 && unit.unitSwVersion == kUnitSwVersionSBP2) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool HasParsedUnitProfile(const ASFW::Discovery::ConfigROM& rom) noexcept {
+    return !rom.unitDirectories.empty();
+}
 
 } // namespace
 
@@ -75,16 +91,37 @@ void ConfigROMStore::Insert(const ConfigROM& rom) {
     romsByGenNode_[key] = romCopy;
 
     auto it = romsByGuid_.find(romCopy.bib.guid);
-    const bool replaceGuidEntry =
-        it == romsByGuid_.end() || it->second.gen.value < romCopy.gen.value ||
+    // Validated with Linux (core-device.c read_config_rom/fw_device_refresh) and Apple
+    // (IOFireWireROMCache::hasROMChanged): the cache must converge on the most complete
+    // ROM and never regress to a partial/unit-less one. Combine both fixes:
+    //  - newer generation: take it, but main's guard refuses to overwrite a ROM that
+    //    has a parsed unit profile with a newer one that lacks it (Apple keeps
+    //    reconsidering unit-less generation-0 devices for slow unit publishers);
+    //  - same generation: take it when it carries at least as many quadlets, i.e. a
+    //    minimal→general growth within a generation (Apple: newBIBSize > getLength()).
+    const bool shouldUpdateGuid =
+        it == romsByGuid_.end() ||
+        (it->second.gen.value < romCopy.gen.value &&
+         (HasParsedUnitProfile(romCopy) || !HasParsedUnitProfile(it->second))) ||
         (it->second.gen == romCopy.gen &&
          it->second.rawQuadlets.size() <= romCopy.rawQuadlets.size());
-    if (replaceGuidEntry) {
+
+    if (shouldUpdateGuid) {
         romsByGuid_[romCopy.bib.guid] = romCopy;
 
-        ASFW_LOG_V2(ConfigROM, "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u",
+        ASFW_LOG_V2(ConfigROM,
+                    "ConfigROMStore::Insert: GUID=0x%016llx gen=%u node=%u state=%u "
+                    "rawQuadlets=%zu rootEntries=%zu unitDirs=%zu hasSBP2=%d",
                     romCopy.bib.guid, romCopy.gen.value, romCopy.nodeId,
-                    static_cast<uint8_t>(romCopy.state));
+                    static_cast<uint8_t>(romCopy.state), romCopy.rawQuadlets.size(),
+                    romCopy.rootDirMinimal.size(), romCopy.unitDirectories.size(),
+                    HasSBP2Unit(romCopy) ? 1 : 0);
+    } else {
+        ASFW_LOG_V2(ConfigROM,
+                    "ConfigROMStore::Insert: retaining richer GUID cache for GUID=0x%016llx "
+                    "candidateGen=%u candidateUnitDirs=%zu cachedGen=%u cachedUnitDirs=%zu",
+                    romCopy.bib.guid, romCopy.gen.value, romCopy.unitDirectories.size(),
+                    it->second.gen.value, it->second.unitDirectories.size());
     }
 }
 
@@ -116,6 +153,7 @@ const ConfigROM* ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
     LockGuard guard(lock_);
 
     const ConfigROM* latest = nullptr;
+    const ConfigROM* latestWithUnitProfile = nullptr;
     for (const auto& [key, rom] : romsByGenNode_) {
         if (rom.nodeId != nodeId) {
             continue;
@@ -123,7 +161,22 @@ const ConfigROM* ConfigROMStore::FindLatestForNode(uint8_t nodeId) const {
         if (latest == nullptr || rom.gen.value > latest->gen.value) {
             latest = &rom;
         }
+        if (HasParsedUnitProfile(rom) &&
+            (latestWithUnitProfile == nullptr ||
+             rom.gen.value > latestWithUnitProfile->gen.value)) {
+            latestWithUnitProfile = &rom;
+        }
     }
+
+    if (latestWithUnitProfile != nullptr && latest != latestWithUnitProfile &&
+        latest != nullptr && latestWithUnitProfile->bib.guid == latest->bib.guid) {
+        ASFW_LOG_V2(ConfigROM,
+                    "ConfigROMStore::FindLatestForNode: node=%u using gen=%u with unit profile "
+                    "instead of partial gen=%u",
+                    nodeId, latestWithUnitProfile->gen.value, latest ? latest->gen.value : 0);
+        return latestWithUnitProfile;
+    }
+
     return latest;
 }
 

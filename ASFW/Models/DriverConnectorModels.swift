@@ -514,8 +514,13 @@ struct DriverConnectorFWDeviceInfo: Identifiable {
     let generation: UInt32
     let state: DriverConnectorFWDeviceState
     let units: [DriverConnectorFWUnitInfo]
+    let deviceKind: UInt8  // DeviceKind enum value from driver
 
     var stateString: String { state.description }
+    var isStorage: Bool { deviceKind == 4 }  // DeviceKind::Storage = 4
+    var hasSBP2Unit: Bool { units.contains(where: \.isSBP2Unit) }
+    var sbp2Units: [DriverConnectorFWUnitInfo] { units.filter(\.isSBP2Unit) }
+    var storageUnits: [DriverConnectorFWUnitInfo] { sbp2Units }
 }
 
 struct DriverConnectorFWUnitInfo: Identifiable {
@@ -524,12 +529,23 @@ struct DriverConnectorFWUnitInfo: Identifiable {
     let swVersion: UInt32
     let state: DriverConnectorFWUnitState
     let romOffset: UInt32
+    let managementAgentOffset: UInt32?
+    let lun: UInt32?
+    let unitCharacteristics: UInt32?
+    let fastStart: UInt32?
     let vendorName: String?
     let productName: String?
+
+    private static let sbp2SpecId: UInt32 = 0x00609E
+    private static let sbp2SwVersion: UInt32 = 0x010483
 
     var specIdHex: String { String(format: "0x%06X", specId) }
     var swVersionHex: String { String(format: "0x%06X", swVersion) }
     var stateString: String { state.description }
+    var isSBP2Unit: Bool {
+        specId == Self.sbp2SpecId && swVersion == Self.sbp2SwVersion
+    }
+    var isSBP2Storage: Bool { isSBP2Unit }
 }
 
 // API compatibility aliases (keep existing public names and nested access stable)

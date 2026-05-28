@@ -172,6 +172,14 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     mockAsync.SimulateReadSuccess(6, {0});
     mockAsync.SimulateReadSuccess(7, {0});
 
+    // Full root-directory parse (general ROM, crc_length == bus_info_length): each
+    // node now reads its root-directory header. An empty header (0 entries) completes
+    // the node. See ROMScanSession::ContinueAfterBIBSuccess (always reads the root dir
+    // for non-Nikon ROMs, validated with Linux core-device.c).
+    mockAsync.WaitForPendingReads(10);
+    mockAsync.SimulateReadSuccess(8, {0});
+    mockAsync.SimulateReadSuccess(9, {0});
+
     {
         std::unique_lock lock(mtx);
         cv.wait_for(lock, std::chrono::seconds(1), [&] { return callbackCount > 0; });
@@ -220,6 +228,11 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
     // First BIB returns not-ready payload (q0 == 0), then retry succeeds.
     mockAsync.SimulateFullBIBSuccess(0, CreateBusyBIB());
     mockAsync.SimulateFullBIBSuccess(4, CreateMinimalBIB());
+
+    // Full root-directory parse: the recovered node reads its (empty) root-directory
+    // header to complete (general ROM with crc_length == bus_info_length).
+    mockAsync.WaitForPendingReads(9);
+    mockAsync.SimulateReadSuccess(8, {0});
 
     {
         std::unique_lock lock(mtx);

@@ -123,12 +123,7 @@ public:
 
     ~ObserverGuard() noexcept {
         if (unregister_) {
-            try {
-                unregister_();
-            } catch (...) {
-                ASFW_LOG_ERROR(Discovery,
-                               "ObserverGuard: unregister callback threw during destruction");
-            }
+            unregister_();
         }
     }
 
