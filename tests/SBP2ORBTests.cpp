@@ -89,6 +89,32 @@ public:
     uint64_t nowNs{0};
 };
 
+TEST(SBP2ORBTests, StatusBlockDetailsDecodeSBP2Layout) {
+    StatusBlock status{};
+    status.details = 0b10011101;
+
+    EXPECT_EQ(2, status.Source());
+    EXPECT_EQ(1, status.Response());
+    EXPECT_EQ(1, status.DeadBit());
+    EXPECT_EQ(5, status.Length());
+}
+
+TEST(SBP2ORBTests, SBPStatusConstantsMatchSBP2RequestStatus) {
+    EXPECT_EQ(0, SBPStatus::kNoAdditionalInfo);
+    EXPECT_EQ(1, SBPStatus::kReqTypeNotSupported);
+    EXPECT_EQ(2, SBPStatus::kSpeedNotSupported);
+    EXPECT_EQ(3, SBPStatus::kPageSizeNotSupported);
+    EXPECT_EQ(4, SBPStatus::kAccessDenied);
+    EXPECT_EQ(5, SBPStatus::kLogicalUnitNotSupported);
+    EXPECT_EQ(6, SBPStatus::kMaxPayloadTooSmall);
+    EXPECT_EQ(8, SBPStatus::kResourcesUnavailable);
+    EXPECT_EQ(9, SBPStatus::kFunctionRejected);
+    EXPECT_EQ(10, SBPStatus::kLoginIDNotRecognized);
+    EXPECT_EQ(11, SBPStatus::kDummyORBCompleted);
+    EXPECT_EQ(12, SBPStatus::kRequestAborted);
+    EXPECT_EQ(0xFF, SBPStatus::kUnspecifiedError);
+}
+
 TEST(SBP2ORBTests, CommandORBTimerFiresOnHostQueue) {
     ORBTimerRig rig;
 

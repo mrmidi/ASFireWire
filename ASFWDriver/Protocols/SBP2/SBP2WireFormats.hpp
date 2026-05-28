@@ -193,11 +193,11 @@ static_assert(offsetof(PageTableEntry, segmentBaseAddressLo) == 4, "PTE addressL
 
 // ---------------------------------------------------------------------------
 // SBP-2 Status Block
-// Ref: SBP-2 §5.2
+// Ref: SBP-2 §5.3 status blocks
 // ---------------------------------------------------------------------------
 
 struct StatusBlock {
-    uint8_t  details{0};     // [7] Src, [6:4] Resp, [3:2] D, [1:0] Len
+    uint8_t  details{0};     // [7:6] Src, [5:4] Resp, [3] D, [2:0] Len
     uint8_t  sbpStatus{0};   // SBP-2 specific status code
     uint16_t orbOffsetHi{0};
     uint32_t orbOffsetLo{0};
@@ -205,10 +205,10 @@ struct StatusBlock {
 
     static constexpr uint32_t kMaxSize = 32; // header (8) + max status (24)
 
-    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 7) & 0x1; }
-    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x7; }
-    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 2) & 0x1; }
-    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x3; }
+    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 6) & 0x3; }
+    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x3; }
+    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 3) & 0x1; }
+    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x7; }
 };
 
 static_assert(sizeof(StatusBlock) == 32, "StatusBlock must be 32 bytes");
@@ -315,19 +315,21 @@ namespace Options {
     static constexpr uint32_t kFunctionTargetReset    = 0xF;
 }
 
-// SBP-2 status codes (from sbpStatus field)
+// SBP-2 §5.3.1 request status codes (from sbpStatus field)
 namespace SBPStatus {
-    static constexpr uint8_t kNoAdditionalInfo   = 0;
-    static constexpr uint8_t kReqTypeNotSupported = 1;
-    static constexpr uint8_t kSpeedNotSupported   = 2;
-    static constexpr uint8_t kPageSizeNotSupported = 3;
-    static constexpr uint8_t kAccessDenied        = 4;
-    static constexpr uint8_t kResourceUnavailable = 5;
-    static constexpr uint8_t kFunctionRejected    = 6;
-    static constexpr uint8_t kLoginIDNotRecognized = 7;
-    static constexpr uint8_t kDummyORBCompleted   = 8;
-    static constexpr uint8_t kRequestAborted      = 0xB;
-    static constexpr uint8_t kUnspecifiedError    = 0xFF;
+    static constexpr uint8_t kNoAdditionalInfo       = 0;
+    static constexpr uint8_t kReqTypeNotSupported    = 1;
+    static constexpr uint8_t kSpeedNotSupported      = 2;
+    static constexpr uint8_t kPageSizeNotSupported   = 3;
+    static constexpr uint8_t kAccessDenied           = 4;
+    static constexpr uint8_t kLogicalUnitNotSupported = 5;
+    static constexpr uint8_t kMaxPayloadTooSmall     = 6;
+    static constexpr uint8_t kResourcesUnavailable   = 8;
+    static constexpr uint8_t kFunctionRejected       = 9;
+    static constexpr uint8_t kLoginIDNotRecognized   = 10;
+    static constexpr uint8_t kDummyORBCompleted      = 11;
+    static constexpr uint8_t kRequestAborted         = 12;
+    static constexpr uint8_t kUnspecifiedError       = 0xFF;
 }
 
 // Busy timeout register (CSR address 0xFFFFF0000210)
