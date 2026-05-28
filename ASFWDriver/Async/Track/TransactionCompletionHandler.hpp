@@ -66,8 +66,18 @@ public:
         // consumption. This makes the handler robust to controllers that surface a
         // raw/packed ack value (e.g. 0x8, the ContextControl RUN bit) in the
         // descriptor's ack nibble regardless of how the TxCompletion was produced.
+        const uint8_t rawAckCode = rawComp.ackCode;
         TxCompletion comp = rawComp;
         comp.ackCode = NormalizeAckFromEvent(comp.eventCode, comp.ackCode);
+
+        if (rawAckCode == 0x8 && comp.ackCode == rawAckCode) {
+            ASFW_LOG_V1(Async,
+                        "AT completion raw ack nibble 0x8 survived normalization: "
+                        "tLabel=%u event=0x%02X (%{public}s) ts=%u ackCount=%u. "
+                        "Linux treats eventCode, not this nibble, as authoritative.",
+                        comp.tLabel, static_cast<uint8_t>(comp.eventCode),
+                        ToString(comp.eventCode), comp.timeStamp, comp.ackCount);
+        }
 
         // AT Response context completions correspond to WrResp acks we send back
         // to devices. They are not tracked as transactions; skip quietly.
@@ -431,7 +441,10 @@ private:
                 break;
 
             default:
-                ASFW_LOG_V2(Async, "  → Unknown ackCode=0x%X, treating as tardy (wait for AR)", ackCode);
+                ASFW_LOG_V2(Async,
+                            "  → Unknown ackCode=0x%X event=0x%02X (%{public}s), treating as tardy (wait for AR)",
+                            ackCode, static_cast<uint8_t>(comp.eventCode),
+                            ToString(comp.eventCode));
                 txn.TransitionTo(TransactionState::ATCompleted, "OnATCompletion: unknown_ack");
                 txn.TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: unknown_ack");
                 break;

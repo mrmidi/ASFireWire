@@ -110,6 +110,16 @@ class BusResetCoordinator {
     const char* StateString() const;
     static const char* StateString(State state);
 
+    /// Decide whether to re-assert local cycleMaster during reset rearm.
+    /// Mirrors Linux ohci.c:2052 (bus_reset_work): re-arm UNLESS we were root and
+    /// remain root. The bit is hardware-gated (OHCI emits cycle starts only when
+    /// actually root), so this is NOT role policy — it keeps the isoch clock armed
+    /// across resets while avoiding a redundant write when root is stable.
+    [[nodiscard]] static constexpr bool ShouldReassertCycleMasterOnRearm(bool wasRoot,
+                                                                         bool isRootNow) noexcept {
+        return !(wasRoot && isRootNow);
+    }
+
     // ASFW-defined diagnostics codes for BusResetCoordinator recovery paths.
     // These are not OHCI/IEEE 1394 wire or register values. They label the
     // coordinator FSM branch that most recently recorded a recovery trigger.
@@ -279,6 +289,7 @@ class BusResetCoordinator {
     bool HasSelfIDCompletion() const;
     bool CanAttemptSelfIDDecode() const;
     bool G_NodeIDValid() const;
+    bool G_IsRoot() const;
 
     bool ReadyForDiscovery(Discovery::Generation gen);
 
@@ -289,6 +300,8 @@ class BusResetCoordinator {
     std::atomic<bool> workInProgress_{false};
     bool pendingBusResetEdge_{false};
     bool stopFlushIssued_{false};
+    /// Tracks whether local was root at the previous rearm (Linux ohci->is_root).
+    bool wasRoot_{false};
 
     BusResetMetrics metrics_{};
 

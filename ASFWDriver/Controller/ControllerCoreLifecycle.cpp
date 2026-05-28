@@ -634,7 +634,8 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // The kProvisionalNodeId value would be immediately overwritten anyway
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
-             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable (cycleMaster deferred)");
+             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable | cycleMaster "
+             "(hardware-gated: emits cycle starts only when root)");
     hw.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
 
     ConfigureAtRetries(hw);

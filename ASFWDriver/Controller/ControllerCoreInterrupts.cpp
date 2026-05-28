@@ -159,6 +159,16 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
     if ((events & IntEventBits::kCycle64Seconds) != 0U) {
         HandleCycle64Seconds();
     }
+
+    // FW-7: record cycle-start/lost evidence for RoleCoordinator. Edge-triggered
+    // so the per-cycle cycleSynch can never flood the coordinator — OnInterrupt
+    // returns true only when the observation actually changes. Uses the cached
+    // generation (set in OnTopologyReady) to avoid copying the topology snapshot
+    // on the interrupt path. Does not disturb the cycleInconsistent audio-recovery
+    // handling above.
+    if (cycleObserver_.OnInterrupt(currentGeneration_, events)) {
+        roleCoordinator_.OnCycleStartEvidence(currentGeneration_, cycleObserver_.Observation());
+    }
 }
 
 void ControllerCore::NotifyBusResetCoordinator(uint32_t events, uint64_t timestamp) const {

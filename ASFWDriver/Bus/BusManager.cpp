@@ -164,6 +164,29 @@ struct CycleMasterInputs {
     return MakePhyConfigCommand(inputs.localNodeID, true);
 }
 
+[[nodiscard]] std::optional<BusManager::PhyConfigCommand> MaybeClaimRootForLocalIRM(
+    const CycleMasterInputs& inputs) {
+    if (inputs.irmNodeID != inputs.localNodeID || inputs.rootNodeID == inputs.localNodeID) {
+        return std::nullopt;
+    }
+
+    if (inputs.otherContenderID.has_value()) {
+        return std::nullopt;
+    }
+
+    if (!inputs.localContender) {
+        return std::nullopt;
+    }
+
+    // Apple IOFireWireController::finishedBusScan(): when the local node is IRM,
+    // it forces local root before turning on cycle master. This handles buses where
+    // a remote root is not an IRM contender, e.g. Saffire behind a passive middle PHY.
+    ASFW_LOG(BusManager,
+             "⚠️  Local node is IRM but remote node %u is root and no peer contender exists; forcing local root",
+             inputs.rootNodeID);
+    return MakePhyConfigCommand(inputs.localNodeID, true);
+}
+
 [[nodiscard]] bool IsTwoNodeLocalRootTopology(const TopologySnapshot& topology) {
     if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
         return false;
@@ -258,6 +281,10 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
 
     if (const auto rootDecision = MaybeDelegateOrClaimRoot(config_, inputs)) {
         return rootDecision;
+    }
+
+    if (const auto localIRMRootDecision = MaybeClaimRootForLocalIRM(inputs)) {
+        return localIRMRootDecision;
     }
 
     if (inputs.badIRM) {

@@ -13,10 +13,16 @@ namespace ASFW::Driver {
 // Bit 31 in AsReqFilterHiSet = accept all async requests
 constexpr uint32_t kAsReqAcceptAllMask = 0x80000000u;
 
-// Default link control configuration used during controller initialization
+// Default link control configuration used during controller initialization.
+// cycleMaster is armed here (Linux ohci.c ohci_enable():2472 sets
+// cycleTimerEnable | cycleMaster together). The bit is hardware-gated — OHCI
+// only emits cycle-start packets when the PHY reports this node is root — so
+// arming it while non-root is a harmless no-op. It is refreshed after each reset
+// in BusResetCoordinator::StepRearming (Linux ohci.c:2052).
 constexpr uint32_t kDefaultLinkControl = LinkControlBits::kRcvSelfID |
 										   LinkControlBits::kRcvPhyPkt |
-										   LinkControlBits::kCycleTimerEnable;
+										   LinkControlBits::kCycleTimerEnable |
+										   LinkControlBits::kCycleMaster;
 
 // Posted write priming bits (OHCI HCControl - enable posted writes and LPS)
 constexpr uint32_t kPostedWritePrimingBits = HCControlBits::kPostedWriteEnable |

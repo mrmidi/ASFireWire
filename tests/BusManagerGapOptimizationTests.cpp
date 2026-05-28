@@ -96,6 +96,28 @@ TEST(BusManagerGapOptimizationTests, ExperimentalHostCycleMasterBringupDisablesD
     EXPECT_FALSE(command.has_value());
 }
 
+TEST(BusManagerGapOptimizationTests, LocalIRMRemoteRootWithoutPeerContenderForcesLocalRoot) {
+    BusManager busManager;
+
+    TopologySnapshot topology{};
+    topology.localNodeId = 0U;
+    topology.rootNodeId = 2U;
+    topology.irmNodeId = 0U;
+    topology.nodes = {
+        MakeNode(0U, true),
+        MakeNode(1U, false, false),
+        MakeNode(2U, false),
+    };
+
+    const auto command = busManager.AssignCycleMaster(topology, {});
+
+    ASSERT_TRUE(command.has_value());
+    ASSERT_TRUE(command->forceRootNodeID.has_value());
+    ASSERT_TRUE(command->setContender.has_value());
+    EXPECT_EQ(*command->forceRootNodeID, 0U);
+    EXPECT_TRUE(*command->setContender);
+}
+
 TEST(BusManagerGapOptimizationTests, InconsistentObservedBaseGapsForceConservative63) {
     BusManager busManager;
     busManager.SetGapOptimizationEnabled(true);

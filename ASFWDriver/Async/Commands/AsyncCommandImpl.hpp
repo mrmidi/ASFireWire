@@ -12,6 +12,8 @@
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Logging/Logging.hpp"
 
+#include <cstring>
+
 namespace ASFW::Async {
 
 template<typename Derived>
@@ -72,6 +74,43 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
         ASFW_LOG_ERROR(Async, "Command submit failed: BuildHeader returned 0 for handle=0x%x", 
                        handle.value);
         return AsyncHandle{0};
+    }
+
+    if (headerSize >= 12) {
+        uint32_t q0 = 0;
+        uint32_t q1 = 0;
+        uint32_t q2 = 0;
+        std::memcpy(&q0, headerBuffer + 0, sizeof(q0));
+        std::memcpy(&q1, headerBuffer + 4, sizeof(q1));
+        std::memcpy(&q2, headerBuffer + 8, sizeof(q2));
+
+        const uint8_t headerTLabel = static_cast<uint8_t>((q0 >> 10) & 0x3Fu);
+        const uint8_t headerSpeed = static_cast<uint8_t>((q0 >> 16) & 0x07u);
+        const uint8_t headerTCode = static_cast<uint8_t>((q0 >> 4) & 0x0Fu);
+        const uint16_t headerDest = static_cast<uint16_t>((q1 >> 16) & 0xFFFFu);
+        const uint16_t headerAddrHi = static_cast<uint16_t>(q1 & 0xFFFFu);
+
+        // TODO: Temporary topology/ROM triage log. Remove once Saffire init is understood.
+        ASFW_LOG(Async,
+                 "[TempTX] gen=%u handle=0x%08x src=0x%04x metaDst=0x%04x hdrDst=0x%04x tLabel=%u hdrTLabel=%u tCode=0x%x hdrTCode=0x%x ctxSpeed=%u hdrSpeed=%u addr=0x%04x_%08x len=%u strategy=%u q0=0x%08x q1=0x%08x q2=0x%08x",
+                 meta.generation,
+                 handle.value,
+                 txCtx.sourceNodeID,
+                 meta.destinationNodeID,
+                 headerDest,
+                 label,
+                 headerTLabel,
+                 meta.tCode,
+                 headerTCode,
+                 txCtx.speedCode,
+                 headerSpeed,
+                 headerAddrHi,
+                 q2,
+                 meta.expectedLength,
+                 static_cast<uint8_t>(meta.completionStrategy),
+                 q0,
+                 q1,
+                 q2);
     }
     
     // Step 6: Prepare DMA payload (if needed) - CRTP dispatch

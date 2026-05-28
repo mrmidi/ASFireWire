@@ -93,6 +93,14 @@ struct HCControlBits {
     static constexpr uint32_t kBibImageValid = 1u << 31;
 };
 
+/// \brief NodeID register bit definitions (OHCI 1.1 §5.9, Table 5-15).
+struct NodeIDBits {
+    static constexpr uint32_t kIDValid = 1u << 31;     ///< NodeID fields valid (set after Self-ID)
+    static constexpr uint32_t kRoot = 1u << 30;        ///< This controller is the bus root
+    static constexpr uint32_t kCPS = 1u << 27;         ///< Cable power status
+    static constexpr uint32_t kNodeNumberMask = 0x3Fu; ///< [5:0] physical node number
+};
+
 /// \brief LinkControl register bit definitions (OHCI 1.1 §5.10, Table 5-17).
 ///
 /// This register is accessed through two write-only strobes and one read view:

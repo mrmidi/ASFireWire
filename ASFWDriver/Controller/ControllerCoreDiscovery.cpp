@@ -71,6 +71,13 @@ bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
+    // FW-6/FW-7: hand the new topology/generation to role policy before any
+    // discovery-specific early returns — role policy is independent of ROM scan.
+    // Skeleton policy is inert (None/Defer) with null executors, so this takes
+    // no hardware action yet.
+    currentGeneration_ = snap.generation;
+    roleCoordinator_.OnTopologyChanged(snap.generation, snap);
+
     if (!deps_.romScanner) {
         ASFW_LOG(Discovery, "OnTopologyReady: no ROMScanner available");
         return;
