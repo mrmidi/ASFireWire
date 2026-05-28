@@ -690,7 +690,12 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
         (static_cast<uint64_t>(guidHi) << 32) | static_cast<uint64_t>(guidLo);
     const uint64_t effectiveGuid = (config_.localGuid != 0) ? config_.localGuid : hardwareGuid;
 
-    builder->Build(busOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
+    // FW-11: advertise only the capabilities ASFW actually backs. The hardware
+    // BusOptions register often defaults to bmc=1, but ASFW does not implement
+    // 1394a BUS_MANAGER_ID election, so Bus Manager Capable must be cleared
+    // before staging the local Config ROM. Physical/other bits are preserved.
+    const uint32_t localBusOptions = ASFW::FW::NormalizeLocalBusOptions(busOptions);
+    builder->Build(localBusOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
                    config_.vendor.vendorName);
     if (builder->QuadletCount() < 5) {
         ASFW_LOG(Hardware, "Config ROM builder produced insufficient quadlets (%zu)",
