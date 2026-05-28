@@ -112,6 +112,7 @@ public:
 #ifdef ASFW_HOST_TEST
     // Testing hook: return the underlying login session for a handle.
     SBP2LoginSession* GetSessionForTesting(uint64_t handle);
+    std::weak_ptr<SBP2LoginSession> GetSessionWeakForTesting(uint64_t handle);
 #endif
 
 private:
@@ -126,6 +127,10 @@ private:
 
     void CleanupCommandResources(SBP2SessionRecord& record);
     void CleanupManagementResources(SBP2SessionRecord& record);
+    void RetireSessionLocked(std::shared_ptr<SBP2LoginSession> session);
+    void EraseRetiredSessionLocked(const std::shared_ptr<SBP2LoginSession>& session);
+    void SetReleaseLogoutCallbackLocked(uint64_t handle,
+                                        const std::shared_ptr<SBP2LoginSession>& session);
     [[nodiscard]] static bool IsSupportedTaskManagementFunction(
         SBP2ManagementORB::Function function) noexcept;
 
@@ -137,6 +142,8 @@ private:
 
     IOLock* lock_{nullptr};
     std::map<uint64_t, SBP2SessionRecord> sessions_;
+    // Hidden from registry clients, but retained until async logout finishes or times out.
+    std::vector<std::shared_ptr<SBP2LoginSession>> retiringSessions_;
     uint64_t nextHandle_{1};
 };
 

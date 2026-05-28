@@ -174,7 +174,11 @@ public:
     uint64_t CreateSession() {
         auto result = registry.CreateSession(reinterpret_cast<void*>(0xCAFE), kGuid, 0);
         EXPECT_TRUE(result.has_value());
-        return result.value_or(0);
+        const uint64_t handle = result.value_or(0);
+        if (auto* session = registry.GetSessionForTesting(handle)) {
+            session->SetTimeoutQueue(&queue);
+        }
+        return handle;
     }
 
     void LoginSuccessfully(uint64_t handle,
@@ -454,6 +458,63 @@ TEST(SBP2SessionRegistryTests, RepeatedMissingDiscoveryTerminatesSuspendedSBP2De
     const size_t writesBeforeRefresh = rig.bus.WriteCount();
     rig.registry.RefreshTargets(Generation{2});
     EXPECT_EQ(writesBeforeRefresh, rig.bus.WriteCount());
+}
+
+TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutStatusArrives) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    std::weak_ptr<ASFW::Protocols::SBP2::SBP2LoginSession> weakSession =
+        rig.registry.GetSessionWeakForTesting(handle);
+    ASSERT_FALSE(weakSession.expired());
+
+    const size_t writesBeforeRelease = rig.bus.WriteCount();
+    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+
+    EXPECT_FALSE(weakSession.expired());
+    ASSERT_EQ(writesBeforeRelease + 1U, rig.bus.WriteCount());
+    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+
+    const auto& logoutWrite = rig.bus.WriteAt(writesBeforeRelease);
+    EXPECT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+    EXPECT_FALSE(weakSession.expired());
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    EXPECT_TRUE(weakSession.expired());
+    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+}
+
+TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutTimeout) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    std::weak_ptr<ASFW::Protocols::SBP2::SBP2LoginSession> weakSession =
+        rig.registry.GetSessionWeakForTesting(handle);
+    ASSERT_FALSE(weakSession.expired());
+
+    const size_t writesBeforeRelease = rig.bus.WriteCount();
+    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+
+    EXPECT_FALSE(weakSession.expired());
+    ASSERT_EQ(writesBeforeRelease + 1U, rig.bus.WriteCount());
+    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+
+    const auto& logoutWrite = rig.bus.WriteAt(writesBeforeRelease);
+    EXPECT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+    EXPECT_FALSE(weakSession.expired());
+
+    rig.AdvanceMs(2'000);
+
+    EXPECT_TRUE(weakSession.expired());
+    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
 }
 
 TEST(SBP2SessionRegistryTests, MissingDiscoveryStillTerminatesNonSBP2Device) {

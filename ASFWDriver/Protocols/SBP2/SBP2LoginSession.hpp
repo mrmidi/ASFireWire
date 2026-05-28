@@ -110,7 +110,7 @@ enum class LoginState : uint8_t {
 // SBP2LoginSession
 // ---------------------------------------------------------------------------
 
-class SBP2LoginSession {
+class SBP2LoginSession : public std::enable_shared_from_this<SBP2LoginSession> {
     friend class SBP2SessionRegistry;
 
 public:

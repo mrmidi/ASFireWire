@@ -25,6 +25,38 @@ SBP2LoginSession::SBP2LoginSession(Async::IFireWireBus& bus,
 
 SBP2LoginSession::~SBP2LoginSession() {
     CancelPendingTimer();
+    if (loginWriteHandle_) {
+        bus_.Cancel(loginWriteHandle_);
+        loginWriteHandle_ = {};
+    }
+    if (reconnectWriteHandle_) {
+        bus_.Cancel(reconnectWriteHandle_);
+        reconnectWriteHandle_ = {};
+    }
+    if (logoutWriteHandle_) {
+        bus_.Cancel(logoutWriteHandle_);
+        logoutWriteHandle_ = {};
+    }
+    if (fetchAgentWriteHandle_) {
+        bus_.Cancel(fetchAgentWriteHandle_);
+        fetchAgentWriteHandle_ = {};
+    }
+    if (doorbellWriteHandle_) {
+        bus_.Cancel(doorbellWriteHandle_);
+        doorbellWriteHandle_ = {};
+    }
+    if (agentResetWriteHandle_) {
+        bus_.Cancel(agentResetWriteHandle_);
+        agentResetWriteHandle_ = {};
+    }
+    if (unsolicitedStatusWriteHandle_) {
+        bus_.Cancel(unsolicitedStatusWriteHandle_);
+        unsolicitedStatusWriteHandle_ = {};
+    }
+    if (busyTimeoutWriteHandle_) {
+        bus_.Cancel(busyTimeoutWriteHandle_);
+        busyTimeoutWriteHandle_ = {};
+    }
     ClearORBTracking(true);
     lifetimeToken_.reset();
     ReleaseOwnedTimeoutQueue();
@@ -110,13 +142,16 @@ bool SBP2LoginSession::Login() noexcept {
     };
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     loginWriteHandle_ = bus_.WriteBlock(
         gen, node, mgmtAddr,
         std::span<const uint8_t>{loginORBAddressBE_.data(), loginORBAddressBE_.size()},
         speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                      std::span<const uint8_t> response) {
-            OnLoginWriteComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnLoginWriteComplete(requestGeneration, status, response);
+            }
         });
 
     if (!loginWriteHandle_) {
@@ -156,13 +191,16 @@ bool SBP2LoginSession::Logout() noexcept {
     };
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     logoutWriteHandle_ = bus_.WriteBlock(
         gen, node, mgmtAddr,
         std::span<const uint8_t>{logoutORBAddressBE_.data(), logoutORBAddressBE_.size()},
         speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                      std::span<const uint8_t> response) {
-            OnLogoutWriteComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnLogoutWriteComplete(requestGeneration, status, response);
+            }
         });
 
     if (!logoutWriteHandle_) {
@@ -212,18 +250,26 @@ bool SBP2LoginSession::Reconnect() noexcept {
     };
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     reconnectWriteHandle_ = bus_.WriteBlock(
         gen, node, mgmtAddr,
         std::span<const uint8_t>{reconnectORBAddressBE_.data(), reconnectORBAddressBE_.size()},
         speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                      std::span<const uint8_t> response) {
-            OnReconnectWriteComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnReconnectWriteComplete(requestGeneration, status, response);
+            }
         });
 
     if (!reconnectWriteHandle_) {
         ASFW_LOG(SBP2, "SBP2LoginSession::Reconnect: WriteBlock failed, will retry");
-        SubmitDelayedCallback(kLoginRetryDelayMs, [this]() { OnReconnectTimeout(); });
+        const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+        SubmitDelayedCallback(kLoginRetryDelayMs, [weakSelf]() {
+            if (auto self = weakSelf.lock()) {
+                self->OnReconnectTimeout();
+            }
+        });
         reconnectTimerActive_ = true;
         return true; // Will retry
     }
@@ -249,7 +295,14 @@ void SBP2LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             ClearORBTracking(true);
             DeallocateResources();
             SetState(LoginState::Idle);
-            SubmitDelayedCallback(100, [this]() { (void)Login(); });
+            {
+                const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+                SubmitDelayedCallback(100, [weakSelf]() {
+                    if (auto self = weakSelf.lock()) {
+                        (void)self->Login();
+                    }
+                });
+            }
             break;
 
         case LoginState::LoggedIn:
@@ -269,7 +322,14 @@ void SBP2LoginSession::HandleBusReset(uint16_t newGeneration) noexcept {
             DeallocateResources();
             loginGeneration_ = newGeneration;
             SetState(LoginState::Suspended);
-            SubmitDelayedCallback(100, [this]() { (void)Reconnect(); });
+            {
+                const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+                SubmitDelayedCallback(100, [weakSelf]() {
+                    if (auto self = weakSelf.lock()) {
+                        (void)self->Reconnect();
+                    }
+                });
+            }
             break;
 
         case LoginState::LoggingOut:
@@ -320,10 +380,13 @@ bool SBP2LoginSession::AllocateResources() noexcept {
     if (allResourcesAllocated) {
         // Re-register callback in case it was previously cleared by a reset path.
         if (statusBlockHandle_ != 0) {
+            const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
             addrSpaceMgr_.SetRemoteWriteCallback(
                 statusBlockHandle_,
-                [this](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
-                    OnStatusBlockRemoteWrite(offset, payload);
+                [weakSelf](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
+                    if (auto self = weakSelf.lock()) {
+                        self->OnStatusBlockRemoteWrite(offset, payload);
+                    }
                 });
         }
         return true; // Already allocated
@@ -368,10 +431,13 @@ bool SBP2LoginSession::AllocateResources() noexcept {
     // Register a callback for status block writes — the device writes status
     // here to signal login/reconnect/logout completion (and ORB completion
     // in Step 2).
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     addrSpaceMgr_.SetRemoteWriteCallback(
         statusBlockHandle_,
-        [this](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
-            OnStatusBlockRemoteWrite(offset, payload);
+        [weakSelf](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
+            if (auto self = weakSelf.lock()) {
+                self->OnStatusBlockRemoteWrite(offset, payload);
+            }
         });
 
     ASFW_LOG(SBP2, "SBP2LoginSession: all address spaces allocated");
@@ -649,11 +715,15 @@ void SBP2LoginSession::OnLoginWriteComplete(uint16_t expectedGeneration,
 
         if (loginRetryCount_ < kLoginRetryMax) {
             loginRetryCount_++;
-            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                (void)Login();
+            const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+            SubmitDelayedCallback(kLoginRetryDelayMs, [weakSelf]() {
+                if (auto self = weakSelf.lock()) {
+                    self->loginGeneration_ =
+                        static_cast<uint16_t>(self->busInfo_.GetGeneration().value);
+                    self->loginNodeID_ = self->targetInfo_.targetNodeId;
+                    self->SetState(LoginState::Idle);
+                    (void)self->Login();
+                }
             });
             return;
         }
@@ -729,7 +799,12 @@ void SBP2LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
         ASFW_LOG(SBP2, "SBP2LoginSession::OnReconnectWriteComplete: status=%s, retrying",
                  Async::ToString(status));
 
-        SubmitDelayedCallback(100, [this]() { (void)Reconnect(); });
+        const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+        SubmitDelayedCallback(100, [weakSelf]() {
+            if (auto self = weakSelf.lock()) {
+                (void)self->Reconnect();
+            }
+        });
         return;
     }
 
@@ -781,6 +856,7 @@ void SBP2LoginSession::OnLogoutWriteComplete(uint16_t expectedGeneration,
     }
 
     ASFW_LOG(SBP2, "SBP2LoginSession: logout management agent write ACK'd, waiting for status block");
+    StartLogoutTimer();
 }
 
 void SBP2LoginSession::OnLogoutTimeout() noexcept {
@@ -863,11 +939,15 @@ void SBP2LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& blo
 
         if (loginRetryCount_ < kLoginRetryMax) {
             loginRetryCount_++;
-            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                (void)Login();
+            const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+            SubmitDelayedCallback(kLoginRetryDelayMs, [weakSelf]() {
+                if (auto self = weakSelf.lock()) {
+                    self->loginGeneration_ =
+                        static_cast<uint16_t>(self->busInfo_.GetGeneration().value);
+                    self->loginNodeID_ = self->targetInfo_.targetNodeId;
+                    self->SetState(LoginState::Idle);
+                    (void)self->Login();
+                }
             });
             return;
         }
@@ -897,11 +977,15 @@ void SBP2LoginSession::CompleteLoginFromStatusBlock(const Wire::StatusBlock& blo
 
         if (loginRetryCount_ < kLoginRetryMax) {
             loginRetryCount_++;
-            SubmitDelayedCallback(kLoginRetryDelayMs, [this]() {
-                loginGeneration_ = static_cast<uint16_t>(busInfo_.GetGeneration().value);
-                loginNodeID_ = targetInfo_.targetNodeId;
-                SetState(LoginState::Idle);
-                (void)Login();
+            const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+            SubmitDelayedCallback(kLoginRetryDelayMs, [weakSelf]() {
+                if (auto self = weakSelf.lock()) {
+                    self->loginGeneration_ =
+                        static_cast<uint16_t>(self->busInfo_.GetGeneration().value);
+                    self->loginNodeID_ = self->targetInfo_.targetNodeId;
+                    self->SetState(LoginState::Idle);
+                    (void)self->Login();
+                }
             });
             return;
         }
@@ -1072,22 +1156,31 @@ void SBP2LoginSession::SetState(LoginState newState) noexcept {
 
 void SBP2LoginSession::StartLoginTimer() noexcept {
     loginTimerActive_ = true;
-    SubmitDelayedCallback(targetInfo_.managementTimeoutMs, [this]() {
-        OnLoginTimeout();
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+    SubmitDelayedCallback(targetInfo_.managementTimeoutMs, [weakSelf]() {
+        if (auto self = weakSelf.lock()) {
+            self->OnLoginTimeout();
+        }
     });
 }
 
 void SBP2LoginSession::StartReconnectTimer() noexcept {
     reconnectTimerActive_ = true;
-    SubmitDelayedCallback(targetInfo_.managementTimeoutMs + 1000, [this]() {
-        OnReconnectTimeout();
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+    SubmitDelayedCallback(targetInfo_.managementTimeoutMs + 1000, [weakSelf]() {
+        if (auto self = weakSelf.lock()) {
+            self->OnReconnectTimeout();
+        }
     });
 }
 
 void SBP2LoginSession::StartLogoutTimer() noexcept {
     logoutTimerActive_ = true;
-    SubmitDelayedCallback(targetInfo_.managementTimeoutMs, [this]() {
-        OnLogoutTimeout();
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+    SubmitDelayedCallback(targetInfo_.managementTimeoutMs, [weakSelf]() {
+        if (auto self = weakSelf.lock()) {
+            self->OnLogoutTimeout();
+        }
     });
 }
 
@@ -1163,13 +1256,14 @@ void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
     const uint64_t expectedGeneration =
         delayedCallbackGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1ULL;
     const std::weak_ptr<int> weakLifetime = lifetimeToken_;
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     const uint64_t delayNs = delayMs * 1'000'000ULL;
     IODispatchQueue* bounceQueue = workQueue_;
 
     DispatchAfterCompat(delayQueue,
                         delayNs,
-                        [this,
-                         weakLifetime,
+                        [weakLifetime,
+                         weakSelf,
                          expectedGeneration,
                          bounceQueue,
                          cb = std::move(callback)]() mutable {
@@ -1177,14 +1271,18 @@ void SBP2LoginSession::SubmitDelayedCallback(uint64_t delayMs,
             return;
         }
         DispatchAsyncCompat(bounceQueue,
-                            [this,
-                             weakLifetime,
+                            [weakLifetime,
+                             weakSelf,
                              expectedGeneration,
                              cb = std::move(cb)]() mutable {
             if (weakLifetime.expired()) {
                 return;
             }
-            if (delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
+            auto self = weakSelf.lock();
+            if (!self) {
+                return;
+            }
+            if (self->delayedCallbackGeneration_.load(std::memory_order_acquire) != expectedGeneration) {
                 return;
             }
             cb();
@@ -1345,13 +1443,16 @@ bool SBP2LoginSession::AppendORBImmediate(SBP2CommandORB* orb) noexcept {
     const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     fetchAgentWriteHandle_ = bus_.WriteBlock(
         gen, node, fetchAgentAddress_,
         std::span<const uint8_t>{fetchAgentWriteData_.data(), fetchAgentWriteData_.size()},
         speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                     std::span<const uint8_t> response) {
-            OnFetchAgentWriteComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnFetchAgentWriteComplete(requestGeneration, status, response);
+            }
         });
 
     if (!fetchAgentWriteHandle_) {
@@ -1464,11 +1565,14 @@ void SBP2LoginSession::RingDoorbell() noexcept {
     const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     doorbellWriteHandle_ = bus_.WriteQuad(
         gen, node, doorbellAddress_, 0, speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                     std::span<const uint8_t> response) {
-            OnDoorbellComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnDoorbellComplete(requestGeneration, status, response);
+            }
         });
 
     if (!doorbellWriteHandle_) {
@@ -1500,9 +1604,12 @@ void SBP2LoginSession::OnFetchAgentWriteComplete(uint16_t expectedGeneration,
                 activeFetchAgentORB_->SetFetchAgentWriteRetries(retries);
                 // Retry after a delay
                 SBP2CommandORB* retryORB = activeFetchAgentORB_;
-                SubmitDelayedCallback(1000, [this, retryORB]() {
-                    if (activeFetchAgentORB_ == retryORB) {
-                        AppendORBImmediate(retryORB);
+                const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+                SubmitDelayedCallback(1000, [weakSelf, retryORB]() {
+                    if (auto self = weakSelf.lock()) {
+                        if (self->activeFetchAgentORB_ == retryORB) {
+                            self->AppendORBImmediate(retryORB);
+                        }
                     }
                 });
                 return;
@@ -1607,11 +1714,14 @@ void SBP2LoginSession::ResetFetchAgent(std::function<void(int)> callback) noexce
     const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     agentResetWriteHandle_ = bus_.WriteQuad(
         gen, node, agentResetAddress_, 0, speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                     std::span<const uint8_t> response) {
-            OnAgentResetComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnAgentResetComplete(requestGeneration, status, response);
+            }
         });
 
     if (!agentResetWriteHandle_) {
@@ -1661,11 +1771,14 @@ void SBP2LoginSession::EnableUnsolicitedStatus() noexcept {
     const FW::NodeId node{static_cast<uint8_t>(loginNodeID_ & 0x3Fu)};
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     unsolicitedStatusWriteHandle_ = bus_.WriteQuad(
         gen, node, unsolicitedStatusAddress_, 0, speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                     std::span<const uint8_t> response) {
-            OnUnsolicitedStatusEnableComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnUnsolicitedStatusEnableComplete(requestGeneration, status, response);
+            }
         });
 }
 
@@ -1705,15 +1818,18 @@ void SBP2LoginSession::WriteBusyTimeout() noexcept {
     const FW::FwSpeed speed = busInfo_.GetSpeed(node);
 
     busyTimeoutInProgress_ = true;
+    const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
     busyTimeoutWriteHandle_ = bus_.WriteBlock(
         gen,
         node,
         busyAddr,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&busyTimeoutBuffer_), 4},
         speed,
-        [this, requestGeneration = loginGeneration_](Async::AsyncStatus status,
-                                                     std::span<const uint8_t> response) {
-            OnBusyTimeoutComplete(requestGeneration, status, response);
+        [weakSelf, requestGeneration = loginGeneration_](Async::AsyncStatus status,
+                                                         std::span<const uint8_t> response) {
+            if (auto self = weakSelf.lock()) {
+                self->OnBusyTimeoutComplete(requestGeneration, status, response);
+            }
         });
 
     if (!busyTimeoutWriteHandle_) {

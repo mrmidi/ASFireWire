@@ -80,7 +80,8 @@ uint64_t ReadORBAddress(AddressSpaceManager& manager,
 class SessionRig {
 public:
     SessionRig()
-        : session(bus, bus, addressManager) {
+        : sessionOwner(std::make_shared<SBP2LoginSession>(bus, bus, addressManager))
+        , session(*sessionOwner) {
         workQueue.SetManualDispatchForTesting(true);
         timeoutQueue.SetManualDispatchForTesting(true);
         ASFW::Testing::SetHostMonotonicClockForTesting([this]() { return nowNs; });
@@ -167,7 +168,8 @@ public:
 
     ASFW::Async::Testing::DeferredFireWireBus bus;
     AddressSpaceManager addressManager{nullptr};
-    SBP2LoginSession session;
+    std::shared_ptr<SBP2LoginSession> sessionOwner;
+    SBP2LoginSession& session;
     IODispatchQueue workQueue;
     IODispatchQueue timeoutQueue;
     uint64_t nowNs{0};
