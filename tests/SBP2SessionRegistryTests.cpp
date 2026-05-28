@@ -115,7 +115,7 @@ void CompleteTaskManagementStatus(AddressSpaceManager& manager,
 
 class SessionRegistryRig {
 public:
-    SessionRegistryRig()
+    explicit SessionRegistryRig(uint32_t unitCharacteristics = 0x080400)
         : registry(bus, bus, addressManager, deviceManager, &queue) {
         queue.SetManualDispatchForTesting(true);
         ASFW::Testing::SetHostMonotonicClockForTesting([this]() { return nowNs; });
@@ -124,14 +124,14 @@ public:
         bus.SetLocalNodeID(ASFW::FW::NodeId{0x2A});
         bus.SetDefaultSpeed(ASFW::FW::FwSpeed::S400);
 
-        UpsertDevice(Generation{1}, 0x32);
+        UpsertDevice(Generation{1}, 0x32, unitCharacteristics);
     }
 
     ~SessionRegistryRig() {
         ASFW::Testing::ResetHostMonotonicClockForTesting();
     }
 
-    void UpsertDevice(Generation generation, uint8_t nodeId) {
+    void UpsertDevice(Generation generation, uint8_t nodeId, uint32_t unitCharacteristics = 0x080400) {
         DeviceRecord record{};
         record.guid = kGuid;
         record.vendorId = 0x001122;
@@ -154,7 +154,7 @@ public:
             RomEntry{CfgKey::Unit_Sw_Version, kSBP2UnitSwVersion, 0, 0},
             RomEntry{CfgKey::Logical_Unit_Number, 0x000002, 0, 0},
             RomEntry{CfgKey::Management_Agent_Offset, 0x000080, 1, 0},
-            RomEntry{CfgKey::Unit_Characteristics, 0x080400, 0, 0},
+            RomEntry{CfgKey::Unit_Characteristics, unitCharacteristics, 0, 0},
         };
 
         auto device = deviceManager.UpsertDevice(record, rom);
@@ -504,6 +504,19 @@ TEST(SBP2SessionRegistryTests, CreateSessionAcceptsRealSBP2SpecAndVersion) {
                                              SessionRegistryRig::kGuid,
                                              0);
     ASSERT_TRUE(result.has_value());
+}
+
+TEST(SBP2SessionRegistryTests, UnitCharacteristicsDecodeTimeoutAndORBSizeFromLowBytes) {
+    SessionRegistryRig rig(0x000410);
+
+    const uint64_t handle = rig.CreateSession();
+    auto* session = rig.registry.GetSessionForTesting(handle);
+    ASSERT_NE(nullptr, session);
+
+    const auto& targetInfo = session->TargetInfo();
+    EXPECT_EQ(2000u, targetInfo.managementTimeoutMs);
+    EXPECT_EQ(64u, targetInfo.maxORBSize);
+    EXPECT_EQ(64u - NormalORB::kHeaderSize, targetInfo.maxCommandBlockSize);
 }
 
 TEST(SBP2SessionRegistryTests, DeviceDiscoveryParsesNikonStyleManagementAgentCSRKey) {

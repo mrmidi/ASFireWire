@@ -49,8 +49,8 @@ struct SBP2TargetInfo {
     uint16_t lun{0};                     // Logical unit number
 
     // From Unit_Characteristics key (if present)
-    uint32_t managementTimeoutMs{2000};  // (byte[1] of unitCharacteristics) * 500 ms
-    uint16_t maxORBSize{32};             // (byte[0] * 4), min 32
+    uint32_t managementTimeoutMs{2000};  // Unit_Characteristics[15:8] * 500 ms
+    uint16_t maxORBSize{32};             // Unit_Characteristics[7:0] * 4, min 32
     uint16_t maxCommandBlockSize{0};     // maxORBSize - sizeof(NormalORB header)
 
     // From Fast_Start key (optional)
