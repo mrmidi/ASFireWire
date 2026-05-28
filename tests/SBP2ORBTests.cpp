@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 
 namespace {
@@ -127,6 +128,36 @@ TEST(SBP2ORBTests, CommandORBTimerFiresOnHostQueue) {
     rig.AdvanceMs(5);
 
     EXPECT_EQ(-1, completionStatus);
+}
+
+TEST(SBP2ORBTests, CommandORBRejectsOversizedCDBWithoutOverwritingCommandBlock) {
+    ORBTimerRig rig;
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x8), 4);
+    const std::array<uint8_t, 4> originalCDB{0x12, 0x34, 0x56, 0x78};
+    const std::array<uint8_t, 6> oversizedCDB{0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA};
+
+    ASSERT_TRUE(orb.SetCommandBlock(originalCDB));
+    EXPECT_FALSE(orb.SetCommandBlock(oversizedCDB));
+    ASSERT_EQ(kIOReturnSuccess, orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 6));
+
+    const auto orbAddress = orb.GetORBAddress();
+    const uint64_t packedAddress = ComposeAddress(orbAddress.addressHi, orbAddress.addressLo);
+    const uint32_t commandQuadlet = ReadQuadlet(
+        rig.addressManager,
+        packedAddress + ASFW::Protocols::SBP2::Wire::NormalORB::kHeaderSize);
+
+    std::array<uint8_t, 4> writtenCDB{};
+    std::memcpy(writtenCDB.data(), &commandQuadlet, writtenCDB.size());
+    EXPECT_EQ(originalCDB, writtenCDB);
+}
+
+TEST(SBP2ORBTests, CommandORBRejectsOutOfRangeMaxPayloadLog) {
+    ORBTimerRig rig;
+
+    SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x9), 4);
+
+    EXPECT_EQ(kIOReturnBadArgument, orb.PrepareForExecution(0x21, ASFW::FW::FwSpeed::S400, 16));
 }
 
 TEST(SBP2ORBTests, CommandORBCancelSuppressesPendingTimeout) {

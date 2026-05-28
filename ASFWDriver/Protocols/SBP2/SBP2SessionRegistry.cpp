@@ -309,9 +309,13 @@ bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequ
         }
 
         auto orb = std::make_unique<SBP2CommandORB>(addrSpaceMgr_, record->owner, maxCDB);
-        orb->SetCommandBlock(std::span<const uint8_t>{request.cdb.data(), request.cdb.size()});
+        if (!orb->SetCommandBlock(std::span<const uint8_t>{request.cdb.data(), request.cdb.size()})) {
+            if (bufferHandle != 0) {
+                addrSpaceMgr_.DeallocateAddressRange(record->owner, bufferHandle);
+            }
+            return false;
+        }
         orb->SetFlags(BuildCommandFlags(request.direction));
-        orb->SetMaxPayloadSize(record->session->MaxPayloadSize());
         orb->SetTimeout(request.timeoutMs > 0
             ? request.timeoutMs
             : record->session->TargetInfo().managementTimeoutMs);

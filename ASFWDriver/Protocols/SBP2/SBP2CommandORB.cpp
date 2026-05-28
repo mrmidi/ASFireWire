@@ -65,13 +65,16 @@ void SBP2CommandORB::DeallocateResources() noexcept {
 // Command block (CDB)
 // ---------------------------------------------------------------------------
 
-void SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
+bool SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
     if (!IsValid() || orbStorage_.size() < Wire::NormalORB::kHeaderSize) {
-        return;
+        return false;
     }
 
-    const uint32_t copyLen = static_cast<uint32_t>(
-        std::min(cdb.size(), static_cast<size_t>(maxCommandBlockSize_)));
+    if (cdb.size() > static_cast<size_t>(maxCommandBlockSize_)) {
+        return false;
+    }
+
+    const uint32_t copyLen = static_cast<uint32_t>(cdb.size());
 
     if (copyLen > 0) {
         std::memcpy(orbStorage_.data() + Wire::NormalORB::kHeaderSize,
@@ -83,6 +86,8 @@ void SBP2CommandORB::SetCommandBlock(std::span<const uint8_t> cdb) noexcept {
         std::memset(orbStorage_.data() + Wire::NormalORB::kHeaderSize + copyLen,
                      0, maxCommandBlockSize_ - copyLen);
     }
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +99,9 @@ kern_return_t SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
                                                   uint16_t maxPayloadLog) noexcept {
     if (!IsValid() || orbStorage_.size() < sizeof(Wire::NormalORB)) {
         return kIOReturnNotReady;
+    }
+    if (maxPayloadLog > 15) {
+        return kIOReturnBadArgument;
     }
 
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());

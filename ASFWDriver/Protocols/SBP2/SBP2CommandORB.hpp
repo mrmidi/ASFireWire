@@ -50,9 +50,8 @@ public:
     SBP2CommandORB& operator=(const SBP2CommandORB&) = delete;
 
     // Configuration (call before submit)
-    void SetCommandBlock(std::span<const uint8_t> cdb) noexcept;
+    [[nodiscard]] bool SetCommandBlock(std::span<const uint8_t> cdb) noexcept;
     void SetFlags(uint32_t flags) noexcept { flags_ = flags; }
-    void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
     void SetTimeout(uint32_t ms) noexcept { timeoutDuration_ = ms; }
     void SetCompletionCallback(CompletionCallback cb) noexcept {
         completionCallback_ = std::move(cb);
@@ -109,7 +108,6 @@ private:
     uint32_t maxCommandBlockSize_;
 
     uint32_t flags_{0};
-    uint16_t maxPayloadSize_{0};
     uint32_t timeoutDuration_{0};
     CompletionCallback completionCallback_;
 
