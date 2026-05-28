@@ -289,6 +289,30 @@ TEST(SBP2LoginSessionTests, ReconnectReplaysBusyTimeoutRegister) {
     ExpectBusyTimeoutWrite(rig.bus.WriteAt(reconnectWriteIndex + 1), kTargetNodeID);
 }
 
+TEST(SBP2LoginSessionTests, ReconnectAckStartsStatusTimeoutAndFallsBackToLogin) {
+    SessionRig rig;
+    rig.LoginSuccessfully();
+
+    rig.bus.SetGeneration(ASFW::FW::Generation{2});
+    rig.session.HandleBusReset(2);
+    ASSERT_EQ(LoginState::Suspended, rig.session.State());
+    ASSERT_TRUE(rig.session.Reconnect());
+    ASSERT_EQ(LoginState::Reconnecting, rig.session.State());
+
+    const size_t reconnectWriteIndex = rig.bus.WriteCount() - 1;
+    ASSERT_TRUE(rig.bus.CompleteWrite(rig.bus.WriteAt(reconnectWriteIndex).handle,
+                                      ASFW::Async::AsyncStatus::kSuccess));
+    rig.DrainReady();
+
+    rig.AdvanceMs(1009);
+    EXPECT_EQ(LoginState::Reconnecting, rig.session.State());
+    EXPECT_EQ(reconnectWriteIndex + 1, rig.bus.WriteCount());
+
+    rig.AdvanceMs(1);
+    EXPECT_EQ(LoginState::LoggingIn, rig.session.State());
+    EXPECT_EQ(reconnectWriteIndex + 2, rig.bus.WriteCount());
+}
+
 TEST(SBP2LoginSessionTests, BusyTimeoutReplayCancelsInFlightWrite) {
     SessionRig rig;
 

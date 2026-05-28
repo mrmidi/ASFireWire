@@ -284,6 +284,7 @@ private:
 
     void SetState(LoginState newState) noexcept;
     void StartLoginTimer() noexcept;
+    void StartReconnectTimer() noexcept;
     void StartLogoutTimer() noexcept;
     void CancelLoginTimer() noexcept;
 

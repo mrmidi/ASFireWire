@@ -735,6 +735,7 @@ void SBP2LoginSession::OnReconnectWriteComplete(uint16_t expectedGeneration,
 
     // Reconnect ORB write ACK'd. Wait for status block from device.
     ASFW_LOG(SBP2, "SBP2LoginSession: reconnect write ACK'd, waiting for status block");
+    StartReconnectTimer();
 }
 
 void SBP2LoginSession::OnReconnectTimeout() noexcept {
@@ -832,6 +833,7 @@ void SBP2LoginSession::OnStatusBlockRemoteWrite(uint32_t offset,
 
         case LoginState::Reconnecting:
             reconnectTimerActive_ = false;
+            CancelPendingTimer();
             CompleteReconnectFromStatusBlock(block, len);
             break;
 
@@ -1072,6 +1074,13 @@ void SBP2LoginSession::StartLoginTimer() noexcept {
     loginTimerActive_ = true;
     SubmitDelayedCallback(targetInfo_.managementTimeoutMs, [this]() {
         OnLoginTimeout();
+    });
+}
+
+void SBP2LoginSession::StartReconnectTimer() noexcept {
+    reconnectTimerActive_ = true;
+    SubmitDelayedCallback(targetInfo_.managementTimeoutMs + 1000, [this]() {
+        OnReconnectTimeout();
     });
 }
 
