@@ -548,6 +548,48 @@ TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutTimeout) {
     EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
 }
 
+TEST(SBP2SessionRegistryTests, CreateSessionRejectsDuplicateTargetAcrossOwners) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    ASSERT_NE(0u, handle);
+
+    auto duplicate = rig.registry.CreateSession(reinterpret_cast<void*>(0xBEEF),
+                                                SessionRegistryRig::kGuid,
+                                                0);
+    ASSERT_FALSE(duplicate.has_value());
+    EXPECT_EQ(kIOReturnExclusiveAccess, duplicate.error());
+}
+
+TEST(SBP2SessionRegistryTests, CreateSessionRejectsDuplicateTargetUntilLogoutCompletes) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    const size_t writesBeforeRelease = rig.bus.WriteCount();
+    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+
+    auto duplicateWhileLoggingOut = rig.registry.CreateSession(reinterpret_cast<void*>(0xBEEF),
+                                                               SessionRegistryRig::kGuid,
+                                                               0);
+    ASSERT_FALSE(duplicateWhileLoggingOut.has_value());
+    EXPECT_EQ(kIOReturnExclusiveAccess, duplicateWhileLoggingOut.error());
+
+    const auto& logoutWrite = rig.bus.WriteAt(writesBeforeRelease);
+    ASSERT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
+
+    StatusBlock status{};
+    status.details = 0;
+    status.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+
+    auto replacement = rig.registry.CreateSession(reinterpret_cast<void*>(0xBEEF),
+                                                  SessionRegistryRig::kGuid,
+                                                  0);
+    ASSERT_TRUE(replacement.has_value());
+}
+
 TEST(SBP2SessionRegistryTests, MissingDiscoveryStillTerminatesNonSBP2Device) {
     DeviceManager deviceManager;
 

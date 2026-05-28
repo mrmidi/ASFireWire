@@ -126,7 +126,8 @@ private:
 
     void CleanupCommandResources(SBP2SessionRecord& record);
     void CleanupManagementResources(SBP2SessionRecord& record);
-    void RetireSessionLocked(std::shared_ptr<SBP2LoginSession> session);
+    [[nodiscard]] bool HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const;
+    void RetireSessionLocked(const SBP2SessionRecord& record);
     void EraseRetiredSessionLocked(const std::shared_ptr<SBP2LoginSession>& session);
     void SetReleaseLogoutCallbackLocked(uint64_t handle,
                                         const std::shared_ptr<SBP2LoginSession>& session);
@@ -141,8 +142,13 @@ private:
 
     IOLock* lock_{nullptr};
     std::map<uint64_t, SBP2SessionRecord> sessions_;
+    struct RetiringSession {
+        uint64_t guid{0};
+        uint32_t romOffset{0};
+        std::shared_ptr<SBP2LoginSession> session;
+    };
     // Hidden from registry clients, but retained until async logout finishes or times out.
-    std::vector<std::shared_ptr<SBP2LoginSession>> retiringSessions_;
+    std::vector<RetiringSession> retiringSessions_;
     uint64_t nextHandle_{1};
 };
 

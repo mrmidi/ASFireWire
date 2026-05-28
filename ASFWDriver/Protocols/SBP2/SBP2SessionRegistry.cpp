@@ -137,11 +137,18 @@ std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
         return std::unexpected(kIOReturnUnsupported);
     }
 
+    IOLockGuard lock(lock_);
+    if (HasSessionForTargetLocked(guid, romOffset)) {
+        ASFW_LOG(SBP2,
+                 "SBP2SessionRegistry: duplicate session for guid=0x%016llx romOffset=%u",
+                 guid, romOffset);
+        return std::unexpected(kIOReturnExclusiveAccess);
+    }
+
     auto session = std::make_shared<SBP2LoginSession>(bus_, busInfo_, addrSpaceMgr_);
     session->Configure(targetInfo);
     session->SetWorkQueue(workQueue_);
 
-    IOLockGuard lock(lock_);
     const uint64_t handle = nextHandle_++;
 
     SBP2SessionRecord record{};
@@ -479,7 +486,7 @@ bool SBP2SessionRegistry::ReleaseSession(uint64_t handle) {
             }
         } else if (record.session && record.session->State() == LoginState::LoggingOut) {
             SetReleaseLogoutCallbackLocked(handle, record.session);
-            RetireSessionLocked(record.session);
+            RetireSessionLocked(record);
             sessions_.erase(it);
             return true;
         } else {
@@ -512,7 +519,7 @@ bool SBP2SessionRegistry::ReleaseSession(uint64_t handle) {
         CleanupCommandResources(it->second);
         CleanupManagementResources(it->second);
         if (it->second.session && it->second.session->State() == LoginState::LoggingOut) {
-            RetireSessionLocked(it->second.session);
+            RetireSessionLocked(it->second);
         }
         sessions_.erase(it);
     }
@@ -531,7 +538,7 @@ void SBP2SessionRegistry::ReleaseOwner(void* owner) {
                 if (record.session->Logout()) {
                     CleanupCommandResources(record);
                     CleanupManagementResources(record);
-                    RetireSessionLocked(record.session);
+                    RetireSessionLocked(record);
                     it = sessions_.erase(it);
                     continue;
                 }
@@ -539,7 +546,7 @@ void SBP2SessionRegistry::ReleaseOwner(void* owner) {
                 SetReleaseLogoutCallbackLocked(record.handle, record.session);
                 CleanupCommandResources(record);
                 CleanupManagementResources(record);
-                RetireSessionLocked(record.session);
+                RetireSessionLocked(record);
                 it = sessions_.erase(it);
                 continue;
             }
@@ -687,14 +694,38 @@ void SBP2SessionRegistry::CleanupManagementResources(SBP2SessionRecord& record) 
     record.managementORB.reset();
 }
 
-void SBP2SessionRegistry::RetireSessionLocked(std::shared_ptr<SBP2LoginSession> session) {
-    if (session == nullptr) {
+bool SBP2SessionRegistry::HasSessionForTargetLocked(uint64_t guid, uint32_t romOffset) const {
+    for (const auto& [handle, record] : sessions_) {
+        if (record.guid == guid && record.romOffset == romOffset && record.session != nullptr) {
+            return true;
+        }
+    }
+
+    return std::any_of(retiringSessions_.begin(), retiringSessions_.end(),
+                       [guid, romOffset](const RetiringSession& retired) {
+                           return retired.guid == guid &&
+                               retired.romOffset == romOffset &&
+                               retired.session != nullptr;
+                       });
+}
+
+void SBP2SessionRegistry::RetireSessionLocked(const SBP2SessionRecord& record) {
+    if (record.session == nullptr) {
         return;
     }
 
-    if (std::find(retiringSessions_.begin(), retiringSessions_.end(), session) ==
+    const auto it = std::find_if(
+        retiringSessions_.begin(), retiringSessions_.end(),
+        [&record](const RetiringSession& retired) {
+            return retired.session == record.session;
+        });
+    if (it ==
         retiringSessions_.end()) {
-        retiringSessions_.push_back(std::move(session));
+        retiringSessions_.push_back(RetiringSession{
+            .guid = record.guid,
+            .romOffset = record.romOffset,
+            .session = record.session,
+        });
     }
 }
 
@@ -705,7 +736,10 @@ void SBP2SessionRegistry::EraseRetiredSessionLocked(
     }
 
     retiringSessions_.erase(
-        std::remove(retiringSessions_.begin(), retiringSessions_.end(), session),
+        std::remove_if(retiringSessions_.begin(), retiringSessions_.end(),
+                       [&session](const RetiringSession& retired) {
+                           return retired.session == session;
+                       }),
         retiringSessions_.end());
 }
 
