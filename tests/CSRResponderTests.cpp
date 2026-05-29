@@ -204,6 +204,17 @@ TEST(CSRResponder, TopologyMap_NoProvider_DeclinesReads) {
     EXPECT_FALSE(rsp.BlockReadClaim(FW::kCSR_TopologyMapBase, 64).mine);
 }
 
+TEST(CSRResponder, TopologyMap_WithProvider_BlockReadClaimsAddressError) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    FakeTopologyMap topo;
+    CSRResponder rsp(CSRResponder::Deps{.root = &r, .cycleMaster = &cm, .topologyMap = &topo});
+
+    const auto res = rsp.BlockReadClaim(FW::kCSR_TopologyMapBase, 64);
+    EXPECT_TRUE(res.mine);
+    EXPECT_EQ(res.rcode, ResponseCode::AddressError);
+}
+
 TEST(CSRResponder, TopologyMap_WithProvider_ServesQuadlet) {
     FakeRoot r;
     FakeCycleMaster cm;

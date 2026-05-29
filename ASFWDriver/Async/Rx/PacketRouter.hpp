@@ -57,7 +57,7 @@ enum class ARContextType : uint8_t {
  * Handlers are invoked from interrupt context. Must complete quickly and
  * avoid blocking operations.
  */
-using PacketHandler = std::function<ResponseCode(const ARPacketView&)>;
+using PacketHandler = std::function<ResponseCode(const ARPacketView&, uint32_t generation)>;
 
 /**
  * \brief Central dispatcher for AR (Asynchronous Receive) packets.

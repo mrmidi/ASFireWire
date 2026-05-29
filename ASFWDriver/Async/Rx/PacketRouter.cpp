@@ -131,7 +131,7 @@ void PacketRouter::RoutePacket(ARContextType contextType, std::span<const uint8_
         CaptureIncomingEvent(contextType, view, generation);
 
         if (tCode < 16 && handlers[tCode]) {
-            const ResponseCode rcode = handlers[tCode](view);
+            const ResponseCode rcode = handlers[tCode](view, generation);
 
             if (contextType == ARContextType::Request &&
                 responseSender_ &&
