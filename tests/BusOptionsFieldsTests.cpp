@@ -256,8 +256,8 @@ TEST(BusOptionsFieldsTests, MaxRecField_IsAt_Bits15to12) {
 }
 
 TEST(CSRSpaceTests, RemoteStateSetCmstrAddressMatchesLinuxAndSpec) {
-    EXPECT_EQ(ASFW::FW::kCSRRemoteStateSet, 0xF00000F0u);
+    EXPECT_EQ(ASFW::FW::kCSRRemoteStateSet, 0xF0000004u);
     EXPECT_EQ(ASFW::FW::kCSRStateBitCMSTR, 0x00000100u);
     EXPECT_EQ(ASFW::FW::CSRAddr(0xFFC2u, ASFW::FW::kCSRRemoteStateSet),
-              0xFFC2FFFFF00000F0ULL);
+              0xFFC2FFFFF0000004ULL);
 }

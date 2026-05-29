@@ -75,6 +75,26 @@ const char* RemoteCmstrResultString(Async::AsyncStatus status) {
     }
     return "unknown";
 }
+
+const char* RemoteCmstrDetailString(Async::AsyncStatus status) {
+    switch (status) {
+    case Async::AsyncStatus::kSuccess:
+        return "rcode=complete";
+    case Async::AsyncStatus::kTimeout:
+    case Async::AsyncStatus::kBusyRetryExhausted:
+        return "no-response";
+    case Async::AsyncStatus::kAborted:
+    case Async::AsyncStatus::kStaleGeneration:
+        return "generation-stale";
+    case Async::AsyncStatus::kHardwareError:
+        return "see-async-rcode";
+    case Async::AsyncStatus::kShortRead:
+        return "short-response";
+    case Async::AsyncStatus::kLockCompareFail:
+        return "lock-compare-failed";
+    }
+    return "unknown";
+}
 } // anonymous namespace
 
 bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request) {
@@ -316,9 +336,9 @@ void ControllerCore::EnableRemoteCycleMaster(uint8_t rootNodeId, uint32_t genera
                         [generation, rootNodeId](Async::AsyncStatus status,
                                                  std::span<const uint8_t>) {
         ASFW_LOG(Controller,
-                 "RoleCoordinator: remote CMSTR write result gen=%u root=%u result=%{public}s status=%{public}s",
+                 "RoleCoordinator: remote CMSTR write result gen=%u root=%u result=%{public}s status=%{public}s detail=%{public}s",
                  generation, rootNodeId, RemoteCmstrResultString(status),
-                 Async::ToString(status));
+                 Async::ToString(status), RemoteCmstrDetailString(status));
     });
 }
 
