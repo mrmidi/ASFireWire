@@ -118,8 +118,18 @@ CSRResponder::Result CSRResponder::BlockReadClaim(uint32_t csrOffsetLo, uint32_t
         // Until FW-20 installs a provider, decline so 0x5 routing is unchanged.
         return Result{.mine = false};
     }
-    // Gated/disabled for block reads until the DMA-backed path is implemented under FW-20.
-    // Return AddressError rather than Complete with 0 payload.
+    const uint32_t regionOffset = csrOffsetLo - FW::kCSR_TopologyMapBase;
+    uint64_t addr = 0;
+    uint32_t len = 0;
+    if (deps_.topologyMap->ResolveBlockRead(regionOffset, length, addr, len)) {
+        return Result{
+            .mine = true,
+            .rcode = ResponseCode::Complete,
+            .readValue = 0,
+            .readBlockDeviceAddress = addr,
+            .readBlockLength = len
+        };
+    }
     return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
 }
 

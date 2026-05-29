@@ -11,6 +11,8 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -117,6 +119,14 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     // no hardware action yet.
     currentGeneration_ = snap.generation;
     roleCoordinator_.OnTopologyChanged(snap.generation, snap);
+
+    if (deps_.topologyMapService) {
+        deps_.topologyMapService->Rebuild(snap);
+    }
+
+    if (deps_.busManagerElectionDriver) {
+        deps_.busManagerElectionDriver->OnTopologyReady(snap);
+    }
 
     if (!deps_.romScanner) {
         ASFW_LOG(Discovery, "OnTopologyReady: no ROMScanner available");

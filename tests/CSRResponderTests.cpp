@@ -40,6 +40,13 @@ struct FakeTopologyMap : ITopologyMapProvider {
         out = value;
         return true;
     }
+    [[nodiscard]] bool ResolveBlockRead(uint32_t regionByteOffset, uint32_t requestedLength,
+                                        uint64_t& outPayloadDeviceAddress, uint32_t& outPayloadLength) const noexcept override {
+        if (!valid) return false;
+        outPayloadDeviceAddress = 0x12345000 + regionByteOffset;
+        outPayloadLength = requestedLength;
+        return true;
+    }
 };
 
 CSRResponder Make(FakeRoot& r, FakeCycleMaster& cm) {
@@ -204,10 +211,24 @@ TEST(CSRResponder, TopologyMap_NoProvider_DeclinesReads) {
     EXPECT_FALSE(rsp.BlockReadClaim(FW::kCSR_TopologyMapBase, 64).mine);
 }
 
-TEST(CSRResponder, TopologyMap_WithProvider_BlockReadClaimsAddressError) {
+TEST(CSRResponder, TopologyMap_WithProvider_BlockReadResolvesSuccessfully) {
     FakeRoot r;
     FakeCycleMaster cm;
     FakeTopologyMap topo;
+    CSRResponder rsp(CSRResponder::Deps{.root = &r, .cycleMaster = &cm, .topologyMap = &topo});
+
+    const auto res = rsp.BlockReadClaim(FW::kCSR_TopologyMapBase + 16, 64);
+    EXPECT_TRUE(res.mine);
+    EXPECT_EQ(res.rcode, ResponseCode::Complete);
+    EXPECT_EQ(res.readBlockDeviceAddress, 0x12345000u + 16);
+    EXPECT_EQ(res.readBlockLength, 64u);
+}
+
+TEST(CSRResponder, TopologyMap_WithProviderInvalid_BlockReadClaimsAddressError) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    FakeTopologyMap topo;
+    topo.valid = false;
     CSRResponder rsp(CSRResponder::Deps{.root = &r, .cycleMaster = &cm, .topologyMap = &topo});
 
     const auto res = rsp.BlockReadClaim(FW::kCSR_TopologyMapBase, 64);

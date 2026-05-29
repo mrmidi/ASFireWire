@@ -25,8 +25,9 @@ struct ControllerConfig {
     bool allowCycleMasterEligibility{false};
     std::vector<uint32_t> supportedSpeeds;
 
-    // FW-22: which capabilities the local Config ROM advertises. Default is the
-    // conservative Apple-style mode (bmc=0, hardware irmc/cmc/isc preserved).
+    // FW-22: which capabilities the local Config ROM advertises.
+    // Conservative Apple-style mode: advertise neither BM nor IRM capability.
+    // Use LegacyBmcCleared only for backwards-compatible behavior verification.
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::AppleAvoidManager};
 
     static ControllerConfig MakeDefault();

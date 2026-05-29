@@ -250,6 +250,26 @@ target_include_directories(CSRResponderTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(CSRResponderTests)
 
+# Topology Map Builder Tests (FW-20)
+add_executable(TopologyMapBuilderTests
+    "${ASFW_TESTS_DIR}/TopologyMapBuilderTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapBuilder.cpp"
+)
+
+target_link_libraries(TopologyMapBuilderTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TopologyMapBuilderTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TopologyMapBuilderTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TopologyMapBuilderTests)
+
 # FW-19: central inbound-request dispatch routing. Links asfw_packet_serdes for
 # the PacketRouter / ResponseSender symbols referenced by Install/DispatchView.
 add_executable(LocalRequestDispatchTests
@@ -1800,3 +1820,26 @@ target_include_directories(DiagnosticsServiceTests PRIVATE ${ASFW_COMMON_INCLUDE
 
 gtest_discover_tests(DiagnosticsServiceTests)
 
+# Bus Manager Election Tests
+add_executable(BusManagerElectionTests
+    "${ASFW_TESTS_DIR}/BusManagerElectionTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElection.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElectionDriver.cpp"
+    "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
+    "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+ 
+target_link_libraries(BusManagerElectionTests
+    PRIVATE
+        GTest::gtest_main
+)
+ 
+target_compile_definitions(BusManagerElectionTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+ 
+target_include_directories(BusManagerElectionTests PRIVATE ${ASFW_COMMON_INCLUDES})
+ 
+gtest_discover_tests(BusManagerElectionTests)

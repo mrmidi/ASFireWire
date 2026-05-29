@@ -9,6 +9,7 @@
 #include "../Async/FireWireBusImpl.hpp"
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -123,6 +124,14 @@ CMP::CMPClient* ControllerCore::GetCMPClient() const { return deps_.cmpClient.ge
 
 void ControllerCore::SetCMPClient(std::shared_ptr<CMP::CMPClient> client) {
     deps_.cmpClient = std::move(client);
+}
+
+Bus::BusManagerElectionDriver* ControllerCore::GetBusManagerElectionDriver() const {
+    return deps_.busManagerElectionDriver.get();
+}
+
+void ControllerCore::SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver) {
+    deps_.busManagerElectionDriver = std::move(driver);
 }
 
 // Diagnostic accessors for UserClient handlers

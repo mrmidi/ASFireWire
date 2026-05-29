@@ -33,6 +33,8 @@ namespace ASFW::Bus {
 struct IRootStatus;
 struct ICycleMasterControl;
 class CSRResponder;
+class TopologyMapService;
+class BusManagerElectionDriver;
 } // namespace ASFW::Bus
 
 namespace ASFW::Shared {
@@ -114,6 +116,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::shared_ptr<ASFW::Bus::IRootStatus> csrRootStatus;
         std::shared_ptr<ASFW::Bus::ICycleMasterControl> csrCycleMasterControl;
         std::shared_ptr<ASFW::Bus::CSRResponder> csrResponder;
+        std::shared_ptr<ASFW::Bus::TopologyMapService> topologyMapService;
 
         // FW-19: single owner of inbound local request routing (CSR/SBP-2/FCP/DICE).
         std::shared_ptr<ASFW::Async::LocalRequestDispatch> localRequestDispatch;
@@ -121,6 +124,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
 
         std::shared_ptr<ASFW::CMP::CMPClient> cmpClient;
+        std::shared_ptr<ASFW::Bus::BusManagerElectionDriver> busManagerElectionDriver;
         std::function<void()> cycleInconsistentCallback;
     };
 
@@ -169,6 +173,9 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     CMP::CMPClient* GetCMPClient() const;
     void SetCMPClient(std::shared_ptr<CMP::CMPClient> client);
+
+    Bus::BusManagerElectionDriver* GetBusManagerElectionDriver() const;
+    void SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver);
 
   private:
     void LogBuildBanner() const;

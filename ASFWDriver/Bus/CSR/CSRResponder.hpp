@@ -51,6 +51,9 @@ struct ITopologyMapProvider {
     // Returns false if the offset is out of the currently-valid map.
     [[nodiscard]] virtual bool ReadQuadlet(uint32_t regionByteOffset,
                                            uint32_t& outValue) const noexcept = 0;
+    // Gated/implemented under FW-20: resolves block-read targets targeting topology map.
+    [[nodiscard]] virtual bool ResolveBlockRead(uint32_t regionByteOffset, uint32_t requestedLength,
+                                                uint64_t& outPayloadDeviceAddress, uint32_t& outPayloadLength) const noexcept = 0;
 };
 
 class CSRResponder {
@@ -67,6 +70,8 @@ public:
         bool mine{false};
         Async::ResponseCode rcode{Async::ResponseCode::AddressError};
         uint32_t readValue{0}; // valid for read dispatches when rcode == Complete
+        uint64_t readBlockDeviceAddress{0};
+        uint32_t readBlockLength{0};
     };
 
     explicit CSRResponder(Deps deps) noexcept : deps_(deps) {}

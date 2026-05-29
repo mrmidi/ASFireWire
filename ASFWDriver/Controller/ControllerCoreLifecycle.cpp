@@ -11,6 +11,8 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -438,6 +440,12 @@ kern_return_t ControllerCore::Start(IOService* provider) {
 
     ASFW_LOG(Controller, "✓ Hardware initialization complete - interrupt delivery active");
 
+    if (deps_.topologyMapService) {
+        if (!deps_.topologyMapService->Start()) {
+            ASFW_LOG(Controller, "⚠️ WARNING: TopologyMapService failed to start");
+        }
+    }
+
     if (deps_.stateMachine) {
         deps_.stateMachine->TransitionTo(ControllerState::kRunning,
                                          "ControllerCore::Start complete", mach_absolute_time());
@@ -466,6 +474,14 @@ void ControllerCore::Stop() {
 
     // Mark as not running to prevent HandleInterrupt from processing events
     running_ = false;
+
+    if (deps_.topologyMapService) {
+        deps_.topologyMapService->Stop();
+    }
+
+    if (deps_.busManagerElectionDriver) {
+        deps_.busManagerElectionDriver->Stop();
+    }
 
     if (hardwareAttached_ && deps_.hardware) {
         if (deps_.configRomStager) {
@@ -699,8 +715,9 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
     // FW-11/FW-22: advertise only the capabilities ASFW actually backs, gated by
     // the configured role mode. The hardware BusOptions register often defaults
     // to bmc=1, but ASFW does not (yet) implement 1394a BUS_MANAGER_ID election,
-    // so the default AppleAvoidManager mode clears Bus Manager Capable before
-    // staging the local Config ROM. Physical/other bits are preserved.
+    // so the default AppleAvoidManager mode clears Bus Manager Capable and
+    // Isochronous Resource Manager Capable before staging the local Config ROM.
+    // Physical/other bits are preserved.
     const uint32_t localBusOptions =
         ASFW::FW::NormalizeLocalBusOptions(busOptions, config_.roleMode);
     const auto advertisedCaps = ASFW::FW::DecodeBusOptions(localBusOptions);
