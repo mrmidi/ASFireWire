@@ -155,7 +155,7 @@ final class ASFWDiagnosticsClient {
             throw DiagnosticsError.structSizeMismatch(selector: selector, received: Int(header.structSize), expected: expectedSize)
         }
         
-        guard data.count >= expectedSize else {
+        guard data.count <= expectedSize else {
             throw DiagnosticsError.invalidDataSize(selector: selector, received: data.count, expectedAtLeast: expectedSize)
         }
         
@@ -166,8 +166,13 @@ final class ASFWDiagnosticsClient {
             throw DiagnosticsError.driverError(status: header.status)
         }
         
-        // Copy to aligned storage and load as T
-        return data.withUnsafeBytes { ptr in
+        // Allocate a zero-initialized buffer of the full expected structure size.
+        // Copy the received populated bytes (which might be truncated from the end) over.
+        var fullStruct = Data(count: expectedSize)
+        fullStruct.replaceSubrange(0..<data.count, with: data)
+        
+        // Load the full structure safely
+        return fullStruct.withUnsafeBytes { ptr in
             ptr.load(as: T.self)
         }
     }
