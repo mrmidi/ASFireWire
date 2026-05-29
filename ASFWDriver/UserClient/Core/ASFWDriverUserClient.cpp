@@ -357,6 +357,43 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
     }
 }
 
+constexpr uint64_t kMethodDiagGetBusContract      = 1000;
+constexpr uint64_t kMethodDiagGetTopology         = 1001;
+constexpr uint64_t kMethodDiagGetRoleCoordinator  = 1002;
+constexpr uint64_t kMethodDiagGetOHCI             = 1003;
+constexpr uint64_t kMethodDiagGetPHY              = 1004;
+constexpr uint64_t kMethodDiagGetCSRContract      = 1005;
+constexpr uint64_t kMethodDiagGetAsyncTrace       = 1006;
+constexpr uint64_t kMethodDiagGetInboundCSRStats  = 1007;
+constexpr uint64_t kMethodDiagClearAsyncTrace     = 1008;
+
+MethodDispatchResult DispatchDiagnosticsMethods(
+    ASFW::UserClient::UserClientRuntimeState& runtimeState,
+    IOUserClientMethodArguments* arguments, uint64_t selector) {
+    switch (selector) {
+    case kMethodDiagGetBusContract:
+        return runtimeState.Diagnostics().GetBusContract(arguments);
+    case kMethodDiagGetTopology:
+        return runtimeState.Diagnostics().GetTopology(arguments);
+    case kMethodDiagGetRoleCoordinator:
+        return runtimeState.Diagnostics().GetRoleCoordinator(arguments);
+    case kMethodDiagGetOHCI:
+        return runtimeState.Diagnostics().GetOHCI(arguments);
+    case kMethodDiagGetPHY:
+        return runtimeState.Diagnostics().GetPHY(arguments);
+    case kMethodDiagGetCSRContract:
+        return runtimeState.Diagnostics().GetCSRContract(arguments);
+    case kMethodDiagGetAsyncTrace:
+        return runtimeState.Diagnostics().GetAsyncTrace(arguments);
+    case kMethodDiagGetInboundCSRStats:
+        return runtimeState.Diagnostics().GetInboundCSRStats(arguments);
+    case kMethodDiagClearAsyncTrace:
+        return runtimeState.Diagnostics().ClearAsyncTrace(arguments);
+    default:
+        return std::nullopt;
+    }
+}
+
 } // namespace
 
 bool ASFWDriverUserClient::init() {
@@ -534,6 +571,9 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
         return *result;
     }
     if (auto result = DispatchIsochMethods(*runtimeState, arguments, selector)) {
+        return *result;
+    }
+    if (auto result = DispatchDiagnosticsMethods(*runtimeState, arguments, selector)) {
         return *result;
     }
 

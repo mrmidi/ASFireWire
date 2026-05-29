@@ -130,6 +130,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     HardwareInterface* GetHardware() const;
     BusResetCoordinator* GetBusResetCoordinator() const;
     BusManager* GetBusManager() const;
+    const Role::RoleCoordinator& GetRoleCoordinator() const { return roleCoordinator_; }
 
     Discovery::ConfigROMStore* GetConfigROMStore() const;
     Discovery::ROMScanner* GetROMScanner() const;

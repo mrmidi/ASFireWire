@@ -8,6 +8,12 @@
 
 #include "../ResponseCode.hpp"
 
+namespace ASFW::Debug {
+class AsyncTraceCapture;
+}
+
+struct ASFWDiagInboundCSRStats;
+
 namespace ASFW::Async {
 
 class ResponseSender;
@@ -191,7 +197,7 @@ public:
      * **Phase 2.2**
      * Signature updated to use std::span for type-safe buffer access.
      */
-    void RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData);
+    void RoutePacket(ARContextType contextType, std::span<const uint8_t> packetData, uint32_t generation);
 
     /**
      * \brief Clear all registered handlers.
@@ -203,6 +209,13 @@ public:
     /// Configure optional response sender for automatic WrResp emission.
     void SetResponseSender(ResponseSender* sender) noexcept { responseSender_ = sender; }
     [[nodiscard]] ResponseSender* GetResponseSender() const noexcept { return responseSender_; }
+
+    void SetDiagnostics(Debug::AsyncTraceCapture* traceCapture, ASFWDiagInboundCSRStats* csrStats) noexcept {
+        traceCapture_ = traceCapture;
+        csrStats_ = csrStats;
+    }
+
+    void CaptureIncomingEvent(ARContextType contextType, const ARPacketView& view, uint32_t generation) noexcept;
 
     PacketRouter(const PacketRouter&) = delete;
     PacketRouter& operator=(const PacketRouter&) = delete;
@@ -216,6 +229,9 @@ private:
 
     /// Optional responder used to transmit WrResp packets for handled requests
     ResponseSender* responseSender_{nullptr};
+
+    Debug::AsyncTraceCapture* traceCapture_{nullptr};
+    ASFWDiagInboundCSRStats* csrStats_{nullptr};
 
     /**
      * \brief Extract tCode from packet header first byte (Phase 2.2: std::span).

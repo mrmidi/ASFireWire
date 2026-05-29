@@ -121,9 +121,11 @@ void RxPath::ProcessRequestInterrupts() {
                      buffersProcessed,
                      newDataSize,
                      info.startOffset);
+        const uint32_t currentGen = generationTracker_.GetCurrentState().generation16;
         packetRouter_.RoutePacket(
             ARContextType::Request,
-            std::span<const uint8_t>(newDataStart, newDataSize));
+            std::span<const uint8_t>(newDataStart, newDataSize),
+            currentGen);
         commitConsumed(info.descriptorIndex, bufferSize);
     }
 
@@ -490,6 +492,19 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
 
     // NOTE: span points to stack-local payloadCopy — valid only for this synchronous call chain.
     rxResponse.payload = std::span<const uint8_t>(payloadCopy, payloadLen);
+
+    {
+        ARPacketView view{};
+        view.tCode = tCode;
+        view.header = std::span<const uint8_t>(info.packetStart, info.headerLength);
+        view.payload = rxResponse.payload;
+        view.xferStatus = xferStatus;
+        view.timeStamp = static_cast<uint16_t>(info.timeStamp);
+        view.destID = destinationID;
+        view.sourceID = sourceID;
+        view.tLabel = tLabel;
+        packetRouter_.CaptureIncomingEvent(ARContextType::Response, view, currentGen);
+    }
 
     // V2: Compact AR response one-liner for packet flow visibility
     ASFW_LOG_V2(Async, "📥 AR/RSP: tCode=0x%X rCode=0x%X tLabel=%u src=0x%04X→dst=0x%04X payload=%zu bytes",
