@@ -305,10 +305,14 @@ struct DiagnosticsTextFormatter {
         // regValidMask tells us which reads actually succeeded (OHCI rdDone). With it we can
         // distinguish a genuine 0xFF (isolated PHY: physical_id=63) from a failed/timed-out read.
         if !phy.reg0Valid {
-            appendRow("Reg00", "READ FAILED (OHCI timeout/regAccessFail — 0xFF is a placeholder)")
-            appendRow("Reg00 physical_id", "(unread)")
-            appendRow("Reg00 root", "(unread)")
-            appendRow("Reg00 power_status", "(unread)")
+            // Benign: reg 0 is redundant. The in-tree Linux reference never reads PHY reg 0 —
+            // node identity comes from OHCI NodeID. Source it from there instead of alarming.
+            let ohciNode = snapshot.ohci.nodeId & 0x3F
+            let ohciRoot = (snapshot.ohci.nodeId >> 30) & 1 == 1
+            appendRow("Reg00", "not read (rdDone not set) — reg 0 is redundant; identity from OHCI NodeID")
+            appendRow("Reg00 physical_id", "\(ohciNode) (from OHCI NodeID)")
+            appendRow("Reg00 root", "\(ohciRoot ? "Yes" : "No") (from OHCI NodeID)")
+            appendRow("Reg00 power_status", "n/a (reg 0 not read)")
         } else {
             appendRow("Reg00 physical_id", phy.physicalId == 63 ? "63 / unassigned (isolated)" : "\(phy.physicalId)")
             appendRow("Reg00 root", phy.root ? "Yes" : "No")
@@ -342,14 +346,21 @@ struct DiagnosticsTextFormatter {
         let ohciNode = snapshot.ohci.nodeId & 0x3F
         appendRow("OHCI NodeID (authoritative)", ohciNodeValid ? "valid, \(formatNodeStr(ohciNode))" : "invalid")
         appendRow("Topology local node", formatNodeStr(snapshot.topology.localNode))
-        appendRow("PHY Reg00 physical_id", !phy.reg0Valid ? "read failed" : (phy.physicalId == 63 ? "63 / unassigned" : "\(phy.physicalId)"))
+        appendRow("PHY Reg00 physical_id", !phy.reg0Valid ? "not read (using OHCI NodeID)" : (phy.physicalId == 63 ? "63 / unassigned" : "\(phy.physicalId)"))
         appendRow("Verdict", cons.verdict)
-        if cons.warnings.isEmpty {
+        if cons.warnings.isEmpty && cons.notes.isEmpty {
             appendRow("Reason", "PHY-derived state is consistent with OHCI/topology.")
-        } else {
+        }
+        if !cons.warnings.isEmpty {
             report += "\nWarnings (trust order: OHCI NodeID > Self-ID topology > PHY Reg00):\n"
             for w in cons.warnings {
                 report += "  ⚠ \(w.code)\n      \(w.detail)\n"
+            }
+        }
+        if !cons.notes.isEmpty {
+            report += "\nNotes (informational, not problems):\n"
+            for n in cons.notes {
+                report += "  ℹ \(n.code)\n      \(n.detail)\n"
             }
         }
         
@@ -605,7 +616,8 @@ struct PhyDecode {
 enum PhyConsistencyChecker {
     struct Result {
         let verdict: String
-        let warnings: [(code: String, detail: String)]
+        let warnings: [(code: String, detail: String)]  // genuine inconsistencies
+        let notes: [(code: String, detail: String)]      // informational, not a problem
     }
 
     static func check(phy: PhyDecode, regs: [UInt32],
@@ -613,18 +625,19 @@ enum PhyConsistencyChecker {
                       topo: ASFWDiagTopology,
                       ohci: ASFWDiagOHCI) -> Result {
         var warnings: [(code: String, detail: String)] = []
+        var notes: [(code: String, detail: String)] = []
 
         let ohciNodeValid = (ohci.nodeId >> 31) & 1 == 1
         let ohciNode = ohci.nodeId & 0x3F
         let topoValid = topo.valid != 0
         let localIsRoot = topoValid && topo.localNode == topo.rootNode
 
-        // With regValidMask we can be definitive. If the Reg00 read failed, the value is a
-        // placeholder — don't compare it. If it succeeded, the decoded id/root are real and any
-        // conflict with OHCI/topology is meaningful. Trust order: OHCI NodeID > topology > Reg00.
+        // Reg0 is redundant — the in-tree Linux reference never reads PHY reg 0; node identity
+        // comes from OHCI NodeID. So a failed reg0 read is a benign NOTE, not a warning. When it
+        // *did* read, its decoded id/root are real and any conflict with OHCI/topology matters.
         if !phy.reg0Valid {
-            warnings.append(("WARN_PHY_REG00_READ_FAILED",
-                "OHCI failed to read Reg00 (timeout / regAccessFail). physical_id/root/power are unknown — the 0xFF is a placeholder, not PHY state. Rely on OHCI NodeID / Self-ID topology."))
+            notes.append(("NOTE_PHY_REG00_NOT_READ",
+                "Reg00 read did not complete (rdDone not set). Benign: reg 0 is redundant — node identity is taken from OHCI NodeID, and the Linux firewire-ohci reference never reads PHY reg 0 either."))
         } else {
             if ohciNodeValid && phy.physicalId != ohciNode {
                 warnings.append(("WARN_PHY_ID_CONFLICT",
@@ -640,26 +653,27 @@ enum PhyConsistencyChecker {
             }
         }
 
-        // Surface any other registers whose reads failed (reg0 handled above).
+        // Regs 1–15 are read in normal operation; a failure there is unexpected → warning.
         let otherFailed = (0..<min(regs.count, 16)).filter { $0 != 0 && (phy.validMask & (1 << $0)) == 0 }
         if !otherFailed.isEmpty {
             warnings.append(("WARN_PHY_REG_READ_FAILED",
-                "PHY register read(s) failed (placeholder 0xFF): \(otherFailed.map { "Reg\(String(format: "%02d", $0))" }.joined(separator: ", "))."))
+                "Unexpected PHY register read failure(s): \(otherFailed.map { "Reg\(String(format: "%02d", $0))" }.joined(separator: ", "))."))
         }
 
-        if regs.count > 1 && (regs[1] & 0xFF) != 0xFF && phy.gapCount != bus.gapCount {
+        if (phy.validMask & (1 << 1)) != 0 && phy.gapCount != bus.gapCount {
             warnings.append(("WARN_GAP_CONFLICT",
                 "PHY gap_count=\(phy.gapCount) != bus gap_count=\(bus.gapCount)."))
         }
-        if regs.count > 5 && (regs[5] & 0xFF) != 0xFF && phy.powerFail {
-            warnings.append(("WARN_PWR_FAIL_LATCHED",
-                "pwr_fail=1; may be latched after a bus reset — do not treat as fatal on its own."))
+        if (phy.validMask & (1 << 5)) != 0 && phy.powerFail {
+            notes.append(("NOTE_PWR_FAIL_LATCHED",
+                "pwr_fail=1; this rcu bit latches on PHY power-up / cable-power loss and stays set until software clears it — not fatal on its own."))
         }
         if phy.pageSelect != 0 && phy.pageSelect != 1 {
-            warnings.append(("WARN_VENDOR_PAGE",
+            notes.append(("NOTE_VENDOR_PAGE",
                 "page_select=\(phy.pageSelect); Regs 08–15 are vendor-dependent and not decoded as standard."))
         }
 
-        return Result(verdict: warnings.isEmpty ? "OK" : "WARNING", warnings: warnings)
+        let verdict = !warnings.isEmpty ? "WARNING" : (notes.isEmpty ? "OK" : "OK (with notes)")
+        return Result(verdict: verdict, warnings: warnings, notes: notes)
     }
 }
