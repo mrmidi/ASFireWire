@@ -50,11 +50,16 @@ void TraceOutgoingEvent(Debug::AsyncTraceCapture* traceCapture, uint32_t context
     const uint32_t q1 = OSSwapLittleToHostInt32(immDesc->immediateData[1]);
     const uint32_t q2 = OSSwapLittleToHostInt32(immDesc->immediateData[2]);
     
-    event.destinationId = static_cast<uint16_t>(q0 >> 16);
+    // OHCI/Linux AT request layout (see PacketBuilder.cpp:151,188):
+    //   Q0 = [srcBusID:1][unused:5][spd:3 @18:16][tLabel:6 @15:10][rt:2][tCode:4 @7:4][pri:4]
+    //   Q1 = [destinationID:16 @31:16][destOffsetHigh:16]
+    // destID lives in Q1, NOT Q0; the source ID is filled by hardware on the wire (not in the
+    // descriptor), so leave it 0 — the formatter shows the local node for TX rows.
     event.tLabel = static_cast<uint8_t>((q0 >> 10) & 0x3F);
     event.tCode = static_cast<uint8_t>((q0 >> 4) & 0x0F);
-    event.sourceId = static_cast<uint16_t>(q1 >> 16);
-    
+    event.destinationId = static_cast<uint16_t>(q1 >> 16);
+    event.sourceId = 0;
+
     const uint64_t offset_high = q1 & 0xFFFF;
     const uint64_t offset_low = q2;
     
@@ -74,7 +79,14 @@ void TraceOutgoingEvent(Debug::AsyncTraceCapture* traceCapture, uint32_t context
     
     event.ackCode = 0; // Fill when completion is received if possible, else 0
     event.rCode = 0;
-    event.speed = (q0 >> 16) & 0x07;
+    // spd is at Q0 bits [18:16] (PacketBuilder.cpp:181). Map the OHCI speed code to the ABI enum.
+    switch ((q0 >> 16) & 0x07) {
+        case 0:  event.speed = ASFWDiagSpeedS100; break;
+        case 1:  event.speed = ASFWDiagSpeedS200; break;
+        case 2:  event.speed = ASFWDiagSpeedS400; break;
+        case 3:  event.speed = ASFWDiagSpeedS800; break;
+        default: event.speed = ASFWDiagSpeedUnknown; break;
+    }
     
     traceCapture->CaptureEvent(event);
 }

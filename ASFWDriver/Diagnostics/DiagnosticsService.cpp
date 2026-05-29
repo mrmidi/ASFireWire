@@ -13,6 +13,19 @@ namespace ASFW::Diagnostics {
 
 namespace {
 
+// The ABI `speed` field carries an ASFWDiagSpeed enum, but the topology stores raw Mbps.
+uint32_t MbpsToDiagSpeed(uint32_t mbps) noexcept {
+    switch (mbps) {
+        case 100:  return ASFWDiagSpeedS100;
+        case 200:  return ASFWDiagSpeedS200;
+        case 400:  return ASFWDiagSpeedS400;
+        case 800:  return ASFWDiagSpeedS800;
+        case 1600: return ASFWDiagSpeedS1600;
+        case 3200: return ASFWDiagSpeedS3200;
+        default:   return ASFWDiagSpeedUnknown;
+    }
+}
+
 void InitHeader(ASFWDiagHeader* header, uint32_t structSize, uint32_t generation, uint32_t seq) noexcept {
     header->abiVersion = ASFW_DIAG_ABI_VERSION;
     header->structSize = structSize;
@@ -124,7 +137,7 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
             dstNode.nodeId = srcNode.nodeId;
             dstNode.linkActive = srcNode.linkActive ? 1 : 0;
             dstNode.contender = srcNode.isIRMCandidate ? 1 : 0;
-            dstNode.speed = srcNode.maxSpeedMbps;
+            dstNode.speed = MbpsToDiagSpeed(srcNode.maxSpeedMbps);
             dstNode.powerClass = srcNode.powerClass;
             dstNode.gapCount = srcNode.gapCount;
             dstNode.portCount = srcNode.portCount;
@@ -247,13 +260,17 @@ ASFWDiagStatus DiagnosticsService::CollectPHY(ASFWDiagPHY* out) const noexcept {
     std::memset(out, 0, sizeof(ASFWDiagPHY));
     out->regCount = ASFW_DIAG_MAX_PHY_REGS;
 
-    // Read PHY registers address 0 to 15 safely (ReadPhyRegister serializes using phyLock_ internally)
+    // Read PHY registers address 0 to 15 safely (ReadPhyRegister serializes using phyLock_ internally).
+    // regValidMask records which reads actually succeeded (rdDone) vs failed/timed-out — so a 0xFF
+    // from a dead read is distinguishable from a genuine 0xFF (e.g. isolated PHY).
+    out->regValidMask = 0;
     for (uint8_t i = 0; i < ASFW_DIAG_MAX_PHY_REGS; ++i) {
         auto optVal = hw->ReadPhyRegister(i);
         if (optVal) {
             out->regs[i] = *optVal;
+            out->regValidMask |= (1u << i);
         } else {
-            out->regs[i] = 0xFF; // Unavailable/error value
+            out->regs[i] = 0xFF; // read failed/timed out — bit left clear in regValidMask
         }
     }
 
@@ -307,17 +324,21 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
         const char* name;
     };
 
+    // Offsets/ownership follow IEEE 1212 / 1394 + Apple IOFireWireFamilyCommon.h:
+    //   STATE_CLEAR=+0x000, STATE_SET=+0x004 (were swapped); BROADCAST_CHANNEL=+0x234 (was 0x22C).
+    // IRM resource registers (BUS_MANAGER_ID/BANDWIDTH/CHANNELS) are serviced by the OHCI
+    // CSR engine; TOPOLOGY_MAP/SPEED_MAP are not OHCI-served and are not yet implemented here.
     static const LocalCSREntryDef CSR_DEFS[] = {
-        { 0xFFFFF0000000ULL, 0x000, ASFWDiagCSROwnerASFWSoftware,  true,  "STATE_SET" },
-        { 0xFFFFF0000004ULL, 0x004, ASFWDiagCSROwnerASFWSoftware,  true,  "STATE_CLEAR" },
-        { 0xFFFFF000021CULL, 0x21C, ASFWDiagCSROwnerASFWSoftware,  true,  "BUS_MANAGER_ID" },
-        { 0xFFFFF0000220ULL, 0x220, ASFWDiagCSROwnerASFWSoftware,  true,  "BANDWIDTH_AVAILABLE" },
-        { 0xFFFFF0000224ULL, 0x224, ASFWDiagCSROwnerASFWSoftware,  true,  "CHANNELS_AVAILABLE_HI" },
-        { 0xFFFFF0000228ULL, 0x228, ASFWDiagCSROwnerASFWSoftware,  true,  "CHANNELS_AVAILABLE_LO" },
-        { 0xFFFFF000022CULL, 0x22C, ASFWDiagCSROwnerASFWSoftware,  true,  "BROADCAST_CHANNEL" },
-        { 0xFFFFF0000400ULL, 0x400, ASFWDiagCSROwnerOHCIHardware,  true,  "CONFIG_ROM" },
-        { 0xFFFFF0001000ULL, 0x1000, ASFWDiagCSROwnerOHCIHardware, true,  "TOPOLOGY_MAP" },
-        { 0xFFFFF0002000ULL, 0x2000, ASFWDiagCSROwnerOHCIHardware, true,  "SPEED_MAP" }
+        { 0xFFFFF0000000ULL, 0x000, ASFWDiagCSROwnerASFWSoftware,         true,  "STATE_CLEAR" },
+        { 0xFFFFF0000004ULL, 0x004, ASFWDiagCSROwnerASFWSoftware,         true,  "STATE_SET" },
+        { 0xFFFFF000021CULL, 0x21C, ASFWDiagCSROwnerOHCIHardware,         true,  "BUS_MANAGER_ID" },
+        { 0xFFFFF0000220ULL, 0x220, ASFWDiagCSROwnerOHCIHardware,         true,  "BANDWIDTH_AVAILABLE" },
+        { 0xFFFFF0000224ULL, 0x224, ASFWDiagCSROwnerOHCIHardware,         true,  "CHANNELS_AVAILABLE_HI" },
+        { 0xFFFFF0000228ULL, 0x228, ASFWDiagCSROwnerOHCIHardware,         true,  "CHANNELS_AVAILABLE_LO" },
+        { 0xFFFFF0000234ULL, 0x234, ASFWDiagCSROwnerASFWSoftware,         true,  "BROADCAST_CHANNEL" },
+        { 0xFFFFF0000400ULL, 0x400, ASFWDiagCSROwnerOHCIHardware,         true,  "CONFIG_ROM" },
+        { 0xFFFFF0001000ULL, 0x1000, ASFWDiagCSROwnerPlanned,             false, "TOPOLOGY_MAP" },
+        { 0xFFFFF0002000ULL, 0x2000, ASFWDiagCSROwnerOmittedAddressError, false, "SPEED_MAP" }
     };
 
     constexpr uint32_t entryCount = sizeof(CSR_DEFS) / sizeof(CSR_DEFS[0]);
@@ -342,9 +363,9 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
         // Connect counter stats if available
         if (stats) {
             if (src.offset == 0x000) {
-                dst.writeCount = stats->inboundStateSetWrites;
-            } else if (src.offset == 0x004) {
                 dst.writeCount = stats->inboundStateClearWrites;
+            } else if (src.offset == 0x004) {
+                dst.writeCount = stats->inboundStateSetWrites;
             } else if (src.offset == 0x21C) {
                 dst.readCount = stats->inboundBusManagerIdReads;
                 dst.lockCount = stats->inboundBusManagerIdLocks;
@@ -357,7 +378,7 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
             } else if (src.offset == 0x228) {
                 dst.readCount = stats->inboundChannelReads;
                 dst.lockCount = stats->inboundChannelLocks;
-            } else if (src.offset == 0x22C) {
+            } else if (src.offset == 0x234) {
                 dst.readCount = stats->inboundBroadcastChannelReads;
                 dst.writeCount = stats->inboundBroadcastChannelWrites;
             } else if (src.offset == 0x400) {

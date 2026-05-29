@@ -259,13 +259,15 @@ void PacketRouter::CaptureIncomingEvent(ARContextType contextType, const ARPacke
                     handled = true;
                 }
             } else if (destOffset == 0xFFFFF0000000ULL) {
+                // +0x000 is STATE_CLEAR (IEEE 1212 / Apple IOFireWireFamilyCommon.h:544)
                 if (tCode == 0x0 || tCode == 0x1) {
-                    csrStats_->inboundStateSetWrites++;
+                    csrStats_->inboundStateClearWrites++;
                     handled = true;
                 }
             } else if (destOffset == 0xFFFFF0000004ULL) {
+                // +0x004 is STATE_SET
                 if (tCode == 0x0 || tCode == 0x1) {
-                    csrStats_->inboundStateClearWrites++;
+                    csrStats_->inboundStateSetWrites++;
                     handled = true;
                 }
             } else if (destOffset == 0xFFFFF000021CULL) {
@@ -292,7 +294,8 @@ void PacketRouter::CaptureIncomingEvent(ARContextType contextType, const ARPacke
                     csrStats_->inboundChannelLocks++;
                     handled = true;
                 }
-            } else if (destOffset == 0xFFFFF000022CULL) {
+            } else if (destOffset == 0xFFFFF0000234ULL) {
+                // BROADCAST_CHANNEL is at +0x234 (Apple IOFireWireFamilyCommon.h:586)
                 if (tCode == 0x4) {
                     csrStats_->inboundBroadcastChannelReads++;
                     handled = true;
@@ -310,8 +313,13 @@ void PacketRouter::CaptureIncomingEvent(ARContextType contextType, const ARPacke
                     csrStats_->inboundSpeedMapReads++;
                     handled = true;
                 }
+            } else if (destOffset == 0xFFFFF0000B00ULL || destOffset == 0xFFFFF0000D00ULL) {
+                // FCP_COMMAND (+0xB00) / FCP_RESPONSE (+0xD00) are AV/C transaction space,
+                // not CSR registers (Apple IOFireWireFamilyCommon.h:593-594). They live in the
+                // initial register window but must not be counted as "unsupported CSR".
+                handled = true;
             }
-            
+
             if (!handled) {
                 csrStats_->unsupportedCSRRequests++;
             }
