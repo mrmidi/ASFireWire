@@ -16,7 +16,8 @@
 namespace ASFW::Bus {
 
 TopologyMapService::TopologyMapService(ASFW::Driver::HardwareInterface* hw) noexcept
-    : hardware_(hw) {
+    : hardware_(hw),
+      lock_(ASFW::Async::IOLockWrapper(IOLockAlloc())) {
     // Initialise hostMap_ with a default empty map structure (generation 0)
     ASFW::Driver::TopologySnapshot emptySnap{};
     emptySnap.nodeCount = 0;
@@ -27,6 +28,10 @@ TopologyMapService::TopologyMapService(ASFW::Driver::HardwareInterface* hw) noex
 
 TopologyMapService::~TopologyMapService() {
     Stop();
+    if (lock_.IsValid()) {
+        IOLockFree(lock_.Raw());
+        lock_ = ASFW::Async::IOLockWrapper(nullptr);
+    }
 }
 
 bool TopologyMapService::Start() noexcept {
@@ -81,7 +86,7 @@ void TopologyMapService::Stop() noexcept {
 }
 
 void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot) noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
+    ASFW::Async::IOScopedLock guard(lock_);
     if (!started_ && !Start()) {
         ASFW_LOG(Controller, "❌ TopologyMapService: Rebuild failed, service cannot be started");
         return;
@@ -107,7 +112,7 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
 }
 
 bool TopologyMapService::ReadQuadlet(uint32_t regionByteOffset, uint32_t& outValue) const noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
+    ASFW::Async::IOScopedLock guard(lock_);
     if (regionByteOffset % 4 != 0 || regionByteOffset >= 1024) {
         return false;
     }
@@ -117,7 +122,7 @@ bool TopologyMapService::ReadQuadlet(uint32_t regionByteOffset, uint32_t& outVal
 
 bool TopologyMapService::ResolveBlockRead(uint32_t regionByteOffset, uint32_t requestedLength,
                                          uint64_t& outPayloadDeviceAddress, uint32_t& outPayloadLength) const noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
+    ASFW::Async::IOScopedLock guard(lock_);
     if (!started_ || !dmaOpt_) {
         return false;
     }

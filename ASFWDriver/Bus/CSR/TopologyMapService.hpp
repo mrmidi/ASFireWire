@@ -7,9 +7,9 @@
 
 #include "CSRResponder.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
+#include "../../Async/Core/LockPolicy.hpp"
 #include <cstdint>
 #include <span>
-#include <mutex>
 #include <optional>
 
 #ifdef ASFW_HOST_TEST
@@ -53,7 +53,7 @@ public:
 
 private:
     ASFW::Driver::HardwareInterface* hardware_;
-    mutable std::mutex mutex_;
+    mutable ASFW::Async::IOLockWrapper lock_;
 
     // Monotonic generation counter, never reset. Bumps on each Rebuild.
     uint32_t generation_{0};

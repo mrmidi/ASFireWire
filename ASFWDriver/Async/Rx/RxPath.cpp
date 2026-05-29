@@ -32,7 +32,7 @@ RxPath::RxPath(ARRequestContext& arReqContext,
     // Route PHY packets (tCode=0xE) in AR Request context through RxPath
     packetRouter_.RegisterRequestHandler(
         HW::AsyncRequestHeader::kTcodePhyPacket,
-        [this](const ARPacketView& view) {
+        [this](const ARPacketView& view, uint32_t /* generation */) {
             this->HandlePhyRequestPacket(view);
             return ResponseCode::NoResponse;  // PHY packets never generate a response
         });
