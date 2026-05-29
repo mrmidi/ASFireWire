@@ -236,7 +236,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
         EXPECT_EQ(view.payload.size(), 0u);
         return ResponseCode::NoResponse;
     });
-    router.RoutePacket(ARContextType::Response, buffer);
+    router.RoutePacket(ARContextType::Response, buffer, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
@@ -271,7 +271,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) 
         EXPECT_EQ(view.payload.size(), 0x20u);
         return ResponseCode::NoResponse;
     });
-    router.RoutePacket(ARContextType::Response, buffer);
+    router.RoutePacket(ARContextType::Response, buffer, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
@@ -302,7 +302,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
         EXPECT_EQ(view.payload.size(), 0x4u);
         return ResponseCode::NoResponse;
     });
-    router.RoutePacket(ARContextType::Response, buffer);
+    router.RoutePacket(ARContextType::Response, buffer, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
@@ -341,7 +341,7 @@ TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBefor
         return ResponseCode::Complete;
     });
 
-    router.RoutePacket(ARContextType::Request, buffer);
+    router.RoutePacket(ARContextType::Request, buffer, /*generation=*/0);
     EXPECT_TRUE(handled);
 }
 
@@ -363,6 +363,6 @@ TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
         return ResponseCode::NoResponse;
     });
     const auto responseBuffer = std::span<const uint8_t>(responseBytes.data(), responseBytes.size());
-    router.RoutePacket(ARContextType::Response, responseBuffer);
+    router.RoutePacket(ARContextType::Response, responseBuffer, /*generation=*/0);
     EXPECT_TRUE(handled);
 }

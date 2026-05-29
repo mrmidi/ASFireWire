@@ -15,27 +15,58 @@ namespace ASFW::UserClient {
 
 namespace {
 
+// IOConnectCallStructMethod returns structure output inline, capped at 4 KB. The app
+// requests at most this many bytes (see ASFWDiagnosticsClient.structOutputLimit); if the
+// driver hands back a larger OSData the copy fails with kIOReturnNoSpace and the retry --
+// now requesting >4 KB -- is rejected with kIOReturnBadArgument. So every payload we pack
+// must be clamped to this limit, not just to ASFW_DIAG_MAX_*.
+constexpr size_t kStructOutputLimit = 4096;
+
+// Default: fixed-size structs are well under the limit; serialize the whole thing.
 template <typename T>
-size_t GetPopulatedSize(const T& val) {
+size_t PrepareForWire(T& /*val*/) {
     return sizeof(T);
 }
 
+// Topology grows with node count. Clamp to whatever fits in the inline limit and reflect
+// the truncation in nodeCount so the client never reads zero-filled phantom nodes.
 template <>
-inline size_t GetPopulatedSize<ASFWDiagTopology>(const ASFWDiagTopology& val) {
+inline size_t PrepareForWire<ASFWDiagTopology>(ASFWDiagTopology& val) {
+    constexpr size_t kHeaderBytes = offsetof(ASFWDiagTopology, nodes);
+    constexpr uint32_t kMaxFit =
+        static_cast<uint32_t>((kStructOutputLimit - kHeaderBytes) / sizeof(ASFWDiagNode));
     uint32_t count = val.nodeCount;
     if (count > ASFW_DIAG_MAX_NODES) {
         count = ASFW_DIAG_MAX_NODES;
     }
-    return offsetof(ASFWDiagTopology, nodes) + count * sizeof(ASFWDiagNode);
+    if (count > kMaxFit) {
+        count = kMaxFit;
+    }
+    val.nodeCount = count;
+    return kHeaderBytes + (count * sizeof(ASFWDiagNode));
 }
 
+// The async trace ring (up to ASFW_DIAG_MAX_ASYNC_EVENTS) far exceeds the inline limit when
+// full. events[] is ordered oldest->newest, so when we must truncate we drop from the front
+// to keep the most recent activity, then rewrite eventCount to the serialized count.
 template <>
-inline size_t GetPopulatedSize<ASFWDiagAsyncTrace>(const ASFWDiagAsyncTrace& val) {
+inline size_t PrepareForWire<ASFWDiagAsyncTrace>(ASFWDiagAsyncTrace& val) {
+    constexpr size_t kHeaderBytes = offsetof(ASFWDiagAsyncTrace, events);
+    constexpr uint32_t kMaxFit =
+        static_cast<uint32_t>((kStructOutputLimit - kHeaderBytes) / sizeof(ASFWDiagAsyncEvent));
     uint32_t count = val.eventCount;
     if (count > ASFW_DIAG_MAX_ASYNC_EVENTS) {
         count = ASFW_DIAG_MAX_ASYNC_EVENTS;
     }
-    return offsetof(ASFWDiagAsyncTrace, events) + count * sizeof(ASFWDiagAsyncEvent);
+    if (count > kMaxFit) {
+        const uint32_t drop = count - kMaxFit;
+        for (uint32_t i = 0; i < kMaxFit; ++i) {
+            val.events[i] = val.events[i + drop];
+        }
+        count = kMaxFit;
+    }
+    val.eventCount = count;
+    return kHeaderBytes + (count * sizeof(ASFWDiagAsyncEvent));
 }
 
 template <typename StructType, typename CollectFn>
@@ -50,9 +81,9 @@ kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserCli
     StructType val{};
     ASFWDiagStatus status = (service->*collectFn)(&val);
     (void)status; // Handled via header status field
-    
-    size_t sizeToCopy = GetPopulatedSize(val);
-    
+
+    size_t sizeToCopy = PrepareForWire(val);
+
     // Allocate OSData with the populated bytes directly
     OSData* data = OSData::withBytes(&val, static_cast<uint32_t>(sizeToCopy));
     if (!data) {

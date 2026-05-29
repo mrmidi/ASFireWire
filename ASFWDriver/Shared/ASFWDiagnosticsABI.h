@@ -172,6 +172,9 @@ typedef struct ASFWDiagPHY {
     uint32_t lastPhyConfigRootId;
     uint32_t lastPhyConfigGapCount;
     uint32_t lastPhyResetReason;
+    // Bit i set => regs[i] was read successfully (OHCI rdDone, no regAccessFail/timeout).
+    // Distinguishes a genuine 0xFF (e.g. isolated PHY: physical_id=63) from a failed read.
+    uint32_t regValidMask;
 } ASFWDiagPHY;
 
 typedef struct ASFWDiagCSREntry {

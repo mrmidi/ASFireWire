@@ -128,13 +128,21 @@ final class ASFWDiagnosticsClient {
         )
     }
     
+    /// IOConnectCallStructMethod returns structure output inline, capped at 4 KB.
+    /// Requesting more makes the DriverKit shim reject the call with kIOReturnBadArgument
+    /// before the driver method runs. The driver only serializes the populated prefix of
+    /// each struct (see DiagnosticsHandler::GetPopulatedSize), so a 4 KB request is enough
+    /// for realistic topologies/traces and loadDiagStruct zero-fills the rest.
+    private static let structOutputLimit = 4096
+
     private func loadDiagStruct<T>(selector: UInt32, expectedSize: Int) throws -> T {
         guard connector.isConnected else {
             throw DiagnosticsError.notConnected
         }
-        
-        // Call struct method with expected size as capacity.
-        guard let data = connector.transport.callStruct(selector: selector, input: nil, initialCap: expectedSize) else {
+
+        // Call struct method, clamping the requested capacity to the IOKit inline limit.
+        let cap = min(expectedSize, Self.structOutputLimit)
+        guard let data = connector.transport.callStruct(selector: selector, input: nil, initialCap: cap) else {
             throw DiagnosticsError.callFailed(selector: selector)
         }
         

@@ -93,6 +93,14 @@ std::optional<AsyncStatusSnapshot> AsyncSubsystem::GetStatusSnapshot() const {
     return std::nullopt;
 }
 
+Debug::AsyncTraceCapture* AsyncSubsystem::GetAsyncTraceCapture() const {
+    return nullptr;
+}
+
+ASFWDiagInboundCSRStats* AsyncSubsystem::GetInboundCSRStats() const {
+    return nullptr;
+}
+
 } // namespace ASFW::Async
 
 // Stub destructors for out-of-line definitions that this test target doesn't link.

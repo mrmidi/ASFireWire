@@ -48,6 +48,7 @@ add_library(asfw_packet_serdes STATIC
     "${ASFW_DRIVER_DIR}/Async/Tx/PacketBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Async/Rx/ARPacketParser.cpp"
     "${ASFW_DRIVER_DIR}/Async/Rx/PacketRouter.cpp"
+    "${ASFW_DRIVER_DIR}/Debug/AsyncTraceCapture.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
     "${ASFW_TESTS_DIR}/ResponseSenderStub.cpp"
 )

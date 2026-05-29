@@ -233,6 +233,12 @@ class AsyncControllerStub final : public ASFW::Async::IAsyncControllerPort {
     [[nodiscard]] std::optional<ASFW::Async::AsyncStatusSnapshot> GetStatusSnapshot() const override {
         return std::nullopt;
     }
+    [[nodiscard]] ASFW::Debug::AsyncTraceCapture* GetAsyncTraceCapture() const override {
+        return nullptr;
+    }
+    [[nodiscard]] ASFWDiagInboundCSRStats* GetInboundCSRStats() const override {
+        return nullptr;
+    }
 
     std::vector<uint8_t> beginGenerations;
     std::vector<uint8_t> confirmedGenerations;

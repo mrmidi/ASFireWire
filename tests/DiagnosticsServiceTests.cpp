@@ -27,19 +27,19 @@ static_assert(offsetof(ASFWDiagBusContract, busId) == 32, "busId offset mismatch
 static_assert(sizeof(ASFWDiagNode) == 164, "ASFWDiagNode size mismatch");
 static_assert(offsetof(ASFWDiagNode, ports) == 32, "ports offset mismatch");
 
-static_assert(sizeof(ASFWDiagTopology) == 11008, "ASFWDiagTopology size mismatch");
-static_assert(offsetof(ASFWDiagTopology, rawSelfIds) == 32, "rawSelfIds offset mismatch");
-static_assert(offsetof(ASFWDiagTopology, nodes) == 1056, "nodes offset mismatch");
+static_assert(sizeof(ASFWDiagTopology) == 11584, "ASFWDiagTopology size mismatch");
+static_assert(offsetof(ASFWDiagTopology, rawSelfIds) == 64, "rawSelfIds offset mismatch");
+static_assert(offsetof(ASFWDiagTopology, nodes) == 1088, "nodes offset mismatch");
 
-static_assert(sizeof(ASFWDiagRoleCoordinator) == 96, "ASFWDiagRoleCoordinator size mismatch");
+static_assert(sizeof(ASFWDiagRoleCoordinator) == 104, "ASFWDiagRoleCoordinator size mismatch");
 
 static_assert(sizeof(ASFWDiagOHCI) == 136, "ASFWDiagOHCI size mismatch");
 
-static_assert(sizeof(ASFWDiagPHY) == 104, "ASFWDiagPHY size mismatch");
+static_assert(sizeof(ASFWDiagPHY) == 128, "ASFWDiagPHY size mismatch");
 
-static_assert(sizeof(ASFWDiagCSREntry) == 80, "ASFWDiagCSREntry size mismatch");
+static_assert(sizeof(ASFWDiagCSREntry) == 88, "ASFWDiagCSREntry size mismatch");
 
-static_assert(sizeof(ASFWDiagCSRContract) == 2592, "ASFWDiagCSRContract size mismatch");
+static_assert(sizeof(ASFWDiagCSRContract) == 2856, "ASFWDiagCSRContract size mismatch");
 
 static_assert(sizeof(ASFWDiagAsyncEvent) == 80, "ASFWDiagAsyncEvent size mismatch");
 
@@ -58,12 +58,12 @@ TEST_F(DiagnosticsServiceTests, VerifyStructSizeInvariants) {
     EXPECT_EQ(sizeof(ASFWDiagHeader), 32);
     EXPECT_EQ(sizeof(ASFWDiagBusContract), 96);
     EXPECT_EQ(sizeof(ASFWDiagNode), 164);
-    EXPECT_EQ(sizeof(ASFWDiagTopology), 11008);
-    EXPECT_EQ(sizeof(ASFWDiagRoleCoordinator), 96);
+    EXPECT_EQ(sizeof(ASFWDiagTopology), 11584);
+    EXPECT_EQ(sizeof(ASFWDiagRoleCoordinator), 104);
     EXPECT_EQ(sizeof(ASFWDiagOHCI), 136);
-    EXPECT_EQ(sizeof(ASFWDiagPHY), 104);
-    EXPECT_EQ(sizeof(ASFWDiagCSREntry), 80);
-    EXPECT_EQ(sizeof(ASFWDiagCSRContract), 2592);
+    EXPECT_EQ(sizeof(ASFWDiagPHY), 128);
+    EXPECT_EQ(sizeof(ASFWDiagCSREntry), 88);
+    EXPECT_EQ(sizeof(ASFWDiagCSRContract), 2856);
     EXPECT_EQ(sizeof(ASFWDiagAsyncEvent), 80);
     EXPECT_EQ(sizeof(ASFWDiagAsyncTrace), 10280);
     EXPECT_EQ(sizeof(ASFWDiagInboundCSRStats), 96);
