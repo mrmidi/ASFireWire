@@ -17,7 +17,7 @@
 
 namespace ASFW::Bus {
 
-class BusManagerElectionDriver {
+class BusManagerElectionDriver : public std::enable_shared_from_this<BusManagerElectionDriver> {
 public:
     struct Deps {
         ASFW::Async::IAsyncControllerPort* asyncController{nullptr};

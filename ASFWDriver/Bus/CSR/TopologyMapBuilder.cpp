@@ -20,7 +20,10 @@ uint32_t BuildTopologyMap(const ASFW::Driver::TopologySnapshot& snapshot,
     const auto& rawQuads = snapshot.selfIDData.rawQuadlets;
     // rawQuads[0] is the generation/header from OHCI SelfIDCount; the actual
     // Self-ID quadlets on the bus start at index 1.
-    const uint32_t selfIdCount = (rawQuads.size() > 1) ? static_cast<uint32_t>(rawQuads.size() - 1) : 0;
+    uint32_t selfIdCount = (rawQuads.size() > 1) ? static_cast<uint32_t>(rawQuads.size() - 1) : 0;
+    if (selfIdCount > 253) {
+        selfIdCount = 253;
+    }
     const uint32_t nodeCount = snapshot.nodeCount;
 
     // Build map header
@@ -30,18 +33,12 @@ uint32_t BuildTopologyMap(const ASFW::Driver::TopologySnapshot& snapshot,
 
     // Copy Self-ID quadlets verbatim into the map
     for (uint32_t i = 0; i < selfIdCount; ++i) {
-        if (i + 3 >= 256) {
-            break; // limit to 256 quadlets
-        }
         out[i + 3] = rawQuads[i + 1];
     }
 
     // Compute CRC16 over quadlets 1..2+selfIdCount
     const uint32_t crcCoverageCount = 2 + selfIdCount;
-    // Cap coverage to remain within span bounds (max 255 quadlets covered since out is 256)
-    const uint32_t safeCrcCount = (crcCoverageCount < 255) ? crcCoverageCount : 255;
-
-    const uint16_t crc = ASFW::FW::ComputeBlockCRC16(out.subspan(1, safeCrcCount));
+    const uint16_t crc = ASFW::FW::ComputeBlockCRC16(out.subspan(1, crcCoverageCount));
     out[0] |= crc;
 
     return 3 + selfIdCount;

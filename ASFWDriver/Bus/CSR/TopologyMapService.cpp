@@ -92,7 +92,7 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
         return;
     }
 
-    generation_ = snapshot.generation;
+    generation_++;
 
     std::span<uint32_t, 256> outSpan(hostMap_);
     const uint32_t filledQuads = BuildTopologyMap(snapshot, generation_, outSpan);
@@ -100,9 +100,19 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
     // Sync to big-endian DMA mirror
     if (dmaMap_) {
         auto* const base = reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(dmaMap_->GetAddress()));
-        for (size_t i = 0; i < 256; ++i) {
+        
+        // Step 1: Write DMA header length = 0 first to invalidate
+        base[0] = 0;
+        OSSynchronizeIO();
+
+        // Step 2: Write body / self-ID quadlets
+        for (size_t i = 1; i < 256; ++i) {
             base[i] = OSSwapHostToBigInt32(hostMap_[i]);
         }
+        OSSynchronizeIO();
+
+        // Step 3: Write final header with length + CRC last
+        base[0] = OSSwapHostToBigInt32(hostMap_[0]);
         OSSynchronizeIO();
     }
 

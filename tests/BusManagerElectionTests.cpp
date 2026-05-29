@@ -180,14 +180,14 @@ TEST(BusManagerElectionDriver, GatedByMode) {
 
     // AvoidManager Mode: OnTopologyReady should do nothing
     {
-        BusManagerElectionDriver driver(deps, RoleMode::AppleAvoidManager);
+        auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::AppleAvoidManager);
         TopologySnapshot snap{};
         snap.generation = 1;
         snap.localNodeId = 0;
         snap.irmNodeId = 1;
         snap.busBase16 = 0xFFC0;
 
-        driver.OnTopologyReady(snap);
+        driver->OnTopologyReady(snap);
         EXPECT_EQ(mockAsync->compareSwapCount, 0);
         EXPECT_EQ(queue->DrainAllForTesting(), 0);
     }
@@ -209,13 +209,13 @@ TEST(BusManagerElectionDriver, IncumbentImmediateContention) {
         .csrResponder = nullptr
     };
 
-    BusManagerElectionDriver driver(deps, RoleMode::FullBusManager);
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::FullBusManager);
 
     // Setup wasIncumbent = true
     // Mimic winning previous election
-    (void)driver.FSM().InterpretOldValue(0x3F, 0); 
-    driver.OnBusReset();
-    EXPECT_TRUE(driver.WasIncumbent());
+    (void)driver->FSM().InterpretOldValue(0x3F, 0); 
+    driver->OnBusReset();
+    EXPECT_TRUE(driver->WasIncumbent());
 
     TopologySnapshot snap{};
     snap.generation = 1;
@@ -223,7 +223,7 @@ TEST(BusManagerElectionDriver, IncumbentImmediateContention) {
     snap.irmNodeId = 1;
     snap.busBase16 = 0x0;
 
-    driver.OnTopologyReady(snap);
+    driver->OnTopologyReady(snap);
 
     // Contends immediately: compareSwapCount should be 1
     EXPECT_EQ(mockAsync->compareSwapCount, 1);
@@ -233,7 +233,7 @@ TEST(BusManagerElectionDriver, IncumbentImmediateContention) {
 
     // Complete compareswap
     mockAsync->lastCompareSwapCallback(ASFW::Async::AsyncStatus::kSuccess, 0x3F, true);
-    EXPECT_EQ(driver.FSM().Owner(), BmOwner::Local);
+    EXPECT_EQ(driver->FSM().Owner(), BmOwner::Local);
 }
 
 TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
@@ -252,8 +252,8 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
         .csrResponder = nullptr
     };
 
-    BusManagerElectionDriver driver(deps, RoleMode::FullBusManager);
-    EXPECT_FALSE(driver.WasIncumbent());
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::FullBusManager);
+    EXPECT_FALSE(driver->WasIncumbent());
 
     TopologySnapshot snap{};
     snap.generation = 2;
@@ -261,7 +261,7 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
     snap.irmNodeId = 2;
     snap.busBase16 = 0x0;
 
-    driver.OnTopologyReady(snap);
+    driver->OnTopologyReady(snap);
 
     // Delay scheduled, not executed yet
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
@@ -275,8 +275,8 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
 
     // Callback remote node wins
     mockAsync->lastCompareSwapCallback(ASFW::Async::AsyncStatus::kSuccess, 4, false);
-    EXPECT_EQ(driver.FSM().Owner(), BmOwner::Remote);
-    EXPECT_EQ(driver.FSM().OwnerId(), 4);
+    EXPECT_EQ(driver->FSM().Owner(), BmOwner::Remote);
+    EXPECT_EQ(driver->FSM().OwnerId(), 4);
 }
 
 TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
@@ -295,7 +295,7 @@ TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
         .csrResponder = nullptr
     };
 
-    BusManagerElectionDriver driver(deps, RoleMode::FullBusManager);
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::FullBusManager);
 
     TopologySnapshot snap{};
     snap.generation = 3;
@@ -303,11 +303,11 @@ TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
     snap.irmNodeId = 2;
     snap.busBase16 = 0x0;
 
-    driver.OnTopologyReady(snap);
+    driver->OnTopologyReady(snap);
 
     // A bus reset occurs before the grace period task executes!
     mockAsync->currentGen16 = 4; // Generation advances
-    driver.OnBusReset();
+    driver->OnBusReset();
 
     // Now execute delayed grace period task
     queue->DrainAllForTesting();

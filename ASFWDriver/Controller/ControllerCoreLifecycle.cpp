@@ -106,13 +106,18 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
 
 bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
                                       const ASFW::Driver::ControllerConfig& config) {
+    const bool shouldAdvertiseContender =
+        config.roleMode == ASFW::FW::RoleMode::FullBusManager ||
+        config.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
+        config.allowCycleMasterEligibility;
+
     const uint8_t phyReg4Bits =
-        config.allowCycleMasterEligibility
+        shouldAdvertiseContender
             ? (ASFW::Driver::kPhyLinkActive | ASFW::Driver::kPhyContender)
             : ASFW::Driver::kPhyLinkActive;
 
     ASFW_LOG_PHY("Configuring PHY register 4 (link_on=1 contender=%d)",
-                 config.allowCycleMasterEligibility ? 1 : 0);
+                 shouldAdvertiseContender ? 1 : 0);
     bool phyConfigOk = hw.UpdatePhyRegister(ASFW::Driver::kPhyReg4Address, 0, phyReg4Bits);
     if (!phyConfigOk) {
         ASFW_LOG(Hardware, "Failed to configure PHY register 4");
@@ -120,7 +125,7 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     }
 
     ASFW_LOG_PHY("PHY reg4 configured: link_on=1 contender=%d",
-                 config.allowCycleMasterEligibility ? 1 : 0);
+                 shouldAdvertiseContender ? 1 : 0);
     hw.InitializePhyReg4Cache();
 
     const bool accelEnabled =

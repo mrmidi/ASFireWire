@@ -48,7 +48,7 @@ struct ICycleMasterControl {
 struct ITopologyMapProvider {
     virtual ~ITopologyMapProvider() = default;
     // regionByteOffset is relative to kCSR_TopologyMapBase (0..0x3FF, quad-aligned).
-    // Returns false if the offset is out of the currently-valid map.
+    // Returns false if the offset is out of the 1 KiB topology map region.
     [[nodiscard]] virtual bool ReadQuadlet(uint32_t regionByteOffset,
                                            uint32_t& outValue) const noexcept = 0;
     // Gated/implemented under FW-20: resolves block-read targets targeting topology map.
