@@ -46,8 +46,13 @@ public:
         // CSR register space only: destination high 16 bits == 0xFFFF.
         if ((ctx.destOffset >> 32) != 0xFFFFu) {
             return LocalRequestResult::NotMine();
-        }
         const uint32_t off = static_cast<uint32_t>(ctx.destOffset & 0xFFFFFFFFu);
+        if (off == ASFW::FW::kCSR_BusManagerID ||
+            off == ASFW::FW::kCSR_BandwidthAvailable ||
+            off == ASFW::FW::kCSR_ChannelsAvailableHi ||
+            off == ASFW::FW::kCSR_ChannelsAvailableLo) {
+            ASFW_LOG(Controller, "⚠️ WARNING: Inbound request targeting autonomous hardware CSR (offset=0x%x, tCode=0x%x) reached software dispatch unexpectedly!", off, ctx.tCode);
+        }
         switch (ctx.tCode) {
         case AReq::kTcodeWriteQuad: {
             const auto r = csr_->WriteQuadlet(off, ctx.quadletData);

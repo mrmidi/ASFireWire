@@ -118,12 +118,9 @@ CSRResponder::Result CSRResponder::BlockReadClaim(uint32_t csrOffsetLo, uint32_t
         // Until FW-20 installs a provider, decline so 0x5 routing is unchanged.
         return Result{.mine = false};
     }
-    if ((csrOffsetLo & 0x3u) != 0 || (length & 0x3u) != 0 || length == 0) {
-        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
-    }
-    // FW-20 fills the actual block-read data path (DMA-backed payload). The claim
-    // itself lets the wiring know the region is ours.
-    return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = 0};
+    // Gated/disabled for block reads until the DMA-backed path is implemented under FW-20.
+    // Return AddressError rather than Complete with 0 payload.
+    return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
 }
 
 } // namespace ASFW::Bus

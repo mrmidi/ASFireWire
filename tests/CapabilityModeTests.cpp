@@ -22,8 +22,8 @@ constexpr uint32_t kHwBusOptions =
     (0x05u << BO::kCycClkAccShift) | (0x08u << BO::kMaxRecShift) |
     (0x02u << BO::kMaxROMShift) | BO::kReserved3Mask | 0x02u /*link_spd*/;
 
-TEST(CapabilityMode, AppleAvoidManager_ForcesBmcZero_PreservesRest) {
-    const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::AppleAvoidManager);
+TEST(CapabilityMode, LegacyBmcCleared_ForcesBmcZero_PreservesRest) {
+    const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::LegacyBmcCleared);
     const auto d = DecodeBusOptions(out);
     EXPECT_FALSE(d.bmc);
     EXPECT_TRUE(d.irmc); // preserved from hardware
@@ -33,9 +33,20 @@ TEST(CapabilityMode, AppleAvoidManager_ForcesBmcZero_PreservesRest) {
     EXPECT_EQ(out, kHwBusOptions & ~BO::kBMCMask);
 }
 
-TEST(CapabilityMode, AppleAvoidManager_MatchesLegacyOneArgOverload) {
+TEST(CapabilityMode, AppleAvoidManager_ForcesBmcAndIrmcZero_PreservesRest) {
+    const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::AppleAvoidManager);
+    const auto d = DecodeBusOptions(out);
+    EXPECT_FALSE(d.bmc);
+    EXPECT_FALSE(d.irmc); // cleared to avoid being manager/IRM
+    EXPECT_TRUE(d.cmc);
+    EXPECT_TRUE(d.isc);
+    // Both bmc and irmc bits are cleared.
+    EXPECT_EQ(out, kHwBusOptions & ~(BO::kBMCMask | BO::kIRMCMask));
+}
+
+TEST(CapabilityMode, LegacyBmcCleared_MatchesLegacyOneArgOverload) {
     EXPECT_EQ(NormalizeLocalBusOptions(kHwBusOptions),
-              NormalizeLocalBusOptions(kHwBusOptions, RoleMode::AppleAvoidManager));
+              NormalizeLocalBusOptions(kHwBusOptions, RoleMode::LegacyBmcCleared));
 }
 
 TEST(CapabilityMode, IRMServerOnly_SetsIrmcClearsBmc) {
@@ -55,8 +66,8 @@ TEST(CapabilityMode, FullBusManager_SetsBmcAndIrmc) {
 }
 
 TEST(CapabilityMode, ReservedAndNumericBitsPreservedInEveryMode) {
-    for (auto mode : {RoleMode::AppleAvoidManager, RoleMode::IRMServerOnly,
-                      RoleMode::FullBusManager}) {
+    for (auto mode : {RoleMode::LegacyBmcCleared, RoleMode::AppleAvoidManager,
+                      RoleMode::IRMServerOnly, RoleMode::FullBusManager}) {
         const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, mode);
         const auto d = DecodeBusOptions(out);
         EXPECT_EQ(d.cycClkAcc, 0x05u);

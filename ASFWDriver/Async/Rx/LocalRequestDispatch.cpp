@@ -90,9 +90,10 @@ ResponseCode LocalRequestDispatch::DispatchView(const ARPacketView& view, uint32
 void LocalRequestDispatch::Install(PacketRouter& router, ResponseSender* sender) {
     sender_ = sender;
 
-    // Generation is not delivered to per-tCode handlers by PacketRouter today;
-    // no current participant needs it (generation-safety lands with FW-18).
-    const auto wire = [this](const ARPacketView& view) { return DispatchView(view, 0); };
+    // Deliver generation to LocalRequestDispatch so that context has correct generation.
+    const auto wire = [this](const ARPacketView& view, uint32_t generation) {
+        return DispatchView(view, generation);
+    };
 
     router.RegisterRequestHandler(AReq::kTcodeWriteQuad, wire);
     router.RegisterRequestHandler(AReq::kTcodeWriteBlock, wire);

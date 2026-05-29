@@ -228,7 +228,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadQuadletResponseMatchesLinuxVector) {
 
     PacketRouter router;
     bool handled = false;
-    router.RegisterResponseHandler(0x6, [&](const ARPacketView& view) {
+    router.RegisterResponseHandler(0x6, [&](const ARPacketView& view, uint32_t) {
         handled = true;
         EXPECT_EQ(view.destID, 0xFFC1);
         EXPECT_EQ(view.sourceID, 0xFFC0);
@@ -263,7 +263,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseReadBlockResponseComputesPayloadLength) 
 
     PacketRouter router;
     bool handled = false;
-    router.RegisterResponseHandler(0x7, [&](const ARPacketView& view) {
+    router.RegisterResponseHandler(0x7, [&](const ARPacketView& view, uint32_t) {
         handled = true;
         EXPECT_EQ(view.destID, 0xFFC1);
         EXPECT_EQ(view.sourceID, 0xFFC0);
@@ -294,7 +294,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ParseLockResponsePreservesExtendedTCodeLength
 
     PacketRouter router;
     bool handled = false;
-    router.RegisterResponseHandler(0xB, [&](const ARPacketView& view) {
+    router.RegisterResponseHandler(0xB, [&](const ARPacketView& view, uint32_t) {
         handled = true;
         EXPECT_EQ(view.destID, 0xFFC1);
         EXPECT_EQ(view.sourceID, 0xFFC0);
@@ -326,7 +326,7 @@ TEST(AsyncPacketSerDesLinuxCompat, RequestPayloadIsCopiedIntoAlignedScratchBefor
 
     PacketRouter router;
     bool handled = false;
-    router.RegisterRequestHandler(0x1, [&](const ARPacketView& view) {
+    router.RegisterRequestHandler(0x1, [&](const ARPacketView& view, uint32_t) {
         handled = true;
         EXPECT_EQ(view.payload.size(), 8u);
         EXPECT_EQ(0u, reinterpret_cast<uintptr_t>(view.payload.data()) & 0x7u);
@@ -357,7 +357,7 @@ TEST(AsyncPacketSerDesLinuxCompat, ExtractTLabelUsesWireByteTwo) {
 
     PacketRouter router;
     bool handled = false;
-    router.RegisterResponseHandler(0x6, [&](const ARPacketView& view) {
+    router.RegisterResponseHandler(0x6, [&](const ARPacketView& view, uint32_t) {
         handled = true;
         EXPECT_EQ(view.tLabel, 48u);
         return ResponseCode::NoResponse;

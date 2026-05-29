@@ -325,25 +325,20 @@ struct GenerationUpdate {
 //   - irmc / cmc / isc / pmc and all numeric fields (cyc_clk_acc, max_rec,
 //     max_ROM, generation, link_spd): PRESERVED from hardware, UNCHANGED. The
 //     OHCI register is authoritative for physical capability — do not fabricate
-//     (wire-compat). In particular this does NOT touch irmc. Note ASFW currently
-//     has only an IRM *client* (IRMClient allocates from the elected IRM) and
-//     does NOT host the IRM CSR register set as a server, so whether ASFW should
-//     advertise irmc=1 at all is an OPEN question owned by the RoleCoordinator
-//     work (FW-5/FW-9) — not decided here. Preserving the hardware value keeps
-//     existing (working) IRM-election behavior unchanged.
-
 // FW-22: role mode driving local BIB capability advertisement. ASFW must never
 // advertise a role it cannot serve, so the advertised bits are mode-gated.
 enum class RoleMode : uint8_t {
-    // Conservative default. Exactly the historical FW-11 behavior: force bmc=0,
-    // preserve hardware irmc/cmc/isc/pmc and all numeric fields. Zero change to
-    // advertised bits vs the legacy 1-arg normalizer.
-    AppleAvoidManager = 0,
+    // Keeps the legacy behavior (FW-11): force bmc=0, preserve hardware
+    // irmc/cmc/isc/pmc. Included for backwards-compatibility verification.
+    LegacyBmcCleared = 0,
+    // True Apple-style avoid manager mode: force bmc=0, irmc=0. Ensures the node
+    // behaves as a pure client and will not be elected as IRM or BM.
+    AppleAvoidManager = 1,
     // ASFW hosts the IRM resource registers (FW-13/FW-19) but does not contend
     // for full Bus Manager: irmc=1, bmc=0, cmc/isc preserved.
-    IRMServerOnly = 1,
+    IRMServerOnly = 2,
     // Full Bus Manager: bmc=1, irmc=1 (legal only once FW-18/19/20/21 land).
-    FullBusManager = 2,
+    FullBusManager = 3,
 };
 
 // A BIB advertising bmc=1 MUST also advertise irmc=1 (IEEE 1394a-2000: a
@@ -362,8 +357,11 @@ enum class RoleMode : uint8_t {
     using namespace BusOptionsFields;
     uint32_t out = hwBusOptions;
     switch (mode) {
-    case RoleMode::AppleAvoidManager:
+    case RoleMode::LegacyBmcCleared:
         out &= ~kBMCMask; // bmc=0; preserve everything else
+        break;
+    case RoleMode::AppleAvoidManager:
+        out &= ~(kBMCMask | kIRMCMask); // bmc=0, irmc=0; truly avoid manager
         break;
     case RoleMode::IRMServerOnly:
         out &= ~kBMCMask; // bmc=0
@@ -376,21 +374,24 @@ enum class RoleMode : uint8_t {
     return out;
 }
 
-// Legacy 1-arg overload: AppleAvoidManager semantics (preserves all callers).
+// Legacy 1-arg overload: LegacyBmcCleared semantics (preserves legacy callers).
 [[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions) noexcept {
-    return NormalizeLocalBusOptions(hwBusOptions, RoleMode::AppleAvoidManager);
+    return NormalizeLocalBusOptions(hwBusOptions, RoleMode::LegacyBmcCleared);
 }
 
 // Mode invariants: every mode must yield a legal capability combo, and the
 // default must still force bmc=0 while leaving irmc untouched (regression guard).
-static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager) &
+static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::LegacyBmcCleared) &
                BusOptionsFields::kBMCMask) == 0,
-              "AppleAvoidManager must force bmc=0");
-static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager) &
+              "LegacyBmcCleared must force bmc=0");
+static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::LegacyBmcCleared) &
                BusOptionsFields::kIRMCMask) != 0,
-              "AppleAvoidManager must preserve hardware irmc");
-static_assert(NormalizeLocalBusOptions(0x00000000u, RoleMode::AppleAvoidManager) == 0x00000000u,
-              "AppleAvoidManager must be a pure passthrough when bmc already 0");
+              "LegacyBmcCleared must preserve hardware irmc");
+static_assert(NormalizeLocalBusOptions(0x00000000u, RoleMode::LegacyBmcCleared) == 0x00000000u,
+              "LegacyBmcCleared must be a pure passthrough when bmc already 0");
+static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager) &
+               (BusOptionsFields::kBMCMask | BusOptionsFields::kIRMCMask)) == 0,
+              "AppleAvoidManager must force bmc=0 and irmc=0");
 static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::IRMServerOnly) &
                (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
                   BusOptionsFields::kIRMCMask,
@@ -399,7 +400,8 @@ static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager) &
                (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
                   (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask),
               "FullBusManager must set bmc=1 and irmc=1");
-static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager)) &&
+static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::LegacyBmcCleared)) &&
+              IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::IRMServerOnly)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager)),
