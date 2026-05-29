@@ -1718,3 +1718,23 @@ target_compile_definitions(SBP2ORBTests
 target_include_directories(SBP2ORBTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SBP2ORBTests)
+
+# Diagnostics Service & ABI Invariants Tests
+add_executable(DiagnosticsServiceTests
+    "${ASFW_TESTS_DIR}/DiagnosticsServiceTests.cpp"
+)
+
+target_link_libraries(DiagnosticsServiceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(DiagnosticsServiceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(DiagnosticsServiceTests PRIVATE ${ASFW_COMMON_INCLUDES} "${ASFW_DRIVER_DIR}/Shared")
+
+gtest_discover_tests(DiagnosticsServiceTests)
+
