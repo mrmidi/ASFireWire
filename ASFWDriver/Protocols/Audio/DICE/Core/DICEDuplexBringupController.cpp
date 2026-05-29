@@ -56,11 +56,15 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
                       const GlobalState& global,
                       const StreamConfig& tx,
                       const StreamConfig& rx) noexcept {
-    caps.hostInputPcmChannels = tx.TotalPcmChannels();
-    caps.deviceToHostAm824Slots = tx.TotalAm824Slots();
-    caps.hostOutputPcmChannels = rx.TotalPcmChannels();
-    caps.hostToDeviceAm824Slots = rx.TotalAm824Slots();
+    caps.hostInputPcmChannels = tx.ActivePcmChannels();
+    caps.deviceToHostAm824Slots = tx.ActiveAm824Slots();
+    caps.hostOutputPcmChannels = rx.ActivePcmChannels();
+    caps.hostToDeviceAm824Slots = rx.ActiveAm824Slots();
     caps.sampleRateHz = global.sampleRate;
+    caps.deviceToHostIsoChannel =
+        tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
+    caps.hostToDeviceIsoChannel =
+        rx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
 }
 
 } // namespace
