@@ -13,6 +13,8 @@
 #include "../Async/Rx/PacketRouter.hpp"
 #include "../Bus/CSR/CSRHardwareAdapters.hpp"
 #include "../Bus/CSR/CSRResponder.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Hardware/IEEE1394.hpp"
 #include "../Logging/Logging.hpp"
@@ -46,6 +48,7 @@ public:
         // CSR register space only: destination high 16 bits == 0xFFFF.
         if ((ctx.destOffset >> 32) != 0xFFFFu) {
             return LocalRequestResult::NotMine();
+        }
         const uint32_t off = static_cast<uint32_t>(ctx.destOffset & 0xFFFFFFFFu);
         if (off == ASFW::FW::kCSR_BusManagerID ||
             off == ASFW::FW::kCSR_BandwidthAvailable ||
@@ -68,9 +71,7 @@ public:
             if (!r.mine) {
                 return LocalRequestResult::NotMine();
             }
-            // FW-20 fills the DMA-backed payload; until then BlockReadClaim only
-            // claims with a provider installed (currently none -> NotMine above).
-            return LocalRequestResult::Block(r.rcode, 0, 0);
+            return LocalRequestResult::Block(r.rcode, r.readBlockDeviceAddress, r.readBlockLength);
         }
         default:
             return LocalRequestResult::NotMine();
@@ -200,9 +201,23 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
         d.csrResponder = std::make_shared<ASFW::Bus::CSRResponder>(ASFW::Bus::CSRResponder::Deps{
             .root = d.csrRootStatus.get(),
             .cycleMaster = d.csrCycleMasterControl.get(),
-            .topologyMap = nullptr, // FW-20 installs the topology-map provider
+            .topologyMap = d.topologyMapService.get(),
         });
-        ASFW_LOG(Controller, "[Controller] CSRResponder initialized (FW-19)");
+        ASFW_LOG(Controller, "[Controller] CSRResponder initialized with TopologyMapService (FW-20)");
+
+        // Create and wire the Bus Manager election driver (FW-18)
+        if (!d.busManagerElectionDriver && d.asyncController && d.scheduler) {
+            ASFW::Bus::BusManagerElectionDriver::Deps electDeps{
+                .asyncController = d.asyncController.get(),
+                .scheduler = d.scheduler.get(),
+                .csrResponder = d.csrResponder.get(),
+            };
+            d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.config.roleMode);
+            if (ctx.controller) {
+                ctx.controller->SetBusManagerElectionDriver(d.busManagerElectionDriver);
+            }
+            ASFW_LOG(Controller, "[Controller] BusManagerElectionDriver initialized (FW-18)");
+        }
     }
 
     auto dispatch = std::make_shared<ASFW::Async::LocalRequestDispatch>();

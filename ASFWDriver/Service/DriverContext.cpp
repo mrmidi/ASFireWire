@@ -14,6 +14,8 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -56,6 +58,8 @@ void ServiceContext::Reset() {
     deps.configRomStager.reset();
     deps.interrupts.reset();
     deps.topology.reset();
+    deps.topologyMapService.reset();
+    deps.busManagerElectionDriver.reset();
     deps.fcpResponseRouter.reset(); // Clean up FCP router
     deps.sbp2AddressSpaceManager.reset();
     deps.avcDiscovery.reset();      // Clean up AV/C discovery
@@ -107,6 +111,9 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     }
     if (!d.busManager) {
         d.busManager = std::make_shared<BusManager>();
+    }
+    if (!d.topologyMapService && d.hardware) {
+        d.topologyMapService = std::make_shared<ASFW::Bus::TopologyMapService>(d.hardware.get());
     }
 
     if (!d.asyncSubsystem) {

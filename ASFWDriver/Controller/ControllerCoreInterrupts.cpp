@@ -11,6 +11,7 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -53,6 +54,11 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     LogInterruptContext(snapshot, rawEvents, currentMask, events);
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
+    if ((events & IntEventBits::kBusReset) != 0U) {
+        if (deps_.busManagerElectionDriver) {
+            deps_.busManagerElectionDriver->OnBusReset();
+        }
+    }
     DispatchAsyncInterrupts(events);
     LogBusResetCompletionEvents(events, snapshot.timestamp);
 

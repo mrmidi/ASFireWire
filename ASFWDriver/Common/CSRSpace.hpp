@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <span>
 
 // Forward declaration - FWAddress struct is defined in AsyncTypes.hpp
 namespace ASFW::Async {
@@ -509,6 +510,27 @@ constexpr inline uint32_t MakeDirectoryEntry(uint8_t key, uint8_t type, uint32_t
     return (static_cast<uint32_t>(type) & 0x3u) << 30 |
            (static_cast<uint32_t>(key) & 0x3Fu) << 24 |
            (value24 & 0x00FFFFFFu);
+}
+
+[[nodiscard]] constexpr uint16_t CRCStep(uint16_t crc, uint16_t data) noexcept {
+    crc = static_cast<uint16_t>(crc ^ data);
+    for (int bit = 0; bit < 16; ++bit) {
+        if ((crc & 0x8000U) != 0U) {
+            crc = static_cast<uint16_t>((crc << 1) ^ kConfigROMCRCPolynomial);
+        } else {
+            crc = static_cast<uint16_t>(crc << 1);
+        }
+    }
+    return crc;
+}
+
+[[nodiscard]] constexpr uint16_t ComputeBlockCRC16(std::span<const uint32_t> block) noexcept {
+    uint16_t crc = 0;
+    for (uint32_t quadletHost : block) {
+        crc = CRCStep(crc, static_cast<uint16_t>((quadletHost >> 16) & 0xFFFFU));
+        crc = CRCStep(crc, static_cast<uint16_t>(quadletHost & 0xFFFFU));
+    }
+    return crc;
 }
 
 } // namespace ASFW::FW
