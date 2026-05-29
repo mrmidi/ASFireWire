@@ -251,7 +251,8 @@ struct DiagnosticsTextFormatter {
             appendRow("Remote CMSTR Payload", formatHex32(snapshot.roleCoordinator.remoteCMSTRPayload))
             appendRow("Remote CMSTR RCode", snapshot.roleCoordinator.remoteCMSTRRCode)
         } else {
-            appendRow("Remote CMSTR", "none (not executed)")
+            appendRow("Remote CMSTR Policy", "observe-only / not armed")
+            appendRow("Reason", "root CMC evidence not connected")
         }
         appendRow("Cycle Start Observed", snapshot.roleCoordinator.cycleStartObserved != 0 ? "Yes" : "No")
         appendRow("Cycle Start Source Node", formatNodeStr(snapshot.roleCoordinator.cycleStartSourceNode))
