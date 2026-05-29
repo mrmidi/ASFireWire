@@ -790,4 +790,82 @@ std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const 
     return {cycleTimer, uptime};
 }
 
+void HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
+    if (!device_) {
+        return;
+    }
+    const uint32_t currentValue = ReadLocalIRMResource(selectCode);
+    if (currentValue == value) {
+        return;
+    }
+    
+    Write(Register32::kCSRCompareData, currentValue);
+    Write(Register32::kCSRData, value);
+    Write(Register32::kCSRControl, selectCode & 0x3u);
+    FlushPostedWrites();
+    
+    constexpr int kMaxTries = 10000;
+    for (int i = 0; i < kMaxTries; ++i) {
+        uint32_t ctrl = Read(Register32::kCSRControl);
+        if (ctrl & 0x80000000u) {
+            return;
+        }
+#ifndef ASFW_HOST_TEST
+        IODelay(5);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+#endif
+    }
+    ASFW_LOG(Hardware, "WriteLocalIRMResource timeout select=%u value=0x%08x", selectCode, value);
+}
+
+uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
+    if (!device_) {
+        return 0;
+    }
+    Write(Register32::kCSRControl, selectCode & 0x3u);
+    FlushPostedWrites();
+    
+    constexpr int kMaxTries = 10000;
+    for (int i = 0; i < kMaxTries; ++i) {
+        uint32_t ctrl = Read(Register32::kCSRControl);
+        if (ctrl & 0x80000000u) {
+            return Read(Register32::kCSRData);
+        }
+#ifndef ASFW_HOST_TEST
+        IODelay(5);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+#endif
+    }
+    ASFW_LOG(Hardware, "ReadLocalIRMResource timeout select=%u", selectCode);
+    return 0;
+}
+
+bool HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue, uint32_t& outOldValue) noexcept {
+    if (!device_) {
+        return false;
+    }
+    Write(Register32::kCSRCompareData, compareValue);
+    Write(Register32::kCSRData, newValue);
+    Write(Register32::kCSRControl, selectCode & 0x3u);
+    FlushPostedWrites();
+    
+    constexpr int kMaxTries = 10000;
+    for (int i = 0; i < kMaxTries; ++i) {
+        uint32_t ctrl = Read(Register32::kCSRControl);
+        if (ctrl & 0x80000000u) {
+            outOldValue = Read(Register32::kCSRData);
+            return (outOldValue == compareValue);
+        }
+#ifndef ASFW_HOST_TEST
+        IODelay(5);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(5));
+#endif
+    }
+    ASFW_LOG(Hardware, "CompareSwapLocalIRMResource timeout select=%u compare=0x%08x new=0x%08x", selectCode, compareValue, newValue);
+    return false;
+}
+
 } // namespace ASFW::Driver

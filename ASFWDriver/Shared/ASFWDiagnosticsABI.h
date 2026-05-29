@@ -242,6 +242,39 @@ typedef struct ASFWDiagInboundCSRStats {
     uint32_t reserved0;
 } ASFWDiagInboundCSRStats;
 
+typedef struct ASFWDiagBusManager {
+    ASFWDiagHeader header;
+    uint32_t roleMode;
+    uint32_t advertisedBmc;
+    uint32_t advertisedIrmc;
+    uint32_t advertisedCmc;
+    uint32_t advertisedIsc;
+    
+    // Election / Runtime State (C Types)
+    uint32_t localIsIRM;
+    uint32_t localIsBM;
+    uint32_t localIsRoot;
+    uint32_t bmOwnerSource;
+    uint32_t lastBusManagerIdOldValue;
+    uint32_t staleElectionAbortCount;
+    uint32_t failedElectionCount;
+    uint32_t unexpectedResourceCsrSoftwareCount;
+
+    // Local IRM resource registers
+    uint32_t localIrmBusManagerId;
+    uint32_t localIrmBandwidthAvailable;
+    uint32_t localIrmChannelsAvailableHi;
+    uint32_t localIrmChannelsAvailableLo;
+
+    // Topology Map Service status
+    uint32_t topologyMapValid;
+    uint32_t topologyMapGeneration;
+    uint32_t topologyMapSelfIdCount;
+    uint32_t topologyMapCRC;
+    uint32_t topologyMapDMAReady;
+    uint32_t reserved[6];
+} ASFWDiagBusManager;
+
 #ifdef __cplusplus
 }
 #endif

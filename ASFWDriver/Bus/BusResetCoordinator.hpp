@@ -39,6 +39,10 @@ namespace ASFW::Discovery {
 class ROMScanner;
 }
 
+namespace ASFW::Bus {
+class TopologyMapService;
+}
+
 namespace ASFW::Driver {
 
 #ifdef ASFW_HOST_TEST
@@ -88,7 +92,8 @@ class BusResetCoordinator {
                     Async::IAsyncControllerPort* asyncSys, SelfIDCapture* selfIdCapture,
                     ConfigROMStager* configRom, InterruptManager* interrupts,
                     TopologyManager* topology, BusManager* busManager = nullptr,
-                    Discovery::ROMScanner* romScanner = nullptr);
+                    Discovery::ROMScanner* romScanner = nullptr,
+                    ASFW::Bus::TopologyMapService* topologyMapService = nullptr);
 
     /**
      * Latch bus-reset related interrupt bits and schedule deferred recovery work.
@@ -323,6 +328,7 @@ class BusResetCoordinator {
     TopologyManager* topologyManager_{nullptr};
     BusManager* busManager_{nullptr};
     Discovery::ROMScanner* romScanner_{nullptr};
+    ASFW::Bus::TopologyMapService* topologyMapService_{nullptr};
 
     OSSharedPtr<IODispatchQueue> workQueue_;
 

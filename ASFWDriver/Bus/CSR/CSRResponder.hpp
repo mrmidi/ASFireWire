@@ -42,6 +42,12 @@ struct ICycleMasterControl {
     [[nodiscard]] virtual bool IsCycleMasterEnabled() const noexcept = 0;
 };
 
+// Triggers a physical bus reset on the local bus.
+struct IBusResetTrigger {
+    virtual ~IBusResetTrigger() = default;
+    virtual void TriggerBusReset(bool shortReset) noexcept = 0;
+};
+
 // Supplies TOPOLOGY_MAP quadlets. Installed by FW-20; until then the responder
 // holds a null provider and declines the region (NotMine → caller falls through,
 // preserving today's behavior).
@@ -61,6 +67,7 @@ public:
     struct Deps {
         IRootStatus* root{nullptr};
         ICycleMasterControl* cycleMaster{nullptr};
+        IBusResetTrigger* resetTrigger{nullptr};
         ITopologyMapProvider* topologyMap{nullptr}; // null until FW-20
     };
 
@@ -102,6 +109,10 @@ public:
         deps_.topologyMap = provider;
     }
 
+    [[nodiscard]] uint32_t UnexpectedResourceCsrSoftwareCount() const noexcept {
+        return unexpectedResourceCsrSoftwareCount_;
+    }
+
 private:
     [[nodiscard]] Result HandleStateWrite(bool isSet, uint32_t value) noexcept;
     [[nodiscard]] Result HandleStateRead() const noexcept;
@@ -115,10 +126,15 @@ private:
                csrOffsetLo == ASFW::FW::kCSR_ChannelsAvailableHi ||
                csrOffsetLo == ASFW::FW::kCSR_ChannelsAvailableLo;
     }
+    [[nodiscard]] static bool InSpeedMapRegion(uint32_t csrOffsetLo) noexcept {
+        return csrOffsetLo >= ASFW::FW::kCSR_SpeedMapBase &&
+               csrOffsetLo <= ASFW::FW::kCSR_SpeedMapEnd;
+    }
 
     Deps deps_;
     bool abdicate_{false};
     uint32_t broadcastChannel_{ASFW::FW::kBroadcastChannelInitial};
+    uint32_t unexpectedResourceCsrSoftwareCount_{0};
 };
 
 } // namespace ASFW::Bus

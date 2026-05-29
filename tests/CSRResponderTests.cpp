@@ -118,15 +118,13 @@ TEST(CSRResponder, AbdicateConsumeIsOneShot) {
     EXPECT_FALSE(rsp.ConsumeAbdicate()); // already consumed
 }
 
-TEST(CSRResponder, ResetStartWrite_ClearsAbdicate_ReadIsTypeError) {
+TEST(CSRResponder, ResetStartWrite_ReadIsTypeError) {
     FakeRoot r;
     FakeCycleMaster cm;
     auto rsp = Make(r, cm);
 
-    rsp.WriteQuadlet(FW::kCSR_StateSet, FW::kCSRStateBitABDICATE);
     const auto w = rsp.WriteQuadlet(FW::kCSR_ResetStart, 0);
     EXPECT_EQ(w.rcode, ResponseCode::Complete);
-    EXPECT_FALSE(rsp.Abdicate());
 
     const auto rd = rsp.ReadQuadlet(FW::kCSR_ResetStart);
     EXPECT_TRUE(rd.mine);

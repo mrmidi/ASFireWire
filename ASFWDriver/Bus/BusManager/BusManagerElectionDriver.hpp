@@ -15,14 +15,26 @@
 
 #include <memory>
 
+namespace ASFW::Driver {
+class HardwareInterface;
+}
+
 namespace ASFW::Bus {
 
 class BusManagerElectionDriver : public std::enable_shared_from_this<BusManagerElectionDriver> {
 public:
+    struct IBMRoleEvents {
+        virtual ~IBMRoleEvents() = default;
+        virtual void OnLocalWonBM(uint32_t generation, uint8_t localNodeId) = 0;
+        virtual void OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) = 0;
+        virtual void OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncStatus status) = 0;
+    };
+
     struct Deps {
         ASFW::Async::IAsyncControllerPort* asyncController{nullptr};
         ASFW::Driver::Scheduler* scheduler{nullptr};
         ASFW::Bus::CSRResponder* csrResponder{nullptr};
+        ASFW::Driver::HardwareInterface* hardware{nullptr};
     };
 
     BusManagerElectionDriver(Deps deps, ASFW::FW::RoleMode roleMode) noexcept;
@@ -31,6 +43,8 @@ public:
     void OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap) noexcept;
     void OnBusReset() noexcept;
     void Stop() noexcept;
+
+    void SetObserver(IBMRoleEvents* observer) noexcept { observer_ = observer; }
 
     // Accessors for diagnostics / testing
     [[nodiscard]] const BusManagerElection& FSM() const noexcept { return fsm_; }
@@ -47,6 +61,8 @@ private:
     Deps deps_;
     ASFW::FW::RoleMode roleMode_;
     BusManagerElection fsm_;
+    IBMRoleEvents* observer_{nullptr};
+    ASFW::Async::AsyncHandle inFlightHandle_{};
     bool wasIncumbent_{false};
     bool inFlight_{false};
     uint32_t inFlightGen_{0};

@@ -41,15 +41,39 @@ public:
      */
     void Stop() noexcept;
 
-    /**
-     * @brief Rebuilds the topology map from a stable topology snapshot.
-     */
     void Rebuild(const ASFW::Driver::TopologySnapshot& snapshot) noexcept;
+
+    /**
+     * @brief Thread-safely invalidates the map, clearing its validation status and contents.
+     */
+    void Invalidate() noexcept;
 
     // ITopologyMapProvider overrides
     [[nodiscard]] bool ReadQuadlet(uint32_t regionByteOffset, uint32_t& outValue) const noexcept override;
     [[nodiscard]] bool ResolveBlockRead(uint32_t regionByteOffset, uint32_t requestedLength,
                                         uint64_t& outPayloadDeviceAddress, uint32_t& outPayloadLength) const noexcept override;
+
+    // Diagnostic getters
+    [[nodiscard]] bool IsValid() const noexcept {
+        ASFW::Async::IOScopedLock guard(lock_);
+        return hostMap_[0] != 0;
+    }
+    [[nodiscard]] uint32_t GetGeneration() const noexcept {
+        ASFW::Async::IOScopedLock guard(lock_);
+        return generation_;
+    }
+    [[nodiscard]] uint32_t GetSelfIdCount() const noexcept {
+        ASFW::Async::IOScopedLock guard(lock_);
+        return hostMap_[2] & 0xFFFFu;
+    }
+    [[nodiscard]] uint16_t GetCRC() const noexcept {
+        ASFW::Async::IOScopedLock guard(lock_);
+        return static_cast<uint16_t>(hostMap_[0] & 0xFFFFu);
+    }
+    [[nodiscard]] bool IsDMAReady() const noexcept {
+        ASFW::Async::IOScopedLock guard(lock_);
+        return started_ && dmaMap_;
+    }
 
 private:
     ASFW::Driver::HardwareInterface* hardware_;

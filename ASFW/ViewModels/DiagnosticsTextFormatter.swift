@@ -259,6 +259,53 @@ struct DiagnosticsTextFormatter {
         appendRow("BM Retry Count", snapshot.roleCoordinator.bmRetryCount)
         appendRow("Gap Mismatch Detected", snapshot.roleCoordinator.gapMismatchDetected != 0 ? "Yes" : "No")
         
+        // --- Bus Manager ---
+        appendTitle("Bus Manager & IRM Role Runtime")
+        let bmModeStr: String
+        switch snapshot.busManager.roleMode {
+        case 0: bmModeStr = "Apple Avoid Manager"
+        case 1: bmModeStr = "Full Bus Manager"
+        case 2: bmModeStr = "IRM Server Only"
+        case 3: bmModeStr = "Legacy BMC Cleared"
+        default: bmModeStr = "Unknown (\(snapshot.busManager.roleMode))"
+        }
+        appendRow("Configured Role Mode", bmModeStr)
+        appendRow("Advertised BMC", snapshot.busManager.advertisedBmc != 0 ? "Yes" : "No")
+        appendRow("Advertised IRMC", snapshot.busManager.advertisedIrmc != 0 ? "Yes" : "No")
+        appendRow("Advertised CMC", snapshot.busManager.advertisedCmc != 0 ? "Yes" : "No")
+        appendRow("Advertised ISC", snapshot.busManager.advertisedIsc != 0 ? "Yes" : "No")
+        
+        appendRow("Local Node is IRM", snapshot.busManager.localIsIRM != 0 ? "Yes" : "No")
+        appendRow("Local Node is BM", snapshot.busManager.localIsBM != 0 ? "Yes" : "No")
+        appendRow("Local Node is Root", snapshot.busManager.localIsRoot != 0 ? "Yes" : "No")
+        
+        let bmOwnerStr: String
+        switch snapshot.busManager.bmOwnerSource {
+        case 0: bmOwnerStr = "Unknown"
+        case 1: bmOwnerStr = "Inferred"
+        case 2: bmOwnerStr = "BusManagerIdRead"
+        case 3: bmOwnerStr = "ElectionResult"
+        case 4: bmOwnerStr = "LocalWonElection"
+        case 5: bmOwnerStr = "RemoteWonElection"
+        default: bmOwnerStr = "Unknown (\(snapshot.busManager.bmOwnerSource))"
+        }
+        appendRow("BM Owner Source", bmOwnerStr)
+        appendRow("Last BM ID Value", formatNodeStr(snapshot.busManager.lastBusManagerIdOldValue))
+        appendRow("Stale Election Aborts", snapshot.busManager.staleElectionAbortCount)
+        appendRow("Failed Elections", snapshot.busManager.failedElectionCount)
+        appendRow("Unexpected software resource accesses", snapshot.busManager.unexpectedResourceCsrSoftwareCount)
+        
+        appendRow("Local IRM BM ID Reg", formatNodeStr(snapshot.busManager.localIrmBusManagerId))
+        appendRow("Local IRM Bandwidth Available", snapshot.busManager.localIrmBandwidthAvailable)
+        appendRow("Local IRM Channels Avail Hi", formatHex32(snapshot.busManager.localIrmChannelsAvailableHi))
+        appendRow("Local IRM Channels Avail Lo", formatHex32(snapshot.busManager.localIrmChannelsAvailableLo))
+        
+        appendRow("Topology Map Valid", snapshot.busManager.topologyMapValid != 0 ? "Yes" : "No")
+        appendRow("Topology Map Generation", snapshot.busManager.topologyMapGeneration)
+        appendRow("Topology Map Self-ID Count", snapshot.busManager.topologyMapSelfIdCount)
+        appendRow("Topology Map CRC", formatHex16(snapshot.busManager.topologyMapCRC))
+        appendRow("Topology Map DMA Ready", snapshot.busManager.topologyMapDMAReady != 0 ? "Yes" : "No")
+
         // --- OHCI Registers ---
         appendTitle("OHCI Link/Controller Snapshot")
         appendRow("OHCI Version", formatHex32(snapshot.ohci.version))

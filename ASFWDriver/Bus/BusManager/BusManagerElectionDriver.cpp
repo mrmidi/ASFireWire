@@ -6,6 +6,7 @@
 #include "BusManagerElectionDriver.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Controller/ControllerTypes.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 
 namespace ASFW::Bus {
 
@@ -101,10 +102,22 @@ void BusManagerElectionDriver::OnBusReset() noexcept {
     fsm_.Reset();
     inFlight_ = false;
     inFlightGen_ = 0;
+    if (inFlightHandle_) {
+        if (deps_.asyncController) {
+            deps_.asyncController->Cancel(inFlightHandle_);
+        }
+        inFlightHandle_ = {};
+    }
 }
 
 void BusManagerElectionDriver::Stop() noexcept {
     active_ = false;
+    if (inFlightHandle_) {
+        if (deps_.asyncController) {
+            deps_.asyncController->Cancel(inFlightHandle_);
+        }
+        inFlightHandle_ = {};
+    }
 }
 
 void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId, uint8_t irmNodeId, uint16_t busBase16) noexcept {
@@ -122,6 +135,28 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
         return;
     }
 
+    // Local Loopback Compare-Swap Branching (FW-14)
+    if (irmNodeId == localNodeId) {
+        ASFW_LOG(Controller, "[BM Election] Local node is IRM; routing CompareSwap through local CSRControl loopback");
+        if (deps_.hardware == nullptr) {
+            ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
+            inFlight_ = false;
+            if (observer_) {
+                observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
+            }
+            return;
+        }
+
+        uint32_t oldValue = 0;
+        // SelectCode for BUS_MANAGER_ID is 0.
+        // CompareSwapLocalIRMResource returns true if compare matched, false otherwise.
+        const bool compareMatched = deps_.hardware->CompareSwapLocalIRMResource(0, 0x3F, localNodeId, oldValue);
+
+        // Invoke HandleCompareSwapResult synchronously since it's a local hardware lock sequence
+        HandleCompareSwapResult(generation, localNodeId, ASFW::Async::AsyncStatus::kSuccess, oldValue, compareMatched);
+        return;
+    }
+
     ASFW::Async::CompareSwapParams params{
         .destinationID = ASFW::Driver::ComposeNodeID(busBase16, irmNodeId),
         .addressHigh = ASFW::FW::kCSRRegSpaceHi,
@@ -135,11 +170,12 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
              params.destinationID, irmNodeId, generation);
 
     std::weak_ptr<BusManagerElectionDriver> weakSelf = shared_from_this();
-    deps_.asyncController->CompareSwap(params, [weakSelf, generation, localNodeId](ASFW::Async::AsyncStatus status, uint32_t oldValue, bool compareMatched) {
+    inFlightHandle_ = deps_.asyncController->CompareSwap(params, [weakSelf, generation, localNodeId](ASFW::Async::AsyncStatus status, uint32_t oldValue, bool compareMatched) {
         auto self = weakSelf.lock();
         if (!self) {
             return;
         }
+        self->inFlightHandle_ = {}; // clear in-flight handle
         self->HandleCompareSwapResult(generation, localNodeId, status, oldValue, compareMatched);
     });
 }
@@ -165,6 +201,9 @@ void BusManagerElectionDriver::HandleCompareSwapResult(uint32_t generation, uint
     if (status != ASFW::Async::AsyncStatus::kSuccess) {
         ASFW_LOG(Controller, "[BM Election] CompareSwap failed with status %d (%s)",
                  static_cast<int>(status), ASFW::Async::ToString(status));
+        if (observer_) {
+            observer_->OnBMElectionFailed(generation, status);
+        }
         return;
     }
 
@@ -172,15 +211,27 @@ void BusManagerElectionDriver::HandleCompareSwapResult(uint32_t generation, uint
     switch (outcome) {
     case ElectionOutcome::WonBM:
         ASFW_LOG(Controller, "[BM Election] WON Bus Manager election! (oldValue=0x%X, compareMatched=%d)", oldValue, compareMatched);
+        if (observer_) {
+            observer_->OnLocalWonBM(generation, localNodeId);
+        }
         break;
     case ElectionOutcome::IncumbentReestablished:
         ASFW_LOG(Controller, "[BM Election] Re-established BM incumbency.");
+        if (observer_) {
+            observer_->OnLocalWonBM(generation, localNodeId);
+        }
         break;
     case ElectionOutcome::RemoteBM:
         ASFW_LOG(Controller, "[BM Election] Remote node 0x%02X won Bus Manager election (oldValue=0x%X).",
                  fsm_.OwnerId().value_or(0xFF), oldValue);
+        if (observer_) {
+            observer_->OnRemoteBM(generation, fsm_.OwnerId().value_or(0xFF));
+        }
         break;
     default:
+        if (observer_) {
+            observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kLockCompareFail);
+        }
         break;
     }
 }

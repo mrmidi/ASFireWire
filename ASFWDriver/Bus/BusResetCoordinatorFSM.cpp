@@ -12,6 +12,7 @@
 #include "Logging.hpp"
 #include "TopologyManager.hpp"
 #include "../ConfigROM/ROMScanner.hpp"
+#include "CSR/TopologyMapService.hpp"
 
 namespace {
 
@@ -41,6 +42,10 @@ void BusResetCoordinator::BeginNewResetCycle() {
 
     if (topologyManager_ != nullptr) {
         topologyManager_->InvalidateForBusReset();
+    }
+
+    if (topologyMapService_ != nullptr) {
+        topologyMapService_->Invalidate();
     }
 
     TransitionTo(State::Detecting, "busReset edge observed");
