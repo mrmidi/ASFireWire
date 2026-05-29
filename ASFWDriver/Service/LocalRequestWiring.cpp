@@ -198,9 +198,12 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
         d.csrRootStatus = std::make_shared<ASFW::Bus::HardwareRootStatus>(d.hardware.get());
         d.csrCycleMasterControl =
             std::make_shared<ASFW::Bus::HardwareCycleMasterControl>(d.hardware.get());
+        d.csrResetTrigger =
+            std::make_shared<ASFW::Bus::HardwareBusResetTrigger>(d.hardware.get());
         d.csrResponder = std::make_shared<ASFW::Bus::CSRResponder>(ASFW::Bus::CSRResponder::Deps{
             .root = d.csrRootStatus.get(),
             .cycleMaster = d.csrCycleMasterControl.get(),
+            .resetTrigger = d.csrResetTrigger.get(),
             .topologyMap = d.topologyMapService.get(),
         });
         ASFW_LOG(Controller, "[Controller] CSRResponder initialized with TopologyMapService (FW-20)");
@@ -211,9 +214,11 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
                 .asyncController = d.asyncController.get(),
                 .scheduler = d.scheduler.get(),
                 .csrResponder = d.csrResponder.get(),
+                .hardware = d.hardware.get(),
             };
             d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.config.roleMode);
             if (ctx.controller) {
+                d.busManagerElectionDriver->SetObserver(ctx.controller.get());
                 ctx.controller->SetBusManagerElectionDriver(d.busManagerElectionDriver);
             }
             ASFW_LOG(Controller, "[Controller] BusManagerElectionDriver initialized (FW-18)");

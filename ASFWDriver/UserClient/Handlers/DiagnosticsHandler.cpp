@@ -142,6 +142,10 @@ kern_return_t DiagnosticsHandler::GetInboundCSRStats(IOUserClientMethodArguments
     return CollectAndPack<ASFWDiagInboundCSRStats>(service_, args, &Diagnostics::DiagnosticsService::CollectInboundCSRStats);
 }
 
+kern_return_t DiagnosticsHandler::GetBusManager(IOUserClientMethodArguments* args) {
+    return CollectAndPack<ASFWDiagBusManager>(service_, args, &Diagnostics::DiagnosticsService::CollectBusManager);
+}
+
 kern_return_t DiagnosticsHandler::ClearAsyncTrace(IOUserClientMethodArguments* args) {
     if (!driver_) {
         return kIOReturnNotReady;

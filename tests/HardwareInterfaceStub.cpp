@@ -14,6 +14,7 @@ using RegisterKey = uint32_t;
 struct HardwareTestState {
     std::unordered_map<RegisterKey, uint32_t> registers;
     std::unordered_map<uint8_t, uint8_t> phyRegisters;
+    std::unordered_map<uint32_t, uint32_t> localIRMResources;
     std::vector<HardwareInterface::TestOperation> operations;
     bool busResetIssued{false};
     bool lastBusResetWasShort{false};
@@ -373,6 +374,40 @@ void HardwareInterface::SetTestInitiateBusResetResult(const bool success) noexce
 void HardwareInterface::ResetTestState() noexcept {
     WithState(this, [](HardwareTestState& state) {
         state = HardwareTestState{};
+    });
+}
+
+void HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
+    WithState(this, [selectCode, value](HardwareTestState& state) {
+        state.localIRMResources[selectCode] = value;
+    });
+}
+
+uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
+    return WithState(this, [selectCode](HardwareTestState& state) -> uint32_t {
+        auto it = state.localIRMResources.find(selectCode);
+        if (it != state.localIRMResources.end()) {
+            return it->second;
+        }
+        if (selectCode == 0) return 0x3F;
+        if (selectCode == 1) return 4915;
+        return 0xFFFFFFFF;
+    });
+}
+
+bool HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue, uint32_t& outOldValue) noexcept {
+    return WithState(this, [selectCode, compareValue, newValue, &outOldValue](HardwareTestState& state) {
+        auto it = state.localIRMResources.find(selectCode);
+        uint32_t val = (selectCode == 0) ? 0x3F : ((selectCode == 1) ? 4915 : 0xFFFFFFFF);
+        if (it != state.localIRMResources.end()) {
+            val = it->second;
+        }
+        outOldValue = val;
+        if (val == compareValue) {
+            state.localIRMResources[selectCode] = newValue;
+            return true;
+        }
+        return false;
     });
 }
 

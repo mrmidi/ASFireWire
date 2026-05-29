@@ -13,6 +13,7 @@
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -113,6 +114,48 @@ bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
+    // Initialize/update Bus Manager/IRM runtime state (FW-14)
+    bmState_.generation = snap.generation;
+    if (snap.localNodeId.has_value()) {
+        bmState_.localNodeId = snap.localNodeId.value();
+    } else {
+        bmState_.localNodeId = 0x3F;
+    }
+    if (snap.irmNodeId.has_value()) {
+        bmState_.irmNodeId = snap.irmNodeId.value();
+        bmState_.localIsIRM = (snap.localNodeId == snap.irmNodeId);
+    } else {
+        bmState_.irmNodeId = 0x3F;
+        bmState_.localIsIRM = false;
+    }
+
+    if (bmState_.localIsIRM) {
+        auto* const hw = GetHardware();
+        if (hw) {
+            ASFW_LOG(Controller, "[IRM] Local node is IRM; initializing local IRM resource registers");
+            hw->WriteLocalIRMResource(0, 0x3F);       // BUS_MANAGER_ID
+            hw->WriteLocalIRMResource(1, 4915);       // BANDWIDTH_AVAILABLE
+            hw->WriteLocalIRMResource(2, 0xFFFFFFFF); // CHANNELS_AVAILABLE_HI
+            hw->WriteLocalIRMResource(3, 0x7FFFFFFF); // CHANNELS_AVAILABLE_LO
+
+            // Validate with readback (correction 5)
+            const uint32_t bmId = hw->ReadLocalIRMResource(0);
+            const uint32_t bw = hw->ReadLocalIRMResource(1);
+            const uint32_t chHi = hw->ReadLocalIRMResource(2);
+            const uint32_t chLo = hw->ReadLocalIRMResource(3);
+            ASFW_LOG(Controller, "[IRM] Readback validation: BM_ID=0x%x, BW=%u, CH_HI=0x%x, CH_LO=0x%x",
+                     bmId, bw, chHi, chLo);
+        }
+    }
+
+    if (snap.rootNodeId.has_value()) {
+        bmState_.rootNodeId = snap.rootNodeId.value();
+        bmState_.localIsRoot = (snap.localNodeId == snap.rootNodeId);
+    } else {
+        bmState_.rootNodeId = 0x3F;
+        bmState_.localIsRoot = false;
+    }
+
     // FW-6/FW-7: hand the new topology/generation to role policy before any
     // discovery-specific early returns — role policy is independent of ROM scan.
     // Skeleton policy is inert (None/Defer) with null executors, so this takes
@@ -127,6 +170,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     if (deps_.busManagerElectionDriver) {
         deps_.busManagerElectionDriver->OnTopologyReady(snap);
     }
+
+    EvaluateBusManagerPolicy();
 
     if (!deps_.romScanner) {
         ASFW_LOG(Discovery, "OnTopologyReady: no ROMScanner available");
@@ -488,10 +533,48 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
                  gen.value);
     }
 
-    ASFW_LOG(Discovery, "═══════════════════════════════════════");
     ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u", roms.size(),
              gen.value);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
+}
+
+void ControllerCore::OnLocalWonBM(uint32_t generation, uint8_t localNodeId) {
+    bmState_.generation = generation;
+    bmState_.localIsBM = true;
+    bmState_.bmNodeId = localNodeId;
+    bmState_.bmOwnerSource = ASFW::Bus::BMOwnerSource::LocalWonElection;
+    if (deps_.busManagerElectionDriver) {
+        bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
+        bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
+    }
+    EvaluateBusManagerPolicy();
+}
+
+void ControllerCore::OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) {
+    bmState_.generation = generation;
+    bmState_.localIsBM = false;
+    bmState_.bmNodeId = remoteNodeId;
+    bmState_.bmOwnerSource = ASFW::Bus::BMOwnerSource::RemoteWonElection;
+    if (deps_.busManagerElectionDriver) {
+        bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
+        bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
+    }
+    EvaluateBusManagerPolicy();
+}
+
+void ControllerCore::OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncStatus status) {
+    bmState_.generation = generation;
+    bmState_.failedElectionCount++;
+    if (deps_.busManagerElectionDriver) {
+        bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
+    }
+    EvaluateBusManagerPolicy();
+}
+
+void ControllerCore::EvaluateBusManagerPolicy() noexcept {
+    if (bmPolicyCoordinator_) {
+        bmPolicyCoordinator_->Evaluate(GetBusManagerRuntimeState());
+    }
 }
 
 } // namespace ASFW::Driver

@@ -29,6 +29,7 @@ public:
     ASFWDiagStatus CollectCSRContract(ASFWDiagCSRContract* out) const noexcept;
     ASFWDiagStatus CollectAsyncTrace(ASFWDiagAsyncTrace* out) const noexcept;
     ASFWDiagStatus CollectInboundCSRStats(ASFWDiagInboundCSRStats* out) const noexcept;
+    ASFWDiagStatus CollectBusManager(ASFWDiagBusManager* out) const noexcept;
 
 private:
     Driver::ControllerCore* controller_{nullptr};

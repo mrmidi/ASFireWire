@@ -40,6 +40,7 @@ bool TopologyMapService::Start() noexcept {
     }
     if (hardware_ == nullptr) {
         ASFW_LOG(Controller, "❌ TopologyMapService: Start failed, hardware_ is null");
+        Invalidate();
         return false;
     }
 
@@ -47,6 +48,7 @@ bool TopologyMapService::Start() noexcept {
     auto opt = hardware_->AllocateDMA(1024, kIOMemoryDirectionInOut, 1024);
     if (!opt) {
         ASFW_LOG(Controller, "❌ TopologyMapService: Start failed, AllocateDMA failed");
+        Invalidate();
         return false;
     }
     dmaOpt_ = opt;
@@ -57,6 +59,7 @@ bool TopologyMapService::Start() noexcept {
     if (kr != kIOReturnSuccess || rawMap == nullptr) {
         ASFW_LOG(Controller, "❌ TopologyMapService: Start failed, CreateMapping failed kr=0x%x", kr);
         dmaOpt_.reset();
+        Invalidate();
         return false;
     }
     dmaMap_ = OSSharedPtr<IOMemoryMap>(rawMap, OSNoRetain);
@@ -79,6 +82,7 @@ void TopologyMapService::Stop() noexcept {
     if (!started_) {
         return;
     }
+    Invalidate();
     dmaMap_.reset();
     dmaOpt_.reset();
     started_ = false;
@@ -119,6 +123,16 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
     const uint32_t selfIdCount = (filledQuads > 3) ? (filledQuads - 3) : 0;
     ASFW_LOG(Controller, "TopologyMapService: Map rebuilt for generation %u: nodes=%u, selfIds=%u",
              generation_, snapshot.nodeCount, selfIdCount);
+}
+
+void TopologyMapService::Invalidate() noexcept {
+    ASFW::Async::IOScopedLock guard(lock_);
+    hostMap_[0] = 0;
+    if (dmaMap_) {
+        auto* const base = reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(dmaMap_->GetAddress()));
+        base[0] = 0;
+        OSSynchronizeIO();
+    }
 }
 
 bool TopologyMapService::ReadQuadlet(uint32_t regionByteOffset, uint32_t& outValue) const noexcept {

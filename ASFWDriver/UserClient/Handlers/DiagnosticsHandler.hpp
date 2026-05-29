@@ -47,6 +47,9 @@ public:
     // Selector 1008: Clear Async Trace
     kern_return_t ClearAsyncTrace(IOUserClientMethodArguments* args);
 
+    // Selector 1009: Bus Manager Info
+    kern_return_t GetBusManager(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};

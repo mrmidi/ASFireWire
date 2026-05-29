@@ -17,6 +17,7 @@
 #include "Logging.hpp"
 #include "SelfIDCapture.hpp"
 #include "TopologyManager.hpp"
+#include "CSR/TopologyMapService.hpp"
 
 namespace {
 
@@ -71,7 +72,8 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
                                      Async::IAsyncControllerPort* asyncSys,
                                      SelfIDCapture* selfIdCapture, ConfigROMStager* configRom,
                                      InterruptManager* interrupts, TopologyManager* topology,
-                                     BusManager* busManager, Discovery::ROMScanner* romScanner) {
+                                     BusManager* busManager, Discovery::ROMScanner* romScanner,
+                                     Bus::TopologyMapService* topologyMapService) {
     hardware_ = hw;
     workQueue_ = std::move(workQueue);
     asyncSubsystem_ = asyncSys;
@@ -81,6 +83,7 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
     topologyManager_ = topology;
     busManager_ = busManager;
     romScanner_ = romScanner;
+    topologyMapService_ = topologyMapService;
 
     state_ = State::Idle;
     selfIdLatch_.Reset();
@@ -91,6 +94,10 @@ void BusResetCoordinator::Initialize(HardwareInterface* hw, OSSharedPtr<IODispat
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;
     stopFlushIssued_ = false;
+
+    if (topologyMapService_) {
+        topologyMapService_->Invalidate();
+    }
 
     if (hardware_ == nullptr || workQueue_.get() == nullptr || asyncSubsystem_ == nullptr ||
         selfIdCapture_ == nullptr || configRomStager_ == nullptr || interruptManager_ == nullptr ||

@@ -6,6 +6,7 @@
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Debug/AsyncTraceCapture.hpp"
+#include "../Bus/CSR/TopologyMapService.hpp"
 #include <cstring>
 #include <DriverKit/IOLib.h>
 
@@ -445,6 +446,65 @@ ASFWDiagStatus DiagnosticsService::CollectInboundCSRStats(ASFWDiagInboundCSRStat
     }
 
     InitHeader(&out->header, sizeof(ASFWDiagInboundCSRStats), endGen, snapshotSeq_++);
+    return ASFWDiagStatusOK;
+}
+
+ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) const noexcept {
+    if (!controller_ || !out) {
+        return ASFWDiagStatusUnavailable;
+    }
+
+    const uint32_t startGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
+
+    std::memset(out, 0, sizeof(ASFWDiagBusManager));
+
+    const auto& config = controller_->GetConfig();
+    out->roleMode = static_cast<uint32_t>(config.roleMode);
+
+    auto* hw = controller_->GetHardware();
+    if (hw) {
+        const uint32_t busOptions = hw->Read(Driver::Register32::kBusOptions);
+        auto caps = ASFW::FW::DecodeBusOptions(ASFW::FW::NormalizeLocalBusOptions(busOptions, config.roleMode));
+        out->advertisedBmc = caps.bmc ? 1 : 0;
+        out->advertisedIrmc = caps.irmc ? 1 : 0;
+        out->advertisedCmc = caps.cmc ? 1 : 0;
+        out->advertisedIsc = caps.isc ? 1 : 0;
+    }
+
+    const auto& bmState = controller_->GetBusManagerRuntimeState();
+    out->localIsIRM = bmState.localIsIRM ? 1 : 0;
+    out->localIsBM = bmState.localIsBM ? 1 : 0;
+    out->localIsRoot = bmState.localIsRoot ? 1 : 0;
+    out->bmOwnerSource = static_cast<uint32_t>(bmState.bmOwnerSource);
+    out->lastBusManagerIdOldValue = bmState.lastBusManagerIdOldValue;
+    out->staleElectionAbortCount = bmState.staleElectionAbortCount;
+    out->failedElectionCount = bmState.failedElectionCount;
+    out->unexpectedResourceCsrSoftwareCount = bmState.unexpectedResourceCsrSoftwareCount;
+
+    // Local IRM resource registers
+    if (hw && bmState.localIsIRM) {
+        out->localIrmBusManagerId = hw->ReadLocalIRMResource(0);
+        out->localIrmBandwidthAvailable = hw->ReadLocalIRMResource(1);
+        out->localIrmChannelsAvailableHi = hw->ReadLocalIRMResource(2);
+        out->localIrmChannelsAvailableLo = hw->ReadLocalIRMResource(3);
+    }
+
+    // Topology Map Service status
+    auto* topoMap = controller_->GetTopologyMapService();
+    if (topoMap) {
+        out->topologyMapValid = topoMap->IsValid() ? 1 : 0;
+        out->topologyMapGeneration = topoMap->GetGeneration();
+        out->topologyMapSelfIdCount = topoMap->GetSelfIdCount();
+        out->topologyMapCRC = topoMap->GetCRC();
+        out->topologyMapDMAReady = topoMap->IsDMAReady() ? 1 : 0;
+    }
+
+    const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
+    if (startGen != endGen) {
+        return ASFWDiagStatusStaleGeneration;
+    }
+
+    InitHeader(&out->header, sizeof(ASFWDiagBusManager), endGen, snapshotSeq_++);
     return ASFWDiagStatusOK;
 }
 

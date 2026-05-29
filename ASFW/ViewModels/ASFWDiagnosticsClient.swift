@@ -18,6 +18,7 @@ struct ASFWDiagnosticsSnapshot {
     let csrContract: ASFWDiagCSRContract
     let asyncTrace: ASFWDiagAsyncTrace
     let inboundCSRStats: ASFWDiagInboundCSRStats
+    let busManager: ASFWDiagBusManager
 }
 
 /// Client to invoke diagnostic selectors on the ASFW driver.
@@ -104,6 +105,11 @@ final class ASFWDiagnosticsClient {
             selector: 1007,
             expectedSize: MemoryLayout<ASFWDiagInboundCSRStats>.size
         )
+
+        let busManager: ASFWDiagBusManager = try loadDiagStruct(
+            selector: 1009,
+            expectedSize: MemoryLayout<ASFWDiagBusManager>.size
+        )
         
         // Verify cross-struct generation consistency.
         // We compare generation IDs across all collected structures.
@@ -111,8 +117,9 @@ final class ASFWDiagnosticsClient {
         if topology.header.generation != gen ||
            roleCoordinator.header.generation != gen ||
            phy.header.generation != gen ||
-           asyncTrace.header.generation != gen {
-            print("[DiagClient] ⚠️ Cross-struct generation mismatch. BusContract: \(gen), Topology: \(topology.header.generation), RoleCoord: \(roleCoordinator.header.generation), PHY: \(phy.header.generation), Trace: \(asyncTrace.header.generation)")
+           asyncTrace.header.generation != gen ||
+           busManager.header.generation != gen {
+            print("[DiagClient] ⚠️ Cross-struct generation mismatch. BusContract: \(gen), Topology: \(topology.header.generation), RoleCoord: \(roleCoordinator.header.generation), PHY: \(phy.header.generation), Trace: \(asyncTrace.header.generation), BusManager: \(busManager.header.generation)")
             throw DiagnosticsError.staleGeneration
         }
         
@@ -124,7 +131,8 @@ final class ASFWDiagnosticsClient {
             phy: phy,
             csrContract: csrContract,
             asyncTrace: asyncTrace,
-            inboundCSRStats: inboundCSRStats
+            inboundCSRStats: inboundCSRStats,
+            busManager: busManager
         )
     }
     

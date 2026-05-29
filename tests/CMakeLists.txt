@@ -362,6 +362,8 @@ add_executable(BusResetCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
     "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapService.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
     "${ASFW_DRIVER_DIR}/Hardware/InterruptManager.cpp"
     "${ASFW_TESTS_DIR}/BusResetCoordinatorDepsStubs.cpp"
@@ -1827,6 +1829,7 @@ add_executable(BusManagerElectionTests
     "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElectionDriver.cpp"
     "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
  

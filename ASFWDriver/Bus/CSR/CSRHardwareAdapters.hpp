@@ -57,4 +57,20 @@ private:
     ASFW::Driver::HardwareInterface* hw_;
 };
 
+// Physical bus reset trigger adapter.
+class HardwareBusResetTrigger final : public IBusResetTrigger {
+public:
+    explicit HardwareBusResetTrigger(ASFW::Driver::HardwareInterface* hw) noexcept : hw_(hw) {}
+
+    void TriggerBusReset(bool shortReset) noexcept override {
+        if (hw_ == nullptr) {
+            return;
+        }
+        hw_->InitiateBusReset(shortReset);
+    }
+
+private:
+    ASFW::Driver::HardwareInterface* hw_;
+};
+
 } // namespace ASFW::Bus

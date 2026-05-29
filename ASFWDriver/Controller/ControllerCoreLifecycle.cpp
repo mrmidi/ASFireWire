@@ -13,6 +13,7 @@
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -109,7 +110,8 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     const bool shouldAdvertiseContender =
         config.roleMode == ASFW::FW::RoleMode::FullBusManager ||
         config.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
-        config.allowCycleMasterEligibility;
+        (config.roleMode == ASFW::FW::RoleMode::LegacyBmcCleared &&
+         config.allowCycleMasterEligibility);
 
     const uint8_t phyReg4Bits =
         shouldAdvertiseContender
@@ -321,6 +323,13 @@ ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);
         ASFW_LOG(Controller, "✅ FireWireBusImpl facade created");
+        bmPolicyCoordinator_ = std::make_unique<Bus::BusManagerPolicyCoordinator>(
+            Bus::BusManagerPolicyCoordinator::Deps{
+                .hardware = deps_.hardware.get(),
+                .busImpl = busImpl_.get()
+            }
+        );
+        ASFW_LOG(Controller, "✅ BusManagerPolicyCoordinator created");
     }
 
     if (deps_.hardware && deps_.asyncController) {
@@ -361,7 +370,7 @@ kern_return_t ControllerCore::InitializeBusResetAndDiscovery() {
     deps_.busReset->Initialize(deps_.hardware.get(), workQueue, deps_.asyncController.get(),
                                deps_.selfId.get(), deps_.configRomStager.get(),
                                deps_.interrupts.get(), deps_.topology.get(), deps_.busManager.get(),
-                               deps_.romScanner.get());
+                               deps_.romScanner.get(), deps_.topologyMapService.get());
 
     ASFW_LOG(Controller, "Binding topology callback for Discovery integration");
     deps_.busReset->BindCallbacks(

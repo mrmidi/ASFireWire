@@ -42,15 +42,20 @@ CSRResponder::Result CSRResponder::HandleStateRead() const noexcept {
 }
 
 CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t value) noexcept {
+    // The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
+    if (InSpeedMapRegion(csrOffsetLo)) {
+        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+    }
+
     switch (csrOffsetLo) {
     case FW::kCSR_StateSet:
         return HandleStateWrite(/*isSet=*/true, value);
     case FW::kCSR_StateClear:
         return HandleStateWrite(/*isSet=*/false, value);
     case FW::kCSR_ResetStart:
-        // RESET_START write behaves as STATE_CLEAR with the ABDICATE bit set,
-        // i.e. it clears the abdicate flag (Linux core-transaction.c).
-        abdicate_ = false;
+        if (deps_.resetTrigger != nullptr) {
+            deps_.resetTrigger->TriggerBusReset(/*shortReset=*/false);
+        }
         return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = 0};
     case FW::kCSR_BroadcastChannel:
         // Only the VALID bit is writable; the channel number and transmit-valid
@@ -62,6 +67,7 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
     }
 
     if (IsIrmResourceCsr(csrOffsetLo)) {
+        unexpectedResourceCsrSoftwareCount_++;
         // OHCI serves these autonomously; never software-answer.
         return Result{.mine = false};
     }
@@ -73,6 +79,11 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
 }
 
 CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
+    // The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
+    if (InSpeedMapRegion(csrOffsetLo)) {
+        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+    }
+
     switch (csrOffsetLo) {
     case FW::kCSR_StateSet:
     case FW::kCSR_StateClear:
@@ -87,6 +98,7 @@ CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
     }
 
     if (IsIrmResourceCsr(csrOffsetLo)) {
+        unexpectedResourceCsrSoftwareCount_++;
         return Result{.mine = false};
     }
 
@@ -111,6 +123,10 @@ CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
 }
 
 CSRResponder::Result CSRResponder::BlockReadClaim(uint32_t csrOffsetLo, uint32_t length) noexcept {
+    // The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
+    if (InSpeedMapRegion(csrOffsetLo)) {
+        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+    }
     if (!InTopologyRegion(csrOffsetLo)) {
         return Result{.mine = false};
     }

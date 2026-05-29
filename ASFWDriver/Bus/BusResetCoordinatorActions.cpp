@@ -17,6 +17,7 @@
 #include "Logging.hpp"
 #include "SelfIDCapture.hpp"
 #include "TopologyManager.hpp"
+#include "CSR/TopologyMapService.hpp"
 
 namespace {
 
@@ -120,6 +121,10 @@ void BusResetCoordinator::ArmSelfIDBuffer() {
 }
 
 void BusResetCoordinator::StopFlushAT() {
+    if (topologyMapService_ != nullptr) {
+        topologyMapService_->Invalidate();
+    }
+
     if (asyncSubsystem_ == nullptr) {
         return;
     }

@@ -7,6 +7,8 @@
 
 #include "../Bus/Role/CycleObserver.hpp"
 #include "../Bus/Role/RoleCoordinator.hpp"
+#include "../Bus/BusManager/BusManagerRuntimeState.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"
@@ -30,11 +32,13 @@ class MetricsSink;
 } // namespace ASFW::Driver
 
 namespace ASFW::Bus {
-struct IRootStatus;
-struct ICycleMasterControl;
+class IRootStatus;
+class ICycleMasterControl;
+class IBusResetTrigger;
 class CSRResponder;
 class TopologyMapService;
 class BusManagerElectionDriver;
+class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
 
 namespace ASFW::Shared {
@@ -84,7 +88,8 @@ namespace ASFW::Driver {
 // bus reset sequencing, and topology publication.
 class ControllerCore final : private Role::IPhyConfigReset,
                              private Role::IRemoteCsrWriter,
-                             private Role::IContenderControl {
+                             private Role::IContenderControl,
+                             public ASFW::Bus::BusManagerElectionDriver::IBMRoleEvents {
   public:
     struct Dependencies {
         std::shared_ptr<HardwareInterface> hardware;
@@ -115,6 +120,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
         // TOPOLOGY_MAP) plus its hardware adapters for root status / cycle master.
         std::shared_ptr<ASFW::Bus::IRootStatus> csrRootStatus;
         std::shared_ptr<ASFW::Bus::ICycleMasterControl> csrCycleMasterControl;
+        std::shared_ptr<ASFW::Bus::IBusResetTrigger> csrResetTrigger;
         std::shared_ptr<ASFW::Bus::CSRResponder> csrResponder;
         std::shared_ptr<ASFW::Bus::TopologyMapService> topologyMapService;
 
@@ -139,6 +145,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     const ControllerStateMachine& StateMachine() const;
     MetricsSink& Metrics() const;
     std::optional<TopologySnapshot> LatestTopology() const;
+    [[nodiscard]] const ControllerConfig& GetConfig() const noexcept { return config_; }
 
     Async::IFireWireBus& Bus();
     Async::IFireWireBus& Bus() const;
@@ -177,6 +184,20 @@ class ControllerCore final : private Role::IPhyConfigReset,
     Bus::BusManagerElectionDriver* GetBusManagerElectionDriver() const;
     void SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver);
 
+    const Bus::BusManagerRuntimeState& GetBusManagerRuntimeState() const {
+        if (deps_.busManagerElectionDriver) {
+            bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
+            bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
+        }
+        if (deps_.csrResponder) {
+            bmState_.unexpectedResourceCsrSoftwareCount = deps_.csrResponder->UnexpectedResourceCsrSoftwareCount();
+        }
+        return bmState_;
+    }
+    Bus::BusManagerRuntimeState& GetBusManagerRuntimeState() { return bmState_; }
+
+    ASFW::Bus::TopologyMapService* GetTopologyMapService() const { return deps_.topologyMapService.get(); }
+
   private:
     void LogBuildBanner() const;
     kern_return_t InitializeBusResetAndDiscovery();
@@ -195,6 +216,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     [[nodiscard]] static uint32_t FaultAckMask(uint32_t events) noexcept;
     void DiagnoseUnrecoverableError() const;
     void HandleCycle64Seconds(); // Called on cycle64Seconds interrupt to extend 7-bit seconds
+    void EvaluateBusManagerPolicy() noexcept;
 
     void OnTopologyReady(const TopologySnapshot& snapshot);
     void BeginRootCapabilityEvidence(const TopologySnapshot& snapshot, uint8_t localNodeId);
@@ -210,6 +232,11 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void EnableRemoteCycleMaster(uint8_t rootNodeId, uint32_t generation) override;
     void EnableLocalCycleMaster(uint32_t generation) override;
     void ClearLocalContenderAndDelegate(uint8_t targetRoot, uint32_t generation) override;
+
+    // ASFW::Bus::BusManagerElectionDriver::IBMRoleEvents implementation
+    void OnLocalWonBM(uint32_t generation, uint8_t localNodeId) override;
+    void OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) override;
+    void OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncStatus status) override;
 
     ControllerConfig config_;
     Dependencies deps_;
@@ -241,6 +268,9 @@ class ControllerCore final : private Role::IPhyConfigReset,
     bool haveRootEvidence_{false};
     bool cycleLostWindowActive_{false};
     uint32_t cycleLostWindowEpoch_{0};
+
+    mutable Bus::BusManagerRuntimeState bmState_{};
+    std::unique_ptr<Bus::BusManagerPolicyCoordinator> bmPolicyCoordinator_;
 };
 
 } // namespace ASFW::Driver
