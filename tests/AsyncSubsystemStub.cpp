@@ -93,6 +93,14 @@ std::optional<AsyncStatusSnapshot> AsyncSubsystem::GetStatusSnapshot() const {
     return std::nullopt;
 }
 
+Debug::AsyncTraceCapture* AsyncSubsystem::GetAsyncTraceCapture() const {
+    return nullptr;
+}
+
+ASFWDiagInboundCSRStats* AsyncSubsystem::GetInboundCSRStats() const {
+    return nullptr;
+}
+
 // Stub destructors for linked classes
 PayloadRegistry::~PayloadRegistry() {}
 TransactionManager::~TransactionManager() {}
