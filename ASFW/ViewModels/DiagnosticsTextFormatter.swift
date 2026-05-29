@@ -263,10 +263,10 @@ struct DiagnosticsTextFormatter {
         appendTitle("Bus Manager & IRM Role Runtime")
         let bmModeStr: String
         switch snapshot.busManager.roleMode {
-        case 0: bmModeStr = "Apple Avoid Manager"
-        case 1: bmModeStr = "Full Bus Manager"
+        case 0: bmModeStr = "Legacy BMC Cleared"
+        case 1: bmModeStr = "Apple Avoid Manager"
         case 2: bmModeStr = "IRM Server Only"
-        case 3: bmModeStr = "Legacy BMC Cleared"
+        case 3: bmModeStr = "Full Bus Manager"
         default: bmModeStr = "Unknown (\(snapshot.busManager.roleMode))"
         }
         appendRow("Configured Role Mode", bmModeStr)

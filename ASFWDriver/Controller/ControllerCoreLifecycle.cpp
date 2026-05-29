@@ -325,8 +325,7 @@ ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
         ASFW_LOG(Controller, "✅ FireWireBusImpl facade created");
         bmPolicyCoordinator_ = std::make_unique<Bus::BusManagerPolicyCoordinator>(
             Bus::BusManagerPolicyCoordinator::Deps{
-                .hardware = deps_.hardware.get(),
-                .busImpl = busImpl_.get()
+                .hardware = deps_.hardware.get()
             }
         );
         ASFW_LOG(Controller, "✅ BusManagerPolicyCoordinator created");

@@ -6,8 +6,7 @@
 #pragma once
 
 #include "BusManagerRuntimeState.hpp"
-#include "../../Async/FireWireBusImpl.hpp"
-#include <memory>
+#include <cstdint>
 
 namespace ASFW::Driver {
 class HardwareInterface;
@@ -19,7 +18,6 @@ class BusManagerPolicyCoordinator {
 public:
     struct Deps {
         ASFW::Driver::HardwareInterface* hardware{nullptr};
-        ASFW::Async::FireWireBusImpl* busImpl{nullptr};
     };
 
     explicit BusManagerPolicyCoordinator(Deps deps) noexcept;
@@ -30,7 +28,6 @@ public:
 private:
     Deps deps_;
     uint32_t generation_{0};
-    bool remoteCmstrInFlight_{false};
 };
 
 } // namespace ASFW::Bus

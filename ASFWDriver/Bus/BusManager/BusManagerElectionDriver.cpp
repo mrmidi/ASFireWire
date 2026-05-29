@@ -147,13 +147,21 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
             return;
         }
 
-        uint32_t oldValue = 0;
         // SelectCode for BUS_MANAGER_ID is 0.
-        // CompareSwapLocalIRMResource returns true if compare matched, false otherwise.
-        const bool compareMatched = deps_.hardware->CompareSwapLocalIRMResource(0, 0x3F, localNodeId, oldValue);
+        const auto result = deps_.hardware->CompareSwapLocalIRMResource(0, 0x3F, localNodeId);
+
+        if (result.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
+            ASFW_LOG(Controller, "[BM Election] Local CompareSwap failed (status=%d)",
+                     static_cast<int>(result.status));
+            inFlight_ = false;
+            if (observer_) {
+                observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
+            }
+            return;
+        }
 
         // Invoke HandleCompareSwapResult synchronously since it's a local hardware lock sequence
-        HandleCompareSwapResult(generation, localNodeId, ASFW::Async::AsyncStatus::kSuccess, oldValue, compareMatched);
+        HandleCompareSwapResult(generation, localNodeId, ASFW::Async::AsyncStatus::kSuccess, result.oldValue, result.compareMatched);
         return;
     }
 

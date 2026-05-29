@@ -129,7 +129,11 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         bmState_.localIsIRM = false;
     }
 
-    if (bmState_.localIsIRM) {
+    const bool localIrmResourceEnabled =
+        config_.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
+        config_.roleMode == ASFW::FW::RoleMode::FullBusManager;
+
+    if (localIrmResourceEnabled && bmState_.localIsIRM) {
         auto* const hw = GetHardware();
         if (hw) {
             ASFW_LOG(Controller, "[IRM] Local node is IRM; initializing local IRM resource registers");
@@ -155,6 +159,12 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         bmState_.rootNodeId = 0x3F;
         bmState_.localIsRoot = false;
     }
+
+    // Clear stale BM ownership from previous generation.
+    // Only OnLocalWonBM / OnRemoteBM may set these after the new election.
+    bmState_.localIsBM = false;
+    bmState_.bmNodeId = 0x3F;
+    bmState_.bmOwnerSource = ASFW::Bus::BMOwnerSource::Unknown;
 
     // FW-6/FW-7: hand the new topology/generation to role policy before any
     // discovery-specific early returns — role policy is independent of ROM scan.
