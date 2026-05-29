@@ -129,11 +129,14 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         session->topology_ = std::move(request.topology);
         session->localNodeId_ = request.localNodeId;
         session->completion_ = std::move(completion);
+        session->rootCapabilityCallback_ = std::move(request.rootCapabilityCallback);
         session->completionNotified_ = false;
         session->hadBusyNodes_ = false;
         session->inflight_ = 0;
         session->completedROMs_.clear();
         session->nodeScans_.clear();
+        session->rootProbeStarted_ = false;
+        session->rootProbeTerminal_ = false;
 
         if (request.targetNodes.empty()) {
             for (const auto& node : session->topology_.nodes) {
@@ -182,7 +185,13 @@ void ROMScanSession::Abort() {
         if (!session) {
             return;
         }
+        if (session->rootProbeStarted_ && !session->rootProbeTerminal_ &&
+            session->topology_.rootNodeId.has_value()) {
+            session->NotifyRootBIBFailure(*session->topology_.rootNodeId,
+                                          Driver::Role::RootBibReadStatus::AbortedByReset);
+        }
         session->completion_ = nullptr;
+        session->rootCapabilityCallback_ = nullptr;
         session->completionNotified_ = true;
         session->nodeScans_.clear();
         session->completedROMs_.clear();
@@ -355,6 +364,7 @@ void ROMScanSession::StartBIBRead(ROMScanNodeStateMachine& node) {
     const uint8_t nodeId = node.NodeId();
     const Generation gen = gen_;
     const auto speed = node.CurrentSpeed();
+    NotifyRootBIBPending(nodeId);
 
     auto weakSelf = weak_from_this();
     reader_->ReadBIB(nodeId, gen, speed, [weakSelf, nodeId](ROMReader::ReadResult result) mutable {
@@ -396,6 +406,79 @@ void ROMScanSession::RetryWithFallback(ROMScanNodeStateMachine& node) {
     }
 }
 
+bool ROMScanSession::IsRootNode(uint8_t nodeId) const noexcept {
+    return topology_.rootNodeId.has_value() && *topology_.rootNodeId == nodeId;
+}
+
+void ROMScanSession::NotifyRootBIBPending(uint8_t nodeId) {
+    if (!IsRootNode(nodeId) || !rootCapabilityCallback_ || rootProbeStarted_) {
+        return;
+    }
+
+    rootProbeStarted_ = true;
+    Driver::Role::RootCapabilityEvidence evidence{};
+    evidence.generation = gen_.value;
+    evidence.rootNodeId = nodeId;
+    evidence.bibReadStatus = Driver::Role::RootBibReadStatus::Pending;
+    evidence.verdict = Driver::Role::RootCapability::Unknown;
+    rootCapabilityCallback_(evidence);
+}
+
+void ROMScanSession::NotifyRootBIBSuccess(uint8_t nodeId, const BusInfoBlock& bib) {
+    if (!IsRootNode(nodeId) || !rootCapabilityCallback_ || rootProbeTerminal_) {
+        return;
+    }
+
+    rootProbeStarted_ = true;
+    rootProbeTerminal_ = true;
+    Driver::Role::RootCapabilityEvidence evidence{};
+    evidence.generation = gen_.value;
+    evidence.rootNodeId = nodeId;
+    evidence.bibReadStatus = Driver::Role::RootBibReadStatus::Success;
+    evidence.cmcKnown = true;
+    evidence.cmc = bib.cmc;
+    evidence.configRomHeaderValid = true;
+    evidence.verdict = Driver::Role::DeriveRootCapabilityVerdict(
+        evidence.bibReadStatus, evidence.cmcKnown, evidence.cmc,
+        evidence.cycleObservationComplete, evidence.cycles);
+    rootCapabilityCallback_(evidence);
+}
+
+void ROMScanSession::NotifyRootBIBFailure(uint8_t nodeId,
+                                          Driver::Role::RootBibReadStatus status) {
+    if (!IsRootNode(nodeId) || !rootCapabilityCallback_ || rootProbeTerminal_) {
+        return;
+    }
+
+    rootProbeStarted_ = true;
+    rootProbeTerminal_ = true;
+    Driver::Role::RootCapabilityEvidence evidence{};
+    evidence.generation = gen_.value;
+    evidence.rootNodeId = nodeId;
+    evidence.bibReadStatus = status;
+    evidence.verdict = Driver::Role::RootCapability::Unknown;
+    rootCapabilityCallback_(evidence);
+}
+
+Driver::Role::RootBibReadStatus ROMScanSession::MapBIBFailureStatus(
+    Async::AsyncStatus status) noexcept {
+    using Driver::Role::RootBibReadStatus;
+    switch (status) {
+    case Async::AsyncStatus::kTimeout:
+    case Async::AsyncStatus::kBusyRetryExhausted:
+        return RootBibReadStatus::Timeout;
+    case Async::AsyncStatus::kAborted:
+    case Async::AsyncStatus::kStaleGeneration:
+        return RootBibReadStatus::AbortedByReset;
+    case Async::AsyncStatus::kSuccess:
+    case Async::AsyncStatus::kShortRead:
+    case Async::AsyncStatus::kHardwareError:
+    case Async::AsyncStatus::kLockCompareFail:
+        return RootBibReadStatus::Failed;
+    }
+    return RootBibReadStatus::Failed;
+}
+
 void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result) {
     if (aborted_.load(std::memory_order_relaxed) || result.generation != gen_) {
         return;
@@ -418,6 +501,9 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
         LogBIBReadFailed(nodeId);
         hadBusyNodes_ = true;
         RetryWithFallback(node);
+        if (node.CurrentState() == ROMScanNodeStateMachine::State::Failed) {
+            NotifyRootBIBFailure(nodeId, MapBIBFailureStatus(result.status));
+        }
         Pump();
         return;
     }
@@ -427,6 +513,9 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
         LogBIBBootingRetry(nodeId);
         hadBusyNodes_ = true;
         RetryWithFallback(node);
+        if (node.CurrentState() == ROMScanNodeStateMachine::State::Failed) {
+            NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Timeout);
+        }
         Pump();
         return;
     }
@@ -434,6 +523,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
     if (result.quadletsBE.size() < ASFW::ConfigROM::kBIBQuadletCount) {
         LogBIBShortRead(nodeId, result.quadletsBE.size());
         (void)TransitionNodeState(node, ROMScanNodeStateMachine::State::Failed, "BIB short read");
+        NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Failed);
         Pump();
         return;
     }
@@ -442,6 +532,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
     if (!bibRes) {
         LogBIBParseFailed(nodeId, bibRes.error());
         (void)TransitionNodeState(node, ROMScanNodeStateMachine::State::Failed, "BIB parse failed");
+        NotifyRootBIBFailure(nodeId, Driver::Role::RootBibReadStatus::Failed);
         Pump();
         return;
     }
@@ -451,6 +542,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
     }
 
     node.MutableROM().bib = bibRes->bib;
+    NotifyRootBIBSuccess(nodeId, bibRes->bib);
 
     node.MutableROM().rawQuadlets.clear();
     node.MutableROM().rawQuadlets.reserve(std::max<size_t>(256U, result.quadletsBE.size()));

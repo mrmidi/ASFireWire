@@ -50,6 +50,22 @@ struct FakeCsr : IRemoteCsrWriter {
     }
 };
 
+struct FakeContender : IContenderControl {
+    int localCycleMasterCalls{0};
+    int delegateCalls{0};
+    uint8_t lastTarget{0};
+    uint32_t lastGen{0};
+    void EnableLocalCycleMaster(uint32_t generation) override {
+        ++localCycleMasterCalls;
+        lastGen = generation;
+    }
+    void ClearLocalContenderAndDelegate(uint8_t targetRoot, uint32_t generation) override {
+        ++delegateCalls;
+        lastTarget = targetRoot;
+        lastGen = generation;
+    }
+};
+
 // Synthetic policies (captureless → convert to PolicyFn).
 RoleAction AlwaysForceRoot(const RoleInputs& /*in*/) noexcept {
     RoleAction a{};
@@ -85,9 +101,48 @@ TEST(RoleCoordinatorTests, StaleEvidenceDropped_CurrentApplied) {
     rc.OnRootCapability(4, RootCapability::CapableByBIB);
     EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::DeferForEvidence);
 
-    // Current-generation evidence is applied (skeleton → inert None).
+    // Current-generation evidence is applied and policy accepts remote CMC root.
     rc.OnRootCapability(5, RootCapability::CapableByBIB);
-    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::None);
+    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::EnableRemoteCycleMaster);
+}
+
+TEST(RoleCoordinatorTests, StructuredEvidence_CurrentApplied_StaleDropped) {
+    RoleCoordinator rc;
+    rc.OnTopologyChanged(6, MakeTopo(0, 1, 1, 2));
+
+    RootCapabilityEvidence stale{};
+    stale.generation = 5;
+    stale.rootNodeId = 1;
+    stale.bibReadStatus = RootBibReadStatus::Success;
+    stale.cmcKnown = true;
+    stale.cmc = true;
+    rc.OnRootCapabilityEvidence(5, stale);
+    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::DeferForEvidence);
+
+    RootCapabilityEvidence current = stale;
+    current.generation = 6;
+    rc.OnRootCapabilityEvidence(6, current);
+    EXPECT_EQ(rc.LastRootEvidence().verdict, RootCapability::CapableByBIB);
+    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::EnableRemoteCycleMaster);
+}
+
+TEST(RoleCoordinatorTests, StructuredEvidence_DerivesCycleFallbacks) {
+    RoleCoordinator rc;
+    rc.OnTopologyChanged(8, MakeTopo(0, 1, 1, 2));
+
+    RootCapabilityEvidence functioning{};
+    functioning.generation = 8;
+    functioning.rootNodeId = 1;
+    functioning.bibReadStatus = RootBibReadStatus::Timeout;
+    functioning.cycleObservationComplete = true;
+    functioning.cycles = CycleObservation{.cycleStartObserved = true, .cycleLostObserved = false};
+    rc.OnRootCapabilityEvidence(8, functioning);
+    EXPECT_EQ(rc.LastRootEvidence().verdict, RootCapability::FunctioningByCycleStart);
+
+    RootCapabilityEvidence bad = functioning;
+    bad.cycles = CycleObservation{.cycleStartObserved = false, .cycleLostObserved = true};
+    rc.OnRootCapabilityEvidence(8, bad);
+    EXPECT_EQ(rc.LastRootEvidence().verdict, RootCapability::BadOrNonResponsive);
 }
 
 TEST(RoleCoordinatorTests, RemoteCmstrDispatchedToExecutor) {
@@ -100,6 +155,20 @@ TEST(RoleCoordinatorTests, RemoteCmstrDispatchedToExecutor) {
     EXPECT_EQ(csr.calls, 1);
     EXPECT_EQ(csr.lastNode, 2);
     EXPECT_EQ(csr.lastGen, 7u);
+}
+
+TEST(RoleCoordinatorTests, LocalCmcRootDispatchedToLocalCycleMasterExecutor) {
+    FakeContender contender;
+    RoleCoordinator::Executors ex{};
+    ex.contender = &contender;
+    RoleCoordinator rc(ex);
+
+    rc.OnTopologyChanged(10, MakeTopo(0, 0, 0, 1));
+    rc.OnLocalCycleMasterCapability(10, true);
+    rc.OnRootCapability(10, RootCapability::CapableByBIB);
+
+    EXPECT_EQ(contender.localCycleMasterCalls, 1);
+    EXPECT_EQ(contender.lastGen, 10U);
 }
 
 TEST(RoleCoordinatorTests, PingPongGuardStopsAfterMax) {

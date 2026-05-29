@@ -37,6 +37,14 @@ inline constexpr uint32_t kCSR_IndirectData    = kCSRCoreBase + 0x0014;
 inline constexpr uint32_t kCSR_SplitTimeoutHi  = kCSRCoreBase + 0x0018;
 inline constexpr uint32_t kCSR_SplitTimeoutLo  = kCSRCoreBase + 0x001C;
 
+// Serial bus management CSRs (IEEE 1394 remote CSR register space).
+// These live at offsets below 0x400, distinct from ASFW's local CSR-core
+// staging aliases above. FW-10 uses STATE_SET to ask a remote root to enable
+// cycle-master operation.
+inline constexpr uint32_t kCSRRemoteStateClear = kCSRRegSpaceLo + 0x00EC;
+inline constexpr uint32_t kCSRRemoteStateSet   = kCSRRegSpaceLo + 0x00F0;
+inline constexpr uint32_t kCSRStateBitCMSTR    = 1u << 8;
+
 // Config ROM Base Address (IEEE 1394-1995 §8.3.2.2)
 // Low 32b offset within CSR register space (0xF0000400)
 // Effective 64-bit CSR address is (nodeID<<48 | 0xFFFF<<32 | 0xF0000400)

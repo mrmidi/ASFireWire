@@ -17,13 +17,19 @@ TEST(CycleObserverTests, FreshObserver_NoEvidence) {
     EXPECT_FALSE(obs.CycleInconsistentSeen());
 }
 
-TEST(CycleObserverTests, CycleSynch_SetsStart_AndEdgeFiresOnce) {
+TEST(CycleObserverTests, CycleSynch_IgnoredForRoleEvidence) {
     CycleObserver obs;
-    EXPECT_TRUE(obs.OnInterrupt(1, IntEventBits::kCycleSynch)); // first → changed
-    EXPECT_TRUE(obs.Observation().cycleStartObserved);
-    // Subsequent cycleSynch in the same generation must NOT report a change
-    // (this is what lets the caller avoid the per-cycle flood into RoleCoordinator).
     EXPECT_FALSE(obs.OnInterrupt(1, IntEventBits::kCycleSynch));
+    EXPECT_FALSE(obs.Observation().cycleStartObserved);
+    EXPECT_FALSE(obs.OnInterrupt(1, IntEventBits::kCycleSynch));
+}
+
+TEST(CycleObserverTests, NoCycleLostWindow_SetsContinuityObserved) {
+    CycleObserver obs;
+    EXPECT_TRUE(obs.MarkCycleContinuityObserved(2));
+    EXPECT_TRUE(obs.Observation().cycleStartObserved);
+    EXPECT_FALSE(obs.Observation().cycleLostObserved);
+    EXPECT_FALSE(obs.MarkCycleContinuityObserved(2));
 }
 
 TEST(CycleObserverTests, CycleLost_SetsLost) {
@@ -35,7 +41,8 @@ TEST(CycleObserverTests, CycleLost_SetsLost) {
 
 TEST(CycleObserverTests, GenerationChange_ResetsEvidence) {
     CycleObserver obs;
-    obs.OnInterrupt(1, IntEventBits::kCycleSynch | IntEventBits::kCycleLost);
+    obs.MarkCycleContinuityObserved(1);
+    obs.OnInterrupt(1, IntEventBits::kCycleLost);
     EXPECT_TRUE(obs.Observation().cycleStartObserved);
     EXPECT_TRUE(obs.Observation().cycleLostObserved);
 

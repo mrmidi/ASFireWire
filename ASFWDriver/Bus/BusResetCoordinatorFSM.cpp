@@ -133,16 +133,6 @@ void BusResetCoordinator::MaybeRequestTopologyDrivenReset() {
         return;
     }
 
-    EvaluateRootDelegation(*cycle_.acceptedTopology);
-
-    if (auto command =
-            busManager_->AssignCycleMaster(*cycle_.acceptedTopology,
-                                           topologyManager_->GetBadIRMFlags())) {
-        RequestSoftwareReset({ResetRequestKind::Delegation, ResetFlavor::Long, command,
-                              "AssignCycleMaster"});
-        return;
-    }
-
     if (!cycle_.acceptedSelfId.has_value()) {
         return;
     }
@@ -151,6 +141,10 @@ void BusResetCoordinator::MaybeRequestTopologyDrivenReset() {
         busManager_->EvaluateGapPolicy(*cycle_.acceptedTopology,
                                        cycle_.acceptedSelfId->quads);
     if (!gapDecision) {
+        return;
+    }
+
+    if (gapDecision->reason != BusManager::GapDecisionReason::MismatchForce63) {
         return;
     }
 
@@ -179,20 +173,8 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepRearming() {
         return StepResult::Yield;
     }
 
-    // Per Linux bus_reset_work() (ohci.c:2052): re-assert cycleMaster after a
-    // bus reset UNLESS we were root and remain root. The OHCI hardware may have
-    // auto-cleared it if cycleTooLong fired during the reset; refreshing it keeps
-    // cycle-start packets flowing for the isoch clock (DICE audio) and devices
-    // like the Nikon SAA7356HL that need them for MCU firmware download.
-    //
-    // The bit is hardware-gated (OHCI emits cycle starts only when actually root),
-    // so this is NOT role policy — local cycleMaster is intentionally not gated on
-    // RoleCoordinator's view of who should be cycle master (see FW-7).
     if (hardware_ != nullptr) {
         const bool isRoot = G_IsRoot();
-        if (ShouldReassertCycleMasterOnRearm(wasRoot_, isRoot)) {
-            hardware_->SetLinkControlBits(LinkControlBits::kCycleMaster);
-        }
         wasRoot_ = isRoot;
     }
 

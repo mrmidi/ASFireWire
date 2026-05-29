@@ -13,22 +13,72 @@ RoleAction EvaluateRolePolicy(const RoleInputs& in) noexcept {
         return action;
     }
 
-    // SKELETON (FW-6): until root-capability (FW-8) and cycle-start (FW-7)
-    // evidence exist, defer instead of guessing. FW-9 replaces the block below
-    // with the full matrix in Linux bm_work decision ORDER:
-    //   gap-inconsistent → root-null → not-probed-defer → cmc-keep → not-cmc-force
-    // (firewire/core-card.c:432-531). The order is load-bearing for anti-ping-pong.
-    if ((in.rootCap == RootCapability::Unknown) && !in.cycles.cycleStartObserved) {
+    const uint8_t localNode = *in.topo->localNodeId;
+    const uint8_t rootNode = *in.topo->rootNodeId;
+    const bool localIsRoot = localNode == rootNode;
+
+    if (in.rootCap == RootCapability::Unknown) {
         action.kind = RoleAction::Kind::DeferForEvidence;
         action.reason = "awaiting root-capability / cycle-start evidence";
         return action;
     }
 
-    // Evidence exists, but no policy decisions are implemented yet (FW-9).
-    // Deliberately inert: the skeleton must never issue a reset or cycle-master
-    // change. Local cycleMaster is NOT a role-policy output (see FW-7 note).
-    action.kind = RoleAction::Kind::None;
-    action.reason = "skeleton: no policy decisions implemented yet (FW-9)";
+    if (localIsRoot) {
+        if (in.localCmcCapable || in.rootCap == RootCapability::CapableByBIB) {
+            action.kind = RoleAction::Kind::EnableLocalCycleMaster;
+            action.targetRoot = localNode;
+            action.reason = "local root accepted: enable local cycleMaster";
+            return action;
+        }
+
+        action.kind = RoleAction::Kind::MarkRootBadOrUnknown;
+        action.reason = "local root is not known cycle-master-capable";
+        return action;
+    }
+
+    switch (in.rootCap) {
+    case RootCapability::CapableByBIB:
+        action.kind = RoleAction::Kind::EnableRemoteCycleMaster;
+        action.targetRoot = rootNode;
+        action.reason = "remote root CMC=1: write remote STATE_SET.cmstr";
+        return action;
+
+    case RootCapability::FunctioningByCycleStart:
+        action.kind = RoleAction::Kind::None;
+        action.targetRoot = rootNode;
+        action.reason = "remote root accepted by cycle continuity";
+        return action;
+
+    case RootCapability::IncapableByBIB:
+        if (in.localCmcCapable) {
+            action.kind = RoleAction::Kind::ForceRootAndReset;
+            action.targetRoot = localNode;
+            action.reset = RoleResetFlavor::Short;
+            action.reason = "remote root CMC=0: force local capable root";
+            return action;
+        }
+        action.kind = RoleAction::Kind::MarkRootBadOrUnknown;
+        action.reason = "remote root CMC=0 and no capable local fallback";
+        return action;
+
+    case RootCapability::BadOrNonResponsive:
+        if (in.localCmcCapable) {
+            action.kind = RoleAction::Kind::ForceRootAndReset;
+            action.targetRoot = localNode;
+            action.reset = RoleResetFlavor::Short;
+            action.reason = "remote root bad/nonresponsive: force local capable root";
+            return action;
+        }
+        action.kind = RoleAction::Kind::MarkRootBadOrUnknown;
+        action.reason = "remote root bad/nonresponsive and no capable local fallback";
+        return action;
+
+    case RootCapability::Unknown:
+        break;
+    }
+
+    action.kind = RoleAction::Kind::DeferForEvidence;
+    action.reason = "awaiting root-capability / cycle-start evidence";
     return action;
 }
 

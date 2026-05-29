@@ -59,6 +59,12 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void StartBIBRead(ROMScanNodeStateMachine& node);
     void HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult result);
     void ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId);
+    [[nodiscard]] bool IsRootNode(uint8_t nodeId) const noexcept;
+    void NotifyRootBIBPending(uint8_t nodeId);
+    void NotifyRootBIBSuccess(uint8_t nodeId, const BusInfoBlock& bib);
+    void NotifyRootBIBFailure(uint8_t nodeId, Driver::Role::RootBibReadStatus status);
+    [[nodiscard]] static Driver::Role::RootBibReadStatus MapBIBFailureStatus(
+        Async::AsyncStatus status) noexcept;
     [[nodiscard]] bool ShouldDelayMinimalROMCompletion(const ROMScanNodeStateMachine& node) const;
     void ScheduleMinimalROMRetry(ROMScanNodeStateMachine& node);
     void CompleteMinimalROM(ROMScanNodeStateMachine& node, const char* reason);
@@ -104,6 +110,9 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     bool hadBusyNodes_{false};
     bool completionNotified_{false};
     ScanCompletionCallback completion_;
+    std::function<void(Driver::Role::RootCapabilityEvidence)> rootCapabilityCallback_;
+    bool rootProbeStarted_{false};
+    bool rootProbeTerminal_{false};
 
     IOLock* executorLock_{nullptr};
     std::deque<std::function<void()>> executorQueue_;

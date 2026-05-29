@@ -303,7 +303,12 @@ void LogInitSummary(ASFW::Driver::HardwareInterface& hw,
 namespace ASFW::Driver {
 
 ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
-    : config_(std::move(config)), deps_(std::move(deps)) {
+    : config_(std::move(config)),
+      deps_(std::move(deps)),
+      roleCoordinator_(Role::RoleExecutors{
+          static_cast<Role::IPhyConfigReset*>(this),
+          static_cast<Role::IRemoteCsrWriter*>(this),
+          static_cast<Role::IContenderControl*>(this)}) {
 
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
@@ -634,8 +639,8 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // The kProvisionalNodeId value would be immediately overwritten anyway
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
-             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable | cycleMaster "
-             "(hardware-gated: emits cycle starts only when root)");
+             "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable "
+             "(cycleMaster is role-policy controlled)");
     hw.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
 
     ConfigureAtRetries(hw);

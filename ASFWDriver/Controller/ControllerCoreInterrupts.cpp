@@ -115,13 +115,8 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
         ASFW_LOG(Controller, "⚠️ WARNING: Cycle too long - isochronous cycle overran 125μs budget");
         ASFW_LOG(Controller,
                  "This indicates DMA descriptors or system latency causing timing violation");
-        // Validated with Linux — refs: ohci.c (irq_handler): on cycleTooLong the hardware
-        // auto-clears cycleMaster, so re-assert it via LinkControlSet immediately. Without
-        // this, cycle-start packets stop permanently and devices that depend on them
-        // (e.g. Nikon SAA7356HL MCU firmware download) never initialize.
-        if (deps_.hardware) {
-            deps_.hardware->SetLinkControlBits(LinkControlBits::kCycleMaster);
-        }
+        // FW-9/FW-10: local cycleMaster is no longer reasserted from the fault path.
+        // RoleCoordinator owns local-vs-remote cycle-master enablement.
     }
 
     if ((events & IntEventBits::kCycleInconsistent) != 0U) {
@@ -160,14 +155,16 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
         HandleCycle64Seconds();
     }
 
-    // FW-7: record cycle-start/lost evidence for RoleCoordinator. Edge-triggered
-    // so the per-cycle cycleSynch can never flood the coordinator — OnInterrupt
-    // returns true only when the observation actually changes. Uses the cached
-    // generation (set in OnTopologyReady) to avoid copying the topology snapshot
-    // on the interrupt path. Does not disturb the cycleInconsistent audio-recovery
-    // handling above.
+    // FW-8: record cycleLost evidence for RoleCoordinator. cycleSynch is
+    // deliberately ignored by CycleObserver because it is local timer evidence,
+    // not proof that the remote root generated cycle-start packets.
     if (cycleObserver_.OnInterrupt(currentGeneration_, events)) {
-        roleCoordinator_.OnCycleStartEvidence(currentGeneration_, cycleObserver_.Observation());
+        if (((events & IntEventBits::kCycleLost) != 0U) && cycleLostWindowActive_) {
+            CompleteRootCycleLostWindow(currentGeneration_, cycleLostWindowEpoch_, true);
+        } else {
+            roleCoordinator_.OnCycleStartEvidence(currentGeneration_,
+                                                  cycleObserver_.Observation());
+        }
     }
 }
 

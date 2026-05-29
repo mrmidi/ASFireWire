@@ -13,6 +13,7 @@
 
 using namespace ASFW::Discovery;
 using namespace ASFW::Driver;
+using namespace ASFW::Driver::Role;
 
 namespace {
 
@@ -202,11 +203,132 @@ std::vector<uint32_t> CreateFullBIB(uint64_t guid = 0x0123456789ABCDEF) {
     };
 }
 
+std::vector<uint32_t> CreateFullBIBWithCMC(bool cmc) {
+    auto bib = CreateFullBIB();
+    if (cmc) {
+        bib[2] |= 0x40000000U;
+    } else {
+        bib[2] &= ~0x40000000U;
+    }
+    return bib;
+}
+
 } // anonymous namespace
 
 // ============================================================================
 // Manual Read Completion Tests
 // ============================================================================
+
+TEST(ROMScannerCompletion, RootBIBSuccess_EmitsCMCTrueEvidence) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 101;
+    topology.busBase16 = 0xFFC0;
+    topology.localNodeId = 0;
+    topology.rootNodeId = 1;
+    topology.nodes.push_back({.nodeId = 0, .linkActive = true});
+    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+
+    std::vector<RootCapabilityEvidence> evidence;
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+    request.rootCapabilityCallback = [&](RootCapabilityEvidence update) {
+        evidence.push_back(update);
+    };
+
+    ASSERT_TRUE(scanner.Start(request, [](Generation, std::vector<ConfigROM>, bool) {}));
+    mockAsync.WaitForPendingReads(1);
+    ASSERT_EQ(evidence.size(), 1u);
+    EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::Pending);
+
+    mockAsync.SimulateFullBIBSuccess(CreateFullBIBWithCMC(true));
+    ASSERT_GE(evidence.size(), 2u);
+    EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::Success);
+    EXPECT_TRUE(evidence.back().cmcKnown);
+    EXPECT_TRUE(evidence.back().cmc);
+    EXPECT_TRUE(evidence.back().configRomHeaderValid);
+    EXPECT_EQ(evidence.back().verdict, RootCapability::CapableByBIB);
+}
+
+TEST(ROMScannerCompletion, RootBIBSuccess_EmitsCMCFalseEvidence) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 102;
+    topology.busBase16 = 0xFFC0;
+    topology.localNodeId = 0;
+    topology.rootNodeId = 1;
+    topology.nodes.push_back({.nodeId = 0, .linkActive = true});
+    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+
+    std::vector<RootCapabilityEvidence> evidence;
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+    request.rootCapabilityCallback = [&](RootCapabilityEvidence update) {
+        evidence.push_back(update);
+    };
+
+    ASSERT_TRUE(scanner.Start(request, [](Generation, std::vector<ConfigROM>, bool) {}));
+    mockAsync.WaitForPendingReads(1);
+    mockAsync.SimulateFullBIBSuccess(CreateFullBIBWithCMC(false));
+
+    ASSERT_GE(evidence.size(), 2u);
+    EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::Success);
+    EXPECT_TRUE(evidence.back().cmcKnown);
+    EXPECT_FALSE(evidence.back().cmc);
+    EXPECT_EQ(evidence.back().verdict, RootCapability::IncapableByBIB);
+}
+
+TEST(ROMScannerCompletion, RootBIBTimeout_EmitsTerminalTimeoutEvidence) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+    ROMScannerParams params{};
+    params.doIRMCheck = false;
+    params.startSpeed = FwSpeed::S100;
+    params.perStepRetries = 0;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 103;
+    topology.busBase16 = 0xFFC0;
+    topology.localNodeId = 0;
+    topology.rootNodeId = 1;
+    topology.nodes.push_back({.nodeId = 0, .linkActive = true});
+    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+
+    std::vector<RootCapabilityEvidence> evidence;
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+    request.rootCapabilityCallback = [&](RootCapabilityEvidence update) {
+        evidence.push_back(update);
+    };
+
+    ASSERT_TRUE(scanner.Start(request, [](Generation, std::vector<ConfigROM>, bool) {}));
+    mockAsync.WaitForPendingReads(1);
+    mockAsync.SimulateReadTimeout(0);
+
+    ASSERT_GE(evidence.size(), 2u);
+    EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::Timeout);
+    EXPECT_EQ(evidence.back().verdict, RootCapability::Unknown);
+}
 
 TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRootHeader) {
     MockAsyncSubsystem mockAsync;

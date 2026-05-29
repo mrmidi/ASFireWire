@@ -15,12 +15,6 @@ bool CycleObserver::OnInterrupt(uint32_t generation, uint32_t intEventBits) noex
 
     bool changed = false;
 
-    // cycleSynch ⇒ cycles are starting on the bus (positive evidence).
-    if (((intEventBits & IntEventBits::kCycleSynch) != 0U) && !obs_.cycleStartObserved) {
-        obs_.cycleStartObserved = true;
-        changed = true;
-    }
-
     // cycleLost ⇒ expected cycle starts are missing.
     if (((intEventBits & IntEventBits::kCycleLost) != 0U) && !obs_.cycleLostObserved) {
         obs_.cycleLostObserved = true;
@@ -34,6 +28,21 @@ bool CycleObserver::OnInterrupt(uint32_t generation, uint32_t intEventBits) noex
     }
 
     return changed;
+}
+
+bool CycleObserver::MarkCycleContinuityObserved(uint32_t generation) noexcept {
+    if (generation != generation_) {
+        generation_ = generation;
+        obs_ = CycleObservation{};
+        cycleInconsistentSeen_ = false;
+    }
+
+    if (obs_.cycleLostObserved || obs_.cycleStartObserved) {
+        return false;
+    }
+
+    obs_.cycleStartObserved = true;
+    return true;
 }
 
 } // namespace ASFW::Driver::Role
