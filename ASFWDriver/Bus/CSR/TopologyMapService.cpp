@@ -35,6 +35,11 @@ TopologyMapService::~TopologyMapService() {
 }
 
 bool TopologyMapService::Start() noexcept {
+    ASFW::Async::IOScopedLock guard(lock_);
+    return StartLocked();
+}
+
+bool TopologyMapService::StartLocked() noexcept {
     if (started_) {
         return true;
     }
@@ -91,7 +96,7 @@ void TopologyMapService::Stop() noexcept {
 
 void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot) noexcept {
     ASFW::Async::IOScopedLock guard(lock_);
-    if (!started_ && !Start()) {
+    if (!started_ && !StartLocked()) {
         ASFW_LOG(Controller, "❌ TopologyMapService: Rebuild failed, service cannot be started");
         return;
     }

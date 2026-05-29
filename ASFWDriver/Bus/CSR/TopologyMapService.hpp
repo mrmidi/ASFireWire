@@ -93,6 +93,7 @@ private:
 
     void ZeroBuffer() noexcept;
     void InvalidateLocked() noexcept;
+    bool StartLocked() noexcept;
 };
 
 } // namespace ASFW::Bus

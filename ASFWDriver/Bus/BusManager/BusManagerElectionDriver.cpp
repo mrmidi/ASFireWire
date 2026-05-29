@@ -81,6 +81,7 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
                     if (state.generation16 != generation) {
                         ASFW_LOG(Controller, "[BM Election] Aborting grace period contention: generation changed from %u to %u",
                                  generation, state.generation16);
+                        self->inFlight_ = false;
                         return;
                     }
                 }
