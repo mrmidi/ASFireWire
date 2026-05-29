@@ -23,20 +23,13 @@ kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserCli
         return kIOReturnBadArgument;
     }
 
-    // Allocate OSData with size of StructType
-    OSData* data = OSData::withCapacity(sizeof(StructType));
-    if (!data) {
-        return kIOReturnNoMemory;
-    }
-
-    // Set structure bounds
     StructType val{};
     ASFWDiagStatus status = (service->*collectFn)(&val);
     (void)status; // Handled via header status field
     
-    // Write even on error (since structure carries status code in header)
-    if (!data->appendBytes(&val, sizeof(StructType))) {
-        data->release();
+    // Allocate OSData with the bytes directly
+    OSData* data = OSData::withBytes(&val, sizeof(StructType));
+    if (!data) {
         return kIOReturnNoMemory;
     }
 
