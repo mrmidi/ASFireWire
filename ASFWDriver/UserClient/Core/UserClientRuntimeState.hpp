@@ -13,6 +13,7 @@
 #include "../Handlers/StatusHandler.hpp"
 #include "../Handlers/TopologyHandler.hpp"
 #include "../Handlers/TransactionHandler.hpp"
+#include "../Handlers/DiagnosticsHandler.hpp"
 #include "../Storage/TransactionStorage.hpp"
 
 class ASFWDriver;
@@ -54,6 +55,7 @@ class UserClientRuntimeState final {
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(driver);
         sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager);
+        diagnosticsHandler_ = std::make_unique<DiagnosticsHandler>(driver);
 
         return HandlersReady();
     }
@@ -68,6 +70,7 @@ class UserClientRuntimeState final {
         statusHandler_.reset();
         topologyHandler_.reset();
         busResetHandler_.reset();
+        diagnosticsHandler_.reset();
     }
 
     void ReleaseOwner(void* owner) noexcept {
@@ -81,7 +84,7 @@ class UserClientRuntimeState final {
                statusHandler_ != nullptr && transactionHandler_ != nullptr &&
                configRomHandler_ != nullptr && deviceDiscoveryHandler_ != nullptr &&
                avcHandler_ != nullptr && isochHandler_ != nullptr &&
-               sbp2Handler_ != nullptr;
+               sbp2Handler_ != nullptr && diagnosticsHandler_ != nullptr;
     }
 
     [[nodiscard]] TransactionStorage& TransactionResults() noexcept { return transactionStorage_; }
@@ -97,6 +100,7 @@ class UserClientRuntimeState final {
     [[nodiscard]] AVCHandler& AVC() noexcept { return *avcHandler_; }
     [[nodiscard]] IsochHandler& Isoch() noexcept { return *isochHandler_; }
     [[nodiscard]] SBP2Handler& SBP2() noexcept { return *sbp2Handler_; }
+    [[nodiscard]] DiagnosticsHandler& Diagnostics() noexcept { return *diagnosticsHandler_; }
 
   private:
     TransactionStorage transactionStorage_{};
@@ -109,6 +113,7 @@ class UserClientRuntimeState final {
     std::unique_ptr<AVCHandler> avcHandler_{};
     std::unique_ptr<IsochHandler> isochHandler_{};
     std::unique_ptr<SBP2Handler> sbp2Handler_{};
+    std::unique_ptr<DiagnosticsHandler> diagnosticsHandler_{};
 };
 
 template <typename ClientLike>

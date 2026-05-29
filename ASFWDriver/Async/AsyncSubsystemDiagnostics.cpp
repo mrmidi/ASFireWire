@@ -85,6 +85,14 @@ AsyncWatchdogStats AsyncSubsystem::GetWatchdogStats() const {
     return stats;
 }
 
+Debug::AsyncTraceCapture* AsyncSubsystem::GetAsyncTraceCapture() const {
+    return asyncTraceCapture_.get();
+}
+
+ASFWDiagInboundCSRStats* AsyncSubsystem::GetInboundCSRStats() const {
+    return const_cast<ASFWDiagInboundCSRStats*>(&inboundCSRStats_);
+}
+
 void AsyncSubsystem::DumpState() {
     // TODO: emit structured diagnostics for debugging.
 }

@@ -7,6 +7,10 @@
 #include "DescriptorBuilder.hpp"
 #include "../Track/PayloadRegistry.hpp"
 
+namespace ASFW::Debug {
+class AsyncTraceCapture;
+}
+
 namespace ASFW::Async {
 class DescriptorBuilder;
 class ATRequestContext;
@@ -49,10 +53,15 @@ public:
     // Payload registry wiring (non-owning)
     void SetPayloads(ASFW::Async::PayloadRegistry* p) noexcept { payloads_ = p; }
 
+    void SetDiagnostics(Debug::AsyncTraceCapture* traceCapture) noexcept {
+        traceCapture_ = traceCapture;
+    }
+
 private:
     Engine::ContextManager& ctxMgr_;
     DescriptorBuilder& descriptorBuilder_;
     ASFW::Async::PayloadRegistry* payloads_{nullptr};
+    Debug::AsyncTraceCapture* traceCapture_{nullptr};
     // Phase 1.2: submitLock_ removed - locking now handled by ATManager with fine granularity
 };
 

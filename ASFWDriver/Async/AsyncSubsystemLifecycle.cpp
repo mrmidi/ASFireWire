@@ -350,6 +350,13 @@ kern_return_t AsyncSubsystem::InitializeCoreStartState(size_t completionQueueCap
 
     tracking_ = std::make_unique<Track_Tracking<CompletionQueue>>(
         labelAllocator_.get(), txnMgr_.get(), *completionQueue_, nullptr);
+
+    asyncTraceCapture_ = std::make_unique<Debug::AsyncTraceCapture>();
+    std::memset(&inboundCSRStats_, 0, sizeof(inboundCSRStats_));
+    inboundCSRStats_.header.abiVersion = ASFW_DIAG_ABI_VERSION;
+    inboundCSRStats_.header.structSize = sizeof(inboundCSRStats_);
+    inboundCSRStats_.header.status = ASFWDiagStatusOK;
+
     return kIOReturnSuccess;
 }
 
@@ -398,6 +405,9 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
     }
 
     submitter_ = std::make_unique<Tx::Submitter>(*contextManager_, *descriptorBuilder_);
+    if (submitter_) {
+        submitter_->SetDiagnostics(asyncTraceCapture_.get());
+    }
     if (tracking_ && contextManager_) {
         contextManager_->SetPayloads(tracking_->Payloads());
         if (submitter_) {
@@ -408,6 +418,7 @@ kern_return_t AsyncSubsystem::ProvisionAsyncDataPath(const char*& failureStage) 
     }
 
     packetRouter_ = std::make_unique<PacketRouter>();
+    packetRouter_->SetDiagnostics(asyncTraceCapture_.get(), &inboundCSRStats_);
     rxPath_ = std::make_unique<Rx::RxPath>(*contextManager_->GetArRequestContext(),
                                            *contextManager_->GetArResponseContext(), *tracking_,
                                            *generationTracker_, *packetRouter_);
