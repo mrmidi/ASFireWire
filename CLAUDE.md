@@ -157,6 +157,8 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 
 **Test isolation:** All C++ tests compile with `ASFW_HOST_TEST` defined, which stubs out DriverKit APIs. Logic tested this way cannot cover actual hardware interaction.
 
+**Wire compatibility is the correctness bar.** ASFW is general-purpose but typically tested only against audio hardware. For untestable device classes/topologies, "correct" means *behaves like the in-tree reference stacks* (`firewire/` = Linux, authoritative for OHCI mechanism; `IOFireWireFamily.kmodproj/` = Apple, authoritative for policy/ordering). Spec is the floor, the references are the ceiling. Internal architecture is free; observable **bus behavior must conform**. Only deviate from the references with hardware in hand — "cleaner than the reference" is an untested behavior. This is sharpest at the bus-policy layer (root/cycle-master/reset/gap), which is global state affecting every device at once.
+
 ## Code Patterns
 
 - **Error handling:** `std::expected<T, E>` — no exceptions in driver code. Mark all error-returning functions `[[nodiscard]]`.

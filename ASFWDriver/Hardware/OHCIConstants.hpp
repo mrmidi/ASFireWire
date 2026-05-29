@@ -14,15 +14,13 @@ namespace ASFW::Driver {
 constexpr uint32_t kAsReqAcceptAllMask = 0x80000000u;
 
 // Default link control configuration used during controller initialization.
-// cycleMaster is armed here (Linux ohci.c ohci_enable():2472 sets
-// cycleTimerEnable | cycleMaster together). The bit is hardware-gated — OHCI
-// only emits cycle-start packets when the PHY reports this node is root — so
-// arming it while non-root is a harmless no-op. It is refreshed after each reset
-// in BusResetCoordinator::StepRearming (Linux ohci.c:2052).
+// Keep the local cycle timer running for cycleLost/cycleSynch accounting, but
+// do not arm local cycleMaster here. FW-9/FW-10 make cycle-master enablement a
+// RoleCoordinator action so remote roots use CSR STATE_SET.cmstr instead of
+// local LinkControl.cycleMaster.
 constexpr uint32_t kDefaultLinkControl = LinkControlBits::kRcvSelfID |
 										   LinkControlBits::kRcvPhyPkt |
-										   LinkControlBits::kCycleTimerEnable |
-										   LinkControlBits::kCycleMaster;
+										   LinkControlBits::kCycleTimerEnable;
 
 // Posted write priming bits (OHCI HCControl - enable posted writes and LPS)
 constexpr uint32_t kPostedWritePrimingBits = HCControlBits::kPostedWriteEnable |

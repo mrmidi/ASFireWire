@@ -561,7 +561,7 @@ TEST(BusResetCoordinatorTests, GapMismatchResetIsDeferredThenSentWithPhyConfig) 
     EXPECT_EQ(operations.back(), HardwareInterface::TestOperation::InitiateBusReset);
 }
 
-TEST(BusResetCoordinatorTests, DelegationResetShortCircuitsGapOptimizationForGeneration) {
+TEST(BusResetCoordinatorTests, EarlyTopologyPolicyDoesNotDelegateBeforeEvidence) {
     BusResetTestRig rig;
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
@@ -577,11 +577,9 @@ TEST(BusResetCoordinatorTests, DelegationResetShortCircuitsGapOptimizationForGen
 
     rig.AdvanceMs(2000U);
 
-    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued());
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_EQ(rig.hardware.TestLastForceRootNode(), 0U);
-    EXPECT_FALSE(rig.hardware.TestLastGapCount().has_value());
-    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
 }
 
 TEST(BusResetCoordinatorTests, LocalIRMRemoteRootWithoutPeerContenderForcesLocalRoot) {
@@ -601,13 +599,10 @@ TEST(BusResetCoordinatorTests, LocalIRMRemoteRootWithoutPeerContenderForcesLocal
 
     rig.AdvanceMs(2000U);
 
-    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued());
-    EXPECT_TRUE(rig.hardware.TestLastPhyConfigSucceeded());
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_TRUE(rig.hardware.TestLastBusResetSucceeded());
-    EXPECT_EQ(rig.hardware.TestLastForceRootNode(), 0U);
-    EXPECT_FALSE(rig.hardware.TestLastGapCount().has_value());
-    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_EQ(rig.publishedTopologies.back().rootNodeId, 2U);
 }
 
 TEST(BusResetCoordinatorTests, ConsumedSelfIDComplete2IsClearedExplicitly) {
@@ -657,7 +652,7 @@ TEST(BusResetCoordinatorTests, ConservativeMismatchGapOverridesDeferredTargetGap
     EXPECT_EQ(BusResetCoordinatorTestPeer::PendingGapCount(coordinator), 63U);
 }
 
-TEST(BusResetCoordinatorTests, FailedPhyConfigDispatchSuppressesTopologyAndKeepsGapUnconfirmed) {
+TEST(BusResetCoordinatorTests, TargetGapOptimizationDoesNotRunBeforeRoleEvidence) {
     BusResetTestRig rig;
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
@@ -673,31 +668,14 @@ TEST(BusResetCoordinatorTests, FailedPhyConfigDispatchSuppressesTopologyAndKeeps
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
-    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued());
-    EXPECT_FALSE(rig.hardware.TestLastPhyConfigSucceeded());
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
-    EXPECT_TRUE(rig.publishedTopologies.empty());
-
-    rig.ResetHardwareState();
-    rig.SetSendPhyConfigResult(true);
-    rig.SetLocalNode(1U);
-
-    rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(18U, {MakeBaseSelfID(0U, 63U, true, false),
-                                                MakeBaseSelfID(1U, 63U, true, true)}),
-                     18U);
-    rig.TriggerStickyCompletion();
-    rig.AdvanceMs(2000U);
-
-    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued());
-    EXPECT_TRUE(rig.hardware.TestLastPhyConfigSucceeded());
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_TRUE(rig.hardware.TestLastBusResetSucceeded());
-    EXPECT_EQ(rig.hardware.TestLastGapCount(), 21U);
-    EXPECT_TRUE(rig.publishedTopologies.empty());
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_TRUE(rig.publishedTopologies.back().gapCountConsistent);
+    EXPECT_EQ(rig.publishedTopologies.back().gapCount, 63U);
 }
 
-TEST(BusResetCoordinatorTests, FailedResetInitiationSuppressesTopologyAndKeepsGapUnconfirmed) {
+TEST(BusResetCoordinatorTests, FailedResetInitiationDoesNotApplyToSkippedTargetGap) {
     BusResetTestRig rig;
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
@@ -712,29 +690,13 @@ TEST(BusResetCoordinatorTests, FailedResetInitiationSuppressesTopologyAndKeepsGa
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
-    EXPECT_TRUE(rig.hardware.TestPhyConfigIssued());
-    EXPECT_TRUE(rig.hardware.TestLastPhyConfigSucceeded());
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_FALSE(rig.hardware.TestLastBusResetSucceeded());
-    EXPECT_TRUE(rig.publishedTopologies.empty());
-
-    rig.ResetHardwareState();
-    rig.SetLocalNode(1U);
-
-    rig.StartResetCycle();
-    rig.PrimeCapture(MakeRawSelfIDCapture(20U, {MakeBaseSelfID(0U, 63U, true, false),
-                                                MakeBaseSelfID(1U, 63U, true, true)}),
-                     20U);
-    rig.TriggerStickyCompletion();
-    rig.AdvanceMs(2000U);
-
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_TRUE(rig.hardware.TestLastBusResetSucceeded());
-    EXPECT_EQ(rig.hardware.TestLastGapCount(), 21U);
-    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_EQ(rig.publishedTopologies.back().gapCount, 63U);
 }
 
-TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessfulCorrection) {
+TEST(BusResetCoordinatorTests, StableAcceptedGenerationDoesNotCommitSkippedTargetGap) {
     BusResetTestRig rig;
     rig.Initialize(true);
     rig.busManager.SetGapOptimizationEnabled(true);
@@ -748,8 +710,9 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(2000U);
 
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_TRUE(rig.publishedTopologies.empty());
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    EXPECT_EQ(rig.publishedTopologies.back().gapCount, 63U);
 
     rig.ResetHardwareState();
     rig.SetLocalNode(1U);
@@ -763,19 +726,16 @@ TEST(BusResetCoordinatorTests, StableAcceptedGenerationCommitsGapAfterSuccessful
 
     EXPECT_FALSE(rig.hardware.TestPhyConfigIssued());
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
-    ASSERT_EQ(rig.publishedTopologies.size(), 1U);
+    ASSERT_EQ(rig.publishedTopologies.size(), 2U);
     ASSERT_TRUE(rig.publishedTopologies.back().gapCountConsistent);
     EXPECT_EQ(rig.publishedTopologies.back().gapCount, 21U);
 }
 
-// FW-7: cycleMaster re-assert guard (Linux ohci.c:2052). Re-arm on rearm UNLESS
-// we were root and remain root. The bit is hardware-gated, so this is a
-// redundant-write avoidance, not role policy.
-TEST(BusResetCoordinatorCycleMasterGuard, ReassertsUnlessRootStaysRoot) {
+// FW-9/FW-10: local cycleMaster is role-policy controlled, never reset-rearm controlled.
+TEST(BusResetCoordinatorCycleMasterGuard, NeverReassertsFromResetRearm) {
     using BRC = ASFW::Driver::BusResetCoordinator;
-    EXPECT_TRUE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/false, /*isRootNow=*/false));
-    EXPECT_TRUE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/false, /*isRootNow=*/true));
-    EXPECT_TRUE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/true, /*isRootNow=*/false));
-    // The one case we skip the redundant write: was root and still root.
+    EXPECT_FALSE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/false, /*isRootNow=*/false));
+    EXPECT_FALSE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/false, /*isRootNow=*/true));
+    EXPECT_FALSE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/true, /*isRootNow=*/false));
     EXPECT_FALSE(BRC::ShouldReassertCycleMasterOnRearm(/*wasRoot=*/true, /*isRootNow=*/true));
 }

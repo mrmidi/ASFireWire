@@ -1,8 +1,7 @@
 // RolePolicyTests.cpp — Layer 1 of RoleCoordinator (FW-6).
 //
-// Pins the conservative SKELETON behavior of EvaluateRolePolicy: it never issues
-// a reset or cycle-master change yet; it only returns None or DeferForEvidence.
-// FW-9 will extend/replace these with the full bm_work-style decision matrix.
+// Pins the FW-9/FW-10 role decisions: root capability evidence becomes local
+// cycleMaster, remote CMSTR, force-root, or defer/no-op decisions.
 
 #include <cstdint>
 
@@ -17,6 +16,8 @@ using ASFW::Driver::Role::RoleAction;
 using ASFW::Driver::Role::RoleInputs;
 using ASFW::Driver::Role::RoleResetFlavor;
 using ASFW::Driver::Role::RootCapability;
+using ASFW::Driver::Role::RootBibReadStatus;
+using ASFW::Driver::Role::DeriveRootCapabilityVerdict;
 
 namespace {
 
@@ -53,21 +54,82 @@ TEST(RolePolicyTests, UnknownCapabilityNoCycles_Defers) {
     EXPECT_EQ(EvaluateRolePolicy(in).kind, RoleAction::Kind::DeferForEvidence);
 }
 
-TEST(RolePolicyTests, EvidencePresent_SkeletonIsInert_NoReset) {
+TEST(RolePolicyTests, RemoteCmcRoot_EnablesRemoteCycleMaster) {
     const auto t = MakeTopo(0, 1, 1);
     RoleInputs in{};
     in.topo = &t;
     in.rootCap = RootCapability::CapableByBIB;
     const auto a = EvaluateRolePolicy(in);
-    EXPECT_EQ(a.kind, RoleAction::Kind::None);          // skeleton must not act yet
-    EXPECT_EQ(a.reset, RoleResetFlavor::None);          // and never issues a reset
+    EXPECT_EQ(a.kind, RoleAction::Kind::EnableRemoteCycleMaster);
+    EXPECT_EQ(a.targetRoot, 1U);
+    EXPECT_EQ(a.reset, RoleResetFlavor::None);
 }
 
-TEST(RolePolicyTests, CycleStartObserved_ClearsDefer) {
+TEST(RolePolicyTests, CycleStartOnlyRootAcceptanceDoesNotWriteCmstr) {
     const auto t = MakeTopo(0, 1, 1);
     RoleInputs in{};
     in.topo = &t;
-    in.rootCap = RootCapability::Unknown;
+    in.rootCap = RootCapability::FunctioningByCycleStart;
     in.cycles = CycleObservation{.cycleStartObserved = true, .cycleLostObserved = false};
-    EXPECT_NE(EvaluateRolePolicy(in).kind, RoleAction::Kind::DeferForEvidence);
+    EXPECT_EQ(EvaluateRolePolicy(in).kind, RoleAction::Kind::None);
+}
+
+TEST(RolePolicyTests, LocalRootAndLocalCmc_EnableLocalCycleMaster) {
+    const auto t = MakeTopo(0, 0, 0);
+    RoleInputs in{};
+    in.topo = &t;
+    in.rootCap = RootCapability::CapableByBIB;
+    in.localCmcCapable = true;
+    const auto a = EvaluateRolePolicy(in);
+    EXPECT_EQ(a.kind, RoleAction::Kind::EnableLocalCycleMaster);
+    EXPECT_EQ(a.targetRoot, 0U);
+}
+
+TEST(RolePolicyTests, RemoteIncapableRoot_ForcesLocalOnlyWhenLocalCmc) {
+    const auto t = MakeTopo(0, 1, 0);
+    RoleInputs in{};
+    in.topo = &t;
+    in.rootCap = RootCapability::IncapableByBIB;
+    in.localCmcCapable = true;
+    auto a = EvaluateRolePolicy(in);
+    EXPECT_EQ(a.kind, RoleAction::Kind::ForceRootAndReset);
+    EXPECT_EQ(a.targetRoot, 0U);
+    EXPECT_EQ(a.reset, RoleResetFlavor::Short);
+
+    in.localCmcCapable = false;
+    a = EvaluateRolePolicy(in);
+    EXPECT_EQ(a.kind, RoleAction::Kind::MarkRootBadOrUnknown);
+}
+
+TEST(RolePolicyTests, RemoteBadRoot_ForcesLocalOnlyWhenLocalCmc) {
+    const auto t = MakeTopo(0, 1, 0);
+    RoleInputs in{};
+    in.topo = &t;
+    in.rootCap = RootCapability::BadOrNonResponsive;
+    in.localCmcCapable = true;
+    EXPECT_EQ(EvaluateRolePolicy(in).kind, RoleAction::Kind::ForceRootAndReset);
+
+    in.localCmcCapable = false;
+    EXPECT_EQ(EvaluateRolePolicy(in).kind, RoleAction::Kind::MarkRootBadOrUnknown);
+}
+
+TEST(RolePolicyTests, RootCapabilityEvidence_DerivesBibVerdicts) {
+    EXPECT_EQ(DeriveRootCapabilityVerdict(RootBibReadStatus::Success, true, true, false, {}),
+              RootCapability::CapableByBIB);
+    EXPECT_EQ(DeriveRootCapabilityVerdict(RootBibReadStatus::Success, true, false, false, {}),
+              RootCapability::IncapableByBIB);
+}
+
+TEST(RolePolicyTests, RootCapabilityEvidence_DerivesCycleWindowVerdicts) {
+    EXPECT_EQ(DeriveRootCapabilityVerdict(
+                  RootBibReadStatus::Timeout, false, false, true,
+                  CycleObservation{.cycleStartObserved = true, .cycleLostObserved = false}),
+              RootCapability::FunctioningByCycleStart);
+    EXPECT_EQ(DeriveRootCapabilityVerdict(
+                  RootBibReadStatus::Failed, false, false, true,
+                  CycleObservation{.cycleStartObserved = false, .cycleLostObserved = true}),
+              RootCapability::BadOrNonResponsive);
+    EXPECT_EQ(DeriveRootCapabilityVerdict(RootBibReadStatus::AbortedByReset, false, false, true,
+                                          {}),
+              RootCapability::Unknown);
 }

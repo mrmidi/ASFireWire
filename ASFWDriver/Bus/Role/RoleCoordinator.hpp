@@ -65,6 +65,8 @@ class RoleCoordinator {
     // OnTopologyChanged starts a fresh generation: evidence is cleared, and the
     // ping-pong retry counter resets only when the physical topology changed.
     void OnTopologyChanged(uint32_t generation, const TopologySnapshot& topo);
+    void OnLocalCycleMasterCapability(uint32_t generation, bool capable);
+    void OnRootCapabilityEvidence(uint32_t generation, RootCapabilityEvidence evidence);
     void OnRootCapability(uint32_t generation, RootCapability verdict);
     void OnCycleStartEvidence(uint32_t generation, CycleObservation obs);
     // Reserved for FW-9 to correlate an issued reset with its completion.
@@ -75,6 +77,9 @@ class RoleCoordinator {
     [[nodiscard]] RoleAction LastAction() const noexcept { return lastAction_; }
     [[nodiscard]] uint8_t ResetRetriesThisTopology() const noexcept { return resetRetries_; }
     [[nodiscard]] bool HaveTopology() const noexcept { return haveTopology_; }
+    [[nodiscard]] RootCapabilityEvidence LastRootEvidence() const noexcept {
+        return rootEvidence_;
+    }
 
   private:
     void Reevaluate();
@@ -89,6 +94,7 @@ class RoleCoordinator {
     bool haveTopology_{false};
     TopologySnapshot topo_{};
     RootCapability rootCap_{RootCapability::Unknown};
+    RootCapabilityEvidence rootEvidence_{};
     CycleObservation cycles_{};
     bool localCmcCapable_{false};
 

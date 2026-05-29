@@ -7,6 +7,7 @@
 
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
+#include "../Async/Interfaces/IFireWireBusOps.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
@@ -14,6 +15,7 @@
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
 #include "../ConfigROM/ROMScanner.hpp"
+#include "../Common/CSRSpace.hpp"
 #include "../Diagnostics/DiagnosticLogger.hpp"
 #include "../Diagnostics/MetricsSink.hpp"
 #include "../Discovery/DiscoveryConvergence.hpp"
@@ -55,6 +57,24 @@ const char* DeviceKindString(Discovery::DeviceKind kind) {
         return "Unknown";
     }
 }
+
+const char* RemoteCmstrResultString(Async::AsyncStatus status) {
+    switch (status) {
+    case Async::AsyncStatus::kSuccess:
+        return "complete";
+    case Async::AsyncStatus::kTimeout:
+    case Async::AsyncStatus::kBusyRetryExhausted:
+        return "timeout";
+    case Async::AsyncStatus::kAborted:
+    case Async::AsyncStatus::kStaleGeneration:
+        return "generation-abort";
+    case Async::AsyncStatus::kShortRead:
+    case Async::AsyncStatus::kHardwareError:
+    case Async::AsyncStatus::kLockCompareFail:
+        return "failure";
+    }
+    return "unknown";
+}
 } // anonymous namespace
 
 bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request) {
@@ -88,6 +108,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         ASFW_LOG(Discovery, "OnTopologyReady: invalid local node ID");
         return;
     }
+    BeginRootCapabilityEvidence(snap, localNodeId);
 
     // Count how many nodes will actually be scanned (exclude local + link-inactive)
     uint32_t scannableCount = 0;
@@ -106,6 +127,9 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     request.gen = Discovery::Generation{snap.generation};
     request.topology = snap;
     request.localNodeId = localNodeId;
+    request.rootCapabilityCallback = [this](Role::RootCapabilityEvidence evidence) {
+        this->OnRootCapabilityProbe(evidence);
+    };
 
     const bool started = StartDiscoveryScan(request);
     if (!started) {
@@ -125,6 +149,201 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         // CMP (PCR) operations target a *specific device's* plug registers, not the IRM node.
         // Device-scoped CMP wiring is done at stream start time (IsochService).
     }
+}
+
+void ControllerCore::BeginRootCapabilityEvidence(const TopologySnapshot& snap,
+                                                 uint8_t localNodeId) {
+    haveRootEvidence_ = false;
+    cycleLostWindowActive_ = false;
+    ++cycleLostWindowEpoch_;
+
+    (void)cycleObserver_.OnInterrupt(snap.generation, 0);
+
+    if (!snap.rootNodeId.has_value()) {
+        return;
+    }
+
+    currentRootEvidence_ = Role::RootCapabilityEvidence{};
+    currentRootEvidence_.generation = snap.generation;
+    currentRootEvidence_.rootNodeId = *snap.rootNodeId;
+    currentRootEvidence_.bibReadStatus = Role::RootBibReadStatus::NotStarted;
+    currentRootEvidence_.verdict = Role::RootCapability::Unknown;
+    haveRootEvidence_ = true;
+
+    if (deps_.configRomStager) {
+        const auto decoded =
+            ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());
+        roleCoordinator_.OnLocalCycleMasterCapability(snap.generation, decoded.cmc);
+    }
+
+    if (*snap.rootNodeId == localNodeId) {
+        if (deps_.configRomStager) {
+            const auto decoded =
+                ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());
+            currentRootEvidence_.bibReadStatus = Role::RootBibReadStatus::Success;
+            currentRootEvidence_.cmcKnown = true;
+            currentRootEvidence_.cmc = decoded.cmc;
+            currentRootEvidence_.configRomHeaderValid = true;
+        }
+        PublishRootCapabilityEvidence();
+        return;
+    }
+
+    PublishRootCapabilityEvidence();
+    StartRootCycleLostWindow(snap.generation);
+}
+
+void ControllerCore::OnRootCapabilityProbe(Role::RootCapabilityEvidence evidence) {
+    if (!haveRootEvidence_ || evidence.generation != currentGeneration_ ||
+        evidence.generation != currentRootEvidence_.generation ||
+        evidence.rootNodeId != currentRootEvidence_.rootNodeId) {
+        return;
+    }
+
+    currentRootEvidence_.bibReadStatus = evidence.bibReadStatus;
+    currentRootEvidence_.cmcKnown = evidence.cmcKnown;
+    currentRootEvidence_.cmc = evidence.cmc;
+    currentRootEvidence_.configRomHeaderValid = evidence.configRomHeaderValid;
+    if (currentRootEvidence_.bibReadStatus == Role::RootBibReadStatus::Success &&
+        cycleLostWindowActive_) {
+        cycleLostWindowActive_ = false;
+        ++cycleLostWindowEpoch_;
+        if (deps_.hardware && deps_.interrupts) {
+            deps_.interrupts->MaskInterrupts(deps_.hardware.get(), IntEventBits::kCycleLost);
+        }
+    }
+    PublishRootCapabilityEvidence();
+}
+
+void ControllerCore::StartRootCycleLostWindow(uint32_t generation) {
+    if (!haveRootEvidence_ || generation != currentRootEvidence_.generation ||
+        !deps_.hardware || !deps_.interrupts || !deps_.scheduler) {
+        return;
+    }
+
+    cycleLostWindowActive_ = true;
+    const uint32_t epoch = ++cycleLostWindowEpoch_;
+
+    deps_.hardware->ClearIntEvents(IntEventBits::kCycleLost);
+    deps_.interrupts->UnmaskInterrupts(deps_.hardware.get(), IntEventBits::kCycleLost);
+
+    constexpr uint64_t kCycleLostObservationWindowNs = 2ULL * 1'000'000ULL;
+    deps_.scheduler->DispatchAsyncAfter(kCycleLostObservationWindowNs, [this, generation, epoch] {
+        this->CompleteRootCycleLostWindow(generation, epoch, false);
+    });
+}
+
+void ControllerCore::CompleteRootCycleLostWindow(uint32_t generation, uint32_t epoch,
+                                                 bool cycleLost) {
+    if (!cycleLostWindowActive_ || epoch != cycleLostWindowEpoch_ ||
+        !haveRootEvidence_ || generation != currentRootEvidence_.generation) {
+        return;
+    }
+
+    cycleLostWindowActive_ = false;
+    if (deps_.hardware && deps_.interrupts) {
+        deps_.interrupts->MaskInterrupts(deps_.hardware.get(), IntEventBits::kCycleLost);
+    }
+
+    if (!cycleLost) {
+        (void)cycleObserver_.MarkCycleContinuityObserved(generation);
+    }
+
+    currentRootEvidence_.cycleObservationComplete = true;
+    currentRootEvidence_.cycles = cycleObserver_.Observation();
+    PublishRootCapabilityEvidence();
+}
+
+void ControllerCore::PublishRootCapabilityEvidence() {
+    if (!haveRootEvidence_) {
+        return;
+    }
+
+    currentRootEvidence_.verdict = Role::DeriveRootCapabilityVerdict(
+        currentRootEvidence_.bibReadStatus,
+        currentRootEvidence_.cmcKnown,
+        currentRootEvidence_.cmc,
+        currentRootEvidence_.cycleObservationComplete,
+        currentRootEvidence_.cycles);
+    roleCoordinator_.OnRootCapabilityEvidence(currentRootEvidence_.generation,
+                                              currentRootEvidence_);
+}
+
+void ControllerCore::ForceRootAndReset(uint8_t targetRoot, Role::RoleResetFlavor flavor,
+                                       uint8_t gapCount, uint32_t generation) {
+    if (generation != currentGeneration_ || !deps_.busReset) {
+        return;
+    }
+
+    const bool longReset = flavor == Role::RoleResetFlavor::Long;
+    const std::optional<uint8_t> gap =
+        (gapCount != 0U) ? std::optional<uint8_t>{gapCount} : std::nullopt;
+
+    std::optional<bool> setContender = std::nullopt;
+    if (const auto topo = LatestTopology(); topo && topo->localNodeId == targetRoot) {
+        setContender = true;
+    }
+
+    ASFW_LOG(Controller,
+             "RoleCoordinator: force root target=%u gen=%u reset=%{public}s gap=%u contender=%d",
+             targetRoot, generation, longReset ? "Long" : "Short", gap.value_or(0),
+             setContender.value_or(false) ? 1 : 0);
+    deps_.busReset->RequestRolePolicyReset(targetRoot, longReset, gap, setContender,
+                                           "RoleCoordinator force-root");
+}
+
+void ControllerCore::EnableRemoteCycleMaster(uint8_t rootNodeId, uint32_t generation) {
+    if (generation != currentGeneration_ || !busImpl_) {
+        return;
+    }
+
+    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = ASFW::FW::kCSRRegSpaceHi,
+        .addressLo = ASFW::FW::kCSRRemoteStateSet,
+        .nodeID = static_cast<uint16_t>(0xFFC0u | (rootNodeId & 0x3Fu)),
+    }};
+
+    ASFW_LOG(Controller,
+             "RoleCoordinator: remote CMSTR write submitted gen=%u root=%u addr=0x%04x:%08x payload=0x%08x",
+             generation, rootNodeId, address.addressHi, address.addressLo,
+             ASFW::FW::kCSRStateBitCMSTR);
+
+    busImpl_->WriteQuad(ASFW::FW::Generation{generation},
+                        ASFW::FW::NodeId{rootNodeId},
+                        address,
+                        ASFW::FW::kCSRStateBitCMSTR,
+                        ASFW::FW::FwSpeed::S100,
+                        [generation, rootNodeId](Async::AsyncStatus status,
+                                                 std::span<const uint8_t>) {
+        ASFW_LOG(Controller,
+                 "RoleCoordinator: remote CMSTR write result gen=%u root=%u result=%{public}s status=%{public}s",
+                 generation, rootNodeId, RemoteCmstrResultString(status),
+                 Async::ToString(status));
+    });
+}
+
+void ControllerCore::EnableLocalCycleMaster(uint32_t generation) {
+    if (generation != currentGeneration_ || !deps_.hardware) {
+        return;
+    }
+
+    ASFW_LOG(Controller, "RoleCoordinator: enabling local cycleMaster gen=%u", generation);
+    deps_.hardware->SetLinkControlBits(LinkControlBits::kCycleMaster);
+}
+
+void ControllerCore::ClearLocalContenderAndDelegate(uint8_t targetRoot, uint32_t generation) {
+    if (generation != currentGeneration_ || !deps_.busReset) {
+        return;
+    }
+
+    ASFW_LOG(Controller,
+             "RoleCoordinator: clear local contender and delegate root target=%u gen=%u",
+             targetRoot, generation);
+    deps_.busReset->RequestRolePolicyReset(targetRoot,
+                                           /*longReset=*/false,
+                                           std::nullopt,
+                                           false,
+                                           "RoleCoordinator delegate-root");
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)

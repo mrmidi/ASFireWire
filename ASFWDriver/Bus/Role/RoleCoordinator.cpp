@@ -19,8 +19,34 @@ void RoleCoordinator::OnTopologyChanged(uint32_t generation, const TopologySnaps
     topo_ = topo;
     haveTopology_ = true;
     rootCap_ = RootCapability::Unknown;
+    rootEvidence_ = RootCapabilityEvidence{.generation = generation};
     cycles_ = CycleObservation{};
+    localCmcCapable_ = false;
 
+    Reevaluate();
+}
+
+void RoleCoordinator::OnLocalCycleMasterCapability(uint32_t generation, bool capable) {
+    if (!haveTopology_ || (generation != generation_)) {
+        return;
+    }
+    localCmcCapable_ = capable;
+    Reevaluate();
+}
+
+void RoleCoordinator::OnRootCapabilityEvidence(uint32_t generation,
+                                               RootCapabilityEvidence evidence) {
+    if (!haveTopology_ || (generation != generation_) || (evidence.generation != generation_)) {
+        return; // stale or pre-topology: drop by construction
+    }
+    evidence.verdict = DeriveRootCapabilityVerdict(evidence.bibReadStatus,
+                                                   evidence.cmcKnown,
+                                                   evidence.cmc,
+                                                   evidence.cycleObservationComplete,
+                                                   evidence.cycles);
+    rootEvidence_ = evidence;
+    rootCap_ = evidence.verdict;
+    cycles_ = evidence.cycles;
     Reevaluate();
 }
 
@@ -28,6 +54,21 @@ void RoleCoordinator::OnRootCapability(uint32_t generation, RootCapability verdi
     if (!haveTopology_ || (generation != generation_)) {
         return; // stale or pre-topology: drop by construction
     }
+    rootEvidence_ = RootCapabilityEvidence{
+        .generation = generation,
+        .rootNodeId = topo_.rootNodeId.value_or(0xFF),
+        .bibReadStatus = verdict == RootCapability::Unknown ? RootBibReadStatus::NotStarted
+                                                            : RootBibReadStatus::Success,
+        .cmcKnown = verdict == RootCapability::CapableByBIB ||
+                    verdict == RootCapability::IncapableByBIB,
+        .cmc = verdict == RootCapability::CapableByBIB,
+        .configRomHeaderValid = verdict == RootCapability::CapableByBIB ||
+                                verdict == RootCapability::IncapableByBIB,
+        .cycleObservationComplete = verdict == RootCapability::FunctioningByCycleStart ||
+                                    verdict == RootCapability::BadOrNonResponsive,
+        .cycles = cycles_,
+        .verdict = verdict,
+    };
     rootCap_ = verdict;
     Reevaluate();
 }
@@ -37,6 +78,7 @@ void RoleCoordinator::OnCycleStartEvidence(uint32_t generation, CycleObservation
         return; // stale: drop
     }
     cycles_ = obs;
+    rootEvidence_.cycles = obs;
     Reevaluate();
 }
 

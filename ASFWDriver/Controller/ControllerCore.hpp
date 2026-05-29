@@ -73,7 +73,9 @@ namespace ASFW::Driver {
 
 // Central orchestrator that wires together hardware access, interrupt routing,
 // bus reset sequencing, and topology publication.
-class ControllerCore {
+class ControllerCore final : private Role::IPhyConfigReset,
+                             private Role::IRemoteCsrWriter,
+                             private Role::IContenderControl {
   public:
     struct Dependencies {
         std::shared_ptr<HardwareInterface> hardware;
@@ -171,9 +173,19 @@ class ControllerCore {
     void HandleCycle64Seconds(); // Called on cycle64Seconds interrupt to extend 7-bit seconds
 
     void OnTopologyReady(const TopologySnapshot& snapshot);
+    void BeginRootCapabilityEvidence(const TopologySnapshot& snapshot, uint8_t localNodeId);
+    void OnRootCapabilityProbe(Role::RootCapabilityEvidence evidence);
+    void StartRootCycleLostWindow(uint32_t generation);
+    void CompleteRootCycleLostWindow(uint32_t generation, uint32_t epoch, bool cycleLost);
+    void PublishRootCapabilityEvidence();
     void OnDiscoveryScanComplete(Discovery::Generation gen,
                                  const std::vector<Discovery::ConfigROM>& roms,
                                  bool hadBusyNodes) const;
+    void ForceRootAndReset(uint8_t targetRoot, Role::RoleResetFlavor flavor, uint8_t gapCount,
+                           uint32_t generation) override;
+    void EnableRemoteCycleMaster(uint8_t rootNodeId, uint32_t generation) override;
+    void EnableLocalCycleMaster(uint32_t generation) override;
+    void ClearLocalContenderAndDelegate(uint8_t targetRoot, uint32_t generation) override;
 
     ControllerConfig config_;
     Dependencies deps_;
@@ -201,6 +213,10 @@ class ControllerCore {
     Role::RoleCoordinator roleCoordinator_{};
     Role::CycleObserver cycleObserver_{};
     uint32_t currentGeneration_{0};
+    Role::RootCapabilityEvidence currentRootEvidence_{};
+    bool haveRootEvidence_{false};
+    bool cycleLostWindowActive_{false};
+    uint32_t cycleLostWindowEpoch_{0};
 };
 
 } // namespace ASFW::Driver

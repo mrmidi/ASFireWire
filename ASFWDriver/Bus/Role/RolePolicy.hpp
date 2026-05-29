@@ -35,6 +35,56 @@ struct CycleObservation {
     bool cycleLostObserved{false};
 };
 
+enum class RootBibReadStatus : uint8_t {
+    NotStarted,
+    Pending,
+    Success,
+    Timeout,
+    Failed,
+    AbortedByReset,
+};
+
+struct RootCapabilityEvidence {
+    uint32_t generation{0};
+    uint8_t rootNodeId{0xFF};
+    RootBibReadStatus bibReadStatus{RootBibReadStatus::NotStarted};
+    bool cmcKnown{false};
+    bool cmc{false};
+    bool configRomHeaderValid{false};
+    bool cycleObservationComplete{false};
+    CycleObservation cycles{};
+    RootCapability verdict{RootCapability::Unknown};
+};
+
+[[nodiscard]] constexpr bool IsTerminalBibStatus(RootBibReadStatus status) noexcept {
+    return status == RootBibReadStatus::Success ||
+           status == RootBibReadStatus::Timeout ||
+           status == RootBibReadStatus::Failed ||
+           status == RootBibReadStatus::AbortedByReset;
+}
+
+[[nodiscard]] constexpr RootCapability DeriveRootCapabilityVerdict(
+    RootBibReadStatus bibStatus,
+    bool cmcKnown,
+    bool cmc,
+    bool cycleObservationComplete,
+    CycleObservation cycles) noexcept {
+    if (bibStatus == RootBibReadStatus::Success && cmcKnown) {
+        return cmc ? RootCapability::CapableByBIB : RootCapability::IncapableByBIB;
+    }
+
+    if (bibStatus == RootBibReadStatus::Timeout || bibStatus == RootBibReadStatus::Failed) {
+        if (cycles.cycleLostObserved) {
+            return RootCapability::BadOrNonResponsive;
+        }
+        if (cycleObservationComplete && cycles.cycleStartObserved) {
+            return RootCapability::FunctioningByCycleStart;
+        }
+    }
+
+    return RootCapability::Unknown;
+}
+
 // Reset flavor for a role action. Deliberately local to the pure layer (with a
 // None case) so Layer 1 does not depend on BusResetCoordinator. The executor
 // maps None→no-op and Short/Long→BusResetCoordinator::ResetFlavor.

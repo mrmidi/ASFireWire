@@ -607,6 +607,26 @@ void BusResetCoordinator::RequestUserReset(bool shortReset) {
                           "UserClient-initiated", std::nullopt});
 }
 
+void BusResetCoordinator::RequestRolePolicyReset(uint8_t targetRoot, bool longReset,
+                                                 std::optional<uint8_t> gapCount,
+                                                 std::optional<bool> setContender,
+                                                 std::string reason) {
+    BusManager::PhyConfigCommand command{};
+    command.forceRootNodeID = targetRoot;
+    command.gapCount = gapCount;
+    command.setContender = setContender;
+
+    if (reason.empty()) {
+        reason = "RoleCoordinator";
+    }
+
+    RequestSoftwareReset({ResetRequestKind::Delegation,
+                          longReset ? ResetFlavor::Long : ResetFlavor::Short,
+                          command,
+                          std::move(reason),
+                          std::nullopt});
+}
+
 void BusResetCoordinator::ResetDelegationRetryCounter() {
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;

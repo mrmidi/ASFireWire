@@ -110,14 +110,13 @@ class BusResetCoordinator {
     const char* StateString() const;
     static const char* StateString(State state);
 
-    /// Decide whether to re-assert local cycleMaster during reset rearm.
-    /// Mirrors Linux ohci.c:2052 (bus_reset_work): re-arm UNLESS we were root and
-    /// remain root. The bit is hardware-gated (OHCI emits cycle starts only when
-    /// actually root), so this is NOT role policy — it keeps the isoch clock armed
-    /// across resets while avoiding a redundant write when root is stable.
+    /// Legacy helper retained for tests that document the pre-FW-9 behavior.
+    /// Local cycleMaster is now controlled by RoleCoordinator, not reset rearm.
     [[nodiscard]] static constexpr bool ShouldReassertCycleMasterOnRearm(bool wasRoot,
                                                                          bool isRootNow) noexcept {
-        return !(wasRoot && isRootNow);
+        (void)wasRoot;
+        (void)isRootNow;
+        return false;
     }
 
     // ASFW-defined diagnostics codes for BusResetCoordinator recovery paths.
@@ -182,6 +181,12 @@ class BusResetCoordinator {
 
     /// Request a user-initiated bus reset (short or long).
     void RequestUserReset(bool shortReset);
+
+    /// Request a RoleCoordinator-initiated PHY config + bus reset.
+    void RequestRolePolicyReset(uint8_t targetRoot, bool longReset,
+                                std::optional<uint8_t> gapCount,
+                                std::optional<bool> setContender,
+                                std::string reason);
 
   private:
 #ifdef ASFW_HOST_TEST

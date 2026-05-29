@@ -19,6 +19,7 @@ public:
     void Bind(OSSharedPtr<IODispatchQueue> queue);
 
     void DispatchAsync(const std::function<void()>& work);
+    void DispatchAsyncAfter(uint64_t delayNs, const std::function<void()>& work);
     void DispatchSync(const std::function<void()>& work);
 
     OSSharedPtr<IODispatchQueue> Queue() const { return queue_; }

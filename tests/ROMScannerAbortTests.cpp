@@ -14,6 +14,7 @@
 
 using namespace ASFW::Discovery;
 using namespace ASFW::Driver;
+using namespace ASFW::Driver::Role;
 
 namespace {
 
@@ -157,6 +158,7 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     TopologySnapshot topology;
     topology.generation = 42;
     topology.busBase16 = 0xFFC0;
+    topology.rootNodeId = 1;
     topology.nodes.push_back({.nodeId = 1, .linkActive = true});
 
     ROMScanRequest request{};
@@ -164,6 +166,10 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     request.topology = topology;
     request.localNodeId = 0;
     request.targetNodes = {1};
+    std::vector<RootCapabilityEvidence> evidence;
+    request.rootCapabilityCallback = [&](RootCapabilityEvidence update) {
+        evidence.push_back(update);
+    };
 
     ASSERT_TRUE(scanner.Start(
         request,
@@ -174,7 +180,11 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
         }));
 
     mockAsync.WaitForPendingReads(1);
+    ASSERT_EQ(evidence.size(), 1u);
+    EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::Pending);
     scanner.Abort(request.gen);
+    ASSERT_GE(evidence.size(), 2u);
+    EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::AbortedByReset);
 
     // Late BIB completions should be ignored (no user completion callback).
     const auto bib = CreateMinimalBIB();

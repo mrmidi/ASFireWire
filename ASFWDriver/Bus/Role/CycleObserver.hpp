@@ -2,14 +2,13 @@
 
 // CycleObserver.hpp — cycle-start/lost evidence for RoleCoordinator (FW-7).
 //
-// Maps OHCI cycle IntEvent bits to a per-generation CycleObservation. Pure and
-// host-testable; touches no hardware. It does NOT alter the existing
-// cycleInconsistent → DICE audio-recovery path (that stays in
-// ControllerCoreInterrupts) — it only records evidence.
+// Maps OHCI cycleLost IntEvent bits and the FW-8 bounded no-loss window into a
+// per-generation CycleObservation. Pure and host-testable; touches no hardware.
+// It does NOT alter the existing cycleInconsistent → DICE audio-recovery path
+// (that stays in ControllerCoreInterrupts) — it only records evidence.
 //
-// OnInterrupt returns true only when the observation actually changed, so the
-// caller can feed RoleCoordinator on edges and never on the per-cycle cycleSynch
-// flood (cycleSynch fires ~8000×/s when enabled).
+// cycleSynch is intentionally ignored for role evidence: it fires from the local
+// cycle timer and is not proof that a remote root generated cycle-start packets.
 
 #include <cstdint>
 
@@ -21,8 +20,9 @@ class CycleObserver {
   public:
     // Record one interrupt's IntEvent bits for the given bus generation. A new
     // generation resets the accumulated evidence. Returns true iff the
-    // CycleObservation changed as a result of this call (start or lost newly set).
+    // CycleObservation changed as a result of this call (lost newly set).
     bool OnInterrupt(uint32_t generation, uint32_t intEventBits) noexcept;
+    bool MarkCycleContinuityObserved(uint32_t generation) noexcept;
 
     [[nodiscard]] CycleObservation Observation() const noexcept { return obs_; }
     [[nodiscard]] uint32_t Generation() const noexcept { return generation_; }
