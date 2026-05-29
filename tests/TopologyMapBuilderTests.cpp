@@ -91,9 +91,9 @@ TEST(TopologyMapBuilder, SpansBoundSafety) {
     std::array<uint32_t, 256> out{};
     const uint32_t length = BuildTopologyMap(snap, snap.generation, out);
 
-    // BuildTopologyMap limits copying to remain within 256 bounds.
+    // BuildTopologyMap clamps selfIdCount to 253 to remain within 256 bounds.
     // Index 0, 1, 2 are taken. So max 253 self-IDs can be copied.
-    EXPECT_EQ(length, 303u); // selfIdCount is calculated from size - 1, which is 300. So 3 + 300 = 303.
+    EXPECT_EQ(length, 256u);
     // But verify we only wrote up to out[255] and didn't overflow/crash.
     EXPECT_EQ(out[3], 0u);
     EXPECT_EQ(out[255], 252u);
