@@ -43,6 +43,37 @@ inline constexpr uint32_t kCSR_SplitTimeoutLo  = kCSRCoreBase + 0x001C;
 inline constexpr uint32_t kCSRRemoteStateClear = kCSR_StateClear;
 inline constexpr uint32_t kCSRRemoteStateSet   = kCSR_StateSet;
 inline constexpr uint32_t kCSRStateBitCMSTR    = 1u << 8;
+// STATE_CLEAR/STATE_SET abdicate bit (IEEE 1394a-2000). Matches Linux
+// CSR_STATE_BIT_ABDICATE (core.h: 1<<10). Set via STATE_SET, cleared via
+// STATE_CLEAR; consumed once per bus reset by the BM election path.
+inline constexpr uint32_t kCSRStateBitABDICATE = 1u << 10;
+
+// RESET_START (IEEE 1394-1995 §8.3.2.1). A write here is defined to behave as a
+// STATE_CLEAR write with the ABDICATE bit set (Linux core-transaction.c).
+inline constexpr uint32_t kCSR_ResetStart      = kCSRCoreBase + 0x000C;
+
+// IRM/BM resource CSRs (IEEE 1394a-2000 §8.3.2.3.x). On OHCI these four are
+// served autonomously by the controller's CSR compare-swap engine for remote
+// read/lock — ASFW does NOT software-serve them (matches Linux: handle_registers
+// hits BUG() for these offsets). Offsets kept here as the single source of truth.
+inline constexpr uint32_t kCSR_BusManagerID       = kCSRCoreBase + 0x021C;
+inline constexpr uint32_t kCSR_BandwidthAvailable = kCSRCoreBase + 0x0220;
+inline constexpr uint32_t kCSR_ChannelsAvailableHi = kCSRCoreBase + 0x0224;
+inline constexpr uint32_t kCSR_ChannelsAvailableLo = kCSRCoreBase + 0x0228;
+
+// BROADCAST_CHANNEL (IEEE 1394a-2000 §8.3.2.3.10). Software-owned by ASFW.
+inline constexpr uint32_t kCSR_BroadcastChannel = kCSRCoreBase + 0x0234;
+// Initial value: valid-for-transmit bit (1<<31) | channel number 31. Matches
+// Linux BROADCAST_CHANNEL_INITIAL (core.h: (1<<31 | 31)).
+inline constexpr uint32_t kBroadcastChannelInitial = (1u << 31) | 31u;
+// Writable "valid" bit (1<<30). Matches Linux BROADCAST_CHANNEL_VALID — note
+// this is bit 30, distinct from the transmit-valid bit 31 in INITIAL.
+inline constexpr uint32_t kBroadcastChannelValid   = 1u << 30;
+
+// TOPOLOGY_MAP CSR region (IEEE 1394a-2000 §8.3.2.4.1). Software-served by ASFW;
+// the handler covers 0x400 bytes (256 quadlets) like Linux (handle_topology_map).
+inline constexpr uint32_t kCSR_TopologyMapBase = kCSRCoreBase + 0x1000;
+inline constexpr uint32_t kCSR_TopologyMapEnd  = kCSRCoreBase + 0x13FF;
 
 // Config ROM Base Address (IEEE 1394-1995 §8.3.2.2)
 // Low 32b offset within CSR register space (0xF0000400)
@@ -300,9 +331,79 @@ struct GenerationUpdate {
 //     advertise irmc=1 at all is an OPEN question owned by the RoleCoordinator
 //     work (FW-5/FW-9) — not decided here. Preserving the hardware value keeps
 //     existing (working) IRM-election behavior unchanged.
-[[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions) noexcept {
-    return hwBusOptions & ~BusOptionsFields::kBMCMask;
+
+// FW-22: role mode driving local BIB capability advertisement. ASFW must never
+// advertise a role it cannot serve, so the advertised bits are mode-gated.
+enum class RoleMode : uint8_t {
+    // Conservative default. Exactly the historical FW-11 behavior: force bmc=0,
+    // preserve hardware irmc/cmc/isc/pmc and all numeric fields. Zero change to
+    // advertised bits vs the legacy 1-arg normalizer.
+    AppleAvoidManager = 0,
+    // ASFW hosts the IRM resource registers (FW-13/FW-19) but does not contend
+    // for full Bus Manager: irmc=1, bmc=0, cmc/isc preserved.
+    IRMServerOnly = 1,
+    // Full Bus Manager: bmc=1, irmc=1 (legal only once FW-18/19/20/21 land).
+    FullBusManager = 2,
+};
+
+// A BIB advertising bmc=1 MUST also advertise irmc=1 (IEEE 1394a-2000: a
+// BM-capable node is required to be IRM-capable). Other combinations are legal.
+[[nodiscard]] constexpr bool IsLegalCapabilityCombo(uint32_t busOptionsHost) noexcept {
+    const bool bmc  = (busOptionsHost & BusOptionsFields::kBMCMask) != 0;
+    const bool irmc = (busOptionsHost & BusOptionsFields::kIRMCMask) != 0;
+    return !(bmc && !irmc);
 }
+
+// Mode-driven normalizer. Manipulates capability bits directly (rather than
+// Decode->Encode) so reserved bits [11:10]/[3] and all numeric fields are
+// preserved byte-for-byte from the hardware register in every mode.
+[[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions,
+                                                          RoleMode mode) noexcept {
+    using namespace BusOptionsFields;
+    uint32_t out = hwBusOptions;
+    switch (mode) {
+    case RoleMode::AppleAvoidManager:
+        out &= ~kBMCMask; // bmc=0; preserve everything else
+        break;
+    case RoleMode::IRMServerOnly:
+        out &= ~kBMCMask; // bmc=0
+        out |= kIRMCMask; // irmc=1
+        break;
+    case RoleMode::FullBusManager:
+        out |= (kBMCMask | kIRMCMask); // bmc=1 implies irmc=1
+        break;
+    }
+    return out;
+}
+
+// Legacy 1-arg overload: AppleAvoidManager semantics (preserves all callers).
+[[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions) noexcept {
+    return NormalizeLocalBusOptions(hwBusOptions, RoleMode::AppleAvoidManager);
+}
+
+// Mode invariants: every mode must yield a legal capability combo, and the
+// default must still force bmc=0 while leaving irmc untouched (regression guard).
+static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager) &
+               BusOptionsFields::kBMCMask) == 0,
+              "AppleAvoidManager must force bmc=0");
+static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager) &
+               BusOptionsFields::kIRMCMask) != 0,
+              "AppleAvoidManager must preserve hardware irmc");
+static_assert(NormalizeLocalBusOptions(0x00000000u, RoleMode::AppleAvoidManager) == 0x00000000u,
+              "AppleAvoidManager must be a pure passthrough when bmc already 0");
+static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::IRMServerOnly) &
+               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
+                  BusOptionsFields::kIRMCMask,
+              "IRMServerOnly must set irmc=1 and bmc=0");
+static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager) &
+               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
+                  (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask),
+              "FullBusManager must set bmc=1 and irmc=1");
+static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager)) &&
+              IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::IRMServerOnly)) &&
+              IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager)) &&
+              IsLegalCapabilityCombo(NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager)),
+              "every RoleMode must produce a legal capability combo");
 
 namespace Detail {
 // Local constexpr popcount (avoid <bit> include in this shared header).
@@ -377,6 +478,19 @@ static_assert(CSRAddr(0x3FF, 0xF0000400) == 0x03fffffff0000400ULL,
               "CSRAddr helper must produce correct 64-bit address");
 static_assert(ConfigROMWord(0x3FF, 0x00) == 0x03fffffff0000400ULL,
               "ConfigROMWord helper must produce correct 64-bit address");
+
+// Validate BM/IRM CSR offsets against IEEE 1394a-2000 fixed addresses.
+static_assert(kCSR_ResetStart == 0xF000000Cu, "RESET_START must be 0xF000000C");
+static_assert(kCSR_BusManagerID == 0xF000021Cu, "BUS_MANAGER_ID must be 0xF000021C");
+static_assert(kCSR_BandwidthAvailable == 0xF0000220u, "BANDWIDTH_AVAILABLE must be 0xF0000220");
+static_assert(kCSR_ChannelsAvailableHi == 0xF0000224u, "CHANNELS_AVAILABLE_HI must be 0xF0000224");
+static_assert(kCSR_ChannelsAvailableLo == 0xF0000228u, "CHANNELS_AVAILABLE_LO must be 0xF0000228");
+static_assert(kCSR_BroadcastChannel == 0xF0000234u, "BROADCAST_CHANNEL must be 0xF0000234");
+static_assert(kCSR_TopologyMapBase == 0xF0001000u, "TOPOLOGY_MAP base must be 0xF0001000");
+static_assert(kCSR_TopologyMapEnd == 0xF00013FFu, "TOPOLOGY_MAP end must be 0xF00013FF");
+static_assert(kBroadcastChannelInitial == 0x8000001Fu, "BROADCAST_CHANNEL initial must be 0x8000001F");
+static_assert(kBroadcastChannelValid == 0x40000000u, "BROADCAST_CHANNEL valid must be bit 30");
+static_assert(kCSRStateBitABDICATE == 0x00000400u, "STATE abdicate must be bit 10");
 
 // ============================================================================
 // Config ROM helpers and constants

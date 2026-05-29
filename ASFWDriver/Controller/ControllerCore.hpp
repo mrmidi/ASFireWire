@@ -29,6 +29,12 @@ class MetricsSink;
 
 } // namespace ASFW::Driver
 
+namespace ASFW::Bus {
+struct IRootStatus;
+struct ICycleMasterControl;
+class CSRResponder;
+} // namespace ASFW::Bus
+
 namespace ASFW::Shared {
 class IDMAMemory;
 }
@@ -39,6 +45,7 @@ class IAsyncControllerPort;
 class IFireWireBus;
 class FireWireBusImpl;
 class DMAMemoryImpl;
+class LocalRequestDispatch;
 } // namespace ASFW::Async
 
 namespace ASFW::Discovery {
@@ -101,6 +108,15 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::shared_ptr<ASFW::Protocols::AVC::AVCDiscovery> avcDiscovery;
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
         std::shared_ptr<ASFW::Protocols::SBP2::AddressSpaceManager> sbp2AddressSpaceManager;
+
+        // FW-19: local software CSR responder (STATE_SET/CLEAR, BROADCAST_CHANNEL,
+        // TOPOLOGY_MAP) plus its hardware adapters for root status / cycle master.
+        std::shared_ptr<ASFW::Bus::IRootStatus> csrRootStatus;
+        std::shared_ptr<ASFW::Bus::ICycleMasterControl> csrCycleMasterControl;
+        std::shared_ptr<ASFW::Bus::CSRResponder> csrResponder;
+
+        // FW-19: single owner of inbound local request routing (CSR/SBP-2/FCP/DICE).
+        std::shared_ptr<ASFW::Async::LocalRequestDispatch> localRequestDispatch;
 
         std::shared_ptr<ASFW::IRM::IRMClient> irmClient;
 

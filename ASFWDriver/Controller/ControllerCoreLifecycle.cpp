@@ -696,11 +696,19 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
         (static_cast<uint64_t>(guidHi) << 32) | static_cast<uint64_t>(guidLo);
     const uint64_t effectiveGuid = (config_.localGuid != 0) ? config_.localGuid : hardwareGuid;
 
-    // FW-11: advertise only the capabilities ASFW actually backs. The hardware
-    // BusOptions register often defaults to bmc=1, but ASFW does not implement
-    // 1394a BUS_MANAGER_ID election, so Bus Manager Capable must be cleared
-    // before staging the local Config ROM. Physical/other bits are preserved.
-    const uint32_t localBusOptions = ASFW::FW::NormalizeLocalBusOptions(busOptions);
+    // FW-11/FW-22: advertise only the capabilities ASFW actually backs, gated by
+    // the configured role mode. The hardware BusOptions register often defaults
+    // to bmc=1, but ASFW does not (yet) implement 1394a BUS_MANAGER_ID election,
+    // so the default AppleAvoidManager mode clears Bus Manager Capable before
+    // staging the local Config ROM. Physical/other bits are preserved.
+    const uint32_t localBusOptions =
+        ASFW::FW::NormalizeLocalBusOptions(busOptions, config_.roleMode);
+    const auto advertisedCaps = ASFW::FW::DecodeBusOptions(localBusOptions);
+    ASFW_LOG(Hardware,
+             "FW-22: roleMode=%u advertising bmc=%d irmc=%d cmc=%d isc=%d (hw=0x%08x -> 0x%08x)",
+             static_cast<unsigned>(config_.roleMode), advertisedCaps.bmc ? 1 : 0,
+             advertisedCaps.irmc ? 1 : 0, advertisedCaps.cmc ? 1 : 0, advertisedCaps.isc ? 1 : 0,
+             busOptions, localBusOptions);
     builder->Build(localBusOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
                    config_.vendor.vendorName);
     if (builder->QuadletCount() < 5) {

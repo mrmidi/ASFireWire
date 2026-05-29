@@ -62,6 +62,7 @@
 #include "Protocols/AVC/FCPResponseRouter.hpp"
 #include "Scheduling/Scheduler.hpp"
 #include "Service/DriverContext.hpp"
+#include "Service/LocalRequestWiring.hpp"
 #include "Shared/Memory/DMAMemoryManager.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
 
@@ -129,81 +130,9 @@ void ArmProviderTerminationNotifications(ASFWDriver& driver, IOService* provider
 }
 #endif
 
-ASFW::Async::ResponseCode RouteFcpBlockWrite(
-    ASFW::Protocols::AVC::FCPResponseRouter* fcpRouter,
-    const ASFW::Async::ARPacketView& packet) {
-    if (fcpRouter == nullptr) {
-        return ASFW::Async::ResponseCode::NoResponse;
-    }
-
-    const ASFW::Protocols::Ports::BlockWriteRequestView request{
-        .sourceID = packet.sourceID,
-        .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
-        .payload = packet.payload,
-    };
-
-    const auto disposition = fcpRouter->RouteBlockWrite(request);
-    if (disposition == ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
-        return ASFW::Async::ResponseCode::AddressError;
-    }
-    return ASFW::Async::ResponseCode::Complete;
-}
-
-ASFW::Async::ResponseCode RouteDiceNotificationQuadletWrite(
-    const ASFW::Async::ARPacketView& packet) {
-    const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
-    if (!ASFW::Audio::DICE::NotificationMailbox::MatchesDestOffset(destOffset)) {
-        return ASFW::Async::ResponseCode::AddressError;
-    }
-
-    if (packet.header.size() < 16) {
-        return ASFW::Async::ResponseCode::TypeError;
-    }
-
-    const uint32_t bits =
-        ASFW::Audio::DICE::NotificationMailbox::PublishWireQuadlet(packet.header.data() + 12);
-    ASFW_LOG(DICE,
-             "DICE notification quadlet received: dest=0x%010llx bits=0x%08x",
-             destOffset,
-             bits);
-    return ASFW::Async::ResponseCode::Complete;
-}
-
-void RegisterFcpBlockWriteHandler(ServiceContext& ctx) {
-    if (!ctx.deps.fcpResponseRouter || !ctx.deps.asyncSubsystem) {
-        return;
-    }
-
-    auto* router = ctx.deps.asyncSubsystem->GetPacketRouter();
-    if (router == nullptr) {
-        return;
-    }
-
-    router->RegisterRequestHandler(
-        0x1,
-        [fcpRouter = ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
-            return RouteFcpBlockWrite(fcpRouter, packet);
-        });
-    ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
-}
-
-void RegisterDiceNotificationHandler(ServiceContext& ctx) {
-    if (!ctx.deps.asyncSubsystem) {
-        return;
-    }
-
-    auto* router = ctx.deps.asyncSubsystem->GetPacketRouter();
-    if (router == nullptr) {
-        return;
-    }
-
-    router->RegisterRequestHandler(
-        0x0,
-        [](const ASFW::Async::ARPacketView& packet) {
-            return RouteDiceNotificationQuadletWrite(packet);
-        });
-    ASFW_LOG(Controller, "✅ DICE notification handler wired to PacketRouter (tCode 0x0)");
-}
+// FCP / DICE / SBP-2 / CSR inbound request handlers are now registered centrally
+// by ASFW::Service::WireLocalRequestDispatch (Service/LocalRequestWiring.cpp),
+// which owns request tCodes 0x0/0x1/0x4/0x5 and routes by destination address.
 
 void EnsureRomScanner(ServiceContext& ctx) {
     if (!ctx.deps.speedPolicy || !ctx.controller) {
@@ -351,13 +280,10 @@ kern_return_t IMPL(ASFWDriver, Start) {
         ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
     }
 
-    RegisterFcpBlockWriteHandler(ctx);
-    RegisterDiceNotificationHandler(ctx);
-
-    // main's SBP2 dependency wiring (its only call site landed here); DICE's
-    // EnsureRomScanner replaces the old inline ROMScanner setup, and the FCP
-    // block-write handler is wired above via RegisterFcpBlockWriteHandler(ctx).
+    // Construct the SBP-2 manager dependency, then assemble the single inbound
+    // request dispatch (CSR / FCP / DICE / SBP-2) in one place.
     DriverWiring::EnsureSbp2Deps(ctx);
+    ASFW::Service::WireLocalRequestDispatch(ctx);
     EnsureRomScanner(ctx);
 
     kr = ctx.controller->Start(provider);

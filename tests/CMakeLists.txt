@@ -211,6 +211,67 @@ target_include_directories(TopologyManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(TopologyManagerTests)
 
+# FW-22: capability advertisement modes (header-only logic).
+add_executable(CapabilityModeTests
+    "${ASFW_TESTS_DIR}/CapabilityModeTests.cpp"
+)
+
+target_link_libraries(CapabilityModeTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CapabilityModeTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CapabilityModeTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CapabilityModeTests)
+
+# FW-19: software CSR responder surface.
+add_executable(CSRResponderTests
+    "${ASFW_TESTS_DIR}/CSRResponderTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/CSRResponder.cpp"
+)
+
+target_link_libraries(CSRResponderTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CSRResponderTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CSRResponderTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CSRResponderTests)
+
+# FW-19: central inbound-request dispatch routing. Links asfw_packet_serdes for
+# the PacketRouter / ResponseSender symbols referenced by Install/DispatchView.
+add_executable(LocalRequestDispatchTests
+    "${ASFW_TESTS_DIR}/LocalRequestDispatchTests.cpp"
+    "${ASFW_DRIVER_DIR}/Async/Rx/LocalRequestDispatch.cpp"
+)
+
+target_link_libraries(LocalRequestDispatchTests
+    PRIVATE
+        asfw_packet_serdes
+        GTest::gtest_main
+)
+
+target_compile_definitions(LocalRequestDispatchTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(LocalRequestDispatchTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(LocalRequestDispatchTests)
+
 add_executable(SelfIDSequenceTests
     "${ASFW_TESTS_DIR}/SelfIDSequenceTests.cpp"
 )
