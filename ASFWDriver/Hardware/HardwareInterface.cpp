@@ -842,9 +842,9 @@ uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
     return 0;
 }
 
-bool HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue, uint32_t& outOldValue) noexcept {
+LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept {
     if (!device_) {
-        return false;
+        return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
     }
     Write(Register32::kCSRCompareData, compareValue);
     Write(Register32::kCSRData, newValue);
@@ -855,8 +855,8 @@ bool HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_
     for (int i = 0; i < kMaxTries; ++i) {
         uint32_t ctrl = Read(Register32::kCSRControl);
         if (ctrl & 0x80000000u) {
-            outOldValue = Read(Register32::kCSRData);
-            return (outOldValue == compareValue);
+            const uint32_t oldValue = Read(Register32::kCSRData);
+            return {LocalCSRLockResult::Status::Success, oldValue, (oldValue == compareValue)};
         }
 #ifndef ASFW_HOST_TEST
         IODelay(5);
@@ -865,7 +865,7 @@ bool HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_
 #endif
     }
     ASFW_LOG(Hardware, "CompareSwapLocalIRMResource timeout select=%u compare=0x%08x new=0x%08x", selectCode, compareValue, newValue);
-    return false;
+    return {LocalCSRLockResult::Status::Timeout, 0, false};
 }
 
 } // namespace ASFW::Driver

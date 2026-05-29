@@ -3,6 +3,7 @@
 #include <optional>
 #include <utility> // for std::pair
 
+
 #ifdef ASFW_HOST_TEST
 #include "Testing/HostDriverKitStubs.hpp"
 #include <vector>
@@ -28,6 +29,19 @@ class IAsyncControllerPort;
 } // namespace ASFW::Async
 
 namespace ASFW::Driver {
+
+/// Result of a local autonomous IRM CSR compare-swap operation (OHCI §5.5).
+struct LocalCSRLockResult {
+    enum class Status : uint8_t {
+        Success,             ///< Hardware completed the operation.
+        Timeout,             ///< CSRControl done bit was never set.
+        HardwareUnavailable, ///< No hardware interface (device_ is null).
+    };
+    Status status{Status::HardwareUnavailable};
+    uint32_t oldValue{0};    ///< Previous register value (valid only on Success).
+    bool compareMatched{false}; ///< True if oldValue == compareValue (swap occurred).
+};
+
 
 class HardwareInterface {
   public:
@@ -120,7 +134,8 @@ class HardwareInterface {
     // Local autonomous IRM CSR helpers (OHCI §5.5)
     void WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept;
     [[nodiscard]] uint32_t ReadLocalIRMResource(uint32_t selectCode) noexcept;
-    bool CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue, uint32_t& outOldValue) noexcept;
+    [[nodiscard]] LocalCSRLockResult CompareSwapLocalIRMResource(
+        uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept;
 
 #ifdef ASFW_HOST_TEST
     enum class TestOperation : uint8_t {

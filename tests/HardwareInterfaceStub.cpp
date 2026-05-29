@@ -395,19 +395,18 @@ uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
     });
 }
 
-bool HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue, uint32_t& outOldValue) noexcept {
-    return WithState(this, [selectCode, compareValue, newValue, &outOldValue](HardwareTestState& state) {
+LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept {
+    return WithState(this, [selectCode, compareValue, newValue](HardwareTestState& state) -> LocalCSRLockResult {
         auto it = state.localIRMResources.find(selectCode);
         uint32_t val = (selectCode == 0) ? 0x3F : ((selectCode == 1) ? 4915 : 0xFFFFFFFF);
         if (it != state.localIRMResources.end()) {
             val = it->second;
         }
-        outOldValue = val;
         if (val == compareValue) {
             state.localIRMResources[selectCode] = newValue;
-            return true;
+            return {LocalCSRLockResult::Status::Success, val, true};
         }
-        return false;
+        return {LocalCSRLockResult::Status::Success, val, false};
     });
 }
 
