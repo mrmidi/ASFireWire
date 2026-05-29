@@ -8,10 +8,10 @@ extern "C" {
 #endif
 
 #define ASFW_DIAG_ABI_VERSION 1u
-#define ASFW_DIAG_MAX_NODES 16u
-#define ASFW_DIAG_MAX_PORTS 8u
-#define ASFW_DIAG_MAX_SELF_ID_QUADS 64u
-#define ASFW_DIAG_MAX_ASYNC_EVENTS 48u // Bounded size to keep under 4KB
+#define ASFW_DIAG_MAX_NODES 64u
+#define ASFW_DIAG_MAX_PORTS 27u
+#define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
+#define ASFW_DIAG_MAX_ASYNC_EVENTS 128u // Bounded size to keep memory footprint sane
 #define ASFW_DIAG_MAX_CSR_ENTRIES 32u
 #define ASFW_DIAG_MAX_PHY_REGS 16u
 

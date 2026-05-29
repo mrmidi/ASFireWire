@@ -9,10 +9,34 @@
 #include "ControllerCoreAccess.hpp"
 
 #include <DriverKit/OSData.h>
+#include <cstddef>
 
 namespace ASFW::UserClient {
 
 namespace {
+
+template <typename T>
+size_t GetPopulatedSize(const T& val) {
+    return sizeof(T);
+}
+
+template <>
+inline size_t GetPopulatedSize<ASFWDiagTopology>(const ASFWDiagTopology& val) {
+    uint32_t count = val.nodeCount;
+    if (count > ASFW_DIAG_MAX_NODES) {
+        count = ASFW_DIAG_MAX_NODES;
+    }
+    return offsetof(ASFWDiagTopology, nodes) + count * sizeof(ASFWDiagNode);
+}
+
+template <>
+inline size_t GetPopulatedSize<ASFWDiagAsyncTrace>(const ASFWDiagAsyncTrace& val) {
+    uint32_t count = val.eventCount;
+    if (count > ASFW_DIAG_MAX_ASYNC_EVENTS) {
+        count = ASFW_DIAG_MAX_ASYNC_EVENTS;
+    }
+    return offsetof(ASFWDiagAsyncTrace, events) + count * sizeof(ASFWDiagAsyncEvent);
+}
 
 template <typename StructType, typename CollectFn>
 kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserClientMethodArguments* args, CollectFn&& collectFn) {
@@ -27,8 +51,10 @@ kern_return_t CollectAndPack(Diagnostics::DiagnosticsService* service, IOUserCli
     ASFWDiagStatus status = (service->*collectFn)(&val);
     (void)status; // Handled via header status field
     
-    // Allocate OSData with the bytes directly
-    OSData* data = OSData::withBytes(&val, sizeof(StructType));
+    size_t sizeToCopy = GetPopulatedSize(val);
+    
+    // Allocate OSData with the populated bytes directly
+    OSData* data = OSData::withBytes(&val, static_cast<uint32_t>(sizeToCopy));
     if (!data) {
         return kIOReturnNoMemory;
     }
