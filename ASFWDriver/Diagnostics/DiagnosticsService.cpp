@@ -481,12 +481,18 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
     out->failedElectionCount = bmState.failedElectionCount;
     out->unexpectedResourceCsrSoftwareCount = bmState.unexpectedResourceCsrSoftwareCount;
 
-    // Local IRM resource registers
-    if (hw && bmState.localIsIRM) {
-        out->localIrmBusManagerId = hw->ReadLocalIRMResource(0);
-        out->localIrmBandwidthAvailable = hw->ReadLocalIRMResource(1);
-        out->localIrmChannelsAvailableHi = hw->ReadLocalIRMResource(2);
-        out->localIrmChannelsAvailableLo = hw->ReadLocalIRMResource(3);
+    // Local IRM resource registers & controller status (FW-14 Phase 2)
+    auto* const irmCtrl = controller_->GetLocalIRMResourceController();
+    if (irmCtrl) {
+        auto snap = irmCtrl->Snapshot();
+        out->localIrmResourceState = static_cast<uint32_t>(snap.state);
+        out->localIrmReadbackValid = snap.readbackValid ? 1 : 0;
+        out->csrControlLastStatus = static_cast<uint32_t>(snap.lastCsrStatus);
+        
+        out->localIrmBusManagerId = snap.busManagerId;
+        out->localIrmBandwidthAvailable = snap.bandwidthAvailable;
+        out->localIrmChannelsAvailableHi = snap.channelsAvailableHi;
+        out->localIrmChannelsAvailableLo = snap.channelsAvailableLo;
     }
 
     // Topology Map Service status
@@ -498,6 +504,20 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->topologyMapCRC = topoMap->GetCRC();
         out->topologyMapDMAReady = topoMap->IsDMAReady() ? 1 : 0;
     }
+
+    // Populate new diagnostics fields (Pass 1 & 3)
+    out->rootCmcKnown = bmState.rootCmcKnown ? 1 : 0;
+    out->rootCmcCapable = bmState.rootCmcCapable ? 1 : 0;
+    out->cycleStartObserved = bmState.cycleStartObserved ? 1 : 0;
+    out->cycleStartSourceNode = bmState.cycleStartSourceNode;
+    out->remoteCmstrNeeded = bmState.remoteCmstrNeeded ? 1 : 0;
+    out->remoteCmstrAllowed = bmState.remoteCmstrAllowed ? 1 : 0;
+    out->remoteCmstrAlreadySatisfied = bmState.remoteCmstrAlreadySatisfied ? 1 : 0;
+    out->bmPolicyVerdict = bmState.bmPolicyVerdict;
+    out->fullBMActivityLevel = bmState.fullBMActivityLevel;
+    out->lastRemoteCmstrResult = bmState.lastRemoteCmstrResult;
+    out->lastRemoteCmstrGeneration = bmState.lastRemoteCmstrGeneration;
+    out->lastRemoteCmstrTargetNode = bmState.lastRemoteCmstrTargetNode;
 
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {

@@ -377,21 +377,23 @@ void HardwareInterface::ResetTestState() noexcept {
     });
 }
 
-void HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
+LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
     WithState(this, [selectCode, value](HardwareTestState& state) {
         state.localIRMResources[selectCode] = value;
     });
+    return {LocalCSRLockResult::Status::Success};
 }
 
-uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
-    return WithState(this, [selectCode](HardwareTestState& state) -> uint32_t {
+LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
+    return WithState(this, [selectCode](HardwareTestState& state) -> LocalCSRReadResult {
         auto it = state.localIRMResources.find(selectCode);
         if (it != state.localIRMResources.end()) {
-            return it->second;
+            return {LocalCSRLockResult::Status::Success, it->second};
         }
-        if (selectCode == 0) return 0x3F;
-        if (selectCode == 1) return 4915;
-        return 0xFFFFFFFF;
+        uint32_t defaultVal = 0xFFFFFFFF;
+        if (selectCode == 0) defaultVal = 0x3F;
+        else if (selectCode == 1) defaultVal = 4915;
+        return {LocalCSRLockResult::Status::Success, defaultVal};
     });
 }
 

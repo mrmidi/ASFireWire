@@ -296,16 +296,75 @@ struct DiagnosticsTextFormatter {
         appendRow("Failed Elections", snapshot.busManager.failedElectionCount)
         appendRow("Unexpected software resource accesses", snapshot.busManager.unexpectedResourceCsrSoftwareCount)
         
-        appendRow("Local IRM BM ID Reg", formatNodeStr(snapshot.busManager.localIrmBusManagerId))
-        appendRow("Local IRM Bandwidth Available", snapshot.busManager.localIrmBandwidthAvailable)
-        appendRow("Local IRM Channels Avail Hi", formatHex32(snapshot.busManager.localIrmChannelsAvailableHi))
-        appendRow("Local IRM Channels Avail Lo", formatHex32(snapshot.busManager.localIrmChannelsAvailableLo))
+        let irmStateStr: String
+        switch snapshot.busManager.localIrmResourceState {
+        case 0: irmStateStr = "disabled"
+        case 1: irmStateStr = "initialized"
+        case 2: irmStateStr = "failed"
+        default: irmStateStr = "Unknown"
+        }
+        appendRow("Local IRM Resource State", irmStateStr)
+        appendRow("Local IRM Readback Valid", snapshot.busManager.localIrmReadbackValid != 0 ? "Yes" : "No")
+
+        let csrStatusStr: String
+        switch snapshot.busManager.csrControlLastStatus {
+        case 0: csrStatusStr = "OK"
+        case 1: csrStatusStr = "Timeout"
+        case 2: csrStatusStr = "HardwareUnavailable"
+        case 3: csrStatusStr = "AccessFailed"
+        default: csrStatusStr = "Unknown"
+        }
+        appendRow("CSRControl Last Status", csrStatusStr)
+
+        appendRow("BUS_MANAGER_ID local", formatNodeStr(snapshot.busManager.localIrmBusManagerId))
+        appendRow("BANDWIDTH_AVAILABLE local", snapshot.busManager.localIrmBandwidthAvailable)
+        appendRow("CHANNELS_AVAILABLE_HI local", formatHex32(snapshot.busManager.localIrmChannelsAvailableHi))
+        appendRow("CHANNELS_AVAILABLE_LO local", formatHex32(snapshot.busManager.localIrmChannelsAvailableLo))
         
         appendRow("Topology Map Valid", snapshot.busManager.topologyMapValid != 0 ? "Yes" : "No")
         appendRow("Topology Map Generation", snapshot.busManager.topologyMapGeneration)
         appendRow("Topology Map Self-ID Count", snapshot.busManager.topologyMapSelfIdCount)
         appendRow("Topology Map CRC", formatHex16(snapshot.busManager.topologyMapCRC))
         appendRow("Topology Map DMA Ready", snapshot.busManager.topologyMapDMAReady != 0 ? "Yes" : "No")
+
+        // Pass 1 & 3 Evidence & Verdict Output
+        let verdictStr: String
+        switch snapshot.busManager.bmPolicyVerdict {
+        case 0: verdictStr = "ObserveOnly"
+        case 1: verdictStr = "RemoteRootAlreadyCycling"
+        case 2: verdictStr = "RemoteCMSTRNeeded"
+        case 3: verdictStr = "LocalRootCycleMaster"
+        default: verdictStr = "Unknown (\(snapshot.busManager.bmPolicyVerdict))"
+        }
+        appendRow("BM Policy Verdict", verdictStr)
+        appendRow("Root CMC Known", snapshot.busManager.rootCmcKnown != 0 ? "Yes" : "No")
+        appendRow("Root CMC Capable", snapshot.busManager.rootCmcCapable != 0 ? "Yes" : "No")
+        appendRow("CycleStart Observed", snapshot.busManager.cycleStartObserved != 0 ? "Yes" : "No")
+        appendRow("CycleStart Source", formatNodeStr(snapshot.busManager.cycleStartSourceNode))
+        appendRow("Remote CMSTR Allowed", snapshot.busManager.remoteCmstrAllowed != 0 ? "Yes" : "No")
+
+        let cmstrActionStr: String
+        if snapshot.busManager.remoteCmstrAllowed != 0 {
+            if snapshot.busManager.lastRemoteCmstrResult == 0 {
+                cmstrActionStr = "success"
+            } else {
+                cmstrActionStr = "failed (code \(snapshot.busManager.lastRemoteCmstrResult))"
+            }
+        } else {
+            cmstrActionStr = "not armed"
+        }
+        appendRow("Remote CMSTR Action", cmstrActionStr)
+
+        let activityStr: String
+        switch snapshot.busManager.fullBMActivityLevel {
+        case 0: activityStr = "ObserveOnly"
+        case 1: activityStr = "ElectionOnly"
+        case 2: activityStr = "RemoteCmstrAllowed"
+        case 3: activityStr = "GapPolicyAllowed"
+        case 4: activityStr = "ForceRootAllowed"
+        default: activityStr = "Unknown (\(snapshot.busManager.fullBMActivityLevel))"
+        }
+        appendRow("Full BM Activity Level", activityStr)
 
         // --- OHCI Registers ---
         appendTitle("OHCI Link/Controller Snapshot")

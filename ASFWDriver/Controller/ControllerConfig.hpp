@@ -29,6 +29,7 @@ struct ControllerConfig {
     // Conservative Apple-style mode: advertise neither BM nor IRM capability.
     // Use LegacyBmcCleared only for backwards-compatible behavior verification.
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::AppleAvoidManager};
+    ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
 
     static ControllerConfig MakeDefault();
 };

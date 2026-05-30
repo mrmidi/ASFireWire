@@ -9,6 +9,8 @@
 #include "../Bus/Role/RoleCoordinator.hpp"
 #include "../Bus/BusManager/BusManagerRuntimeState.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/BusManager/LocalIRMResourceController.hpp"
+#include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"
@@ -89,7 +91,9 @@ namespace ASFW::Driver {
 class ControllerCore final : private Role::IPhyConfigReset,
                              private Role::IRemoteCsrWriter,
                              private Role::IContenderControl,
-                             public ASFW::Bus::BusManagerElectionDriver::IBMRoleEvents {
+                             public ASFW::Bus::BusManagerElectionDriver::IBMRoleEvents,
+                             public ASFW::Bus::IBMPolicyExecutor,
+                             public std::enable_shared_from_this<ControllerCore> {
   public:
     struct Dependencies {
         std::shared_ptr<HardwareInterface> hardware;
@@ -185,18 +189,16 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver);
 
     const Bus::BusManagerRuntimeState& GetBusManagerRuntimeState() const {
-        if (deps_.busManagerElectionDriver) {
-            bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
-            bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
-        }
-        if (deps_.csrResponder) {
-            bmState_.unexpectedResourceCsrSoftwareCount = deps_.csrResponder->UnexpectedResourceCsrSoftwareCount();
-        }
+        SyncBusManagerRuntimeState();
         return bmState_;
     }
-    Bus::BusManagerRuntimeState& GetBusManagerRuntimeState() { return bmState_; }
+    Bus::BusManagerRuntimeState& GetBusManagerRuntimeState() {
+        SyncBusManagerRuntimeState();
+        return bmState_;
+    }
 
     ASFW::Bus::TopologyMapService* GetTopologyMapService() const { return deps_.topologyMapService.get(); }
+    ASFW::Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
 
   private:
     void LogBuildBanner() const;
@@ -238,6 +240,11 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) override;
     void OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncStatus status) override;
 
+    // ASFW::Bus::IBMPolicyExecutor implementation
+    void SendRemoteCmstr(uint8_t rootNodeId, uint32_t generation) override;
+    void HandleRemoteCmstrCallback(uint32_t generation, uint8_t rootNodeId, ASFW::Async::AsyncStatus status);
+    void SyncBusManagerRuntimeState() const noexcept;
+
     ControllerConfig config_;
     Dependencies deps_;
     bool running_{false};
@@ -271,6 +278,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     mutable Bus::BusManagerRuntimeState bmState_{};
     std::unique_ptr<Bus::BusManagerPolicyCoordinator> bmPolicyCoordinator_;
+    std::unique_ptr<Bus::LocalIRMResourceController> localIrmController_;
 };
 
 } // namespace ASFW::Driver

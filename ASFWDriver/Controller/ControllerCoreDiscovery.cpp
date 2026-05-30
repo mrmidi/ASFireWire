@@ -133,22 +133,11 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         config_.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
         config_.roleMode == ASFW::FW::RoleMode::FullBusManager;
 
-    if (localIrmResourceEnabled && bmState_.localIsIRM) {
-        auto* const hw = GetHardware();
-        if (hw) {
-            ASFW_LOG(Controller, "[IRM] Local node is IRM; initializing local IRM resource registers");
-            hw->WriteLocalIRMResource(0, 0x3F);       // BUS_MANAGER_ID
-            hw->WriteLocalIRMResource(1, 4915);       // BANDWIDTH_AVAILABLE
-            hw->WriteLocalIRMResource(2, 0xFFFFFFFF); // CHANNELS_AVAILABLE_HI
-            hw->WriteLocalIRMResource(3, 0x7FFFFFFF); // CHANNELS_AVAILABLE_LO
-
-            // Validate with readback (correction 5)
-            const uint32_t bmId = hw->ReadLocalIRMResource(0);
-            const uint32_t bw = hw->ReadLocalIRMResource(1);
-            const uint32_t chHi = hw->ReadLocalIRMResource(2);
-            const uint32_t chLo = hw->ReadLocalIRMResource(3);
-            ASFW_LOG(Controller, "[IRM] Readback validation: BM_ID=0x%x, BW=%u, CH_HI=0x%x, CH_LO=0x%x",
-                     bmId, bw, chHi, chLo);
+    if (localIrmController_) {
+        if (localIrmResourceEnabled && bmState_.localIsIRM) {
+            localIrmController_->InitializeDefaults(bmState_.localNodeId);
+        } else {
+            localIrmController_->Disable();
         }
     }
 
@@ -177,7 +166,11 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         deps_.topologyMapService->Rebuild(snap);
     }
 
-    if (deps_.busManagerElectionDriver) {
+    const bool electionAllowed =
+        config_.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+        config_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;
+
+    if (deps_.busManagerElectionDriver && electionAllowed) {
         deps_.busManagerElectionDriver->OnTopologyReady(snap);
     }
 
@@ -585,6 +578,67 @@ void ControllerCore::EvaluateBusManagerPolicy() noexcept {
     if (bmPolicyCoordinator_) {
         bmPolicyCoordinator_->Evaluate(GetBusManagerRuntimeState());
     }
+}
+
+void ControllerCore::SendRemoteCmstr(uint8_t rootNodeId, uint32_t generation) {
+    if (generation != currentGeneration_ || !busImpl_) {
+        return;
+    }
+
+    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = ASFW::FW::kCSRRegSpaceHi,
+        .addressLo = ASFW::FW::kCSRRemoteStateSet,
+        .nodeID = static_cast<uint16_t>(0xFFC0u | (rootNodeId & 0x3Fu)),
+    }};
+
+    bmState_.lastRemoteCmstrGeneration = generation;
+    bmState_.lastRemoteCmstrTargetNode = rootNodeId;
+
+    std::weak_ptr<ControllerCore> weakSelf = std::static_pointer_cast<ControllerCore>(shared_from_this());
+
+    busImpl_->WriteQuad(ASFW::FW::Generation{generation},
+                        ASFW::FW::NodeId{rootNodeId},
+                        address,
+                        ASFW::FW::kCSRStateBitCMSTR,
+                        ASFW::FW::FwSpeed::S100,
+                        [weakSelf, generation, rootNodeId](Async::AsyncStatus status,
+                                                           std::span<const uint8_t>) {
+        auto self = weakSelf.lock();
+        if (!self) {
+            return;
+        }
+        ASFW_LOG(Controller,
+                 "ControllerCore: remote CMSTR write callback gen=%u root=%u result=%{public}s",
+                 generation, rootNodeId, Async::ToString(status));
+        self->HandleRemoteCmstrCallback(generation, rootNodeId, status);
+    });
+}
+
+void ControllerCore::HandleRemoteCmstrCallback(uint32_t generation, uint8_t rootNodeId, ASFW::Async::AsyncStatus status) {
+    if (generation == currentGeneration_) {
+        bmState_.lastRemoteCmstrResult = static_cast<uint32_t>(status);
+        EvaluateBusManagerPolicy();
+    }
+}
+
+void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
+    if (deps_.busManagerElectionDriver) {
+        bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
+        bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
+    }
+    if (deps_.csrResponder) {
+        bmState_.unexpectedResourceCsrSoftwareCount = deps_.csrResponder->UnexpectedResourceCsrSoftwareCount();
+    }
+
+    // Populate root evidence from role coordinator
+    const auto rootEvidence = roleCoordinator_.LastRootEvidence();
+    bmState_.rootCmcKnown = rootEvidence.cmcKnown;
+    bmState_.rootCmcCapable = rootEvidence.cmc;
+    bmState_.cycleStartObserved = rootEvidence.cycles.cycleStartObserved;
+    bmState_.cycleStartSourceNode = rootEvidence.rootNodeId;
+
+    // Populate submode level
+    bmState_.fullBMActivityLevel = static_cast<uint8_t>(config_.fullBMActivityLevel);
 }
 
 } // namespace ASFW::Driver

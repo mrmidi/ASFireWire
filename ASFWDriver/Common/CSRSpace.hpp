@@ -347,6 +347,14 @@ enum class RoleMode : uint8_t {
     FullBusManager = 3,
 };
 
+enum class FullBMActivityLevel : uint8_t {
+    ObserveOnly = 0,
+    ElectionOnly = 1,
+    RemoteCmstrAllowed = 2,
+    GapPolicyAllowed = 3,
+    ForceRootAllowed = 4,
+};
+
 // A BIB advertising bmc=1 MUST also advertise irmc=1 (IEEE 1394a-2000: a
 // BM-capable node is required to be IRM-capable). Other combinations are legal.
 [[nodiscard]] constexpr bool IsLegalCapabilityCombo(uint32_t busOptionsHost) noexcept {

@@ -790,16 +790,19 @@ std::pair<uint32_t, uint64_t> HardwareInterface::ReadCycleTimeAndUpTime() const 
     return {cycleTimer, uptime};
 }
 
-void HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
+LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept {
     if (!device_) {
-        return;
+        return {LocalCSRLockResult::Status::HardwareUnavailable};
     }
-    const uint32_t currentValue = ReadLocalIRMResource(selectCode);
-    if (currentValue == value) {
-        return;
+    const auto currentValResult = ReadLocalIRMResource(selectCode);
+    if (currentValResult.status != LocalCSRLockResult::Status::Success) {
+        return {currentValResult.status};
+    }
+    if (currentValResult.value == value) {
+        return {LocalCSRLockResult::Status::Success};
     }
     
-    Write(Register32::kCSRCompareData, currentValue);
+    Write(Register32::kCSRCompareData, currentValResult.value);
     Write(Register32::kCSRData, value);
     Write(Register32::kCSRControl, selectCode & 0x3u);
     FlushPostedWrites();
@@ -808,7 +811,7 @@ void HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t valu
     for (int i = 0; i < kMaxTries; ++i) {
         uint32_t ctrl = Read(Register32::kCSRControl);
         if (ctrl & 0x80000000u) {
-            return;
+            return {LocalCSRLockResult::Status::Success};
         }
 #ifndef ASFW_HOST_TEST
         IODelay(5);
@@ -817,11 +820,12 @@ void HardwareInterface::WriteLocalIRMResource(uint32_t selectCode, uint32_t valu
 #endif
     }
     ASFW_LOG(Hardware, "WriteLocalIRMResource timeout select=%u value=0x%08x", selectCode, value);
+    return {LocalCSRLockResult::Status::Timeout};
 }
 
-uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
+LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
     if (!device_) {
-        return 0;
+        return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
     }
     Write(Register32::kCSRControl, selectCode & 0x3u);
     FlushPostedWrites();
@@ -830,7 +834,7 @@ uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
     for (int i = 0; i < kMaxTries; ++i) {
         uint32_t ctrl = Read(Register32::kCSRControl);
         if (ctrl & 0x80000000u) {
-            return Read(Register32::kCSRData);
+            return {LocalCSRLockResult::Status::Success, Read(Register32::kCSRData)};
         }
 #ifndef ASFW_HOST_TEST
         IODelay(5);
@@ -839,7 +843,7 @@ uint32_t HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) noexcept {
 #endif
     }
     ASFW_LOG(Hardware, "ReadLocalIRMResource timeout select=%u", selectCode);
-    return 0;
+    return {LocalCSRLockResult::Status::Timeout, 0};
 }
 
 LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept {

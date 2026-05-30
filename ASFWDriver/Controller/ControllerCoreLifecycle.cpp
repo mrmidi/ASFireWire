@@ -319,13 +319,17 @@ ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
           static_cast<Role::IRemoteCsrWriter*>(this),
           static_cast<Role::IContenderControl*>(this)}) {
 
+    localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(deps_.hardware.get());
+    ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
+
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);
         ASFW_LOG(Controller, "✅ FireWireBusImpl facade created");
         bmPolicyCoordinator_ = std::make_unique<Bus::BusManagerPolicyCoordinator>(
             Bus::BusManagerPolicyCoordinator::Deps{
-                .hardware = deps_.hardware.get()
+                .hardware = deps_.hardware.get(),
+                .executor = this
             }
         );
         ASFW_LOG(Controller, "✅ BusManagerPolicyCoordinator created");
