@@ -171,6 +171,11 @@ bool ASFWDriver::init() {
         ivars->context = IONew(ServiceContext, 1);
         if (!ivars->context)
             return false;
+        // IONew is raw IOMalloc — it does NOT run constructors. Placement-new so
+        // ServiceContext's members are actually initialized (config defaults,
+        // OSSharedPtr/shared_ptr/atomics, StatusPublisher/IsochService/...) instead
+        // of relying on zero-filled pages. Paired with ~ServiceContext() in free().
+        new (ivars->context) ServiceContext();
     }
     return true;
 }
@@ -179,6 +184,7 @@ void ASFWDriver::free() {
     if (ivars) {
         if (ivars->context) {
             ivars->context->Reset();
+            ivars->context->~ServiceContext(); // pair with placement-new in init()
             IOSafeDeleteNULL(ivars->context, ServiceContext, 1);
         }
         IODelete(ivars, ASFWDriver_IVars, 1);
