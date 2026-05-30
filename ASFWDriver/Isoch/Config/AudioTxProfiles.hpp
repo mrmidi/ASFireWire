@@ -12,7 +12,7 @@ enum class TxProfileId : uint8_t { A = 0, B = 1, C = 2 };
 #if defined(ASFW_TX_TUNING_PROFILE)
 inline constexpr uint8_t kTxTuningProfileRaw = ASFW_TX_TUNING_PROFILE;
 #else
-inline constexpr uint8_t kTxTuningProfileRaw = 0;  // 0=A, 1=B, 2=C
+inline constexpr uint8_t kTxTuningProfileRaw = 1;  // 0=A, 1=B, 2=C
 #endif
 static_assert(kTxTuningProfileRaw <= 2, "Invalid ASFW_TX_TUNING_PROFILE — use 0 (A), 1 (B), or 2 (C)");
 inline constexpr TxProfileId kActiveTxProfileId = static_cast<TxProfileId>(kTxTuningProfileRaw);

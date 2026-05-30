@@ -21,7 +21,7 @@ TEST(TopologyMapBuilder, EmptyOrOneNodeSnapshot) {
     snap.generation = 12;
     snap.nodeCount = 1;
     // Index 0 is the generation/header from OHCI SelfIDCount; no actual Self-ID quadlets.
-    snap.selfIDData.rawQuadlets = { 0x8000000Cu }; 
+    snap.rawSelfIdQuadlets = { 0x8000000Cu }; 
 
     std::array<uint32_t, 256> out{};
     const uint32_t length = BuildTopologyMap(snap, snap.generation, out);
@@ -50,7 +50,7 @@ TEST(TopologyMapBuilder, MultipleNodesWithSelfIDs) {
     snap.generation = 42;
     snap.nodeCount = 3;
     // Index 0 is the header. Indices 1, 2, 3 are raw self-IDs verbatim.
-    snap.selfIDData.rawQuadlets = {
+    snap.rawSelfIdQuadlets = {
         0x8000000Cu, // OHCI header (stripped)
         0x50515253u, // Self-ID 0
         0x60616263u, // Self-ID 1
@@ -83,9 +83,9 @@ TEST(TopologyMapBuilder, SpansBoundSafety) {
     snap.nodeCount = 255;
     
     // Create 300 mock quadlets (exceeding the 256-quadlet span limit)
-    snap.selfIDData.rawQuadlets.push_back(0x8000000Cu);
+    snap.rawSelfIdQuadlets.push_back(0x8000000Cu);
     for (size_t i = 0; i < 300; ++i) {
-        snap.selfIDData.rawQuadlets.push_back(static_cast<uint32_t>(i));
+        snap.rawSelfIdQuadlets.push_back(static_cast<uint32_t>(i));
     }
 
     std::array<uint32_t, 256> out{};

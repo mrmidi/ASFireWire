@@ -80,7 +80,7 @@ RoleAction AlwaysForceRoot(const RoleInputs& /*in*/) noexcept {
 RoleAction AlwaysRemoteCmstr(const RoleInputs& in) noexcept {
     RoleAction a{};
     a.kind = RoleAction::Kind::EnableRemoteCycleMaster;
-    a.targetRoot = (in.topo != nullptr) ? in.topo->rootNodeId.value_or(0) : 0;
+    a.targetRoot = (in.topo != nullptr) ? in.topo->rootNodeId : 0;
     return a;
 }
 

@@ -97,19 +97,16 @@ void StatusPublisher::Publish(ControllerCore* controller,
         if (auto topo = controller->LatestTopology()) {
             snapshot.busGeneration = topo->generation;
             snapshot.nodeCount = topo->nodeCount;
-            if (topo->localNodeId.has_value()) {
-                snapshot.localNodeID = static_cast<uint32_t>(*topo->localNodeId);
+            if (topo->localNodeId != Driver::kInvalidPhysicalId) {
+                snapshot.localNodeID = static_cast<uint32_t>(topo->localNodeId);
             }
-            if (topo->rootNodeId.has_value()) {
-                snapshot.rootNodeID = static_cast<uint32_t>(*topo->rootNodeId);
+            if (topo->rootNodeId != Driver::kInvalidPhysicalId) {
+                snapshot.rootNodeID = static_cast<uint32_t>(topo->rootNodeId);
             }
-            if (topo->irmNodeId.has_value()) {
-                snapshot.irmNodeID = static_cast<uint32_t>(*topo->irmNodeId);
+            if (topo->irmNodeId != Driver::kInvalidPhysicalId) {
+                snapshot.irmNodeID = static_cast<uint32_t>(topo->irmNodeId);
             }
-            if (topo->irmNodeId.has_value() && topo->localNodeId.has_value() &&
-                topo->irmNodeId == topo->localNodeId) {
-                snapshot.flags |= SharedStatusBlock::kFlagIsIRM;
-            }
+
         }
     }
 

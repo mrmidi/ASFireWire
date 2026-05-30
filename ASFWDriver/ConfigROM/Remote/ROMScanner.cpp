@@ -46,7 +46,7 @@ bool ROMScanner::Start(const ROMScanRequest& request, ScanCompletionCallback com
     }
 
     ASFW_LOG_V2(ConfigROM, "ROMScanner::Start gen=%u localNode=%u topologyNodes=%zu targets=%zu",
-                request.gen.value, request.localNodeId, request.topology.nodes.size(),
+                request.gen.value, request.localNodeId, request.topology.physical.nodes.size(),
                 request.targetNodes.size());
 
     auto session = std::make_shared<ROMScanSession>(bus_, speedPolicy_, params_, reader_,

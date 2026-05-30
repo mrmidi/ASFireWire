@@ -137,8 +137,8 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
     TopologySnapshot topology;
     topology.generation = 11;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
-    topology.nodes.push_back({.nodeId = 2, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 2, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -208,7 +208,7 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
     TopologySnapshot topology;
     topology.generation = 9;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 3, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 3, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};

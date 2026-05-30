@@ -8,13 +8,13 @@
 namespace ASFW::Discovery {
 
 [[nodiscard]] inline bool HasRemoteLinkActiveNode(const ASFW::Driver::TopologySnapshot& topology) {
-    if (!topology.localNodeId.has_value()) {
+    if (topology.localNodeId == Driver::kInvalidPhysicalId) {
         return false;
     }
 
-    const uint8_t localNodeId = *topology.localNodeId;
-    for (const auto& node : topology.nodes) {
-        if (node.nodeId != localNodeId && node.linkActive) {
+    const uint8_t localNodeId = topology.localNodeId;
+    for (const auto& node : topology.physical.nodes) {
+        if (node.physicalId != localNodeId && node.linkActive) {
             return true;
         }
     }

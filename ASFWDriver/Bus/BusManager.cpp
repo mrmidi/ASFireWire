@@ -67,21 +67,21 @@ struct CycleMasterInputs {
     CycleMasterInputs inputs{};
     inputs.localNodeID = localNodeID;
     inputs.rootNodeID = rootNodeID;
-    inputs.irmNodeID = topology.irmNodeId.value_or(0xFF);
+    inputs.irmNodeID = topology.irmNodeId;
 
-    for (const auto& node : topology.nodes) {
-        if (!node.isIRMCandidate || !node.linkActive) {
+    for (const auto& node : topology.physical.nodes) {
+        if (!node.contender || !node.linkActive) {
             continue;
         }
 
-        if (node.nodeId == localNodeID) {
+        if (node.physicalId == localNodeID) {
             inputs.localContender = true;
             continue;
         }
 
-        const bool isBad = (node.nodeId < badIRMFlags.size() && badIRMFlags[node.nodeId]);
+        const bool isBad = (node.physicalId < badIRMFlags.size() && badIRMFlags[node.physicalId]);
         if (!isBad) {
-            inputs.otherContenderID = node.nodeId;
+            inputs.otherContenderID = node.physicalId;
         }
     }
 
@@ -89,7 +89,7 @@ struct CycleMasterInputs {
         return inputs;
     }
 
-    if (inputs.irmNodeID == 0xFF) {
+    if (inputs.irmNodeID == kInvalidPhysicalId) {
         inputs.badIRM = true;
         return inputs;
     }
@@ -188,16 +188,16 @@ struct CycleMasterInputs {
 }
 
 [[nodiscard]] bool IsTwoNodeLocalRootTopology(const TopologySnapshot& topology) {
-    if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
+    if (topology.localNodeId == kInvalidPhysicalId || topology.rootNodeId == kInvalidPhysicalId) {
         return false;
     }
-    if (*topology.localNodeId != *topology.rootNodeId) {
+    if (topology.localNodeId != topology.rootNodeId) {
         return false;
     }
 
     uint8_t remoteActiveNodes = 0;
-    for (const auto& node : topology.nodes) {
-        if (node.linkActive && node.nodeId != *topology.localNodeId) {
+    for (const auto& node : topology.physical.nodes) {
+        if (node.linkActive && node.physicalId != topology.localNodeId) {
             ++remoteActiveNodes;
         }
     }
@@ -259,14 +259,14 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
     const TopologySnapshot& topology,
     const std::vector<bool>& badIRMFlags)
 {
-    if (!topology.localNodeId.has_value() || !topology.rootNodeId.has_value()) {
+    if (topology.localNodeId == kInvalidPhysicalId || topology.rootNodeId == kInvalidPhysicalId) {
         ASFW_LOG(BusManager, "AssignCycleMaster: Invalid topology (local=%d root=%d)",
-                 topology.localNodeId.has_value(), topology.rootNodeId.has_value());
+                 topology.localNodeId != kInvalidPhysicalId, topology.rootNodeId != kInvalidPhysicalId);
         return std::nullopt;
     }
 
-    const uint8_t localNodeID = *topology.localNodeId;
-    const uint8_t rootNodeID = *topology.rootNodeId;
+    const uint8_t localNodeID = topology.localNodeId;
+    const uint8_t rootNodeID = topology.rootNodeId;
     const CycleMasterInputs inputs = CollectCycleMasterInputs(topology, badIRMFlags, localNodeID, rootNodeID);
 
     if (const auto forcedRoot = MaybeForceConfiguredRoot(config_, inputs)) {
@@ -312,14 +312,14 @@ std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
         return std::nullopt;
     }
 
-    if (!topology.localNodeId.has_value() || !topology.irmNodeId.has_value()) {
+    if (topology.localNodeId == kInvalidPhysicalId || topology.irmNodeId == kInvalidPhysicalId) {
         return std::nullopt;
     }
 
-    const uint8_t localNodeID = *topology.localNodeId;
-    if (*topology.irmNodeId != localNodeID) {
+    const uint8_t localNodeID = topology.localNodeId;
+    if (topology.irmNodeId != localNodeID) {
         ASFW_LOG_V3(BusManager, "Skipping gap optimization because local node %u is not IRM %u",
-                    localNodeID, *topology.irmNodeId);
+                    localNodeID, topology.irmNodeId);
         return std::nullopt;
     }
 
@@ -338,7 +338,7 @@ std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
     }
 
     const uint8_t targetGap =
-        config_.forcedGapFlag ? config_.forcedGapCount : CalculateGapFromHops(topology.maxHopsFromRoot);
+        config_.forcedGapFlag ? config_.forcedGapCount : CalculateGapFromHops(topology.physical.maxHopsFromRoot);
 
     if (config_.forcedGapFlag) {
         if (targetGap == gapState_.lastConfirmedGap) {

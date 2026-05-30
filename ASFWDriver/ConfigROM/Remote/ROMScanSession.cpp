@@ -139,14 +139,14 @@ void ROMScanSession::Start(ROMScanRequest request, ScanCompletionCallback comple
         session->rootProbeTerminal_ = false;
 
         if (request.targetNodes.empty()) {
-            for (const auto& node : session->topology_.nodes) {
-                if (node.nodeId == session->localNodeId_) {
+            for (const auto& node : session->topology_.physical.nodes) {
+                if (node.physicalId == session->localNodeId_) {
                     continue;
                 }
                 if (!node.linkActive) {
                     continue;
                 }
-                session->nodeScans_.emplace_back(node.nodeId, session->gen_,
+                session->nodeScans_.emplace_back(node.physicalId, session->gen_,
                                                  session->params_.startSpeed,
                                                  session->params_.perStepRetries);
                 session->nodeScans_.back().SetSlowPublishRetriesLeft(
@@ -186,8 +186,8 @@ void ROMScanSession::Abort() {
             return;
         }
         if (session->rootProbeStarted_ && !session->rootProbeTerminal_ &&
-            session->topology_.rootNodeId.has_value()) {
-            session->NotifyRootBIBFailure(*session->topology_.rootNodeId,
+            session->topology_.rootNodeId != Driver::kInvalidPhysicalId) {
+            session->NotifyRootBIBFailure(session->topology_.rootNodeId,
                                           Driver::Role::RootBibReadStatus::AbortedByReset);
         }
         session->completion_ = nullptr;
@@ -407,7 +407,7 @@ void ROMScanSession::RetryWithFallback(ROMScanNodeStateMachine& node) {
 }
 
 bool ROMScanSession::IsRootNode(uint8_t nodeId) const noexcept {
-    return topology_.rootNodeId.has_value() && *topology_.rootNodeId == nodeId;
+    return topology_.rootNodeId != Driver::kInvalidPhysicalId && topology_.rootNodeId == nodeId;
 }
 
 void ROMScanSession::NotifyRootBIBPending(uint8_t nodeId) {
@@ -555,7 +555,7 @@ void ROMScanSession::HandleBIBComplete(uint8_t nodeId, ROMReader::ReadResult res
 }
 
 void ROMScanSession::ContinueAfterBIBSuccess(ROMScanNodeStateMachine& node, uint8_t nodeId) {
-    if (params_.doIRMCheck && topology_.irmNodeId.has_value() && *topology_.irmNodeId == nodeId &&
+    if (params_.doIRMCheck && topology_.irmNodeId != Driver::kInvalidPhysicalId && topology_.irmNodeId == nodeId &&
         node.ROM().bib.irmc) {
         StartIRMRead(node);
         return;

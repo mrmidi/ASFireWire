@@ -23,13 +23,13 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
         return;
     }
 
-    if (!snap.localNodeId.has_value() || !snap.irmNodeId.has_value()) {
+    if (snap.localNodeId == Driver::kInvalidPhysicalId || snap.irmNodeId == Driver::kInvalidPhysicalId) {
         ASFW_LOG(Controller, "[BM Election] Skipping election: missing local ID or IRM ID");
         return;
     }
 
-    const uint8_t localNodeId = snap.localNodeId.value();
-    const uint8_t irmNodeId = snap.irmNodeId.value();
+    const uint8_t localNodeId = snap.localNodeId;
+    const uint8_t irmNodeId = snap.irmNodeId;
     const uint32_t generation = snap.generation;
 
     // Check if we are already contending for this or a newer generation

@@ -21,15 +21,15 @@ RoleAction EvaluateRolePolicy(const RoleInputs& in) noexcept {
     RoleAction action{};
 
     // No usable topology yet → nothing to decide.
-    if ((in.topo == nullptr) || !in.topo->localNodeId.has_value() ||
-        !in.topo->rootNodeId.has_value()) {
+    if ((in.topo == nullptr) || in.topo->localNodeId == kInvalidPhysicalId ||
+        in.topo->rootNodeId == kInvalidPhysicalId) {
         action.kind = RoleAction::Kind::None;
         action.reason = "no topology";
         return action;
     }
 
-    const uint8_t localNode = *in.topo->localNodeId;
-    const uint8_t rootNode = *in.topo->rootNodeId;
+    const uint8_t localNode = in.topo->localNodeId;
+    const uint8_t rootNode = in.topo->rootNodeId;
     const bool localIsRoot = localNode == rootNode;
     const bool localIsIRM = localNode == in.irmNodeId;
 

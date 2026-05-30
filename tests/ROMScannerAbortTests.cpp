@@ -159,7 +159,7 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     topology.generation = 42;
     topology.busBase16 = 0xFFC0;
     topology.rootNodeId = 1;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -219,7 +219,7 @@ TEST(ROMScannerEnsurePrefix, EnsurePrefixCapExceeded_CompletesDeterministically)
     TopologySnapshot topology;
     topology.generation = 5;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};

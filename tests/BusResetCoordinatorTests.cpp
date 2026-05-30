@@ -141,6 +141,13 @@ uint32_t MakeBaseSelfID(uint8_t phyId, uint8_t gapCount, bool linkActive = true,
     if (contender) {
         quadlet |= 1U << 11U;
     }
+    // Auto-generate valid linear daisy-chain port states
+    if (phyId == 0) {
+        quadlet |= (2U << 6U); // port0 = Parent
+    } else {
+        quadlet |= (3U << 6U); // port0 = Child
+        quadlet |= (2U << 4U); // port1 = Parent
+    }
     return quadlet;
 }
 
@@ -365,7 +372,7 @@ TEST(BusResetCoordinatorTests, StableResetPublishesTopologyExactlyOnce) {
 
     ASSERT_EQ(rig.publishedTopologies.size(), 1U);
     EXPECT_EQ(rig.publishedTopologies.front().generation, 7U);
-    EXPECT_EQ(rig.publishedTopologies.front().nodes.size(), 2U);
+    EXPECT_EQ(rig.publishedTopologies.front().physical.nodes.size(), 2U);
     EXPECT_EQ(rig.coordinator.GetState(), BusResetCoordinator::State::Idle);
     EXPECT_EQ(rig.async.beginGenerations, std::vector<uint8_t>({8U}));
     EXPECT_EQ(rig.async.confirmedGenerations, std::vector<uint8_t>({7U}));
@@ -428,6 +435,10 @@ TEST(BusResetCoordinatorTests, InvalidInversePairRequestsShortRecoveryReset) {
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(1U);
 
+    // Should be deferred due to the 2s holdoff from Self-ID completion.
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    rig.AdvanceMs(1999U);
+
     EXPECT_TRUE(rig.hardware.TestBusResetIssued());
     EXPECT_TRUE(rig.hardware.TestLastBusResetWasShort());
     EXPECT_TRUE(rig.publishedTopologies.empty());
@@ -446,6 +457,10 @@ TEST(BusResetCoordinatorTests, GenerationMismatchRequestsShortRecoveryReset) {
     rig.PrimeCapture(rawCapture, 11U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(1U);
+
+    // Should be deferred due to the 2s holdoff from Self-ID completion.
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    rig.AdvanceMs(1999U);
 
     EXPECT_TRUE(rig.hardware.TestBusResetIssued());
     EXPECT_TRUE(rig.hardware.TestLastBusResetWasShort());
@@ -472,18 +487,20 @@ TEST(BusResetCoordinatorTests, InvalidTopologyDoesNotReusePreviouslyPublishedSna
     rig.StartResetCycle();
     const auto invalidCapture =
         MakeRawSelfIDCapture(13U, {MakeBaseSelfID(0U, 63U, false, false),
-                                   MakeBaseSelfID(1U, 63U, false, false)});
+                                   MakeBaseSelfID(2U, 63U, false, false)});
     rig.PrimeCapture(invalidCapture, 13U);
     rig.TriggerStickyCompletion();
     rig.AdvanceMs(1U);
 
+    // Previous snapshot should not be re-published, and no recovery reset should be issued.
     EXPECT_EQ(rig.publishedTopologies.size(), 1U);
     EXPECT_FALSE(rig.hardware.TestBusResetIssued());
     rig.AdvanceMs(1999U);
-    EXPECT_TRUE(rig.hardware.TestBusResetIssued());
-    EXPECT_TRUE(rig.hardware.TestLastBusResetWasShort());
+    EXPECT_FALSE(rig.hardware.TestBusResetIssued());
+    
+    // Recovery reason should still be recorded for diagnostics.
     ASSERT_TRUE(rig.coordinator.Metrics().lastFailureReason.has_value());
-    EXPECT_NE(rig.coordinator.Metrics().lastFailureReason->find("NoRootNode"),
+    EXPECT_NE(rig.coordinator.Metrics().lastFailureReason->find("NonContiguousPhysicalIds"),
               std::string::npos);
 }
 

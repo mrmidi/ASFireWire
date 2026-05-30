@@ -19,19 +19,6 @@ namespace ASFW::Driver {
  */
 class TopologyManager {
   public:
-    enum class TopologyBuildErrorCode : uint8_t {
-        InvalidSelfID,
-        EmptySequenceSet,
-        MissingNodeCoverage,
-        NoRootNode,
-        TreeValidationFailed,
-    };
-
-    struct TopologyBuildError {
-        TopologyBuildErrorCode code{TopologyBuildErrorCode::InvalidSelfID};
-        std::string detail;
-    };
-
     TopologyManager();
 
     void Reset();
