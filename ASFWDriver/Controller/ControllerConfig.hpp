@@ -26,9 +26,10 @@ struct ControllerConfig {
     std::vector<uint32_t> supportedSpeeds;
 
     // FW-22: which capabilities the local Config ROM advertises.
-    // Conservative Apple-style mode: advertise neither BM nor IRM capability.
+    // Default ClientOnly: advertise neither BM nor IRM capability (conservative,
+    // and intentionally MORE conservative than Apple/Linux, which advertise bmc=1).
     // Use LegacyBmcCleared only for backwards-compatible behavior verification.
-    ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::AppleAvoidManager};
+    ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
 
     // EXPERIMENTAL (FW-21): Linux-shaped self-promotion on a verified CMC=0 root.

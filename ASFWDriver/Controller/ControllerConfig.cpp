@@ -16,7 +16,7 @@ ControllerConfig ControllerConfig::MakeDefault() {
     // The live Start() path builds a default-constructed ControllerConfig (so the
     // member initializers are what ship), while tests use MakeDefault(); set the
     // role fields explicitly here so the two sources can never silently diverge.
-    config.roleMode = ASFW::FW::RoleMode::AppleAvoidManager;
+    config.roleMode = ASFW::FW::RoleMode::ClientOnly;
     config.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::ObserveOnly;
     config.linuxStyleCmcForceRoot = false;
     return config;

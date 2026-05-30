@@ -265,7 +265,7 @@ struct DiagnosticsTextFormatter {
         let bmModeStr: String
         switch snapshot.busManager.roleMode {
         case 0: bmModeStr = "Legacy BMC Cleared"
-        case 1: bmModeStr = "Apple Avoid Manager"
+        case 1: bmModeStr = "Client Only (no BM/IRM)"
         case 2: bmModeStr = "IRM Server Only"
         case 3: bmModeStr = "Full Bus Manager"
         default: bmModeStr = "Unknown (\(snapshot.busManager.roleMode))"

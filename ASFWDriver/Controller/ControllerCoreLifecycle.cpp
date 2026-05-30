@@ -739,7 +739,7 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
     // FW-11/FW-22: advertise only the capabilities ASFW actually backs, gated by
     // the configured role mode. The hardware BusOptions register often defaults
     // to bmc=1, but ASFW does not (yet) implement 1394a BUS_MANAGER_ID election,
-    // so the default AppleAvoidManager mode clears Bus Manager Capable and
+    // so the default ClientOnly mode clears Bus Manager Capable and
     // Isochronous Resource Manager Capable before staging the local Config ROM.
     // Physical/other bits are preserved.
     const uint32_t localBusOptions =
