@@ -49,8 +49,11 @@ final class DiagnosticsStore: ObservableObject {
                 print("[DiagStore] 🔍 Querying driver diagnostics selectors...")
                 let snapshot = try self.client.fetchSnapshot()
                 print("[DiagStore] ✅ Successfully retrieved diagnostic snapshot.")
-                
-                let text = DiagnosticsTextFormatter.format(snapshot: snapshot)
+
+                // Loaded-driver build, so the report shows which dext is actually
+                // running (build-freshness check). Best-effort; nil just omits the row.
+                let version = self.connector.getDriverVersion()
+                let text = DiagnosticsTextFormatter.format(snapshot: snapshot, version: version)
                 
                 DispatchQueue.main.async {
                     self.lastSnapshot = snapshot

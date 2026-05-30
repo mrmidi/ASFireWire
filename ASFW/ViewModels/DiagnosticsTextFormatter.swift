@@ -9,7 +9,7 @@ import Foundation
 
 struct DiagnosticsTextFormatter {
     
-    static func format(snapshot: ASFWDiagnosticsSnapshot) -> String {
+    static func format(snapshot: ASFWDiagnosticsSnapshot, version: DriverVersionInfo? = nil) -> String {
         var report = ""
         
         func appendTitle(_ title: String) {
@@ -46,7 +46,10 @@ struct DiagnosticsTextFormatter {
             case 3: return "EnableRemoteCycleMaster"
             case 4: return "ForceRootAndReset"
             case 5: return "ClearContenderAndDelegate"
-            case 6: return "MarkRootBadOrUnknown"
+            // Diagnostic-only verdict: records that the root is unverified /
+            // CMC=0 / non-responsive. The Apple-compatible default does NOT mutate
+            // the bus on this — it is informational, not an alarm.
+            case 6: return "Root unverified — diagnostic only (no bus action)"
             default: return "Unknown (\(v))"
             }
         }
@@ -99,11 +102,19 @@ struct DiagnosticsTextFormatter {
         // --- Report Header ---
         report += "ASFW 1394 DIAGNOSTICS REPORT\n"
         report += String(repeating: "═", count: 60) + "\n"
-        // The driver header timestamp is mach uptime (since boot), NOT wall-clock. The real
-        // wall-clock time is added app-side at report-generation time.
+        // The driver header timestamp is mach_absolute_time since SYSTEM BOOT, not
+        // driver load — so this is system uptime, not driver uptime. Labeled
+        // accordingly. (True per-load driver uptime lives in ControllerMetrics but
+        // is not yet plumbed through the diagnostics ABI.)
         appendRow("Report Generated", Date().description)
-        appendRow("Driver Uptime", formatUptime(snapshot.busContract.header.timestampNs))
-        appendRow("Driver Uptime (ns)", snapshot.busContract.header.timestampNs)
+        appendRow("System Uptime (since boot)", formatUptime(snapshot.busContract.header.timestampNs))
+        appendRow("System Uptime (ns)", snapshot.busContract.header.timestampNs)
+        // Loaded driver build — use this (not uptime) to confirm the running dext
+        // matches the source you expect.
+        if let v = version {
+            appendRow("Driver Build",
+                      "v\(v.semanticVersion) (\(v.gitCommitShort)\(v.gitDirty ? " DIRTY" : "") @ \(v.gitBranch))")
+        }
         appendRow("ABI Version", snapshot.busContract.header.abiVersion)
         appendRow("Generation", snapshot.busContract.header.generation)
         appendRow("Snapshot Sequence", snapshot.busContract.header.snapshotSeq)
