@@ -48,6 +48,14 @@ private:
                                      uint8_t parentPort,
                                      TopologyNodeRecord& child,
                                      uint8_t childPort) noexcept;
+
+    /**
+     * Compute the bus diameter in cable hops: the longest path between any two
+     * nodes of the reconstructed (acyclic) physical tree. This is the value used
+     * for IEEE 1394-2008 Table E.1 gap_count optimization. Returns 0 for a
+     * single-node (or empty) bus.
+     */
+    static uint8_t ComputeBusDiameter(const PhysicalTopologyGraph& graph) noexcept;
 };
 
 } // namespace ASFW::Driver

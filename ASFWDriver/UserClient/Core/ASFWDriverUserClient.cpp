@@ -27,7 +27,8 @@ enum {
     kMethodGetMetricsSnapshot = 3,
     kMethodClearHistory = 4,
     kMethodGetSelfIDCapture = 5,
-    kMethodGetTopologySnapshot = 6,
+    // 6 (kMethodGetTopologySnapshot) retired: topology now served via the
+    // diagnostics ABI (kMethodDiagGetTopology / ASFWDiagTopology).
     kMethodPing = 7,
     kMethodAsyncRead = 8,
     kMethodAsyncWrite = 9,
@@ -115,8 +116,8 @@ MethodDispatchResult DispatchTopologyMethods(ASFW::UserClient::UserClientRuntime
     switch (selector) {
     case kMethodGetSelfIDCapture:
         return runtimeState.Topology().GetSelfIDCapture(arguments);
-    case kMethodGetTopologySnapshot:
-        return runtimeState.Topology().GetTopologySnapshot(arguments);
+    // kMethodGetTopologySnapshot (6) retired: topology now served via the
+    // diagnostics ABI (kMethodDiagGetTopology / ASFWDiagTopology).
     default:
         return std::nullopt;
     }

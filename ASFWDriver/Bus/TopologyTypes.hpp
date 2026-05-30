@@ -161,7 +161,12 @@ struct PhysicalTopologyGraph {
     uint8_t irmId{kInvalidPhysicalId};
 
     uint8_t nodeCount{0};
-    uint8_t maxHopsFromRoot{0};
+
+    // Bus diameter in cable hops: the maximum number of hops between ANY two
+    // nodes (the tree's longest path), NOT the depth from the root. This is the
+    // quantity IEEE 1394-2008 Annex E / Table E.1 is indexed by for gap_count
+    // optimization. A single-node bus is 0 hops. Computed in BuildPhysicalGraph.
+    uint8_t busDiameterHops{0};
 
     std::vector<TopologyNodeRecord> nodes;
 };

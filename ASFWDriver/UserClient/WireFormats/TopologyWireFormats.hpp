@@ -31,35 +31,10 @@ struct __attribute__((packed)) SelfIDSequenceWire {
     uint32_t quadletCount;
 };
 
-// Topology snapshot wire formats
-struct __attribute__((packed)) TopologyNodeWire {
-    uint8_t nodeId;
-    uint8_t portCount;
-    uint8_t gapCount;
-    uint8_t powerClass;
-    uint32_t maxSpeedMbps;
-    uint8_t isIRMCandidate;
-    uint8_t linkActive;
-    uint8_t initiatedReset;
-    uint8_t isRoot;
-    uint8_t parentPort;      // 0xFF if no parent
-    uint8_t portStateCount;  // Number of port states
-    uint8_t _padding[2];
-    // Followed by: port states array (uint8_t per port)
-};
-
-struct __attribute__((packed)) TopologySnapshotWire {
-    uint32_t generation;
-    uint64_t capturedAt;
-    uint8_t nodeCount;
-    uint8_t rootNodeId;      // 0xFF if none
-    uint8_t irmNodeId;       // 0xFF if none
-    uint8_t localNodeId;     // 0xFF if none
-    uint8_t gapCount;
-    uint8_t warningCount;
-    uint16_t busBase16;      // Bus base (bus << 6), ready to OR with node ID
-    // Followed by: nodes array, then warnings array (null-terminated strings)
-};
+// NOTE: The topology snapshot wire formats (TopologyNodeWire /
+// TopologySnapshotWire) were retired. Topology is now served through the
+// diagnostics ABI (ASFWDiagTopology / ASFWDiagNode in Shared/ASFWDiagnosticsABI.h),
+// which is versioned and layout-shared with the Swift app via the bridging header.
 
 } // namespace ASFW::UserClient::Wire
 

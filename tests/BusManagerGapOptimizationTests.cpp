@@ -25,11 +25,11 @@ uint32_t MakeBaseSelfID(const uint8_t phyId, const uint8_t gapCount, const bool 
 
 TopologySnapshot MakeTopology(const uint8_t localNodeId,
                               const uint8_t irmNodeId,
-                              const uint8_t maxHopsFromRoot) {
+                              const uint8_t busDiameterHops) {
     TopologySnapshot topology{};
     topology.localNodeId = localNodeId;
     topology.irmNodeId = irmNodeId;
-    topology.physical.maxHopsFromRoot = maxHopsFromRoot;
+    topology.physical.busDiameterHops = busDiameterHops;
     return topology;
 }
 

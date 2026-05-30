@@ -192,10 +192,10 @@ struct DiagnosticsTextFormatter {
                     let portState = portStates[p]
                     let stateChar: String
                     switch portState {
-                    case ASFWDiagPortStateInactive.rawValue: stateChar = "I" // Inactive
-                    case ASFWDiagPortStateChild.rawValue: stateChar = "C"    // Child
-                    case ASFWDiagPortStateParent.rawValue: stateChar = "P"   // Parent
-                    case ASFWDiagPortStateUnknown.rawValue: stateChar = "U"  // Unknown
+                    case ASFWDiagPortStateNotPresent.rawValue: stateChar = "." // not present
+                    case ASFWDiagPortStateNotConnected.rawValue: stateChar = "-" // present, not connected
+                    case ASFWDiagPortStateParent.rawValue: stateChar = "P"   // toward root
+                    case ASFWDiagPortStateChild.rawValue: stateChar = "C"    // away from root
                     default: stateChar = "?"
                     }
                     portDetails += stateChar

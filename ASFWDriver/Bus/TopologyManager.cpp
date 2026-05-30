@@ -33,7 +33,12 @@ struct NodeIDRegisterInfo {
     return info;
 }
 
-uint8_t CalculateOptimumGapCount(const std::vector<SelfIDNodeRecord>& records) {
+// Returns the gap_count currently OBSERVED on the bus (the max gap_count field
+// across the Self-ID packets), not an optimized value. This feeds snapshot.gapCount,
+// which is used for diagnostics, the wire snapshot, and the topology fingerprint.
+// The gap_count that ASFW *applies* when acting as bus manager is computed
+// separately from the bus diameter via GapCountOptimizer (see BusManager).
+uint8_t ObservedGapCount(const std::vector<SelfIDNodeRecord>& records) {
     uint8_t maxGap = 0;
     for (const auto& record : records) {
         if (record.gapCount > maxGap) {
@@ -71,7 +76,7 @@ void LogTopologySummary(const TopologySnapshot& snapshot) {
              localStr.c_str(),
              busStr.c_str(),
              snapshot.gapCount,
-             snapshot.physical.maxHopsFromRoot,
+             snapshot.physical.busDiameterHops,
              static_cast<uint8_t>(snapshot.graphStatus),
              static_cast<uint8_t>(snapshot.errorCode));
 }
@@ -172,7 +177,7 @@ TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result,
     snapshot.nodeCount = snapshot.physical.nodeCount;
     snapshot.rootNodeId = snapshot.physical.rootId;
     snapshot.irmNodeId = snapshot.physical.irmId;
-    snapshot.gapCount = CalculateOptimumGapCount(*records);
+    snapshot.gapCount = ObservedGapCount(*records);
     snapshot.gapCountConsistent = CalculateGapConsistency(result.quads);
 
     LogTopologySummary(snapshot);

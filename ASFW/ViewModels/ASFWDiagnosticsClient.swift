@@ -50,6 +50,13 @@ final class ASFWDiagnosticsClient {
         }
     }
     
+    /// Fetches only the topology struct (selector kMethodDiagGetTopology = 1001).
+    /// Used by the live Topology view, which needs just this one struct rather than
+    /// the whole diagnostics bundle.
+    func fetchTopology() throws -> ASFWDiagTopology {
+        try loadDiagStruct(selector: 1001, expectedSize: MemoryLayout<ASFWDiagTopology>.size)
+    }
+
     /// Clears the async transaction trace ring buffer on the driver.
     func clearAsyncTrace() throws {
         guard connector.isConnected else {

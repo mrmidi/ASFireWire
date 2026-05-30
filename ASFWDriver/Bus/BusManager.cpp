@@ -1,4 +1,5 @@
 #include "BusManager.hpp"
+#include "GapCountOptimizer.hpp"
 #include "Logging.hpp"
 
 #include <algorithm>
@@ -338,7 +339,8 @@ std::optional<BusManager::GapDecision> BusManager::EvaluateGapPolicy(
     }
 
     const uint8_t targetGap =
-        config_.forcedGapFlag ? config_.forcedGapCount : CalculateGapFromHops(topology.physical.maxHopsFromRoot);
+        config_.forcedGapFlag ? config_.forcedGapCount
+                              : GapCountOptimizer::CalculateFromHops(topology.physical.busDiameterHops);
 
     if (config_.forcedGapFlag) {
         if (targetGap == gapState_.lastConfirmedGap) {
@@ -406,11 +408,6 @@ void BusManager::ClearInFlightGapReset() {
     ASFW_LOG_V2(BusManager, "Discarding in-flight gap target %u after dispatch failure",
                 gapState_.inFlight->gapCount);
     gapState_.inFlight.reset();
-}
-
-uint8_t BusManager::CalculateGapFromHops(uint8_t maxHops) const {
-    if (maxHops >= 26) maxHops = 25;
-    return GAP_TABLE[maxHops];
 }
 
 } // namespace ASFW::Driver

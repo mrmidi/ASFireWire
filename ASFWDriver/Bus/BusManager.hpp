@@ -133,13 +133,6 @@ public:
 private:
     Config config_;
     GapState gapState_{};
-
-    static constexpr uint8_t GAP_TABLE[26] = {
-        63, 5, 7, 8, 10, 13, 16, 18, 21, 24, 26, 29, 32, 35, 37, 40,
-        43, 46, 48, 51, 54, 57, 59, 62, 63, 63
-    };
-
-    uint8_t CalculateGapFromHops(uint8_t maxHops) const;
 };
 
 } // namespace ASFW::Driver

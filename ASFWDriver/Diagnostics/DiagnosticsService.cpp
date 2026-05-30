@@ -14,6 +14,25 @@ namespace ASFW::Diagnostics {
 
 namespace {
 
+// The ABI `ports` field carries an ASFWDiagPortState enum; the topology stores the
+// driver's internal PortState. The two enums are defined to share wire-format values,
+// so this is a checked straight-through map (never the bare cast that previously let
+// the impoverished ABI enum mis-render Child as "Unknown" and NotConnected as "Child").
+static_assert(static_cast<uint32_t>(Driver::PortState::NotPresent) == ASFWDiagPortStateNotPresent);
+static_assert(static_cast<uint32_t>(Driver::PortState::NotActive) == ASFWDiagPortStateNotConnected);
+static_assert(static_cast<uint32_t>(Driver::PortState::Parent) == ASFWDiagPortStateParent);
+static_assert(static_cast<uint32_t>(Driver::PortState::Child) == ASFWDiagPortStateChild);
+
+uint32_t PortStateToDiag(Driver::PortState state) noexcept {
+    switch (state) {
+        case Driver::PortState::NotPresent: return ASFWDiagPortStateNotPresent;
+        case Driver::PortState::NotActive:  return ASFWDiagPortStateNotConnected;
+        case Driver::PortState::Parent:     return ASFWDiagPortStateParent;
+        case Driver::PortState::Child:      return ASFWDiagPortStateChild;
+    }
+    return ASFWDiagPortStateNotPresent;
+}
+
 // The ABI `speed` field carries an ASFWDiagSpeed enum, but the topology stores raw Mbps.
 uint32_t MbpsToDiagSpeed(uint32_t mbps) noexcept {
     switch (mbps) {
@@ -65,7 +84,7 @@ ASFWDiagStatus DiagnosticsService::CollectBusContract(ASFWDiagBusContract* out) 
         out->bmNode = topo.irmNodeId; // IRM acts as BM in most topologies
         out->nodeCount = topo.nodeCount;
         out->gapCount = topo.gapCount;
-        out->maxHops = topo.physical.maxHopsFromRoot;
+        out->maxHops = topo.physical.busDiameterHops;
     } else {
         out->localNode = 0xFF;
         out->rootNode = 0xFF;
@@ -127,6 +146,8 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
         }
         out->selfIdSequenceCount = 0; // Not directly stored in v2 snapshot currently
         out->enumeratorError = (topo.selfIdStatus == Driver::SelfIDStreamStatus::Valid) ? 0 : 1;
+        out->gapCount = topo.gapCount;
+        out->busBase16 = topo.busBase16;
 
         // Copy decoded nodes
         const uint32_t copyNodes = (topo.physical.nodes.size() > ASFW_DIAG_MAX_NODES) 
@@ -147,11 +168,32 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
             dstNode.isIRM = (topo.irmNodeId != Driver::kInvalidPhysicalId && srcNode.physicalId == topo.irmNodeId) ? 1 : 0;
             dstNode.initiatedReset = srcNode.initiatedReset ? 1 : 0;
             
-            const uint32_t copyPorts = (srcNode.reportedPorts.size() > ASFW_DIAG_MAX_PORTS) 
-                                           ? ASFW_DIAG_MAX_PORTS 
+            const uint32_t copyPorts = (srcNode.reportedPorts.size() > ASFW_DIAG_MAX_PORTS)
+                                           ? ASFW_DIAG_MAX_PORTS
                                            : static_cast<uint32_t>(srcNode.reportedPorts.size());
+            dstNode.parentPort = 0xFFFFFFFFu;
             for (uint32_t p = 0; p < copyPorts; ++p) {
-                dstNode.ports[p] = static_cast<uint32_t>(srcNode.reportedPorts[p]);
+                dstNode.ports[p] = PortStateToDiag(srcNode.reportedPorts[p]);
+
+                // Physical adjacency, parallel to ports[]: pack remote node id
+                // and remote port, or 0xFFFFFFFF when the port is not connected.
+                const auto& link = srcNode.links[p];
+                if (link.connected) {
+                    dstNode.links[p] = (static_cast<uint32_t>(link.remoteNodeId) << 8) |
+                                       static_cast<uint32_t>(link.remotePort);
+                } else {
+                    dstNode.links[p] = 0xFFFFFFFFu;
+                }
+
+                // First port reported as Parent points toward the root.
+                if (dstNode.parentPort == 0xFFFFFFFFu &&
+                    srcNode.reportedPorts[p] == Driver::PortState::Parent) {
+                    dstNode.parentPort = p;
+                }
+            }
+            // Ports beyond portCount carry no adjacency.
+            for (uint32_t p = copyPorts; p < ASFW_DIAG_MAX_PORTS; ++p) {
+                dstNode.links[p] = 0xFFFFFFFFu;
             }
         }
     }

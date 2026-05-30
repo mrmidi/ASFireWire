@@ -27,8 +27,8 @@ public:
     // Method 5: Get Self-ID capture with raw quadlets and sequences
     kern_return_t GetSelfIDCapture(IOUserClientMethodArguments* args);
 
-    // Method 6: Get complete topology snapshot with nodes and port states
-    kern_return_t GetTopologySnapshot(IOUserClientMethodArguments* args);
+    // Topology snapshots now flow through the diagnostics ABI (ASFWDiagTopology,
+    // selector kMethodDiagGetTopology); GetTopologySnapshot was retired.
 
 private:
     ASFWDriver* driver_;
