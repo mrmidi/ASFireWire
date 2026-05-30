@@ -47,16 +47,16 @@ template <typename T>
 
 [[nodiscard]] OSData* SerializeTopologySnapshot(const ASFW::Driver::TopologySnapshot& topo) {
     const size_t headerSize = sizeof(Wire::TopologySnapshotWire);
-    const size_t nodesBaseSize = topo.nodes.size() * sizeof(Wire::TopologyNodeWire);
+    const size_t nodesBaseSize = topo.physical.nodes.size() * sizeof(Wire::TopologyNodeWire);
 
     size_t portStatesSize = 0;
-    for (const auto& node : topo.nodes) {
-        portStatesSize += node.portStates.size();
+    for (const auto& node : topo.physical.nodes) {
+        portStatesSize += node.reportedPorts.size();
     }
 
     size_t warningsSize = 0;
-    for (const auto& warning : topo.warnings) {
-        warningsSize += warning.length() + 1;
+    if (topo.graphStatus == ASFW::Driver::TopologyGraphStatus::Invalid) {
+        warningsSize = topo.errorDetail.length() + 1;
     }
 
     const size_t totalSize = headerSize + nodesBaseSize + portStatesSize + warningsSize;
@@ -69,36 +69,36 @@ template <typename T>
     snapWire.generation = topo.generation;
     snapWire.capturedAt = topo.capturedAt;
     snapWire.nodeCount = topo.nodeCount;
-    snapWire.rootNodeId = topo.rootNodeId.value_or(0xFF);
-    snapWire.irmNodeId = topo.irmNodeId.value_or(0xFF);
-    snapWire.localNodeId = topo.localNodeId.value_or(0xFF);
+    snapWire.rootNodeId = topo.rootNodeId;
+    snapWire.irmNodeId = topo.irmNodeId;
+    snapWire.localNodeId = topo.localNodeId;
     snapWire.gapCount = topo.gapCount;
-    snapWire.warningCount = static_cast<uint8_t>(topo.warnings.size());
+    snapWire.warningCount = (topo.graphStatus == ASFW::Driver::TopologyGraphStatus::Invalid) ? 1 : 0;
     snapWire.busBase16 = topo.busBase16;
 
     if (!AppendValueOrRelease(data, snapWire)) {
         return nullptr;
     }
 
-    for (const auto& node : topo.nodes) {
+    for (const auto& node : topo.physical.nodes) {
         Wire::TopologyNodeWire nodeWire{};
-        nodeWire.nodeId = node.nodeId;
+        nodeWire.nodeId = node.physicalId;
         nodeWire.portCount = node.portCount;
         nodeWire.gapCount = node.gapCount;
         nodeWire.powerClass = node.powerClass;
         nodeWire.maxSpeedMbps = node.maxSpeedMbps;
-        nodeWire.isIRMCandidate = node.isIRMCandidate ? 1 : 0;
+        nodeWire.isIRMCandidate = node.contender ? 1 : 0;
         nodeWire.linkActive = node.linkActive ? 1 : 0;
         nodeWire.initiatedReset = node.initiatedReset ? 1 : 0;
         nodeWire.isRoot = node.isRoot ? 1 : 0;
-        nodeWire.parentPort = node.parentPort.value_or(0xFF);
-        nodeWire.portStateCount = static_cast<uint8_t>(node.portStates.size());
+        nodeWire.parentPort = 0xFF; // Not directly available in physical graph record anymore
+        nodeWire.portStateCount = static_cast<uint8_t>(node.reportedPorts.size());
 
         if (!AppendValueOrRelease(data, nodeWire)) {
             return nullptr;
         }
 
-        for (auto portState : node.portStates) {
+        for (auto portState : node.reportedPorts) {
             const uint8_t state = static_cast<uint8_t>(portState);
             if (!AppendValueOrRelease(data, state)) {
                 return nullptr;
@@ -106,9 +106,9 @@ template <typename T>
         }
     }
 
-    for (const auto& warning : topo.warnings) {
-        const char* str = warning.c_str();
-        const size_t len = warning.length() + 1;
+    if (topo.graphStatus == ASFW::Driver::TopologyGraphStatus::Invalid) {
+        const char* str = topo.errorDetail.c_str();
+        const size_t len = topo.errorDetail.length() + 1;
         if (!AppendBytesOrRelease(data,
                                   reinterpret_cast<const uint8_t*>(str),
                                   len)) {
@@ -148,11 +148,11 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
     }
 
     auto topo = controller->LatestTopology();
-    if (!topo || !topo->selfIDData.valid) {
+    if (!topo || topo->selfIdStatus != SelfIDStreamStatus::Valid) {
         // No valid Self-ID data available
         ASFW_LOG_V3(
-            UserClient, "kMethodGetSelfIDCapture - no valid Self-ID data (topo=%d valid=%d)",
-            topo.has_value() ? 1 : 0, topo.has_value() ? (topo->selfIDData.valid ? 1 : 0) : 0);
+            UserClient, "kMethodGetSelfIDCapture - no valid Self-ID data (topo=%d status=%u)",
+            topo.has_value() ? 1 : 0, topo.has_value() ? static_cast<uint8_t>(topo->selfIdStatus) : 0);
         OSData* data = OSData::withCapacity(0);
         if (!data)
             return kIOReturnNoMemory;
@@ -163,12 +163,10 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
         return kIOReturnSuccess;
     }
 
-    const auto& selfID = topo->selfIDData;
-
     // Calculate total size
     size_t headerSize = sizeof(Wire::SelfIDMetricsWire);
-    size_t quadletsSize = selfID.rawQuadlets.size() * sizeof(uint32_t);
-    size_t sequencesSize = selfID.sequences.size() * sizeof(Wire::SelfIDSequenceWire);
+    size_t quadletsSize = topo->rawSelfIdQuadlets.size() * sizeof(uint32_t);
+    size_t sequencesSize = 0; // Not directly stored in v2 snapshot currently
     size_t totalSize = headerSize + quadletsSize + sequencesSize;
 
     OSData* data = OSData::withCapacity(static_cast<uint32_t>(totalSize));
@@ -177,16 +175,16 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
 
     // Write header
     Wire::SelfIDMetricsWire wire{};
-    wire.generation = selfID.generation;
-    wire.captureTimestamp = selfID.captureTimestamp;
-    wire.quadletCount = static_cast<uint32_t>(selfID.rawQuadlets.size());
-    wire.sequenceCount = static_cast<uint32_t>(selfID.sequences.size());
-    wire.valid = selfID.valid ? 1 : 0;
-    wire.timedOut = selfID.timedOut ? 1 : 0;
-    wire.crcError = selfID.crcError ? 1 : 0;
+    wire.generation = topo->generation;
+    wire.captureTimestamp = topo->capturedAt;
+    wire.quadletCount = static_cast<uint32_t>(topo->rawSelfIdQuadlets.size());
+    wire.sequenceCount = 0;
+    wire.valid = (topo->selfIdStatus == SelfIDStreamStatus::Valid) ? 1 : 0;
+    wire.timedOut = (topo->selfIdStatus == SelfIDStreamStatus::Timeout) ? 1 : 0;
+    wire.crcError = (topo->selfIdStatus == SelfIDStreamStatus::CrcError) ? 1 : 0;
 
-    if (selfID.errorReason.has_value()) {
-        strlcpy(wire.errorReason, selfID.errorReason->c_str(), sizeof(wire.errorReason));
+    if (topo->errorCode != TopologyBuildErrorCode::None) {
+        strlcpy(wire.errorReason, topo->errorDetail.c_str(), sizeof(wire.errorReason));
     } else {
         wire.errorReason[0] = '\0';
     }
@@ -197,19 +195,8 @@ kern_return_t TopologyHandler::GetSelfIDCapture(IOUserClientMethodArguments* arg
     }
 
     // Write quadlets
-    if (!selfID.rawQuadlets.empty()) {
-        if (!data->appendBytes(selfID.rawQuadlets.data(), quadletsSize)) {
-            data->release();
-            return kIOReturnNoMemory;
-        }
-    }
-
-    // Write sequences
-    for (const auto& seq : selfID.sequences) {
-        Wire::SelfIDSequenceWire seqWire{};
-        seqWire.startIndex = static_cast<uint32_t>(seq.first);
-        seqWire.quadletCount = seq.second;
-        if (!data->appendBytes(&seqWire, sizeof(seqWire))) {
+    if (!topo->rawSelfIdQuadlets.empty()) {
+        if (!data->appendBytes(topo->rawSelfIdQuadlets.data(), quadletsSize)) {
             data->release();
             return kIOReturnNoMemory;
         }
@@ -270,7 +257,7 @@ kern_return_t TopologyHandler::GetTopologySnapshot(IOUserClientMethodArguments* 
                 "kMethodGetTopologySnapshot EXIT: setting structureOutput len=%zu (gen=%u nodes=%u "
                 "root=%u)",
                 data ? data->getLength() : 0, topo->generation, topo->nodeCount,
-                topo->rootNodeId.value_or(0xFF));
+                topo->rootNodeId);
     return kIOReturnSuccess;
 }
 

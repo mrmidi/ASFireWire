@@ -59,13 +59,13 @@ ASFWDiagStatus DiagnosticsService::CollectBusContract(ASFWDiagBusContract* out) 
     if (topoOpt) {
         const auto& topo = *topoOpt;
         out->busId = topo.busNumber.value_or(0);
-        out->localNode = topo.localNodeId.value_or(0xFF);
-        out->rootNode = topo.rootNodeId.value_or(0xFF);
-        out->irmNode = topo.irmNodeId.value_or(0xFF);
-        out->bmNode = topo.irmNodeId.value_or(0xFF); // IRM acts as BM in most topologies
+        out->localNode = topo.localNodeId;
+        out->rootNode = topo.rootNodeId;
+        out->irmNode = topo.irmNodeId;
+        out->bmNode = topo.irmNodeId; // IRM acts as BM in most topologies
         out->nodeCount = topo.nodeCount;
         out->gapCount = topo.gapCount;
-        out->maxHops = topo.maxHopsFromRoot;
+        out->maxHops = topo.physical.maxHopsFromRoot;
     } else {
         out->localNode = 0xFF;
         out->rootNode = 0xFF;
@@ -111,13 +111,13 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
     } else {
         const auto& topo = *topoOpt;
         out->valid = 1;
-        out->localNode = topo.localNodeId.value_or(0xFF);
-        out->rootNode = topo.rootNodeId.value_or(0xFF);
-        out->irmNode = topo.irmNodeId.value_or(0xFF);
+        out->localNode = topo.localNodeId;
+        out->rootNode = topo.rootNodeId;
+        out->irmNode = topo.irmNodeId;
         out->nodeCount = topo.nodeCount;
         
         // Copy raw Self-IDs
-        const auto& rawQuads = topo.selfIDData.rawQuadlets;
+        const auto& rawQuads = topo.rawSelfIdQuadlets;
         out->rawSelfIdCount = static_cast<uint32_t>(rawQuads.size());
         const uint32_t copyCount = (out->rawSelfIdCount > ASFW_DIAG_MAX_SELF_ID_QUADS) 
                                        ? ASFW_DIAG_MAX_SELF_ID_QUADS 
@@ -125,33 +125,33 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
         for (uint32_t i = 0; i < copyCount; ++i) {
             out->rawSelfIds[i] = rawQuads[i];
         }
-        out->selfIdSequenceCount = static_cast<uint32_t>(topo.selfIDData.sequences.size());
-        out->enumeratorError = topo.selfIDData.valid ? 0 : 1;
+        out->selfIdSequenceCount = 0; // Not directly stored in v2 snapshot currently
+        out->enumeratorError = (topo.selfIdStatus == Driver::SelfIDStreamStatus::Valid) ? 0 : 1;
 
         // Copy decoded nodes
-        const uint32_t copyNodes = (topo.nodes.size() > ASFW_DIAG_MAX_NODES) 
+        const uint32_t copyNodes = (topo.physical.nodes.size() > ASFW_DIAG_MAX_NODES) 
                                        ? ASFW_DIAG_MAX_NODES 
-                                       : static_cast<uint32_t>(topo.nodes.size());
+                                       : static_cast<uint32_t>(topo.physical.nodes.size());
         for (uint32_t i = 0; i < copyNodes; ++i) {
-            const auto& srcNode = topo.nodes[i];
+            const auto& srcNode = topo.physical.nodes[i];
             auto& dstNode = out->nodes[i];
-            dstNode.nodeId = srcNode.nodeId;
+            dstNode.nodeId = srcNode.physicalId;
             dstNode.linkActive = srcNode.linkActive ? 1 : 0;
-            dstNode.contender = srcNode.isIRMCandidate ? 1 : 0;
+            dstNode.contender = srcNode.contender ? 1 : 0;
             dstNode.speed = MbpsToDiagSpeed(srcNode.maxSpeedMbps);
             dstNode.powerClass = srcNode.powerClass;
             dstNode.gapCount = srcNode.gapCount;
             dstNode.portCount = srcNode.portCount;
-            dstNode.isLocal = (topo.localNodeId && srcNode.nodeId == *topo.localNodeId) ? 1 : 0;
-            dstNode.isRoot = (topo.rootNodeId && srcNode.nodeId == *topo.rootNodeId) ? 1 : 0;
-            dstNode.isIRM = (topo.irmNodeId && srcNode.nodeId == *topo.irmNodeId) ? 1 : 0;
+            dstNode.isLocal = (topo.localNodeId != Driver::kInvalidPhysicalId && srcNode.physicalId == topo.localNodeId) ? 1 : 0;
+            dstNode.isRoot = (topo.rootNodeId != Driver::kInvalidPhysicalId && srcNode.physicalId == topo.rootNodeId) ? 1 : 0;
+            dstNode.isIRM = (topo.irmNodeId != Driver::kInvalidPhysicalId && srcNode.physicalId == topo.irmNodeId) ? 1 : 0;
             dstNode.initiatedReset = srcNode.initiatedReset ? 1 : 0;
             
-            const uint32_t copyPorts = (srcNode.portStates.size() > ASFW_DIAG_MAX_PORTS) 
+            const uint32_t copyPorts = (srcNode.reportedPorts.size() > ASFW_DIAG_MAX_PORTS) 
                                            ? ASFW_DIAG_MAX_PORTS 
-                                           : static_cast<uint32_t>(srcNode.portStates.size());
+                                           : static_cast<uint32_t>(srcNode.reportedPorts.size());
             for (uint32_t p = 0; p < copyPorts; ++p) {
-                dstNode.ports[p] = static_cast<uint32_t>(srcNode.portStates[p]);
+                dstNode.ports[p] = static_cast<uint32_t>(srcNode.reportedPorts[p]);
             }
         }
     }

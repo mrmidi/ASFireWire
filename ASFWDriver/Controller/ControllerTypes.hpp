@@ -40,51 +40,9 @@ struct SelfIDMetrics {
     std::optional<std::string> errorReason;
 };
 
-// Node descriptor with port states for topology visualization
-struct TopologyNode {
-    uint8_t nodeId{0};
-    uint8_t portCount{0};
-    uint32_t maxSpeedMbps{0};
-    bool isIRMCandidate{false};
-    bool linkActive{false};
-    bool initiatedReset{false};
-    bool isRoot{false};
-    uint8_t gapCount{0};
-    uint8_t powerClass{0};  // PowerClass enum value
-    std::vector<PortState> portStates;  // Port state for each port (p0..p15)
-    std::optional<uint8_t> parentPort;  // Port connected to parent (for tree)
-
-    // Tree structure links (NEW - ported from ASFireWire/ASOHCI/Core/Topology.cpp)
-    std::vector<uint8_t> parentNodeIds;  // Usually 0 or 1 parent (root has 0)
-    std::vector<uint8_t> childNodeIds;   // Connected child nodes
-};
-
 // Immutable topology snapshot exchanged between SelfID decode and
-// higher-level consumers (UI, diagnostics, tests).
-struct TopologySnapshot {
-    uint32_t generation{0};
-    std::vector<TopologyNode> nodes;
-    uint64_t capturedAt{0};
-
-    // Topology analysis results per IEEE 1394-1995 §8.4
-    std::optional<uint8_t> rootNodeId;      // Highest nodeID with active link
-    std::optional<uint8_t> irmNodeId;       // IRM-capable node with highest nodeID
-    std::optional<uint8_t> localNodeId;     // Our node ID (if valid)
-    uint8_t gapCount{63};                   // Optimum gap count for this topology
-    bool gapCountConsistent{true};          // All packet-0 gap counts agree across the capture
-    uint8_t nodeCount{0};                   // Total nodes with valid Self-ID
-    uint8_t maxHopsFromRoot{0};             // NEW: Maximum hop count from root node
-
-    // Bus info derived from OHCI NodeID register
-    // busBase16 = (bus << 6), ready to OR with a 6-bit node to form a 16-bit Node_ID
-    uint16_t busBase16{0};
-    // Optional decoded bus number (0..1023). std::nullopt if NodeID invalid.
-    std::optional<uint16_t> busNumber;
-
-    // Self-ID raw data for GUI export
-    SelfIDMetrics selfIDData;               // Complete Self-ID capture
-    std::vector<std::string> warnings;      // Topology validation warnings
-};
+// higher-level consumers (UI, diagnostics, tests) is now defined in
+// ../Bus/TopologyTypes.hpp.
 
 // Helper: Compose a full 16-bit Node_ID from bus base and 6-bit node number
 static inline uint16_t ComposeNodeID(uint16_t busBase16, uint8_t node6) {

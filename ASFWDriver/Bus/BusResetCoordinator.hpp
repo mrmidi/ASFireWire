@@ -277,6 +277,7 @@ class BusResetCoordinator {
     void EnableFilters();
     void RearmAT();
     void LogMetrics();
+    void ArmSoftwareResetHoldoffAfterSelfIDCompletion(uint64_t timestampNs) noexcept;
     void SendGlobalResumeIfNeeded();
     void MaybeRequestTopologyDrivenReset();
     void EvaluateRootDelegation(const TopologySnapshot& topo);

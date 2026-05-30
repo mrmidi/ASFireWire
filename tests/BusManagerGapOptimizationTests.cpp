@@ -23,20 +23,20 @@ uint32_t MakeBaseSelfID(const uint8_t phyId, const uint8_t gapCount, const bool 
     return quadlet;
 }
 
-TopologySnapshot MakeTopology(const std::optional<uint8_t> localNodeId,
-                              const std::optional<uint8_t> irmNodeId,
+TopologySnapshot MakeTopology(const uint8_t localNodeId,
+                              const uint8_t irmNodeId,
                               const uint8_t maxHopsFromRoot) {
     TopologySnapshot topology{};
     topology.localNodeId = localNodeId;
     topology.irmNodeId = irmNodeId;
-    topology.maxHopsFromRoot = maxHopsFromRoot;
+    topology.physical.maxHopsFromRoot = maxHopsFromRoot;
     return topology;
 }
 
-TopologyNode MakeNode(const uint8_t nodeId, const bool contender, const bool linkActive = true) {
-    TopologyNode node{};
-    node.nodeId = nodeId;
-    node.isIRMCandidate = contender;
+TopologyNodeRecord MakeNode(const uint8_t physicalId, const bool contender, const bool linkActive = true) {
+    TopologyNodeRecord node{};
+    node.physicalId = physicalId;
+    node.contender = contender;
     node.linkActive = linkActive;
     return node;
 }
@@ -60,7 +60,7 @@ TEST(BusManagerGapOptimizationTests, DefaultBringupDelegatesRootToPeerContender)
     topology.localNodeId = 1U;
     topology.rootNodeId = 1U;
     topology.irmNodeId = 1U;
-    topology.nodes = {
+    topology.physical.nodes = {
         MakeNode(0U, true),
         MakeNode(1U, true),
     };
@@ -87,7 +87,7 @@ TEST(BusManagerGapOptimizationTests, ExperimentalHostCycleMasterBringupDisablesD
     topology.localNodeId = 1U;
     topology.rootNodeId = 1U;
     topology.irmNodeId = 1U;
-    topology.nodes = {
+    topology.physical.nodes = {
         MakeNode(0U, true),
         MakeNode(1U, true),
     };
@@ -103,7 +103,7 @@ TEST(BusManagerGapOptimizationTests, LocalIRMRemoteRootWithoutPeerContenderForce
     topology.localNodeId = 0U;
     topology.rootNodeId = 2U;
     topology.irmNodeId = 0U;
-    topology.nodes = {
+    topology.physical.nodes = {
         MakeNode(0U, true),
         MakeNode(1U, false, false),
         MakeNode(2U, false),
@@ -165,7 +165,7 @@ TEST(BusManagerGapOptimizationTests, TwoNodeLocalRootSkipsTargetGapOptimization)
 
     auto topology = MakeTopology(1U, 1U, 1U);
     topology.rootNodeId = 1U;
-    topology.nodes = {
+    topology.physical.nodes = {
         MakeNode(0U, true),
         MakeNode(1U, true),
     };

@@ -176,6 +176,8 @@ target_include_directories(GapCountOptimizerTests PRIVATE ${ASFW_COMMON_INCLUDES
 add_executable(TopologyGapExtractionTests
     "${ASFW_TESTS_DIR}/TopologyGapExtractionTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -194,6 +196,8 @@ target_include_directories(TopologyGapExtractionTests PRIVATE ${ASFW_COMMON_INCL
 add_executable(TopologyManagerTests
     "${ASFW_TESTS_DIR}/TopologyManagerTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -362,6 +366,8 @@ add_executable(BusResetCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
     "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
     "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapService.cpp"
     "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapBuilder.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
@@ -599,6 +605,8 @@ add_executable(AsyncBusContractTests
     "${ASFW_TESTS_DIR}/AsyncSubsystemContractStub.cpp"
     "${ASFW_DRIVER_DIR}/Async/FireWireBusImpl.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GenerationTracker.cpp"
     "${ASFW_DRIVER_DIR}/Async/Track/LabelAllocator.cpp"
     "${ASFW_DRIVER_DIR}/Async/Track/PayloadRegistry.cpp"
@@ -1624,6 +1632,8 @@ add_library(asfw_discovery_host STATIC
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
     "${ASFW_DRIVER_DIR}/ConfigROM/Store/ConfigROMStore.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 

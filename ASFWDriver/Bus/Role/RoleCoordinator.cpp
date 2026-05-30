@@ -56,7 +56,7 @@ void RoleCoordinator::OnRootCapability(uint32_t generation, RootCapability verdi
     }
     rootEvidence_ = RootCapabilityEvidence{
         .generation = generation,
-        .rootNodeId = topo_.rootNodeId.value_or(0xFF),
+        .rootNodeId = topo_.rootNodeId,
         .bibReadStatus = verdict == RootCapability::Unknown ? RootBibReadStatus::NotStarted
                                                             : RootBibReadStatus::Success,
         .cmcKnown = verdict == RootCapability::CapableByBIB ||
@@ -97,7 +97,7 @@ void RoleCoordinator::Reevaluate() {
         .cycles = cycles_,
         .localCmcCapable = localCmcCapable_,
         .resetRetriesThisTopology = resetRetries_,
-        .irmNodeId = (haveTopology_ && topo_.irmNodeId.has_value()) ? *topo_.irmNodeId
+        .irmNodeId = (haveTopology_ && topo_.irmNodeId != Driver::kInvalidPhysicalId) ? topo_.irmNodeId
                                                                     : uint8_t{0xFF},
         .activity = activity_,
         .linuxStyleCmcForceRoot = linuxStyleCmcForceRoot_,
@@ -158,14 +158,11 @@ void RoleCoordinator::Dispatch() {
 uint64_t RoleCoordinator::TopologyFingerprint(const TopologySnapshot& topo) noexcept {
     // Skeleton fingerprint of the role-relevant physical topology. A full
     // Self-ID digest can replace this later (FW-9) without changing the boundary.
-    const auto orSentinel = [](const std::optional<uint8_t>& v) -> uint64_t {
-        return v.has_value() ? v.value() : uint64_t{0xFF};
-    };
     uint64_t fp = 0;
     fp = (fp << 8) | topo.nodeCount;
-    fp = (fp << 8) | orSentinel(topo.rootNodeId);
-    fp = (fp << 8) | orSentinel(topo.irmNodeId);
-    fp = (fp << 8) | orSentinel(topo.localNodeId);
+    fp = (fp << 8) | static_cast<uint64_t>(topo.rootNodeId);
+    fp = (fp << 8) | static_cast<uint64_t>(topo.irmNodeId);
+    fp = (fp << 8) | static_cast<uint64_t>(topo.localNodeId);
     fp = (fp << 8) | (topo.gapCountConsistent ? 1ULL : 0ULL);
     fp = (fp << 8) | topo.gapCount;
     return fp;

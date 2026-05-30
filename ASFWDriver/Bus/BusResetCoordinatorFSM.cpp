@@ -79,6 +79,10 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepDetecting() {
 
 BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
     if (CanAttemptSelfIDDecode()) {
+        const uint64_t completionTime = selfIdLatch_.complete ? selfIdLatch_.completeTimeNs
+                                                              : selfIdLatch_.stickyCompleteTimeNs;
+        ArmSoftwareResetHoldoffAfterSelfIDCompletion(completionTime);
+
         const bool decoded = DecodeSelfID();
         ClearConsumedSelfIDInterrupts();
         if (!decoded) {

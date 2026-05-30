@@ -9,9 +9,9 @@ ASFW::Driver::TopologySnapshot MakeTopologyWithRemoteLinkActiveNode() {
     snapshot.generation = 42;
     snapshot.localNodeId = 1;
     snapshot.nodeCount = 2;
-    snapshot.nodes = {
-        ASFW::Driver::TopologyNode{.nodeId = 0, .linkActive = true},
-        ASFW::Driver::TopologyNode{.nodeId = 1, .linkActive = true},
+    snapshot.physical.nodes = {
+        ASFW::Driver::TopologyNodeRecord{.physicalId = 0, .linkActive = true},
+        ASFW::Driver::TopologyNodeRecord{.physicalId = 1, .linkActive = true},
     };
     return snapshot;
 }
@@ -35,8 +35,8 @@ TEST(DiscoveryConvergenceTests, ZeroRomScanIsConclusiveWhenTopologyHasNoRemoteNo
     snapshot.generation = 42;
     snapshot.localNodeId = 1;
     snapshot.nodeCount = 1;
-    snapshot.nodes = {
-        ASFW::Driver::TopologyNode{.nodeId = 1, .linkActive = true},
+    snapshot.physical.nodes = {
+        ASFW::Driver::TopologyNodeRecord{.physicalId = 1, .linkActive = true},
     };
 
     EXPECT_FALSE(ASFW::Discovery::IsZeroRomScanInconclusive(

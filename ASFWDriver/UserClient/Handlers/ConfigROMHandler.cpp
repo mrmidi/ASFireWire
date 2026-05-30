@@ -148,8 +148,8 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
 
     // Validate nodeId exists in topology
     bool nodeExists = false;
-    for (const auto& node : topo->nodes) {
-        if (node.nodeId == nodeId) {
+    for (const auto& node : topo->physical.nodes) {
+        if (node.physicalId == nodeId) {
             nodeExists = true;
             break;
         }
@@ -166,7 +166,7 @@ kern_return_t ConfigROMHandler::TriggerROMRead(IOUserClientMethodArguments* args
     ASFW::Discovery::ROMScanRequest request{};
     request.gen = ASFW::Discovery::Generation{topo->generation};
     request.topology = *topo;
-    request.localNodeId = topo->localNodeId.value_or(0xFF);
+    request.localNodeId = topo->localNodeId;
     request.targetNodes = {nodeId};
 
     if (auto* romStore = controller->GetConfigROMStore(); romStore != nullptr) {

@@ -405,7 +405,7 @@ kern_return_t ASFWDriver::CopyControllerStatus(OSDictionary** status) {
                 dict->setObject("topologyGeneration", n.get());
             }
             if (auto n = OSSharedPtr<OSNumber>(
-                    OSNumber::withNumber(static_cast<uint64_t>(topo->nodes.size()), 32),
+                    OSNumber::withNumber(static_cast<uint64_t>(topo->physical.nodes.size()), 32),
                     OSNoRetain)) {
                 dict->setObject("topologyNodeCount", n.get());
             }

@@ -231,8 +231,8 @@ TEST(ROMScannerCompletion, RootBIBSuccess_EmitsCMCTrueEvidence) {
     topology.busBase16 = 0xFFC0;
     topology.localNodeId = 0;
     topology.rootNodeId = 1;
-    topology.nodes.push_back({.nodeId = 0, .linkActive = true});
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 0, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     std::vector<RootCapabilityEvidence> evidence;
     ROMScanRequest request{};
@@ -270,8 +270,8 @@ TEST(ROMScannerCompletion, RootBIBSuccess_EmitsCMCFalseEvidence) {
     topology.busBase16 = 0xFFC0;
     topology.localNodeId = 0;
     topology.rootNodeId = 1;
-    topology.nodes.push_back({.nodeId = 0, .linkActive = true});
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 0, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     std::vector<RootCapabilityEvidence> evidence;
     ROMScanRequest request{};
@@ -308,8 +308,8 @@ TEST(ROMScannerCompletion, RootBIBTimeout_EmitsTerminalTimeoutEvidence) {
     topology.busBase16 = 0xFFC0;
     topology.localNodeId = 0;
     topology.rootNodeId = 1;
-    topology.nodes.push_back({.nodeId = 0, .linkActive = true});
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 0, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     std::vector<RootCapabilityEvidence> evidence;
     ROMScanRequest request{};
@@ -349,7 +349,7 @@ TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRoo
     TopologySnapshot topology;
     topology.generation = 42;
     topology.busBase16 = 0xFFC0;  // Standard bus address
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -417,7 +417,7 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_ProbesRootDirBeforeComplet
     TopologySnapshot topology;
     topology.generation = 43;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -485,7 +485,7 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_RootDirProbeTimeoutsThenCo
     TopologySnapshot topology;
     topology.generation = 44;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -546,7 +546,7 @@ TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
     TopologySnapshot topology;
     topology.generation = 10;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 2, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 2, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -608,7 +608,7 @@ TEST(ROMScannerCompletion, ManualRead_WithoutCallback_DoesNotCrash) {
     TopologySnapshot topology;
     topology.generation = 5;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 3, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 3, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -648,7 +648,7 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
     TopologySnapshot topology;
     topology.generation = 7;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 4, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 4, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -706,7 +706,7 @@ TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFin
     TopologySnapshot topology;
     topology.generation = 8;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 4, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 4, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -764,8 +764,8 @@ TEST(ROMScannerCompletion, AutomaticScan_InvokesCallback_ApplePattern) {
     TopologySnapshot topology;
     topology.generation = 1;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
-    topology.nodes.push_back({.nodeId = 2, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 2, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
@@ -843,7 +843,7 @@ TEST(ROMScannerCompletion, MultipleManualReads_EachInvokesCallback) {
 
     TopologySnapshot topology;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     // First manual read (gen=1)
     topology.generation = 1;

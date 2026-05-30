@@ -17,7 +17,7 @@ uint32_t BuildTopologyMap(const ASFW::Driver::TopologySnapshot& snapshot,
         val = 0;
     }
 
-    const auto& rawQuads = snapshot.selfIDData.rawQuadlets;
+    const auto& rawQuads = snapshot.rawSelfIdQuadlets;
     // rawQuads[0] is the generation/header from OHCI SelfIDCount; the actual
     // Self-ID quadlets on the bus start at index 1.
     uint32_t selfIdCount = (rawQuads.size() > 1) ? static_cast<uint32_t>(rawQuads.size() - 1) : 0;

@@ -176,20 +176,24 @@ bool BusResetCoordinator::BuildTopology() {
                              TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code));
         RecordRecoveryReasonCode(RecoveryReasonCode::TopologyBuildFailed);
         cycle_.acceptedTopology.reset();
-        RequestSoftwareReset({ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt,
-                              "Invalid Self-ID topology"});
-        ASFW_LOG_V2(BusReset, "Topology build failed: %{public}s (%{public}s)",
-                    TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code),
-                    snapshot.error().detail.c_str());
+
+        if (topologyMapService_ != nullptr) {
+            topologyMapService_->Invalidate();
+        }
+
+        ASFW_LOG(Topology,
+                 "Topology graph invalid: code=%{public}s detail=%{public}s; "
+                 "suppressing recovery reset and leaving TOPOLOGY_MAP unavailable",
+                 TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code),
+                 snapshot.error().detail.c_str());
+
         return false;
     }
 
     cycle_.acceptedTopology = *snapshot;
     lastAcceptedGeneration_ = snapshot->generation;
     lastTopologyNodeCount_ =
-        static_cast<uint8_t>(std::min<std::size_t>(snapshot->nodes.size(), 0xFFU));
-    cycle_.timing.lastSelfIdCompletionNs = timestamp;
-    cycle_.timing.softwareResetBlockedUntilNs = timestamp + kRepeatedResetHoldoffNs;
+        static_cast<uint8_t>(std::min<std::size_t>(snapshot->physical.nodes.size(), 0xFFU));
 
     if (busManager_ != nullptr && snapshot->gapCountConsistent) {
         busManager_->NoteStableGapObserved(snapshot->gapCount);
@@ -289,20 +293,20 @@ void BusResetCoordinator::HandleStraySelfID() {
 
 void BusResetCoordinator::EvaluateRootDelegation(const TopologySnapshot& topology) {
     if (!delegateAttemptActive_) {
-        if (delegateSuppressed_ && topology.rootNodeId.has_value() &&
-            topology.localNodeId.has_value() &&
-            *topology.rootNodeId != *topology.localNodeId) {
+        if (delegateSuppressed_ && topology.rootNodeId != kInvalidPhysicalId &&
+            topology.localNodeId != kInvalidPhysicalId &&
+            topology.rootNodeId != topology.localNodeId) {
             delegateSuppressed_ = false;
         }
         return;
     }
 
-    if (!topology.rootNodeId.has_value()) {
+    if (topology.rootNodeId == kInvalidPhysicalId) {
         return;
     }
 
-    const uint8_t currentRoot = *topology.rootNodeId;
-    const uint8_t localNode = topology.localNodeId.value_or(0xFF);
+    const uint8_t currentRoot = topology.rootNodeId;
+    const uint8_t localNode = topology.localNodeId;
     if ((delegateTarget_ != 0xFF && currentRoot == delegateTarget_) ||
         (localNode != 0xFF && currentRoot != localNode)) {
         delegateAttemptActive_ = false;
@@ -635,6 +639,19 @@ void BusResetCoordinator::RequestRolePolicyReset(uint8_t targetRoot, bool longRe
 void BusResetCoordinator::ResetDelegationRetryCounter() {
     delegateRetryCount_ = 0;
     delegateSuppressed_ = false;
+}
+
+void BusResetCoordinator::ArmSoftwareResetHoldoffAfterSelfIDCompletion(uint64_t timestampNs) noexcept {
+    // IEEE 1394-2008 §8.2.1: software-initiated bus resets are rate-limited
+    // after the self-identify process completes. This holdoff belongs to Self-ID
+    // completion, not to successful topology graph construction. Linux follows the
+    // same shape by recording reset_jiffies before build_tree().
+    cycle_.timing.lastSelfIdCompletionNs = timestampNs;
+    cycle_.timing.softwareResetBlockedUntilNs = timestampNs + kRepeatedResetHoldoffNs;
+
+    ASFW_LOG_V2(BusReset,
+                "Software reset holdoff armed for %llu ns after Self-ID completion",
+                kRepeatedResetHoldoffNs);
 }
 
 } // namespace ASFW::Driver

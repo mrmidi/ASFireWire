@@ -116,13 +116,13 @@ bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request
 void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     // Initialize/update Bus Manager/IRM runtime state (FW-14)
     bmState_.generation = snap.generation;
-    if (snap.localNodeId.has_value()) {
-        bmState_.localNodeId = snap.localNodeId.value();
+    if (snap.localNodeId != Driver::kInvalidPhysicalId) {
+        bmState_.localNodeId = snap.localNodeId;
     } else {
         bmState_.localNodeId = 0x3F;
     }
-    if (snap.irmNodeId.has_value()) {
-        bmState_.irmNodeId = snap.irmNodeId.value();
+    if (snap.irmNodeId != Driver::kInvalidPhysicalId) {
+        bmState_.irmNodeId = snap.irmNodeId;
         bmState_.localIsIRM = (snap.localNodeId == snap.irmNodeId);
     } else {
         bmState_.irmNodeId = 0x3F;
@@ -141,8 +141,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         }
     }
 
-    if (snap.rootNodeId.has_value()) {
-        bmState_.rootNodeId = snap.rootNodeId.value();
+    if (snap.rootNodeId != Driver::kInvalidPhysicalId) {
+        bmState_.rootNodeId = snap.rootNodeId;
         bmState_.localIsRoot = (snap.localNodeId == snap.rootNodeId);
     } else {
         bmState_.rootNodeId = 0x3F;
@@ -182,8 +182,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         return;
     }
 
-    const uint8_t localNodeId = snap.localNodeId.value_or(0xFF);
-    if (localNodeId == 0xFF) {
+    const uint8_t localNodeId = snap.localNodeId;
+    if (localNodeId == Driver::kInvalidPhysicalId) {
         ASFW_LOG(Discovery, "OnTopologyReady: invalid local node ID");
         return;
     }
@@ -191,8 +191,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
 
     // Count how many nodes will actually be scanned (exclude local + link-inactive)
     uint32_t scannableCount = 0;
-    for (const auto& node : snap.nodes) {
-        if (node.nodeId != localNodeId && node.linkActive) {
+    for (const auto& node : snap.physical.nodes) {
+        if (node.physicalId != localNodeId && node.linkActive) {
             scannableCount++;
         }
     }
@@ -216,7 +216,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     }
 
     if (deps_.irmClient) {
-        const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
+        const uint8_t irmNodeId = snap.irmNodeId;
         deps_.irmClient->SetIRMNode(irmNodeId,
                                     Discovery::Generation{snap.generation},
                                     snap.capturedAt);
@@ -238,13 +238,13 @@ void ControllerCore::BeginRootCapabilityEvidence(const TopologySnapshot& snap,
 
     (void)cycleObserver_.OnInterrupt(snap.generation, 0);
 
-    if (!snap.rootNodeId.has_value()) {
+    if (snap.rootNodeId == Driver::kInvalidPhysicalId) {
         return;
     }
 
     currentRootEvidence_ = Role::RootCapabilityEvidence{};
     currentRootEvidence_.generation = snap.generation;
-    currentRootEvidence_.rootNodeId = *snap.rootNodeId;
+    currentRootEvidence_.rootNodeId = snap.rootNodeId;
     currentRootEvidence_.bibReadStatus = Role::RootBibReadStatus::NotStarted;
     currentRootEvidence_.verdict = Role::RootCapability::Unknown;
     haveRootEvidence_ = true;
@@ -255,7 +255,7 @@ void ControllerCore::BeginRootCapabilityEvidence(const TopologySnapshot& snap,
         roleCoordinator_.OnLocalCycleMasterCapability(snap.generation, decoded.cmc);
     }
 
-    if (*snap.rootNodeId == localNodeId) {
+    if (snap.rootNodeId == localNodeId) {
         if (deps_.configRomStager) {
             const auto decoded =
                 ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());

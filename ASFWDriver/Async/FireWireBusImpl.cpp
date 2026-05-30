@@ -126,8 +126,8 @@ FW::FwSpeed FireWireBusImpl::GetSpeed(FW::NodeId nodeId) const {
     }
 
     // Find the node in the topology
-    for (const auto& node : snapshot->nodes) {
-        if (node.nodeId == nodeId.value) {
+    for (const auto& node : snapshot->physical.nodes) {
+        if (node.physicalId == nodeId.value) {
             // Convert maxSpeedMbps to FwSpeed enum
             switch (node.maxSpeedMbps) {
             case 100:
@@ -155,14 +155,15 @@ uint32_t FireWireBusImpl::HopCount(FW::NodeId nodeA, FW::NodeId nodeB) const {
 
     // Get the latest topology snapshot
     auto snapshot = topo_.LatestSnapshot();
-    if (!snapshot || snapshot->nodes.empty()) {
+    if (!snapshot || snapshot->physical.nodes.empty()) {
         return UINT32_MAX; // Unknown
     }
 
-    // Build a map from nodeId to TopologyNode for fast lookup
-    std::map<uint8_t, const Driver::TopologyNode*> nodeMap;
-    for (const auto& node : snapshot->nodes) {
-        nodeMap[node.nodeId] = &node;
+
+    // Build a map from physicalId to TopologyNodeRecord for fast lookup
+    std::map<uint8_t, const Driver::TopologyNodeRecord*> nodeMap;
+    for (const auto& node : snapshot->physical.nodes) {
+        nodeMap[node.physicalId] = &node;
     }
 
     // Check that both nodes exist
@@ -178,30 +179,26 @@ uint32_t FireWireBusImpl::HopCount(FW::NodeId nodeA, FW::NodeId nodeB) const {
     queue.push(nodeA.value);
 
     while (!queue.empty()) {
-        uint8_t current = queue.front();
+        uint8_t currentId = queue.front();
         queue.pop();
 
-        if (current == nodeB.value) {
-            return distance[current];
+        if (currentId == nodeB.value) {
+            return distance[currentId];
         }
 
-        const auto* currentNode = nodeMap[current];
+        const auto* currentNode = nodeMap[currentId];
         if (!currentNode)
             continue;
 
-        // Visit parent nodes
-        for (uint8_t parentId : currentNode->parentNodeIds) {
-            if (distance.find(parentId) == distance.end()) {
-                distance[parentId] = distance[current] + 1;
-                queue.push(parentId);
+        // Visit all connected ports
+        for (const auto& link : currentNode->links) {
+            if (!link.connected || link.remoteNodeId == Driver::kInvalidPhysicalId) {
+                continue;
             }
-        }
 
-        // Visit child nodes
-        for (uint8_t childId : currentNode->childNodeIds) {
-            if (distance.find(childId) == distance.end()) {
-                distance[childId] = distance[current] + 1;
-                queue.push(childId);
+            if (distance.find(link.remoteNodeId) == distance.end()) {
+                distance[link.remoteNodeId] = distance[currentId] + 1;
+                queue.push(link.remoteNodeId);
             }
         }
     }

@@ -325,7 +325,7 @@ struct ScanResult {
     TopologySnapshot topology;
     topology.generation = 3;
     topology.busBase16 = 0xFFC0;
-    topology.nodes.push_back({.nodeId = 1, .linkActive = true});
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
 
     ROMScanRequest request{};
     request.gen = Generation{topology.generation};
