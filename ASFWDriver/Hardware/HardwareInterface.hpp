@@ -42,6 +42,15 @@ struct LocalCSRLockResult {
     bool compareMatched{false}; ///< True if oldValue == compareValue (swap occurred).
 };
 
+struct LocalCSRReadResult {
+    LocalCSRLockResult::Status status{LocalCSRLockResult::Status::HardwareUnavailable};
+    uint32_t value{0};
+};
+
+struct LocalCSRWriteResult {
+    LocalCSRLockResult::Status status{LocalCSRLockResult::Status::HardwareUnavailable};
+};
+
 
 class HardwareInterface {
   public:
@@ -132,8 +141,8 @@ class HardwareInterface {
     [[nodiscard]] std::pair<uint32_t, uint64_t> ReadCycleTimeAndUpTime() const noexcept;
 
     // Local autonomous IRM CSR helpers (OHCI §5.5)
-    void WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept;
-    [[nodiscard]] uint32_t ReadLocalIRMResource(uint32_t selectCode) noexcept;
+    [[nodiscard]] LocalCSRWriteResult WriteLocalIRMResource(uint32_t selectCode, uint32_t value) noexcept;
+    [[nodiscard]] LocalCSRReadResult ReadLocalIRMResource(uint32_t selectCode) noexcept;
     [[nodiscard]] LocalCSRLockResult CompareSwapLocalIRMResource(
         uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept;
 

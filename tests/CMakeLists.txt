@@ -1846,3 +1846,25 @@ target_compile_definitions(BusManagerElectionTests
 target_include_directories(BusManagerElectionTests PRIVATE ${ASFW_COMMON_INCLUDES})
  
 gtest_discover_tests(BusManagerElectionTests)
+
+# Local IRM Resource Controller Tests
+add_executable(LocalIRMResourceControllerTests
+    "${ASFW_TESTS_DIR}/LocalIRMResourceControllerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager/LocalIRMResourceController.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(LocalIRMResourceControllerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(LocalIRMResourceControllerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(LocalIRMResourceControllerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(LocalIRMResourceControllerTests)

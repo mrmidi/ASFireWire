@@ -272,7 +272,26 @@ typedef struct ASFWDiagBusManager {
     uint32_t topologyMapSelfIdCount;
     uint32_t topologyMapCRC;
     uint32_t topologyMapDMAReady;
-    uint32_t reserved[6];
+
+    // BM evidence pipeline fields
+    uint32_t rootCmcKnown;
+    uint32_t rootCmcCapable;
+    uint32_t cycleStartObserved;
+    uint32_t cycleStartSourceNode;
+    uint32_t remoteCmstrNeeded;
+    uint32_t remoteCmstrAllowed;
+    uint32_t remoteCmstrAlreadySatisfied;
+    uint32_t bmPolicyVerdict;
+
+    // Local IRM resource controller status
+    uint32_t localIrmResourceState;
+    uint32_t localIrmReadbackValid;
+    uint32_t csrControlLastStatus;
+    uint32_t fullBMActivityLevel;
+    uint32_t lastRemoteCmstrResult;
+    uint32_t lastRemoteCmstrGeneration;
+    uint32_t lastRemoteCmstrTargetNode;
+    uint32_t reserved[9];
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus

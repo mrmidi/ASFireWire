@@ -14,16 +14,22 @@ class HardwareInterface;
 
 namespace ASFW::Bus {
 
+struct IBMPolicyExecutor {
+    virtual ~IBMPolicyExecutor() = default;
+    virtual void SendRemoteCmstr(uint8_t rootNodeId, uint32_t generation) = 0;
+};
+
 class BusManagerPolicyCoordinator {
 public:
     struct Deps {
         ASFW::Driver::HardwareInterface* hardware{nullptr};
+        IBMPolicyExecutor* executor{nullptr};
     };
 
     explicit BusManagerPolicyCoordinator(Deps deps) noexcept;
     ~BusManagerPolicyCoordinator() = default;
 
-    void Evaluate(const BusManagerRuntimeState& state) noexcept;
+    void Evaluate(BusManagerRuntimeState& state) noexcept;
 
 private:
     Deps deps_;
