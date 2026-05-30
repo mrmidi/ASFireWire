@@ -65,6 +65,14 @@ TEST(CapabilityMode, FullBusManager_SetsBmcAndIrmc) {
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
+TEST(CapabilityMode, FullBusManagerObserveOnly_ClearsBmcSetsIrmc) {
+    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager, ASFW::FW::FullBMActivityLevel::ObserveOnly);
+    const auto d = DecodeBusOptions(out);
+    EXPECT_FALSE(d.bmc);
+    EXPECT_TRUE(d.irmc);
+    EXPECT_TRUE(IsLegalCapabilityCombo(out));
+}
+
 TEST(CapabilityMode, ReservedAndNumericBitsPreservedInEveryMode) {
     for (auto mode : {RoleMode::LegacyBmcCleared, RoleMode::AppleAvoidManager,
                       RoleMode::IRMServerOnly, RoleMode::FullBusManager}) {
