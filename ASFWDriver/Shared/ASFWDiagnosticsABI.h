@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 1u
+#define ASFW_DIAG_ABI_VERSION 3u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -25,11 +25,16 @@ typedef enum ASFWDiagStatus : uint32_t {
     ASFWDiagStatusFailed = 6
 } ASFWDiagStatus;
 
+// Mirrors the IEEE 1394 Self-ID 2-bit port status field 1:1 (see Linux
+// phy-packet-definitions.h and Apple IOFireWireController.h, which agree):
+//   00=not present, 01=not connected, 10=parent, 11=child.
+// Values MUST match ASFW::Driver::PortState so the driver-side translation in
+// DiagnosticsService stays a straight mapping (asserted there).
 typedef enum ASFWDiagPortState : uint32_t {
-    ASFWDiagPortStateInactive = 0,
-    ASFWDiagPortStateChild = 1,
+    ASFWDiagPortStateNotPresent = 0,
+    ASFWDiagPortStateNotConnected = 1,
     ASFWDiagPortStateParent = 2,
-    ASFWDiagPortStateUnknown = 3
+    ASFWDiagPortStateChild = 3
 } ASFWDiagPortState;
 
 typedef enum ASFWDiagSpeed : uint32_t {
@@ -89,7 +94,17 @@ typedef struct ASFWDiagNode {
     uint32_t powerClass;
     uint32_t gapCount;
     uint32_t portCount;
+    // Index of the port whose reported state is Parent (toward root), or
+    // 0xFFFFFFFF if this node has no parent (i.e. it is the root).
+    uint32_t parentPort;
+    // Reported 2-bit port state per port (ASFWDiagPortState). Only the first
+    // portCount entries are meaningful; the remainder are NotPresent (0).
     uint32_t ports[ASFW_DIAG_MAX_PORTS];
+    // Physical adjacency per port, parallel to ports[]: bits [15:8] = remote
+    // node id, bits [7:0] = remote port. 0xFFFFFFFF means the port is not
+    // connected. Lets the app draw the bus tree without inferring adjacency
+    // from Self-ID ordering.
+    uint32_t links[ASFW_DIAG_MAX_PORTS];
     uint32_t isLocal;
     uint32_t isRoot;
     uint32_t isIRM;
@@ -108,6 +123,11 @@ typedef struct ASFWDiagTopology {
     uint32_t rawSelfIdCount;
     uint32_t selfIdSequenceCount;
     uint32_t enumeratorError;
+    // Observed bus gap_count (max of the Self-ID gap_count fields).
+    uint32_t gapCount;
+    // Bus base address component (bus << 6), ready to OR with a node id to form
+    // the 16-bit node address. Carried so the app need not recompute it.
+    uint32_t busBase16;
     uint32_t rawSelfIds[ASFW_DIAG_MAX_SELF_ID_QUADS];
     ASFWDiagNode nodes[ASFW_DIAG_MAX_NODES];
 } ASFWDiagTopology;

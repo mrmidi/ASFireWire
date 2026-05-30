@@ -106,17 +106,73 @@ SelfIDTopologyNormalizer::BuildPhysicalGraph(const std::vector<SelfIDNodeRecord>
             "Unresolved child stack is not empty after processing the root node"});
     }
 
-    // IRM election: highest physical ID contender.
+    // IRM election: the highest physical-ID node that is BOTH a contender (C bit)
+    // AND link-active (L bit). Matches Apple IOFireWireController processSelfIDs
+    // (`(id & (C|L)) == (C|L)`); a link-inactive PHY cannot host the IRM even if
+    // it asserts the contender bit. See IEEE 1394-2008 §8.4.2.
     graph.irmId = kInvalidPhysicalId;
     for (auto it = graph.nodes.rbegin(); it != graph.nodes.rend(); ++it) {
-        if (it->contender) {
+        if (it->contender && it->linkActive) {
             graph.irmId = it->physicalId;
             it->isIRM = true;
             break;
         }
     }
 
+    graph.busDiameterHops = ComputeBusDiameter(graph);
+
     return graph;
+}
+
+uint8_t SelfIDTopologyNormalizer::ComputeBusDiameter(const PhysicalTopologyGraph& graph) noexcept {
+    const size_t n = graph.nodes.size();
+    if (n <= 1) {
+        return 0;  // Single-node (or empty) bus: 0 hops.
+    }
+
+    // Standard tree-diameter via two breadth-first passes:
+    //   1. From an arbitrary node, find the farthest node A.
+    //   2. The greatest distance from A is the diameter.
+    // Adjacency comes from the reconstructed bidirectional links; the node array
+    // is indexed by physical_ID (contiguous 0..root, guaranteed by the builder),
+    // so a node's physical_ID is its index here.
+    const auto farthestFrom = [&](uint8_t start, uint8_t& outDistance) -> uint8_t {
+        std::vector<uint8_t> distance(n, kInvalidPhysicalId);
+        std::vector<uint8_t> frontier;
+        frontier.reserve(n);
+
+        distance[start] = 0;
+        frontier.push_back(start);
+        uint8_t farthestNode = start;
+
+        for (size_t head = 0; head < frontier.size(); ++head) {
+            const uint8_t current = frontier[head];
+            for (const TopologyPortLink& link : graph.nodes[current].links) {
+                if (!link.connected) {
+                    continue;
+                }
+                const uint8_t neighbor = link.remoteNodeId;
+                if (neighbor >= n || distance[neighbor] != kInvalidPhysicalId) {
+                    continue;
+                }
+                distance[neighbor] = static_cast<uint8_t>(distance[current] + 1);
+                if (distance[neighbor] > distance[farthestNode]) {
+                    farthestNode = neighbor;
+                }
+                frontier.push_back(neighbor);
+            }
+        }
+
+        outDistance = distance[farthestNode];
+        return farthestNode;
+    };
+
+    uint8_t unused = 0;
+    const uint8_t endpointA = farthestFrom(0, unused);
+
+    uint8_t diameter = 0;
+    farthestFrom(endpointA, diameter);
+    return diameter;
 }
 
 std::expected<NormalizedTopologyGraph, TopologyBuildError>

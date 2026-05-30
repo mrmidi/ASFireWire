@@ -130,22 +130,21 @@ extension ASFWDriverConnector {
             return nil
         }
 
-        guard let bytes = callStruct(.getTopologySnapshot, initialCap: 4096) else {
-            log("❌ getTopologySnapshot: callStruct failed", level: .error)
+        // Topology is served through the diagnostics ABI (ASFWDiagTopology),
+        // which is versioned and shares its layout with the driver via the
+        // bridging header. The legacy TopologyNodeWire path was retired.
+        do {
+            let diag = try ASFWDiagnosticsClient(connector: self).fetchTopology()
+            guard let result = TopologySnapshot.from(diag: diag) else {
+                log("⚠️  getTopologySnapshot: topology not valid yet", level: .warning)
+                return nil
+            }
+            log("✅ getTopologySnapshot: gen=\(result.generation) nodes=\(result.nodes.count)", level: .success)
+            return result
+        } catch {
+            log("❌ getTopologySnapshot: \(error.localizedDescription)", level: .error)
             return nil
         }
-
-        guard !bytes.isEmpty else {
-            log("⚠️  getTopologySnapshot: driver returned 0 bytes (no topology)", level: .warning)
-            return nil
-        }
-
-        log("✅ getTopologySnapshot: received \(bytes.count) bytes from driver", level: .success)
-        let result = TopologySnapshot.decode(from: bytes)
-        if result == nil {
-            log("❌ getTopologySnapshot: decode returned nil!", level: .error)
-        }
-        return result
     }
 
     func ping() -> String? {

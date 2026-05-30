@@ -24,12 +24,18 @@ static_assert(sizeof(ASFWDiagBusContract) == 96, "ASFWDiagBusContract size misma
 static_assert(offsetof(ASFWDiagBusContract, header) == 0, "header offset mismatch");
 static_assert(offsetof(ASFWDiagBusContract, busId) == 32, "busId offset mismatch");
 
-static_assert(sizeof(ASFWDiagNode) == 164, "ASFWDiagNode size mismatch");
-static_assert(offsetof(ASFWDiagNode, ports) == 32, "ports offset mismatch");
+// ABI v3: ASFWDiagNode gained parentPort (before ports[]) and links[] (after
+// ports[]); ASFWDiagTopology gained gapCount + busBase16 (before rawSelfIds[]).
+static_assert(sizeof(ASFWDiagNode) == 276, "ASFWDiagNode size mismatch");
+static_assert(offsetof(ASFWDiagNode, parentPort) == 32, "parentPort offset mismatch");
+static_assert(offsetof(ASFWDiagNode, ports) == 36, "ports offset mismatch");
+static_assert(offsetof(ASFWDiagNode, links) == 144, "links offset mismatch");
 
-static_assert(sizeof(ASFWDiagTopology) == 11584, "ASFWDiagTopology size mismatch");
-static_assert(offsetof(ASFWDiagTopology, rawSelfIds) == 64, "rawSelfIds offset mismatch");
-static_assert(offsetof(ASFWDiagTopology, nodes) == 1088, "nodes offset mismatch");
+static_assert(sizeof(ASFWDiagTopology) == 18760, "ASFWDiagTopology size mismatch");
+static_assert(offsetof(ASFWDiagTopology, gapCount) == 64, "gapCount offset mismatch");
+static_assert(offsetof(ASFWDiagTopology, busBase16) == 68, "busBase16 offset mismatch");
+static_assert(offsetof(ASFWDiagTopology, rawSelfIds) == 72, "rawSelfIds offset mismatch");
+static_assert(offsetof(ASFWDiagTopology, nodes) == 1096, "nodes offset mismatch");
 
 static_assert(sizeof(ASFWDiagRoleCoordinator) == 104, "ASFWDiagRoleCoordinator size mismatch");
 
@@ -57,8 +63,8 @@ TEST_F(DiagnosticsServiceTests, VerifyStructSizeInvariants) {
     // Runtime checks to double check static assertions
     EXPECT_EQ(sizeof(ASFWDiagHeader), 32);
     EXPECT_EQ(sizeof(ASFWDiagBusContract), 96);
-    EXPECT_EQ(sizeof(ASFWDiagNode), 164);
-    EXPECT_EQ(sizeof(ASFWDiagTopology), 11584);
+    EXPECT_EQ(sizeof(ASFWDiagNode), 276);
+    EXPECT_EQ(sizeof(ASFWDiagTopology), 18760);
     EXPECT_EQ(sizeof(ASFWDiagRoleCoordinator), 104);
     EXPECT_EQ(sizeof(ASFWDiagOHCI), 136);
     EXPECT_EQ(sizeof(ASFWDiagPHY), 128);

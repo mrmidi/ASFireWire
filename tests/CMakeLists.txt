@@ -215,6 +215,47 @@ target_include_directories(TopologyManagerTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(TopologyManagerTests)
 
+# Annex P physical-graph reconstruction + bus-diameter computation.
+add_executable(SelfIDTopologyNormalizerTests
+    "${ASFW_TESTS_DIR}/SelfIDTopologyNormalizerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDTopologyNormalizer.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GapCountOptimizer.cpp"
+)
+
+target_link_libraries(SelfIDTopologyNormalizerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SelfIDTopologyNormalizerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SelfIDTopologyNormalizerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SelfIDTopologyNormalizerTests)
+
+# Self-ID stream parser: low-level stream validation / rejection paths.
+add_executable(SelfIDStreamParserTests
+    "${ASFW_TESTS_DIR}/SelfIDStreamParserTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"
+)
+
+target_link_libraries(SelfIDStreamParserTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SelfIDStreamParserTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SelfIDStreamParserTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SelfIDStreamParserTests)
+
 # FW-22: capability advertisement modes (header-only logic).
 add_executable(CapabilityModeTests
     "${ASFW_TESTS_DIR}/CapabilityModeTests.cpp"
@@ -339,6 +380,7 @@ gtest_discover_tests(SelfIDCaptureTests)
 add_executable(BusManagerGapOptimizationTests
     "${ASFW_TESTS_DIR}/BusManagerGapOptimizationTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GapCountOptimizer.cpp"
     "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
@@ -364,6 +406,7 @@ add_executable(BusResetCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorActions.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorDiscoveryDelay.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/GapCountOptimizer.cpp"
     "${ASFW_DRIVER_DIR}/Bus/SelfIDCapture.cpp"
     "${ASFW_DRIVER_DIR}/Bus/TopologyManager.cpp"
     "${ASFW_DRIVER_DIR}/Bus/SelfIDStreamParser.cpp"

@@ -104,37 +104,10 @@ struct SelfIDSequenceWire {
     var quadletCount: UInt32 = 0
 }
 
-/// Wire format for topology node (matches C++ TopologyNodeWire)
-struct TopologyNodeWire {
-    var nodeId: UInt8 = 0
-    var portCount: UInt8 = 0
-    var gapCount: UInt8 = 0
-    var powerClass: UInt8 = 0
-    var maxSpeedMbps: UInt32 = 0
-    var isIRMCandidate: UInt8 = 0
-    var linkActive: UInt8 = 0
-    var initiatedReset: UInt8 = 0
-    var isRoot: UInt8 = 0
-    var parentPort: UInt8 = 0
-    var portStateCount: UInt8 = 0
-    var _padding0: UInt8 = 0
-    var _padding1: UInt8 = 0
-    // Followed by: port states array (uint8_t per port)
-}
-
-/// Wire format for topology snapshot (matches C++ __attribute__((packed)) TopologySnapshotWire)
-/// Total size: 20 bytes (4+8+6+2)
-struct TopologySnapshotWire {
-    var generation: UInt32       // offset 0, size 4
-    var capturedAt: UInt64       // offset 4, size 8
-    var nodeCount: UInt8         // offset 12
-    var rootNodeId: UInt8        // offset 13
-    var irmNodeId: UInt8         // offset 14
-    var localNodeId: UInt8       // offset 15
-    var gapCount: UInt8          // offset 16
-    var warningCount: UInt8      // offset 17
-    var busBase16: UInt16        // offset 18, size 2
-}
+// Topology no longer has a hand-mirrored Swift wire struct: it is served via the
+// diagnostics ABI (ASFWDiagTopology / ASFWDiagNode), imported directly from the C
+// header through the bridging header, so layout is guaranteed to match the driver.
+// See TopologySnapshot.from(diag:) / TopologyNode(diag:) below.
 
 // MARK: - Swift Data Models
 
@@ -315,6 +288,46 @@ enum PortState: UInt8 {
         case .parent: return "Parent"
         case .child: return "Child"
         }
+    }
+}
+
+/// Physical adjacency for a single PHY port (parallel to a node's portStates).
+/// Decoded from ASFWDiagNode.links[]: 0xFFFFFFFF means the port is not connected,
+/// otherwise bits [15:8] = remote node id, bits [7:0] = remote port.
+struct PortLink: Equatable {
+    let connected: Bool
+    let remoteNodeId: UInt8
+    let remotePort: UInt8
+
+    static let unconnected = PortLink(connected: false, remoteNodeId: 0xFF, remotePort: 0xFF)
+
+    init(connected: Bool, remoteNodeId: UInt8, remotePort: UInt8) {
+        self.connected = connected
+        self.remoteNodeId = remoteNodeId
+        self.remotePort = remotePort
+    }
+
+    init(raw: UInt32) {
+        if raw == 0xFFFF_FFFF {
+            self = .unconnected
+        } else {
+            self.init(connected: true,
+                      remoteNodeId: UInt8((raw >> 8) & 0xFF),
+                      remotePort: UInt8(raw & 0xFF))
+        }
+    }
+}
+
+/// Maps the ASFWDiagSpeed enum (S100..S3200) to a Mbps figure for display.
+func mbpsFromDiagSpeed(_ speed: UInt32) -> UInt32 {
+    switch speed {
+    case ASFWDiagSpeedS100.rawValue: return 100
+    case ASFWDiagSpeedS200.rawValue: return 200
+    case ASFWDiagSpeedS400.rawValue: return 400
+    case ASFWDiagSpeedS800.rawValue: return 800
+    case ASFWDiagSpeedS1600.rawValue: return 1600
+    case ASFWDiagSpeedS3200.rawValue: return 3200
+    default: return 0
     }
 }
 
@@ -501,14 +514,56 @@ struct TopologyNode: Identifiable {
     let isRoot: Bool
     let parentPort: UInt8?
     let portStates: [PortState]
+    /// Physical adjacency parallel to portStates (index = port number).
+    let links: [PortLink]
 
     var speedDescription: String {
         "\(maxSpeedMbps) Mbps"
     }
-    
+
     var powerDescription: String {
         ["No power", "Self-powered (15W)", "Bus-powered (1.5W)", "Bus-powered (3W)",
          "Bus-powered (6W)", "Self-powered (10W)", "Reserved", "Reserved"][Int(powerClass)]
+    }
+
+    /// Build from a diagnostics-ABI node. ports[]/links[] are fixed C arrays
+    /// imported as tuples; only the first portCount entries are meaningful.
+    init(diag n: ASFWDiagNode) {
+        let portCount = Int(min(n.portCount, UInt32(ASFW_DIAG_MAX_PORTS)))
+        let rawPorts: [UInt32] = withUnsafeBytes(of: n.ports) { Array($0.bindMemory(to: UInt32.self)) }
+        let rawLinks: [UInt32] = withUnsafeBytes(of: n.links) { Array($0.bindMemory(to: UInt32.self)) }
+
+        self.id = UInt8(truncatingIfNeeded: n.nodeId)
+        self.nodeId = UInt8(truncatingIfNeeded: n.nodeId)
+        self.portCount = UInt8(truncatingIfNeeded: n.portCount)
+        self.gapCount = UInt8(truncatingIfNeeded: n.gapCount)
+        self.powerClass = UInt8(truncatingIfNeeded: n.powerClass & 0x7)
+        self.maxSpeedMbps = mbpsFromDiagSpeed(n.speed)
+        self.isIRMCandidate = n.contender != 0
+        self.linkActive = n.linkActive != 0
+        self.initiatedReset = n.initiatedReset != 0
+        self.isRoot = n.isRoot != 0
+        self.parentPort = n.parentPort == 0xFFFF_FFFF ? nil : UInt8(truncatingIfNeeded: n.parentPort)
+        self.portStates = (0..<portCount).map { PortState(rawValue: UInt8(truncatingIfNeeded: rawPorts[$0])) ?? .notPresent }
+        self.links = (0..<portCount).map { PortLink(raw: rawLinks[$0]) }
+    }
+
+    init(id: UInt8, nodeId: UInt8, portCount: UInt8, gapCount: UInt8, powerClass: UInt8,
+         maxSpeedMbps: UInt32, isIRMCandidate: Bool, linkActive: Bool, initiatedReset: Bool,
+         isRoot: Bool, parentPort: UInt8?, portStates: [PortState], links: [PortLink]) {
+        self.id = id
+        self.nodeId = nodeId
+        self.portCount = portCount
+        self.gapCount = gapCount
+        self.powerClass = powerClass
+        self.maxSpeedMbps = maxSpeedMbps
+        self.isIRMCandidate = isIRMCandidate
+        self.linkActive = linkActive
+        self.initiatedReset = initiatedReset
+        self.isRoot = isRoot
+        self.parentPort = parentPort
+        self.portStates = portStates
+        self.links = links
     }
 }
 
@@ -526,130 +581,54 @@ struct TopologySnapshot: Identifiable {
     let nodes: [TopologyNode]
     let warnings: [String]
     
-    /// Decode from wire format data
-    static func decode(from data: Data) -> TopologySnapshot? {
-        print("🔍 TopologySnapshot.decode: got \(data.count) bytes")
-        print("🔍 First 32 bytes (hex): \(data.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))")
-        
-        // Expected packed C++ layout: 20 bytes (4+8+6+2)
-        let expectedHeaderSize = 20
-        guard data.count >= expectedHeaderSize else {
-            print("❌ TopologySnapshot.decode: data too small (\(data.count) bytes, need \(expectedHeaderSize))")
-            return nil
+    init(generation: UInt32, capturedAt: UInt64, nodeCount: UInt8, rootNodeId: UInt8?,
+         irmNodeId: UInt8?, localNodeId: UInt8?, gapCount: UInt8, busBase16: UInt16,
+         nodes: [TopologyNode], warnings: [String]) {
+        self.generation = generation
+        self.capturedAt = capturedAt
+        self.nodeCount = nodeCount
+        self.rootNodeId = rootNodeId
+        self.irmNodeId = irmNodeId
+        self.localNodeId = localNodeId
+        self.gapCount = gapCount
+        self.busBase16 = busBase16
+        self.nodes = nodes
+        self.warnings = warnings
+    }
+
+    /// Build from the diagnostics-ABI topology struct (ASFWDiagTopology), which is
+    /// imported directly from the shared C header — no hand-mirrored layout.
+    /// Returns nil when the driver reports the topology is not valid.
+    static func from(diag t: ASFWDiagTopology) -> TopologySnapshot? {
+        guard t.valid != 0 else { return nil }
+
+        // Valid bus node IDs are 0..62; 0x3F (63) and 0xFF are "no node" sentinels.
+        func nodeOpt(_ value: UInt32) -> UInt8? { value >= 0x3F ? nil : UInt8(truncatingIfNeeded: value) }
+
+        // The driver clamps nodeCount to what fit in the inline wire buffer, so the
+        // remaining nodes[] entries are zero-filled and must not be read.
+        let count = Int(min(t.nodeCount, UInt32(ASFW_DIAG_MAX_NODES)))
+        let diagNodes: [ASFWDiagNode] = withUnsafeBytes(of: t.nodes) { buffer in
+            Array(buffer.bindMemory(to: ASFWDiagNode.self).prefix(count))
+        }
+        let nodes = diagNodes.map { TopologyNode(diag: $0) }
+
+        var warnings: [String] = []
+        if t.enumeratorError != 0 {
+            warnings.append("Topology enumerator reported an error (Self-ID not valid).")
         }
 
-        return data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return nil }
-            func read<T: FixedWidthInteger>(_ offset: Int, as type: T.Type) -> T {
-                precondition(offset + MemoryLayout<T>.size <= raw.count)
-                var value: T = 0
-                withUnsafeMutableBytes(of: &value) { dest in
-                    let slice = UnsafeRawBufferPointer(start: base.advanced(by: offset), count: MemoryLayout<T>.size)
-                    dest.copyBytes(from: slice)
-                }
-                return T(littleEndian: value)
-            }
-            func readUInt8(_ offset: Int) -> UInt8 {
-                precondition(offset < raw.count)
-                return raw[offset]
-            }
-
-            let generation: UInt32 = read(0, as: UInt32.self)
-            let capturedAt: UInt64 = read(4, as: UInt64.self)
-            let nodeCount: UInt8 = readUInt8(12)
-            let rootNodeId: UInt8 = readUInt8(13)
-            let irmNodeId: UInt8 = readUInt8(14)
-            let localNodeId: UInt8 = readUInt8(15)
-            let gapCount: UInt8 = readUInt8(16)
-            let warningCount: UInt8 = readUInt8(17)
-            let busBase16: UInt16 = read(18, as: UInt16.self)
-            
-            print("🔍 Raw header fields:")
-            print("  generation=\(generation)")
-            print("  capturedAt=\(capturedAt)")
-            print("  nodeCount=\(nodeCount)")
-            print("  rootNodeId=\(rootNodeId)")
-            print("  irmNodeId=\(irmNodeId)")
-            print("  localNodeId=\(localNodeId)")
-            print("  gapCount=\(gapCount)")
-            print("  warningCount=\(warningCount)")
-            print("  busBase16=0x\(String(format: "%04X", busBase16))")
-            print("✅ TopologySnapshot.decode: header loaded - gen=\(generation) nodeCount=\(nodeCount)")
-            var offset = expectedHeaderSize
-            
-            // Decode nodes
-            var nodes: [TopologyNode] = []
-            let nodeSize = MemoryLayout<TopologyNodeWire>.size
-            
-            for _ in 0..<nodeCount {
-                guard offset + nodeSize <= data.count else { break }
-                var nodeWire = TopologyNodeWire()
-                withUnsafeMutableBytes(of: &nodeWire) { dest in
-                    let slice = UnsafeRawBufferPointer(start: base.advanced(by: offset), count: nodeSize)
-                    dest.copyBytes(from: slice)
-                }
-                offset += nodeSize
-                
-                // Read port states for this node
-                var portStates: [PortState] = []
-                for _ in 0..<nodeWire.portStateCount {
-                    guard offset < data.count else { break }
-                    let state = readUInt8(offset)
-                    portStates.append(PortState(rawValue: state) ?? .notPresent)
-                    offset += 1
-                }
-                
-                let node = TopologyNode(
-                    id: nodeWire.nodeId,
-                    nodeId: nodeWire.nodeId,
-                    portCount: nodeWire.portCount,
-                    gapCount: nodeWire.gapCount,
-                    powerClass: nodeWire.powerClass,
-                    maxSpeedMbps: nodeWire.maxSpeedMbps,
-                    isIRMCandidate: nodeWire.isIRMCandidate != 0,
-                    linkActive: nodeWire.linkActive != 0,
-                    initiatedReset: nodeWire.initiatedReset != 0,
-                    isRoot: nodeWire.isRoot != 0,
-                    parentPort: nodeWire.parentPort != 0xFF ? nodeWire.parentPort : nil,
-                    portStates: portStates
-                )
-                nodes.append(node)
-            }
-            
-            // Decode warnings (null-terminated strings)
-            var warnings: [String] = []
-            for _ in 0..<warningCount {
-                guard offset < data.count else { break }
-                
-                // Find null terminator
-                var endOffset = offset
-                while endOffset < data.count && readUInt8(endOffset) != 0 {
-                    endOffset += 1
-                }
-                
-                if endOffset > offset {
-                    let stringData = data[offset..<endOffset]
-                    if let warning = String(data: stringData, encoding: .utf8) {
-                        warnings.append(warning)
-                    }
-                }
-                offset = endOffset + 1  // Skip null terminator
-            }
-            
-            let snapshot = TopologySnapshot(
-                generation: generation,
-                capturedAt: capturedAt,
-                nodeCount: nodeCount,
-                rootNodeId: rootNodeId != 0xFF ? rootNodeId : nil,
-                irmNodeId: irmNodeId != 0xFF ? irmNodeId : nil,
-                localNodeId: localNodeId != 0xFF ? localNodeId : nil,
-                gapCount: gapCount,
-                busBase16: busBase16,
-                nodes: nodes,
-                warnings: warnings
-            )
-            print("✅ TopologySnapshot.decode: SUCCESS - gen=\(snapshot.generation) nodes=\(snapshot.nodes.count) warnings=\(snapshot.warnings.count)")
-            return snapshot
-        }
+        return TopologySnapshot(
+            generation: t.header.generation,
+            capturedAt: t.header.timestampNs,
+            nodeCount: UInt8(truncatingIfNeeded: t.nodeCount),
+            rootNodeId: nodeOpt(t.rootNode),
+            irmNodeId: nodeOpt(t.irmNode),
+            localNodeId: nodeOpt(t.localNode),
+            gapCount: UInt8(truncatingIfNeeded: t.gapCount),
+            busBase16: UInt16(truncatingIfNeeded: t.busBase16),
+            nodes: nodes,
+            warnings: warnings
+        )
     }
 }
