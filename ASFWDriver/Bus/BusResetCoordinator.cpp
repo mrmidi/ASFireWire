@@ -39,6 +39,15 @@ void LogDeferredRunAlreadyScheduled(const char* reason) {
                 (reason != nullptr) ? reason : "unspecified");
 }
 
+// TODO(ASFW-concurrency, deferred / not critical): this blocks the dext's "Default"
+// IODispatchQueue, which also owns the OHCI interrupt dispatch source — so sleeping
+// here stalls AR/AT/isoch DMA interrupt servicing for the sleep duration. Tolerable
+// for bus-reset settle (stop-the-world, µs-scale per OHCI "5µs→255µs" rule), but
+// IOSleep is ms-granularity: verify callers pass µs-equivalent delays, not ms. Part
+// of a broader audit of which IOSleep/DispatchSync sites run on Default vs a side
+// queue (FCPTransport, IsochService, DICE bring-up, PayloadRegistry). Possible future
+// fix if it bites: move the OHCI interrupt source to a dedicated queue (which then
+// reintroduces a lock requirement for shared bus state, e.g. TopologyManager).
 void SleepForDelay(uint32_t delayMs) {
 #ifdef ASFW_HOST_TEST
     if (delayMs > 0U) {
