@@ -542,9 +542,12 @@ void RxPath::HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t new
 
     // Log raw packet data for verification
     // CRITICAL: OHCI DMA is LITTLE-ENDIAN! Must swap to get wire format.
-    // Linux: cond_le32_to_cpu() - we use OSSwapLittleToHostInt32() to swap LE→BE
+    // We use quadlet-by-quadlet copies to avoid alignment faults on ARM64
+    // when reading from potentially 4-byte aligned DMA memory.
     std::array<uint32_t, 2> rawQuadlets{};
-    std::memcpy(rawQuadlets.data(), quadlets, sizeof(uint32_t) * rawQuadlets.size());
+    __builtin_memcpy(&rawQuadlets[0], &quadlets[0], 4);
+    __builtin_memcpy(&rawQuadlets[1], &quadlets[1], 4);
+
     const uint32_t q0 =
         OSSwapLittleToHostInt32(rawQuadlets[0]);  // LE bytes → BE wire format
     const uint32_t q1 =

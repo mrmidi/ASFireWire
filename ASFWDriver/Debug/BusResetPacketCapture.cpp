@@ -51,9 +51,12 @@ void BusResetPacketCapture::CapturePacket(const uint32_t* dmaQuadlets,
     snapshot.captureTimestamp = GetCurrentTimestamp();
     snapshot.generation = generation;
 
-    // dmaQuadlets may point into packed DMA memory and not be 32-bit aligned on ARM.
+    // dmaQuadlets may point into packed DMA memory and not be 8-byte aligned on ARM.
+    // Use quadlet-by-quadlet copies to avoid alignment faults (EXC_ARM_DA_ALIGN).
     std::array<uint32_t, 4> rawQuadlets{};
-    std::memcpy(rawQuadlets.data(), dmaQuadlets, sizeof(snapshot.rawQuadlets));
+    for (size_t i = 0; i < 4; ++i) {
+        __builtin_memcpy(&rawQuadlets[i], &dmaQuadlets[i], 4);
+    }
 
     // Copy raw quadlets (little-endian from DMA)
     std::memcpy(snapshot.rawQuadlets, rawQuadlets.data(), sizeof(snapshot.rawQuadlets));
