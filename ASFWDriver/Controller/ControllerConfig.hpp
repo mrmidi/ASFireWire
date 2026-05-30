@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace ASFW::Driver {
 
@@ -23,7 +22,6 @@ struct ControllerConfig {
     bool enableVerboseLogging{false};
     bool experimentalHostCycleMasterBringup{false};
     bool allowCycleMasterEligibility{false};
-    std::vector<uint32_t> supportedSpeeds;
 
     // FW-22: which capabilities the local Config ROM advertises.
     // Default ClientOnly: advertise neither BM nor IRM capability (conservative,
