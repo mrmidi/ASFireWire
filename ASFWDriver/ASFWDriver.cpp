@@ -268,7 +268,7 @@ kern_return_t IMPL(ASFWDriver, Start) {
     }
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
 
-    ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.deps);
+    ctx.controller = std::make_shared<ControllerCore>(ctx.config, ctx.rolePolicy, ctx.deps);
 
     if (!ctx.deps.avcDiscovery && ctx.deps.deviceManager) {
         auto& bus = ctx.controller->Bus();

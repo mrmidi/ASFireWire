@@ -13,9 +13,10 @@ struct VendorInfo {
     std::string vendorName;
 };
 
-// Immutable configuration describing how the controller core should initialise
-// hardware and logging surfaces. Values here are populated by the DriverKit
-// service before Start() so helpers remain pure C++.
+// Immutable identity/static configuration supplied at construction. Values here
+// are populated by the DriverKit service before Start() and never change at
+// runtime. Mutable role/bus-management policy lives in RolePolicy (below), not
+// here, so the role mode can be switched at runtime via ControllerCore.
 struct ControllerConfig {
     VendorInfo vendor;
     uint64_t localGuid{0};
@@ -23,10 +24,20 @@ struct ControllerConfig {
     bool experimentalHostCycleMasterBringup{false};
     bool allowCycleMasterEligibility{false};
 
-    // FW-22: which capabilities the local Config ROM advertises.
-    // Default ClientOnly: advertise neither BM nor IRM capability (conservative,
-    // and intentionally MORE conservative than Apple/Linux, which advertise bmc=1).
-    // Use LegacyBmcCleared only for backwards-compatible behavior verification.
+    static ControllerConfig MakeDefault();
+};
+
+// Runtime-mutable bus-management policy. Owned by ControllerCore and changed
+// only through ControllerCore::ApplyRolePolicy(), which re-stages the local
+// Config ROM (BIB capabilities) and triggers a bus reset so peers re-read it.
+// Kept out of the constructor (and out of immutable ControllerConfig) precisely
+// so role mode can be flipped while the driver is running.
+//
+// FW-22: roleMode selects which capabilities the local Config ROM advertises.
+//   Default ClientOnly = advertise neither BM nor IRM (conservative, and
+//   intentionally MORE conservative than Apple/Linux, which advertise bmc=1).
+//   Use LegacyBmcCleared only for backwards-compatible behavior verification.
+struct RolePolicy {
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
 
@@ -34,8 +45,6 @@ struct ControllerConfig {
     // Apple never does this, so it is OFF by default and only takes effect when the
     // activity ladder is also at ForceRootAllowed or higher and local == IRM.
     bool linuxStyleCmcForceRoot{false};
-
-    static ControllerConfig MakeDefault();
 };
 
 } // namespace ASFW::Driver

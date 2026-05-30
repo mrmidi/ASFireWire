@@ -106,11 +106,12 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
 }
 
 bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
-                                      const ASFW::Driver::ControllerConfig& config) {
+                                      const ASFW::Driver::ControllerConfig& config,
+                                      const ASFW::Driver::RolePolicy& policy) {
     const bool shouldAdvertiseContender =
-        config.roleMode == ASFW::FW::RoleMode::FullBusManager ||
-        config.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
-        (config.roleMode == ASFW::FW::RoleMode::LegacyBmcCleared &&
+        policy.roleMode == ASFW::FW::RoleMode::FullBusManager ||
+        policy.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
+        (policy.roleMode == ASFW::FW::RoleMode::LegacyBmcCleared &&
          config.allowCycleMasterEligibility);
 
     const uint8_t phyReg4Bits =
@@ -142,7 +143,8 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
 }
 
 bool ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
-                           const ASFW::Driver::ControllerConfig& config) {
+                           const ASFW::Driver::ControllerConfig& config,
+                           const ASFW::Driver::RolePolicy& policy) {
     hw.SetHCControlBits(ASFW::Driver::HCControlBits::kProgramPhyEnable);
     ASFW_LOG_PHY("Opened PHY programming gate (programPhyEnable=1)");
     IODelay(1000);
@@ -165,7 +167,7 @@ bool ConfigurePhyRegisters(ASFW::Driver::HardwareInterface& hw,
     const uint8_t reg1Value = phyId.value();
     ASFW_LOG_PHY("PHY probe OK (reg1=0x%02x)", reg1Value);
     ConfigureGapCount(hw, reg1Value);
-    return ConfigurePhyOperationalRegisters(hw, config);
+    return ConfigurePhyOperationalRegisters(hw, config, policy);
 }
 
 void FinalizePhyLinkConfiguration(ASFW::Driver::HardwareInterface& hw,
@@ -311,8 +313,9 @@ void LogInitSummary(ASFW::Driver::HardwareInterface& hw,
 
 namespace ASFW::Driver {
 
-ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
+ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy, Dependencies deps)
     : config_(std::move(config)),
+      rolePolicy_(initialPolicy),
       deps_(std::move(deps)),
       roleCoordinator_(Role::RoleExecutors{
           static_cast<Role::IPhyConfigReset*>(this),
@@ -320,11 +323,10 @@ ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
           static_cast<Role::IContenderControl*>(this)}) {
 
     // FW-21: the RoleCoordinator's mutating actions are gated by the capability
-    // ladder. Without this it stays pinned at its internal ObserveOnly default
-    // regardless of ControllerConfig — diverging from the BIB-advertising and
-    // bmState_ consumers that already read config_. Drive it from config here.
-    roleCoordinator_.SetActivityLevel(config_.fullBMActivityLevel);
-    roleCoordinator_.SetLinuxStyleCmcForceRoot(config_.linuxStyleCmcForceRoot);
+    // ladder. Seed it from the initial role policy; ApplyRolePolicy() keeps the
+    // gate in sync on any subsequent runtime change.
+    roleCoordinator_.SetActivityLevel(rolePolicy_.fullBMActivityLevel);
+    roleCoordinator_.SetLinuxStyleCmcForceRoot(rolePolicy_.linuxStyleCmcForceRoot);
 
     localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(deps_.hardware.get());
     ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
@@ -641,7 +643,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
 
     bool phyConfigOk = false;
     if (programPhyEnableSupported) {
-        phyConfigOk = ConfigurePhyRegisters(hw, config_);
+        phyConfigOk = ConfigurePhyRegisters(hw, config_, rolePolicy_);
     }
 
     phyConfigOk_ = phyConfigOk;
@@ -742,12 +744,12 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
     // so the default ClientOnly mode clears Bus Manager Capable and
     // Isochronous Resource Manager Capable before staging the local Config ROM.
     // Physical/other bits are preserved.
-    const uint32_t localBusOptions =
-        ASFW::FW::NormalizeLocalBusOptions(busOptions, config_.roleMode, config_.fullBMActivityLevel);
+    const uint32_t localBusOptions = ASFW::FW::NormalizeLocalBusOptions(
+        busOptions, rolePolicy_.roleMode, rolePolicy_.fullBMActivityLevel);
     const auto advertisedCaps = ASFW::FW::DecodeBusOptions(localBusOptions);
     ASFW_LOG(Hardware,
              "FW-22: roleMode=%u advertising bmc=%d irmc=%d cmc=%d isc=%d (hw=0x%08x -> 0x%08x)",
-             static_cast<unsigned>(config_.roleMode), advertisedCaps.bmc ? 1 : 0,
+             static_cast<unsigned>(rolePolicy_.roleMode), advertisedCaps.bmc ? 1 : 0,
              advertisedCaps.irmc ? 1 : 0, advertisedCaps.cmc ? 1 : 0, advertisedCaps.isc ? 1 : 0,
              busOptions, localBusOptions);
     builder->Build(localBusOptions, effectiveGuid, ASFW::Driver::MakeNodeCapabilities(phyConfigOk_),
@@ -764,6 +766,36 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
         ASFW_LOG(Hardware, "Config ROM staging failed: 0x%08x", kr);
     }
     return kr;
+}
+
+kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
+    rolePolicy_ = policy;
+    // Keep the RoleCoordinator gate in sync with the new policy.
+    roleCoordinator_.SetActivityLevel(rolePolicy_.fullBMActivityLevel);
+    roleCoordinator_.SetLinuxStyleCmcForceRoot(rolePolicy_.linuxStyleCmcForceRoot);
+
+    // Before the link is up there is nothing to re-advertise — Start() stages the
+    // Config ROM from rolePolicy_ during bring-up. Once running, re-stage the BIB
+    // capabilities and force a long bus reset so peers re-read the local ROM.
+    if (!running_ || !deps_.hardware) {
+        return kIOReturnSuccess;
+    }
+
+    auto& hw = *deps_.hardware;
+    const uint32_t busOptions = hw.Read(Register32::kBusOptions);
+    const uint32_t guidHi = hw.Read(Register32::kGUIDHi);
+    const uint32_t guidLo = hw.Read(Register32::kGUIDLo);
+    const kern_return_t kr = StageConfigROM(busOptions, guidHi, guidLo);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "ApplyRolePolicy: Config ROM re-stage failed: 0x%08x", kr);
+        return kr;
+    }
+    ASFW_LOG(Controller,
+             "ApplyRolePolicy: roleMode=%u activity=%u — re-staged BIB, forcing bus reset",
+             static_cast<unsigned>(rolePolicy_.roleMode),
+             static_cast<unsigned>(rolePolicy_.fullBMActivityLevel));
+    hw.InitiateBusReset(/*shortReset=*/false);
+    return kIOReturnSuccess;
 }
 
 void ControllerCore::DiagnoseUnrecoverableError() const {

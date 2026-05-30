@@ -138,7 +138,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::function<void()> cycleInconsistentCallback;
     };
 
-    ControllerCore(ControllerConfig config, Dependencies deps);
+    ControllerCore(ControllerConfig config, RolePolicy initialPolicy, Dependencies deps);
     ~ControllerCore();
 
     kern_return_t Start(IOService* provider);
@@ -150,6 +150,14 @@ class ControllerCore final : private Role::IPhyConfigReset,
     MetricsSink& Metrics() const;
     std::optional<TopologySnapshot> LatestTopology() const;
     [[nodiscard]] const ControllerConfig& GetConfig() const noexcept { return config_; }
+    [[nodiscard]] const RolePolicy& GetRolePolicy() const noexcept { return rolePolicy_; }
+
+    // Runtime role-policy switch (FW-21/FW-22). Updates the stored policy, re-seeds
+    // the RoleCoordinator gate, and — if the controller is already running —
+    // re-stages the local Config ROM (BIB capabilities) and triggers a bus reset
+    // so peers re-read it. Used by Start() with the initial policy and by future
+    // runtime callers (UserClient) to flip role mode live.
+    kern_return_t ApplyRolePolicy(const RolePolicy& policy);
 
     Async::IFireWireBus& Bus();
     Async::IFireWireBus& Bus() const;
@@ -246,6 +254,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void SyncBusManagerRuntimeState() const noexcept;
 
     ControllerConfig config_;
+    RolePolicy rolePolicy_; // runtime-mutable; see ApplyRolePolicy()
     Dependencies deps_;
     bool running_{false};
     bool hardwareAttached_{false};
