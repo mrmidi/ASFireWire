@@ -26,7 +26,11 @@ class AudioCoordinator;
 
 struct ServiceContext {
     ASFW::Driver::ControllerCore::Dependencies deps;
-    ASFW::Driver::ControllerConfig config{}; // placeholder config
+    ASFW::Driver::ControllerConfig config{}; // immutable identity/static config
+    // Initial (wiring-time) role policy. The runtime-mutable copy is owned by
+    // ControllerCore; this is the seed passed at construction and read by
+    // wiring that runs before ControllerCore exists (e.g. the election driver).
+    ASFW::Driver::RolePolicy rolePolicy{};
     std::shared_ptr<ASFW::Driver::ControllerCore> controller;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<OSAction> interruptAction;

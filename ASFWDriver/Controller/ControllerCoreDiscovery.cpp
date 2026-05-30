@@ -130,8 +130,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     }
 
     const bool localIrmResourceEnabled =
-        config_.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
-        config_.roleMode == ASFW::FW::RoleMode::FullBusManager;
+        rolePolicy_.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
+        rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager;
 
     if (localIrmController_) {
         if (localIrmResourceEnabled && bmState_.localIsIRM) {
@@ -168,8 +168,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     }
 
     const bool electionAllowed =
-        config_.roleMode == ASFW::FW::RoleMode::FullBusManager &&
-        config_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;
+        rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+        rolePolicy_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;
 
     if (deps_.busManagerElectionDriver && electionAllowed) {
         deps_.busManagerElectionDriver->OnTopologyReady(snap);
@@ -640,7 +640,7 @@ void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
     bmState_.cycleStartSourceNode = rootEvidence.rootNodeId;
 
     // Populate submode level
-    bmState_.fullBMActivityLevel = static_cast<uint8_t>(config_.fullBMActivityLevel);
+    bmState_.fullBMActivityLevel = static_cast<uint8_t>(rolePolicy_.fullBMActivityLevel);
 }
 
 } // namespace ASFW::Driver

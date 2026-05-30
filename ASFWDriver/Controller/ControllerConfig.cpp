@@ -11,13 +11,8 @@ ControllerConfig ControllerConfig::MakeDefault() {
     config.enableVerboseLogging = false;
     config.experimentalHostCycleMasterBringup = false;
     config.allowCycleMasterEligibility = false;
-    // Role defaults are also expressed as member initializers in ControllerConfig.
-    // The live Start() path builds a default-constructed ControllerConfig (so the
-    // member initializers are what ship), while tests use MakeDefault(); set the
-    // role fields explicitly here so the two sources can never silently diverge.
-    config.roleMode = ASFW::FW::RoleMode::ClientOnly;
-    config.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::ObserveOnly;
-    config.linuxStyleCmcForceRoot = false;
+    // Role/BM policy is no longer part of ControllerConfig — it lives in the
+    // separately-owned, runtime-mutable RolePolicy (see ControllerConfig.hpp).
     return config;
 }
 
