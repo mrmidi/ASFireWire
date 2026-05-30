@@ -82,7 +82,7 @@ TEST(BusManagerElection, FsmDecisions) {
     // AvoidManager or other non-FullBusManager roles should not contend
     {
         BmElectionInputs inputs{
-            .mode = RoleMode::AppleAvoidManager,
+            .mode = RoleMode::ClientOnly,
             .generation = 1,
             .localId = 0,
             .irmId = 1,
@@ -180,7 +180,7 @@ TEST(BusManagerElectionDriver, GatedByMode) {
 
     // AvoidManager Mode: OnTopologyReady should do nothing
     {
-        auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::AppleAvoidManager);
+        auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::ClientOnly);
         TopologySnapshot snap{};
         snap.generation = 1;
         snap.localNodeId = 0;

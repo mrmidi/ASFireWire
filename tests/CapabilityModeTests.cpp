@@ -33,8 +33,8 @@ TEST(CapabilityMode, LegacyBmcCleared_ForcesBmcZero_PreservesRest) {
     EXPECT_EQ(out, kHwBusOptions & ~BO::kBMCMask);
 }
 
-TEST(CapabilityMode, AppleAvoidManager_ForcesBmcAndIrmcZero_PreservesRest) {
-    const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::AppleAvoidManager);
+TEST(CapabilityMode, ClientOnly_ForcesBmcAndIrmcZero_PreservesRest) {
+    const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::ClientOnly);
     const auto d = DecodeBusOptions(out);
     EXPECT_FALSE(d.bmc);
     EXPECT_FALSE(d.irmc); // cleared to avoid being manager/IRM
@@ -77,7 +77,7 @@ TEST(CapabilityMode, FullBusManagerObserveOnly_ClearsBmcSetsIrmc) {
 }
 
 TEST(CapabilityMode, ReservedAndNumericBitsPreservedInEveryMode) {
-    for (auto mode : {RoleMode::LegacyBmcCleared, RoleMode::AppleAvoidManager,
+    for (auto mode : {RoleMode::LegacyBmcCleared, RoleMode::ClientOnly,
                       RoleMode::IRMServerOnly, RoleMode::FullBusManager}) {
         const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, mode);
         const auto d = DecodeBusOptions(out);
