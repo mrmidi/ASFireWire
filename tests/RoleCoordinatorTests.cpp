@@ -13,6 +13,7 @@
 
 using namespace ASFW::Driver;
 using namespace ASFW::Driver::Role;
+using Level = ASFW::FW::FullBMActivityLevel;
 
 namespace {
 
@@ -101,9 +102,11 @@ TEST(RoleCoordinatorTests, StaleEvidenceDropped_CurrentApplied) {
     rc.OnRootCapability(4, RootCapability::CapableByBIB);
     EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::DeferForEvidence);
 
-    // Current-generation evidence is applied and policy accepts remote CMC root.
+    // Current-generation evidence is applied: Apple-default accepts a remote CMC
+    // root with no action (no remote CMSTR). The Defer→None transition proves the
+    // current evidence was applied (vs. the stale one being dropped above).
     rc.OnRootCapability(5, RootCapability::CapableByBIB);
-    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::EnableRemoteCycleMaster);
+    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::None);
 }
 
 TEST(RoleCoordinatorTests, StructuredEvidence_CurrentApplied_StaleDropped) {
@@ -123,7 +126,8 @@ TEST(RoleCoordinatorTests, StructuredEvidence_CurrentApplied_StaleDropped) {
     current.generation = 6;
     rc.OnRootCapabilityEvidence(6, current);
     EXPECT_EQ(rc.LastRootEvidence().verdict, RootCapability::CapableByBIB);
-    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::EnableRemoteCycleMaster);
+    // Apple-default: verified remote CMC root is accepted with no action.
+    EXPECT_EQ(rc.LastAction().kind, RoleAction::Kind::None);
 }
 
 TEST(RoleCoordinatorTests, StructuredEvidence_DerivesCycleFallbacks) {
@@ -162,6 +166,8 @@ TEST(RoleCoordinatorTests, LocalCmcRootDispatchedToLocalCycleMasterExecutor) {
     RoleCoordinator::Executors ex{};
     ex.contender = &contender;
     RoleCoordinator rc(ex);
+    // Enabling local cycleMaster is gated; unlock active root/gap policy.
+    rc.SetActivityLevel(Level::GapPolicyAllowed);
 
     rc.OnTopologyChanged(10, MakeTopo(0, 0, 0, 1));
     rc.OnLocalCycleMasterCapability(10, true);
