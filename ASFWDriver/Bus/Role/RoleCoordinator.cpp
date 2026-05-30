@@ -97,6 +97,10 @@ void RoleCoordinator::Reevaluate() {
         .cycles = cycles_,
         .localCmcCapable = localCmcCapable_,
         .resetRetriesThisTopology = resetRetries_,
+        .irmNodeId = (haveTopology_ && topo_.irmNodeId.has_value()) ? *topo_.irmNodeId
+                                                                    : uint8_t{0xFF},
+        .activity = activity_,
+        .linuxStyleCmcForceRoot = linuxStyleCmcForceRoot_,
     };
     lastAction_ = policy_(in);
     Dispatch();

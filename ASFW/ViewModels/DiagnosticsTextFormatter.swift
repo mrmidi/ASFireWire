@@ -357,11 +357,12 @@ struct DiagnosticsTextFormatter {
 
         let activityStr: String
         switch snapshot.busManager.fullBMActivityLevel {
+        // Order must match FullBMActivityLevel in ASFWDriver/Common/CSRSpace.hpp.
         case 0: activityStr = "ObserveOnly"
         case 1: activityStr = "ElectionOnly"
-        case 2: activityStr = "RemoteCmstrAllowed"
-        case 3: activityStr = "GapPolicyAllowed"
-        case 4: activityStr = "ForceRootAllowed"
+        case 2: activityStr = "GapPolicyAllowed"
+        case 3: activityStr = "ForceRootAllowed"
+        case 4: activityStr = "RemoteCmstrAllowed"
         default: activityStr = "Unknown (\(snapshot.busManager.fullBMActivityLevel))"
         }
         appendRow("Full BM Activity Level", activityStr)

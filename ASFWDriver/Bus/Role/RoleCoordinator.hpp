@@ -72,6 +72,13 @@ class RoleCoordinator {
     // Reserved for FW-9 to correlate an issued reset with its completion.
     void OnResetComplete(uint32_t generation);
 
+    // ---- Policy configuration -------------------------------------------------
+    // Capability gate (default ObserveOnly = no bus side effects). The live driver
+    // sets this from ControllerConfig::fullBMActivityLevel.
+    void SetActivityLevel(ASFW::FW::FullBMActivityLevel level) noexcept { activity_ = level; }
+    // EXPERIMENTAL Linux-style force-root on verified CMC=0 (default OFF = Apple).
+    void SetLinuxStyleCmcForceRoot(bool enabled) noexcept { linuxStyleCmcForceRoot_ = enabled; }
+
     // ---- Test / diagnostic accessors -----------------------------------------
     [[nodiscard]] uint32_t Generation() const noexcept { return generation_; }
     [[nodiscard]] RoleAction LastAction() const noexcept { return lastAction_; }
@@ -97,6 +104,10 @@ class RoleCoordinator {
     RootCapabilityEvidence rootEvidence_{};
     CycleObservation cycles_{};
     bool localCmcCapable_{false};
+
+    // Policy configuration (default = Apple-compatible, observe-only).
+    ASFW::FW::FullBMActivityLevel activity_{ASFW::FW::FullBMActivityLevel::ObserveOnly};
+    bool linuxStyleCmcForceRoot_{false};
 
     // Ping-pong guard.
     uint64_t topologyFingerprint_{0};

@@ -15,6 +15,7 @@
 
 #include <cstdint>
 
+#include "../../Common/CSRSpace.hpp"            // FullBMActivityLevel (capability ladder)
 #include "../../Controller/ControllerTypes.hpp" // TopologySnapshot
 
 namespace ASFW::Driver::Role {
@@ -99,6 +100,20 @@ struct RoleInputs {
     CycleObservation cycles{};
     bool localCmcCapable{false};         // FW-11: is local OHCI cycle-master-capable
     uint8_t resetRetriesThisTopology{0}; // ping-pong guard input
+
+    // IRM node for this generation (TopologySnapshot::irmNodeId, 0xFF if unknown).
+    // Apple-style policy self-promotes to root only when the local node IS the IRM
+    // (mirrors IOFireWireController fLocalNodeID == fIRMNodeID).
+    uint8_t irmNodeId{0xFF};
+
+    // Capability gate. Every mutating RoleAction is gated by this; ObserveOnly
+    // (the default) emits verdicts but never a hardware/bus side effect.
+    ASFW::FW::FullBMActivityLevel activity{ASFW::FW::FullBMActivityLevel::ObserveOnly};
+
+    // EXPERIMENTAL, Linux-style only (default OFF = Apple-compatible). When set,
+    // a verified remote root with CMC=0 may trigger a local self-promote/force-root
+    // like Linux bm_work. Apple ignores CMC entirely, so this stays off by default.
+    bool linuxStyleCmcForceRoot{false};
 };
 
 // Value-type decision. The ONLY thing Layer-1 tests assert.
