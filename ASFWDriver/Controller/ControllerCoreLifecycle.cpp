@@ -108,6 +108,11 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
 bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
                                       const ASFW::Driver::ControllerConfig& config,
                                       const ASFW::Driver::RolePolicy& policy) {
+    // ClientOnly is intentionally absent here: a pure client that advertises no
+    // BM/IRM capability also does NOT set the Self-ID/PHY contender bit, so it can
+    // never win an IRM/BM election. This is deliberately MORE conservative than
+    // Apple/Linux (which make the local PHY contender-capable at init) and keeps
+    // the PHY consistent with the bmc=0/irmc=0 BIB advertisement.
     const bool shouldAdvertiseContender =
         policy.roleMode == ASFW::FW::RoleMode::FullBusManager ||
         policy.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
