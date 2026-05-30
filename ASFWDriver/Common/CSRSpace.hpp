@@ -367,7 +367,8 @@ enum class FullBMActivityLevel : uint8_t {
 // Decode->Encode) so reserved bits [11:10]/[3] and all numeric fields are
 // preserved byte-for-byte from the hardware register in every mode.
 [[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions,
-                                                          RoleMode mode) noexcept {
+                                                          RoleMode mode,
+                                                          FullBMActivityLevel activityLevel = FullBMActivityLevel::ElectionOnly) noexcept {
     using namespace BusOptionsFields;
     uint32_t out = hwBusOptions;
     switch (mode) {
@@ -382,7 +383,12 @@ enum class FullBMActivityLevel : uint8_t {
         out |= kIRMCMask; // irmc=1
         break;
     case RoleMode::FullBusManager:
-        out |= (kBMCMask | kIRMCMask); // bmc=1 implies irmc=1
+        if (activityLevel >= FullBMActivityLevel::ElectionOnly) {
+            out |= (kBMCMask | kIRMCMask); // bmc=1 implies irmc=1
+        } else {
+            out &= ~kBMCMask; // bmc=0
+            out |= kIRMCMask; // irmc=1 (ObserveOnly still needs local IRM registers)
+        }
         break;
     }
     return out;
@@ -420,6 +426,14 @@ static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleM
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager)),
               "every RoleMode must produce a legal capability combo");
+
+static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager, FullBMActivityLevel::ObserveOnly) &
+               BusOptionsFields::kBMCMask) == 0,
+              "FullBusManager + ObserveOnly must force bmc=0");
+static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager, FullBMActivityLevel::ObserveOnly) &
+               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
+                  BusOptionsFields::kIRMCMask,
+              "FullBusManager + ObserveOnly must set irmc=1 and clear bmc=0");
 
 namespace Detail {
 // Local constexpr popcount (avoid <bit> include in this shared header).

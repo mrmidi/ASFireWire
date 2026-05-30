@@ -215,6 +215,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
                 .scheduler = d.scheduler.get(),
                 .csrResponder = d.csrResponder.get(),
                 .hardware = d.hardware.get(),
+                .localIrmController = ctx.controller ? ctx.controller->GetLocalIRMResourceController() : nullptr,
             };
             d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.config.roleMode);
             if (ctx.controller) {

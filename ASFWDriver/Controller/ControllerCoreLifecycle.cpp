@@ -736,7 +736,7 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
     // Isochronous Resource Manager Capable before staging the local Config ROM.
     // Physical/other bits are preserved.
     const uint32_t localBusOptions =
-        ASFW::FW::NormalizeLocalBusOptions(busOptions, config_.roleMode);
+        ASFW::FW::NormalizeLocalBusOptions(busOptions, config_.roleMode, config_.fullBMActivityLevel);
     const auto advertisedCaps = ASFW::FW::DecodeBusOptions(localBusOptions);
     ASFW_LOG(Hardware,
              "FW-22: roleMode=%u advertising bmc=%d irmc=%d cmc=%d isc=%d (hw=0x%08x -> 0x%08x)",

@@ -23,7 +23,7 @@ TEST_F(LocalIRMResourceControllerTests, InitializeDefaultsSuccess) {
     LocalIRMResourceController controller(&hardware_);
     EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Disabled);
 
-    bool ok = controller.InitializeDefaults(4);
+    bool ok = controller.InitializeDefaults();
     EXPECT_TRUE(ok);
 
     auto snap = controller.Snapshot();
@@ -60,7 +60,7 @@ TEST_F(LocalIRMResourceControllerTests, CompareSwapUpdatesCache) {
     LocalIRMResourceController controller(&hardware_);
     
     // Init values
-    ASSERT_TRUE(controller.InitializeDefaults(4));
+    ASSERT_TRUE(controller.InitializeDefaults());
 
     // Perform CompareSwap on BUS_MANAGER_ID (selectCode 0)
     // compareValue = 0x3F, newValue = 4
@@ -76,9 +76,14 @@ TEST_F(LocalIRMResourceControllerTests, CompareSwapUpdatesCache) {
 
 TEST_F(LocalIRMResourceControllerTests, DisableState) {
     LocalIRMResourceController controller(&hardware_);
-    ASSERT_TRUE(controller.InitializeDefaults(4));
+    ASSERT_TRUE(controller.InitializeDefaults());
     EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Initialized);
 
     controller.Disable();
     EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Disabled);
+    EXPECT_FALSE(controller.Snapshot().readbackValid);
+    EXPECT_EQ(controller.Snapshot().busManagerId, 0x3F);
+    EXPECT_EQ(controller.Snapshot().bandwidthAvailable, 0);
+    EXPECT_EQ(controller.Snapshot().channelsAvailableHi, 0);
+    EXPECT_EQ(controller.Snapshot().channelsAvailableLo, 0);
 }

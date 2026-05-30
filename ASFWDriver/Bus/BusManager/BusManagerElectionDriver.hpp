@@ -21,6 +21,8 @@ class HardwareInterface;
 
 namespace ASFW::Bus {
 
+class LocalIRMResourceController;
+
 class BusManagerElectionDriver : public std::enable_shared_from_this<BusManagerElectionDriver> {
 public:
     struct IBMRoleEvents {
@@ -35,6 +37,7 @@ public:
         ASFW::Driver::Scheduler* scheduler{nullptr};
         ASFW::Bus::CSRResponder* csrResponder{nullptr};
         ASFW::Driver::HardwareInterface* hardware{nullptr};
+        LocalIRMResourceController* localIrmController{nullptr};
     };
 
     BusManagerElectionDriver(Deps deps, ASFW::FW::RoleMode roleMode) noexcept;

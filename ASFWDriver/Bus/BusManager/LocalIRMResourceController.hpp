@@ -37,10 +37,9 @@ public:
 
     /**
      * @brief Writes default IRM values to local CSRs and validates them via readback.
-     * @param localNodeId Node ID of the local controller to write as the initial BM candidate.
      * @return true if all writes succeeded and readback matches, false otherwise.
      */
-    bool InitializeDefaults(uint8_t localNodeId) noexcept;
+    bool InitializeDefaults() noexcept;
 
     /**
      * @brief Probes/reads back all local IRM registers to update our diagnostics cache.
@@ -56,7 +55,14 @@ public:
     /**
      * @brief Disables the controller state.
      */
-    void Disable() noexcept { snapshot_.state = LocalIRMResourceState::Disabled; }
+    void Disable() noexcept {
+        snapshot_.state = LocalIRMResourceState::Disabled;
+        snapshot_.readbackValid = false;
+        snapshot_.busManagerId = 0x3F;
+        snapshot_.bandwidthAvailable = 0;
+        snapshot_.channelsAvailableHi = 0;
+        snapshot_.channelsAvailableLo = 0;
+    }
 
     [[nodiscard]] LocalIRMResourceSnapshot Snapshot() const noexcept { return snapshot_; }
 
