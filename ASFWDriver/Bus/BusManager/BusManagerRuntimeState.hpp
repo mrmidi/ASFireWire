@@ -47,6 +47,20 @@ struct BusManagerRuntimeState {
     uint32_t lastRemoteCmstrResult{0};
     uint8_t bmPolicyVerdict{static_cast<uint8_t>(BMPolicyVerdict::ObserveOnly)};
     uint8_t fullBMActivityLevel{0};
+
+    void ResetGenerationScopedPolicy() noexcept {
+        rootCmcKnown = false;
+        rootCmcCapable = false;
+        cycleStartObserved = false;
+        cycleStartSourceNode = 0x3F;
+        remoteCmstrNeeded = false;
+        remoteCmstrAllowed = false;
+        remoteCmstrAlreadySatisfied = false;
+        lastRemoteCmstrGeneration = 0;
+        lastRemoteCmstrTargetNode = 0x3F;
+        lastRemoteCmstrResult = 0;
+        bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::ObserveOnly);
+    }
 };
 
 } // namespace ASFW::Bus

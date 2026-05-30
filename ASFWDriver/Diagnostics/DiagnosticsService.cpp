@@ -464,7 +464,7 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
     auto* hw = controller_->GetHardware();
     if (hw) {
         const uint32_t busOptions = hw->Read(Driver::Register32::kBusOptions);
-        auto caps = ASFW::FW::DecodeBusOptions(ASFW::FW::NormalizeLocalBusOptions(busOptions, config.roleMode));
+        auto caps = ASFW::FW::DecodeBusOptions(ASFW::FW::NormalizeLocalBusOptions(busOptions, config.roleMode, config.fullBMActivityLevel));
         out->advertisedBmc = caps.bmc ? 1 : 0;
         out->advertisedIrmc = caps.irmc ? 1 : 0;
         out->advertisedCmc = caps.cmc ? 1 : 0;

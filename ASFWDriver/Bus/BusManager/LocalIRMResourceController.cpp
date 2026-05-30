@@ -11,7 +11,7 @@ namespace ASFW::Bus {
 LocalIRMResourceController::LocalIRMResourceController(ASFW::Driver::HardwareInterface* hw) noexcept
     : hw_(hw) {}
 
-bool LocalIRMResourceController::InitializeDefaults(uint8_t localNodeId) noexcept {
+bool LocalIRMResourceController::InitializeDefaults() noexcept {
     if (!hw_) {
         snapshot_.state = LocalIRMResourceState::Failed;
         snapshot_.lastCsrStatus = 2; // HardwareUnavailable

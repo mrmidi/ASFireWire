@@ -135,7 +135,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
 
     if (localIrmController_) {
         if (localIrmResourceEnabled && bmState_.localIsIRM) {
-            localIrmController_->InitializeDefaults(bmState_.localNodeId);
+            localIrmController_->InitializeDefaults();
         } else {
             localIrmController_->Disable();
         }
@@ -154,6 +154,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     bmState_.localIsBM = false;
     bmState_.bmNodeId = 0x3F;
     bmState_.bmOwnerSource = ASFW::Bus::BMOwnerSource::Unknown;
+    bmState_.ResetGenerationScopedPolicy();
 
     // FW-6/FW-7: hand the new topology/generation to role policy before any
     // discovery-specific early returns — role policy is independent of ROM scan.
@@ -345,6 +346,7 @@ void ControllerCore::PublishRootCapabilityEvidence() {
         currentRootEvidence_.cycles);
     roleCoordinator_.OnRootCapabilityEvidence(currentRootEvidence_.generation,
                                               currentRootEvidence_);
+    EvaluateBusManagerPolicy();
 }
 
 void ControllerCore::ForceRootAndReset(uint8_t targetRoot, Role::RoleResetFlavor flavor,
