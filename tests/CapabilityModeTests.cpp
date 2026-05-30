@@ -58,7 +58,10 @@ TEST(CapabilityMode, IRMServerOnly_SetsIrmcClearsBmc) {
 }
 
 TEST(CapabilityMode, FullBusManager_SetsBmcAndIrmc) {
-    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager);
+    // bmc=1 now requires explicitly opting in to ElectionOnly-or-higher; the
+    // 2-arg default is ObserveOnly (covered by FullBusManagerObserveOnly_*).
+    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager,
+                                                  ASFW::FW::FullBMActivityLevel::ElectionOnly);
     const auto d = DecodeBusOptions(out);
     EXPECT_TRUE(d.bmc);
     EXPECT_TRUE(d.irmc); // bmc implies irmc

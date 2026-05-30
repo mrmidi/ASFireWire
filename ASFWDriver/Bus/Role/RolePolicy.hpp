@@ -7,11 +7,12 @@
 // whole FW-12 scenario matrix is tested against — build a RoleInputs, assert a
 // RoleAction. See the FW-6 design comment in Linear for the three-layer split.
 //
-// SKELETON (FW-6): EvaluateRolePolicy implements only conservative defaults
-// (None / DeferForEvidence) — it never issues a reset or cycle-master change.
-// The real decision matrix (mirroring Linux bm_work, firewire/core-card.c:432)
-// lands in FW-9; the branch structure here is laid out so FW-9 fills each case
-// in place without reshaping the boundary.
+// POLICY (FW-17): EvaluateRolePolicy is Apple-compatible by default — root CMC is
+// diagnostics-only (never a trigger), remote STATE_SET.cmstr is reachable only at
+// the top experimental ladder rung, and every mutating RoleAction is gated by
+// FullBMActivityLevel (ObserveOnly emits a verdict but requests no bus action).
+// Linux-shaped force-root on a verified CMC=0 root is opt-in only. See the impl
+// notes in RolePolicy.cpp and [[apple-ignores-cmc-irm-probing]].
 
 #include <cstdint>
 

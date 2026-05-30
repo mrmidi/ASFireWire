@@ -373,9 +373,12 @@ enum class FullBMActivityLevel : uint8_t {
 // Mode-driven normalizer. Manipulates capability bits directly (rather than
 // Decode->Encode) so reserved bits [11:10]/[3] and all numeric fields are
 // preserved byte-for-byte from the hardware register in every mode.
+// Safety default for activityLevel: ObserveOnly. A FullBusManager caller must
+// explicitly opt in to ElectionOnly-or-higher before this advertises bmc=1; no
+// caller should advertise Bus-Manager-Capable by accidentally omitting the level.
 [[nodiscard]] constexpr uint32_t NormalizeLocalBusOptions(uint32_t hwBusOptions,
                                                           RoleMode mode,
-                                                          FullBMActivityLevel activityLevel = FullBMActivityLevel::ElectionOnly) noexcept {
+                                                          FullBMActivityLevel activityLevel = FullBMActivityLevel::ObserveOnly) noexcept {
     using namespace BusOptionsFields;
     uint32_t out = hwBusOptions;
     switch (mode) {
@@ -423,10 +426,11 @@ static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::IRMServerOnly) &
                (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
                   BusOptionsFields::kIRMCMask,
               "IRMServerOnly must set irmc=1 and bmc=0");
-static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager) &
+static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager,
+                                        FullBMActivityLevel::ElectionOnly) &
                (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
                   (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask),
-              "FullBusManager must set bmc=1 and irmc=1");
+              "FullBusManager at ElectionOnly+ must set bmc=1 and irmc=1");
 static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::LegacyBmcCleared)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::AppleAvoidManager)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::IRMServerOnly)) &&

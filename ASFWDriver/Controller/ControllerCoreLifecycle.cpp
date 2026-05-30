@@ -319,6 +319,13 @@ ControllerCore::ControllerCore(ControllerConfig config, Dependencies deps)
           static_cast<Role::IRemoteCsrWriter*>(this),
           static_cast<Role::IContenderControl*>(this)}) {
 
+    // FW-21: the RoleCoordinator's mutating actions are gated by the capability
+    // ladder. Without this it stays pinned at its internal ObserveOnly default
+    // regardless of ControllerConfig — diverging from the BIB-advertising and
+    // bmState_ consumers that already read config_. Drive it from config here.
+    roleCoordinator_.SetActivityLevel(config_.fullBMActivityLevel);
+    roleCoordinator_.SetLinuxStyleCmcForceRoot(config_.linuxStyleCmcForceRoot);
+
     localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(deps_.hardware.get());
     ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
 

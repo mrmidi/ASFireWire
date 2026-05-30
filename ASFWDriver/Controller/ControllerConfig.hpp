@@ -31,6 +31,11 @@ struct ControllerConfig {
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::AppleAvoidManager};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
 
+    // EXPERIMENTAL (FW-21): Linux-shaped self-promotion on a verified CMC=0 root.
+    // Apple never does this, so it is OFF by default and only takes effect when the
+    // activity ladder is also at ForceRootAllowed or higher and local == IRM.
+    bool linuxStyleCmcForceRoot{false};
+
     static ControllerConfig MakeDefault();
 };
 
