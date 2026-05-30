@@ -220,8 +220,73 @@ struct DiagnosticsTextFormatter {
                     + pad(node.linkActive != 0 ? "Yes" : "No", 10) + " "
                     + portDetailsPad + "\n"
             }
+
+            // Topology tree, rooted at the bus root, built from parentPort + links[]
+            // (same adjacency the GUI tree uses).
+            let validNodes = Array(nodes.prefix(min(count, nodes.count)))
+            let byId = Dictionary(validNodes.map { (Int($0.nodeId), $0) }, uniquingKeysWith: { a, _ in a })
+
+            func speedLabel(_ s: UInt32) -> String {
+                switch s {
+                case ASFWDiagSpeedS100.rawValue: return "S100"
+                case ASFWDiagSpeedS200.rawValue: return "S200"
+                case ASFWDiagSpeedS400.rawValue: return "S400"
+                case ASFWDiagSpeedS800.rawValue: return "S800"
+                case ASFWDiagSpeedS1600.rawValue: return "S1600"
+                case ASFWDiagSpeedS3200.rawValue: return "S3200"
+                default: return "S?"
+                }
+            }
+            func mbps(_ s: UInt32) -> Int { Int(speedLabel(s).dropFirst()) ?? 0 }
+            func parentOf(_ n: ASFWDiagNode) -> Int? {
+                guard n.isRoot == 0, n.parentPort != 0xFFFF_FFFF else { return nil }
+                let links: [UInt32] = withUnsafeBytes(of: n.links) { Array($0.bindMemory(to: UInt32.self)) }
+                let pp = Int(n.parentPort)
+                guard pp < links.count, links[pp] != 0xFFFF_FFFF else { return nil }
+                return Int((links[pp] >> 8) & 0xFF)
+            }
+
+            var childrenOf: [Int: [Int]] = [:]
+            for node in validNodes {
+                if let parent = parentOf(node) { childrenOf[parent, default: []].append(Int(node.nodeId)) }
+            }
+            for key in childrenOf.keys { childrenOf[key]?.sort() }
+
+            let rootList = validNodes.filter { $0.isRoot != 0 }.map { Int($0.nodeId) }
+            let effectiveRoots = rootList.isEmpty ? (validNodes.last.map { [Int($0.nodeId)] } ?? []) : rootList
+
+            if !effectiveRoots.isEmpty {
+                report += "\nTopology Tree (rooted at bus root):\n"
+                func renderTreeNode(_ id: Int, prefix: String, isLast: Bool, isRootRow: Bool) {
+                    guard let node = byId[id] else { return }
+                    let connector = isRootRow ? "" : (isLast ? "└─ " : "├─ ")
+                    var tags: [String] = []
+                    if node.isRoot != 0 { tags.append("root") }
+                    if Int(snapshot.topology.irmNode) == id { tags.append("IRM") }
+                    if Int(snapshot.topology.localNode) == id { tags.append("local") }
+                    if node.initiatedReset != 0 { tags.append("reset-init") }
+                    if node.linkActive == 0 { tags.append("PHY-only") }
+                    var edge = ""
+                    if let parent = parentOf(node), let pnode = byId[parent] {
+                        let a = mbps(node.speed) == 0 ? mbps(pnode.speed) : mbps(node.speed)
+                        let b = mbps(pnode.speed) == 0 ? mbps(node.speed) : mbps(pnode.speed)
+                        let e = min(a, b)
+                        if e > 0 { edge = " (\(e) Mbps link)" }
+                    }
+                    let tagStr = tags.isEmpty ? "" : "  [" + tags.joined(separator: ",") + "]"
+                    report += "  \(prefix)\(connector)Node \(id)  \(speedLabel(node.speed))\(edge)\(tagStr)\n"
+                    let kids = childrenOf[id] ?? []
+                    let childPrefix = prefix + (isRootRow ? "" : (isLast ? "   " : "│  "))
+                    for (idx, child) in kids.enumerated() {
+                        renderTreeNode(child, prefix: childPrefix, isLast: idx == kids.count - 1, isRootRow: false)
+                    }
+                }
+                for (idx, root) in effectiveRoots.enumerated() {
+                    renderTreeNode(root, prefix: "", isLast: idx == effectiveRoots.count - 1, isRootRow: true)
+                }
+            }
         }
-        
+
         let selfIdCount = Int(min(snapshot.topology.rawSelfIdCount, UInt32(ASFW_DIAG_MAX_SELF_ID_QUADS)))
         if selfIdCount > 0 {
             report += "\nRaw Self-ID Quadlets (\(selfIdCount)):\n"
