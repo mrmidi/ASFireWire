@@ -613,13 +613,14 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     const bool isOHCI_1_1_OrLater = (ohciVersion_ >= ASFW::Driver::kOHCI_1_1);
 
     // Step 3a: Enable OHCI 1.1+ features if supported
-    // Linux: if (version >= OHCI_VERSION_1_1) { reg_write(ohci,
-    // OHCI1394_InitialChannelsAvailableHi, 0xfffffffe); } OHCI 1.1 spec §5.5:
-    // InitialChannelsAvailableHi enables channels 32-62 for isochronous Bit pattern 0xfffffffe =
-    // channels 33-63 available (bit 0 = channel 32, reserved) This enables broadcast channel (63)
-    // auto-allocation behavior
+    // OHCI 1.1 spec §5.5: Program initial default values for autonomous IRM CSRs.
+    // This prepares the controller to host IRM resources correctly after a bus reset.
     if (isOHCI_1_1_OrLater) {
-        hw.WriteAndFlush(Register32::kInitialChannelsAvailableHi, 0xFFFFFFFE);
+        kr = hw.ProgramInitialIRMResourceRegisters();
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Hardware, "❌ Failed to program initial IRM registers: 0x%08x", kr);
+            // We continue anyway, as basic operation might still work
+        }
     }
 
     // Step 4: Clear noByteSwapData - enable byte-swapping for data phases per OHCI spec

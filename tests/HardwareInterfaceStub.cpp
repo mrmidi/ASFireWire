@@ -1,5 +1,6 @@
 #include "HardwareInterface.hpp"
 #include "RegisterMap.hpp"
+#include "../ASFWDriver/Bus/IRM/IRMCSRConstants.hpp"
 
 #include <atomic>
 #include <mutex>
@@ -413,3 +414,11 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
 }
 
 } // namespace ASFW::Driver
+
+kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
+    using namespace ASFW::Driver::IRMCSR;
+    WriteAndFlush(Register32::kInitialBandwidthAvailable, kInitialBandwidthAvailable);
+    WriteAndFlush(Register32::kInitialChannelsAvailableHi, kInitialChannelsAvailableHi);
+    WriteAndFlush(Register32::kInitialChannelsAvailableLo, kInitialChannelsAvailableLo);
+    return kIOReturnSuccess;
+}
