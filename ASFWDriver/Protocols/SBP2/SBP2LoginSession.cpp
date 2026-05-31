@@ -381,6 +381,7 @@ bool SBP2LoginSession::AllocateResources() noexcept {
         // Re-register callback in case it was previously cleared by a reset path.
         if (statusBlockHandle_ != 0) {
             const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+            // AddressSpaceManager dispatches outside its lock, so never capture raw this.
             addrSpaceMgr_.SetRemoteWriteCallback(
                 statusBlockHandle_,
                 [weakSelf](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {
@@ -432,6 +433,7 @@ bool SBP2LoginSession::AllocateResources() noexcept {
     // here to signal login/reconnect/logout completion (and ORB completion
     // in Step 2).
     const std::weak_ptr<SBP2LoginSession> weakSelf = weak_from_this();
+    // AddressSpaceManager dispatches outside its lock, so never capture raw this.
     addrSpaceMgr_.SetRemoteWriteCallback(
         statusBlockHandle_,
         [weakSelf](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {

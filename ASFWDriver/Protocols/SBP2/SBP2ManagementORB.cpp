@@ -195,6 +195,8 @@ SBP2ManagementORB::~SBP2ManagementORB() {
 bool SBP2ManagementORB::AllocateResources() noexcept {
     const auto state = asyncState_;
     const auto registerStatusWriteCallback = [this, state]() {
+        // AddressSpaceManager dispatches outside its lock; the shared state token
+        // keeps callback lifetime independent from this ORB object.
         addrMgr_.SetRemoteWriteCallback(
             statusBlockHandle_,
             [state](uint64_t /*handle*/, uint32_t offset, std::span<const uint8_t> payload) {

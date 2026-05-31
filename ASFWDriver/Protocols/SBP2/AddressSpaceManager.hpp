@@ -7,6 +7,7 @@
 #include <cstring>
 #include <optional>
 #include <limits>
+#include <memory>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -33,9 +34,20 @@ class AddressSpaceManager {
 public:
     // Callback invoked when a remote write arrives for a registered range.
     // Parameters: handle, offset within range, payload data.
+    //
+    // AddressSpaceManager invokes callbacks outside its lock. Callback targets
+    // must capture weak/shared lifetime state, not raw owning object pointers.
     using RemoteWriteCallback = std::function<void(uint64_t handle,
                                                    uint32_t offset,
                                                    std::span<const uint8_t> payload)>;
+    struct RemoteWriteCallbackSlot {
+        explicit RemoteWriteCallbackSlot(RemoteWriteCallback callbackIn)
+            : callback(std::move(callbackIn)) {}
+
+        RemoteWriteCallback callback;
+        std::atomic<bool> enabled{true};
+    };
+
     struct AddressRangeMeta {
         uint64_t handle{0};
         uint64_t address{0};
@@ -264,7 +276,7 @@ public:
             return Async::ResponseCode::DataError;
         }
 
-        RemoteWriteCallback callback;
+        std::shared_ptr<RemoteWriteCallbackSlot> callbackSlot;
         uint64_t handle = 0;
         uint32_t offset = 0;
 
@@ -293,14 +305,15 @@ public:
                 range->mappedBytes,
                 range->hasBacking ? 1u : 0u);
             WriteBytesLocked(*range, offset, payload);
-            callback = range->onRemoteWrite;
+            callbackSlot = range->remoteWriteSlot;
             handle = range->meta.handle;
             IOLockUnlock(lock_);
         }
 
         // Fire callback outside lock to avoid deadlock.
-        if (callback) {
-            callback(handle, offset, payload);
+        if (callbackSlot && callbackSlot->enabled.load(std::memory_order_acquire) &&
+            callbackSlot->callback) {
+            callbackSlot->callback(handle, offset, payload);
         }
 
         return Async::ResponseCode::Complete;
@@ -410,6 +423,10 @@ public:
 
     // Register a callback to fire when a remote write arrives for the given handle.
     // Must be called after AllocateAddressRange. Replaces any previous callback.
+    //
+    // Replacing or clearing the callback invalidates callbacks copied but not
+    // yet dispatched. Callback targets must still use weak/shared lifetime
+    // capture because callbacks run outside the manager lock.
     void SetRemoteWriteCallback(uint64_t handle, RemoteWriteCallback callback) {
         if (!lock_ || handle == 0) {
             return;
@@ -418,7 +435,7 @@ public:
         IOLockLock(lock_);
         auto it = ranges_.find(handle);
         if (it != ranges_.end()) {
-            it->second.onRemoteWrite = std::move(callback);
+            ReplaceRemoteWriteCallbackLocked(it->second, std::move(callback));
         }
         IOLockUnlock(lock_);
     }
@@ -460,7 +477,7 @@ private:
         AddressRangeMeta meta{};
         void* owner{nullptr};
         std::vector<uint8_t> buffer;
-        RemoteWriteCallback onRemoteWrite;
+        std::shared_ptr<RemoteWriteCallbackSlot> remoteWriteSlot;
         std::array<char, kDebugLabelCapacity> debugLabel{};
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
@@ -507,6 +524,18 @@ private:
 
     static const char* DebugLabelCString(const AddressRange& range) {
         return range.debugLabel[0] != '\0' ? range.debugLabel.data() : "unlabeled";
+    }
+
+    static void ReplaceRemoteWriteCallbackLocked(AddressRange& range,
+                                                 RemoteWriteCallback callback) {
+        if (range.remoteWriteSlot) {
+            range.remoteWriteSlot->enabled.store(false, std::memory_order_release);
+            range.remoteWriteSlot.reset();
+        }
+        if (callback) {
+            range.remoteWriteSlot =
+                std::make_shared<RemoteWriteCallbackSlot>(std::move(callback));
+        }
     }
 
     AddressRange* FindRangeByAddressLocked(uint64_t address, uint32_t length) {
