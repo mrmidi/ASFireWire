@@ -152,6 +152,12 @@ public:
      */
     void Disable() noexcept;
 
+    /**
+     * @brief Refreshes evidence (e.g. root CMC status, CycleStart observed) that
+     * arrives after the topology has settled.
+     */
+    void OnRuntimeEvidenceUpdated(const BusManagerRuntimeState& bmState) noexcept;
+
     [[nodiscard]] const IRMFallbackSnapshot& Snapshot() const noexcept { return snapshot_; }
 
 private:

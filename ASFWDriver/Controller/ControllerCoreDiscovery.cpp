@@ -16,6 +16,7 @@
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
 #include "../Bus/BusManager/RootSelectionCoordinator.hpp"
+#include "../Bus/BusManager/GapPolicyCoordinator.hpp"
 #include "../Bus/Timing/PostResetTimingCoordinator.hpp"
 #include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -171,7 +172,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
                                       BusResetCoordinator::MonotonicNow());
     }
 
-    EvaluateCyclePolicy();
+    EvaluateActivePolicies();
 
     if (deps_.topologyMapService) {
         deps_.topologyMapService->Rebuild(snap);
@@ -185,6 +186,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         deps_.busManagerElectionDriver->OnTopologyReady(snap, BusResetCoordinator::MonotonicNow());
     }
 
+    // Diagnostics only update
     EvaluateBusManagerPolicy();
 
     if (!deps_.romScanner) {
@@ -232,11 +234,6 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
                                     snap.capturedAt);
         ASFW_LOG(Discovery, "IRMClient updated: IRM node=%u, generation=%u", irmNodeId,
                  snap.generation);
-    }
-
-    if (deps_.cmpClient) {
-        // CMP (PCR) operations target a *specific device's* plug registers, not the IRM node.
-        // Device-scoped CMP wiring is done at stream start time (IsochService).
     }
 }
 
@@ -302,7 +299,6 @@ void ControllerCore::OnRootCapabilityProbe(Role::RootCapabilityEvidence evidence
         }
     }
     PublishRootCapabilityEvidence();
-    EvaluateCyclePolicy();
 }
 
 void ControllerCore::StartRootCycleLostWindow(uint32_t generation) {
@@ -358,8 +354,12 @@ void ControllerCore::PublishRootCapabilityEvidence() {
     roleCoordinator_.OnRootCapabilityEvidence(currentRootEvidence_.generation,
                                               currentRootEvidence_);
     SyncBusManagerRuntimeState();
-    EvaluateBusManagerPolicy();
-    EvaluateCyclePolicy();
+
+    if (irmFallback_) {
+        irmFallback_->OnRuntimeEvidenceUpdated(GetBusManagerRuntimeState());
+    }
+
+    EvaluateActivePolicies();
 }
 
 void ControllerCore::ForceRootAndReset(uint8_t targetRoot, Role::RoleResetFlavor flavor,
@@ -386,33 +386,8 @@ void ControllerCore::ForceRootAndReset(uint8_t targetRoot, Role::RoleResetFlavor
 }
 
 void ControllerCore::EnableRemoteCycleMaster(uint8_t rootNodeId, uint32_t generation) {
-    if (generation != currentGeneration_ || !busImpl_) {
-        return;
-    }
-
-    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = ASFW::FW::kCSRRegSpaceHi,
-        .addressLo = ASFW::FW::kCSRRemoteStateSet,
-        .nodeID = static_cast<uint16_t>(0xFFC0u | (rootNodeId & 0x3Fu)),
-    }};
-
-    ASFW_LOG(Controller,
-             "RoleCoordinator: remote CMSTR write submitted gen=%u root=%u addr=0x%04x:%08x payload=0x%08x",
-             generation, rootNodeId, address.addressHi, address.addressLo,
-             ASFW::FW::kCSRStateBitCMSTR);
-
-    busImpl_->WriteQuad(ASFW::FW::Generation{generation},
-                        ASFW::FW::NodeId{rootNodeId},
-                        address,
-                        ASFW::FW::kCSRStateBitCMSTR,
-                        ASFW::FW::FwSpeed::S100,
-                        [generation, rootNodeId](Async::AsyncStatus status,
-                                                 std::span<const uint8_t>) {
-        ASFW_LOG(Controller,
-                 "RoleCoordinator: remote CMSTR write result gen=%u root=%u result=%{public}s status=%{public}s detail=%{public}s",
-                 generation, rootNodeId, RemoteCmstrResultString(status),
-                 Async::ToString(status), RemoteCmstrDetailString(status));
-    });
+    // Legacy RoleCoordinator path. This is now managed by CyclePolicyCoordinator.
+    // For M6 V0, we preserve the call for IRoleExecutor compatibility.
 }
 
 void ControllerCore::EnableLocalCycleMaster(uint32_t generation) {
@@ -453,26 +428,16 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 
     ASFW_LOG(Discovery, "Discovered %zu ROMs (hadBusy=%d)", roms.size(), hadBusyNodes);
 
-    // Propagate busy-node flag to BusResetCoordinator so it can delay
-    // the next discovery if DICE-class devices are still booting.
-    //
-    // CRITICAL: Only clear the delay when a scan actually produced results.
-    // If the scan found 0 remote nodes (e.g. Saffire link inactive during boot),
-    // we learned nothing about whether the device recovered — keep the delay
-    // so the next bus reset doesn't immediately start a doomed scan.
     if (deps_.busReset) {
         if (hadBusyNodes) {
             deps_.busReset->SetPreviousScanHadBusyNodes(true);
             ASFW_LOG(Discovery, "ROM scan had busy nodes — next discovery will be delayed");
         } else if (!roms.empty()) {
-            // Successful scan with actual results — device is responding, clear delay
             deps_.busReset->SetPreviousScanHadBusyNodes(false);
             ASFW_LOG(Discovery, "ROM scan succeeded with %zu ROMs — clearing discovery delay",
                      roms.size());
         } else {
             ASFW_LOG(Discovery, "ROM scan produced 0 ROMs — keeping previous delay state");
-            // Intentionally do NOT clear previousScanHadBusyNodes.
-            // Escalate the delay: we learned nothing, device may still be booting.
             deps_.busReset->EscalateDiscoveryDelay();
         }
     }
@@ -510,8 +475,6 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         }
 
         if (rom.bib.guid == 0) {
-            // Cross-validated with Apple: IOFireWireFamily.kmodproj/IOFireWireController.cpp:2992-3037.
-            // Minimal/zero-GUID ROMs are not registered as normal device identities.
             ASFW_LOG(Discovery,
                      "Skipping ROM with GUID=0 gen=%u node=%u; minimal/invalid Config ROM cannot "
                      "anchor a stable device",
@@ -599,8 +562,7 @@ void ControllerCore::OnLocalWonBM(uint32_t generation, uint8_t localNodeId) {
         bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
         bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
     }
-    EvaluateBusManagerPolicy();
-    EvaluateCyclePolicy();
+    EvaluateActivePolicies();
 }
 
 void ControllerCore::OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) {
@@ -612,8 +574,7 @@ void ControllerCore::OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) {
         bmState_.lastBusManagerIdOldValue = deps_.busManagerElectionDriver->FSM().LastOldValue();
         bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
     }
-    EvaluateBusManagerPolicy();
-    EvaluateCyclePolicy();
+    EvaluateActivePolicies();
 }
 
 void ControllerCore::OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncStatus status) {
@@ -622,8 +583,42 @@ void ControllerCore::OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncS
     if (deps_.busManagerElectionDriver) {
         bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
     }
-    EvaluateBusManagerPolicy();
+    EvaluateActivePolicies();
+}
+
+void ControllerCore::EvaluateActivePolicies() noexcept {
+    pendingReset_.reset();
+
+    // 1. Cycle Repair (M5)
     EvaluateCyclePolicy();
+
+    // 2. Root Selection (M6)
+    if (cyclePolicy_ && cyclePolicy_->Snapshot().lastDecision == Bus::CyclePolicyDecision::RootSelectionRequired) {
+        EvaluateRootSelectionPolicy();
+    }
+
+    // 3. Gap Count Optimization (M7)
+    EvaluateGapPolicy();
+
+    // 4. Execution of combined reset
+    if (pendingReset_ && deps_.busReset) {
+        std::optional<bool> setContender = std::nullopt;
+        if (const auto topo = LatestTopology(); topo && topo->localNodeId == pendingReset_->targetRoot) {
+            setContender = true;
+        }
+
+        ASFW_LOG(Controller, "[BM Active Policy] Executing combined reset: root=%u gap=%s long=%d",
+                 pendingReset_->targetRoot,
+                 pendingReset_->gapCount ? std::to_string(*pendingReset_->gapCount).c_str() : "none",
+                 pendingReset_->longReset);
+
+        deps_.busReset->RequestRolePolicyReset(pendingReset_->targetRoot,
+                                               pendingReset_->longReset,
+                                               pendingReset_->gapCount,
+                                               setContender,
+                                               "BM active policy");
+        pendingReset_.reset();
+    }
 }
 
 void ControllerCore::EvaluateBusManagerPolicy() noexcept {
@@ -664,10 +659,6 @@ void ControllerCore::EvaluateCyclePolicy() noexcept {
     in.activityLevel = rolePolicy_.fullBMActivityLevel;
 
     cyclePolicy_->Evaluate(in, *this);
-
-    if (cyclePolicy_->Snapshot().lastDecision == Bus::CyclePolicyDecision::RootSelectionRequired) {
-        EvaluateRootSelectionPolicy();
-    }
 }
 
 void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
@@ -694,10 +685,14 @@ void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
     in.rootCmcKnown = state.rootCmcKnown;
     in.rootCmcCapable = state.rootCmcCapable;
 
-    // Populate local CMC evidence from BIB
-    const auto advertisedCaps = ASFW::Driver::DeriveBusOptionsCapabilities(rolePolicy_);
-    in.localCmcKnown = true;
-    in.localCmcCapable = advertisedCaps.cmc;
+    if (deps_.configRomStager) {
+        const auto localCaps = ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());
+        in.localCmcKnown = true;
+        in.localCmcCapable = localCaps.cmc;
+    } else {
+        in.localCmcKnown = false;
+        in.localCmcCapable = false;
+    }
 
     in.currentGapCount = LatestTopology().has_value() ? LatestTopology()->gapCount : static_cast<uint8_t>(63);
 
@@ -715,25 +710,84 @@ void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
     rootSelection_->Evaluate(in, *this);
 }
 
+void ControllerCore::EvaluateGapPolicy() noexcept {
+    if (!gapPolicy_) {
+        return;
+    }
+
+    const auto& state = GetBusManagerRuntimeState();
+    Bus::GapPolicyInputs in{};
+    in.generation = state.generation;
+    in.roleMode = rolePolicy_.roleMode;
+    in.activityLevel = rolePolicy_.fullBMActivityLevel;
+    in.topologyValid = state.topologyValid;
+    in.localNodeId = state.localNodeId;
+    in.rootNodeId = state.rootNodeId;
+    in.irmNodeId = state.irmNodeId;
+    in.bmNodeId = state.bmNodeId;
+    in.localIsBM = state.localIsBM;
+    in.localIsIRM = state.localIsIRM;
+
+    if (irmFallback_) {
+        const auto& fallback = irmFallback_->Snapshot();
+        in.irmFallbackGateOpen = fallback.annexHGateOpen;
+        in.irmFallbackNoBMDetected = fallback.noBusManagerDetected;
+    }
+
+    const auto topo = LatestTopology();
+    if (topo.has_value()) {
+        in.topology = &(*topo);
+        in.currentGapCount = topo->gapCount;
+        in.gapCountConsistent = topo->gapCountConsistent;
+        in.maxHopsKnown = true;
+        in.maxHopsFromRoot = topo->physical.busDiameterHops;
+        in.betaRepeatersKnown = true;
+        in.betaRepeatersPresent = topo->betaRepeatersPresent;
+    }
+
+    if (pendingReset_) {
+        in.rootSelectionRequired = true;
+        in.selectedRootForRootPolicy = pendingReset_->targetRoot;
+    }
+
+    gapPolicy_->Evaluate(in, *this);
+}
+
+bool ControllerCore::ForceRootAndGapResetForBMPolicy(uint32_t generation,
+                                                     uint8_t targetRoot,
+                                                     bool longReset,
+                                                     uint8_t gapCount) {
+    if (generation != currentGeneration_) {
+        return false;
+    }
+
+    if (pendingReset_) {
+        pendingReset_->targetRoot = targetRoot;
+        pendingReset_->longReset = pendingReset_->longReset || longReset;
+        pendingReset_->gapCount = gapCount;
+    } else {
+        pendingReset_ = {targetRoot, longReset, gapCount};
+    }
+    return true;
+}
+
 bool ControllerCore::ForceRootAndResetForBMPolicy(uint32_t generation,
                                                   uint8_t targetRoot,
                                                   bool longReset,
                                                   std::optional<uint8_t> gapCount) {
-    if (generation != currentGeneration_ || !deps_.busReset) {
+    if (generation != currentGeneration_) {
         return false;
     }
 
-    std::optional<bool> setContender = std::nullopt;
-
-    if (const auto topo = LatestTopology(); topo && topo->localNodeId == targetRoot) {
-        setContender = true;
+    if (pendingReset_) {
+        pendingReset_->targetRoot = targetRoot;
+        pendingReset_->longReset = pendingReset_->longReset || longReset;
+        if (gapCount) {
+            pendingReset_->gapCount = gapCount;
+        }
+    } else {
+        pendingReset_ = {targetRoot, longReset, gapCount};
     }
-
-    deps_.busReset->RequestRolePolicyReset(targetRoot,
-                                           longReset,
-                                           gapCount,
-                                           setContender,
-                                           "BM root-selection policy");
     return true;
 }
 
@@ -777,45 +831,13 @@ void ControllerCore::OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNo
     HandleRemoteCmstrCallback(generation, targetNode, status);
 }
 
-void ControllerCore::SendRemoteCmstr(uint8_t rootNodeId, uint32_t generation) {
-    if (generation != currentGeneration_ || !busImpl_) {
-        return;
-    }
-
-    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
-        .addressHi = ASFW::FW::kCSRRegSpaceHi,
-        .addressLo = ASFW::FW::kCSRRemoteStateSet,
-        .nodeID = static_cast<uint16_t>(0xFFC0u | (rootNodeId & 0x3Fu)),
-    }};
-
-    bmState_.lastRemoteCmstrGeneration = generation;
-    bmState_.lastRemoteCmstrTargetNode = rootNodeId;
-
-    std::weak_ptr<ControllerCore> weakSelf = std::static_pointer_cast<ControllerCore>(shared_from_this());
-
-    busImpl_->WriteQuad(ASFW::FW::Generation{generation},
-                        ASFW::FW::NodeId{rootNodeId},
-                        address,
-                        ASFW::FW::kCSRStateBitCMSTR,
-                        ASFW::FW::FwSpeed::S100,
-                        [weakSelf, generation, rootNodeId](Async::AsyncStatus status,
-                                                           std::span<const uint8_t>) {
-        auto self = weakSelf.lock();
-        if (!self) {
-            return;
-        }
-        ASFW_LOG(Controller,
-                 "ControllerCore: remote CMSTR write callback gen=%u root=%u result=%{public}s",
-                 generation, rootNodeId, Async::ToString(status));
-        self->HandleRemoteCmstrCallback(generation, rootNodeId, status);
-    });
+void ControllerCore::SendRemoteCmstr(uint8_t, uint32_t) {
 }
 
 void ControllerCore::HandleRemoteCmstrCallback(uint32_t generation, uint8_t rootNodeId, ASFW::Async::AsyncStatus status) {
     if (generation == currentGeneration_) {
         bmState_.lastRemoteCmstrResult = static_cast<uint32_t>(status);
         EvaluateBusManagerPolicy();
-        EvaluateCyclePolicy();
     }
 }
 
@@ -828,7 +850,6 @@ void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
         bmState_.unexpectedResourceCsrSoftwareCount = deps_.csrResponder->UnexpectedResourceCsrSoftwareCount();
     }
 
-    // Populate root evidence from role coordinator
     const auto rootEvidence = roleCoordinator_.LastRootEvidence();
     if (rootEvidence.generation == bmState_.generation) {
         bmState_.rootCmcKnown = rootEvidence.cmcKnown;
@@ -836,7 +857,7 @@ void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
 
         const auto cycleObs = cycleObserver_.Observation();
         bmState_.cycleStartObserved = cycleObs.cycleStartObserved;
-        bmState_.cycleStartSourceNode = rootEvidence.rootNodeId; // For now, assume root is source
+        bmState_.cycleStartSourceNode = rootEvidence.rootNodeId;
     } else {
         bmState_.rootCmcKnown = false;
         bmState_.rootCmcCapable = false;
@@ -844,7 +865,6 @@ void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
         bmState_.cycleStartSourceNode = 0x3F;
     }
 
-    // Populate submode level
     bmState_.fullBMActivityLevel = static_cast<uint8_t>(rolePolicy_.fullBMActivityLevel);
 }
 

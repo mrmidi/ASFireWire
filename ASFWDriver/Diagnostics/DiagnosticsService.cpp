@@ -5,6 +5,9 @@
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
+#include "../Bus/BusManager/RootSelectionCoordinator.hpp"
+#include "../Bus/BusManager/GapPolicyCoordinator.hpp"
 #include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../Common/CSRSpace.hpp"
 #include "../Controller/ControllerConfig.hpp"
@@ -741,6 +744,27 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->rootSelectionResetRequested = snap.resetRequested ? 1 : 0;
         out->rootSelectionCurrentGap = snap.currentGapCount;
         out->rootSelectionRequestedGap = snap.requestedGapCount;
+    }
+
+    if (auto* const gap = controller_->GetGapPolicyCoordinator()) {
+        auto snap = gap->Snapshot();
+        out->gapPolicyDecision = static_cast<uint32_t>(snap.lastDecision);
+        out->gapPolicyAction = static_cast<uint32_t>(snap.lastAction);
+        out->gapPolicyCurrentGap = snap.currentGapCount;
+        out->gapPolicyExpectedGap = snap.expectedGapCount;
+        out->gapPolicyRequestedGap = snap.requestedGapCount;
+        out->gapPolicyComputationSource = static_cast<uint32_t>(snap.computationSource);
+        out->gapPolicyMaxHops = snap.maxHopsFromRoot;
+        out->gapPolicyMaxHopsKnown = snap.maxHopsKnown ? 1 : 0;
+        out->gapPolicyGapConsistent = snap.gapCountConsistent ? 1 : 0;
+        out->gapPolicyBetaKnown = snap.betaRepeatersKnown ? 1 : 0;
+        out->gapPolicyBetaPresent = snap.betaRepeatersPresent ? 1 : 0;
+        out->gapPolicyResetRequested = snap.resetRequested ? 1 : 0;
+        out->gapPolicyCombinedWithRootSelection = snap.combinedWithRootSelection ? 1 : 0;
+        out->gapPolicyTargetRoot = snap.targetRoot;
+        out->gapPolicyAttemptsThisTopology = snap.attemptsThisTopology;
+        out->gapPolicyTotalAttempts = snap.totalAttempts;
+        out->gapPolicyRetryLimitHit = snap.retryLimitHit;
     }
 
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;

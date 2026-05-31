@@ -393,6 +393,25 @@ typedef struct ASFWDiagBusManager {
     uint32_t rootSelectionCurrentGap;
     uint32_t rootSelectionRequestedGap;
 
+    // Milestone 7: Gap Count Policy
+    uint32_t gapPolicyDecision;
+    uint32_t gapPolicyAction;
+    uint32_t gapPolicyCurrentGap;
+    uint32_t gapPolicyExpectedGap;
+    uint32_t gapPolicyRequestedGap;
+    uint32_t gapPolicyComputationSource;
+    uint32_t gapPolicyMaxHops;
+    uint32_t gapPolicyMaxHopsKnown;
+    uint32_t gapPolicyGapConsistent;
+    uint32_t gapPolicyBetaKnown;
+    uint32_t gapPolicyBetaPresent;
+    uint32_t gapPolicyResetRequested;
+    uint32_t gapPolicyCombinedWithRootSelection;
+    uint32_t gapPolicyTargetRoot;
+    uint32_t gapPolicyAttemptsThisTopology;
+    uint32_t gapPolicyTotalAttempts;
+    uint32_t gapPolicyRetryLimitHit;
+
     uint32_t reserved[1];
 } ASFWDiagBusManager;
 

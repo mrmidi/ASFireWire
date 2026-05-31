@@ -121,6 +121,22 @@ SelfIDTopologyNormalizer::BuildPhysicalGraph(const std::vector<SelfIDNodeRecord>
 
     graph.busDiameterHops = ComputeBusDiameter(graph);
 
+    // IEEE 1394b-2002: detect beta repeaters.
+    for (const auto& node : graph.nodes) {
+        if (node.speedCode == 3) { // SCODE_BETA
+            uint32_t activePorts = 0;
+            for (const auto& state : node.reportedPorts) {
+                if (state == PortState::Parent || state == PortState::Child) {
+                    activePorts++;
+                }
+            }
+            if (activePorts > 1) {
+                graph.betaRepeatersPresent = true;
+                break;
+            }
+        }
+    }
+
     return graph;
 }
 

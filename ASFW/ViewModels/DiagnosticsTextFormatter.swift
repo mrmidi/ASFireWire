@@ -661,7 +661,73 @@ struct DiagnosticsTextFormatter {
         appendRow("Total Attempts", snapshot.busManager.rootSelectionTotalAttempts)
         appendRow("Reset Requested", snapshot.busManager.rootSelectionResetRequested != 0 ? "Yes" : "No")
         appendRow("Current Gap Count", snapshot.busManager.rootSelectionCurrentGap)
-        appendRow("Requested Gap Count", "unchanged (M7 owns optimization)")
+        appendRow("Requested Gap Count", "preserve current gap")
+        appendRow("Gap Optimization", "disabled; M7 owns optimization")
+
+        // --- Milestone 7: Gap Count Policy ---
+        appendTitle("Gap Count Policy (Milestone 7)")
+        
+        let gapDecisionStr: String
+        switch snapshot.busManager.gapPolicyDecision {
+        case 0: gapDecisionStr = "None"
+        case 1: gapDecisionStr = "SuppressedByRoleMode"
+        case 2: gapDecisionStr = "SuppressedByActivityLevel"
+        case 3: gapDecisionStr = "SuppressedByTopology"
+        case 4: gapDecisionStr = "SuppressedNotBMOrFallbackIRM"
+        case 5: gapDecisionStr = "SuppressedSingleNodeBus"
+        case 6: gapDecisionStr = "DeferMaxHopsUnavailable"
+        case 7: gapDecisionStr = "DeferBetaRepeaterUnknown"
+        case 8: gapDecisionStr = "AlreadyOptimal"
+        case 9: gapDecisionStr = "GapMismatchRequiresLongReset"
+        case 10: gapDecisionStr = "GapOptimizationRequired"
+        case 11: gapDecisionStr = "FailedRetryLimit"
+        case 12: gapDecisionStr = "FailedExecutorUnavailable"
+        case 13: gapDecisionStr = "FailedGenerationStale"
+        default: gapDecisionStr = "Unknown (\(snapshot.busManager.gapPolicyDecision))"
+        }
+        appendRow("Decision", gapDecisionStr)
+        
+        let gapActionStr: String
+        switch snapshot.busManager.gapPolicyAction {
+        case 0: gapActionStr = "None"
+        case 1: gapActionStr = "ReportOnly"
+        case 2: gapActionStr = "ForceRootWithGapAndShortReset"
+        case 3: gapActionStr = "ForceRootWithGapAndLongReset"
+        case 4: gapActionStr = "GapOnlyShortReset"
+        case 5: gapActionStr = "GapOnlyLongReset"
+        default: gapActionStr = "Unknown (\(snapshot.busManager.gapPolicyAction))"
+        }
+        appendRow("Action", gapActionStr)
+        
+        appendRow("Current Gap", snapshot.busManager.gapPolicyCurrentGap)
+        appendRow("Expected Gap", snapshot.busManager.gapPolicyExpectedGap)
+        appendRow("Requested Gap", snapshot.busManager.gapPolicyRequestedGap)
+        
+        let gapSourceStr: String
+        switch snapshot.busManager.gapPolicyComputationSource {
+        case 0: gapSourceStr = "None"
+        case 1: gapSourceStr = "1394a table (max hops)"
+        case 2: gapSourceStr = "Default safe 63"
+        case 3: gapSourceStr = "Existing gap preserved"
+        default: gapSourceStr = "Unknown"
+        }
+        appendRow("Computation Source", gapSourceStr)
+        
+        appendRow("Max Hops From Root", snapshot.busManager.gapPolicyMaxHopsKnown != 0 ? "\(snapshot.busManager.gapPolicyMaxHops)" : "unknown")
+        appendRow("Gap Count Consistent", snapshot.busManager.gapPolicyGapConsistent != 0 ? "Yes" : "No")
+        
+        let betaStr: String
+        if snapshot.busManager.gapPolicyBetaKnown == 0 {
+            betaStr = "Unknown"
+        } else {
+            betaStr = snapshot.busManager.gapPolicyBetaPresent != 0 ? "Known Yes" : "Known No"
+        }
+        appendRow("Beta Repeaters", betaStr)
+        
+        appendRow("Target Root", "node \(snapshot.busManager.gapPolicyTargetRoot)")
+        appendRow("Combined with M6", snapshot.busManager.gapPolicyCombinedWithRootSelection != 0 ? "Yes" : "No")
+        appendRow("Attempts This Topology", "\(snapshot.busManager.gapPolicyAttemptsThisTopology) / 5")
+        appendRow("Reset Requested", snapshot.busManager.gapPolicyResetRequested != 0 ? "Yes" : "No")
 
         // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
         // Generation-scoped gates anchored to Self-ID completion. Reporting only:
