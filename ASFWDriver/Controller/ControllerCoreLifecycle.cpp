@@ -355,6 +355,9 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
     cyclePolicy_ = std::make_unique<Bus::CyclePolicyCoordinator>();
     ASFW_LOG(Controller, "✅ CyclePolicyCoordinator created");
 
+    rootSelection_ = std::make_unique<Bus::RootSelectionCoordinator>(Bus::RootSelectionConfig{});
+    ASFW_LOG(Controller, "✅ RootSelectionCoordinator created");
+
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);

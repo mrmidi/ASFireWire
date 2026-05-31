@@ -2032,6 +2032,28 @@ target_include_directories(CyclePolicyExecutorTests PRIVATE ${ASFW_COMMON_INCLUD
 
 gtest_discover_tests(CyclePolicyExecutorTests)
 
+# Root Selection Coordinator Tests (Milestone 6)
+add_executable(RootSelectionCoordinatorTests
+    "${ASFW_TESTS_DIR}/RootSelectionCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager/RootSelectionCoordinator.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(RootSelectionCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(RootSelectionCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(RootSelectionCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(RootSelectionCoordinatorTests)
+
 # Post-Reset Timing Core (Milestone 2) - generation-scoped post-reset timing gates
 add_executable(PostResetTimingTests
     "${ASFW_TESTS_DIR}/PostResetTimingTests.cpp"

@@ -69,6 +69,9 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         if (cyclePolicy_) {
             cyclePolicy_->OnBusResetStarted(generation);
         }
+        if (rootSelection_) {
+            rootSelection_->OnBusResetStarted(generation);
+        }
     }
     DispatchAsyncInterrupts(events);
     LogBusResetCompletionEvents(events, snapshot.timestamp);

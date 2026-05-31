@@ -610,6 +610,48 @@ struct DiagnosticsTextFormatter {
         appendRow("Remote Submit Count", snapshot.busManager.cyclePolicyRemoteSubmitCount)
         appendRow("Cycle Master Policy", "Active. Root/gap policy disabled.")
 
+        // --- Milestone 6: Root Selection / Force-Root Policy ---
+        appendTitle("Root Selection / Force-Root Policy (Milestone 6)")
+        
+        let rootDecisionStr: String
+        switch snapshot.busManager.rootSelectionDecision {
+        case 0: rootDecisionStr = "None"
+        case 1: rootDecisionStr = "SuppressedByRoleMode"
+        case 2: rootDecisionStr = "SuppressedByActivityLevel"
+        case 3: rootDecisionStr = "SuppressedByTopology"
+        case 4: rootDecisionStr = "SuppressedNotBMOrFallbackIRM"
+        case 5: rootDecisionStr = "SuppressedCycleAlreadyObserved"
+        case 6: rootDecisionStr = "SuppressedRootAlreadySuitable"
+        case 7: rootDecisionStr = "DeferredRootEvidenceIncomplete"
+        case 8: rootDecisionStr = "DeferredCandidateEvidenceIncomplete"
+        case 9: rootDecisionStr = "SelectLocalRoot"
+        case 10: rootDecisionStr = "SelectRemoteRoot"
+        case 11: rootDecisionStr = "FailedNoCandidate"
+        case 12: rootDecisionStr = "FailedRetryLimit"
+        case 13: rootDecisionStr = "FailedGenerationStale"
+        case 14: rootDecisionStr = "FailedExecutorUnavailable"
+        default: rootDecisionStr = "Unknown (\(snapshot.busManager.rootSelectionDecision))"
+        }
+        appendRow("Decision", rootDecisionStr)
+        
+        let rootActionStr: String
+        switch snapshot.busManager.rootSelectionAction {
+        case 0: rootActionStr = "None"
+        case 1: rootActionStr = "ForceRootAndShortReset"
+        case 2: rootActionStr = "ForceRootAndLongReset"
+        case 3: rootActionStr = "ReportOnly"
+        default: rootActionStr = "Unknown (\(snapshot.busManager.rootSelectionAction))"
+        }
+        appendRow("Action", rootActionStr)
+        
+        appendRow("Previous Root", snapshot.busManager.rootSelectionPreviousRoot == 0x3F ? "none" : "node \(snapshot.busManager.rootSelectionPreviousRoot)")
+        appendRow("Selected Root", snapshot.busManager.rootSelectionSelectedRoot == 0x3F ? "none" : "node \(snapshot.busManager.rootSelectionSelectedRoot)")
+        appendRow("Reason", "current root CMC=false, no cycle start")
+        appendRow("Attempts This Topology", "\(snapshot.busManager.rootSelectionAttemptsThisTopology) / 5")
+        appendRow("Total Attempts", snapshot.busManager.rootSelectionTotalAttempts)
+        appendRow("Reset Requested", snapshot.busManager.rootSelectionResetRequested != 0 ? "Yes" : "No")
+        appendRow("Gap Policy", "unchanged, M7 owns optimization")
+
         // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
         // Generation-scoped gates anchored to Self-ID completion. Reporting only:
         // the driver takes no bus action from these gates in this milestone, so an

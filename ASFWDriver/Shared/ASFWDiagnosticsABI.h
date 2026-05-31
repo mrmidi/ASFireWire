@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 6u
+#define ASFW_DIAG_ABI_VERSION 8u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -380,6 +380,18 @@ typedef struct ASFWDiagBusManager {
     uint32_t cyclePolicyRemoteCmstrStatus;
     uint32_t cyclePolicyLocalEnableCount;
     uint32_t cyclePolicyRemoteSubmitCount;
+
+    // Milestone 6: Root Selection Policy
+    uint32_t rootSelectionDecision;
+    uint32_t rootSelectionAction;
+    uint32_t rootSelectionSelectedRoot;
+    uint32_t rootSelectionPreviousRoot;
+    uint32_t rootSelectionAttemptsThisTopology;
+    uint32_t rootSelectionTotalAttempts;
+    uint32_t rootSelectionRetryLimitHit;
+    uint32_t rootSelectionResetRequested;
+    uint32_t rootSelectionCurrentGap;
+    uint32_t rootSelectionRequestedGap;
 
     uint32_t reserved[1];
 } ASFWDiagBusManager;

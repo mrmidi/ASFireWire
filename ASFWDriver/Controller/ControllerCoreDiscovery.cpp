@@ -15,6 +15,7 @@
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
+#include "../Bus/BusManager/RootSelectionCoordinator.hpp"
 #include "../Bus/Timing/PostResetTimingCoordinator.hpp"
 #include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -664,6 +665,71 @@ void ControllerCore::EvaluateCyclePolicy() noexcept {
     in.activityLevel = rolePolicy_.fullBMActivityLevel;
 
     cyclePolicy_->Evaluate(in, *this);
+
+    if (cyclePolicy_->Snapshot().lastDecision == Bus::CyclePolicyDecision::RootSelectionRequired) {
+        EvaluateRootSelectionPolicy();
+    }
+}
+
+void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
+    if (!rootSelection_) {
+        return;
+    }
+
+    const auto& state = GetBusManagerRuntimeState();
+
+    Bus::RootSelectionInputs in{};
+    in.generation = state.generation;
+    in.busBase16 = state.busBase16;
+    in.roleMode = rolePolicy_.roleMode;
+    in.activityLevel = rolePolicy_.fullBMActivityLevel;
+    in.topologyValid = state.topologyValid;
+    in.localNodeId = state.localNodeId;
+    in.rootNodeId = state.rootNodeId;
+    in.irmNodeId = state.irmNodeId;
+    in.bmNodeId = state.bmNodeId;
+    in.localIsRoot = state.localIsRoot;
+    in.localIsIRM = state.localIsIRM;
+    in.localIsBM = state.localIsBM;
+    in.cycleStartObserved = state.cycleStartObserved;
+    in.rootCmcKnown = state.rootCmcKnown;
+    in.rootCmcCapable = state.rootCmcCapable;
+    in.currentGapCount = LatestTopology().has_value() ? LatestTopology()->gapCount : static_cast<uint8_t>(63);
+
+    if (irmFallback_) {
+        const auto& fallback = irmFallback_->Snapshot();
+        in.irmFallbackGateOpen = fallback.annexHGateOpen;
+        in.irmFallbackNoBMDetected = fallback.noBusManagerDetected;
+    }
+
+    const auto topo = LatestTopology();
+    if (topo.has_value()) {
+        in.topology = &(*topo);
+    }
+
+    rootSelection_->Evaluate(in, *this);
+}
+
+bool ControllerCore::ForceRootAndResetForBMPolicy(uint32_t generation,
+                                                  uint8_t targetRoot,
+                                                  bool longReset,
+                                                  std::optional<uint8_t> gapCount) {
+    if (generation != currentGeneration_ || !deps_.busReset) {
+        return false;
+    }
+
+    std::optional<bool> setContender = std::nullopt;
+
+    if (const auto topo = LatestTopology(); topo && topo->localNodeId == targetRoot) {
+        setContender = true;
+    }
+
+    deps_.busReset->RequestRolePolicyReset(targetRoot,
+                                           longReset,
+                                           gapCount,
+                                           setContender,
+                                           "BM root-selection policy");
+    return true;
 }
 
 bool ControllerCore::EnableLocalCycleMasterMutation(uint32_t generation) {

@@ -43,6 +43,7 @@ class TopologyMapService;
 class BroadcastChannelCSR;
 class IRMFallbackCoordinator;
 class CyclePolicyCoordinator;
+class RootSelectionCoordinator;
 class BusManagerElectionDriver;
 class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
@@ -98,6 +99,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              public ASFW::Bus::BusManagerElectionDriver::IBMRoleEvents,
                              public ASFW::Bus::IBMPolicyExecutor,
                              public ASFW::Bus::ICyclePolicyExecutor,
+                             public ASFW::Bus::IRootSelectionExecutor,
                              public std::enable_shared_from_this<ControllerCore> {
   public:
     struct Dependencies {
@@ -215,6 +217,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
     Bus::IRMFallbackCoordinator* GetIRMFallbackCoordinator() const { return irmFallback_.get(); }
     Bus::CyclePolicyCoordinator* GetCyclePolicyCoordinator() const { return cyclePolicy_.get(); }
+    Bus::RootSelectionCoordinator* GetRootSelectionCoordinator() const { return rootSelection_.get(); }
     Bus::BroadcastChannelCSR* GetBroadcastChannel() const { return broadcastChannel_.get(); }
 
   private:
@@ -237,6 +240,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void HandleCycle64Seconds(); // Called on cycle64Seconds interrupt to extend 7-bit seconds
     void EvaluateBusManagerPolicy() noexcept;
     void EvaluateCyclePolicy() noexcept;
+    void EvaluateRootSelectionPolicy() noexcept;
 
     // Async completion callbacks
     void OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,
@@ -270,6 +274,12 @@ class ControllerCore final : private Role::IPhyConfigReset,
     bool EnableLocalCycleMasterMutation(uint32_t generation) override;
     Async::AsyncHandle WriteRemoteStateSetCmstr(uint32_t generation, uint16_t busBase16,
                                                 uint8_t targetNodeId) override;
+
+    // ASFW::Bus::IRootSelectionExecutor implementation
+    bool ForceRootAndResetForBMPolicy(uint32_t generation,
+                                      uint8_t targetRoot,
+                                      bool longReset,
+                                      std::optional<uint8_t> gapCount) override;
 
     void SyncBusManagerRuntimeState() const noexcept;
 
@@ -311,6 +321,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::unique_ptr<Bus::LocalIRMResourceController> localIrmController_;
     std::shared_ptr<Bus::IRMFallbackCoordinator> irmFallback_;
     std::unique_ptr<Bus::CyclePolicyCoordinator> cyclePolicy_;
+    std::unique_ptr<Bus::RootSelectionCoordinator> rootSelection_;
 };
 
 } // namespace ASFW::Driver
