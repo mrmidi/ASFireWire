@@ -487,12 +487,46 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
 
     std::unordered_set<uint64_t> discoveredGuids;
     discoveredGuids.reserve(roms.size());
+    std::unordered_set<uint64_t> seenGuids;
+    std::unordered_set<uint64_t> duplicateGuids;
+    seenGuids.reserve(roms.size());
+    duplicateGuids.reserve(roms.size());
+
+    for (const auto& rom : roms) {
+        if (rom.bib.guid == 0) {
+            continue;
+        }
+        if (!seenGuids.insert(rom.bib.guid).second) {
+            duplicateGuids.insert(rom.bib.guid);
+        }
+    }
 
     for (const auto& rom : roms) {
         const auto nodeId = ASFW::Discovery::TryOperationalNodeId(rom.nodeId);
         if (!nodeId.has_value()) {
             ASFW_LOG(Discovery, "Skipping ROM with invalid nodeId=%u gen=%u during discovery",
                      rom.nodeId, rom.gen.value);
+            continue;
+        }
+
+        if (rom.bib.guid == 0) {
+            // Cross-validated with Apple: IOFireWireFamily.kmodproj/IOFireWireController.cpp:2992-3037.
+            // Minimal/zero-GUID ROMs are not registered as normal device identities.
+            ASFW_LOG(Discovery,
+                     "Skipping ROM with GUID=0 gen=%u node=%u; minimal/invalid Config ROM cannot "
+                     "anchor a stable device",
+                     rom.gen.value,
+                     rom.nodeId);
+            continue;
+        }
+
+        if (duplicateGuids.contains(rom.bib.guid)) {
+            ASFW_LOG(Discovery,
+                     "Skipping duplicate GUID=0x%016llx gen=%u node=%u during discovery",
+                     rom.bib.guid,
+                     rom.gen.value,
+                     rom.nodeId);
+            deps_.deviceRegistry->MarkDuplicateGuid(gen, rom.bib.guid, *nodeId);
             continue;
         }
 

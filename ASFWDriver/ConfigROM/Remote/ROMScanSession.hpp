@@ -65,9 +65,9 @@ class ROMScanSession final : public std::enable_shared_from_this<ROMScanSession>
     void NotifyRootBIBFailure(uint8_t nodeId, Driver::Role::RootBibReadStatus status);
     [[nodiscard]] static Driver::Role::RootBibReadStatus MapBIBFailureStatus(
         Async::AsyncStatus status) noexcept;
-    [[nodiscard]] bool ShouldDelayMinimalROMCompletion(const ROMScanNodeStateMachine& node) const;
-    void ScheduleMinimalROMRetry(ROMScanNodeStateMachine& node);
-    void CompleteMinimalROM(ROMScanNodeStateMachine& node, const char* reason);
+    [[nodiscard]] bool ShouldDelayConfigROMReadyRetry(const ROMScanNodeStateMachine& node) const;
+    void ScheduleConfigROMReadyRetry(ROMScanNodeStateMachine& node, const char* reason);
+    void CompleteUnsupportedMinimalROM(ROMScanNodeStateMachine& node);
 
     void StartIRMRead(ROMScanNodeStateMachine& node);
     void HandleIRMReadComplete(uint8_t nodeId, bool success, uint32_t valueHostOrder);

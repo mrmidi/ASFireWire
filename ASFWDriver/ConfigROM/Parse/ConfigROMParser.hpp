@@ -66,11 +66,13 @@ class ConfigROMParser {
     /**
      * @brief Parses a Bus Information Block from BIG-ENDIAN wire format quadlets.
      *
-     * Extracts fields defined in IEEE 1394-1995 §8.3.2.5, including the GUID,
-     * max_rec, and bus capabilities. CRC-16 is computed when checkable and
-     * returned as CRCStatus (CRC mismatch is warning-only).
+     * Extracts fields defined in IEEE 1212 / IEEE 1394. A true minimal ROM
+     * (`bus_info_length == 1`) is q0-only and has no IEEE 1394 GUID/options.
+     * A general IEEE 1394 ROM must provide the full Bus Info Block advertised
+     * by q0. CRC-16 is computed when checkable and returned as CRCStatus (CRC
+     * mismatch is warning-only).
      *
-     * @param bibQuadletsBE Span of quadlets in big-endian byte order (at least 5 quadlets).
+     * @param bibQuadletsBE Span of quadlets in big-endian byte order.
      * @return Parsed bib + CRC status on success, or an Error on failure.
      */
     [[nodiscard]] static std::expected<BIBParseResult, Error>
@@ -115,14 +117,15 @@ class ConfigROMParser {
     ParseTextDescriptorLeaf(std::span<const uint32_t> allQuadletsBE, uint32_t leafOffsetQuadlets);
 
     /**
-     * @brief Calculates total Config ROM size in bytes based on the BIB crc_length.
+     * @brief Calculates the q0-advertised CRC coverage prefix size in bytes.
      *
-     * Result is clamped to ASFW::ConfigROM::kMaxROMBytes.
+     * This is not the total Config ROM size. IEEE 1212 `crc_length` describes
+     * CRC coverage only; directory reads must still follow directory headers.
      *
      * @param bib The parsed Bus Information Block.
-     * @return The length of the ROM in bytes.
+     * @return The CRC-covered prefix length in bytes, including q0.
      */
-    static uint32_t CalculateROMSize(const BusInfoBlock& bib);
+    static uint32_t CalculateCRCCoverageBytes(const BusInfoBlock& bib);
 
   private:
     static uint16_t CRCStep(uint16_t crc, uint16_t data);

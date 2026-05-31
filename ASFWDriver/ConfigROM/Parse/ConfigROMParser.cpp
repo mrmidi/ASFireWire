@@ -6,11 +6,21 @@
 #include "../Common/ConfigROMConstants.hpp"
 
 #include <algorithm>
-#include <array>
 
 #include <DriverKit/DriverKit.h>
 
 namespace ASFW::Discovery {
+
+namespace {
+
+constexpr uint8_t kMinimal1212BusInfoLength = 1;
+constexpr uint8_t kGeneral1394MinBusInfoLength = 4;
+
+[[nodiscard]] uint32_t ReadBEQuadlet(std::span<const uint32_t> quadletsBE, size_t index) {
+    return OSSwapBigToHostInt32(quadletsBE[index]);
+}
+
+} // namespace
 
 uint16_t ConfigROMParser::CRCStep(uint16_t crc, uint16_t data) {
     crc = static_cast<uint16_t>(crc ^ data);
@@ -168,15 +178,11 @@ void ConfigROMParser::AppendRecognizedEntry(std::vector<RomEntry>& entries, uint
 
 std::expected<ConfigROMParser::BIBParseResult, ConfigROMParser::Error>
 ConfigROMParser::ParseBIB(std::span<const uint32_t> bibQuadletsBE) {
-    if (bibQuadletsBE.size() < ASFW::ConfigROM::kBIBQuadletCount) {
+    if (bibQuadletsBE.empty()) {
         return std::unexpected(Error{.code = ErrorCode::TooShort, .offsetQuadlets = 0});
     }
 
-    const uint32_t q0 = OSSwapBigToHostInt32(bibQuadletsBE[0]);
-    const uint32_t q1 = OSSwapBigToHostInt32(bibQuadletsBE[1]);
-    const uint32_t q2 = OSSwapBigToHostInt32(bibQuadletsBE[2]);
-    const uint32_t q3 = OSSwapBigToHostInt32(bibQuadletsBE[3]);
-    const uint32_t q4 = OSSwapBigToHostInt32(bibQuadletsBE[4]);
+    const uint32_t q0 = ReadBEQuadlet(bibQuadletsBE, 0);
 
     BusInfoBlock bib{};
 
@@ -184,6 +190,42 @@ ConfigROMParser::ParseBIB(std::span<const uint32_t> bibQuadletsBE) {
     bib.crcLength = static_cast<uint8_t>((q0 >> 16) & 0xFF);
     bib.crc = static_cast<uint16_t>(q0 & 0xFFFF);
 
+    // Cross-validated with Apple: IOFireWireFamily.kmodproj/IOFireWireController.cpp:2805-2818.
+    // Apple treats bus_info_length==1 as a q0-only minimal ROM; otherwise it
+    // synthesizes the fixed "1394" q1 and continues with the general BIB.
+    if (bib.busInfoLength == kMinimal1212BusInfoLength) {
+        bib.format = ConfigROMFormat::Minimal1212;
+
+        BIBParseResult out{};
+        out.bib = bib;
+        out.crcStatus = CRCStatus::NotCheckable;
+        return out;
+    }
+
+    if (bib.busInfoLength < kGeneral1394MinBusInfoLength) {
+        return std::unexpected(Error{.code = ErrorCode::InvalidHeader, .offsetQuadlets = 0});
+    }
+
+    if (bib.crcLength != 0 && bib.crcLength < bib.busInfoLength) {
+        return std::unexpected(Error{.code = ErrorCode::InvalidHeader, .offsetQuadlets = 0});
+    }
+
+    const size_t requiredQuadlets = static_cast<size_t>(bib.busInfoLength) + 1U;
+    if (bibQuadletsBE.size() < requiredQuadlets) {
+        return std::unexpected(Error{.code = ErrorCode::TooShort,
+                                     .offsetQuadlets = static_cast<uint32_t>(bibQuadletsBE.size())});
+    }
+
+    const uint32_t q1 = ReadBEQuadlet(bibQuadletsBE, 1);
+    const uint32_t q2 = ReadBEQuadlet(bibQuadletsBE, 2);
+    const uint32_t q3 = ReadBEQuadlet(bibQuadletsBE, 3);
+    const uint32_t q4 = ReadBEQuadlet(bibQuadletsBE, 4);
+
+    if (q1 != ASFW::FW::kBusNameQuadlet) {
+        return std::unexpected(Error{.code = ErrorCode::InvalidHeader, .offsetQuadlets = 1});
+    }
+
+    bib.format = ConfigROMFormat::General1394;
     bib.irmc = ((q2 >> 31) & 0x1) != 0;
     bib.cmc = ((q2 >> 30) & 0x1) != 0;
     bib.isc = ((q2 >> 29) & 0x1) != 0;
@@ -206,14 +248,19 @@ ConfigROMParser::ParseBIB(std::span<const uint32_t> bibQuadletsBE) {
         return out;
     }
 
-    if (bib.crcLength > 4) {
+    const size_t crcQuadlets = static_cast<size_t>(bib.crcLength);
+    if (crcQuadlets > bibQuadletsBE.size() - 1U) {
         out.crcStatus = CRCStatus::NotCheckable;
         return out;
     }
 
-    const std::array<uint32_t, 4> bibAfterHeader{q1, q2, q3, q4};
-    const auto crcSpan =
-        std::span<const uint32_t>(bibAfterHeader.data(), static_cast<size_t>(bib.crcLength));
+    std::vector<uint32_t> crcInput;
+    crcInput.reserve(crcQuadlets);
+    for (size_t i = 1; i <= crcQuadlets; ++i) {
+        crcInput.push_back(ReadBEQuadlet(bibQuadletsBE, i));
+    }
+
+    const auto crcSpan = std::span<const uint32_t>(crcInput.data(), crcInput.size());
     const uint16_t computed = ConfigROMParser::ComputeCRC16_1212(crcSpan);
 
     out.computed = computed;
@@ -360,17 +407,17 @@ ConfigROMParser::ParseTextDescriptorLeaf(std::span<const uint32_t> allQuadletsBE
     return text;
 }
 
-uint32_t ConfigROMParser::CalculateROMSize(const BusInfoBlock& bib) {
+uint32_t ConfigROMParser::CalculateCRCCoverageBytes(const BusInfoBlock& bib) {
     uint32_t totalQuadlets = static_cast<uint32_t>(bib.crcLength) + 1;
     uint32_t totalBytes = totalQuadlets * 4;
 
     if (totalBytes > ASFW::ConfigROM::kMaxROMBytes) {
-        ASFW_LOG_V1(ConfigROM, "⚠️  ROM size %u exceeds IEEE 1394 max (%u), clamping", totalBytes,
+        ASFW_LOG_V1(ConfigROM, "CRC coverage %u exceeds IEEE 1394 max (%u), clamping", totalBytes,
                     ASFW::ConfigROM::kMaxROMBytes);
         totalBytes = ASFW::ConfigROM::kMaxROMBytes;
     }
 
-    ASFW_LOG_V2(ConfigROM, "Calculated ROM size from BIB: crcLength=%u → %u bytes (%u quadlets)",
+    ASFW_LOG_V2(ConfigROM, "Calculated CRC coverage from BIB: crcLength=%u -> %u bytes (%u quadlets)",
                 bib.crcLength, totalBytes, totalBytes / 4);
 
     return totalBytes;

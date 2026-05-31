@@ -28,7 +28,7 @@ constexpr uint16_t ClampHeaderFirstEntryCount(uint16_t entryCount) noexcept {
     return entryCount;
 }
 
-constexpr uint32_t BusNameQuadletHostOrder() noexcept {
+constexpr uint32_t BusNameQuadletWireOrder() noexcept {
     if constexpr (std::endian::native == std::endian::little) {
         return std::byteswap(ASFW::FW::kBusNameQuadlet);
     }
@@ -260,6 +260,9 @@ void ROMReader::ReadBIB(uint8_t nodeId, Generation generation, FwSpeed speed,
     auto dispatchQueue = dispatchQueue_;
     auto completionHolder = std::make_shared<CompletionCallback>(std::move(callback));
 
+    // Cross-validated with Linux: firewire/core-device.c:596 and
+    // Apple: IOFireWireFamily.kmodproj/IOFireWireController.cpp:2805.
+    // Read q0 first so q0==0/minimal headers are visible without probing q2-q4.
     ReadQuadletsBEImpl(
         *bus, dispatchQueue, nodeId, generation, speed,
         /*offsetBytes=*/0,
@@ -280,25 +283,40 @@ void ROMReader::ReadBIB(uint8_t nodeId, Generation generation, FwSpeed speed,
                 return;
             }
 
-            const uint32_t q1Host = BusNameQuadletHostOrder();
+            const uint32_t q0Host = OSSwapBigToHostInt32(q0.quadletsBE[0]);
+            const uint8_t busInfoLength = static_cast<uint8_t>((q0Host >> 24) & 0xFFU);
 
+            if (q0Host == 0 || busInfoLength < 4U) {
+                q0.address = FW::ConfigROMAddr::kAddressLo;
+                q0.status = Async::AsyncStatus::kSuccess;
+                (*completionHolder)(std::move(q0));
+                return;
+            }
+
+            const uint32_t q1Wire = BusNameQuadletWireOrder();
+            const uint32_t trailingBIBQuadlets = static_cast<uint32_t>(busInfoLength) - 1U;
+
+            // Cross-validated with Apple:
+            // IOFireWireFamily.kmodproj/IOFireWireController.cpp:2816-2824.
+            // q1 is the fixed "1394" bus name, so read q2..qN and synthesize q1.
             ReadQuadletsBEImpl(
                 *bus, dispatchQueue, nodeId, generation, speed,
                 /*offsetBytes=*/8,
-                /*quadletCount=*/3,
-                [nodeId, generation, completionHolder, q0 = std::move(q0),
-                 q1Host](ReadResult q2_4) mutable {
+                trailingBIBQuadlets,
+                [nodeId, generation, completionHolder, q0 = std::move(q0), q1Wire,
+                 busInfoLength](ReadResult q2N) mutable {
                     if (!completionHolder || !*completionHolder) {
                         return;
                     }
 
-                    if (!q2_4.success || q2_4.quadletsBE.size() != 3) {
+                    const size_t expectedTrailing = static_cast<size_t>(busInfoLength) - 1U;
+                    if (!q2N.success || q2N.quadletsBE.size() != expectedTrailing) {
                         ReadResult out{};
                         out.success = false;
                         out.nodeId = nodeId;
                         out.generation = generation;
                         out.address = FW::ConfigROMAddr::kAddressLo;
-                        out.status = q2_4.status;
+                        out.status = q2N.status;
                         (*completionHolder)(std::move(out));
                         return;
                     }
@@ -310,11 +328,11 @@ void ROMReader::ReadBIB(uint8_t nodeId, Generation generation, FwSpeed speed,
                     out.address = FW::ConfigROMAddr::kAddressLo;
                     out.status = Async::AsyncStatus::kSuccess;
 
-                    out.quadletsBE.reserve(kBIBQuadlets);
+                    out.quadletsBE.reserve(static_cast<size_t>(busInfoLength) + 1U);
                     out.quadletsBE.push_back(q0.quadletsBE[0]);
-                    out.quadletsBE.push_back(q1Host);
-                    out.quadletsBE.insert(out.quadletsBE.end(), q2_4.quadletsBE.begin(),
-                                          q2_4.quadletsBE.end());
+                    out.quadletsBE.push_back(q1Wire);
+                    out.quadletsBE.insert(out.quadletsBE.end(), q2N.quadletsBE.begin(),
+                                          q2N.quadletsBE.end());
                     (*completionHolder)(std::move(out));
                 },
                 QuadletReadPolicy::AllOrNothing);

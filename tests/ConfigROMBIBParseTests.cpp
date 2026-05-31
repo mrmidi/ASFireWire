@@ -56,6 +56,47 @@ TEST(ConfigROMBIBParseTests, TA1999027_AnnexC_DecodesHeaderAndBusOptions) {
     EXPECT_EQ(bib.guid, 0xFFFFFFFFFFFFFFFFULL);
 }
 
+TEST(ConfigROMBIBParseTests, TrueMinimal1212ROM_IsQ0Only) {
+    const std::array<uint32_t, 1> bibWire = {
+        WireU32FromBENumeric(0x01010000u),
+    };
+
+    auto bibRes = ASFW::Discovery::ConfigROMParser::ParseBIB(std::span{bibWire});
+    ASSERT_TRUE(bibRes.has_value());
+
+    EXPECT_EQ(bibRes->bib.format, ASFW::Discovery::ConfigROMFormat::Minimal1212);
+    EXPECT_EQ(bibRes->bib.busInfoLength, 1u);
+    EXPECT_EQ(bibRes->bib.crcLength, 1u);
+    EXPECT_EQ(bibRes->bib.guid, 0u);
+    EXPECT_EQ(bibRes->crcStatus, ASFW::Discovery::ConfigROMParser::CRCStatus::NotCheckable);
+}
+
+TEST(ConfigROMBIBParseTests, General1394ROM_RequiresAdvertisedBusInfoQuadlets) {
+    const std::array<uint32_t, 1> bibWire = {
+        WireU32FromBENumeric(0x04040000u),
+    };
+
+    auto bibRes = ASFW::Discovery::ConfigROMParser::ParseBIB(std::span{bibWire});
+    ASSERT_FALSE(bibRes.has_value());
+    EXPECT_EQ(bibRes.error().code, ASFW::Discovery::ConfigROMParser::ErrorCode::TooShort);
+    EXPECT_EQ(bibRes.error().offsetQuadlets, 1u);
+}
+
+TEST(ConfigROMBIBParseTests, General1394ROM_RejectsCrcLengthShorterThanBusInfoLength) {
+    const std::array<uint32_t, 5> bibWire = {
+        WireU32FromBENumeric(0x04030000u),
+        WireU32FromBENumeric(0x31333934u),
+        WireU32FromBENumeric(0x00000000u),
+        WireU32FromBENumeric(0x00112233u),
+        WireU32FromBENumeric(0x44556677u),
+    };
+
+    auto bibRes = ASFW::Discovery::ConfigROMParser::ParseBIB(std::span{bibWire});
+    ASSERT_FALSE(bibRes.has_value());
+    EXPECT_EQ(bibRes.error().code, ASFW::Discovery::ConfigROMParser::ErrorCode::InvalidHeader);
+    EXPECT_EQ(bibRes.error().offsetQuadlets, 0u);
+}
+
 TEST(ConfigROMBIBParseTests, CRC_Mismatch_IsWarning_NotFailure) {
     const std::array<uint32_t, 5> bibWire = {
         WireU32FromBENumeric(0x0404EABEu), // wrong CRC on purpose (expected 0xEABF)

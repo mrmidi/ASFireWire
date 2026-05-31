@@ -182,14 +182,13 @@ std::vector<uint32_t> CreateStandardBIBWithCrcLength4() {
     return {0x04040000, 0, 0, 0, 0};
 }
 
-// Helper to create minimal BIB (Bus Info Block) for testing
-// Q0: info_length=1 (minimal ROM), crc_length=1, crc=valid
-// Format: [31:24]=info_length, [23:16]=crc_length, [15:0]=crc
-std::vector<uint32_t> CreateMinimalBIB(uint64_t guid = 0) {
-    // Minimal BIB: header quadlet + 4 quadlets of zeros
-    // info_length=4 (standard BIB), crc_length=4 (minimal total ROM), crc=0x0000
+std::vector<uint32_t> CreateStandardBIBWithGuid(uint64_t guid) {
     return {0x04040000, 0, 0, static_cast<uint32_t>(guid >> 32),
             static_cast<uint32_t>(guid & 0xFFFFFFFF)};
+}
+
+std::vector<uint32_t> CreateTrueMinimalROMHeader() {
+    return {0x01010000};
 }
 
 // Helper to create full BIB with GUID
@@ -301,6 +300,7 @@ TEST(ROMScannerCompletion, RootBIBTimeout_EmitsTerminalTimeoutEvidence) {
     params.doIRMCheck = false;
     params.startSpeed = FwSpeed::S100;
     params.perStepRetries = 0;
+    params.configROMReadyRetries = 0;
     ROMScanner scanner(mockAsync, speedPolicy, params);
 
     TopologySnapshot topology;
@@ -398,7 +398,7 @@ TEST(ROMScannerCompletion, ManualRead_EmptyRootDirectory_InvokesCallbackAfterRoo
     EXPECT_EQ(completedROMs[0].rawQuadlets.size(), 6u);
 }
 
-TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_ProbesRootDirBeforeCompletion) {
+TEST(ROMScannerCompletion, ManualRead_GeneralROM_CrcLengthEqualsBusInfoLength_ReadsRootDir) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
@@ -408,7 +408,7 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_ProbesRootDirBeforeComplet
     std::mutex mtx;
     std::condition_variable cv;
 
-    constexpr uint64_t kNikonGuid = 0x0090B54001FFFFFFULL;
+    constexpr uint64_t kGuid = 0x0011223344556677ULL;
 
     ROMScannerParams params{};
     params.doIRMCheck = false;
@@ -437,13 +437,13 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_ProbesRootDirBeforeComplet
     ASSERT_TRUE(scanner.Start(request, onComplete));
     mockAsync.WaitForPendingReads(1);
 
-    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB(kNikonGuid));
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithGuid(kGuid));
 
-    EXPECT_FALSE(callbackInvoked) << "Nikon minimal ROM should not complete immediately";
+    EXPECT_FALSE(callbackInvoked) << "General ROM should wait for root directory";
 
     mockAsync.WaitForPendingReads(5);
     EXPECT_EQ(mockAsync.GetPendingReadCount(), 5u)
-        << "Compatibility path should schedule a root directory probe";
+        << "crc_length == bus_info_length still schedules a root directory read";
     EXPECT_EQ(mockAsync.pendingReads_[4].address.addressLo,
               ASFW::FW::ConfigROMAddr::kAddressLo + 20u);
 
@@ -460,13 +460,13 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_ProbesRootDirBeforeComplet
     }
 
     EXPECT_TRUE(callbackInvoked);
-    EXPECT_TRUE(hadBusyNodes);
+    EXPECT_FALSE(hadBusyNodes);
     ASSERT_EQ(completedROMs.size(), 1u);
-    EXPECT_EQ(completedROMs[0].bib.guid, kNikonGuid);
+    EXPECT_EQ(completedROMs[0].bib.guid, kGuid);
     EXPECT_FALSE(completedROMs[0].rootDirMinimal.empty());
 }
 
-TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_RootDirProbeTimeoutsThenCompletesMinimal) {
+TEST(ROMScannerCompletion, ManualRead_TrueMinimalROM_CompletesWithoutDeviceROM) {
     MockAsyncSubsystem mockAsync;
     SpeedPolicy speedPolicy;
 
@@ -475,8 +475,6 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_RootDirProbeTimeoutsThenCo
     std::vector<ConfigROM> completedROMs;
     std::mutex mtx;
     std::condition_variable cv;
-
-    constexpr uint64_t kNikonGuid = 0x0090B54001FFFFFFULL;
 
     ROMScannerParams params{};
     params.doIRMCheck = false;
@@ -505,15 +503,70 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_RootDirProbeTimeoutsThenCo
     ASSERT_TRUE(scanner.Start(request, onComplete));
     mockAsync.WaitForPendingReads(1);
 
-    mockAsync.SimulateFullBIBSuccess(CreateMinimalBIB(kNikonGuid));
-    EXPECT_FALSE(callbackInvoked);
+    const auto minimal = CreateTrueMinimalROMHeader();
+    mockAsync.SimulateReadSuccess(0, {minimal[0]});
 
-    for (size_t attempt = 0; attempt < 4; ++attempt) {
-        mockAsync.WaitForPendingReads(5 + attempt);
-        EXPECT_EQ(mockAsync.pendingReads_[4 + attempt].address.addressLo,
-                  ASFW::FW::ConfigROMAddr::kAddressLo + 20u);
-        mockAsync.SimulateReadTimeout(4 + attempt);
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(1), [&callbackInvoked] { return callbackInvoked; });
     }
+
+    EXPECT_TRUE(callbackInvoked);
+    EXPECT_FALSE(hadBusyNodes);
+    EXPECT_EQ(completedROMs.size(), 0u);
+    EXPECT_EQ(mockAsync.GetPendingReadCount(), 1u);
+}
+
+TEST(ROMScannerCompletion, ManualRead_GeneralROM_RootDirTimeoutRetriesGenericScanThenFails) {
+    MockAsyncSubsystem mockAsync;
+    SpeedPolicy speedPolicy;
+
+    bool callbackInvoked = false;
+    bool hadBusyNodes = false;
+    std::vector<ConfigROM> completedROMs;
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    constexpr uint64_t kGuid = 0x0011223344556677ULL;
+
+    ROMScannerParams params{};
+    params.startSpeed = FwSpeed::S100;
+    params.perStepRetries = 0;
+    params.configROMReadyRetries = 1;
+    params.doIRMCheck = false;
+    ROMScanner scanner(mockAsync, speedPolicy, params);
+
+    TopologySnapshot topology;
+    topology.generation = 44;
+    topology.busBase16 = 0xFFC0;
+    topology.physical.nodes.push_back({.physicalId = 1, .linkActive = true});
+
+    ROMScanRequest request{};
+    request.gen = Generation{topology.generation};
+    request.topology = topology;
+    request.localNodeId = 0;
+    request.targetNodes = {1};
+
+    ScanCompletionCallback onComplete = [&](Generation /*gen*/, std::vector<ConfigROM> roms,
+                                            bool busy) {
+        std::lock_guard lock(mtx);
+        callbackInvoked = true;
+        hadBusyNodes = busy;
+        completedROMs = std::move(roms);
+        cv.notify_one();
+    };
+
+    ASSERT_TRUE(scanner.Start(request, onComplete));
+    mockAsync.WaitForPendingReads(1);
+
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithGuid(kGuid));
+    mockAsync.WaitForPendingReads(5);
+    mockAsync.SimulateReadTimeout(4);
+
+    mockAsync.WaitForPendingReads(6);
+    mockAsync.SimulateFullBIBSuccess(CreateStandardBIBWithGuid(kGuid));
+    mockAsync.WaitForPendingReads(10);
+    mockAsync.SimulateReadTimeout(9);
 
     {
         std::unique_lock lock(mtx);
@@ -522,9 +575,7 @@ TEST(ROMScannerCompletion, ManualRead_NikonMinimalROM_RootDirProbeTimeoutsThenCo
 
     EXPECT_TRUE(callbackInvoked);
     EXPECT_TRUE(hadBusyNodes);
-    ASSERT_EQ(completedROMs.size(), 1u);
-    EXPECT_EQ(completedROMs[0].bib.guid, kNikonGuid);
-    EXPECT_TRUE(completedROMs[0].rootDirMinimal.empty());
+    EXPECT_EQ(completedROMs.size(), 0u);
 }
 
 TEST(ROMScannerCompletion, ManualRead_FullROM_InvokesCallbackAfterBothReads) {
@@ -642,6 +693,7 @@ TEST(ROMScannerCompletion, ManualRead_Timeout_InvokesCallbackAfterRetryExhaustio
 
     ROMScannerParams params{};
     params.startSpeed = FwSpeed::S100;
+    params.configROMReadyRetries = 0;
     params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params);
 
@@ -700,6 +752,7 @@ TEST(ROMScannerCompletion, ManualRead_DefaultS400FallbackInvokesCallbackAfterFin
     std::condition_variable cv;
 
     ROMScannerParams params{};
+    params.configROMReadyRetries = 0;
     params.doIRMCheck = false;
     ROMScanner scanner(mockAsync, speedPolicy, params);
 
