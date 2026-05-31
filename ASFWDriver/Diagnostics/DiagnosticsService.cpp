@@ -3,6 +3,9 @@
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/BusManager.hpp"
+#include "../Bus/BusResetCoordinator.hpp"
+#include "../Common/CSRSpace.hpp"
+#include "../Controller/ControllerConfig.hpp"
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Debug/AsyncTraceCapture.hpp"
@@ -45,6 +48,14 @@ uint32_t MbpsToDiagSpeed(uint32_t mbps) noexcept {
         case 3200: return ASFWDiagSpeedS3200;
         default:   return ASFWDiagSpeedUnknown;
     }
+}
+
+uint64_t MonotonicNowNs() noexcept {
+    static mach_timebase_info_data_t timebase{};
+    if (timebase.denom == 0) {
+        mach_timebase_info(&timebase);
+    }
+    return (mach_absolute_time() * timebase.numer) / timebase.denom;
 }
 
 void InitHeader(ASFWDiagHeader* header, uint32_t structSize, uint32_t generation, uint32_t seq) noexcept {
@@ -251,6 +262,66 @@ ASFWDiagStatus DiagnosticsService::CollectRoleCoordinator(ASFWDiagRoleCoordinato
     }
 
     InitHeader(&out->header, sizeof(ASFWDiagRoleCoordinator), endGen, snapshotSeq_++);
+    return ASFWDiagStatusOK;
+}
+
+ASFWDiagStatus DiagnosticsService::CollectPostResetTiming(ASFWDiagPostResetTiming* out) const noexcept {
+    if (!controller_ || !out) {
+        return ASFWDiagStatusUnavailable;
+    }
+
+    const uint32_t startGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
+
+    std::memset(out, 0, sizeof(ASFWDiagPostResetTiming));
+
+    auto* busReset = controller_->GetBusResetCoordinator();
+    if (!busReset) {
+        return ASFWDiagStatusUnavailable;
+    }
+
+    const uint64_t nowNs = MonotonicNowNs();
+    const auto snap = busReset->PostResetTiming().Snapshot(nowNs);
+
+    out->selfIdComplete = snap.selfIdComplete ? 1 : 0;
+    out->generation = snap.generation;
+    out->selfIdCompleteNs = snap.selfIdCompleteNs;
+    out->nowNs = snap.nowNs;
+    out->ageSinceSelfIdNs = snap.ageSinceSelfIdNs;
+
+    out->incumbentBMGate = static_cast<uint32_t>(snap.incumbentBMGate);
+    out->nonIncumbentBMGate = static_cast<uint32_t>(snap.nonIncumbentBMGate);
+    out->irmFallbackGate = static_cast<uint32_t>(snap.irmFallbackGate);
+    out->newIsoAllocationGate = static_cast<uint32_t>(snap.newIsoAllocationGate);
+
+    out->nonIncumbentBMRemainingNs = snap.nonIncumbentBMRemainingNs;
+    out->irmFallbackRemainingNs = snap.irmFallbackRemainingNs;
+    out->newIsoAllocationRemainingNs = snap.newIsoAllocationRemainingNs;
+
+    out->staleTimerFirings = snap.staleTimerFirings;
+    out->suppressedByGeneration = snap.suppressedByGeneration;
+    out->suppressedByRolePolicy = snap.suppressedByRolePolicy;
+
+    // Display-only BM candidate classification (policy stays out of the timing
+    // core). Only an active FullBusManager is ever a candidate; everything else
+    // — including the ObserveOnly default — is NotCandidate, so the report makes
+    // clear that an Open BM gate does not imply the local node will contend.
+    out->bmCandidateClass = static_cast<uint32_t>(Bus::Timing::BMCandidateClass::NotCandidate);
+    const auto& cfg = controller_->GetConfig();
+    if (cfg.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+        cfg.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) {
+        const auto& bmState = controller_->GetBusManagerRuntimeState();
+        const bool incumbent = (bmState.bmNodeId != 0x3F) && (bmState.localNodeId == bmState.bmNodeId);
+        out->bmCandidateClass = static_cast<uint32_t>(incumbent
+                                                          ? Bus::Timing::BMCandidateClass::Incumbent
+                                                          : Bus::Timing::BMCandidateClass::NonIncumbent);
+    }
+
+    const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
+    if (startGen != endGen) {
+        return ASFWDiagStatusStaleGeneration;
+    }
+
+    InitHeader(&out->header, sizeof(ASFWDiagPostResetTiming), endGen, snapshotSeq_++);
     return ASFWDiagStatusOK;
 }
 

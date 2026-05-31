@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 3u
+#define ASFW_DIAG_ABI_VERSION 4u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -151,6 +151,37 @@ typedef struct ASFWDiagRoleCoordinator {
     uint32_t bmRetryCount;
     uint32_t gapMismatchDetected;
 } ASFWDiagRoleCoordinator;
+
+// Post-reset timing gates (IEEE 1394-2008 §8.x / Annex H), anchored to Self-ID
+// completion. Generation-scoped: a newer bus reset invalidates the gates until
+// the next Self-ID completion. Reporting only — the driver takes no bus action
+// from these gates in this milestone.
+typedef struct ASFWDiagPostResetTiming {
+    ASFWDiagHeader header;
+    uint32_t selfIdComplete; // 1 once Self-ID completion has armed the gates
+    uint32_t generation;     // generation the gates are anchored to
+    uint64_t selfIdCompleteNs; // monotonic ns of Self-ID completion (0 if none)
+    uint64_t nowNs;            // monotonic ns when this snapshot was taken
+    uint64_t ageSinceSelfIdNs; // nowNs - selfIdCompleteNs (0 if not armed)
+    // Gate states. Values are TimingGateState: 0=Unknown 1=Closed 2=Open
+    // 3=ExpiredGeneration 4=SuppressedByRolePolicy 5=SuppressedByTopology.
+    uint32_t incumbentBMGate;
+    uint32_t nonIncumbentBMGate;
+    uint32_t irmFallbackGate;
+    uint32_t newIsoAllocationGate;
+    // Time until each still-closed gate opens, in ns (0 when already open).
+    uint64_t nonIncumbentBMRemainingNs;
+    uint64_t irmFallbackRemainingNs;
+    uint64_t newIsoAllocationRemainingNs;
+    // BMCandidateClass for the local node: 0=NotCandidate 1=Incumbent
+    // 2=NonIncumbent. Display only; an Open BM gate with NotCandidate means the
+    // local node will not contend (role policy suppresses it).
+    uint32_t bmCandidateClass;
+    // Counters incremented by future timer/action consumers (0 in this milestone).
+    uint32_t staleTimerFirings;
+    uint32_t suppressedByGeneration;
+    uint32_t suppressedByRolePolicy;
+} ASFWDiagPostResetTiming;
 
 typedef struct ASFWDiagOHCI {
     ASFWDiagHeader header;

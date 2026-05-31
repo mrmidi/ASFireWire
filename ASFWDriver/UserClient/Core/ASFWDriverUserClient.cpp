@@ -368,6 +368,7 @@ constexpr uint64_t kMethodDiagGetAsyncTrace       = 1006;
 constexpr uint64_t kMethodDiagGetInboundCSRStats  = 1007;
 constexpr uint64_t kMethodDiagClearAsyncTrace     = 1008;
 constexpr uint64_t kMethodDiagGetBusManager       = 1009;
+constexpr uint64_t kMethodDiagGetPostResetTiming  = 1010;
 
 MethodDispatchResult DispatchDiagnosticsMethods(
     ASFW::UserClient::UserClientRuntimeState& runtimeState,
@@ -393,6 +394,8 @@ MethodDispatchResult DispatchDiagnosticsMethods(
         return runtimeState.Diagnostics().ClearAsyncTrace(arguments);
     case kMethodDiagGetBusManager:
         return runtimeState.Diagnostics().GetBusManager(arguments);
+    case kMethodDiagGetPostResetTiming:
+        return runtimeState.Diagnostics().GetPostResetTiming(arguments);
     default:
         return std::nullopt;
     }

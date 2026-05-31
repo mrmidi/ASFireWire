@@ -50,6 +50,9 @@ public:
     // Selector 1009: Bus Manager Info
     kern_return_t GetBusManager(IOUserClientMethodArguments* args);
 
+    // Selector 1010: Post-Reset Timing (IEEE 1394-2008 §8.x) gate states
+    kern_return_t GetPostResetTiming(IOUserClientMethodArguments* args);
+
 private:
     ASFWDriver* driver_{nullptr};
     Diagnostics::DiagnosticsService* service_{nullptr};
