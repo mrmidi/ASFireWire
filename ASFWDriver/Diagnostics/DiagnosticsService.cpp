@@ -5,6 +5,7 @@
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../Common/CSRSpace.hpp"
 #include "../Controller/ControllerConfig.hpp"
 #include "../Async/AsyncSubsystem.hpp"
@@ -703,6 +704,16 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
                                                               ? Bus::Timing::BMCandidateClass::Incumbent
                                                               : Bus::Timing::BMCandidateClass::NonIncumbent);
         }
+    }
+
+    if (auto* const fallback = controller_->GetIRMFallbackCoordinator()) {
+        auto snap = fallback->Snapshot();
+        out->irmFallbackState = static_cast<uint32_t>(snap.state);
+        out->irmFallbackPlannedAction = static_cast<uint32_t>(snap.plannedAction);
+        out->irmFallbackProbeStatus = static_cast<uint32_t>(snap.probeStatus);
+        out->irmFallbackRawBusManagerId = snap.busManagerIdRaw;
+        out->irmFallbackAnnexHGateOpen = snap.annexHGateOpen ? 1 : 0;
+        out->irmFallbackRemainingMs = static_cast<uint32_t>(snap.remainingNs / 1000000ULL);
     }
 
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;

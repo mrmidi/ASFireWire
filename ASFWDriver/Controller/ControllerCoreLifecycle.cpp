@@ -15,6 +15,7 @@
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
+#include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -339,6 +340,16 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
     if (broadcastChannel_ && deps_.hardware) {
         localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(*deps_.hardware, *broadcastChannel_);
         ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
+    }
+
+    if (deps_.hardware && deps_.busReset) {
+        Bus::IRMFallbackCoordinator::Deps fallbackDeps{
+            .hardware = deps_.hardware.get(),
+            .timing = &deps_.busReset->PostResetTiming(),
+            .scheduler = deps_.scheduler.get()
+        };
+        irmFallback_ = std::make_shared<Bus::IRMFallbackCoordinator>(fallbackDeps);
+        ASFW_LOG(Controller, "✅ IRMFallbackCoordinator created");
     }
 
     if (deps_.asyncController && deps_.topology) {

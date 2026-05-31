@@ -502,6 +502,62 @@ struct DiagnosticsTextFormatter {
 
         appendRow("ElectionOnly Active Mutations", "BUS_MANAGER_ID only. Cycle/root/gap policy disabled.")
 
+        // --- Milestone 4: IRM Fallback Planner ---
+        appendTitle("IRM Fallback Planner (Milestone 4)")
+        
+        let fallbackStateStr: String
+        switch snapshot.busManager.irmFallbackState {
+        case 0: fallbackStateStr = "Disabled"
+        case 1: fallbackStateStr = "WaitingForTopology"
+        case 2: fallbackStateStr = "NotLocalIRM"
+        case 3: fallbackStateStr = "WaitingForAnnexHGate"
+        case 4: fallbackStateStr = "ProbingBusManagerId"
+        case 5: fallbackStateStr = "BMExists"
+        case 6: fallbackStateStr = "NoBMDetected"
+        case 7: fallbackStateStr = "PlanningCycleRepair"
+        case 8: fallbackStateStr = "ActionSuppressedByPolicy"
+        case 9: fallbackStateStr = "ProbeFailed"
+        case 10: fallbackStateStr = "StaleGeneration"
+        default: fallbackStateStr = "Unknown (\(snapshot.busManager.irmFallbackState))"
+        }
+        appendRow("Fallback State", fallbackStateStr)
+        
+        let fallbackActionStr: String
+        switch snapshot.busManager.irmFallbackPlannedAction {
+        case 0: fallbackActionStr = "None"
+        case 1: fallbackActionStr = "DiagnosticsOnly (M4 report)"
+        case 2: fallbackActionStr = "LocalRootEnableCycleMasterRequired"
+        case 3: fallbackActionStr = "RemoteRootCmstrRequired"
+        case 4: fallbackActionStr = "RootSelectionRequired"
+        case 5: fallbackActionStr = "GapPolicyRequired"
+        case 6: fallbackActionStr = "BMAlreadyExists"
+        case 7: fallbackActionStr = "CycleStartAlreadyObserved"
+        case 8: fallbackActionStr = "SuppressedByRolePolicy"
+        case 9: fallbackActionStr = "SuppressedByActivityLevel"
+        case 10: fallbackActionStr = "SuppressedByTopology"
+        default: fallbackActionStr = "Unknown (\(snapshot.busManager.irmFallbackPlannedAction))"
+        }
+        appendRow("Planned Action", fallbackActionStr)
+        
+        let probeStatusStr: String
+        switch snapshot.busManager.irmFallbackProbeStatus {
+        case 0: probeStatusStr = "NotAttempted"
+        case 1: probeStatusStr = "Success"
+        case 2: probeStatusStr = "InvalidUpperBits"
+        case 3: probeStatusStr = "HardwareUnavailable"
+        case 4: probeStatusStr = "Timeout"
+        default: probeStatusStr = "Unknown (\(snapshot.busManager.irmFallbackProbeStatus))"
+        }
+        appendRow("BUS_MANAGER_ID Probe Status", probeStatusStr)
+        appendRow("Probed BUS_MANAGER_ID Raw", formatHex32(snapshot.busManager.irmFallbackRawBusManagerId))
+        
+        appendRow("Annex H Fallback Gate", snapshot.busManager.irmFallbackAnnexHGateOpen != 0 ? "Open" : "Closed")
+        if snapshot.busManager.irmFallbackAnnexHGateOpen == 0 {
+            appendRow("Fallback Allowed In", "\(snapshot.busManager.irmFallbackRemainingMs) ms")
+        }
+
+        appendRow("Mutation Performed", "No")
+
         let activityStr: String
         switch snapshot.busManager.fullBMActivityLevel {
         // Order must match FullBMActivityLevel in ASFWDriver/Common/CSRSpace.hpp.

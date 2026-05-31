@@ -12,6 +12,7 @@
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -61,6 +62,9 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         }
         if (localIrmController_) {
             localIrmController_->OnBusResetStarted(generation);
+        }
+        if (irmFallback_) {
+            irmFallback_->OnBusResetStarted(generation);
         }
     }
     DispatchAsyncInterrupts(events);
