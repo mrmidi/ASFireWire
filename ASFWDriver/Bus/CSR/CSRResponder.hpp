@@ -48,6 +48,8 @@ struct IBusResetTrigger {
     virtual void TriggerBusReset(bool shortReset) noexcept = 0;
 };
 
+class BroadcastChannelCSR;
+
 // Supplies TOPOLOGY_MAP quadlets. Installed by FW-20; until then the responder
 // holds a null provider and declines the region (NotMine → caller falls through,
 // preserving today's behavior).
@@ -69,6 +71,7 @@ public:
         ICycleMasterControl* cycleMaster{nullptr};
         IBusResetTrigger* resetTrigger{nullptr};
         ITopologyMapProvider* topologyMap{nullptr}; // null until FW-20
+        BroadcastChannelCSR* broadcastChannel{nullptr};
     };
 
     // Outcome of a dispatch. When mine == false the caller must fall through to
@@ -103,7 +106,7 @@ public:
     }
 
     // Current BROADCAST_CHANNEL register value (diagnostics/tests).
-    [[nodiscard]] uint32_t BroadcastChannel() const noexcept { return broadcastChannel_; }
+    [[nodiscard]] uint32_t BroadcastChannel() const noexcept;
 
     void SetTopologyMapProvider(ITopologyMapProvider* provider) noexcept {
         deps_.topologyMap = provider;
@@ -133,7 +136,6 @@ private:
 
     Deps deps_;
     bool abdicate_{false};
-    uint32_t broadcastChannel_{ASFW::FW::kBroadcastChannelInitial};
     uint32_t unexpectedResourceCsrSoftwareCount_{0};
 };
 

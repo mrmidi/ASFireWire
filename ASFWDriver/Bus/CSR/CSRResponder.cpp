@@ -5,11 +5,17 @@
 // firewire (ohci_read_csr / ohci_write_csr / handle_registers).
 
 #include "CSRResponder.hpp"
+#include "BroadcastChannelCSR.hpp"
 
 namespace ASFW::Bus {
 
 using Async::ResponseCode;
 namespace FW = ASFW::FW;
+
+uint32_t CSRResponder::BroadcastChannel() const noexcept {
+    return (deps_.broadcastChannel != nullptr) ? deps_.broadcastChannel->Read()
+                                               : FW::kBroadcastChannelInitial;
+}
 
 CSRResponder::Result CSRResponder::HandleStateWrite(bool isSet, uint32_t value) noexcept {
     // Cycle-master bit: only the root node may flip its local cycle master. A
@@ -58,9 +64,9 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
         }
         return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = 0};
     case FW::kCSR_BroadcastChannel:
-        // Only the VALID bit is writable; the channel number and transmit-valid
-        // bit are pinned to INITIAL (Linux handle_registers BROADCAST_CHANNEL).
-        broadcastChannel_ = (value & FW::kBroadcastChannelValid) | FW::kBroadcastChannelInitial;
+        if (deps_.broadcastChannel != nullptr) {
+            deps_.broadcastChannel->Write(value);
+        }
         return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = 0};
     default:
         break;
@@ -89,7 +95,7 @@ CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
     case FW::kCSR_StateClear:
         return HandleStateRead();
     case FW::kCSR_BroadcastChannel:
-        return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = broadcastChannel_};
+        return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = BroadcastChannel()};
     case FW::kCSR_ResetStart:
         // RESET_START is write-only.
         return Result{.mine = true, .rcode = ResponseCode::TypeError, .readValue = 0};
