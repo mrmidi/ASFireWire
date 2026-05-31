@@ -219,6 +219,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
                 .hardware = d.hardware.get(),
                 .localIrmController = ctx.controller ? ctx.controller->GetLocalIRMResourceController() : nullptr,
                 .timing = d.busReset ? &d.busReset->PostResetTiming() : nullptr,
+                .monotonicNowNs = ASFW::Driver::BusResetCoordinator::MonotonicNow,
             };
             d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.rolePolicy);
             if (ctx.controller) {

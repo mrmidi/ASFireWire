@@ -133,8 +133,8 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
                 }
                 
                 // Final check before contending: Re-validate timing gate
-                if (self->deps_.timing) {
-                    const uint64_t now = Driver::BusResetCoordinator::MonotonicNow();
+                if (self->deps_.timing && self->deps_.monotonicNowNs) {
+                    const uint64_t now = self->deps_.monotonicNowNs();
                     const auto finalGate = self->deps_.timing->CheckBMGate(generation, candidateClass, now);
                     if (!finalGate.allowed) {
                         ASFW_LOG(Controller, "[BM Election] Deferred contention aborted: gate still closed (state=%d)", static_cast<int>(finalGate.state));

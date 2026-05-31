@@ -204,7 +204,7 @@ class BusResetCoordinator {
                                 std::optional<bool> setContender,
                                 std::string reason);
 
-    static uint64_t MonotonicNow();
+    static uint64_t MonotonicNow() noexcept;
 
   private:
 #ifdef ASFW_HOST_TEST

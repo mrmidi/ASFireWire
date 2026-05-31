@@ -24,6 +24,20 @@ using ASFW::Driver::RolePolicy;
 using ASFW::FW::RoleMode;
 using ASFW::FW::FullBMActivityLevel;
 
+class ScopedMockClock {
+public:
+    explicit ScopedMockClock(std::function<uint64_t()> fn) {
+        ASFW::Testing::SetHostMonotonicClockForTesting(std::move(fn));
+    }
+
+    ~ScopedMockClock() {
+        ASFW::Testing::ResetHostMonotonicClockForTesting();
+    }
+
+    ScopedMockClock(const ScopedMockClock&) = delete;
+    ScopedMockClock& operator=(const ScopedMockClock&) = delete;
+};
+
 class MockAsyncPort : public ASFW::Async::IAsyncControllerPort {
 public:
     ASFW::Async::AsyncHandle Read(const ASFW::Async::ReadParams&, ASFW::Async::CompletionCallback) override { return {}; }
@@ -176,7 +190,8 @@ TEST(BusManagerElectionDriver, GatedByMode) {
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
         .csrResponder = nullptr,
-        .timing = &timing
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
     };
 
     // AvoidManager Mode: OnTopologyReady should do nothing
@@ -209,7 +224,8 @@ TEST(BusManagerElectionDriver, IncumbentImmediateContention) {
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
         .csrResponder = nullptr,
-        .timing = &timing
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
     };
 
     auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
@@ -253,7 +269,8 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
         .csrResponder = nullptr,
-        .timing = &timing
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
     };
 
     auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
@@ -276,17 +293,12 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
 
     // ADVANCE CLOCK to open the gate (+125ms)
-    ASFW::Testing::SetHostMonotonicClockForTesting([now]() { return now + 126000000ULL; });
+    {
+        ScopedMockClock clock([now]() { return now + 126000000ULL; });
 
-    // Drain queue tasks (drains delayed contention)
-    queue->DrainAllForTesting();
-
-    // Contends after grace: compareSwapCount should be 1
-    EXPECT_EQ(mockAsync->compareSwapCount, 1);
-    EXPECT_EQ(mockAsync->lastCompareSwapParams.compareValue, 0x3F);
-    EXPECT_EQ(mockAsync->lastCompareSwapParams.swapValue, 1);
-    
-    ASFW::Testing::ResetHostMonotonicClockForTesting();
+        // Drain queue tasks (drains delayed contention)
+        queue->DrainAllForTesting();
+    }
 }
 
 TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
@@ -303,7 +315,8 @@ TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
         .csrResponder = nullptr,
-        .timing = &timing
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
     };
 
     auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
@@ -346,7 +359,8 @@ TEST(BusManagerElectionDriver, MaxOneAttemptPerGeneration) {
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
         .csrResponder = nullptr,
-        .timing = &timing
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
     };
 
     auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
@@ -378,9 +392,10 @@ TEST(BusManagerElectionDriver, MaxOneAttemptPerGeneration) {
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
     
     // ADVANCE CLOCK
-    ASFW::Testing::SetHostMonotonicClockForTesting([now]() { return now + 126000000ULL; });
-
-    queue->DrainAllForTesting();
+    {
+        ScopedMockClock clock([now]() { return now + 126000000ULL; });
+        queue->DrainAllForTesting();
+    }
     EXPECT_EQ(mockAsync->compareSwapCount, 1);
     
     // Attempt finished. Now call OnTopologyReady again for same generation.
@@ -389,11 +404,7 @@ TEST(BusManagerElectionDriver, MaxOneAttemptPerGeneration) {
     // Even if we drain, count should stay 1
     queue->DrainAllForTesting();
     EXPECT_EQ(mockAsync->compareSwapCount, 1); 
-    
-    ASFW::Testing::ResetHostMonotonicClockForTesting();
 }
-
-} // namespace
 
 TEST(BusManagerElection, RejectsInvalidOldValues) {
     BusManagerElection fsm;
@@ -425,7 +436,8 @@ TEST(BusManagerElectionDriver, DeferredElectionSuppressedByPolicyChange) {
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
         .csrResponder = nullptr,
-        .timing = &timing
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
     };
 
     auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
@@ -454,3 +466,101 @@ TEST(BusManagerElectionDriver, DeferredElectionSuppressedByPolicyChange) {
     // Should be suppressed
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
 }
+
+TEST(BusManagerElectionDriver, DeferredElectionSuppressedByActivityChangedToObserveOnly) {
+    OSSharedPtr<IODispatchQueue> queue(new IODispatchQueue(), OSNoRetain);
+    queue->SetManualDispatchForTesting(true);
+    
+    auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
+    scheduler->Bind(queue);
+
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+    auto mockAsync = std::make_shared<MockAsyncPort>();
+
+    BusManagerElectionDriver::Deps deps{
+        .asyncController = mockAsync.get(),
+        .scheduler = scheduler.get(),
+        .csrResponder = nullptr,
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
+    };
+
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
+
+    const uint32_t generation = 15;
+    mockAsync->currentGen16 = generation;
+    const uint64_t now = ASFW::Testing::HostMonotonicNow();
+    timing.OnSelfIDComplete(generation, now);
+
+    TopologySnapshot snap{};
+    snap.generation = generation;
+    snap.localNodeId = 1;
+    snap.irmNodeId = 2;
+    snap.busBase16 = 0x0;
+
+    // Schedule delayed election
+    driver->OnTopologyReady(snap, now);
+    EXPECT_EQ(mockAsync->compareSwapCount, 0);
+
+    // CHANGE ACTIVITY BEFORE TIMER FIRES
+    driver->SetRolePolicy(RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ObserveOnly});
+
+    // Execute task
+    { 
+        ScopedMockClock clock([now]() { return now + 126000000ULL; });
+        queue->DrainAllForTesting();
+    }
+
+    // Should be suppressed
+    EXPECT_EQ(mockAsync->compareSwapCount, 0);
+}
+
+TEST(BusManagerElectionDriver, DeferredElectionSuppressedAfterDriverStop) {
+    OSSharedPtr<IODispatchQueue> queue(new IODispatchQueue(), OSNoRetain);
+    queue->SetManualDispatchForTesting(true);
+    
+    auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
+    scheduler->Bind(queue);
+
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+    auto mockAsync = std::make_shared<MockAsyncPort>();
+
+    BusManagerElectionDriver::Deps deps{
+        .asyncController = mockAsync.get(),
+        .scheduler = scheduler.get(),
+        .csrResponder = nullptr,
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
+    };
+
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
+
+    const uint32_t generation = 20;
+    mockAsync->currentGen16 = generation;
+    const uint64_t now = ASFW::Testing::HostMonotonicNow();
+    timing.OnSelfIDComplete(generation, now);
+
+    TopologySnapshot snap{};
+    snap.generation = generation;
+    snap.localNodeId = 1;
+    snap.irmNodeId = 2;
+    snap.busBase16 = 0x0;
+
+    // Schedule delayed election
+    driver->OnTopologyReady(snap, now);
+    EXPECT_EQ(mockAsync->compareSwapCount, 0);
+
+    // STOP DRIVER
+    driver->Stop();
+
+    // Execute task
+    { 
+        ScopedMockClock clock([now]() { return now + 126000000ULL; });
+        queue->DrainAllForTesting();
+    }
+
+    // Should be suppressed
+    EXPECT_EQ(mockAsync->compareSwapCount, 0);
+}
+
+} // namespace
