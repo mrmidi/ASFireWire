@@ -246,11 +246,11 @@ public:
 
 class IOPCIDevice : public OSObject {
 public:
-    kern_return_t Open(IOService*) { return kIOReturnUnsupported; }
-    void Close(IOService*) {}
-    kern_return_t GetBARInfo(uint8_t, uint8_t*, uint64_t*, uint8_t*) { return kIOReturnUnsupported; }
-    void MemoryRead32(uint8_t, uint64_t, uint32_t*) {}
-    void MemoryWrite32(uint8_t, uint64_t, uint32_t) {}
+    virtual kern_return_t Open(IOService*) { return kIOReturnUnsupported; }
+    virtual void Close(IOService*) {}
+    virtual kern_return_t GetBARInfo(uint8_t, uint8_t*, uint64_t*, uint8_t*) { return kIOReturnUnsupported; }
+    virtual void MemoryRead32(uint8_t, uint64_t, uint32_t*) {}
+    virtual void MemoryWrite32(uint8_t, uint64_t, uint32_t) {}
 };
 
 class IOMemoryMap : public OSObject {

@@ -1515,7 +1515,7 @@ add_executable(DICEDuplexBringupControllerTests
     "${ASFW_TESTS_DIR}/DICEDuplexBringupControllerTests.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Core/DICETransaction.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/Audio/DICE/Core/DICEDuplexBringupController.cpp"
-    "${ASFW_DRIVER_DIR}/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -1583,7 +1583,7 @@ add_executable(DiceDuplexRestartCoordinatorTests
     "${ASFW_TESTS_DIR}/DiceDuplexRestartCoordinatorTests.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Backends/DiceDuplexRestartCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
-    "${ASFW_DRIVER_DIR}/IRM/IRMClient.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
@@ -1880,7 +1880,7 @@ add_executable(BusManagerElectionTests
     "${ASFW_TESTS_DIR}/BusManagerElectionTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElection.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElectionDriver.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/BusManager/LocalIRMResourceController.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceController.cpp"
     "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
@@ -1901,10 +1901,24 @@ target_include_directories(BusManagerElectionTests PRIVATE ${ASFW_COMMON_INCLUDE
  
 gtest_discover_tests(BusManagerElectionTests)
 
+add_executable(HardwareInterfaceOrderTests
+    "${ASFW_TESTS_DIR}/HardwareInterfaceOrderTests.cpp"
+    "${ASFW_DRIVER_DIR}/Hardware/HardwareInterface.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(HardwareInterfaceOrderTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+gtest_discover_tests(HardwareInterfaceOrderTests)
+
 # Local IRM Resource Controller Tests
 add_executable(LocalIRMResourceControllerTests
     "${ASFW_TESTS_DIR}/LocalIRMResourceControllerTests.cpp"
-    "${ASFW_DRIVER_DIR}/Bus/BusManager/LocalIRMResourceController.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceController.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
