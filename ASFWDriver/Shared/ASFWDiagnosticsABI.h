@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 4u
+#define ASFW_DIAG_ABI_VERSION 5u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -79,7 +79,7 @@ typedef struct ASFWDiagBusContract {
     uint32_t cycleStartSourceNode;
     uint32_t localCycleMasterEnabled;
     uint32_t localCycleTimerEnabled;
-    uint32_t lastBusResetCount;
+    uint32_t asfwInitiatedResetCount;
     uint32_t rolePolicyMode;
     uint32_t roleVerdict;
     uint32_t reserved1;
@@ -319,7 +319,7 @@ typedef struct ASFWDiagBusManager {
 
     // Topology Map Service status
     uint32_t topologyMapValid;
-    uint32_t topologyMapGeneration;
+    uint32_t topologyMapCSRGeneration;
     uint32_t topologyMapSelfIdCount;
     uint32_t topologyMapCRC;
     uint32_t topologyMapDMAReady;
@@ -359,8 +359,10 @@ typedef struct ASFWDiagBusManager {
     uint32_t bmElectionCompareValue;
     uint32_t bmElectionSwapValue;
     uint32_t bmCandidateClass;
+    uint32_t bmElectionAttemptedGen;
+    uint32_t bmElectionAttemptsThisGen;
 
-    uint32_t reserved[4];
+    uint32_t reserved[2];
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus

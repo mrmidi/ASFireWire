@@ -126,6 +126,11 @@ ASFWDiagStatus DiagnosticsService::CollectBusContract(ASFWDiagBusContract* out) 
         out->localCycleTimerEnabled = (linkCtrl & Driver::LinkControlBits::kCycleTimerEnable) ? 1 : 0;
     }
 
+    auto* busReset = controller_->GetBusResetCoordinator();
+    if (busReset) {
+        out->asfwInitiatedResetCount = busReset->Diagnostics().softwareResetIssuedCount;
+    }
+
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {
         return ASFWDiagStatusStaleGeneration;
@@ -657,7 +662,7 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
     auto* topoMap = controller_->GetTopologyMapService();
     if (topoMap) {
         out->topologyMapValid = topoMap->IsValid() ? 1 : 0;
-        out->topologyMapGeneration = topoMap->GetGeneration();
+        out->topologyMapCSRGeneration = topoMap->GetGeneration();
         out->topologyMapSelfIdCount = topoMap->GetSelfIdCount();
         out->topologyMapCRC = topoMap->GetCRC();
         out->topologyMapDMAReady = topoMap->IsDMAReady() ? 1 : 0;
@@ -683,9 +688,12 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->bmElectionState = electSnap.inFlight ? 1 : 0;
         out->bmElectionResultKind = static_cast<uint32_t>(electDriver->FSM().Owner());
         out->bmElectionLocalFlag = electSnap.wasIncumbent ? 1 : 0;
+        out->bmElectionAction = electSnap.lastAction;
         out->bmElectionPath = electSnap.lastElectionPath;
         out->bmElectionCompareValue = 0x3F;
         out->bmElectionSwapValue = electSnap.localNodeId;
+        out->bmElectionAttemptedGen = electSnap.attemptedGen;
+        out->bmElectionAttemptsThisGen = electSnap.attemptsThisGen;
         
         // Re-classify for display (policy-level)
         out->bmCandidateClass = static_cast<uint32_t>(Bus::Timing::BMCandidateClass::NotCandidate);

@@ -72,8 +72,11 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
 
     DecisionAction action = fsm_.Decide(inputs);
     if (action == DecisionAction::DoNotContend) {
+        lastAction_ = 0;
         return;
     }
+
+    lastAction_ = (action == DecisionAction::ContendImmediately) ? 1 : 2;
 
     // Map DecisionAction to Annex H candidate class
     using namespace Timing;
@@ -159,6 +162,7 @@ void BusManagerElectionDriver::OnBusReset() noexcept {
     inFlightGen_ = 0;
     attemptsThisGeneration_ = 0;
     lastElectionPath_ = 0;
+    lastAction_ = 0;
     if (inFlightHandle_) {
         if (deps_.asyncController) {
             deps_.asyncController->Cancel(inFlightHandle_);
