@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Copyright (c) 2024 ASFireWire Project
 //
 // LocalRequestDispatch.hpp — single owner of inbound AR *request* routing to the
