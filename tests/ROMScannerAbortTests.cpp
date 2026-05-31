@@ -113,7 +113,7 @@ private:
     mutable std::condition_variable cv_;
 };
 
-std::vector<uint32_t> CreateMinimalBIB() {
+std::vector<uint32_t> CreateStandardBIBWithCrcLength4() {
     return {0x04040000, 0, 0, 0, 0};
 }
 
@@ -187,7 +187,7 @@ TEST(ROMScannerAbort, AbortGeneration_IgnoresLateCallbacks) {
     EXPECT_EQ(evidence.back().bibReadStatus, RootBibReadStatus::AbortedByReset);
 
     // Late BIB completions should be ignored (no user completion callback).
-    const auto bib = CreateMinimalBIB();
+    const auto bib = CreateStandardBIBWithCrcLength4();
     mockAsync.SimulateReadSuccess(0, std::span(&bib[0], 1));
     mockAsync.WaitForPendingReads(4);
     mockAsync.SimulateReadSuccess(1, std::span(&bib[2], 1));

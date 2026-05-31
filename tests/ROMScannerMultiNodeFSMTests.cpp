@@ -109,7 +109,7 @@ public:
     }
 };
 
-std::vector<uint32_t> CreateMinimalBIB() {
+std::vector<uint32_t> CreateStandardBIBWithCrcLength4() {
     return {0x04040000, 0, 0, 0, 0};
 }
 
@@ -157,8 +157,8 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
 
     // Interleaved BIB completion for two nodes.
     mockAsync.WaitForPendingReads(2);
-    mockAsync.SimulateReadSuccess(0, {CreateMinimalBIB()[0]});
-    mockAsync.SimulateReadSuccess(1, {CreateMinimalBIB()[0]});
+    mockAsync.SimulateReadSuccess(0, {CreateStandardBIBWithCrcLength4()[0]});
+    mockAsync.SimulateReadSuccess(1, {CreateStandardBIBWithCrcLength4()[0]});
 
     mockAsync.WaitForPendingReads(4);
     mockAsync.SimulateReadSuccess(2, {0});
@@ -174,8 +174,8 @@ TEST(ROMScannerMultiNodeFSM, AutomaticTwoNodesCompletesOnce) {
 
     // Full root-directory parse (general ROM, crc_length == bus_info_length): each
     // node now reads its root-directory header. An empty header (0 entries) completes
-    // the node. See ROMScanSession::ContinueAfterBIBSuccess (always reads the root dir
-    // for non-Nikon ROMs, validated with Linux core-device.c).
+    // the node. See ROMScanSession::ContinueAfterBIBSuccess (always reads the root dir;
+    // cross-validated with Linux: firewire/core-device.c:650-652).
     mockAsync.WaitForPendingReads(10);
     mockAsync.SimulateReadSuccess(8, {0});
     mockAsync.SimulateReadSuccess(9, {0});
@@ -227,7 +227,7 @@ TEST(ROMScannerMultiNodeFSM, BusyBIBSetsBusyFlagAndRecovers) {
 
     // First BIB returns not-ready payload (q0 == 0), then retry succeeds.
     mockAsync.SimulateFullBIBSuccess(0, CreateBusyBIB());
-    mockAsync.SimulateFullBIBSuccess(4, CreateMinimalBIB());
+    mockAsync.SimulateFullBIBSuccess(4, CreateStandardBIBWithCrcLength4());
 
     // Full root-directory parse: the recovered node reads its (empty) root-directory
     // header to complete (general ROM with crc_length == bus_info_length).
