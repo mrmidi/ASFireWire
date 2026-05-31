@@ -205,6 +205,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
             .cycleMaster = d.csrCycleMasterControl.get(),
             .resetTrigger = d.csrResetTrigger.get(),
             .topologyMap = d.topologyMapService.get(),
+            .broadcastChannel = d.broadcastChannel.get(),
         });
         ASFW_LOG(Controller, "[Controller] CSRResponder initialized with TopologyMapService (FW-20)");
 

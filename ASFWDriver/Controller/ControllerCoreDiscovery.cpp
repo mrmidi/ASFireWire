@@ -129,16 +129,15 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         bmState_.localIsIRM = false;
     }
 
-    const bool localIrmResourceEnabled =
+    const bool roleAllowsIRMHost =
         rolePolicy_.roleMode == ASFW::FW::RoleMode::IRMResourceHost ||
         rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager;
 
     if (localIrmController_) {
-        if (localIrmResourceEnabled && bmState_.localIsIRM) {
-            localIrmController_->InitializeDefaults();
-        } else {
-            localIrmController_->Disable();
-        }
+        localIrmController_->OnTopologyReady(snap.generation,
+                                             bmState_.localNodeId,
+                                             bmState_.irmNodeId,
+                                             roleAllowsIRMHost);
     }
 
     if (snap.rootNodeId != Driver::kInvalidPhysicalId) {

@@ -39,6 +39,7 @@ class ICycleMasterControl;
 class IBusResetTrigger;
 class CSRResponder;
 class TopologyMapService;
+class BroadcastChannelCSR;
 class BusManagerElectionDriver;
 class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
@@ -125,6 +126,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::shared_ptr<ASFW::Bus::IRootStatus> csrRootStatus;
         std::shared_ptr<ASFW::Bus::ICycleMasterControl> csrCycleMasterControl;
         std::shared_ptr<ASFW::Bus::IBusResetTrigger> csrResetTrigger;
+        std::shared_ptr<ASFW::Bus::BroadcastChannelCSR> broadcastChannel;
         std::shared_ptr<ASFW::Bus::CSRResponder> csrResponder;
         std::shared_ptr<ASFW::Bus::TopologyMapService> topologyMapService;
 
@@ -287,6 +289,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     mutable Bus::BusManagerRuntimeState bmState_{};
     std::unique_ptr<Bus::BusManagerPolicyCoordinator> bmPolicyCoordinator_;
+    std::shared_ptr<Bus::BroadcastChannelCSR> broadcastChannel_;
     std::unique_ptr<Bus::LocalIRMResourceController> localIrmController_;
 };
 
