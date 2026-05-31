@@ -201,7 +201,8 @@ public:
         if (!registry_) {
             return kIOReturnNotReady;
         }
-        if (!args || !args->scalarInput || args->scalarInputCount < 1) {
+        if (!args || !args->scalarInput || args->scalarInputCount < 1 ||
+            !args->scalarOutput || args->scalarOutputCount < 5) {
             return kIOReturnBadArgument;
         }
 
@@ -212,14 +213,12 @@ public:
         }
 
         // Return as scalars: loginState, loginID, generation, lastError, reconnectPending
-        if (args->scalarOutput && args->scalarOutputCount >= 5) {
-            args->scalarOutput[0] = static_cast<uint64_t>(state->loginState);
-            args->scalarOutput[1] = static_cast<uint64_t>(state->loginID);
-            args->scalarOutput[2] = static_cast<uint64_t>(state->generation);
-            args->scalarOutput[3] = static_cast<uint64_t>(static_cast<uint32_t>(state->lastError));
-            args->scalarOutput[4] = state->reconnectPending ? 1 : 0;
-            args->scalarOutputCount = 5;
-        }
+        args->scalarOutput[0] = static_cast<uint64_t>(state->loginState);
+        args->scalarOutput[1] = static_cast<uint64_t>(state->loginID);
+        args->scalarOutput[2] = static_cast<uint64_t>(state->generation);
+        args->scalarOutput[3] = static_cast<uint64_t>(static_cast<uint32_t>(state->lastError));
+        args->scalarOutput[4] = state->reconnectPending ? 1 : 0;
+        args->scalarOutputCount = 5;
         return kIOReturnSuccess;
     }
 

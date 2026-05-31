@@ -6,6 +6,15 @@
 #include "ASFWDriver/Protocols/SBP2/SCSICommandSet.hpp"
 #include "ASFWDriver/Protocols/SBP2/SBP2WireFormats.hpp"
 #include "ASFWDriver/Testing/HostDriverKitStubs.hpp"
+#ifndef OSDynamicCast
+#define ASFW_TEST_DEFINED_OSDYNAMICCAST 1
+#define OSDynamicCast(type, object) static_cast<type*>(object)
+#endif
+#include "ASFWDriver/UserClient/Handlers/SBP2Handler.hpp"
+#ifdef ASFW_TEST_DEFINED_OSDYNAMICCAST
+#undef OSDynamicCast
+#undef ASFW_TEST_DEFINED_OSDYNAMICCAST
+#endif
 #include "tests/mocks/DeferredFireWireBus.hpp"
 
 #include <cstddef>
@@ -410,6 +419,34 @@ TEST(SBP2SessionRegistryTests, RejectsSessionOperationsFromNonOwningClient) {
     EXPECT_FALSE(rig.registry.GetInquiryResult(SessionRegistryRig::OtherOwner(), handle).has_value());
     EXPECT_TRUE(rig.registry.GetInquiryResult(SessionRegistryRig::Owner(), handle).has_value());
     EXPECT_TRUE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
+}
+
+TEST(SBP2SessionRegistryTests, HandlerRejectsMissingOrShortSessionStateOutput) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    ASFW::UserClient::SBP2Handler handler(nullptr, &rig.registry);
+    uint64_t scalarInput[] = {handle};
+
+    IOUserClientMethodArguments args{};
+    args.scalarInput = scalarInput;
+    args.scalarInputCount = 1;
+    EXPECT_EQ(kIOReturnBadArgument,
+              handler.GetSBP2SessionState(&args, SessionRegistryRig::Owner()));
+
+    uint64_t shortOutput[4]{};
+    args.scalarOutput = shortOutput;
+    args.scalarOutputCount = 4;
+    EXPECT_EQ(kIOReturnBadArgument,
+              handler.GetSBP2SessionState(&args, SessionRegistryRig::Owner()));
+
+    uint64_t output[5]{};
+    args.scalarOutput = output;
+    args.scalarOutputCount = 5;
+    EXPECT_EQ(kIOReturnSuccess,
+              handler.GetSBP2SessionState(&args, SessionRegistryRig::Owner()));
+    EXPECT_EQ(5u, args.scalarOutputCount);
 }
 
 TEST(SBP2SessionRegistryTests, SubmitTaskManagementWritesLogicalUnitResetORB) {
