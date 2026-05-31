@@ -146,6 +146,10 @@ kern_return_t DiagnosticsHandler::GetBusManager(IOUserClientMethodArguments* arg
     return CollectAndPack<ASFWDiagBusManager>(service_, args, &Diagnostics::DiagnosticsService::CollectBusManager);
 }
 
+kern_return_t DiagnosticsHandler::GetPostResetTiming(IOUserClientMethodArguments* args) {
+    return CollectAndPack<ASFWDiagPostResetTiming>(service_, args, &Diagnostics::DiagnosticsService::CollectPostResetTiming);
+}
+
 kern_return_t DiagnosticsHandler::ClearAsyncTrace(IOUserClientMethodArguments* args) {
     if (!driver_) {
         return kIOReturnNotReady;
