@@ -115,7 +115,7 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     // the PHY consistent with the bmc=0/irmc=0 BIB advertisement.
     const bool shouldAdvertiseContender =
         policy.roleMode == ASFW::FW::RoleMode::FullBusManager ||
-        policy.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
+        policy.roleMode == ASFW::FW::RoleMode::IRMResourceHost ||
         (policy.roleMode == ASFW::FW::RoleMode::LegacyBmcCleared &&
          config.allowCycleMasterEligibility);
 

@@ -49,8 +49,8 @@ TEST(CapabilityMode, LegacyBmcCleared_MatchesLegacyOneArgOverload) {
               NormalizeLocalBusOptions(kHwBusOptions, RoleMode::LegacyBmcCleared));
 }
 
-TEST(CapabilityMode, IRMServerOnly_SetsIrmcClearsBmc) {
-    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::IRMServerOnly);
+TEST(CapabilityMode, IRMResourceHost_SetsIrmcClearsBmc) {
+    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::IRMResourceHost);
     const auto d = DecodeBusOptions(out);
     EXPECT_TRUE(d.irmc);
     EXPECT_FALSE(d.bmc);
@@ -78,7 +78,7 @@ TEST(CapabilityMode, FullBusManagerObserveOnly_ClearsBmcSetsIrmc) {
 
 TEST(CapabilityMode, ReservedAndNumericBitsPreservedInEveryMode) {
     for (auto mode : {RoleMode::LegacyBmcCleared, RoleMode::ClientOnly,
-                      RoleMode::IRMServerOnly, RoleMode::FullBusManager}) {
+                      RoleMode::IRMResourceHost, RoleMode::FullBusManager}) {
         const uint32_t out = NormalizeLocalBusOptions(kHwBusOptions, mode);
         const auto d = DecodeBusOptions(out);
         EXPECT_EQ(d.cycClkAcc, 0x05u);
@@ -97,7 +97,7 @@ TEST(CapabilityMode, IllegalCombo_BmcWithoutIrmc_IsDetected) {
 }
 
 TEST(CapabilityMode, GenerationUpdatePreservesCapabilityBits) {
-    const uint32_t advertised = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::IRMServerOnly);
+    const uint32_t advertised = NormalizeLocalBusOptions(kHwBusOptions, RoleMode::IRMResourceHost);
     const uint32_t regen = ASFW::FW::SetGeneration({.busOptionsHost = advertised, .gen4 = 0xA});
     const auto d = DecodeBusOptions(regen);
     EXPECT_EQ(d.generation, 0xAu);
