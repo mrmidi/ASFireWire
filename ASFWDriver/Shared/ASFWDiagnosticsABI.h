@@ -370,7 +370,18 @@ typedef struct ASFWDiagBusManager {
     uint32_t irmFallbackAnnexHGateOpen;
     uint32_t irmFallbackRemainingMs;
 
-    uint32_t reserved[2];
+    // Milestone 5: Cycle Master Policy
+    uint32_t cyclePolicyDecision;
+    uint32_t cyclePolicyAction;
+    uint32_t cyclePolicyTargetNode;
+    uint32_t cyclePolicyLocalLowLevelMasterBefore;
+    uint32_t cyclePolicyLocalLowLevelMasterAfter;
+    uint32_t cyclePolicyRemoteCmstrInFlight;
+    uint32_t cyclePolicyRemoteCmstrStatus;
+    uint32_t cyclePolicyLocalEnableCount;
+    uint32_t cyclePolicyRemoteSubmitCount;
+
+    uint32_t reserved[1];
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus
