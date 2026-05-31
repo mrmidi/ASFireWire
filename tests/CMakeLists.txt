@@ -295,6 +295,17 @@ target_include_directories(CSRResponderTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(CSRResponderTests)
 
+add_executable(BroadcastChannelCSRTests
+    "${ASFW_TESTS_DIR}/BroadcastChannelCSRTests.cpp"
+)
+
+target_link_libraries(BroadcastChannelCSRTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+gtest_discover_tests(BroadcastChannelCSRTests)
+
 # Topology Map Builder Tests (FW-20)
 add_executable(TopologyMapBuilderTests
     "${ASFW_TESTS_DIR}/TopologyMapBuilderTests.cpp"

@@ -4,6 +4,7 @@
 // CSRResponderTests.cpp — FW-19 software CSR responder surface.
 
 #include "Bus/CSR/CSRResponder.hpp"
+#include "Bus/CSR/BroadcastChannelCSR.hpp"
 #include "Common/CSRSpace.hpp"
 
 #include <gtest/gtest.h>
@@ -15,6 +16,7 @@ using ASFW::Bus::CSRResponder;
 using ASFW::Bus::ICycleMasterControl;
 using ASFW::Bus::IRootStatus;
 using ASFW::Bus::ITopologyMapProvider;
+using ASFW::Bus::BroadcastChannelCSR;
 namespace FW = ASFW::FW;
 
 struct FakeRoot : IRootStatus {
@@ -49,8 +51,9 @@ struct FakeTopologyMap : ITopologyMapProvider {
     }
 };
 
-CSRResponder Make(FakeRoot& r, FakeCycleMaster& cm) {
-    return CSRResponder(CSRResponder::Deps{.root = &r, .cycleMaster = &cm, .topologyMap = nullptr});
+CSRResponder Make(FakeRoot& r, FakeCycleMaster& cm, BroadcastChannelCSR* bc = nullptr) {
+    return CSRResponder(
+        CSRResponder::Deps{.root = &r, .cycleMaster = &cm, .topologyMap = nullptr, .broadcastChannel = bc});
 }
 
 // ---- STATE_SET cycle master ---------------------------------------------------
@@ -279,3 +282,43 @@ TEST(CSRResponder, UnknownCsrOffset_IsNotMine) {
 }
 
 } // namespace
+
+// ---- BROADCAST_CHANNEL --------------------------------------------------------
+
+TEST(CSRResponder, BroadcastChannelRead_DelegatesToDep) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    BroadcastChannelCSR bc;
+    bc.MarkValidChannel31(); // 0xC000001F
+
+    auto rsp = Make(r, cm, &bc);
+
+    const auto res = rsp.ReadQuadlet(FW::kCSR_BroadcastChannel);
+    EXPECT_TRUE(res.mine);
+    EXPECT_EQ(res.rcode, ResponseCode::Complete);
+    EXPECT_EQ(res.readValue, 0xC000001F);
+}
+
+TEST(CSRResponder, BroadcastChannelWrite_DelegatesToDep) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    BroadcastChannelCSR bc;
+    auto rsp = Make(r, cm, &bc);
+
+    // Write valid bit = 1
+    const auto res = rsp.WriteQuadlet(FW::kCSR_BroadcastChannel, 0x40000000);
+    EXPECT_TRUE(res.mine);
+    EXPECT_EQ(res.rcode, ResponseCode::Complete);
+
+    // Should be 0xC000001F (sanitized)
+    EXPECT_EQ(bc.Read(), 0xC000001F);
+}
+
+TEST(CSRResponder, BroadcastChannel_NullDep_ReturnsInitial) {
+    FakeRoot r;
+    FakeCycleMaster cm;
+    auto rsp = Make(r, cm, nullptr);
+
+    const auto res = rsp.ReadQuadlet(FW::kCSR_BroadcastChannel);
+    EXPECT_EQ(res.readValue, FW::kBroadcastChannelInitial);
+}
