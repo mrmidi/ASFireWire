@@ -116,6 +116,13 @@ class HardwareInterface {
         return initialIRMRegistersProgrammed_;
     }
 
+    /**
+     * @brief Forced state override for unit tests.
+     */
+    void SetInitialIRMRegistersProgrammed(bool programmed) noexcept {
+        initialIRMRegistersProgrammed_ = programmed;
+    }
+
     [[nodiscard]] bool WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                               uint32_t pollIntervalUsec = 100) const;
     [[nodiscard]] bool WaitLink(uint32_t mask, bool expectSet, uint32_t timeoutUsec,

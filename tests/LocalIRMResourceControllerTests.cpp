@@ -22,12 +22,14 @@ protected:
 };
 
 TEST_F(LocalIRMResourceControllerTests, InitialState) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Disabled);
     EXPECT_EQ(broadcastChannel_.Read(), 0x8000001F);
 }
 
 TEST_F(LocalIRMResourceControllerTests, BusResetResetsState) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     broadcastChannel_.MarkValidChannel31();
     
@@ -39,6 +41,7 @@ TEST_F(LocalIRMResourceControllerTests, BusResetResetsState) {
 }
 
 TEST_F(LocalIRMResourceControllerTests, TopologyReady_NotIRM_DisablesHosting) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     controller.OnTopologyReady(10, 0, 2, true); // Local=0, IRM=2
     
@@ -49,6 +52,7 @@ TEST_F(LocalIRMResourceControllerTests, TopologyReady_NotIRM_DisablesHosting) {
 }
 
 TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesAndSetsValid) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     
     // Local=2, IRM=2
@@ -63,6 +67,7 @@ TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesAndSetsValid) 
 }
 
 TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesReadyChanged) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     
     // Setup hardware with some non-default value in BANDWIDTH_AVAILABLE (select 1)
@@ -76,6 +81,7 @@ TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesReadyChanged) 
 }
 
 TEST_F(LocalIRMResourceControllerTests, RoleDoesNotAllowIRMHost_DisablesHosting) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     controller.OnTopologyReady(10, 2, 2, false); // Local=IRM but role=ClientOnly
     
