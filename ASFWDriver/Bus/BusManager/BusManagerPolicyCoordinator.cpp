@@ -30,6 +30,9 @@ void BusManagerPolicyCoordinator::Evaluate(BusManagerRuntimeState& state) noexce
         state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::LocalRootCycleMaster);
         
         // Milestone 3: ElectionOnly must not enable local cycleMaster
+        // For now, we use RemoteCmstrAllowed as the gate for ANY active BM behavior
+        // beyond election itself (maximum conservatism). Later milestones may
+        // introduce intermediate levels like LocalCyclePolicyAllowed.
         if (state.fullBMActivityLevel >= static_cast<uint8_t>(ASFW::FW::FullBMActivityLevel::RemoteCmstrAllowed)) {
             if (deps_.hardware) {
                 const uint32_t linkCtrl = deps_.hardware->ReadLinkControl();

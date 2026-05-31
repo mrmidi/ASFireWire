@@ -69,6 +69,7 @@ public:
         uint32_t attemptedGen{0};
         uint8_t attemptsThisGen{0};
         uint8_t lastElectionPath{0}; // 0=none, 1=Local, 2=Remote
+        uint8_t lastAction{0};       // 0=none, 1=Immediate, 2=Grace
     };
     [[nodiscard]] Snapshot GetSnapshot() const noexcept {
         return Snapshot{
@@ -80,7 +81,8 @@ public:
             .wasIncumbent = wasIncumbent_,
             .attemptedGen = attemptedGeneration_,
             .attemptsThisGen = attemptsThisGeneration_,
-            .lastElectionPath = lastElectionPath_
+            .lastElectionPath = lastElectionPath_,
+            .lastAction = lastAction_
         };
     }
 
@@ -109,6 +111,7 @@ private:
     uint8_t localNodeId_{0xFF};
     uint8_t irmNodeId_{0xFF};
     uint8_t lastElectionPath_{0};
+    uint8_t lastAction_{0};
     bool active_{true};
 };
 
