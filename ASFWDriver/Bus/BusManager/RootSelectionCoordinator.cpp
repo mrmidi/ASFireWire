@@ -54,7 +54,7 @@ void RootSelectionCoordinator::Evaluate(const RootSelectionInputs& inputs,
         }
 
         const bool longReset = config_.useLongResetForRootSelection;
-        const std::optional<uint8_t> gap = std::nullopt; // M7 owns gap optimization.
+        const std::optional<uint8_t> gap = inputs.currentGapCount; // Explicitly preserve current gap
 
         snapshot_.selectedRoot = candidate->nodeId;
         snapshot_.requestedGapCount = inputs.currentGapCount;
@@ -237,8 +237,8 @@ RootSelectionCoordinator::BuildCandidates(const RootSelectionInputs& inputs) con
 
         if (c.isLocal) {
             c.transactionCapable = true;
-            c.cmcKnown = true;
-            c.cmcCapable = true;
+            c.cmcKnown = inputs.localCmcKnown;
+            c.cmcCapable = inputs.localCmcCapable;
             c.reason = RootCandidateReason::LocalCMC;
         } else {
             c.transactionCapable = node.linkActive;

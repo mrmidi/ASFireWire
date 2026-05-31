@@ -118,7 +118,11 @@ bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
-    // Initialize/update Bus Manager/IRM runtime state (FW-14)
+    // 1. Advance generation and notify role authority first
+    currentGeneration_ = snap.generation;
+    roleCoordinator_.OnTopologyChanged(snap.generation, snap);
+
+    // 2. Initialize/update Bus Manager/IRM runtime state (FW-14)
     bmState_.generation = snap.generation;
     bmState_.busBase16 = snap.busBase16;
     bmState_.topologyValid = (snap.graphStatus == Driver::TopologyGraphStatus::Valid);
@@ -168,13 +172,6 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     }
 
     EvaluateCyclePolicy();
-
-    // FW-6/FW-7: hand the new topology/generation to role policy before any
-    // discovery-specific early returns — role policy is independent of ROM scan.
-    // Skeleton policy is inert (None/Defer) with null executors, so this takes
-    // no hardware action yet.
-    currentGeneration_ = snap.generation;
-    roleCoordinator_.OnTopologyChanged(snap.generation, snap);
 
     if (deps_.topologyMapService) {
         deps_.topologyMapService->Rebuild(snap);
@@ -360,7 +357,9 @@ void ControllerCore::PublishRootCapabilityEvidence() {
         currentRootEvidence_.cycles);
     roleCoordinator_.OnRootCapabilityEvidence(currentRootEvidence_.generation,
                                               currentRootEvidence_);
+    SyncBusManagerRuntimeState();
     EvaluateBusManagerPolicy();
+    EvaluateCyclePolicy();
 }
 
 void ControllerCore::ForceRootAndReset(uint8_t targetRoot, Role::RoleResetFlavor flavor,
@@ -694,6 +693,12 @@ void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
     in.cycleStartObserved = state.cycleStartObserved;
     in.rootCmcKnown = state.rootCmcKnown;
     in.rootCmcCapable = state.rootCmcCapable;
+
+    // Populate local CMC evidence from BIB
+    const auto advertisedCaps = ASFW::Driver::DeriveBusOptionsCapabilities(rolePolicy_);
+    in.localCmcKnown = true;
+    in.localCmcCapable = advertisedCaps.cmc;
+
     in.currentGapCount = LatestTopology().has_value() ? LatestTopology()->gapCount : static_cast<uint8_t>(63);
 
     if (irmFallback_) {
@@ -825,12 +830,19 @@ void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
 
     // Populate root evidence from role coordinator
     const auto rootEvidence = roleCoordinator_.LastRootEvidence();
-    bmState_.rootCmcKnown = rootEvidence.cmcKnown;
-    bmState_.rootCmcCapable = rootEvidence.cmc;
-    
-    const auto cycleObs = cycleObserver_.Observation();
-    bmState_.cycleStartObserved = cycleObs.cycleStartObserved;
-    bmState_.cycleStartSourceNode = rootEvidence.rootNodeId; // For now, assume root is source
+    if (rootEvidence.generation == bmState_.generation) {
+        bmState_.rootCmcKnown = rootEvidence.cmcKnown;
+        bmState_.rootCmcCapable = rootEvidence.cmc;
+
+        const auto cycleObs = cycleObserver_.Observation();
+        bmState_.cycleStartObserved = cycleObs.cycleStartObserved;
+        bmState_.cycleStartSourceNode = rootEvidence.rootNodeId; // For now, assume root is source
+    } else {
+        bmState_.rootCmcKnown = false;
+        bmState_.rootCmcCapable = false;
+        bmState_.cycleStartObserved = false;
+        bmState_.cycleStartSourceNode = 0x3F;
+    }
 
     // Populate submode level
     bmState_.fullBMActivityLevel = static_cast<uint8_t>(rolePolicy_.fullBMActivityLevel);

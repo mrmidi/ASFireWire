@@ -26,22 +26,11 @@ void BusManagerPolicyCoordinator::Evaluate(BusManagerRuntimeState& state) noexce
     }
 
     if (state.localIsRoot) {
-        // If local node is BM and also root: set local cycleMaster in LinkControlSet
+        // If local node is BM and also root: local cycleMaster should be set.
         state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::LocalRootCycleMaster);
         
-        // Milestone 3: ElectionOnly must not enable local cycleMaster
-        // For now, we use RemoteCmstrAllowed as the gate for ANY active BM behavior
-        // beyond election itself (maximum conservatism). Later milestones may
-        // introduce intermediate levels like LocalCyclePolicyAllowed.
-        if (state.fullBMActivityLevel >= static_cast<uint8_t>(ASFW::FW::FullBMActivityLevel::RemoteCmstrAllowed)) {
-            if (deps_.hardware) {
-                const uint32_t linkCtrl = deps_.hardware->ReadLinkControl();
-                if ((linkCtrl & ASFW::Driver::LinkControlBits::kCycleMaster) == 0) {
-                    ASFW_LOG(Controller, "[BM Policy] Local node is BM and root; enabling local cycleMaster (level=%u)", state.fullBMActivityLevel);
-                    deps_.hardware->SetLinkControlBits(ASFW::Driver::LinkControlBits::kCycleMaster);
-                }
-            }
-        } else {
+        // Diagnostics only: report suppression if below CyclePolicyAllowed.
+        if (state.fullBMActivityLevel < static_cast<uint8_t>(ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed)) {
             ASFW_LOG(Controller, "[BM Policy] Local node is BM and root; but cycleMaster activation is suppressed (level=%u)", state.fullBMActivityLevel);
         }
     } else {
@@ -68,22 +57,6 @@ void BusManagerPolicyCoordinator::Evaluate(BusManagerRuntimeState& state) noexce
                 state.remoteCmstrAlreadySatisfied = false;
                 state.remoteCmstrNeeded = true;
                 ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root CMC capable but not cycling. Remote CMSTR needed.", state.rootNodeId);
-
-                // Pass 3: remote CMSTR submission gate
-                if (state.fullBMActivityLevel >= static_cast<uint8_t>(ASFW::FW::FullBMActivityLevel::RemoteCmstrAllowed)) {
-                    if (!state.remoteCmstrAllowed) {
-                        state.remoteCmstrAllowed = true;
-                        state.lastRemoteCmstrGeneration = state.generation;
-                        state.lastRemoteCmstrTargetNode = state.rootNodeId;
-                        ASFW_LOG(Controller, "[BM Policy] Submitting remote CMSTR write to root=%u for gen=%u",
-                                 state.rootNodeId, state.generation);
-                        if (deps_.executor) {
-                            deps_.executor->SendRemoteCmstr(state.rootNodeId, state.generation);
-                        }
-                    }
-                } else {
-                    ASFW_LOG(Controller, "[BM Policy] Observe-only: Remote CMSTR not sent (activity level = %u)", state.fullBMActivityLevel);
-                }
             }
         }
     }

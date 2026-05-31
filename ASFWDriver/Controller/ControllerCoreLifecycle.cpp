@@ -806,6 +806,10 @@ kern_return_t ControllerCore::ApplyRolePolicy(const RolePolicy& policy) {
     roleCoordinator_.SetActivityLevel(rolePolicy_.fullBMActivityLevel);
     roleCoordinator_.SetLinuxStyleCmcForceRoot(rolePolicy_.linuxStyleCmcForceRoot);
 
+    if (deps_.busManagerElectionDriver) {
+        deps_.busManagerElectionDriver->SetRolePolicy(policy);
+    }
+
     // Before the link is up there is nothing to re-advertise — Start() stages the
     // Config ROM from rolePolicy_ during bring-up. Once running, re-stage the BIB
     // capabilities and force a long bus reset so peers re-read the local ROM.

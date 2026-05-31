@@ -85,6 +85,8 @@ TEST_F(RootSelectionCoordinatorTests, ForceRootAllowed_AllowsSelection) {
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.topology = &topo;
     
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::SelectLocalRoot);
@@ -151,6 +153,8 @@ TEST_F(RootSelectionCoordinatorTests, FallbackIRM_NoBM_GateOpen_AllowsRootSelect
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.topology = &topo;
     
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::SelectLocalRoot);
@@ -175,6 +179,8 @@ TEST_F(RootSelectionCoordinatorTests, RetryLimit_BoundsForceRootAttempts) {
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.topology = &topo;
 
     struct MockExecutor : public IRootSelectionExecutor {
@@ -214,6 +220,8 @@ TEST_F(RootSelectionCoordinatorTests, StableTopologyChange_ResetsRetryCounter) {
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.topology = &topo1;
 
     struct MockExecutor : public IRootSelectionExecutor {
