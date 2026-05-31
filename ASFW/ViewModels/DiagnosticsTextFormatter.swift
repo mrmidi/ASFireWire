@@ -139,7 +139,7 @@ struct DiagnosticsTextFormatter {
         appendRow("Cycle Start Source Node", formatNodeStr(snapshot.busContract.cycleStartSourceNode))
         appendRow("Local Cycle Master Enabled", snapshot.busContract.localCycleMasterEnabled != 0 ? "Yes" : "No")
         appendRow("Local Cycle Timer Enabled", snapshot.busContract.localCycleTimerEnabled != 0 ? "Yes" : "No")
-        appendRow("Last Bus Reset Count", snapshot.busContract.lastBusResetCount)
+        appendRow("ASFW-Initiated Reset Count", snapshot.busContract.asfwInitiatedResetCount)
         
         // "Role Forcing Mode": whether the role-policy evaluator forces the local
         // node's root standing. "Standard" = no forcing (normal election); it is
@@ -425,7 +425,7 @@ struct DiagnosticsTextFormatter {
         appendRow("CHANNELS_AVAILABLE_LO local", formatHex32(snapshot.busManager.localIrmChannelsAvailableLo))
         
         appendRow("Topology Map Valid", snapshot.busManager.topologyMapValid != 0 ? "Yes" : "No")
-        appendRow("Topology Map Generation", snapshot.busManager.topologyMapGeneration)
+        appendRow("Topology Map CSR Generation", snapshot.busManager.topologyMapCSRGeneration)
         appendRow("Topology Map Self-ID Count", snapshot.busManager.topologyMapSelfIdCount)
         appendRow("Topology Map CRC", formatHex16(snapshot.busManager.topologyMapCRC))
         appendRow("Topology Map DMA Ready", snapshot.busManager.topologyMapDMAReady != 0 ? "Yes" : "No")
@@ -458,10 +458,54 @@ struct DiagnosticsTextFormatter {
         }
         appendRow("Remote CMSTR Action", cmstrActionStr)
 
+        // --- Milestone 3: Bus Manager Election ---
+        appendTitle("Bus Manager Election (Milestone 3)")
+
+        let candidateClassStr: String
+        switch snapshot.busManager.bmCandidateClass {
+        case 0: candidateClassStr = "Not a candidate"
+        case 1: candidateClassStr = "Incumbent"
+        case 2: candidateClassStr = "Non-incumbent (challenger)"
+        default: candidateClassStr = "Unknown (\(snapshot.busManager.bmCandidateClass))"
+        }
+        appendRow("BM Candidate Class", candidateClassStr)
+        appendRow("Incumbent BM Local Flag", snapshot.busManager.bmElectionLocalFlag != 0 ? "Yes" : "No")
+
+        let electActionStr: String
+        switch snapshot.busManager.bmElectionAction {
+        case 0: electActionStr = "none (DoNotContend)"
+        case 1: electActionStr = "Immediate (incumbent retry)"
+        case 2: electActionStr = "Grace Period (125ms challenger delay)"
+        default: electActionStr = "Unknown (\(snapshot.busManager.bmElectionAction))"
+        }
+        appendRow("Election Decision Action", electActionStr)
+
+        appendRow("Election In-Flight", snapshot.busManager.bmElectionState != 0 ? "Yes" : "No")
+
+        let pathStr: String
+        switch snapshot.busManager.bmElectionPath {
+        case 0: pathStr = "none"
+        case 1: pathStr = "Local OHCI CSRControl"
+        case 2: pathStr = "Remote Async Lock (S100)"
+        default: pathStr = "Unknown (\(snapshot.busManager.bmElectionPath))"
+        }
+        appendRow("Election Attempt Path", pathStr)
+
+        appendRow("Election Compare Value", formatHex32(snapshot.busManager.bmElectionCompareValue))
+        appendRow("Election Swap Value", formatHex32(snapshot.busManager.bmElectionSwapValue))
+        appendRow("Last BUS_MANAGER_ID Old Value", formatHex32(snapshot.busManager.lastBusManagerIdOldValue))
+
+        appendRow("Election Attempted Gen", snapshot.busManager.bmElectionAttemptedGen)
+        appendRow("Attempts This Gen", snapshot.busManager.bmElectionAttemptsThisGen)
+        appendRow("Stale Election Abort Count", snapshot.busManager.staleElectionAbortCount)
+        appendRow("Failed Election Count", snapshot.busManager.failedElectionCount)
+
+        appendRow("ElectionOnly Active Mutations", "BUS_MANAGER_ID only. Cycle/root/gap policy disabled.")
+
         let activityStr: String
         switch snapshot.busManager.fullBMActivityLevel {
         // Order must match FullBMActivityLevel in ASFWDriver/Common/CSRSpace.hpp.
-        case 0: activityStr = "ObserveOnly"
+        case 0: activityStr = "ObserveOnly (BM-passive, IRM-visible)"
         case 1: activityStr = "ElectionOnly"
         case 2: activityStr = "GapPolicyAllowed"
         case 3: activityStr = "ForceRootAllowed"
