@@ -71,8 +71,14 @@ void GapPolicyCoordinator::Evaluate(const GapPolicyInputs& inputs,
 
         snapshot_.targetRoot = targetRoot;
         snapshot_.combinedWithRootSelection = inputs.rootSelectionRequired;
-        snapshot_.lastAction = longReset ? GapPolicyAction::ForceRootWithGapAndLongReset
-                                         : GapPolicyAction::ForceRootWithGapAndShortReset;
+        
+        if (inputs.rootSelectionRequired) {
+            snapshot_.lastAction = longReset ? GapPolicyAction::ForceRootWithGapAndLongReset
+                                             : GapPolicyAction::ForceRootWithGapAndShortReset;
+        } else {
+            snapshot_.lastAction = longReset ? GapPolicyAction::GapOnlyLongReset
+                                             : GapPolicyAction::GapOnlyShortReset;
+        }
 
         const bool ok = executor.ForceRootAndGapResetForBMPolicy(inputs.generation,
                                                                  targetRoot,

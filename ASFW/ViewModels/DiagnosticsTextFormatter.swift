@@ -649,7 +649,7 @@ struct DiagnosticsTextFormatter {
         
         let rootReasonStr: String
         switch snapshot.busManager.rootSelectionDecision {
-        case 6: rootReasonStr = "Current root CMC=false, no cycle start"
+        case 6: rootReasonStr = "Current root already CMC-capable/suitable"
         case 10: rootReasonStr = "Remote-root selection (future goal; currently local only)"
         case 11: rootReasonStr = "No cycle-master-capable candidates found"
         case 12: rootReasonStr = "Reset attempt limit reached for this topology"
@@ -728,6 +728,62 @@ struct DiagnosticsTextFormatter {
         appendRow("Combined with M6", snapshot.busManager.gapPolicyCombinedWithRootSelection != 0 ? "Yes" : "No")
         appendRow("Attempts This Topology", "\(snapshot.busManager.gapPolicyAttemptsThisTopology) / 5")
         appendRow("Reset Requested", snapshot.busManager.gapPolicyResetRequested != 0 ? "Yes" : "No")
+
+        // --- Milestone 8: Power / Link-On Policy ---
+        appendTitle("Power / Link-On Policy (Milestone 8)")
+        
+        let powerDecisionStr: String
+        switch snapshot.busManager.powerPolicyDecision {
+        case 0: powerDecisionStr = "None"
+        case 1: powerDecisionStr = "SuppressedByRoleMode"
+        case 2: powerDecisionStr = "SuppressedByPolicyLevel"
+        case 3: powerDecisionStr = "SuppressedByTopology"
+        case 4: powerDecisionStr = "SuppressedNotBMOrFallbackIRM"
+        case 5: powerDecisionStr = "NoEligibleNodes"
+        case 6: powerDecisionStr = "DeferredPowerBudgetUnknown"
+        case 7: powerDecisionStr = "DeferredNodeEvidenceIncomplete"
+        case 8: powerDecisionStr = "LinkOnRequired"
+        case 9: powerDecisionStr = "LinkOnAlreadyAttemptedThisGeneration"
+        case 10: powerDecisionStr = "FailedRetryLimit"
+        case 11: powerDecisionStr = "FailedExecutorUnavailable"
+        case 12: powerDecisionStr = "FailedGenerationStale"
+        default: powerDecisionStr = "Unknown (\(snapshot.busManager.powerPolicyDecision))"
+        }
+        appendRow("Decision", powerDecisionStr)
+        
+        let powerActionStr: String
+        switch snapshot.busManager.powerPolicyAction {
+        case 0: powerActionStr = "None"
+        case 1: powerActionStr = "ReportOnly"
+        case 2: powerActionStr = "SendLinkOnPackets"
+        default: powerActionStr = "Unknown (\(snapshot.busManager.powerPolicyAction))"
+        }
+        appendRow("Action", powerActionStr)
+        
+        let budgetStr: String
+        switch snapshot.busManager.powerBudgetStatus {
+        case 0: budgetStr = "Unknown"
+        case 1: budgetStr = "Sufficient"
+        case 2: budgetStr = "Insufficient"
+        default: budgetStr = "Invalid (\(snapshot.busManager.powerBudgetStatus))"
+        }
+        appendRow("Power Budget", budgetStr)
+        
+        appendRow("Eligible Nodes", snapshot.busManager.powerEligibleNodeCount)
+        
+        if snapshot.busManager.powerTargetNodeCount > 0 {
+            var targets: [String] = []
+            // Safe access to fixed-size array powerTargetNodes[16] via mirroring or manual indexing
+            // Since we're in Swift, we treat it as a tuple or use Reflection if needed.
+            // For now, let's assume we can access them if the ABI allows.
+            // Actually, we'll just report the count and first few if possible.
+            appendRow("Target Node Count", snapshot.busManager.powerTargetNodeCount)
+        }
+        
+        appendRow("Attempts This Generation", "\(snapshot.busManager.linkOnAttemptsThisGeneration) / 1")
+        appendRow("Submitted", snapshot.busManager.linkOnSubmittedCount)
+        appendRow("Succeeded", snapshot.busManager.linkOnSuccessCount)
+        appendRow("Failed", snapshot.busManager.linkOnFailureCount)
 
         // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
         // Generation-scoped gates anchored to Self-ID completion. Reporting only:

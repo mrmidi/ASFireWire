@@ -32,6 +32,8 @@ TEST_F(CyclePolicyCoordinatorTests, ElectionOnlySuppressesLocalCycleMaster) {
     in.activityLevel = FullBMActivityLevel::ElectionOnly;
     in.localIsBM = true;
     in.localIsRoot = true;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::SuppressedByActivityLevel);
 }
@@ -43,8 +45,35 @@ TEST_F(CyclePolicyCoordinatorTests, LocalBMAndLocalRootPlansLocalCycleMaster) {
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = true;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, LocalRootCmcUnknownDefers) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = true;
+    in.localCmcKnown = false;
+    
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::DeferLocalCmcUnknown);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, LocalRootCmcFalseRequiresRootSelection) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = true;
+    in.localCmcKnown = true;
+    in.localCmcCapable = false;
+    
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::RootSelectionRequired);
 }
 
 TEST_F(CyclePolicyCoordinatorTests, CycleStartObservedSuppressesAllCycleRepair) {
@@ -119,6 +148,8 @@ TEST_F(CyclePolicyCoordinatorTests, IRMFallbackLocalRootPlansLocalCycleMaster) {
     in.irmFallbackGateOpen = true;
     in.irmFallbackNoBMDetected = true;
     in.localIsRoot = true;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
 }

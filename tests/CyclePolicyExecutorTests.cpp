@@ -32,6 +32,8 @@ TEST_F(CyclePolicyExecutorTests, ExecutorEnablesLocalCycleMasterOnlyOncePerGener
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = true;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.cycleStartObserved = false;
 
     // First call: should trigger mutation
@@ -55,6 +57,8 @@ TEST_F(CyclePolicyExecutorTests, ExecutorDoesNotEnableLocalCycleMasterWhenNotRoo
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = false; // Not root!
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     in.cycleStartObserved = false;
@@ -76,6 +80,8 @@ TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWriteWithCorrectAddre
     in.activityLevel = FullBMActivityLevel::RemoteCmstrAllowed;
     in.localIsBM = true;
     in.localIsRoot = false;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     in.rootNodeId = 2;
@@ -98,6 +104,8 @@ TEST_F(CyclePolicyExecutorTests, ExecutorSuppressesRemoteCmstrBelowRemoteCmstrAl
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed; // Too low for remote CMSTR
     in.localIsBM = true;
     in.localIsRoot = false;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     in.cycleStartObserved = false;
@@ -115,6 +123,8 @@ TEST_F(CyclePolicyExecutorTests, RemoteCmstrCallbackStaleGenerationIgnored) {
     in.activityLevel = FullBMActivityLevel::RemoteCmstrAllowed;
     in.localIsBM = true;
     in.localIsRoot = false;
+    in.localCmcKnown = true;
+    in.localCmcCapable = true;
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     in.rootNodeId = 2;

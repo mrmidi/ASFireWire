@@ -72,6 +72,12 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         if (rootSelection_) {
             rootSelection_->OnBusResetStarted(generation);
         }
+        if (gapPolicy_) {
+            gapPolicy_->OnBusResetStarted(generation);
+        }
+        if (powerLinkPolicy_) {
+            powerLinkPolicy_->OnBusResetStarted(generation);
+        }
     }
     DispatchAsyncInterrupts(events);
     LogBusResetCompletionEvents(events, snapshot.timestamp);

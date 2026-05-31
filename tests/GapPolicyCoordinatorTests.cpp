@@ -142,6 +142,36 @@ TEST_F(GapPolicyCoordinatorTests, GapMismatch_RequiresLongReset) {
     EXPECT_EQ(coordinator_.Plan(in), GapPolicyDecision::GapMismatchRequiresLongReset);
 }
 
+TEST_F(GapPolicyCoordinatorTests, GapOptimization_PlansGapOnlyReset) {
+    GapPolicyInputs in{};
+    ASFW::Driver::TopologySnapshot topo{};
+    topo.nodeCount = 2;
+    in.topology = &topo;
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::GapPolicyAllowed;
+    in.localIsBM = true;
+    in.maxHopsKnown = true;
+    in.maxHopsFromRoot = 2; // Expected = 7
+    in.betaRepeatersKnown = true;
+    in.betaRepeatersPresent = false;
+    in.currentGapCount = 63;
+    in.gapCountConsistent = true;
+    in.rootNodeId = 1;
+    
+    struct MockExecutor : public IGapPolicyExecutor {
+        MOCK_METHOD(bool, ForceRootAndGapResetForBMPolicy, (uint32_t, uint8_t, bool, uint8_t), (override));
+    } executor;
+
+    EXPECT_CALL(executor, ForceRootAndGapResetForBMPolicy(testing::_, 1, false, 7)).WillOnce(testing::Return(true));
+
+    coordinator_.Evaluate(in, executor);
+    EXPECT_EQ(coordinator_.Snapshot().lastDecision, GapPolicyDecision::GapOptimizationRequired);
+    EXPECT_EQ(coordinator_.Snapshot().lastAction, GapPolicyAction::GapOnlyShortReset);
+    EXPECT_EQ(coordinator_.Snapshot().targetRoot, 1);
+    EXPECT_FALSE(coordinator_.Snapshot().combinedWithRootSelection);
+}
+
 TEST_F(GapPolicyCoordinatorTests, CombinedWithRootSelection) {
     GapPolicyInputs in{};
     ASFW::Driver::TopologySnapshot topo{};
@@ -170,6 +200,7 @@ TEST_F(GapPolicyCoordinatorTests, CombinedWithRootSelection) {
     EXPECT_CALL(executor, ForceRootAndGapResetForBMPolicy(testing::_, 0, false, 7)).WillOnce(testing::Return(true));
 
     coordinator_.Evaluate(in, executor);
+    EXPECT_EQ(coordinator_.Snapshot().lastDecision, GapPolicyDecision::GapOptimizationRequired);
     EXPECT_EQ(coordinator_.Snapshot().lastAction, GapPolicyAction::ForceRootWithGapAndShortReset);
     EXPECT_EQ(coordinator_.Snapshot().targetRoot, 0);
     EXPECT_TRUE(coordinator_.Snapshot().combinedWithRootSelection);
