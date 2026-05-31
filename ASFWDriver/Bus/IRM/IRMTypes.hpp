@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include "../Discovery/DiscoveryTypes.hpp"  // For Generation type
+#include "../../Discovery/DiscoveryTypes.hpp"  // For Generation type
 #include <DriverKit/IOLib.h>
 
 namespace ASFW::IRM {
@@ -42,8 +42,8 @@ namespace IRMRegisters {
  *
  * Calculation: 400 Mbps / 196 KB/s per unit ≈ 4915 units
  *
- * Reference: Apple IOFireWireFamily/IOFireWireController.cpp
- *            Linux firewire-ohci.c BANDWIDTH_AVAILABLE_INITIAL
+ * Reference: Apple IOFireWireController.cpp:6302 - Initial bandwidth 0x1333
+ *            Linux core.h:46 - BANDWIDTH_AVAILABLE_INITIAL 4915
  */
 constexpr uint32_t kMaxBandwidthUnitsS400 = 4915;
 

@@ -802,8 +802,10 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
         return {LocalCSRLockResult::Status::Success};
     }
     
-    Write(Register32::kCSRCompareData, currentValResult.value);
+    // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
+    // Cross-validated with Linux: firewire/ohci.c:1680-1682
     Write(Register32::kCSRData, value);
+    Write(Register32::kCSRCompareData, currentValResult.value);
     Write(Register32::kCSRControl, selectCode & 0x3u);
     FlushPostedWrites();
     
@@ -850,8 +852,10 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
     if (!device_) {
         return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
     }
-    Write(Register32::kCSRCompareData, compareValue);
+    // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
+    // Cross-validated with Linux: firewire/ohci.c:1680-1682
     Write(Register32::kCSRData, newValue);
+    Write(Register32::kCSRCompareData, compareValue);
     Write(Register32::kCSRControl, selectCode & 0x3u);
     FlushPostedWrites();
     

@@ -9,7 +9,7 @@
 #include "../Bus/Role/RoleCoordinator.hpp"
 #include "../Bus/BusManager/BusManagerRuntimeState.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
-#include "../Bus/BusManager/LocalIRMResourceController.hpp"
+#include "../Bus/IRM/LocalIRMResourceController.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"

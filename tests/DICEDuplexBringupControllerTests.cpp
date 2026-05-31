@@ -3,7 +3,7 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
-#include "IRM/IRMClient.hpp"
+#include "Bus/IRM/IRMClient.hpp"
 #include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
 #include "Protocols/Audio/DICE/Core/DICETransaction.hpp"
 #include "Protocols/Audio/DICE/Core/DICEDuplexBringupController.hpp"

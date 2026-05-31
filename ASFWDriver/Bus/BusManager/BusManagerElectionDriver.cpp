@@ -4,7 +4,7 @@
 // BusManagerElectionDriver.cpp — see BusManagerElectionDriver.hpp
 
 #include "BusManagerElectionDriver.hpp"
-#include "LocalIRMResourceController.hpp"
+#include "../IRM/LocalIRMResourceController.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Controller/ControllerTypes.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
