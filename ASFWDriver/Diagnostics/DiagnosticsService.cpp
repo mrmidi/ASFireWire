@@ -81,7 +81,14 @@ ASFWDiagStatus DiagnosticsService::CollectBusContract(ASFWDiagBusContract* out) 
         out->localNode = topo.localNodeId;
         out->rootNode = topo.rootNodeId;
         out->irmNode = topo.irmNodeId;
-        out->bmNode = topo.irmNodeId; // IRM acts as BM in most topologies
+        // BM is NOT the IRM. The IRM is elected passively from Self-ID; the BM is
+        // a separate role won by a lock(compare_swap) on the IRM's BUS_MANAGER_ID
+        // register, and a bus may have no BM at all. Report the real tracked BM
+        // identity (BusManagerRuntimeState.bmNodeId; 0x3F == none/unknown, the
+        // BUS_MANAGER_ID reset value) instead of echoing the IRM. In ClientOnly
+        // we never contend, so this honestly reads "none" with BM Owner Source
+        // = Unknown. Determining a remote BM (probing 0x21C) is deferred Tier 2.
+        out->bmNode = controller_->GetBusManagerRuntimeState().bmNodeId;
         out->nodeCount = topo.nodeCount;
         out->gapCount = topo.gapCount;
         out->maxHops = topo.physical.busDiameterHops;
@@ -144,7 +151,7 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
         for (uint32_t i = 0; i < copyCount; ++i) {
             out->rawSelfIds[i] = rawQuads[i];
         }
-        out->selfIdSequenceCount = 0; // Not directly stored in v2 snapshot currently
+        out->selfIdSequenceCount = topo.selfIdSequenceCount;
         out->enumeratorError = (topo.selfIdStatus == Driver::SelfIDStreamStatus::Valid) ? 0 : 1;
         out->gapCount = topo.gapCount;
         out->busBase16 = topo.busBase16;
@@ -171,6 +178,14 @@ ASFWDiagStatus DiagnosticsService::CollectTopology(ASFWDiagTopology* out) const 
             const uint32_t copyPorts = (srcNode.reportedPorts.size() > ASFW_DIAG_MAX_PORTS)
                                            ? ASFW_DIAG_MAX_PORTS
                                            : static_cast<uint32_t>(srcNode.reportedPorts.size());
+            // TODO (worth considering, not urgent): parentPort is derived from the
+            // raw `reportedPorts` while adjacency comes from the reconstructed
+            // `links[]`, and the two are never cross-validated here. The normalized
+            // graph (SelfIDTopologyNormalizer::NormalizeFromLocal) already resolves
+            // a validated, acyclic parent/child orientation — emitting from that
+            // instead would make the exported tree self-consistent by construction
+            // and remove any chance of the app re-deriving a back-edge. Driver data
+            // is currently sound; this is a robustness/clarity improvement only.
             dstNode.parentPort = 0xFFFFFFFFu;
             for (uint32_t p = 0; p < copyPorts; ++p) {
                 dstNode.ports[p] = PortStateToDiag(srcNode.reportedPorts[p]);
@@ -394,6 +409,18 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
         dst.offset = src.offset;
         dst.owner = src.owner;
         dst.implemented = src.implemented ? 1 : 0;
+
+        // TOPOLOGY_MAP (+0x1000) is now built and served by ASFW software
+        // (TopologyMapService), not "Planned". Reflect the live ownership so the
+        // CSR contract agrees with the Topology Map Valid/DMA Ready fields rather
+        // than reporting a stale planned/unimplemented state.
+        if (src.offset == 0x1000) {
+            if (auto* topoMap = controller_->GetTopologyMapService();
+                topoMap && topoMap->IsValid()) {
+                dst.owner = ASFWDiagCSROwnerASFWSoftware;
+                dst.implemented = 1;
+            }
+        }
         
         // Copy string safely without std::string overhead
         std::size_t nameLen = std::strlen(src.name);
