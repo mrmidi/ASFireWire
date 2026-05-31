@@ -311,7 +311,15 @@ typedef struct ASFWDiagBusManager {
     uint32_t lastRemoteCmstrResult;
     uint32_t lastRemoteCmstrGeneration;
     uint32_t lastRemoteCmstrTargetNode;
-    uint32_t reserved[9];
+    
+    // Milestone 1 additions
+    uint32_t broadcastChannelValue;
+    uint32_t broadcastChannelValid;
+    uint32_t initialBandwidthAvailable;
+    uint32_t initialChannelsAvailableHi;
+    uint32_t initialChannelsAvailableLo;
+    
+    uint32_t reserved[4];
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus
