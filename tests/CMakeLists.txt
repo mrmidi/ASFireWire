@@ -417,6 +417,7 @@ add_executable(BusResetCoordinatorTests
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorFSM.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorActions.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Timing/PostResetTimingCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusResetCoordinatorDiscoveryDelay.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager.cpp"
     "${ASFW_DRIVER_DIR}/Bus/GapCountOptimizer.cpp"
@@ -1959,3 +1960,23 @@ target_compile_definitions(LocalIRMResourceControllerTests
 target_include_directories(LocalIRMResourceControllerTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(LocalIRMResourceControllerTests)
+
+# Post-Reset Timing Core (Milestone 2) - generation-scoped post-reset timing gates
+add_executable(PostResetTimingTests
+    "${ASFW_TESTS_DIR}/PostResetTimingTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Timing/PostResetTimingCoordinator.cpp"
+)
+
+target_link_libraries(PostResetTimingTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(PostResetTimingTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(PostResetTimingTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(PostResetTimingTests)
