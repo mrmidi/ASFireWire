@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Copyright (c) 2024 ASFireWire Project
 //
-// HardwareInterfaceOrderTests.cpp — Regression tests for CSRControl write order.
+// HardwareInterfaceOrderTests.cpp — Regression tests for CSRControl write order and cycle master.
 
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/RegisterMap.hpp"
@@ -14,6 +14,7 @@ using namespace ASFW::Driver;
 using testing::_;
 using testing::Args;
 using testing::InSequence;
+using testing::Return;
 
 class MockPCIDevice : public IOPCIDevice {
 public:
@@ -23,35 +24,30 @@ public:
     MOCK_METHOD(kern_return_t, GetBARInfo, (uint8_t bar, uint8_t* index, uint64_t* size, uint8_t* type), (override));
     MOCK_METHOD(kern_return_t, Open, (IOService * owner), (override));
     MOCK_METHOD(void, Close, (IOService * owner), (override));
-    
-    // Default behaviors to satisfy polling loops
-    void SetupDefaultReadBehavior() {
-        ON_CALL(*this, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
-            .WillByDefault([](uint8_t, uint64_t, uint32_t* val) {
-                *val = 0x80000000; // Operation done
-            });
-            
-        ON_CALL(*this, Open(_)).WillByDefault(testing::Return(kIOReturnSuccess));
-    }
 };
 
 class HardwareInterfaceOrderTests : public ::testing::Test {
 protected:
     void SetUp() override {
         mockDevice_ = new MockPCIDevice();
-        mockDevice_->SetupDefaultReadBehavior();
         
-        // We need to trick Attach into succeeding
-        EXPECT_CALL(*mockDevice_, GetBARInfo(0, _, _, _))
-            .WillOnce([](uint8_t, uint8_t* index, uint64_t* size, uint8_t* type) {
+        // Default behaviors
+        ON_CALL(*mockDevice_, Open(_)).WillByDefault(Return(kIOReturnSuccess));
+        ON_CALL(*mockDevice_, GetBARInfo(0, _, _, _))
+            .WillByDefault([](uint8_t, uint8_t* index, uint64_t* size, uint8_t* type) {
                 *index = 0;
                 *size = 4096;
                 *type = 1; // M32
                 return kIOReturnSuccess;
             });
-        
-        kern_return_t kr = hardware_.Attach(nullptr, mockDevice_);
-        ASSERT_EQ(kr, kIOReturnSuccess) << "HardwareInterface::Attach failed";
+
+        // Default done bit for polling loops
+        ON_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
+            .WillByDefault([](uint8_t, uint64_t, uint32_t* val) {
+                *val = 0x80000000;
+            });
+
+        hardware_.Attach(nullptr, mockDevice_);
     }
 
     HardwareInterface hardware_;
@@ -71,14 +67,14 @@ TEST_F(HardwareInterfaceOrderTests, CompareSwapLocalIRMResource_WritesDataCompar
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRData), newValue));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRCompareData), compareValue));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
-    // FlushPostedWrites() reads kHCControl
+    
+    // Flush
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
-    // Read kCSRControl until done
-    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
-        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
-            *val = 0x80000000;
-        });
-    // Read old value from kCSRData
+    
+    // Poll loop
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _));
+    
+    // Read old value
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRData), _))
         .WillOnce([compareValue](uint8_t, uint64_t, uint32_t* val) {
             *val = compareValue;
@@ -86,6 +82,7 @@ TEST_F(HardwareInterfaceOrderTests, CompareSwapLocalIRMResource_WritesDataCompar
 
     auto result = hardware_.CompareSwapLocalIRMResource(selectCode, compareValue, newValue);
     EXPECT_EQ(result.status, LocalCSRLockResult::Status::Success);
+    EXPECT_TRUE(result.compareMatched);
 }
 
 TEST_F(HardwareInterfaceOrderTests, WriteLocalIRMResource_WritesDataCompareControlInOrder) {
@@ -95,33 +92,65 @@ TEST_F(HardwareInterfaceOrderTests, WriteLocalIRMResource_WritesDataCompareContr
     uint32_t value = 4000;
     uint32_t currentValue = 4915;
 
-    // 1. ReadLocalIRMResource(selectCode) (called by WriteLocalIRMResource)
+    // 1. ReadLocalIRMResource (pre-read)
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
-    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
-        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
-            *val = 0x80000000;
-        });
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRData), _))
         .WillOnce([currentValue](uint8_t, uint64_t, uint32_t* val) {
             *val = currentValue;
         });
 
-    // 2. Then WriteLocalIRMResource performs the atomic sequence:
-    // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
+    // 2. Atomic Swap
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRData), value));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRCompareData), currentValue));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
-    // Final FlushPostedWrites()
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
-    // Final poll
-    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
-        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
-            *val = 0x80000000;
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRData), _))
+        .WillOnce([currentValue](uint8_t, uint64_t, uint32_t* val) {
+            *val = currentValue;
+        });
+
+    // 3. Verification Read
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRData), _))
+        .WillOnce([value](uint8_t, uint64_t, uint32_t* val) {
+            *val = value;
         });
 
     auto result = hardware_.WriteLocalIRMResource(selectCode, value);
     EXPECT_EQ(result.status, LocalCSRLockResult::Status::Success);
+}
+
+TEST_F(HardwareInterfaceOrderTests, SetLocalCycleMasterEnabled_InOrder) {
+    InSequence seq;
+
+    // Set path
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kLinkControlSet), LinkControlBits::kCycleMaster));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    
+    // Readback verification
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kLinkControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
+            *val = LinkControlBits::kCycleMaster;
+        });
+
+    EXPECT_TRUE(hardware_.SetLocalCycleMasterEnabled(true));
+
+    // Clear path
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kLinkControlClear), LinkControlBits::kCycleMaster));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    
+    // Readback verification
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kLinkControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0;
+        });
+
+    EXPECT_TRUE(hardware_.SetLocalCycleMasterEnabled(false));
 }
 
 } // namespace

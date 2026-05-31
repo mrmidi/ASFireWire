@@ -427,4 +427,17 @@ kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     return kIOReturnSuccess;
 }
 
+bool HardwareInterface::IsLocalCycleMasterEnabled() const noexcept {
+    return (Read(Register32::kLinkControl) & LinkControlBits::kCycleMaster) != 0;
+}
+
+bool HardwareInterface::SetLocalCycleMasterEnabled(bool enable) noexcept {
+    if (enable) {
+        SetLinkControlBits(LinkControlBits::kCycleMaster);
+    } else {
+        ClearLinkControlBits(LinkControlBits::kCycleMaster);
+    }
+    return true;
+}
+
 } // namespace ASFW::Driver
