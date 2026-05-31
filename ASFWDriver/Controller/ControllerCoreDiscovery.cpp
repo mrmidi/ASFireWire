@@ -130,7 +130,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     }
 
     const bool localIrmResourceEnabled =
-        rolePolicy_.roleMode == ASFW::FW::RoleMode::IRMServerOnly ||
+        rolePolicy_.roleMode == ASFW::FW::RoleMode::IRMResourceHost ||
         rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager;
 
     if (localIrmController_) {

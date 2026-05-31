@@ -343,9 +343,12 @@ enum class RoleMode : uint8_t {
     // and actively manage); it is ASFW's safe posture until full BM/IRM machinery
     // is hardware-proven. Not "Apple behavior" — Apple does the opposite.
     ClientOnly = 1,
-    // ASFW hosts the IRM resource registers (FW-13/FW-19) but does not contend
-    // for full Bus Manager: irmc=1, bmc=0, cmc/isc preserved.
-    IRMServerOnly = 2,
+    // ASFW advertises IRM capability and can host the local IRM resource set
+    // when the local node wins IRM election (FW-13/FW-19). OHCI hardware
+    // autonomously serves the four core IRM CSRs. ASFW software owns
+    // BROADCAST_CHANNEL and policy/diagnostics. This mode does not perform
+    // full Bus Manager election or topology mutation.
+    IRMResourceHost = 2,
     // Full Bus Manager: bmc=1, irmc=1 (legal only once FW-18/19/20/21 land).
     FullBusManager = 3,
 };
@@ -391,7 +394,7 @@ enum class FullBMActivityLevel : uint8_t {
     case RoleMode::ClientOnly:
         out &= ~(kBMCMask | kIRMCMask); // bmc=0, irmc=0; pure client, no management
         break;
-    case RoleMode::IRMServerOnly:
+    case RoleMode::IRMResourceHost:
         out &= ~kBMCMask; // bmc=0
         out |= kIRMCMask; // irmc=1
         break;
@@ -425,10 +428,10 @@ static_assert(NormalizeLocalBusOptions(0x00000000u, RoleMode::LegacyBmcCleared) 
 static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::ClientOnly) &
                (BusOptionsFields::kBMCMask | BusOptionsFields::kIRMCMask)) == 0,
               "ClientOnly must force bmc=0 and irmc=0");
-static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::IRMServerOnly) &
+static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::IRMResourceHost) &
                (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
                   BusOptionsFields::kIRMCMask,
-              "IRMServerOnly must set irmc=1 and bmc=0");
+              "IRMResourceHost must set irmc=1 and bmc=0");
 static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager,
                                         FullBMActivityLevel::ElectionOnly) &
                (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
@@ -436,7 +439,7 @@ static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager,
               "FullBusManager at ElectionOnly+ must set bmc=1 and irmc=1");
 static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::LegacyBmcCleared)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::ClientOnly)) &&
-              IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::IRMServerOnly)) &&
+              IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::IRMResourceHost)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager)),
               "every RoleMode must produce a legal capability combo");
