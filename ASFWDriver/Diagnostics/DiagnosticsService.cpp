@@ -395,7 +395,7 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
         { 0xFFFFF0000228ULL, 0x228, ASFWDiagCSROwnerOHCIHardware,         true,  "CHANNELS_AVAILABLE_LO" },
         { 0xFFFFF0000234ULL, 0x234, ASFWDiagCSROwnerASFWSoftware,         true,  "BROADCAST_CHANNEL" },
         { 0xFFFFF0000400ULL, 0x400, ASFWDiagCSROwnerOHCIHardware,         true,  "CONFIG_ROM" },
-        { 0xFFFFF0001000ULL, 0x1000, ASFWDiagCSROwnerPlanned,             false, "TOPOLOGY_MAP" },
+        { 0xFFFFF0001000ULL, 0x1000, ASFWDiagCSROwnerASFWSoftware,         true,  "TOPOLOGY_MAP" },
         { 0xFFFFF0002000ULL, 0x2000, ASFWDiagCSROwnerOmittedAddressError, false, "SPEED_MAP" }
     };
 
@@ -556,13 +556,25 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
     if (irmCtrl) {
         auto snap = irmCtrl->Snapshot();
         out->localIrmResourceState = static_cast<uint32_t>(snap.state);
-        out->localIrmReadbackValid = snap.readbackValid ? 1 : 0;
+        out->localIrmReadbackValid = snap.activeProbeSucceeded ? 1 : 0;
         out->csrControlLastStatus = static_cast<uint32_t>(snap.lastCsrStatus);
-        
         out->localIrmBusManagerId = snap.busManagerId;
         out->localIrmBandwidthAvailable = snap.bandwidthAvailable;
         out->localIrmChannelsAvailableHi = snap.channelsAvailableHi;
         out->localIrmChannelsAvailableLo = snap.channelsAvailableLo;
+
+        // Milestone 1 additions
+        if (deps.broadcastChannel) {
+            out->broadcastChannelValue = deps.broadcastChannel->Read();
+            out->broadcastChannelValid = (out->broadcastChannelValue & 0x40000000U) != 0 ? 1 : 0;
+        }
+
+        // Initial registers (from hardware directly)
+        if (deps.hardware) {
+            out->initialBandwidthAvailable = deps.hardware->Read(Register32::kInitialBandwidthAvailable);
+            out->initialChannelsAvailableHi = deps.hardware->Read(Register32::kInitialChannelsAvailableHi);
+            out->initialChannelsAvailableLo = deps.hardware->Read(Register32::kInitialChannelsAvailableLo);
+        }
     }
 
     // Topology Map Service status
