@@ -352,6 +352,9 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
         ASFW_LOG(Controller, "✅ IRMFallbackCoordinator created");
     }
 
+    cyclePolicy_ = std::make_unique<Bus::CyclePolicyCoordinator>();
+    ASFW_LOG(Controller, "✅ CyclePolicyCoordinator created");
+
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);

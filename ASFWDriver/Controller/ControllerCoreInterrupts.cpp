@@ -66,6 +66,9 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         if (irmFallback_) {
             irmFallback_->OnBusResetStarted(generation);
         }
+        if (cyclePolicy_) {
+            cyclePolicy_->OnBusResetStarted(generation);
+        }
     }
     DispatchAsyncInterrupts(events);
     LogBusResetCompletionEvents(events, snapshot.timestamp);
@@ -178,6 +181,7 @@ void ControllerCore::HandleFaultInterrupts(uint32_t events) {
         } else {
             roleCoordinator_.OnCycleStartEvidence(currentGeneration_,
                                                   cycleObserver_.Observation());
+            EvaluateCyclePolicy();
         }
     }
 }

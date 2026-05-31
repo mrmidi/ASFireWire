@@ -14,6 +14,7 @@
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
+#include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
 #include "../Bus/Timing/PostResetTimingCoordinator.hpp"
 #include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -118,6 +119,9 @@ bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request
 void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     // Initialize/update Bus Manager/IRM runtime state (FW-14)
     bmState_.generation = snap.generation;
+    bmState_.busBase16 = snap.busBase16;
+    bmState_.topologyValid = (snap.graphStatus == Driver::TopologyGraphStatus::Valid);
+
     if (snap.localNodeId != Driver::kInvalidPhysicalId) {
         bmState_.localNodeId = snap.localNodeId;
     } else {
@@ -161,6 +165,8 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         irmFallback_->OnTopologyReady(snap, rolePolicy_, GetBusManagerRuntimeState(),
                                       BusResetCoordinator::MonotonicNow());
     }
+
+    EvaluateCyclePolicy();
 
     // FW-6/FW-7: hand the new topology/generation to role policy before any
     // discovery-specific early returns — role policy is independent of ROM scan.
@@ -298,6 +304,7 @@ void ControllerCore::OnRootCapabilityProbe(Role::RootCapabilityEvidence evidence
         }
     }
     PublishRootCapabilityEvidence();
+    EvaluateCyclePolicy();
 }
 
 void ControllerCore::StartRootCycleLostWindow(uint32_t generation) {
@@ -559,6 +566,7 @@ void ControllerCore::OnLocalWonBM(uint32_t generation, uint8_t localNodeId) {
         bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
     }
     EvaluateBusManagerPolicy();
+    EvaluateCyclePolicy();
 }
 
 void ControllerCore::OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) {
@@ -571,6 +579,7 @@ void ControllerCore::OnRemoteBM(uint32_t generation, uint8_t remoteNodeId) {
         bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
     }
     EvaluateBusManagerPolicy();
+    EvaluateCyclePolicy();
 }
 
 void ControllerCore::OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncStatus status) {
@@ -580,12 +589,87 @@ void ControllerCore::OnBMElectionFailed(uint32_t generation, ASFW::Async::AsyncS
         bmState_.staleElectionAbortCount = deps_.busManagerElectionDriver->FSM().StaleElectionAbortCount();
     }
     EvaluateBusManagerPolicy();
+    EvaluateCyclePolicy();
 }
 
 void ControllerCore::EvaluateBusManagerPolicy() noexcept {
     if (bmPolicyCoordinator_) {
         bmPolicyCoordinator_->Evaluate(GetBusManagerRuntimeState());
     }
+}
+
+void ControllerCore::EvaluateCyclePolicy() noexcept {
+    if (!cyclePolicy_) {
+        return;
+    }
+
+    const auto& state = GetBusManagerRuntimeState();
+    Bus::CyclePolicyInputs in{};
+    in.generation = state.generation;
+    in.busBase16 = state.busBase16;
+    in.localNodeId = state.localNodeId;
+    in.rootNodeId = state.rootNodeId;
+    in.irmNodeId = state.irmNodeId;
+    in.bmNodeId = state.bmNodeId;
+    in.topologyValid = state.topologyValid;
+    in.localIsRoot = state.localIsRoot;
+    in.localIsIRM = state.localIsIRM;
+    in.localIsBM = state.localIsBM;
+
+    if (irmFallback_) {
+        const auto& snap = irmFallback_->Snapshot();
+        in.irmFallbackNoBMDetected = snap.noBusManagerDetected;
+        in.irmFallbackGateOpen = snap.annexHGateOpen;
+    }
+
+    in.cycleStartObserved = state.cycleStartObserved;
+    in.cycleStartSourceNode = state.cycleStartSourceNode;
+    in.rootCmcKnown = state.rootCmcKnown;
+    in.rootCmcCapable = state.rootCmcCapable;
+    in.roleMode = rolePolicy_.roleMode;
+    in.activityLevel = rolePolicy_.fullBMActivityLevel;
+
+    cyclePolicy_->Evaluate(in, *this);
+}
+
+bool ControllerCore::EnableLocalCycleMasterMutation(uint32_t generation) {
+    if (generation != currentGeneration_ || !deps_.hardware) {
+        return false;
+    }
+    return deps_.hardware->SetLocalCycleMasterEnabled(true);
+}
+
+Async::AsyncHandle ControllerCore::WriteRemoteStateSetCmstr(uint32_t generation,
+                                                           uint16_t busBase16,
+                                                           uint8_t targetNodeId) {
+    if (generation != currentGeneration_ || !busImpl_) {
+        return {};
+    }
+
+    const Async::FWAddress address{Async::FWAddress::QualifiedAddressParts{
+        .addressHi = ASFW::FW::kCSRRegSpaceHi,
+        .addressLo = ASFW::FW::kCSRRemoteStateSet,
+        .nodeID = static_cast<uint16_t>(busBase16 | (targetNodeId & 0x3Fu)),
+    }};
+
+    std::weak_ptr<ControllerCore> weakThis = shared_from_this();
+    return busImpl_->WriteQuad(
+        FW::Generation{generation}, FW::NodeId{targetNodeId}, address,
+        ASFW::FW::kCSRStateBitCMSTR, FW::FwSpeed::S100,
+        [weakThis, generation, targetNodeId](Async::AsyncStatus status, std::span<const uint8_t>) {
+            auto self = weakThis.lock();
+            if (self) {
+                self->OnRemoteCmstrComplete(generation, targetNodeId, status);
+            }
+        });
+}
+
+void ControllerCore::OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,
+                                           Async::AsyncStatus status) noexcept {
+    if (cyclePolicy_) {
+        cyclePolicy_->OnRemoteCmstrComplete(generation, targetNode, status);
+    }
+    HandleRemoteCmstrCallback(generation, targetNode, status);
 }
 
 void ControllerCore::SendRemoteCmstr(uint8_t rootNodeId, uint32_t generation) {
@@ -626,6 +710,7 @@ void ControllerCore::HandleRemoteCmstrCallback(uint32_t generation, uint8_t root
     if (generation == currentGeneration_) {
         bmState_.lastRemoteCmstrResult = static_cast<uint32_t>(status);
         EvaluateBusManagerPolicy();
+        EvaluateCyclePolicy();
     }
 }
 
@@ -642,8 +727,10 @@ void ControllerCore::SyncBusManagerRuntimeState() const noexcept {
     const auto rootEvidence = roleCoordinator_.LastRootEvidence();
     bmState_.rootCmcKnown = rootEvidence.cmcKnown;
     bmState_.rootCmcCapable = rootEvidence.cmc;
-    bmState_.cycleStartObserved = rootEvidence.cycles.cycleStartObserved;
-    bmState_.cycleStartSourceNode = rootEvidence.rootNodeId;
+    
+    const auto cycleObs = cycleObserver_.Observation();
+    bmState_.cycleStartObserved = cycleObs.cycleStartObserved;
+    bmState_.cycleStartSourceNode = rootEvidence.rootNodeId; // For now, assume root is source
 
     // Populate submode level
     bmState_.fullBMActivityLevel = static_cast<uint8_t>(rolePolicy_.fullBMActivityLevel);

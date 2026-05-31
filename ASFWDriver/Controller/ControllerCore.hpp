@@ -11,6 +11,7 @@
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/IRM/LocalIRMResourceController.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
+#include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"
@@ -41,6 +42,7 @@ class CSRResponder;
 class TopologyMapService;
 class BroadcastChannelCSR;
 class IRMFallbackCoordinator;
+class CyclePolicyCoordinator;
 class BusManagerElectionDriver;
 class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
@@ -95,6 +97,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              private Role::IContenderControl,
                              public ASFW::Bus::BusManagerElectionDriver::IBMRoleEvents,
                              public ASFW::Bus::IBMPolicyExecutor,
+                             public ASFW::Bus::ICyclePolicyExecutor,
                              public std::enable_shared_from_this<ControllerCore> {
   public:
     struct Dependencies {
@@ -211,6 +214,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     ASFW::Bus::TopologyMapService* GetTopologyMapService() const { return deps_.topologyMapService.get(); }
     Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
     Bus::IRMFallbackCoordinator* GetIRMFallbackCoordinator() const { return irmFallback_.get(); }
+    Bus::CyclePolicyCoordinator* GetCyclePolicyCoordinator() const { return cyclePolicy_.get(); }
     Bus::BroadcastChannelCSR* GetBroadcastChannel() const { return broadcastChannel_.get(); }
 
   private:
@@ -232,6 +236,11 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void DiagnoseUnrecoverableError() const;
     void HandleCycle64Seconds(); // Called on cycle64Seconds interrupt to extend 7-bit seconds
     void EvaluateBusManagerPolicy() noexcept;
+    void EvaluateCyclePolicy() noexcept;
+
+    // Async completion callbacks
+    void OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,
+                               Async::AsyncStatus status) noexcept;
 
     void OnTopologyReady(const TopologySnapshot& snapshot);
     void BeginRootCapabilityEvidence(const TopologySnapshot& snapshot, uint8_t localNodeId);
@@ -256,6 +265,12 @@ class ControllerCore final : private Role::IPhyConfigReset,
     // ASFW::Bus::IBMPolicyExecutor implementation
     void SendRemoteCmstr(uint8_t rootNodeId, uint32_t generation) override;
     void HandleRemoteCmstrCallback(uint32_t generation, uint8_t rootNodeId, ASFW::Async::AsyncStatus status);
+
+    // ASFW::Bus::ICyclePolicyExecutor implementation
+    bool EnableLocalCycleMasterMutation(uint32_t generation) override;
+    Async::AsyncHandle WriteRemoteStateSetCmstr(uint32_t generation, uint16_t busBase16,
+                                                uint8_t targetNodeId) override;
+
     void SyncBusManagerRuntimeState() const noexcept;
 
     ControllerConfig config_;
@@ -295,6 +310,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::shared_ptr<Bus::BroadcastChannelCSR> broadcastChannel_;
     std::unique_ptr<Bus::LocalIRMResourceController> localIrmController_;
     std::shared_ptr<Bus::IRMFallbackCoordinator> irmFallback_;
+    std::unique_ptr<Bus::CyclePolicyCoordinator> cyclePolicy_;
 };
 
 } // namespace ASFW::Driver
