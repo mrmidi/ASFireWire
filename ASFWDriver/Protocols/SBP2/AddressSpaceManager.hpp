@@ -59,6 +59,7 @@ public:
     struct ReadSlice {
         uint64_t payloadDeviceAddress{0};
         uint32_t payloadLength{0};
+        std::shared_ptr<void> backingLease{};
     };
 
     explicit AddressSpaceManager(ASFW::Driver::HardwareInterface* hardware) noexcept
@@ -302,8 +303,8 @@ public:
                 static_cast<unsigned long long>(range->meta.address),
                 offset,
                 range->buffer.data(),
-                range->mappedBytes,
-                range->hasBacking ? 1u : 0u);
+                range->backing ? range->backing->mappedBytes : nullptr,
+                range->backing && range->backing->hasBacking ? 1u : 0u);
             WriteBytesLocked(*range, offset, payload);
             callbackSlot = range->remoteWriteSlot;
             handle = range->meta.handle;
@@ -334,13 +335,14 @@ public:
             return Async::ResponseCode::AddressError;
         }
 
-        if (!range->hasBacking || range->deviceAddress == 0) {
+        if (!range->backing || !range->backing->hasBacking ||
+            range->backing->deviceAddress == 0) {
             IOLockUnlock(lock_);
             return Async::ResponseCode::DataError;
         }
 
         const uint64_t offset = address - range->meta.address;
-        const uint64_t payloadAddress = range->deviceAddress + offset;
+        const uint64_t payloadAddress = range->backing->deviceAddress + offset;
         if (payloadAddress > 0xFFFF'FFFFULL) {
             IOLockUnlock(lock_);
             return Async::ResponseCode::DataError;
@@ -348,6 +350,7 @@ public:
 
         outSlice->payloadDeviceAddress = payloadAddress;
         outSlice->payloadLength = length;
+        outSlice->backingLease = range->backing;
 
         ASFW_ADDRSPACE_LOG(
             "AddressSpaceManager[%p] remote read-block label=%s addr=0x%012llx len=%u "
@@ -473,12 +476,27 @@ private:
     static constexpr uint64_t kAutoAddressAlignment = 8ULL;
     static constexpr std::size_t kDebugLabelCapacity = 64;
 
-    struct AddressRange {
-        AddressRangeMeta meta{};
-        void* owner{nullptr};
-        std::vector<uint8_t> buffer;
-        std::shared_ptr<RemoteWriteCallbackSlot> remoteWriteSlot;
-        std::array<char, kDebugLabelCapacity> debugLabel{};
+    struct AddressRangeBacking {
+        ~AddressRangeBacking() {
+            if (mapping) {
+                mapping->release();
+                mapping = nullptr;
+            }
+
+            if (dmaCommand) {
+                dmaCommand->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+                dmaCommand.reset();
+            }
+
+            descriptor.reset();
+            mappedBytes = nullptr;
+            deviceAddress = 0;
+            hasBacking = false;
+        }
+
+        AddressRangeBacking() = default;
+        AddressRangeBacking(const AddressRangeBacking&) = delete;
+        AddressRangeBacking& operator=(const AddressRangeBacking&) = delete;
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};
@@ -486,6 +504,15 @@ private:
         uint8_t* mappedBytes{nullptr};
         uint64_t deviceAddress{0};
         bool hasBacking{false};
+    };
+
+    struct AddressRange {
+        AddressRangeMeta meta{};
+        void* owner{nullptr};
+        std::vector<uint8_t> buffer;
+        std::shared_ptr<RemoteWriteCallbackSlot> remoteWriteSlot;
+        std::array<char, kDebugLabelCapacity> debugLabel{};
+        std::shared_ptr<AddressRangeBacking> backing{};
     };
 
     static uint64_t ComposeAddress(uint16_t hi, uint32_t lo) {
@@ -577,8 +604,8 @@ private:
                 range.owner,
                 static_cast<unsigned long long>(range.meta.address),
                 range.meta.length,
-                range.hasBacking ? 1u : 0u,
-                static_cast<unsigned>(range.deviceAddress));
+                range.backing && range.backing->hasBacking ? 1u : 0u,
+                static_cast<unsigned>(range.backing ? range.backing->deviceAddress : 0));
         }
     }
 
@@ -649,7 +676,7 @@ private:
 
         if (!dma.has_value()) {
 #ifdef ASFW_HOST_TEST
-            range.hasBacking = false;
+            range.backing.reset();
             return kIOReturnSuccess;
 #else
             ASFW_LOG(UserClient,
@@ -688,41 +715,30 @@ private:
         std::memset(mapped, 0, backingSize);
         OSSynchronizeIO();
 
-        range.descriptor = std::move(dma->descriptor);
-        range.dmaCommand = std::move(dma->dmaCommand);
-        range.mapping = mapping;
-        range.mappedBytes = mapped;
-        range.deviceAddress = dma->deviceAddress;
-        range.hasBacking = true;
+        auto backing = std::make_shared<AddressRangeBacking>();
+        backing->descriptor = std::move(dma->descriptor);
+        backing->dmaCommand = std::move(dma->dmaCommand);
+        backing->mapping = mapping;
+        backing->mappedBytes = mapped;
+        backing->deviceAddress = dma->deviceAddress;
+        backing->hasBacking = true;
+        range.backing = std::move(backing);
 
         return kIOReturnSuccess;
     }
 
     static void CleanupBacking(AddressRange& range) {
-        if (range.mapping) {
-            range.mapping->release();
-            range.mapping = nullptr;
-        }
-
-        if (range.dmaCommand) {
-            range.dmaCommand->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-            range.dmaCommand.reset();
-        }
-
-        range.descriptor.reset();
-        range.mappedBytes = nullptr;
-        range.deviceAddress = 0;
-        range.hasBacking = false;
+        range.backing.reset();
     }
 
     static void SyncRange(AddressRange& range, uint64_t offset, uint64_t length) {
-        if (!range.hasBacking) {
+        if (!range.backing || !range.backing->hasBacking) {
             return;
         }
 
 #if defined(IODMACommand_Synchronize_ID)
-        if (range.dmaCommand) {
-            const kern_return_t syncKr = range.dmaCommand->Synchronize(
+        if (range.backing->dmaCommand) {
+            const kern_return_t syncKr = range.backing->dmaCommand->Synchronize(
                 0,
                 offset,
                 length);
@@ -770,14 +786,16 @@ private:
             data.size(),
             data.data(),
             range.buffer.data(),
-            range.mappedBytes,
+            range.backing ? range.backing->mappedBytes : nullptr,
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(data.data()) & 0x7ULL),
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.buffer.data()) & 0x7ULL),
-            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.mappedBytes) & 0x7ULL));
+            static_cast<unsigned long>(
+                reinterpret_cast<uintptr_t>(range.backing ? range.backing->mappedBytes : nullptr) &
+                0x7ULL));
         CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
 
-        if (range.hasBacking && range.mappedBytes) {
-            CopyPayloadBytes(range.mappedBytes + static_cast<std::size_t>(offset), data);
+        if (range.backing && range.backing->hasBacking && range.backing->mappedBytes) {
+            CopyPayloadBytes(range.backing->mappedBytes + static_cast<std::size_t>(offset), data);
             std::atomic_thread_fence(std::memory_order_release);
             SyncRange(range, offset, data.size());
         }

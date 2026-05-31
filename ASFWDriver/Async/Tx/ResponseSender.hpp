@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
 
 #include "../ResponseCode.hpp"
 #include "../Rx/PacketRouter.hpp"
@@ -11,9 +13,11 @@ namespace ASFW::Async {
 class DescriptorBuilder;
 class ATResponseContext;
 class IFireWireBusInfo;
+struct TxCompletion;
 namespace Bus { class GenerationTracker; }
 namespace Engine { class ContextManager; }
 namespace Tx { class Submitter; }
+namespace HW { struct OHCIDescriptor; }
 
 /// Utility to build and send Write Response (WrResp) packets for incoming AR requests.
 class ResponseSender {
@@ -36,7 +40,14 @@ public:
     void SendReadBlockResponse(const ARPacketView& request,
                                ResponseCode rcode,
                                uint64_t payloadDeviceAddress,
-                               uint32_t payloadLength) noexcept;
+                               uint32_t payloadLength,
+                               std::shared_ptr<void> payloadLease = {}) noexcept;
+
+    /// Release response payload leases after AT response descriptor completion.
+    void OnTxCompletion(const TxCompletion& completion) noexcept;
+
+    /// Drop any retained response payload leases during response subsystem teardown.
+    void ClearOutstandingResponses() noexcept;
 
 private:
     void SendResponse(const ARPacketView& request,
@@ -45,12 +56,14 @@ private:
                       const uint32_t* header,
                       std::size_t headerBytes,
                       uint64_t payloadDeviceAddress,
-                      std::size_t payloadLength) noexcept;
+                      std::size_t payloadLength,
+                      std::shared_ptr<void> payloadLease = {}) noexcept;
 
     DescriptorBuilder& builder_;
     Tx::Submitter& submitter_;
     Engine::ContextManager& ctxMgr_;
     Bus::GenerationTracker& generationTracker_;
+    std::unordered_map<const HW::OHCIDescriptor*, std::shared_ptr<void>> responsePayloadLeases_;
 };
 
 } // namespace ASFW::Async

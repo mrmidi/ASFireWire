@@ -2,6 +2,7 @@
 
 #include "../Engine/ContextManager.hpp"
 #include "../Contexts/ATResponseContext.hpp"
+#include "../Track/TxCompletion.hpp"
 #include "../Tx/DescriptorBuilder.hpp"
 #include "../Tx/Submitter.hpp"
 #include "../../Bus/GenerationTracker.hpp"
@@ -50,7 +51,8 @@ void ResponseSender::SendResponse(const ARPacketView& request,
                                   const uint32_t* header,
                                   std::size_t headerBytes,
                                   uint64_t payloadDeviceAddress,
-                                  std::size_t payloadLength) noexcept {
+                                  std::size_t payloadLength,
+                                  std::shared_ptr<void> payloadLease) noexcept {
     // Per IEEE 1394, broadcast requests (destID=0xFFFF) do not get responses.
     if (request.destID == 0xFFFF) {
         ASFW_LOG_V3(Async, "ResponseSender: skip response for broadcast destID=0xFFFF");
@@ -78,8 +80,16 @@ void ResponseSender::SendResponse(const ARPacketView& request,
         return;
     }
 
+    const auto* leaseKey = chain.last;
+    if (payloadLease && leaseKey) {
+        responsePayloadLeases_[leaseKey] = std::move(payloadLease);
+    }
+
     const auto submitRes = submitter_.submit_tx_chain(atRspCtx, std::move(chain));
     if (submitRes.kr != kIOReturnSuccess) {
+        if (leaseKey) {
+            responsePayloadLeases_.erase(leaseKey);
+        }
         ASFW_LOG_ERROR(
             Async,
             "ResponseSender: submit_tx_chain failed (tCode=0x%x kr=0x%x)",
@@ -147,7 +157,8 @@ void ResponseSender::SendReadQuadletResponse(const ARPacketView& request,
 void ResponseSender::SendReadBlockResponse(const ARPacketView& request,
                                            ResponseCode rcode,
                                            uint64_t payloadDeviceAddress,
-                                           uint32_t payloadLength) noexcept {
+                                           uint32_t payloadLength,
+                                           std::shared_ptr<void> payloadLease) noexcept {
     if (request.tCode != 0x5) {
         ASFW_LOG_V3(Async,
                     "ResponseSender: skip RdBlockResp for non-read-block tCode=0x%x",
@@ -177,7 +188,19 @@ void ResponseSender::SendReadBlockResponse(const ARPacketView& request,
                  header,
                  sizeof(header),
                  responsePayloadAddress,
-                 responsePayloadLen);
+                 responsePayloadLen,
+                 std::move(payloadLease));
+}
+
+void ResponseSender::OnTxCompletion(const TxCompletion& completion) noexcept {
+    if (!completion.isResponseContext || !completion.descriptor) {
+        return;
+    }
+    responsePayloadLeases_.erase(completion.descriptor);
+}
+
+void ResponseSender::ClearOutstandingResponses() noexcept {
+    responsePayloadLeases_.clear();
 }
 
 } // namespace ASFW::Async

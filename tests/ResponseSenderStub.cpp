@@ -28,12 +28,20 @@ void ResponseSender::SendReadQuadletResponse(const ARPacketView& request,
 void ResponseSender::SendReadBlockResponse(const ARPacketView& request,
                                            ResponseCode rcode,
                                            uint64_t payloadDeviceAddress,
-                                           uint32_t payloadLength) noexcept {
+                                           uint32_t payloadLength,
+                                           std::shared_ptr<void> payloadLease) noexcept {
     (void)request;
     (void)rcode;
     (void)payloadDeviceAddress;
     (void)payloadLength;
+    (void)payloadLease;
 }
+
+void ResponseSender::OnTxCompletion(const TxCompletion& completion) noexcept {
+    (void)completion;
+}
+
+void ResponseSender::ClearOutstandingResponses() noexcept {}
 
 void ResponseSender::SendResponse(const ARPacketView& request,
                                   ResponseCode rcode,
@@ -41,7 +49,8 @@ void ResponseSender::SendResponse(const ARPacketView& request,
                                   const uint32_t* header,
                                   std::size_t headerBytes,
                                   uint64_t payloadDeviceAddress,
-                                  std::size_t payloadLength) noexcept {
+                                  std::size_t payloadLength,
+                                  std::shared_ptr<void> payloadLease) noexcept {
     (void)request;
     (void)rcode;
     (void)responseTCode;
@@ -49,6 +58,7 @@ void ResponseSender::SendResponse(const ARPacketView& request,
     (void)headerBytes;
     (void)payloadDeviceAddress;
     (void)payloadLength;
+    (void)payloadLease;
 }
 
 } // namespace ASFW::Async

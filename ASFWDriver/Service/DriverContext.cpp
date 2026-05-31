@@ -4,6 +4,8 @@
 
 #include <PCIDriverKit/IOPCIFamilyDefinitions.h>
 
+#include <utility>
+
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/Interfaces/IFireWireBus.hpp"
 #include "../Async/PacketHelpers.hpp"
@@ -305,7 +307,8 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
                                 packet,
                                 result,
                                 slice.payloadDeviceAddress,
-                                slice.payloadLength);
+                                slice.payloadLength,
+                                std::move(slice.backingLease));
                         } else {
                             responder->SendReadBlockResponse(packet, result, 0, 0);
                         }

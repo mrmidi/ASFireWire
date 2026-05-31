@@ -2,6 +2,7 @@
 
 #include "Contexts/ATRequestContext.hpp"
 #include "Contexts/ATResponseContext.hpp"
+#include "Tx/ResponseSender.hpp"
 
 #include "../Logging/Logging.hpp"
 #include "../Shared/Memory/DMAMemoryManager.hpp"
@@ -22,6 +23,9 @@ uint32_t AsyncSubsystem::DrainTxCompletions(const char* reason) {
             return;
         }
         while (auto completion = ctx->ScanCompletion()) {
+            if (completion->isResponseContext && responseSender_) {
+                responseSender_->OnTxCompletion(*completion);
+            }
             tracking_->OnTxCompletion(*completion);
             ++drained;
         }
