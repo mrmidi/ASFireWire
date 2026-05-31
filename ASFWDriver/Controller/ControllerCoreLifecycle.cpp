@@ -333,8 +333,11 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
     roleCoordinator_.SetActivityLevel(rolePolicy_.fullBMActivityLevel);
     roleCoordinator_.SetLinuxStyleCmcForceRoot(rolePolicy_.linuxStyleCmcForceRoot);
 
-    localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(deps_.hardware.get());
-    ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
+    broadcastChannel_ = deps_.broadcastChannel;
+    if (broadcastChannel_ && deps_.hardware) {
+        localIrmController_ = std::make_unique<Bus::LocalIRMResourceController>(*deps_.hardware, *broadcastChannel_);
+        ASFW_LOG(Controller, "✅ LocalIRMResourceController created");
+    }
 
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
@@ -605,6 +608,10 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     const kern_return_t lpsStatus = EnableLinkPowerStatus(hw);
     if (lpsStatus != kIOReturnSuccess) {
         return lpsStatus;
+    }
+
+    if (broadcastChannel_) {
+        broadcastChannel_->ResetImplementedInvalid();
     }
 
     // Step 3: Detect OHCI version

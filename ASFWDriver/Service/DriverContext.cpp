@@ -112,6 +112,9 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
     if (!d.busManager) {
         d.busManager = std::make_shared<BusManager>();
     }
+    if (!d.broadcastChannel) {
+        d.broadcastChannel = std::make_shared<ASFW::Bus::BroadcastChannelCSR>();
+    }
     if (!d.topologyMapService && d.hardware) {
         d.topologyMapService = std::make_shared<ASFW::Bus::TopologyMapService>(d.hardware.get());
     }
