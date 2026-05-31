@@ -1,8 +1,9 @@
 #pragma once
 
 // SBP-2 Session Registry — bridges discovery metadata to SBP2LoginSession instances.
-// Owns sessions keyed by (guid, romOffset), handles bus-reset suspend/reconnect,
-// and provides the INQUIRY command job for the v1 vertical slice.
+// Sessions are created for an owner and target (guid, romOffset). Public
+// operations use opaque handles plus owner validation, while the registry also
+// rejects duplicate live targets by (guid, romOffset).
 
 #include "SBP2LoginSession.hpp"
 #include "SBP2CommandORB.hpp"
@@ -70,16 +71,17 @@ public:
     SBP2SessionRegistry(const SBP2SessionRegistry&) = delete;
     SBP2SessionRegistry& operator=(const SBP2SessionRegistry&) = delete;
 
-    // Create a session for (owner, guid, romOffset).
-    // Validates the unit is SBP-2 and has Management_Agent_Offset.
+    // Create an owner-bound session for target (guid, romOffset).
+    // Validates the unit is SBP-2, has Management_Agent_Offset, and is not
+    // already represented by another live or retiring session.
     [[nodiscard]] std::expected<uint64_t, int> CreateSession(void* owner,
                                                               uint64_t guid,
                                                               uint32_t romOffset);
 
-    // Start login for a session. Returns false if not in Idle state.
+    // Start login for an owner-bound handle. Returns false if not in Idle state.
     [[nodiscard]] bool StartLogin(void* owner, uint64_t handle);
 
-    // Get session state. Returns nullopt if handle not found.
+    // Get session state. Returns nullopt if owner/handle is not found.
     [[nodiscard]] std::optional<SBP2SessionState> GetSessionState(void* owner,
                                                                   uint64_t handle) const;
 
@@ -106,7 +108,7 @@ public:
                                             uint64_t handle,
                                             SBP2ManagementORB::Function function);
 
-    // Release a specific session.
+    // Release a specific owner-bound session.
     [[nodiscard]] bool ReleaseSession(void* owner, uint64_t handle);
 
     // Release all sessions for an owner (best-effort logout + cleanup).
