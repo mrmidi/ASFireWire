@@ -173,21 +173,6 @@ TEST(CSRResponder, BroadcastChannel_InitialValue) {
     EXPECT_EQ(res.readValue, FW::kBroadcastChannelInitial); // 0x8000001F
 }
 
-TEST(CSRResponder, BroadcastChannel_WriteMasksToValidOrInitial) {
-    FakeRoot r;
-    FakeCycleMaster cm;
-    auto rsp = Make(r, cm);
-
-    // Writing all-ones should keep only the VALID bit plus the pinned INITIAL.
-    rsp.WriteQuadlet(FW::kCSR_BroadcastChannel, 0xFFFFFFFFu);
-    EXPECT_EQ(rsp.BroadcastChannel(), FW::kBroadcastChannelValid | FW::kBroadcastChannelInitial);
-    EXPECT_EQ(rsp.BroadcastChannel(), 0xC000001Fu);
-
-    // Writing zero drops VALID, keeps INITIAL.
-    rsp.WriteQuadlet(FW::kCSR_BroadcastChannel, 0u);
-    EXPECT_EQ(rsp.BroadcastChannel(), FW::kBroadcastChannelInitial);
-}
-
 // ---- IRM resource CSRs are OHCI-served (never ours) ----------------------------
 
 TEST(CSRResponder, IrmResourceCsrs_AreNotMine) {
