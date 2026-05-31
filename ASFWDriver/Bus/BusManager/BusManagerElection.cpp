@@ -11,6 +11,11 @@ DecisionAction BusManagerElection::Decide(const BmElectionInputs& inputs) noexce
     if (inputs.mode != ASFW::FW::RoleMode::FullBusManager) {
         return DecisionAction::DoNotContend;
     }
+
+    if (inputs.activityLevel < ASFW::FW::FullBMActivityLevel::ElectionOnly) {
+        return DecisionAction::DoNotContend;
+    }
+
     if (!inputs.irmId.has_value()) {
         return DecisionAction::DoNotContend;
     }

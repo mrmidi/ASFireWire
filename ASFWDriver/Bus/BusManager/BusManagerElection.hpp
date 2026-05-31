@@ -33,6 +33,7 @@ enum class ElectionOutcome : uint8_t {
 
 struct BmElectionInputs {
     ASFW::FW::RoleMode mode;
+    ASFW::FW::FullBMActivityLevel activityLevel;
     uint32_t generation;
     uint8_t localId;
     std::optional<uint8_t> irmId;

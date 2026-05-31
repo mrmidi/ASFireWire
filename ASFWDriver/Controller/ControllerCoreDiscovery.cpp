@@ -171,7 +171,7 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         rolePolicy_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;
 
     if (deps_.busManagerElectionDriver && electionAllowed) {
-        deps_.busManagerElectionDriver->OnTopologyReady(snap);
+        deps_.busManagerElectionDriver->OnTopologyReady(snap, BusResetCoordinator::MonotonicNow());
     }
 
     EvaluateBusManagerPolicy();

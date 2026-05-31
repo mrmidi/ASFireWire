@@ -5,6 +5,7 @@
 
 #include "Bus/BusManager/BusManagerElection.hpp"
 #include "Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "Bus/Timing/PostResetTimingCoordinator.hpp"
 #include "Controller/ControllerTypes.hpp"
 #include "Common/CSRSpace.hpp"
 #include "Scheduling/Scheduler.hpp"
@@ -22,7 +23,9 @@ using ASFW::Bus::BusManagerElectionDriver;
 using ASFW::Bus::DecisionAction;
 using ASFW::Bus::ElectionOutcome;
 using ASFW::Driver::TopologySnapshot;
+using ASFW::Driver::RolePolicy;
 using ASFW::FW::RoleMode;
+using ASFW::FW::FullBMActivityLevel;
 
 class MockAsyncController : public ASFW::Async::IAsyncControllerPort {
 public:
@@ -83,6 +86,7 @@ TEST(BusManagerElection, FsmDecisions) {
     {
         BmElectionInputs inputs{
             .mode = RoleMode::ClientOnly,
+            .activityLevel = FullBMActivityLevel::ObserveOnly,
             .generation = 1,
             .localId = 0,
             .irmId = 1,
@@ -96,6 +100,7 @@ TEST(BusManagerElection, FsmDecisions) {
     {
         BmElectionInputs inputs{
             .mode = RoleMode::FullBusManager,
+            .activityLevel = FullBMActivityLevel::ElectionOnly,
             .generation = 1,
             .localId = 0,
             .irmId = std::nullopt,
@@ -109,6 +114,7 @@ TEST(BusManagerElection, FsmDecisions) {
     {
         BmElectionInputs inputs{
             .mode = RoleMode::FullBusManager,
+            .activityLevel = FullBMActivityLevel::ElectionOnly,
             .generation = 1,
             .localId = 0,
             .irmId = 1,
@@ -122,6 +128,7 @@ TEST(BusManagerElection, FsmDecisions) {
     {
         BmElectionInputs inputs{
             .mode = RoleMode::FullBusManager,
+            .activityLevel = FullBMActivityLevel::ElectionOnly,
             .generation = 1,
             .localId = 0,
             .irmId = 1,
@@ -135,6 +142,7 @@ TEST(BusManagerElection, FsmDecisions) {
     {
         BmElectionInputs inputs{
             .mode = RoleMode::FullBusManager,
+            .activityLevel = FullBMActivityLevel::ElectionOnly,
             .generation = 1,
             .localId = 0,
             .irmId = 1,
@@ -172,22 +180,25 @@ TEST(BusManagerElectionDriver, GatedByMode) {
     auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
     scheduler->Bind(queue);
 
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+
     BusManagerElectionDriver::Deps deps{
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
-        .csrResponder = nullptr
+        .csrResponder = nullptr,
+        .timing = &timing
     };
 
     // AvoidManager Mode: OnTopologyReady should do nothing
     {
-        auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::ClientOnly);
+        auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::ClientOnly});
         TopologySnapshot snap{};
         snap.generation = 1;
         snap.localNodeId = 0;
         snap.irmNodeId = 1;
         snap.busBase16 = 0xFFC0;
 
-        driver->OnTopologyReady(snap);
+        driver->OnTopologyReady(snap, ASFW::Testing::HostMonotonicNow());
         EXPECT_EQ(mockAsync->compareSwapCount, 0);
         EXPECT_EQ(queue->DrainAllForTesting(), 0);
     }
@@ -203,13 +214,16 @@ TEST(BusManagerElectionDriver, IncumbentImmediateContention) {
     auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
     scheduler->Bind(queue);
 
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+
     BusManagerElectionDriver::Deps deps{
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
-        .csrResponder = nullptr
+        .csrResponder = nullptr,
+        .timing = &timing
     };
 
-    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::FullBusManager);
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
 
     // Setup wasIncumbent = true
     // Mimic winning previous election
@@ -217,13 +231,17 @@ TEST(BusManagerElectionDriver, IncumbentImmediateContention) {
     driver->OnBusReset();
     EXPECT_TRUE(driver->WasIncumbent());
 
+    const uint32_t generation = 1;
+    const uint64_t now = ASFW::Testing::HostMonotonicNow();
+    timing.OnSelfIDComplete(generation, now);
+
     TopologySnapshot snap{};
-    snap.generation = 1;
+    snap.generation = generation;
     snap.localNodeId = 0;
     snap.irmNodeId = 1;
     snap.busBase16 = 0x0;
 
-    driver->OnTopologyReady(snap);
+    driver->OnTopologyReady(snap, now);
 
     // Contends immediately: compareSwapCount should be 1
     EXPECT_EQ(mockAsync->compareSwapCount, 1);
@@ -246,22 +264,29 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
     auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
     scheduler->Bind(queue);
 
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+
     BusManagerElectionDriver::Deps deps{
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
-        .csrResponder = nullptr
+        .csrResponder = nullptr,
+        .timing = &timing
     };
 
-    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::FullBusManager);
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
     EXPECT_FALSE(driver->WasIncumbent());
 
+    const uint32_t generation = 2;
+    const uint64_t now = ASFW::Testing::HostMonotonicNow();
+    timing.OnSelfIDComplete(generation, now);
+
     TopologySnapshot snap{};
-    snap.generation = 2;
+    snap.generation = generation;
     snap.localNodeId = 1;
     snap.irmNodeId = 2;
     snap.busBase16 = 0x0;
 
-    driver->OnTopologyReady(snap);
+    driver->OnTopologyReady(snap, now);
 
     // Delay scheduled, not executed yet
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
@@ -289,21 +314,28 @@ TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
     auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
     scheduler->Bind(queue);
 
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+
     BusManagerElectionDriver::Deps deps{
         .asyncController = mockAsync.get(),
         .scheduler = scheduler.get(),
-        .csrResponder = nullptr
+        .csrResponder = nullptr,
+        .timing = &timing
     };
 
-    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RoleMode::FullBusManager);
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
+
+    const uint32_t generation = 3;
+    const uint64_t now = ASFW::Testing::HostMonotonicNow();
+    timing.OnSelfIDComplete(generation, now);
 
     TopologySnapshot snap{};
-    snap.generation = 3;
+    snap.generation = generation;
     snap.localNodeId = 1;
     snap.irmNodeId = 2;
     snap.busBase16 = 0x0;
 
-    driver->OnTopologyReady(snap);
+    driver->OnTopologyReady(snap, now);
 
     // A bus reset occurs before the grace period task executes!
     mockAsync->currentGen16 = 4; // Generation advances

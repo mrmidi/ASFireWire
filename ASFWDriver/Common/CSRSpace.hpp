@@ -402,8 +402,7 @@ enum class FullBMActivityLevel : uint8_t {
         if (activityLevel >= FullBMActivityLevel::ElectionOnly) {
             out |= (kBMCMask | kIRMCMask); // bmc=1 implies irmc=1
         } else {
-            out &= ~kBMCMask; // bmc=0
-            out |= kIRMCMask; // irmc=1 (ObserveOnly still needs local IRM registers)
+            out &= ~(kBMCMask | kIRMCMask); // bmc=0, irmc=0 (ObserveOnly is fully passive)
         }
         break;
     }
@@ -445,12 +444,11 @@ static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleM
               "every RoleMode must produce a legal capability combo");
 
 static_assert((NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager, FullBMActivityLevel::ObserveOnly) &
-               BusOptionsFields::kBMCMask) == 0,
-              "FullBusManager + ObserveOnly must force bmc=0");
+               (BusOptionsFields::kBMCMask | BusOptionsFields::kIRMCMask)) == 0,
+              "FullBusManager + ObserveOnly must force bmc=0 and irmc=0");
 static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager, FullBMActivityLevel::ObserveOnly) &
-               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
-                  BusOptionsFields::kIRMCMask,
-              "FullBusManager + ObserveOnly must set irmc=1 and clear bmc=0");
+               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) == 0,
+              "FullBusManager + ObserveOnly must remain fully passive");
 
 namespace Detail {
 // Local constexpr popcount (avoid <bit> include in this shared header).

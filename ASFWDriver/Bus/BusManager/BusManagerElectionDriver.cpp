@@ -5,21 +5,24 @@
 
 #include "BusManagerElectionDriver.hpp"
 #include "../IRM/LocalIRMResourceController.hpp"
+#include "../IRM/IRMCSRConstants.hpp"
+#include "../Timing/PostResetTimingCoordinator.hpp"
+#include "../Timing/PostResetTiming.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Controller/ControllerTypes.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 
 namespace ASFW::Bus {
 
-BusManagerElectionDriver::BusManagerElectionDriver(Deps deps, ASFW::FW::RoleMode roleMode) noexcept
-    : deps_(deps), roleMode_(roleMode) {}
+BusManagerElectionDriver::BusManagerElectionDriver(Deps deps, ASFW::Driver::RolePolicy rolePolicy) noexcept
+    : deps_(deps), rolePolicy_(rolePolicy) {}
 
-void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap) noexcept {
+void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap, uint64_t nowNs) noexcept {
     if (!active_) {
         return;
     }
 
-    if (roleMode_ != ASFW::FW::RoleMode::FullBusManager) {
+    if (rolePolicy_.roleMode != ASFW::FW::RoleMode::FullBusManager) {
         return;
     }
 
@@ -32,6 +35,11 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
     const uint8_t irmNodeId = snap.irmNodeId;
     const uint32_t generation = snap.generation;
 
+    // Milestone 3: Max one election attempt per generation
+    if (attemptedGeneration_ == generation && attemptsThisGeneration_ >= 1) {
+        return;
+    }
+
     // Check if we are already contending for this or a newer generation
     if (inFlight_ && inFlightGen_ >= generation) {
         return;
@@ -43,7 +51,8 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
     }
 
     BmElectionInputs inputs{
-        .mode = roleMode_,
+        .mode = rolePolicy_.roleMode,
+        .activityLevel = rolePolicy_.fullBMActivityLevel,
         .generation = generation,
         .localId = localNodeId,
         .irmId = irmNodeId,
@@ -56,42 +65,55 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
         return;
     }
 
-    inFlight_ = true;
-    inFlightGen_ = generation;
+    // Map DecisionAction to Annex H candidate class
+    using namespace Timing;
+    BMCandidateClass candidateClass = (action == DecisionAction::ContendImmediately) ? BMCandidateClass::Incumbent : BMCandidateClass::NonIncumbent;
 
-    if (action == DecisionAction::ContendImmediately) {
-        ASFW_LOG(Controller, "[BM Election] Contending immediately for gen=%u as incumbent", generation);
+    if (!deps_.timing) {
+        ASFW_LOG(Controller, "⚠️ [BM Election] Cannot check Annex H gate: timing coordinator missing");
+        return;
+    }
+
+    const TimingGateResult gate = deps_.timing->CheckBMGate(generation, candidateClass, nowNs);
+    if (gate.state == TimingGateState::ExpiredGeneration) {
+        ASFW_LOG(Controller, "[BM Election] Aborting: timing gate expired for generation %u", generation);
+        return;
+    }
+
+    if (gate.allowed) {
+        ASFW_LOG(Controller, "[BM Election] Gate OPEN for gen=%u (class=%u); contending now", generation, static_cast<int>(candidateClass));
+        inFlight_ = true;
+        inFlightGen_ = generation;
+        attemptedGeneration_ = generation;
+        attemptsThisGeneration_++;
         Contend(generation, localNodeId, irmNodeId, snap.busBase16);
-    } else if (action == DecisionAction::ContendAfterGrace) {
-        ASFW_LOG(Controller, "[BM Election] Contending after 125ms grace for gen=%u as challenger", generation);
-        // Wait 125 ms challenger grace period
-        const uint64_t delayNs = 125'000'000ULL;
+    } else if (gate.state == TimingGateState::Closed) {
+        ASFW_LOG(Controller, "[BM Election] Gate CLOSED for gen=%u (class=%u); scheduling for +%llu ms", 
+                 generation, static_cast<int>(candidateClass), gate.remainingNs / 1000000ULL);
+        
         if (deps_.scheduler) {
+            inFlight_ = true;
+            inFlightGen_ = generation;
             std::weak_ptr<BusManagerElectionDriver> weakSelf = shared_from_this();
-            deps_.scheduler->DispatchAsyncAfter(delayNs, [weakSelf, generation, localNodeId, irmNodeId, busBase16 = snap.busBase16]() {
+            deps_.scheduler->DispatchAsyncAfter(gate.remainingNs, [weakSelf, generation, localNodeId, irmNodeId, busBase16 = snap.busBase16]() {
                 auto self = weakSelf.lock();
-                if (!self) {
-                    return;
-                }
-                if (!self->active_) {
-                    self->inFlight_ = false;
-                    return;
-                }
-                // Verify generation is still current before sending compare-swap
+                if (!self || !self->active_) return;
+                
+                // Final check before contending
                 if (self->deps_.asyncController) {
                     const auto state = self->deps_.asyncController->GetBusStateSnapshot();
                     if (state.generation16 != generation) {
-                        ASFW_LOG(Controller, "[BM Election] Aborting grace period contention: generation changed from %u to %u",
+                        ASFW_LOG(Controller, "[BM Election] Aborting deferred contention: generation changed from %u to %u",
                                  generation, state.generation16);
                         self->inFlight_ = false;
                         return;
                     }
                 }
+                
+                self->attemptedGeneration_ = generation;
+                self->attemptsThisGeneration_++;
                 self->Contend(generation, localNodeId, irmNodeId, busBase16);
             });
-        } else {
-            // Fallback for testing / stubs
-            Contend(generation, localNodeId, irmNodeId, snap.busBase16);
         }
     }
 }
@@ -105,6 +127,7 @@ void BusManagerElectionDriver::OnBusReset() noexcept {
     fsm_.Reset();
     inFlight_ = false;
     inFlightGen_ = 0;
+    attemptsThisGeneration_ = 0;
     if (inFlightHandle_) {
         if (deps_.asyncController) {
             deps_.asyncController->Cancel(inFlightHandle_);
@@ -151,7 +174,10 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
             }
             return;
         }
-        result = deps_.hardware->CompareSwapLocalIRMResource(0, 0x3F, localNodeId);
+        result = deps_.hardware->CompareSwapLocalIRMResource(
+            static_cast<uint32_t>(Driver::IRMCSR::CSRSelector::BusManagerId),
+            Driver::IRMCSR::kNoBusManagerId, 
+            localNodeId);
         
         if (result.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
             ASFW_LOG(Controller, "[BM Election] Local CompareSwap failed (status=%d)",
@@ -172,7 +198,7 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
         .destinationID = ASFW::Driver::ComposeNodeID(busBase16, irmNodeId),
         .addressHigh = ASFW::FW::kCSRRegSpaceHi,
         .addressLow = ASFW::FW::kCSR_BusManagerID,
-        .compareValue = 0x3F,
+        .compareValue = Driver::IRMCSR::kNoBusManagerId,
         .swapValue = localNodeId,
         .speedCode = static_cast<uint8_t>(ASFW::FW::Speed::S100)
     };

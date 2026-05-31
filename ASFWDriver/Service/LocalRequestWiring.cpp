@@ -15,6 +15,7 @@
 #include "../Bus/CSR/CSRResponder.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/BusResetCoordinator.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Hardware/IEEE1394.hpp"
 #include "../Logging/Logging.hpp"
@@ -217,8 +218,9 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
                 .csrResponder = d.csrResponder.get(),
                 .hardware = d.hardware.get(),
                 .localIrmController = ctx.controller ? ctx.controller->GetLocalIRMResourceController() : nullptr,
+                .timing = d.busReset ? &d.busReset->PostResetTiming() : nullptr,
             };
-            d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.rolePolicy.roleMode);
+            d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.rolePolicy);
             if (ctx.controller) {
                 d.busManagerElectionDriver->SetObserver(ctx.controller.get());
                 ctx.controller->SetBusManagerElectionDriver(d.busManagerElectionDriver);
