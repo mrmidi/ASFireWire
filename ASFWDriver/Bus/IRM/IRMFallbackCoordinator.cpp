@@ -12,7 +12,7 @@
 namespace ASFW::Bus {
 
 IRMFallbackCoordinator::IRMFallbackCoordinator(Deps deps) noexcept
-    : deps_(deps), csr_(*deps.hardware) {}
+    : deps_(deps), snapshot_{}, csr_(deps.hardware) {}
 
 void IRMFallbackCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     snapshot_ = {};

@@ -25,14 +25,14 @@ protected:
 };
 
 TEST_F(IRMFallbackCoordinatorTests, InitialState) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     EXPECT_EQ(coordinator->Snapshot().state, IRMFallbackState::Disabled);
 }
 
 TEST_F(IRMFallbackCoordinatorTests, ClientOnly_Disabled) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     RolePolicy policy{RoleMode::ClientOnly};
@@ -48,7 +48,7 @@ TEST_F(IRMFallbackCoordinatorTests, ClientOnly_Disabled) {
 }
 
 TEST_F(IRMFallbackCoordinatorTests, NotLocalIRM_Suppressed) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     RolePolicy policy{RoleMode::IRMResourceHost};
@@ -64,7 +64,7 @@ TEST_F(IRMFallbackCoordinatorTests, NotLocalIRM_Suppressed) {
 }
 
 TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateClosed_Waiting) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     RolePolicy policy{RoleMode::IRMResourceHost};
@@ -87,7 +87,7 @@ TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateClosed_Waiting) {
 }
 
 TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateOpen_BMExists) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     RolePolicy policy{RoleMode::IRMResourceHost};
@@ -118,7 +118,7 @@ TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateOpen_BMExists) {
 }
 
 TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateOpen_NoBM_PlansAction) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     RolePolicy policy{RoleMode::IRMResourceHost};
@@ -148,7 +148,7 @@ TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateOpen_NoBM_PlansAction) {
 }
 
 TEST_F(IRMFallbackCoordinatorTests, StaleGeneration_Suppressed) {
-    IRMFallbackCoordinator::Deps deps{&hardware_, &timing_, nullptr};
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
     
     RolePolicy policy{RoleMode::IRMResourceHost};

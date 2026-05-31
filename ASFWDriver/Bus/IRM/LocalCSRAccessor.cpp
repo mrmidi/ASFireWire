@@ -41,4 +41,9 @@ ASFW::Driver::LocalCSRLockResult LocalCSRAccessor::ProbeChannelsLoNoChange(uint3
     return hw_.CompareSwapLocalIRMResource(static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo), expected, expected);
 }
 
+ASFW::Driver::LocalCSRLockResult LocalCSRAccessor::CompareSwapBusManagerId(uint32_t compareValue,
+                                                                          uint32_t newValue) noexcept {
+    return hw_.CompareSwapLocalIRMResource(static_cast<uint32_t>(CSRSelector::BusManagerId), compareValue, newValue);
+}
+
 } // namespace ASFW::Bus

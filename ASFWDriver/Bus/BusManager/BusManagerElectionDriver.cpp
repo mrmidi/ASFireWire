@@ -202,18 +202,22 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
         lastElectionPath_ = 1; // Local
 
         ASFW::Driver::LocalCSRLockResult result;
-        if (deps_.hardware == nullptr) {
-            ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
-            inFlight_ = false;
-            if (observer_) {
-                observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
+        if (deps_.localIrmController) {
+            result = deps_.localIrmController->CompareSwapBusManagerId(Driver::IRMCSR::kNoBusManagerId, localNodeId);
+        } else {
+            if (deps_.hardware == nullptr) {
+                ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
+                inFlight_ = false;
+                if (observer_) {
+                    observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
+                }
+                return;
             }
-            return;
+            result = deps_.hardware->CompareSwapLocalIRMResource(
+                static_cast<uint32_t>(Driver::IRMCSR::CSRSelector::BusManagerId),
+                Driver::IRMCSR::kNoBusManagerId, 
+                localNodeId);
         }
-        result = deps_.hardware->CompareSwapLocalIRMResource(
-            static_cast<uint32_t>(Driver::IRMCSR::CSRSelector::BusManagerId),
-            Driver::IRMCSR::kNoBusManagerId, 
-            localNodeId);
         
         if (result.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
             ASFW_LOG(Controller, "[BM Election] Local CompareSwap failed (status=%d)",

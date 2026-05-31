@@ -17,7 +17,17 @@ LocalIRMResourceController::LocalIRMResourceController(ASFW::Driver::HardwareInt
 
 void LocalIRMResourceController::OnBusResetStarted(uint32_t generation) noexcept {
     snapshot_.generation = generation;
-    snapshot_.state = LocalIRMResourceState::InitialRegistersProgrammed;
+    
+    if (hw_.InitialIRMRegistersProgrammed()) {
+        snapshot_.state = LocalIRMResourceState::InitialRegistersProgrammed;
+        snapshot_.initialRegistersProgrammed = true;
+    } else {
+        // Fall back to Disabled or add a new failed state?
+        // Let's use the Failed state if we have one, or just mark it in diagnostics.
+        snapshot_.state = LocalIRMResourceState::ProbeFailed; // Reuse for now
+        snapshot_.initialRegistersProgrammed = false;
+    }
+
     snapshot_.localIsIRM = false;
     snapshot_.activeProbeAttempted = false;
     snapshot_.activeProbeSucceeded = false;
@@ -120,6 +130,11 @@ void LocalIRMResourceController::Disable() noexcept {
     snapshot_.activeProbeAttempted = false;
     snapshot_.activeProbeSucceeded = false;
     broadcastChannel_.ResetImplementedInvalid();
+}
+
+ASFW::Driver::LocalCSRLockResult LocalIRMResourceController::CompareSwapBusManagerId(uint32_t compareValue,
+                                                                                    uint32_t newValue) noexcept {
+    return csr_.CompareSwapBusManagerId(compareValue, newValue);
 }
 
 } // namespace ASFW::Bus

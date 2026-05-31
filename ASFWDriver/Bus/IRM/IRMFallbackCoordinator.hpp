@@ -117,7 +117,7 @@ struct IRMFallbackSnapshot {
 class IRMFallbackCoordinator final : public std::enable_shared_from_this<IRMFallbackCoordinator> {
 public:
     struct Deps {
-        Driver::HardwareInterface* hardware{nullptr};
+        Driver::HardwareInterface& hardware;
         Timing::PostResetTimingCoordinator* timing{nullptr};
         Driver::Scheduler* scheduler{nullptr};
     };
@@ -155,8 +155,8 @@ public:
     [[nodiscard]] const IRMFallbackSnapshot& Snapshot() const noexcept { return snapshot_; }
 
 private:
-    Deps deps_{};
-    IRMFallbackSnapshot snapshot_{};
+    Deps deps_;
+    IRMFallbackSnapshot snapshot_;
     LocalCSRAccessor csr_;
 
     [[nodiscard]] bool RoleAllowsFallbackCheck(const Driver::RolePolicy& rolePolicy) const noexcept;

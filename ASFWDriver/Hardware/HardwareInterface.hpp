@@ -112,6 +112,10 @@ class HardwareInterface {
 
     [[nodiscard]] uint32_t ReadNodeID() const noexcept;
 
+    [[nodiscard]] bool InitialIRMRegistersProgrammed() const noexcept {
+        return initialIRMRegistersProgrammed_;
+    }
+
     [[nodiscard]] bool WaitHC(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
                               uint32_t pollIntervalUsec = 100) const;
     [[nodiscard]] bool WaitLink(uint32_t mask, bool expectSet, uint32_t timeoutUsec,
@@ -194,6 +198,7 @@ class HardwareInterface {
     uint8_t phyReg4Cache_{0};
 
     bool quirk_agere_lsi_{false};
+    bool initialIRMRegistersProgrammed_{false};
 
     std::optional<uint8_t> ReadPhyRegisterUnlocked(uint8_t address);
     bool WritePhyRegisterUnlocked(uint8_t address, uint8_t value);

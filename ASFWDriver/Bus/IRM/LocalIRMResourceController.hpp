@@ -87,6 +87,13 @@ public:
      */
     void Disable() noexcept;
 
+    /**
+     * @brief Performs an atomic compare-swap on the local BUS_MANAGER_ID register.
+     * Used by BM election when local node is the IRM.
+     */
+    [[nodiscard]] ASFW::Driver::LocalCSRLockResult CompareSwapBusManagerId(uint32_t compareValue,
+                                                                         uint32_t newValue) noexcept;
+
     [[nodiscard]] LocalIRMResourceSnapshot Snapshot() const noexcept { return snapshot_; }
 
 private:
