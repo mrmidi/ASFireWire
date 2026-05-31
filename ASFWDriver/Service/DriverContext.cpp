@@ -10,6 +10,7 @@
 #include "../Async/Interfaces/IFireWireBus.hpp"
 #include "../Async/PacketHelpers.hpp"
 #include "../Async/ResponseCode.hpp"
+#include "../Async/Rx/PacketRouter.hpp"
 #include "../Async/Tx/ResponseSender.hpp"
 #include "../Audio/AudioCoordinator.hpp"
 #include "../Bus/BusManager.hpp"
@@ -33,8 +34,24 @@
 #include "../Protocols/SBP2/SBP2SessionRegistry.hpp"
 #include "../Scheduling/Scheduler.hpp"
 
+namespace {
+
+void StopAndClearAsyncRouting(ServiceContext& ctx) {
+    if (!ctx.deps.asyncSubsystem) {
+        return;
+    }
+
+    ctx.deps.asyncSubsystem->Stop();
+    if (auto* router = ctx.deps.asyncSubsystem->GetPacketRouter()) {
+        router->ClearAllHandlers();
+    }
+}
+
+} // namespace
+
 void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
+    StopAndClearAsyncRouting(*this);
     controller.reset();
     audioCoordinator.reset();
     deps.hardware.reset();
@@ -54,7 +71,7 @@ void ServiceContext::Reset() {
     deps.avcDiscovery.reset();       // Clean up AV/C discovery
     deps.irmClient.reset();          // Clean up IRM client
     deps.asyncController.reset();
-    deps.asyncSubsystem.reset();     // Stop and cleanup asyncSubsystem
+    deps.asyncSubsystem.reset();     // Cleanup asyncSubsystem after handlers are cleared.
     statusPublisher.Reset();
     watchdog.Reset();
 #ifndef ASFW_HOST_TEST
@@ -385,11 +402,9 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
         ctx.controller.reset();
     }
 
-    // CRITICAL: Stop asyncSubsystem BEFORE cancelling watchdog
-    // This prevents the crash where watchdog fires after completion queue is deactivated
-    if (ctx.deps.asyncSubsystem) {
-        ctx.deps.asyncSubsystem->Stop();
-    }
+    // CRITICAL: Stop async routing before releasing protocol dependencies.
+    // This prevents PacketRouter callbacks from outliving captured SBP2/FCP objects.
+    StopAndClearAsyncRouting(ctx);
 
     if (ctx.deps.interrupts)
         ctx.deps.interrupts->Disable();
