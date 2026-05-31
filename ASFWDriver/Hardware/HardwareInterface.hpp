@@ -78,6 +78,7 @@ class HardwareInterface {
     bool SendPhyConfig(std::optional<uint8_t> gapCount, std::optional<uint8_t> forceRootPhyId,
                        std::string_view caller);
     bool SendPhyGlobalResume(uint8_t phyId);
+    bool SendLinkOnPacket(uint8_t targetNodeId);
     bool InitiateBusReset(bool shortReset);
     bool ReadIntEvent(uint32_t& value);
     void AckIntEvent(uint32_t bits);
@@ -186,6 +187,7 @@ class HardwareInterface {
         SendPhyConfig,
         InitiateBusReset,
         SendPhyGlobalResume,
+        SendLinkOn,
         SetContender,
     };
 

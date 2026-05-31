@@ -282,55 +282,58 @@ bool HardwareInterface::SendPhyConfig(std::optional<uint8_t> gapCount,
 
     const auto handle = asyncControllerPort_->PhyRequest(params, std::move(completion));
     if (!handle) {
-        ASFW_LOG_ERROR(Hardware, "PHY CONFIG submission rejected (handle=0) quad=0x%08x",
-                       quadlets[0]);
-        return false;
-    }
-
-    ASFW_LOG(Hardware, "PHY CONFIG submitted handle=0x%x data=(0x%08x, 0x%08x)", handle.value,
-             params.quadlet1, params.quadlet2);
-    return true;
-}
-
-bool HardwareInterface::SendPhyGlobalResume(uint8_t phyId) {
-    if (!device_) {
-        return false;
-    }
-    if (!asyncControllerPort_) {
-        ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME aborted - async controller port not bound");
-        return false;
-    }
-
-    PhyGlobalResumePacket packet{};
-    packet.phyId = static_cast<uint8_t>(phyId & 0x3Fu);
-    const auto quadlets = packet.EncodeBusOrder();
-
-    ASFW_LOG(Hardware, "PHY GLOBAL RESUME packet: phyId=%u quad=0x%08x", packet.phyId, quadlets[0]);
-
-    ASFW::Async::PhyParams params{};
-    params.quadlet1 = quadlets[0];
-    params.quadlet2 = quadlets[1];
-
-    auto completion = [packetQuad = quadlets[0]](ASFW::Async::AsyncHandle handle,
-                                                 ASFW::Async::AsyncStatus status, uint8_t,
-                                                 std::span<const uint8_t>) {
-        if (status == ASFW::Async::AsyncStatus::kSuccess) {
-            ASFW_LOG(Hardware, "PHY GLOBAL RESUME complete handle=0x%x quad=0x%08x", handle.value,
-                     packetQuad);
-        } else {
-            ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME handle=0x%x failed status=%u quad=0x%08x",
-                           handle.value, static_cast<unsigned>(status), packetQuad);
-        }
-    };
-
-    const auto handle = asyncControllerPort_->PhyRequest(params, std::move(completion));
-    if (!handle) {
         ASFW_LOG_ERROR(Hardware, "PHY GLOBAL RESUME submission rejected (handle=0) quad=0x%08x",
                        quadlets[0]);
         return false;
     }
 
-    ASFW_LOG(Hardware, "PHY GLOBAL RESUME submitted handle=0x%x", handle.value);
+    ASFW_LOG(Hardware, "PHY GLOBAL RESUME submitted handle=0x%x data=(0x%08x, 0x%08x)",
+             handle.value, params.quadlet1, params.quadlet2);
+    return true;
+    }
+
+    bool HardwareInterface::SendLinkOnPacket(uint8_t targetNodeId) {
+    if (!device_) {
+        return false;
+    }
+    if (!asyncControllerPort_) {
+        ASFW_LOG_ERROR(Hardware, "Link-On aborted - async controller port not bound");
+        return false;
+    }
+
+    // Cross-validated with linux: core-cdev.c:1624-1640.
+    // Linux uses ioctl_send_phy_packet to wrap raw PHY packets.
+    // IEEE 1394a-2000 §4.3.4.2: Link-On packet.
+    const auto quadlets = LinkOnPacket{targetNodeId}.EncodeBusOrder();
+
+    ASFW_LOG(Hardware, "[M8] Send Link-On packet: target=node %u quad=0x%08x", targetNodeId,
+             quadlets[0]);
+
+    ASFW::Async::PhyParams params{};
+    params.quadlet1 = quadlets[0];
+    params.quadlet2 = quadlets[1];
+
+    auto completion = [packetQuad = quadlets[0], targetNodeId](
+                          ASFW::Async::AsyncHandle handle, ASFW::Async::AsyncStatus status, uint8_t,
+                          std::span<const uint8_t>) {
+        if (status == ASFW::Async::AsyncStatus::kSuccess) {
+            ASFW_LOG(Hardware, "Link-On complete handle=0x%x target=node %u quad=0x%08x",
+                     handle.value, targetNodeId, packetQuad);
+        } else {
+            ASFW_LOG_ERROR(Hardware, "Link-On handle=0x%x failed status=%u target=node %u quad=0x%08x",
+                           handle.value, static_cast<unsigned>(status), targetNodeId, packetQuad);
+        }
+    };
+
+    const auto handle = asyncControllerPort_->PhyRequest(params, std::move(completion));
+    if (!handle) {
+        ASFW_LOG_ERROR(Hardware, "Link-On submission rejected (handle=0) quad=0x%08x",
+                       quadlets[0]);
+        return false;
+    }
+
+    ASFW_LOG(Hardware, "Link-On submitted handle=0x%x data=(0x%08x, 0x%08x)", handle.value,
+             params.quadlet1, params.quadlet2);
     return true;
 }
 
