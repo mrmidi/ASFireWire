@@ -4,6 +4,7 @@
 // LocalIRMResourceControllerTests.cpp — Unit tests for LocalIRMResourceController.
 
 #include "Bus/IRM/LocalIRMResourceController.hpp"
+#include "Bus/CSR/BroadcastChannelCSR.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "gtest/gtest.h"
 
@@ -17,73 +18,68 @@ protected:
     }
 
     HardwareInterface hardware_;
+    BroadcastChannelCSR broadcastChannel_;
 };
 
-TEST_F(LocalIRMResourceControllerTests, InitializeDefaultsSuccess) {
-    LocalIRMResourceController controller(&hardware_);
+TEST_F(LocalIRMResourceControllerTests, InitialState) {
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
     EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Disabled);
-
-    bool ok = controller.InitializeDefaults();
-    EXPECT_TRUE(ok);
-
-    auto snap = controller.Snapshot();
-    EXPECT_EQ(snap.state, LocalIRMResourceState::Initialized);
-    EXPECT_TRUE(snap.readbackValid);
-    EXPECT_EQ(snap.lastCsrStatus, 0); // OK
-    EXPECT_EQ(snap.busManagerId, 0x3F);
-    EXPECT_EQ(snap.bandwidthAvailable, 4915);
-    EXPECT_EQ(snap.channelsAvailableHi, 0xFFFFFFFF);
-    EXPECT_EQ(snap.channelsAvailableLo, 0x7FFFFFFF);
+    EXPECT_EQ(broadcastChannel_.Read(), 0x8000001F);
 }
 
-TEST_F(LocalIRMResourceControllerTests, ProbeReadbackSuccess) {
-    LocalIRMResourceController controller(&hardware_);
+TEST_F(LocalIRMResourceControllerTests, BusResetResetsState) {
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
+    broadcastChannel_.MarkValidChannel31();
     
-    // Setup some custom mock values in the stub
-    hardware_.WriteLocalIRMResource(0, 10);
-    hardware_.WriteLocalIRMResource(1, 2000);
-    hardware_.WriteLocalIRMResource(2, 0xAAAAAAAA);
-    hardware_.WriteLocalIRMResource(3, 0x55555555);
-
-    bool ok = controller.ProbeReadback();
-    EXPECT_TRUE(ok);
-
+    controller.OnBusResetStarted(5);
     auto snap = controller.Snapshot();
-    EXPECT_TRUE(snap.readbackValid);
-    EXPECT_EQ(snap.busManagerId, 10);
-    EXPECT_EQ(snap.bandwidthAvailable, 2000);
-    EXPECT_EQ(snap.channelsAvailableHi, 0xAAAAAAAA);
-    EXPECT_EQ(snap.channelsAvailableLo, 0x55555555);
+    EXPECT_EQ(snap.state, LocalIRMResourceState::InitialRegistersProgrammed);
+    EXPECT_EQ(snap.generation, 5);
+    EXPECT_EQ(broadcastChannel_.Read(), 0x8000001F);
 }
 
-TEST_F(LocalIRMResourceControllerTests, CompareSwapUpdatesCache) {
-    LocalIRMResourceController controller(&hardware_);
+TEST_F(LocalIRMResourceControllerTests, TopologyReady_NotIRM_DisablesHosting) {
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
+    controller.OnTopologyReady(10, 0, 2, true); // Local=0, IRM=2
     
-    // Init values
-    ASSERT_TRUE(controller.InitializeDefaults());
-
-    // Perform CompareSwap on BUS_MANAGER_ID (selectCode 0)
-    // compareValue = 0x3F, newValue = 4
-    auto lockRes = controller.CompareSwapBusManagerId(0x3F, 4);
-    EXPECT_EQ(lockRes.status, LocalCSRLockResult::Status::Success);
-    EXPECT_TRUE(lockRes.compareMatched);
-    EXPECT_EQ(lockRes.oldValue, 0x3F);
-
     auto snap = controller.Snapshot();
-    EXPECT_EQ(snap.busManagerId, 4);
-    EXPECT_EQ(snap.lastCsrStatus, 0); // OK
+    EXPECT_EQ(snap.state, LocalIRMResourceState::NotLocalIRM);
+    EXPECT_FALSE(snap.localIsIRM);
+    EXPECT_EQ(broadcastChannel_.Read(), 0x8000001F);
 }
 
-TEST_F(LocalIRMResourceControllerTests, DisableState) {
-    LocalIRMResourceController controller(&hardware_);
-    ASSERT_TRUE(controller.InitializeDefaults());
-    EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Initialized);
+TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesAndSetsValid) {
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
+    
+    // Local=2, IRM=2
+    controller.OnTopologyReady(10, 2, 2, true);
+    
+    auto snap = controller.Snapshot();
+    EXPECT_EQ(snap.state, LocalIRMResourceState::ReadyDefaults);
+    EXPECT_TRUE(snap.localIsIRM);
+    EXPECT_TRUE(snap.activeProbeAttempted);
+    EXPECT_TRUE(snap.activeProbeSucceeded);
+    EXPECT_EQ(broadcastChannel_.Read(), 0xC000001F);
+}
 
-    controller.Disable();
-    EXPECT_EQ(controller.Snapshot().state, LocalIRMResourceState::Disabled);
-    EXPECT_FALSE(controller.Snapshot().readbackValid);
-    EXPECT_EQ(controller.Snapshot().busManagerId, 0x3F);
-    EXPECT_EQ(controller.Snapshot().bandwidthAvailable, 0);
-    EXPECT_EQ(controller.Snapshot().channelsAvailableHi, 0);
-    EXPECT_EQ(controller.Snapshot().channelsAvailableLo, 0);
+TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesReadyChanged) {
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
+    
+    // Setup hardware with some non-default value in BANDWIDTH_AVAILABLE (select 1)
+    hardware_.WriteLocalIRMResource(1, 1000);
+    
+    controller.OnTopologyReady(10, 2, 2, true);
+    
+    auto snap = controller.Snapshot();
+    EXPECT_EQ(snap.state, LocalIRMResourceState::ReadyChanged);
+    EXPECT_EQ(snap.bandwidthAvailable, 1000);
+}
+
+TEST_F(LocalIRMResourceControllerTests, RoleDoesNotAllowIRMHost_DisablesHosting) {
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
+    controller.OnTopologyReady(10, 2, 2, false); // Local=IRM but role=ClientOnly
+    
+    auto snap = controller.Snapshot();
+    EXPECT_EQ(snap.state, LocalIRMResourceState::Disabled);
+    EXPECT_EQ(broadcastChannel_.Read(), 0x8000001F);
 }
