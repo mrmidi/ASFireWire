@@ -51,6 +51,7 @@ enum class CyclePolicyDecision : uint8_t {
     AlreadySatisfiedLocalCycleMasterEnabled,
 
     DeferRootCmcUnknown,
+    DeferLocalCmcUnknown,
 
     LocalRootEnableCycleMaster,
     RemoteRootSetCmstr,
@@ -97,6 +98,9 @@ struct CyclePolicyInputs {
 
     bool rootCmcKnown{false};
     bool rootCmcCapable{false};
+
+    bool localCmcKnown{false};
+    bool localCmcCapable{false};
 
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel activityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
@@ -175,3 +179,4 @@ private:
 };
 
 } // namespace ASFW::Bus
+

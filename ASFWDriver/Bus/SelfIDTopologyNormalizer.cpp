@@ -29,6 +29,7 @@ SelfIDTopologyNormalizer::BuildPhysicalGraph(const std::vector<SelfIDNodeRecord>
         node.initiatedReset = record.initiatedReset;
         node.gapCount = record.gapCount;
         node.powerClass = record.powerClass;
+        node.speedCode = record.speedCode;
         node.maxSpeedMbps = record.maxSpeedMbps;
         node.baseRaw = record.baseRaw;
         node.reportedPorts = record.ports;

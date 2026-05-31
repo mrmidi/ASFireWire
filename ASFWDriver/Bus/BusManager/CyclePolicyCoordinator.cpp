@@ -107,6 +107,12 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
 
     // If local is root, always use local enable path (safest and most spec-compliant).
     if (inputs.localIsRoot) {
+        if (!inputs.localCmcKnown) {
+            return CyclePolicyDecision::DeferLocalCmcUnknown;
+        }
+        if (!inputs.localCmcCapable) {
+            return CyclePolicyDecision::RootSelectionRequired;
+        }
         return CyclePolicyDecision::LocalRootEnableCycleMaster;
     }
 

@@ -17,6 +17,7 @@
 #include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
 #include "../Bus/BusManager/RootSelectionCoordinator.hpp"
 #include "../Bus/BusManager/GapPolicyCoordinator.hpp"
+#include "../Bus/BusManager/PowerLinkPolicyCoordinator.hpp"
 #include "../Bus/Timing/PostResetTimingCoordinator.hpp"
 #include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -600,7 +601,10 @@ void ControllerCore::EvaluateActivePolicies() noexcept {
     // 3. Gap Count Optimization (M7)
     EvaluateGapPolicy();
 
-    // 4. Execution of combined reset
+    // 4. Power Management / Link-On (M8)
+    EvaluatePowerLinkPolicy();
+
+    // 5. Execution of combined reset
     if (pendingReset_ && deps_.busReset) {
         std::optional<bool> setContender = std::nullopt;
         if (const auto topo = LatestTopology(); topo && topo->localNodeId == pendingReset_->targetRoot) {
@@ -655,6 +659,17 @@ void ControllerCore::EvaluateCyclePolicy() noexcept {
     in.cycleStartSourceNode = state.cycleStartSourceNode;
     in.rootCmcKnown = state.rootCmcKnown;
     in.rootCmcCapable = state.rootCmcCapable;
+
+    // Populate local CMC evidence from staged BIB
+    if (deps_.configRomStager) {
+        const auto localCaps = ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());
+        in.localCmcKnown = true;
+        in.localCmcCapable = localCaps.cmc;
+    } else {
+        in.localCmcKnown = false;
+        in.localCmcCapable = false;
+    }
+
     in.roleMode = rolePolicy_.roleMode;
     in.activityLevel = rolePolicy_.fullBMActivityLevel;
 
@@ -751,6 +766,53 @@ void ControllerCore::EvaluateGapPolicy() noexcept {
     }
 
     gapPolicy_->Evaluate(in, *this);
+}
+
+void ControllerCore::EvaluatePowerLinkPolicy() noexcept {
+    if (!powerLinkPolicy_) {
+        return;
+    }
+
+    const auto& state = GetBusManagerRuntimeState();
+    Bus::PowerLinkPolicyInputs in{};
+    in.generation = state.generation;
+    in.busBase16 = state.busBase16;
+    in.roleMode = rolePolicy_.roleMode;
+    in.powerPolicyLevel = rolePolicy_.powerPolicyLevel;
+    in.topologyValid = state.topologyValid;
+    in.localNodeId = state.localNodeId;
+    in.rootNodeId = state.rootNodeId;
+    in.irmNodeId = state.irmNodeId;
+    in.bmNodeId = state.bmNodeId;
+    in.localIsBM = state.localIsBM;
+    in.localIsIRM = state.localIsIRM;
+
+    if (irmFallback_) {
+        const auto& fallback = irmFallback_->Snapshot();
+        in.irmFallbackGateOpen = fallback.annexHGateOpen;
+        in.irmFallbackNoBMDetected = fallback.noBusManagerDetected;
+    }
+
+    const auto topo = LatestTopology();
+    if (topo.has_value()) {
+        in.topology = &(*topo);
+    }
+    
+    // M8 V0: Power budget is conservatively unknown.
+    in.powerBudgetStatus = Bus::PowerBudgetStatus::Unknown;
+
+    powerLinkPolicy_->Evaluate(in, *this);
+}
+
+bool ControllerCore::SendLinkOnPacket(uint32_t generation,
+                                      uint16_t busBase16,
+                                      uint8_t targetNodeId) {
+    if (generation != currentGeneration_ || !deps_.hardware) {
+        return false;
+    }
+
+    // Cross-validated with linux: core-cdev.c:1624-1640.
+    return deps_.hardware->SendLinkOnPacket(targetNodeId);
 }
 
 bool ControllerCore::ForceRootAndGapResetForBMPolicy(uint32_t generation,

@@ -361,6 +361,9 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
     gapPolicy_ = std::make_unique<Bus::GapPolicyCoordinator>(Bus::GapPolicyConfig{});
     ASFW_LOG(Controller, "✅ GapPolicyCoordinator created");
 
+    powerLinkPolicy_ = std::make_unique<Bus::PowerLinkPolicyCoordinator>(Bus::PowerLinkPolicyConfig{});
+    ASFW_LOG(Controller, "✅ PowerLinkPolicyCoordinator created");
+
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);

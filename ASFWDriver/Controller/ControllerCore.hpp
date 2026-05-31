@@ -47,6 +47,7 @@ class IRMFallbackCoordinator;
 class CyclePolicyCoordinator;
 class RootSelectionCoordinator;
 class GapPolicyCoordinator;
+class PowerLinkPolicyCoordinator;
 class BusManagerElectionDriver;
 class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
@@ -104,6 +105,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              public ASFW::Bus::ICyclePolicyExecutor,
                              public ASFW::Bus::IRootSelectionExecutor,
                              public ASFW::Bus::IGapPolicyExecutor,
+                             public ASFW::Bus::ILinkOnExecutor,
                              public std::enable_shared_from_this<ControllerCore> {
   public:
     struct Dependencies {
@@ -293,6 +295,11 @@ class ControllerCore final : private Role::IPhyConfigReset,
                                          bool longReset,
                                          uint8_t gapCount) override;
 
+    // ASFW::Bus::ILinkOnExecutor implementation
+    bool SendLinkOnPacket(uint32_t generation,
+                          uint16_t busBase16,
+                          uint8_t targetNodeId) override;
+
     void SyncBusManagerRuntimeState() const noexcept;
 
     ControllerConfig config_;
@@ -335,6 +342,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::unique_ptr<Bus::CyclePolicyCoordinator> cyclePolicy_;
     std::unique_ptr<Bus::RootSelectionCoordinator> rootSelection_;
     std::unique_ptr<Bus::GapPolicyCoordinator> gapPolicy_;
+    std::unique_ptr<Bus::PowerLinkPolicyCoordinator> powerLinkPolicy_;
 
     struct PendingReset {
         uint8_t targetRoot{0x3F};
@@ -345,4 +353,4 @@ class ControllerCore final : private Role::IPhyConfigReset,
 };
 
 } // namespace ASFW::Driver
-::Driver
+
