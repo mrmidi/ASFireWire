@@ -14,6 +14,7 @@
 #include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
 #include "../Bus/BusManager/RootSelectionCoordinator.hpp"
 #include "../Bus/BusManager/GapPolicyCoordinator.hpp"
+#include "../Bus/BusManager/PowerLinkPolicyCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"

@@ -602,7 +602,10 @@ void ControllerCore::EvaluateActivePolicies() noexcept {
     EvaluateGapPolicy();
 
     // 4. Power Management / Link-On (M8)
-    EvaluatePowerLinkPolicy();
+    // Only proceed to Link-On evaluation if no root/gap reset is already pending.
+    if (!pendingReset_) {
+        EvaluatePowerLinkPolicy();
+    }
 
     // 5. Execution of combined reset
     if (pendingReset_ && deps_.busReset) {

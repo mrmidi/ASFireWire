@@ -649,7 +649,7 @@ struct DiagnosticsTextFormatter {
         
         let rootReasonStr: String
         switch snapshot.busManager.rootSelectionDecision {
-        case 6: rootReasonStr = "Current root already CMC-capable/suitable"
+        case 6: rootReasonStr = "Current root already suitable / CMC-capable"
         case 10: rootReasonStr = "Remote-root selection (future goal; currently local only)"
         case 11: rootReasonStr = "No cycle-master-capable candidates found"
         case 12: rootReasonStr = "Reset attempt limit reached for this topology"
