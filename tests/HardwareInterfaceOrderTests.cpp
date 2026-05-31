@@ -15,12 +15,14 @@ using testing::_;
 using testing::Args;
 using testing::InSequence;
 
-namespace {
-
 class MockPCIDevice : public IOPCIDevice {
 public:
+    virtual ~MockPCIDevice() = default;
     MOCK_METHOD(void, MemoryWrite32, (uint8_t bar, uint64_t offset, uint32_t value), (override));
     MOCK_METHOD(void, MemoryRead32, (uint8_t bar, uint64_t offset, uint32_t* value), (override));
+    MOCK_METHOD(kern_return_t, GetBARInfo, (uint8_t bar, uint8_t* index, uint64_t* size, uint8_t* type), (override));
+    MOCK_METHOD(kern_return_t, Open, (IOService * owner), (override));
+    MOCK_METHOD(void, Close, (IOService * owner), (override));
     
     // Default behaviors to satisfy polling loops
     void SetupDefaultReadBehavior() {
@@ -28,6 +30,8 @@ public:
             .WillByDefault([](uint8_t, uint64_t, uint32_t* val) {
                 *val = 0x80000000; // Operation done
             });
+            
+        ON_CALL(*this, Open(_)).WillByDefault(testing::Return(kIOReturnSuccess));
     }
 };
 
@@ -46,12 +50,15 @@ protected:
                 return kIOReturnSuccess;
             });
         
-        hardware_.Attach(nullptr, mockDevice_);
+        kern_return_t kr = hardware_.Attach(nullptr, mockDevice_);
+        ASSERT_EQ(kr, kIOReturnSuccess) << "HardwareInterface::Attach failed";
     }
 
     HardwareInterface hardware_;
     MockPCIDevice* mockDevice_{nullptr}; // Owned by hardware_ after Attach
 };
+
+namespace {
 
 TEST_F(HardwareInterfaceOrderTests, CompareSwapLocalIRMResource_WritesDataCompareControlInOrder) {
     InSequence seq;
@@ -64,6 +71,18 @@ TEST_F(HardwareInterfaceOrderTests, CompareSwapLocalIRMResource_WritesDataCompar
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRData), newValue));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRCompareData), compareValue));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
+    // FlushPostedWrites() reads kHCControl
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    // Read kCSRControl until done
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0x80000000;
+        });
+    // Read old value from kCSRData
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRData), _))
+        .WillOnce([compareValue](uint8_t, uint64_t, uint32_t* val) {
+            *val = compareValue;
+        });
 
     auto result = hardware_.CompareSwapLocalIRMResource(selectCode, compareValue, newValue);
     EXPECT_EQ(result.status, LocalCSRLockResult::Status::Success);
@@ -76,9 +95,11 @@ TEST_F(HardwareInterfaceOrderTests, WriteLocalIRMResource_WritesDataCompareContr
     uint32_t value = 4000;
     uint32_t currentValue = 4915;
 
-    // Mock the initial read of current value
+    // 1. ReadLocalIRMResource(selectCode) (called by WriteLocalIRMResource)
+    EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
-        .WillOnce([currentValue](uint8_t, uint64_t, uint32_t* val) {
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
             *val = 0x80000000;
         });
     EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRData), _))
@@ -86,10 +107,18 @@ TEST_F(HardwareInterfaceOrderTests, WriteLocalIRMResource_WritesDataCompareContr
             *val = currentValue;
         });
 
+    // 2. Then WriteLocalIRMResource performs the atomic sequence:
     // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRData), value));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRCompareData), currentValue));
     EXPECT_CALL(*mockDevice_, MemoryWrite32(0, static_cast<uint64_t>(Register32::kCSRControl), selectCode));
+    // Final FlushPostedWrites()
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    // Final poll
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kCSRControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0x80000000;
+        });
 
     auto result = hardware_.WriteLocalIRMResource(selectCode, value);
     EXPECT_EQ(result.status, LocalCSRLockResult::Status::Success);

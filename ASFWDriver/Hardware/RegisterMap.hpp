@@ -28,6 +28,7 @@ enum class Register32 : uint32_t {
     kHCControl = 0x050,      // Read view: both 0x050/0x054 return latched value
     kSelfIDBuffer = 0x064,
     kSelfIDCount = 0x068,
+    kSelfIDGeneration = 0x06C,
     kIRMultiChanMaskHiSet = 0x070,
     kIRMultiChanMaskHiClear = 0x074,
     kIRMultiChanMaskLoSet = 0x078,

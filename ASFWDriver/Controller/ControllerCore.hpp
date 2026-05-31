@@ -208,7 +208,8 @@ class ControllerCore final : private Role::IPhyConfigReset,
     }
 
     ASFW::Bus::TopologyMapService* GetTopologyMapService() const { return deps_.topologyMapService.get(); }
-    ASFW::Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
+    Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
+    Bus::BroadcastChannelCSR* GetBroadcastChannel() const { return broadcastChannel_.get(); }
 
   private:
     void LogBuildBanner() const;

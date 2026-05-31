@@ -138,26 +138,21 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
         inFlight_ = false;
         return;
     }
-
     // Local Loopback Compare-Swap Branching (FW-14)
     if (irmNodeId == localNodeId) {
         ASFW_LOG(Controller, "[BM Election] Local node is IRM; routing CompareSwap through local CSRControl loopback");
         
         ASFW::Driver::LocalCSRLockResult result;
-        if (deps_.localIrmController) {
-            result = deps_.localIrmController->CompareSwapBusManagerId(0x3F, localNodeId);
-        } else {
-            if (deps_.hardware == nullptr) {
-                ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
-                inFlight_ = false;
-                if (observer_) {
-                    observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
-                }
-                return;
+        if (deps_.hardware == nullptr) {
+            ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
+            inFlight_ = false;
+            if (observer_) {
+                observer_->OnBMElectionFailed(generation, ASFW::Async::AsyncStatus::kHardwareError);
             }
-            result = deps_.hardware->CompareSwapLocalIRMResource(0, 0x3F, localNodeId);
+            return;
         }
-
+        result = deps_.hardware->CompareSwapLocalIRMResource(0, 0x3F, localNodeId);
+        
         if (result.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
             ASFW_LOG(Controller, "[BM Election] Local CompareSwap failed (status=%d)",
                      static_cast<int>(result.status));
