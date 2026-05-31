@@ -56,6 +56,8 @@ public:
     void SetRolePolicy(const ASFW::Driver::RolePolicy& policy) noexcept { rolePolicy_ = policy; }
     void SetObserver(IBMRoleEvents* observer) noexcept { observer_ = observer; }
 
+    [[nodiscard]] bool ElectionStillAllowed() const noexcept;
+
     // Milestone 3 diagnostics
     struct Snapshot {
         uint32_t generation{0};
