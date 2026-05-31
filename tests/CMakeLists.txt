@@ -1963,6 +1963,32 @@ target_include_directories(LocalIRMResourceControllerTests PRIVATE ${ASFW_COMMON
 
 gtest_discover_tests(LocalIRMResourceControllerTests)
 
+# IRM Fallback Coordinator Tests (FW-19 Milestone 4)
+add_executable(IRMFallbackCoordinatorTests
+    "${ASFW_TESTS_DIR}/IRMFallbackCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/IRMFallbackCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalCSRAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Timing/PostResetTimingCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
+    "${ASFW_TESTS_DIR}/BusResetCoordinatorStub.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(IRMFallbackCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(IRMFallbackCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(IRMFallbackCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(IRMFallbackCoordinatorTests)
+
 # Post-Reset Timing Core (Milestone 2) - generation-scoped post-reset timing gates
 add_executable(PostResetTimingTests
     "${ASFW_TESTS_DIR}/PostResetTimingTests.cpp"

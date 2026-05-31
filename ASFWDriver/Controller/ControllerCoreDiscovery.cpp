@@ -14,6 +14,8 @@
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
+#include "../Bus/Timing/PostResetTimingCoordinator.hpp"
+#include "../Bus/IRM/IRMFallbackCoordinator.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
 #include "../ConfigROM/ConfigROMStager.hpp"
 #include "../ConfigROM/ConfigROMStore.hpp"
@@ -138,6 +140,11 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
                                              bmState_.localNodeId,
                                              bmState_.irmNodeId,
                                              roleAllowsIRMHost);
+    }
+
+    if (irmFallback_) {
+        irmFallback_->OnTopologyReady(snap, rolePolicy_, GetBusManagerRuntimeState(),
+                                      BusResetCoordinator::MonotonicNow());
     }
 
     if (snap.rootNodeId != Driver::kInvalidPhysicalId) {

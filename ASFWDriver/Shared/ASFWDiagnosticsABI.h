@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 5u
+#define ASFW_DIAG_ABI_VERSION 6u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -361,6 +361,14 @@ typedef struct ASFWDiagBusManager {
     uint32_t bmCandidateClass;
     uint32_t bmElectionAttemptedGen;
     uint32_t bmElectionAttemptsThisGen;
+
+    // Milestone 4: IRM Fallback Planner
+    uint32_t irmFallbackState;
+    uint32_t irmFallbackPlannedAction;
+    uint32_t irmFallbackProbeStatus;
+    uint32_t irmFallbackRawBusManagerId;
+    uint32_t irmFallbackAnnexHGateOpen;
+    uint32_t irmFallbackRemainingMs;
 
     uint32_t reserved[2];
 } ASFWDiagBusManager;

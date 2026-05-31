@@ -40,6 +40,7 @@ class IBusResetTrigger;
 class CSRResponder;
 class TopologyMapService;
 class BroadcastChannelCSR;
+class IRMFallbackCoordinator;
 class BusManagerElectionDriver;
 class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
@@ -209,6 +210,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     ASFW::Bus::TopologyMapService* GetTopologyMapService() const { return deps_.topologyMapService.get(); }
     Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
+    Bus::IRMFallbackCoordinator* GetIRMFallbackCoordinator() const { return irmFallback_.get(); }
     Bus::BroadcastChannelCSR* GetBroadcastChannel() const { return broadcastChannel_.get(); }
 
   private:
@@ -292,6 +294,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::unique_ptr<Bus::BusManagerPolicyCoordinator> bmPolicyCoordinator_;
     std::shared_ptr<Bus::BroadcastChannelCSR> broadcastChannel_;
     std::unique_ptr<Bus::LocalIRMResourceController> localIrmController_;
+    std::shared_ptr<Bus::IRMFallbackCoordinator> irmFallback_;
 };
 
 } // namespace ASFW::Driver
