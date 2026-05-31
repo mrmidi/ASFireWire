@@ -31,6 +31,10 @@ void BusResetCoordinator::BeginNewResetCycle() {
     filtersEnabled_ = false;
     atArmed_ = false;
     cycle_.ResetForNewEdge();
+    // A new reset edge invalidates all post-reset timing gates from the prior
+    // generation; no gate reopens until Self-ID completion is observed for the
+    // new generation. lastGeneration_ still holds the outgoing generation here.
+    postResetTiming_.OnBusResetStarted(lastGeneration_.value, MonotonicNow());
     ++resetEpoch_;
     readyForDiscoveryFailureBits_ = 0;
 
@@ -85,6 +89,13 @@ BusResetCoordinator::StepResult BusResetCoordinator::StepWaitingSelfID() {
 
         const bool decoded = DecodeSelfID();
         ClearConsumedSelfIDInterrupts();
+        if (decoded) {
+            // Anchor post-reset timing gates to Self-ID completion, BEFORE the
+            // topology graph is built, so they stay armed even if that build
+            // later fails (IEEE 1394-2008 §8.x / Annex H). DecodeSelfID() has set
+            // lastGeneration_ to the freshly decoded generation.
+            postResetTiming_.OnSelfIDComplete(lastGeneration_.value, completionTime);
+        }
         if (!decoded) {
             RecordRecoveryReasonCode(RecoveryReasonCode::SelfIDDecodeFailed);
             RequestSoftwareReset(
