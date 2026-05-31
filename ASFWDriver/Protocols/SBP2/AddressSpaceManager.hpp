@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -229,6 +230,9 @@ public:
         if (!lock_) {
             return kIOReturnBadArgument;
         }
+        if (data.size() > std::numeric_limits<uint32_t>::max()) {
+            return kIOReturnBadArgument;
+        }
 
         IOLockLock(lock_);
         auto it = ranges_.find(handle);
@@ -256,6 +260,9 @@ public:
         if (!lock_ || payload.empty()) {
             return Async::ResponseCode::AddressError;
         }
+        if (payload.size() > std::numeric_limits<uint32_t>::max()) {
+            return Async::ResponseCode::DataError;
+        }
 
         RemoteWriteCallback callback;
         uint64_t handle = 0;
@@ -275,7 +282,7 @@ public:
                 "AddressSpaceManager[%p] remote write label=%s addr=0x%012llx len=%zu src=%p "
                 "handle=0x%llx rangeAddr=0x%012llx off=%u buf=%p mapped=%p backing=%u",
                 this,
-                range->debugLabel,
+                DebugLabelCString(*range),
                 static_cast<unsigned long long>(address),
                 payload.size(),
                 payload.data(),
@@ -333,7 +340,7 @@ public:
             "AddressSpaceManager[%p] remote read-block label=%s addr=0x%012llx len=%u "
             "handle=0x%llx rangeAddr=0x%012llx off=%llu dma=0x%08x",
             this,
-            range->debugLabel,
+            DebugLabelCString(*range),
             static_cast<unsigned long long>(address),
             length,
             static_cast<unsigned long long>(range->meta.handle),
@@ -366,7 +373,7 @@ public:
             "AddressSpaceManager[%p] remote read-quadlet label=%s addr=0x%012llx "
             "handle=0x%llx rangeAddr=0x%012llx off=%u value=0x%08x",
             this,
-            range->debugLabel,
+            DebugLabelCString(*range),
             static_cast<unsigned long long>(address),
             static_cast<unsigned long long>(range->meta.handle),
             static_cast<unsigned long long>(range->meta.address),
@@ -424,7 +431,7 @@ public:
         IOLockLock(lock_);
         auto it = ranges_.find(handle);
         if (it != ranges_.end()) {
-            it->second.debugLabel = label != nullptr ? label : "unlabeled";
+            CopyDebugLabel(it->second, label);
         }
         IOLockUnlock(lock_);
     }
@@ -447,13 +454,14 @@ private:
     static constexpr uint32_t kAutoAddressWindowStartLo = 0x0010'0000u;
     static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
     static constexpr uint64_t kAutoAddressAlignment = 8ULL;
+    static constexpr std::size_t kDebugLabelCapacity = 64;
 
     struct AddressRange {
         AddressRangeMeta meta{};
         void* owner{nullptr};
         std::vector<uint8_t> buffer;
         RemoteWriteCallback onRemoteWrite;
-        const char* debugLabel{"unlabeled"};
+        std::array<char, kDebugLabelCapacity> debugLabel{};
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};
@@ -491,6 +499,16 @@ private:
         return end <= static_cast<uint64_t>(range.meta.length);
     }
 
+    static void CopyDebugLabel(AddressRange& range, const char* label) {
+        const char* source = label != nullptr ? label : "unlabeled";
+        range.debugLabel.fill('\0');
+        std::strncpy(range.debugLabel.data(), source, range.debugLabel.size() - 1);
+    }
+
+    static const char* DebugLabelCString(const AddressRange& range) {
+        return range.debugLabel[0] != '\0' ? range.debugLabel.data() : "unlabeled";
+    }
+
     AddressRange* FindRangeByAddressLocked(uint64_t address, uint32_t length) {
         const uint64_t end = address + static_cast<uint64_t>(length);
         if (end < address) {
@@ -525,7 +543,7 @@ private:
             ASFW_ADDRSPACE_LOG(
                 "AddressSpaceManager[%p] range label=%s handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
                 this,
-                range.debugLabel,
+                DebugLabelCString(range),
                 static_cast<unsigned long long>(range.meta.handle),
                 range.owner,
                 static_cast<unsigned long long>(range.meta.address),
@@ -557,6 +575,7 @@ private:
         }
 
         AddressRange range{};
+        CopyDebugLabel(range, nullptr);
         range.owner = owner;
         range.meta.handle = nextHandle_++;
         range.meta.address = start;

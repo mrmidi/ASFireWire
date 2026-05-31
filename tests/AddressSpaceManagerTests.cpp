@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <array>
+#include <limits>
 
 #include "ASFWDriver/Protocols/SBP2/AddressSpaceManager.hpp"
 
@@ -294,6 +295,30 @@ TEST(AddressSpaceManagerTests, ClearingRemoteWriteCallbackStopsFurtherNotificati
                   ComposeAddress(meta.addressHi, meta.addressLo),
                   std::span<const uint8_t>(payload.data(), payload.size())));
     EXPECT_EQ(1, callbackCount);
+}
+
+TEST(AddressSpaceManagerTests, WriteLocalDataRejectsSizeTooLargeForWireLength) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    constexpr std::size_t tooLarge =
+        static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) + 1u;
+    const auto hugePayload =
+        std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(0x1000), tooLarge);
+
+    EXPECT_EQ(kIOReturnBadArgument,
+              manager.WriteLocalData(reinterpret_cast<void*>(0xE), 1, 0, hugePayload));
+}
+
+TEST(AddressSpaceManagerTests, ApplyRemoteWriteRejectsSizeTooLargeForWireLength) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    constexpr std::size_t tooLarge =
+        static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) + 1u;
+    const auto hugePayload =
+        std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(0x1000), tooLarge);
+
+    EXPECT_EQ(ASFW::Async::ResponseCode::DataError,
+              manager.ApplyRemoteWrite(ComposeAddress(0xFFFF, 0x0050'0000), hugePayload));
 }
 
 TEST(AddressSpaceManagerTests, AutoAllocationRejectsRequestLargerThanWindow) {
