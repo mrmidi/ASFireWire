@@ -12,6 +12,7 @@
 #include "../Hardware/RegisterMap.hpp"
 #include "BusManager.hpp"
 #include "SelfIDCapture.hpp"
+#include "Timing/PostResetTimingCoordinator.hpp"
 
 #ifdef ASFW_HOST_TEST
 #include "../Testing/HostDriverKitStubs.hpp"
@@ -110,6 +111,13 @@ class BusResetCoordinator {
 
     /// Return the most recent reset metrics snapshot.
     const BusResetMetrics& Metrics() const { return metrics_; }
+
+    /// Post-reset timing gates (IEEE 1394-2008 §8.x / Annex H), anchored to
+    /// Self-ID completion. Read-only: consumed by diagnostics now and by the
+    /// BM/IRM/Isoch policy layers in later milestones.
+    const ASFW::Bus::Timing::PostResetTimingCoordinator& PostResetTiming() const noexcept {
+        return postResetTiming_;
+    }
     /// Return the current FSM state.
     State GetState() const { return state_; }
     const char* StateString() const;
@@ -335,6 +343,8 @@ class BusResetCoordinator {
 
     SelfIDLatchState selfIdLatch_{};
     ResetCycleState cycle_{};
+    // Post-reset timing gates, anchored to Self-ID completion (see PostResetTiming()).
+    ASFW::Bus::Timing::PostResetTimingCoordinator postResetTiming_{};
     bool busResetMasked_{false};
     Discovery::Generation lastGeneration_{0};
 
