@@ -397,9 +397,16 @@ private struct TopologyTreeNodeView: View {
     let parentLinkSpeed: UInt32?
     let topology: TopologySnapshot
     let children: [UInt8: [TopologyNode]]
+    /// Node ids on the path from the root to (and including) this node's parent.
+    /// Used to break cycles in malformed/stale topology adjacency so recursion
+    /// can't run away and overflow the stack.
+    var ancestors: Set<UInt8> = []
     @Binding var selectedNode: TopologyNode?
 
-    private var childList: [TopologyNode] { children[node.nodeId] ?? [] }
+    /// Children, excluding any that are already ancestors (back-edge / cycle).
+    private var childList: [TopologyNode] {
+        (children[node.nodeId] ?? []).filter { !ancestors.contains($0.nodeId) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -417,6 +424,7 @@ private struct TopologyTreeNodeView: View {
                                 parentLinkSpeed: edgeSpeed(node, child),
                                 topology: topology,
                                 children: children,
+                                ancestors: ancestors.union([node.nodeId]),
                                 selectedNode: $selectedNode
                             )
                         }

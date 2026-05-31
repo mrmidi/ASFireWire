@@ -257,13 +257,36 @@ struct DiagnosticsTextFormatter {
 
             if !effectiveRoots.isEmpty {
                 report += "\nTopology Tree (rooted at bus root):\n"
+                // Hoist the only two snapshot fields the recursion needs into locals.
+                // Capturing the whole multi-KB `snapshot` value type in the nested
+                // recursive function bloats every stack frame; on the small-stacked
+                // dispatch worker this formatter runs on, that overflows the stack.
+                let irmNodeId = Int(snapshot.topology.irmNode)
+                let localNodeId = Int(snapshot.topology.localNode)
+                // Topology links come from a driver snapshot and are not guaranteed
+                // to form an acyclic tree (stale/malformed parentPort -> back-edge).
+                // Guard against cycles so a bad snapshot degrades gracefully instead
+                // of overflowing the stack via unbounded recursion.
+                //
+                // TODO (worth considering, not urgent): converting this recursion to
+                // an explicit work-stack iteration would eliminate stack depth as a
+                // failure mode entirely. This formatter runs on a small-stacked
+                // libdispatch worker (~512 KB), so deep/degenerate topologies are the
+                // only remaining theoretical risk now that the per-frame footprint
+                // and cycles are handled. Recursion is fine for real bus sizes today.
+                var visited: Set<Int> = []
                 func renderTreeNode(_ id: Int, prefix: String, isLast: Bool, isRootRow: Bool) {
                     guard let node = byId[id] else { return }
+                    guard visited.insert(id).inserted else {
+                        let connector = isRootRow ? "" : (isLast ? "└─ " : "├─ ")
+                        report += "  \(prefix)\(connector)Node \(id)  [cycle]\n"
+                        return
+                    }
                     let connector = isRootRow ? "" : (isLast ? "└─ " : "├─ ")
                     var tags: [String] = []
                     if node.isRoot != 0 { tags.append("root") }
-                    if Int(snapshot.topology.irmNode) == id { tags.append("IRM") }
-                    if Int(snapshot.topology.localNode) == id { tags.append("local") }
+                    if irmNodeId == id { tags.append("IRM") }
+                    if localNodeId == id { tags.append("local") }
                     if node.initiatedReset != 0 { tags.append("reset-init") }
                     if node.linkActive == 0 { tags.append("PHY-only") }
                     var edge = ""
