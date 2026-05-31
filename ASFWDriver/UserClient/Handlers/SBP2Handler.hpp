@@ -151,11 +151,11 @@ public:
     }
 
     void ReleaseOwner(void* owner) {
-        if (manager_) {
-            manager_->ReleaseOwner(owner);
-        }
         if (registry_) {
             registry_->ReleaseOwner(owner);
+        }
+        if (manager_) {
+            manager_->ReleaseOwner(owner);
         }
     }
 
