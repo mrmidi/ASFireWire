@@ -32,7 +32,19 @@ struct ControllerConfig {
 // Config ROM (BIB capabilities) and triggers a bus reset so peers re-read it.
 // Kept out of the constructor (and out of immutable ControllerConfig) precisely
 // so role mode can be flipped while the driver is running.
-//
+
+/**
+ * @brief Activity tier for power management and Link-On policy (Milestone 8).
+ *
+ * This level is a separate axis from the main bus-management activity ladder
+ * because Link-On is an explicit wakeup command, not a topology mutation.
+ * Cross-validated with linux: core-device.c:1314, core-topology.c:377.
+ */
+enum class PowerPolicyLevel : uint8_t {
+    ObserveOnly = 0,   ///< Identify link-inactive nodes but do not wake them.
+    LinkOnAllowed = 1, ///< Send Link-On packets to eligible nodes when BM/fallback IRM.
+};
+
 // FW-22: roleMode selects which capabilities the local Config ROM advertises.
 //   Default ClientOnly = advertise neither BM nor IRM (conservative, and
 //   intentionally MORE conservative than Apple/Linux, which advertise bmc=1).
@@ -40,6 +52,7 @@ struct ControllerConfig {
 struct RolePolicy {
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
+    PowerPolicyLevel powerPolicyLevel{PowerPolicyLevel::ObserveOnly};
 
     // EXPERIMENTAL (FW-21): Linux-shaped self-promotion on a verified CMC=0 root.
     // Apple never does this, so it is OFF by default and only takes effect when the

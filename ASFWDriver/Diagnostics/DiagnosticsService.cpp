@@ -767,6 +767,23 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->gapPolicyRetryLimitHit = snap.retryLimitHit;
     }
 
+    if (auto* const power = controller_->GetPowerLinkPolicyCoordinator()) {
+        auto snap = power->Snapshot();
+        out->powerPolicyDecision = static_cast<uint32_t>(snap.lastDecision);
+        out->powerPolicyAction = static_cast<uint32_t>(snap.lastAction);
+        out->powerBudgetStatus = static_cast<uint32_t>(snap.powerBudgetStatus);
+        out->powerEligibleNodeCount = snap.eligibleNodeCount;
+        out->powerTargetNodeCount = snap.targetNodeCount;
+        for (uint32_t i = 0; i < 16; ++i) {
+            out->powerTargetNodes[i] = (i < snap.targetNodeCount) ? snap.targetNodes[i] : 0x3F;
+        }
+        out->linkOnSubmittedCount = snap.linkOnSubmittedCount;
+        out->linkOnSuccessCount = snap.linkOnSuccessCount;
+        out->linkOnFailureCount = snap.linkOnFailureCount;
+        out->linkOnAttemptsThisGeneration = snap.attemptsThisGeneration;
+        out->linkOnTotalAttempts = snap.totalAttempts;
+    }
+
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {
         return ASFWDiagStatusStaleGeneration;

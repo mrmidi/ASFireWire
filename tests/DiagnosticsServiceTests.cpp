@@ -53,13 +53,14 @@ static_assert(sizeof(ASFWDiagAsyncTrace) == 10280, "ASFWDiagAsyncTrace size mism
 
 static_assert(sizeof(ASFWDiagInboundCSRStats) == 96, "ASFWDiagInboundCSRStats size mismatch");
 
-static_assert(sizeof(ASFWDiagBusManager) == 416, "ASFWDiagBusManager size mismatch");
+static_assert(sizeof(ASFWDiagBusManager) == 520, "ASFWDiagBusManager size mismatch");
 static_assert(offsetof(ASFWDiagBusManager, header) == 0, "header offset mismatch");
 static_assert(offsetof(ASFWDiagBusManager, roleMode) == 32, "roleMode offset mismatch");
 static_assert(offsetof(ASFWDiagBusManager, irmFallbackState) == 240, "irmFallbackState offset mismatch");
 static_assert(offsetof(ASFWDiagBusManager, cyclePolicyDecision) == 264, "cyclePolicyDecision offset mismatch");
 static_assert(offsetof(ASFWDiagBusManager, rootSelectionDecision) == 300, "rootSelectionDecision offset mismatch");
 static_assert(offsetof(ASFWDiagBusManager, gapPolicyDecision) == 340, "gapPolicyDecision offset mismatch");
+static_assert(offsetof(ASFWDiagBusManager, powerPolicyDecision) == 408, "powerPolicyDecision offset mismatch");
 
 class DiagnosticsServiceTests : public ::testing::Test {
 protected:
@@ -81,7 +82,7 @@ TEST_F(DiagnosticsServiceTests, VerifyStructSizeInvariants) {
     EXPECT_EQ(sizeof(ASFWDiagAsyncEvent), 80);
     EXPECT_EQ(sizeof(ASFWDiagAsyncTrace), 10280);
     EXPECT_EQ(sizeof(ASFWDiagInboundCSRStats), 96);
-    EXPECT_EQ(sizeof(ASFWDiagBusManager), 416);
+    EXPECT_EQ(sizeof(ASFWDiagBusManager), 520);
 }
 
 TEST_F(DiagnosticsServiceTests, VerifyEnumValues) {

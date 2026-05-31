@@ -176,6 +176,13 @@ bool HardwareInterface::SendPhyGlobalResume(uint8_t) {
     });
 }
 
+bool HardwareInterface::SendLinkOnPacket(uint8_t targetNodeId) {
+    return WithState(this, [targetNodeId](HardwareTestState& state) {
+        state.operations.push_back(TestOperation::SendLinkOn);
+        return true;
+    });
+}
+
 bool HardwareInterface::InitiateBusReset(bool shortReset) {
     return WithState(this, [shortReset](HardwareTestState& state) {
         state.busResetIssued = true;

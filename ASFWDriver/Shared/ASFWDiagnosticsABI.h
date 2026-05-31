@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 8u
+#define ASFW_DIAG_ABI_VERSION 10u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -412,7 +412,20 @@ typedef struct ASFWDiagBusManager {
     uint32_t gapPolicyTotalAttempts;
     uint32_t gapPolicyRetryLimitHit;
 
-    uint32_t reserved[1];
+    // Milestone 8: Power / Link-On Policy
+    uint32_t powerPolicyDecision;
+    uint32_t powerPolicyAction;
+    uint32_t powerBudgetStatus;
+    uint32_t powerEligibleNodeCount;
+    uint32_t powerTargetNodeCount;
+    uint32_t powerTargetNodes[16];
+    uint32_t linkOnSubmittedCount;
+    uint32_t linkOnSuccessCount;
+    uint32_t linkOnFailureCount;
+    uint32_t linkOnAttemptsThisGeneration;
+    uint32_t linkOnTotalAttempts;
+
+    uint32_t reserved[2];
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus
