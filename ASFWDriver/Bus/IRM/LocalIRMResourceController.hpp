@@ -6,29 +6,51 @@
 #pragma once
 
 #include "../../Hardware/HardwareInterface.hpp"
+#include "LocalCSRAccessor.hpp"
 #include <cstdint>
 
 namespace ASFW::Bus {
 
+class BroadcastChannelCSR;
+
 enum class LocalIRMResourceState : uint8_t {
     Disabled = 0,
-    Initialized = 1,
-    Failed = 2,
+    NotLocalIRM = 1,
+    InitialRegistersProgrammed = 2,
+    InitializingActiveResources = 3,
+    ReadyDefaults = 4,
+    ReadyChanged = 5,
+    ProbeFailed = 6,
 };
 
 struct LocalIRMResourceSnapshot {
+    LocalIRMResourceState state{LocalIRMResourceState::Disabled};
+    uint32_t generation{0};
+    uint8_t localNodeId{0x3F};
+    uint8_t irmNodeId{0x3F};
+    
+    bool initialRegistersProgrammed{false};
+    bool localIsIRM{false};
+    bool activeProbeAttempted{false};
+    bool activeProbeSucceeded{false};
+
     uint32_t busManagerId{0x3F};
     uint32_t bandwidthAvailable{0};
     uint32_t channelsAvailableHi{0};
     uint32_t channelsAvailableLo{0};
-    LocalIRMResourceState state{LocalIRMResourceState::Disabled};
-    bool readbackValid{false};
+    
     uint8_t lastCsrStatus{0}; // Success = 0, Timeout = 1, HardwareUnavailable = 2, AccessFailed = 3
 };
 
+/**
+ * @brief Coordinates local IRM resource hosting based on role policy and topology.
+ * This class handles the two-phase IRM initialization: initial registers during bring-up
+ * and active CSR probing when the local node wins the IRM election.
+ */
 class LocalIRMResourceController {
 public:
-    explicit LocalIRMResourceController(ASFW::Driver::HardwareInterface* hw) noexcept;
+    explicit LocalIRMResourceController(ASFW::Driver::HardwareInterface& hw,
+                                        BroadcastChannelCSR& broadcastChannel) noexcept;
     ~LocalIRMResourceController() = default;
 
     // Disable copy/move
@@ -36,38 +58,41 @@ public:
     LocalIRMResourceController& operator=(const LocalIRMResourceController&) = delete;
 
     /**
-     * @brief Writes default IRM values to local CSRs and validates them via readback.
-     * @return true if all writes succeeded and readback matches, false otherwise.
+     * @brief Called when a bus reset sequence begins.
+     * Resets BROADCAST_CHANNEL to unimplemented and marks state as InitialRegistersProgrammed.
      */
-    bool InitializeDefaults() noexcept;
+    void OnBusResetStarted(uint32_t generation) noexcept;
 
     /**
-     * @brief Probes/reads back all local IRM registers to update our diagnostics cache.
-     * @return true if reads completed successfully, false if any read failed/timed out.
+     * @brief Called when topology is accepted and the local node's role is determined.
      */
-    bool ProbeReadback() noexcept;
+    void OnTopologyReady(uint32_t generation,
+                         uint8_t localNodeId,
+                         uint8_t irmNodeId,
+                         bool roleAllowsIRMHost) noexcept;
 
     /**
-     * @brief Performs a Compare-Swap on the local BUS_MANAGER_ID register.
+     * @brief Called when topology is invalid.
      */
-    ASFW::Driver::LocalCSRLockResult CompareSwapBusManagerId(uint32_t compare, uint32_t swap) noexcept;
+    void OnTopologyInvalid(uint32_t generation) noexcept;
+
+    /**
+     * @brief Probes active OHCI autonomous CSRs via CSRControl.
+     * Internal helper used by OnTopologyReady when local node is IRM.
+     */
+    bool ProbeActiveResources() noexcept;
 
     /**
      * @brief Disables the controller state.
      */
-    void Disable() noexcept {
-        snapshot_.state = LocalIRMResourceState::Disabled;
-        snapshot_.readbackValid = false;
-        snapshot_.busManagerId = 0x3F;
-        snapshot_.bandwidthAvailable = 0;
-        snapshot_.channelsAvailableHi = 0;
-        snapshot_.channelsAvailableLo = 0;
-    }
+    void Disable() noexcept;
 
     [[nodiscard]] LocalIRMResourceSnapshot Snapshot() const noexcept { return snapshot_; }
 
 private:
-    ASFW::Driver::HardwareInterface* hw_;
+    ASFW::Driver::HardwareInterface& hw_;
+    BroadcastChannelCSR& broadcastChannel_;
+    LocalCSRAccessor csr_;
     LocalIRMResourceSnapshot snapshot_;
 };
 

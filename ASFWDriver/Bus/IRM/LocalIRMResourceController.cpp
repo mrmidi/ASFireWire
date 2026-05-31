@@ -4,87 +4,90 @@
 // LocalIRMResourceController.cpp — see LocalIRMResourceController.hpp
 
 #include "LocalIRMResourceController.hpp"
-#include "IRMCSRConstants.hpp"
+#include "../CSR/BroadcastChannelCSR.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Bus {
 
-LocalIRMResourceController::LocalIRMResourceController(ASFW::Driver::HardwareInterface* hw) noexcept
-    : hw_(hw) {}
+using namespace ASFW::Driver::IRMCSR;
 
-bool LocalIRMResourceController::InitializeDefaults() noexcept {
-    if (!hw_) {
-        snapshot_.state = LocalIRMResourceState::Failed;
-        snapshot_.lastCsrStatus = 2; // HardwareUnavailable
-        return false;
-    }
+LocalIRMResourceController::LocalIRMResourceController(ASFW::Driver::HardwareInterface& hw,
+                                                       BroadcastChannelCSR& broadcastChannel) noexcept
+    : hw_(hw), broadcastChannel_(broadcastChannel), csr_(hw) {}
 
-    ASFW_LOG(Controller, "[IRM] Initializing local IRM resource registers");
-
-    using namespace ASFW::Driver::IRMCSR;
-
-    auto r0 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::BusManagerId), 
-                                         kNoBusManagerId);
-    auto r1 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::BandwidthAvailable), 
-                                         kInitialBandwidthAvailable);
-    auto r2 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::ChannelsAvailableHi), 
-                                         kInitialChannelsAvailableHi);
-    auto r3 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo), 
-                                         kInitialChannelsAvailableLo);
-
-    if (r0.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
-        r1.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
-        r2.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
-        r3.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
-        
-        snapshot_.state = LocalIRMResourceState::Failed;
-        if (r0.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
-            r1.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
-            r2.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
-            r3.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout) {
-            snapshot_.lastCsrStatus = 1; // Timeout
-        } else {
-            snapshot_.lastCsrStatus = 2; // HardwareUnavailable
-        }
-        ASFW_LOG(Controller, "❌ [IRM] Failed to write local IRM resources: status r0=%d r1=%d r2=%d r3=%d",
-                 static_cast<int>(r0.status), static_cast<int>(r1.status),
-                 static_cast<int>(r2.status), static_cast<int>(r3.status));
-        return false;
-    }
-
-    // Now validate via readback
-    bool valid = ProbeReadback();
-    if (valid) {
-        snapshot_.state = LocalIRMResourceState::Initialized;
-    } else {
-        snapshot_.state = LocalIRMResourceState::Failed;
-        snapshot_.lastCsrStatus = 3; // AccessFailed
-    }
-    return valid;
+void LocalIRMResourceController::OnBusResetStarted(uint32_t generation) noexcept {
+    snapshot_.generation = generation;
+    snapshot_.state = LocalIRMResourceState::InitialRegistersProgrammed;
+    snapshot_.localIsIRM = false;
+    snapshot_.activeProbeAttempted = false;
+    snapshot_.activeProbeSucceeded = false;
+    
+    // BROADCAST_CHANNEL resets to unimplemented/invalid on bus reset
+    broadcastChannel_.ResetImplementedInvalid();
 }
 
-bool LocalIRMResourceController::ProbeReadback() noexcept {
-    if (!hw_) {
-        snapshot_.readbackValid = false;
-        snapshot_.lastCsrStatus = 2; // HardwareUnavailable
-        return false;
+void LocalIRMResourceController::OnTopologyReady(uint32_t generation,
+                                                 uint8_t localNodeId,
+                                                 uint8_t irmNodeId,
+                                                 bool roleAllowsIRMHost) noexcept {
+    snapshot_.generation = generation;
+    snapshot_.localNodeId = localNodeId;
+    snapshot_.irmNodeId = irmNodeId;
+
+    if (!roleAllowsIRMHost) {
+        snapshot_.state = LocalIRMResourceState::Disabled;
+        broadcastChannel_.ResetImplementedInvalid();
+        return;
     }
 
-    auto r0 = hw_->ReadLocalIRMResource(0);
-    auto r1 = hw_->ReadLocalIRMResource(1);
-    auto r2 = hw_->ReadLocalIRMResource(2);
-    auto r3 = hw_->ReadLocalIRMResource(3);
+    if (localNodeId != irmNodeId) {
+        snapshot_.state = LocalIRMResourceState::NotLocalIRM;
+        snapshot_.localIsIRM = false;
+        broadcastChannel_.ResetImplementedInvalid();
+        return;
+    }
 
-    if (r0.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
-        r1.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
-        r2.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
-        r3.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
+    // Local node is IRM!
+    snapshot_.localIsIRM = true;
+    snapshot_.state = LocalIRMResourceState::InitializingActiveResources;
+    
+    // Mark BROADCAST_CHANNEL as valid (0xC000001F)
+    broadcastChannel_.MarkValidChannel31();
+
+    // Probe active OHCI autonomous resources
+    ProbeActiveResources();
+}
+
+void LocalIRMResourceController::OnTopologyInvalid(uint32_t generation) noexcept {
+    snapshot_.generation = generation;
+    snapshot_.state = LocalIRMResourceState::Disabled;
+    snapshot_.localIsIRM = false;
+    broadcastChannel_.ResetImplementedInvalid();
+}
+
+bool LocalIRMResourceController::ProbeActiveResources() noexcept {
+    snapshot_.activeProbeAttempted = true;
+    
+    // Probe all four core IRM resources using "no-change" Compare-Swap.
+    // This allows us to discover the current state without blindly overwriting
+    // potentially allocated resources from remote nodes.
+    auto rBM = csr_.ProbeBusManagerIdNoChange(kNoBusManagerId);
+    auto rBW = csr_.ProbeBandwidthNoChange(kInitialBandwidthAvailable);
+    auto rCHi = csr_.ProbeChannelsHiNoChange(kInitialChannelsAvailableHi);
+    auto rCLo = csr_.ProbeChannelsLoNoChange(kInitialChannelsAvailableLo);
+
+    if (rBM.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
+        rBW.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
+        rCHi.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
+        rCLo.status != ASFW::Driver::LocalCSRLockResult::Status::Success) {
         
-        snapshot_.readbackValid = false;
-        if (r0.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
-            r1.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
-            r2.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
-            r3.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout) {
+        snapshot_.state = LocalIRMResourceState::ProbeFailed;
+        snapshot_.activeProbeSucceeded = false;
+        
+        if (rBM.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
+            rBW.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
+            rCHi.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout ||
+            rCLo.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout) {
             snapshot_.lastCsrStatus = 1; // Timeout
         } else {
             snapshot_.lastCsrStatus = 2; // HardwareUnavailable
@@ -92,30 +95,31 @@ bool LocalIRMResourceController::ProbeReadback() noexcept {
         return false;
     }
 
-    snapshot_.busManagerId = r0.value;
-    snapshot_.bandwidthAvailable = r1.value;
-    snapshot_.channelsAvailableHi = r2.value;
-    snapshot_.channelsAvailableLo = r3.value;
-
-    snapshot_.readbackValid = true;
+    // Store read/old values for diagnostics
+    snapshot_.busManagerId = rBM.oldValue;
+    snapshot_.bandwidthAvailable = rBW.oldValue;
+    snapshot_.channelsAvailableHi = rCHi.oldValue;
+    snapshot_.channelsAvailableLo = rCLo.oldValue;
+    
+    snapshot_.activeProbeSucceeded = true;
     snapshot_.lastCsrStatus = 0; // OK
+
+    // Decide between ReadyDefaults or ReadyChanged
+    if (rBM.compareMatched && rBW.compareMatched && rCHi.compareMatched && rCLo.compareMatched) {
+        snapshot_.state = LocalIRMResourceState::ReadyDefaults;
+    } else {
+        snapshot_.state = LocalIRMResourceState::ReadyChanged;
+    }
+
     return true;
 }
 
-ASFW::Driver::LocalCSRLockResult LocalIRMResourceController::CompareSwapBusManagerId(uint32_t compare, uint32_t swap) noexcept {
-    if (!hw_) {
-        return {ASFW::Driver::LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
-    }
-    auto result = hw_->CompareSwapLocalIRMResource(0, compare, swap);
-    if (result.status == ASFW::Driver::LocalCSRLockResult::Status::Success) {
-        snapshot_.busManagerId = result.compareMatched ? swap : result.oldValue;
-        snapshot_.lastCsrStatus = 0; // OK
-    } else if (result.status == ASFW::Driver::LocalCSRLockResult::Status::Timeout) {
-        snapshot_.lastCsrStatus = 1; // Timeout
-    } else {
-        snapshot_.lastCsrStatus = 2; // HardwareUnavailable
-    }
-    return result;
+void LocalIRMResourceController::Disable() noexcept {
+    snapshot_.state = LocalIRMResourceState::Disabled;
+    snapshot_.localIsIRM = false;
+    snapshot_.activeProbeAttempted = false;
+    snapshot_.activeProbeSucceeded = false;
+    broadcastChannel_.ResetImplementedInvalid();
 }
 
 } // namespace ASFW::Bus
