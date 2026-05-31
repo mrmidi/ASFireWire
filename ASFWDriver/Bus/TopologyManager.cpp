@@ -127,6 +127,7 @@ TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result,
     snapshot.generation = result.generation;
     snapshot.capturedAt = timestamp;
     snapshot.rawSelfIdQuadlets = result.quads;
+    snapshot.selfIdSequenceCount = static_cast<uint32_t>(result.sequences.size());
 
     if (!result.valid || result.quads.empty()) {
         snapshot.selfIdStatus = result.timedOut ? SelfIDStreamStatus::Timeout

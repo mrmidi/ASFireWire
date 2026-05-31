@@ -141,14 +141,18 @@ struct DiagnosticsTextFormatter {
         appendRow("Local Cycle Timer Enabled", snapshot.busContract.localCycleTimerEnabled != 0 ? "Yes" : "No")
         appendRow("Last Bus Reset Count", snapshot.busContract.lastBusResetCount)
         
+        // "Role Forcing Mode": whether the role-policy evaluator forces the local
+        // node's root standing. "Standard" = no forcing (normal election); it is
+        // independent of BM/IRM participation, so it does not contradict a
+        // "Client Only" Configured Role Mode.
         let policyStr: String
         switch snapshot.busContract.rolePolicyMode {
-        case 0: policyStr = "Standard"
+        case 0: policyStr = "Standard (no forced root)"
         case 1: policyStr = "Force Root"
         case 2: policyStr = "Force Not Root"
         default: policyStr = "Unknown (\(snapshot.busContract.rolePolicyMode))"
         }
-        appendRow("Role Policy Mode", policyStr)
+        appendRow("Role Forcing Mode", policyStr)
         
         appendRow("Role Verdict (last action)", roleActionName(snapshot.busContract.roleVerdict))
         
@@ -322,12 +326,12 @@ struct DiagnosticsTextFormatter {
         appendTitle("Role Coordinator Policy Engine")
         let rcModeStr: String
         switch snapshot.roleCoordinator.policyMode {
-        case 0: rcModeStr = "Standard"
+        case 0: rcModeStr = "Standard (no forced root)"
         case 1: rcModeStr = "Force Root"
         case 2: rcModeStr = "Force Not Root"
         default: rcModeStr = "Unknown (\(snapshot.roleCoordinator.policyMode))"
         }
-        appendRow("Policy Mode", rcModeStr)
+        appendRow("Role Forcing Mode", rcModeStr)
         appendRow("Last Decision", roleActionName(snapshot.roleCoordinator.lastDecision))
         appendRow("Last Action", roleActionName(snapshot.roleCoordinator.lastAction))
         appendRow("Last Reset Flavor", roleResetName(snapshot.roleCoordinator.lastActionResult))
@@ -351,7 +355,7 @@ struct DiagnosticsTextFormatter {
             appendRow("Remote CMSTR RCode", snapshot.roleCoordinator.remoteCMSTRRCode)
         } else {
             appendRow("Remote CMSTR Policy", "observe-only / not armed")
-            appendRow("Reason", "root CMC evidence not connected")
+            appendRow("Reason", "ClientOnly / ObserveOnly; remote CMSTR disabled by policy")
         }
         appendRow("Cycle Start Observed", snapshot.roleCoordinator.cycleStartObserved != 0 ? "Yes" : "No")
         appendRow("Cycle Start Source Node", formatNodeStr(snapshot.roleCoordinator.cycleStartSourceNode))

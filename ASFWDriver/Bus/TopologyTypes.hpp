@@ -219,6 +219,11 @@ struct TopologySnapshot {
 
     std::vector<uint32_t> rawSelfIdQuadlets;
 
+    // Number of decoded Self-ID packet sequences (one per node: each node emits a
+    // sequence of 1-4 Self-ID packets). Carried for diagnostics; sourced from
+    // SelfIDCapture::Result::sequences.
+    uint32_t selfIdSequenceCount{0};
+
     PhysicalTopologyGraph physical;
     NormalizedTopologyGraph normalizedFromLocal;
 };
