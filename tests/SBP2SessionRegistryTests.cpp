@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -50,6 +51,7 @@ using ASFW::Protocols::SBP2::Wire::TaskManagementORB;
 using ASFW::Protocols::SBP2::Wire::ToBE16;
 using ASFW::Protocols::SBP2::Wire::ToBE32;
 namespace SBPStatus = ASFW::Protocols::SBP2::Wire::SBPStatus;
+namespace UCWire = ASFW::UserClient::Wire;
 
 uint64_t ComposeAddress(uint16_t hi, uint32_t lo) {
     return (static_cast<uint64_t>(hi) << 32) | lo;
@@ -120,6 +122,35 @@ void CompleteTaskManagementStatus(AddressSpaceManager& manager,
     manager.ApplyRemoteWrite(
         statusAddress,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
+}
+
+std::vector<uint8_t> BuildCommandRequestWire(std::vector<uint8_t> cdb,
+                                             uint32_t transferLength = 0,
+                                             uint8_t direction = 0,
+                                             std::vector<uint8_t> outgoingPayload = {},
+                                             uint8_t captureSenseData = 0,
+                                             uint8_t reserved0 = 0,
+                                             uint8_t reserved1 = 0) {
+    UCWire::SBP2CommandRequestWire header{};
+    header.cdbLength = static_cast<uint32_t>(cdb.size());
+    header.transferLength = transferLength;
+    header.outgoingLength = static_cast<uint32_t>(outgoingPayload.size());
+    header.direction = direction;
+    header.captureSenseData = captureSenseData;
+    header._reserved[0] = reserved0;
+    header._reserved[1] = reserved1;
+
+    std::vector<uint8_t> serialized(sizeof(header) + cdb.size() + outgoingPayload.size());
+    std::memcpy(serialized.data(), &header, sizeof(header));
+    size_t offset = sizeof(header);
+    if (!cdb.empty()) {
+        std::memcpy(serialized.data() + offset, cdb.data(), cdb.size());
+        offset += cdb.size();
+    }
+    if (!outgoingPayload.empty()) {
+        std::memcpy(serialized.data() + offset, outgoingPayload.data(), outgoingPayload.size());
+    }
+    return serialized;
 }
 
 class SessionRegistryRig {
@@ -447,6 +478,39 @@ TEST(SBP2SessionRegistryTests, HandlerRejectsMissingOrShortSessionStateOutput) {
     EXPECT_EQ(kIOReturnSuccess,
               handler.GetSBP2SessionState(&args, SessionRegistryRig::Owner()));
     EXPECT_EQ(5u, args.scalarOutputCount);
+}
+
+TEST(SBP2SessionRegistryTests, HandlerHardensCommandABIInputsBeforeSubmission) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+    rig.LoginSuccessfully(handle);
+
+    ASFW::UserClient::SBP2Handler handler(nullptr, &rig.registry);
+    uint64_t scalarInput[] = {handle};
+
+    auto submit = [&](const std::vector<uint8_t>& serialized) {
+        std::unique_ptr<OSData> input(OSData::withBytes(serialized.data(),
+                                                        static_cast<uint32_t>(serialized.size())));
+        IOUserClientMethodArguments args{};
+        args.scalarInput = scalarInput;
+        args.scalarInputCount = 1;
+        args.structureInput = input.get();
+        return handler.SubmitSBP2Command(&args, SessionRegistryRig::Owner());
+    };
+
+    EXPECT_EQ(kIOReturnBadArgument,
+              submit(BuildCommandRequestWire(std::vector<uint8_t>(17, 0x00))));
+    EXPECT_EQ(kIOReturnBadArgument,
+              submit(BuildCommandRequestWire({0x00}, 0, 0, {}, 2)));
+    EXPECT_EQ(kIOReturnBadArgument,
+              submit(BuildCommandRequestWire({0x00}, 0, 0, {}, 0, 1)));
+    EXPECT_EQ(kIOReturnBadArgument,
+              submit(BuildCommandRequestWire({0x2A}, UCWire::kSBP2CommandMaxTransferLength + 1, 1)));
+    EXPECT_EQ(kIOReturnBadArgument,
+              submit(BuildCommandRequestWire({0x2A}, 4, 2, {0x01, 0x02})));
+    EXPECT_EQ(kIOReturnBadArgument,
+              submit(BuildCommandRequestWire({0x2A}, 4, 1, {0x01})));
+    EXPECT_EQ(kIOReturnSuccess, submit(BuildCommandRequestWire({0x00})));
 }
 
 TEST(SBP2SessionRegistryTests, SubmitTaskManagementWritesLogicalUnitResetORB) {

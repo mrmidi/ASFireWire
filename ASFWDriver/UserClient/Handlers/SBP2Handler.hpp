@@ -290,11 +290,20 @@ public:
         }
 
         const auto* header = reinterpret_cast<const Wire::SBP2CommandRequestWire*>(bytes);
+        if (header->cdbLength == 0 ||
+            header->cdbLength > Wire::kSBP2CommandMaxCDBLength ||
+            header->transferLength > Wire::kSBP2CommandMaxTransferLength ||
+            header->captureSenseData > 1 ||
+            header->_reserved[0] != 0 ||
+            header->_reserved[1] != 0) {
+            return kIOReturnBadArgument;
+        }
+
         const size_t expectedLength =
             sizeof(Wire::SBP2CommandRequestWire) +
             static_cast<size_t>(header->cdbLength) +
             static_cast<size_t>(header->outgoingLength);
-        if (inputLength != expectedLength || header->cdbLength == 0) {
+        if (inputLength != expectedLength) {
             return kIOReturnBadArgument;
         }
 
@@ -310,6 +319,18 @@ public:
             direction = Protocols::SBP2::SCSI::DataDirection::ToTarget;
             break;
         default:
+            return kIOReturnBadArgument;
+        }
+
+        if (direction == Protocols::SBP2::SCSI::DataDirection::ToTarget) {
+            if (header->outgoingLength != header->transferLength) {
+                return kIOReturnBadArgument;
+            }
+        } else if (header->outgoingLength != 0) {
+            return kIOReturnBadArgument;
+        }
+        if (direction == Protocols::SBP2::SCSI::DataDirection::None &&
+            header->transferLength != 0) {
             return kIOReturnBadArgument;
         }
 
