@@ -31,7 +31,7 @@
 #include "../Hardware/OHCIConstants.hpp"
 #include "../Hardware/OHCIEventCodes.hpp"
 #include "../Hardware/RegisterMap.hpp"
-#include "../IRM/IRMClient.hpp"
+#include "../Bus/IRM/IRMClient.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"

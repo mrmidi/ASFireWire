@@ -3,7 +3,7 @@
 //
 // LocalIRMResourceControllerTests.cpp — Unit tests for LocalIRMResourceController.
 
-#include "Bus/BusManager/LocalIRMResourceController.hpp"
+#include "Bus/IRM/LocalIRMResourceController.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "gtest/gtest.h"
 

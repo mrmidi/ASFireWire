@@ -4,6 +4,7 @@
 // LocalIRMResourceController.cpp — see LocalIRMResourceController.hpp
 
 #include "LocalIRMResourceController.hpp"
+#include "IRMCSRConstants.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Bus {
@@ -20,10 +21,16 @@ bool LocalIRMResourceController::InitializeDefaults() noexcept {
 
     ASFW_LOG(Controller, "[IRM] Initializing local IRM resource registers");
 
-    auto r0 = hw_->WriteLocalIRMResource(0, 0x3F);       // BUS_MANAGER_ID
-    auto r1 = hw_->WriteLocalIRMResource(1, 4915);       // BANDWIDTH_AVAILABLE
-    auto r2 = hw_->WriteLocalIRMResource(2, 0xFFFFFFFF); // CHANNELS_AVAILABLE_HI
-    auto r3 = hw_->WriteLocalIRMResource(3, 0x7FFFFFFF); // CHANNELS_AVAILABLE_LO
+    using namespace ASFW::Driver::IRMCSR;
+
+    auto r0 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::BusManagerId), 
+                                         kNoBusManagerId);
+    auto r1 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::BandwidthAvailable), 
+                                         kInitialBandwidthAvailable);
+    auto r2 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::ChannelsAvailableHi), 
+                                         kInitialChannelsAvailableHi);
+    auto r3 = hw_->WriteLocalIRMResource(static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo), 
+                                         kInitialChannelsAvailableLo);
 
     if (r0.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||
         r1.status != ASFW::Driver::LocalCSRLockResult::Status::Success ||

@@ -9,7 +9,7 @@
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/AudioTxProfiles.hpp"
 #include "Encoding/TimingUtils.hpp"
-#include "../IRM/IRMClient.hpp"
+#include "../Bus/IRM/IRMClient.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "../Logging/Logging.hpp"

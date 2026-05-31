@@ -52,7 +52,7 @@
 #include "Hardware/InterruptManager.hpp"
 #include "Hardware/OHCIConstants.hpp"
 #include "Hardware/RegisterMap.hpp"
-#include "IRM/IRMClient.hpp"
+#include "Bus/IRM/IRMClient.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
 #include "Isoch/Transmit/IsochTransmitContext.hpp"
 #include "Logging/LogConfig.hpp"

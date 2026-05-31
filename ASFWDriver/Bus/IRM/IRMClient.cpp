@@ -1,8 +1,8 @@
 #include "IRMClient.hpp"
-#include "../Common/CallbackUtils.hpp"
-#include "../Logging/Logging.hpp"
+#include "../../Common/CallbackUtils.hpp"
+#include "../../Logging/Logging.hpp"
 #ifdef ASFW_HOST_TEST
-#include "../Testing/HostDriverKitStubs.hpp"
+#include "../../Testing/HostDriverKitStubs.hpp"
 #endif
 #include <DriverKit/IOLib.h>
 #include <array>

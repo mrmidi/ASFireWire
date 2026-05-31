@@ -12,7 +12,7 @@
 #include "../ASFWDriver/ConfigROM/ROMScanner.hpp"
 #include "../ASFWDriver/Controller/ControllerTypes.hpp"
 #include "../ASFWDriver/Discovery/SpeedPolicy.hpp"
-#include "../ASFWDriver/IRM/IRMTypes.hpp"
+#include "../ASFWDriver/Bus/IRM/IRMTypes.hpp"
 
 using namespace ASFW::Discovery;
 using namespace ASFW::Driver;

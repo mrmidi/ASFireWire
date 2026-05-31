@@ -1,6 +1,6 @@
 #include "IRMAllocationManager.hpp"
-#include "../Common/CallbackUtils.hpp"
-#include "../Logging/Logging.hpp"
+#include "../../Common/CallbackUtils.hpp"
+#include "../../Logging/Logging.hpp"
 #include <os/log.h>
 
 namespace ASFW::IRM {

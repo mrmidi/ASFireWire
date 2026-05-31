@@ -1,7 +1,7 @@
 #pragma once
 
 #include "IRMTypes.hpp"
-#include "../Async/Interfaces/IFireWireBus.hpp"
+#include "../../Async/Interfaces/IFireWireBus.hpp"
 #include <functional>
 #include <memory>
 

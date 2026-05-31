@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../Async/Interfaces/IAsyncControllerPort.hpp"
-#include "../Async/Interfaces/IFireWireBusOps.hpp"
+#include "../../Async/Interfaces/IAsyncControllerPort.hpp"
+#include "../../Async/Interfaces/IFireWireBusOps.hpp"
 #include <DriverKit/IOLib.h>
 
 namespace ASFW::IRM {

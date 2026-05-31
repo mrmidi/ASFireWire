@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../IRM/IRMTypes.hpp"
+#include "../../../Bus/IRM/IRMTypes.hpp"
 #include "../../../Async/Interfaces/IFireWireBusOps.hpp"
 #include <functional>
 #include <cstdint>

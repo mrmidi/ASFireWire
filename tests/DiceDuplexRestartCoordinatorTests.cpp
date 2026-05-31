@@ -5,7 +5,7 @@
 #include "Audio/Backends/DiceDuplexRestartCoordinator.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
-#include "IRM/IRMClient.hpp"
+#include "Bus/IRM/IRMClient.hpp"
 #include "Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "Protocols/Audio/IDeviceProtocol.hpp"
 #include "Protocols/Audio/DICE/Core/IDICEDuplexProtocol.hpp"

@@ -7,7 +7,7 @@
 
 #include "IsochHandler.hpp"
 #include "../../Controller/ControllerCore.hpp"
-#include "../../IRM/IRMClient.hpp"
+#include "../../Bus/IRM/IRMClient.hpp"
 #include "../../Isoch/IsochReceiveContext.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
