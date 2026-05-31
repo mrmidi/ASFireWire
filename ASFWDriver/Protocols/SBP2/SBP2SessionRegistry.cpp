@@ -168,9 +168,9 @@ std::expected<uint64_t, int> SBP2SessionRegistry::CreateSession(void* owner,
     return handle;
 }
 
-bool SBP2SessionRegistry::StartLogin(uint64_t handle) {
+bool SBP2SessionRegistry::StartLogin(void* owner, uint64_t handle) {
     IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
+    auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->session) {
         return false;
     }
@@ -199,9 +199,10 @@ bool SBP2SessionRegistry::StartLogin(uint64_t handle) {
     return record->session->Login();
 }
 
-std::optional<SBP2SessionState> SBP2SessionRegistry::GetSessionState(uint64_t handle) const {
+std::optional<SBP2SessionState> SBP2SessionRegistry::GetSessionState(void* owner,
+                                                                     uint64_t handle) const {
     IOLockGuard lock(lock_);
-    const auto* record = FindByHandle(handle);
+    const auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->session) {
         return std::nullopt;
     }
@@ -215,13 +216,14 @@ std::optional<SBP2SessionState> SBP2SessionRegistry::GetSessionState(uint64_t ha
     return state;
 }
 
-bool SBP2SessionRegistry::SubmitInquiry(uint64_t handle, uint8_t allocationLength) {
-    return SubmitCommand(handle, SCSI::BuildInquiryRequest(allocationLength));
+bool SBP2SessionRegistry::SubmitInquiry(void* owner, uint64_t handle, uint8_t allocationLength) {
+    return SubmitCommand(owner, handle, SCSI::BuildInquiryRequest(allocationLength));
 }
 
-std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetInquiryResult(uint64_t handle) {
+std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetInquiryResult(void* owner,
+                                                                         uint64_t handle) {
     IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
+    auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->commandReady || !record->pendingCommandResult.has_value() ||
         record->lastCompletedCommandOpcode != kInquiryOpcode) {
         return std::nullopt;
@@ -234,13 +236,15 @@ std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetInquiryResult(uint64_
     return result;
 }
 
-bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request) {
+bool SBP2SessionRegistry::SubmitCommand(void* owner,
+                                        uint64_t handle,
+                                        const SCSI::CommandRequest& request) {
     std::shared_ptr<SBP2LoginSession> session;
     SBP2CommandORB* submittedORB = nullptr;
 
     {
         IOLockGuard lock(lock_);
-        auto* record = FindByHandle(handle);
+        auto* record = FindByHandleForOwner(owner, handle);
         if (!record || !record->session || request.cdb.empty()) {
             return false;
         }
@@ -384,7 +388,7 @@ bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequ
     }
 
     IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
+    auto* record = FindByHandleForOwner(owner, handle);
     if (record != nullptr && record->commandORB.get() == submittedORB) {
         record->commandInFlight = false;
         record->commandReady = false;
@@ -396,9 +400,10 @@ bool SBP2SessionRegistry::SubmitCommand(uint64_t handle, const SCSI::CommandRequ
     return false;
 }
 
-std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetCommandResult(uint64_t handle) {
+std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetCommandResult(void* owner,
+                                                                         uint64_t handle) {
     IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
+    auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->commandReady || !record->pendingCommandResult.has_value()) {
         return std::nullopt;
     }
@@ -410,10 +415,11 @@ std::optional<SCSI::CommandResult> SBP2SessionRegistry::GetCommandResult(uint64_
     return result;
 }
 
-bool SBP2SessionRegistry::SubmitTaskManagement(uint64_t handle,
+bool SBP2SessionRegistry::SubmitTaskManagement(void* owner,
+                                               uint64_t handle,
                                                SBP2ManagementORB::Function function) {
     IOLockGuard lock(lock_);
-    auto* record = FindByHandle(handle);
+    auto* record = FindByHandleForOwner(owner, handle);
     if (!record || !record->session || !IsSupportedTaskManagementFunction(function)) {
         return false;
     }
@@ -461,13 +467,13 @@ bool SBP2SessionRegistry::SubmitTaskManagement(uint64_t handle,
     return true;
 }
 
-bool SBP2SessionRegistry::ReleaseSession(uint64_t handle) {
+bool SBP2SessionRegistry::ReleaseSession(void* owner, uint64_t handle) {
     uint32_t waitMs = 0;
 
     {
         IOLockGuard lock(lock_);
         auto it = sessions_.find(handle);
-        if (it == sessions_.end()) {
+        if (it == sessions_.end() || it->second.owner != owner) {
             return false;
         }
 
@@ -659,6 +665,17 @@ SBP2SessionRecord* SBP2SessionRegistry::FindByHandle(uint64_t handle) {
 const SBP2SessionRecord* SBP2SessionRegistry::FindByHandle(uint64_t handle) const {
     auto it = sessions_.find(handle);
     return it != sessions_.end() ? &it->second : nullptr;
+}
+
+SBP2SessionRecord* SBP2SessionRegistry::FindByHandleForOwner(void* owner, uint64_t handle) {
+    auto* record = FindByHandle(handle);
+    return (record != nullptr && record->owner == owner) ? record : nullptr;
+}
+
+const SBP2SessionRecord* SBP2SessionRegistry::FindByHandleForOwner(void* owner,
+                                                                   uint64_t handle) const {
+    const auto* record = FindByHandle(handle);
+    return (record != nullptr && record->owner == owner) ? record : nullptr;
 }
 
 std::shared_ptr<Discovery::FWUnit> SBP2SessionRegistry::ResolveUnit(uint64_t guid,

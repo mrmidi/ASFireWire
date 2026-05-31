@@ -77,29 +77,37 @@ public:
                                                               uint32_t romOffset);
 
     // Start login for a session. Returns false if not in Idle state.
-    [[nodiscard]] bool StartLogin(uint64_t handle);
+    [[nodiscard]] bool StartLogin(void* owner, uint64_t handle);
 
     // Get session state. Returns nullopt if handle not found.
-    [[nodiscard]] std::optional<SBP2SessionState> GetSessionState(uint64_t handle) const;
+    [[nodiscard]] std::optional<SBP2SessionState> GetSessionState(void* owner,
+                                                                  uint64_t handle) const;
 
     // Submit SCSI INQUIRY. Returns false if not logged in or inquiry already in-flight.
-    [[nodiscard]] bool SubmitInquiry(uint64_t handle, uint8_t allocationLength = 96);
+    [[nodiscard]] bool SubmitInquiry(void* owner,
+                                     uint64_t handle,
+                                     uint8_t allocationLength = 96);
 
     // Get inquiry result (destructive read). Returns nullopt if not ready.
-    [[nodiscard]] std::optional<SCSI::CommandResult> GetInquiryResult(uint64_t handle);
+    [[nodiscard]] std::optional<SCSI::CommandResult> GetInquiryResult(void* owner,
+                                                                      uint64_t handle);
 
     // Submit a generic SCSI command. Returns false if not logged in or another command is active.
-    [[nodiscard]] bool SubmitCommand(uint64_t handle, const SCSI::CommandRequest& request);
+    [[nodiscard]] bool SubmitCommand(void* owner,
+                                     uint64_t handle,
+                                     const SCSI::CommandRequest& request);
 
     // Get generic command result (destructive read). Returns nullopt if not ready.
-    [[nodiscard]] std::optional<SCSI::CommandResult> GetCommandResult(uint64_t handle);
+    [[nodiscard]] std::optional<SCSI::CommandResult> GetCommandResult(void* owner,
+                                                                      uint64_t handle);
 
     // Submit a task-management recovery ORB.
-    [[nodiscard]] bool SubmitTaskManagement(uint64_t handle,
+    [[nodiscard]] bool SubmitTaskManagement(void* owner,
+                                            uint64_t handle,
                                             SBP2ManagementORB::Function function);
 
     // Release a specific session.
-    [[nodiscard]] bool ReleaseSession(uint64_t handle);
+    [[nodiscard]] bool ReleaseSession(void* owner, uint64_t handle);
 
     // Release all sessions for an owner (best-effort logout + cleanup).
     void ReleaseOwner(void* owner);
@@ -118,6 +126,8 @@ public:
 private:
     SBP2SessionRecord* FindByHandle(uint64_t handle);
     const SBP2SessionRecord* FindByHandle(uint64_t handle) const;
+    SBP2SessionRecord* FindByHandleForOwner(void* owner, uint64_t handle);
+    const SBP2SessionRecord* FindByHandleForOwner(void* owner, uint64_t handle) const;
     void FailActiveCommandLocked(SBP2SessionRecord& record,
                                 int transportStatus,
                                 uint8_t sbpStatus) noexcept;

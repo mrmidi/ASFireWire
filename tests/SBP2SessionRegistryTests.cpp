@@ -172,7 +172,7 @@ public:
     }
 
     uint64_t CreateSession() {
-        auto result = registry.CreateSession(reinterpret_cast<void*>(0xCAFE), kGuid, 0);
+        auto result = registry.CreateSession(Owner(), kGuid, 0);
         EXPECT_TRUE(result.has_value());
         const uint64_t handle = result.value_or(0);
         if (auto* session = registry.GetSessionForTesting(handle)) {
@@ -184,7 +184,7 @@ public:
     void LoginSuccessfully(uint64_t handle,
                            uint16_t loginId = 0x0042,
                            uint32_t commandBlockAgentLo = 0x0020'0000) {
-        ASSERT_TRUE(registry.StartLogin(handle));
+        ASSERT_TRUE(registry.StartLogin(Owner(), handle));
         ASSERT_EQ(1u, bus.PendingWriteCount());
 
         const auto& loginWrite = bus.WriteAt(0);
@@ -222,6 +222,8 @@ public:
     }
 
     static constexpr uint64_t kGuid = 0x0003DB0001DDDDA1ULL;
+    static void* Owner() noexcept { return reinterpret_cast<void*>(0xCAFE); }
+    static void* OtherOwner() noexcept { return reinterpret_cast<void*>(0xBEEF); }
 
     ASFW::Async::Testing::DeferredFireWireBus bus;
     AddressSpaceManager addressManager{nullptr};
@@ -256,7 +258,7 @@ TEST(SBP2SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
 
     const auto request = SCSI::BuildRequestSenseRequest(18);
     const size_t pendingBeforeSubmit = rig.bus.PendingWriteCount();
-    ASSERT_TRUE(rig.registry.SubmitCommand(handle, request));
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
     ASSERT_EQ(pendingBeforeSubmit + 1U, rig.bus.PendingWriteCount());
 
     const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
@@ -280,7 +282,7 @@ TEST(SBP2SessionRegistryTests, SubmitRequestSenseCapturesPayloadAndSenseData) {
         rig.sessionStatusAddress,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
 
-    auto result = rig.registry.GetCommandResult(handle);
+    auto result = rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(0, result->transportStatus);
     EXPECT_EQ(SBPStatus::kNoAdditionalInfo, result->sbpStatus);
@@ -293,7 +295,7 @@ TEST(SBP2SessionRegistryTests, InquiryFailureResultPreservesSBPStatus) {
     const uint64_t handle = rig.CreateSession();
     rig.LoginSuccessfully(handle);
 
-    ASSERT_TRUE(rig.registry.SubmitInquiry(handle, 36));
+    ASSERT_TRUE(rig.registry.SubmitInquiry(SessionRegistryRig::Owner(), handle, 36));
     const auto& write = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(write.data);
 
@@ -306,12 +308,12 @@ TEST(SBP2SessionRegistryTests, InquiryFailureResultPreservesSBPStatus) {
         rig.sessionStatusAddress,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
 
-    auto result = rig.registry.GetInquiryResult(handle);
+    auto result = rig.registry.GetInquiryResult(SessionRegistryRig::Owner(), handle);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(0, result->transportStatus);
     EXPECT_EQ(SBPStatus::kRequestAborted, result->sbpStatus);
     EXPECT_TRUE(result->payload.empty());
-    EXPECT_FALSE(rig.registry.GetInquiryResult(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetInquiryResult(SessionRegistryRig::Owner(), handle).has_value());
 }
 
 TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaustion) {
@@ -324,7 +326,7 @@ TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaust
 
     session->SetFetchAgentWriteRetriesForTesting(0);
     const auto request = SCSI::BuildTestUnitReadyRequest();
-    ASSERT_TRUE(rig.registry.SubmitCommand(handle, request));
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
     const auto fetchAgentWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     ASSERT_EQ(8u, fetchAgentWrite.data.size());
     const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(fetchAgentWrite.data);
@@ -334,12 +336,12 @@ TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaust
     while (rig.queue.DrainReadyForTesting() > 0U) {
     }
 
-    const auto commandResult = rig.registry.GetCommandResult(handle);
+    const auto commandResult = rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle);
     ASSERT_TRUE(commandResult.has_value());
     EXPECT_EQ(-1, commandResult->transportStatus);
     EXPECT_EQ(SBPStatus::kUnspecifiedError, commandResult->sbpStatus);
 
-    const auto stateAfterFailure = rig.registry.GetSessionState(handle);
+    const auto stateAfterFailure = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
     ASSERT_TRUE(stateAfterFailure.has_value());
     EXPECT_EQ(-1, stateAfterFailure->lastError);
 
@@ -356,6 +358,60 @@ TEST(SBP2SessionRegistryTests, ActiveCommandFailsOnceAfterFetchAgentRetryExhaust
               rig.addressManager.ReadQuadlet(commandOrbAddress, &ignored));
 }
 
+TEST(SBP2SessionRegistryTests, RejectsSessionOperationsFromNonOwningClient) {
+    SessionRegistryRig rig;
+    const uint64_t handle = rig.CreateSession();
+
+    EXPECT_FALSE(rig.registry.StartLogin(SessionRegistryRig::OtherOwner(), handle));
+    EXPECT_EQ(0u, rig.bus.PendingWriteCount());
+
+    rig.LoginSuccessfully(handle);
+
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::OtherOwner(), handle).has_value());
+    EXPECT_FALSE(rig.registry.SubmitCommand(SessionRegistryRig::OtherOwner(),
+                                            handle,
+                                            SCSI::BuildTestUnitReadyRequest()));
+    EXPECT_FALSE(rig.registry.SubmitInquiry(SessionRegistryRig::OtherOwner(), handle, 36));
+    EXPECT_FALSE(rig.registry.SubmitTaskManagement(
+        SessionRegistryRig::OtherOwner(), handle, SBP2ManagementORB::Function::LogicalUnitReset));
+    EXPECT_FALSE(rig.registry.ReleaseSession(SessionRegistryRig::OtherOwner(), handle));
+
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(),
+                                           handle,
+                                           SCSI::BuildTestUnitReadyRequest()));
+    const auto& commandWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t commandOrbAddress = DecodeAddressFromWritePayload(commandWrite.data);
+    StatusBlock commandStatus{};
+    commandStatus.details = 0;
+    commandStatus.sbpStatus = SBPStatus::kNoAdditionalInfo;
+    commandStatus.orbOffsetHi = ToBE16(static_cast<uint16_t>((commandOrbAddress >> 32) & 0xFFFFu));
+    commandStatus.orbOffsetLo = ToBE32(static_cast<uint32_t>(commandOrbAddress & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&commandStatus),
+                                 sizeof(commandStatus)});
+
+    EXPECT_FALSE(rig.registry.GetCommandResult(SessionRegistryRig::OtherOwner(), handle).has_value());
+    EXPECT_TRUE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
+
+    ASSERT_TRUE(rig.registry.SubmitInquiry(SessionRegistryRig::Owner(), handle, 36));
+    const auto& inquiryWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
+    const uint64_t inquiryOrbAddress = DecodeAddressFromWritePayload(inquiryWrite.data);
+    StatusBlock inquiryStatus{};
+    inquiryStatus.details = 0;
+    inquiryStatus.sbpStatus = SBPStatus::kRequestAborted;
+    inquiryStatus.orbOffsetHi = ToBE16(static_cast<uint16_t>((inquiryOrbAddress >> 32) & 0xFFFFu));
+    inquiryStatus.orbOffsetLo = ToBE32(static_cast<uint32_t>(inquiryOrbAddress & 0xFFFF'FFFFu));
+    rig.addressManager.ApplyRemoteWrite(
+        rig.sessionStatusAddress,
+        std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&inquiryStatus),
+                                 sizeof(inquiryStatus)});
+
+    EXPECT_FALSE(rig.registry.GetInquiryResult(SessionRegistryRig::OtherOwner(), handle).has_value());
+    EXPECT_TRUE(rig.registry.GetInquiryResult(SessionRegistryRig::Owner(), handle).has_value());
+    EXPECT_TRUE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
+}
+
 TEST(SBP2SessionRegistryTests, SubmitTaskManagementWritesLogicalUnitResetORB) {
     SessionRegistryRig rig;
     const uint64_t handle = rig.CreateSession();
@@ -363,7 +419,7 @@ TEST(SBP2SessionRegistryTests, SubmitTaskManagementWritesLogicalUnitResetORB) {
 
     const size_t writesBeforeSubmit = rig.bus.WriteCount();
     ASSERT_TRUE(rig.registry.SubmitTaskManagement(
-        handle, SBP2ManagementORB::Function::LogicalUnitReset));
+        SessionRegistryRig::Owner(), handle, SBP2ManagementORB::Function::LogicalUnitReset));
 
     ASSERT_EQ(writesBeforeSubmit + 1U, rig.bus.WriteCount());
     const auto& write = rig.bus.WriteAt(writesBeforeSubmit);
@@ -379,15 +435,15 @@ TEST(SBP2SessionRegistryTests, TaskManagementSuccessClearsActiveCommandTracking)
     rig.LoginSuccessfully(handle);
 
     const auto request = SCSI::BuildTestUnitReadyRequest();
-    ASSERT_TRUE(rig.registry.SubmitCommand(handle, request));
-    ASSERT_FALSE(rig.registry.GetCommandResult(handle).has_value());
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
+    ASSERT_FALSE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
     ASSERT_GT(rig.bus.WriteCount(), 0U);
     const auto fetchAgentWrite = rig.bus.WriteAt(rig.bus.WriteCount() - 1);
     ASSERT_EQ(8U, fetchAgentWrite.data.size());
 
     const size_t writesBeforeTaskManagement = rig.bus.WriteCount();
     ASSERT_TRUE(rig.registry.SubmitTaskManagement(
-        handle, SBP2ManagementORB::Function::AbortTaskSet));
+        SessionRegistryRig::Owner(), handle, SBP2ManagementORB::Function::AbortTaskSet));
     const auto& taskWrite = rig.bus.WriteAt(writesBeforeTaskManagement);
     const uint64_t taskOrbAddress = DecodeAddressFromWritePayload(taskWrite.data);
     const uint64_t taskStatusAddress =
@@ -396,10 +452,10 @@ TEST(SBP2SessionRegistryTests, TaskManagementSuccessClearsActiveCommandTracking)
     ASSERT_TRUE(rig.bus.CompleteWrite(taskWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
     CompleteTaskManagementStatus(rig.addressManager, taskStatusAddress, taskOrbAddress);
 
-    EXPECT_FALSE(rig.registry.GetCommandResult(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetCommandResult(SessionRegistryRig::Owner(), handle).has_value());
     EXPECT_FALSE(rig.bus.CompleteWrite(fetchAgentWrite.handle,
                                        ASFW::Async::AsyncStatus::kSuccess));
-    EXPECT_TRUE(rig.registry.SubmitCommand(handle, request));
+    EXPECT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
 }
 
 TEST(SBP2SessionRegistryTests, SubmitTaskManagementRejectsInvalidFunction) {
@@ -408,7 +464,7 @@ TEST(SBP2SessionRegistryTests, SubmitTaskManagementRejectsInvalidFunction) {
     rig.LoginSuccessfully(handle);
 
     EXPECT_FALSE(rig.registry.SubmitTaskManagement(
-        handle, SBP2ManagementORB::Function::QueryLogins));
+        SessionRegistryRig::Owner(), handle, SBP2ManagementORB::Function::QueryLogins));
 }
 
 TEST(SBP2SessionRegistryTests, MissingDiscoverySuspendsDeviceAndReconnectWaitsForResume) {
@@ -417,7 +473,7 @@ TEST(SBP2SessionRegistryTests, MissingDiscoverySuspendsDeviceAndReconnectWaitsFo
     rig.LoginSuccessfully(handle);
 
     rig.registry.OnBusReset(2);
-    const auto suspendedState = rig.registry.GetSessionState(handle);
+    const auto suspendedState = rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle);
     ASSERT_TRUE(suspendedState.has_value());
     EXPECT_EQ(ASFW::Protocols::SBP2::LoginState::Suspended, suspendedState->loginState);
 
@@ -465,7 +521,9 @@ TEST(SBP2SessionRegistryTests, MissingDiscoverySuspendsDeviceAndReconnectWaitsFo
     EXPECT_EQ(0x33u, busyTimeoutWrite.address.nodeID);
 
     const size_t writesBeforeCommand = rig.bus.WriteCount();
-    ASSERT_TRUE(rig.registry.SubmitCommand(handle, SCSI::BuildTestUnitReadyRequest()));
+    ASSERT_TRUE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(),
+                                           handle,
+                                           SCSI::BuildTestUnitReadyRequest()));
     ASSERT_EQ(writesBeforeCommand + 1U, rig.bus.WriteCount());
     const auto& fetchAgentWrite = rig.bus.WriteAt(writesBeforeCommand);
     EXPECT_EQ(0x33u, fetchAgentWrite.nodeId.value);
@@ -501,11 +559,11 @@ TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutStatusArrive
     ASSERT_FALSE(weakSession.expired());
 
     const size_t writesBeforeRelease = rig.bus.WriteCount();
-    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
 
     EXPECT_FALSE(weakSession.expired());
     ASSERT_EQ(writesBeforeRelease + 1U, rig.bus.WriteCount());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
 
     const auto& logoutWrite = rig.bus.WriteAt(writesBeforeRelease);
     EXPECT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
@@ -519,7 +577,7 @@ TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutStatusArrive
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
 
     EXPECT_TRUE(weakSession.expired());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
 }
 
 TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutTimeout) {
@@ -532,11 +590,11 @@ TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutTimeout) {
     ASSERT_FALSE(weakSession.expired());
 
     const size_t writesBeforeRelease = rig.bus.WriteCount();
-    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
 
     EXPECT_FALSE(weakSession.expired());
     ASSERT_EQ(writesBeforeRelease + 1U, rig.bus.WriteCount());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
 
     const auto& logoutWrite = rig.bus.WriteAt(writesBeforeRelease);
     EXPECT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
@@ -545,7 +603,7 @@ TEST(SBP2SessionRegistryTests, ReleaseOwnerRetainsSessionUntilLogoutTimeout) {
     rig.AdvanceMs(2'000);
 
     EXPECT_TRUE(weakSession.expired());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
 }
 
 TEST(SBP2SessionRegistryTests, ReleaseOwnerDuringPendingLoginCancelsWriteAndDropsSession) {
@@ -556,14 +614,14 @@ TEST(SBP2SessionRegistryTests, ReleaseOwnerDuringPendingLoginCancelsWriteAndDrop
         rig.registry.GetSessionWeakForTesting(handle);
     ASSERT_FALSE(weakSession.expired());
 
-    ASSERT_TRUE(rig.registry.StartLogin(handle));
+    ASSERT_TRUE(rig.registry.StartLogin(SessionRegistryRig::Owner(), handle));
     ASSERT_EQ(1u, rig.bus.PendingWriteCount());
     const auto loginWrite = rig.bus.WriteAt(0);
 
-    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
 
     EXPECT_TRUE(weakSession.expired());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
     EXPECT_EQ(0u, rig.bus.PendingWriteCount());
     EXPECT_FALSE(rig.bus.CompleteWrite(loginWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
 }
@@ -586,9 +644,9 @@ TEST(SBP2SessionRegistryTests, ReleaseSessionDuringPendingLogoutRetainsUntilStat
     ASSERT_EQ(writesBeforeLogout + 1U, rig.bus.WriteCount());
     ASSERT_EQ(pendingBeforeLogout + 1U, rig.bus.PendingWriteCount());
 
-    EXPECT_TRUE(rig.registry.ReleaseSession(handle));
+    EXPECT_TRUE(rig.registry.ReleaseSession(SessionRegistryRig::Owner(), handle));
     EXPECT_FALSE(weakSession.expired());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
 
     const auto& logoutWrite = rig.bus.WriteAt(writesBeforeLogout);
     EXPECT_TRUE(rig.bus.CompleteWrite(logoutWrite.handle, ASFW::Async::AsyncStatus::kSuccess));
@@ -602,7 +660,7 @@ TEST(SBP2SessionRegistryTests, ReleaseSessionDuringPendingLogoutRetainsUntilStat
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
 
     EXPECT_TRUE(weakSession.expired());
-    EXPECT_FALSE(rig.registry.GetSessionState(handle).has_value());
+    EXPECT_FALSE(rig.registry.GetSessionState(SessionRegistryRig::Owner(), handle).has_value());
 }
 
 TEST(SBP2SessionRegistryTests, CreateSessionRejectsDuplicateTargetAcrossOwners) {
@@ -610,7 +668,7 @@ TEST(SBP2SessionRegistryTests, CreateSessionRejectsDuplicateTargetAcrossOwners) 
     const uint64_t handle = rig.CreateSession();
     ASSERT_NE(0u, handle);
 
-    auto duplicate = rig.registry.CreateSession(reinterpret_cast<void*>(0xBEEF),
+    auto duplicate = rig.registry.CreateSession(SessionRegistryRig::OtherOwner(),
                                                 SessionRegistryRig::kGuid,
                                                 0);
     ASSERT_FALSE(duplicate.has_value());
@@ -623,9 +681,9 @@ TEST(SBP2SessionRegistryTests, CreateSessionRejectsDuplicateTargetUntilLogoutCom
     rig.LoginSuccessfully(handle);
 
     const size_t writesBeforeRelease = rig.bus.WriteCount();
-    rig.registry.ReleaseOwner(reinterpret_cast<void*>(0xCAFE));
+    rig.registry.ReleaseOwner(SessionRegistryRig::Owner());
 
-    auto duplicateWhileLoggingOut = rig.registry.CreateSession(reinterpret_cast<void*>(0xBEEF),
+    auto duplicateWhileLoggingOut = rig.registry.CreateSession(SessionRegistryRig::OtherOwner(),
                                                                SessionRegistryRig::kGuid,
                                                                0);
     ASSERT_FALSE(duplicateWhileLoggingOut.has_value());
@@ -641,7 +699,7 @@ TEST(SBP2SessionRegistryTests, CreateSessionRejectsDuplicateTargetUntilLogoutCom
         rig.sessionStatusAddress,
         std::span<const uint8_t>{reinterpret_cast<const uint8_t*>(&status), sizeof(status)});
 
-    auto replacement = rig.registry.CreateSession(reinterpret_cast<void*>(0xBEEF),
+    auto replacement = rig.registry.CreateSession(SessionRegistryRig::OtherOwner(),
                                                   SessionRegistryRig::kGuid,
                                                   0);
     ASSERT_TRUE(replacement.has_value());
@@ -686,12 +744,12 @@ TEST(SBP2SessionRegistryTests, SubmitCommandRejectsCDBLargerThanORBPayloadBudget
     request.transferLength = 0;
     request.timeoutMs = 100;
 
-    EXPECT_FALSE(rig.registry.SubmitCommand(handle, request));
+    EXPECT_FALSE(rig.registry.SubmitCommand(SessionRegistryRig::Owner(), handle, request));
 }
 
 TEST(SBP2SessionRegistryTests, CreateSessionAcceptsRealSBP2SpecAndVersion) {
     SessionRegistryRig rig;
-    auto result = rig.registry.CreateSession(reinterpret_cast<void*>(0xCAFE),
+    auto result = rig.registry.CreateSession(SessionRegistryRig::Owner(),
                                              SessionRegistryRig::kGuid,
                                              0);
     ASSERT_TRUE(result.has_value());

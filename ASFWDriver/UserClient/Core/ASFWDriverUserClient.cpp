@@ -511,28 +511,28 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
         return runtimeState->SBP2().CreateSBP2Session(arguments, this);
 
     case kMethodStartSBP2Login:
-        return runtimeState->SBP2().StartSBP2Login(arguments);
+        return runtimeState->SBP2().StartSBP2Login(arguments, this);
 
     case kMethodGetSBP2SessionState:
-        return runtimeState->SBP2().GetSBP2SessionState(arguments);
+        return runtimeState->SBP2().GetSBP2SessionState(arguments, this);
 
     case kMethodSubmitSBP2Inquiry:
-        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments);
+        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments, this);
 
     case kMethodGetSBP2InquiryResult:
-        return runtimeState->SBP2().GetSBP2InquiryResult(arguments);
+        return runtimeState->SBP2().GetSBP2InquiryResult(arguments, this);
 
     case kMethodReleaseSBP2Session:
         return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
 
     case kMethodSubmitSBP2Command:
-        return runtimeState->SBP2().SubmitSBP2Command(arguments);
+        return runtimeState->SBP2().SubmitSBP2Command(arguments, this);
 
     case kMethodGetSBP2CommandResult:
-        return runtimeState->SBP2().GetSBP2CommandResult(arguments);
+        return runtimeState->SBP2().GetSBP2CommandResult(arguments, this);
 
     case kMethodSubmitSBP2TaskManagement:
-        return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments);
+        return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments, this);
 
     default:
         return kIOReturnBadArgument;
