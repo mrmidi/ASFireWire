@@ -363,9 +363,10 @@ enum class RoleMode : uint8_t {
 enum class FullBMActivityLevel : uint8_t {
     ObserveOnly = 0,
     ElectionOnly = 1,
-    GapPolicyAllowed = 2,
-    ForceRootAllowed = 3,
-    RemoteCmstrAllowed = 4,
+    CyclePolicyAllowed = 2,
+    GapPolicyAllowed = 3,
+    ForceRootAllowed = 4,
+    RemoteCmstrAllowed = 5,
 };
 
 // A BIB advertising bmc=1 MUST also advertise irmc=1 (IEEE 1394a-2000: a

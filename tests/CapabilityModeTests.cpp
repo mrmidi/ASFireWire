@@ -68,10 +68,19 @@ TEST(CapabilityMode, FullBusManager_SetsBmcAndIrmc) {
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
-TEST(CapabilityMode, FullBusManagerObserveOnly_ClearsBmcSetsIrmc) {
-    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager, ASFW::FW::FullBMActivityLevel::ObserveOnly);
+TEST(CapabilityMode, FullBusManagerObserveOnly_IsFullyPassive) {
+    const uint32_t out = NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::FullBusManager, ASFW::FW::FullBMActivityLevel::ObserveOnly);
     const auto d = DecodeBusOptions(out);
     EXPECT_FALSE(d.bmc);
+    EXPECT_FALSE(d.irmc);
+    EXPECT_TRUE(IsLegalCapabilityCombo(out));
+}
+
+TEST(CapabilityMode, FullBusManagerCyclePolicyAllowed_SetsBmcAndIrmc) {
+    const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager,
+                                                  ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed);
+    const auto d = DecodeBusOptions(out);
+    EXPECT_TRUE(d.bmc);
     EXPECT_TRUE(d.irmc);
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }

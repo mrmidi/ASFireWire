@@ -563,12 +563,52 @@ struct DiagnosticsTextFormatter {
         // Order must match FullBMActivityLevel in ASFWDriver/Common/CSRSpace.hpp.
         case 0: activityStr = "ObserveOnly (BM-passive, IRM-visible)"
         case 1: activityStr = "ElectionOnly"
-        case 2: activityStr = "GapPolicyAllowed"
-        case 3: activityStr = "ForceRootAllowed"
-        case 4: activityStr = "RemoteCmstrAllowed"
+        case 2: activityStr = "CyclePolicyAllowed"
+        case 3: activityStr = "GapPolicyAllowed"
+        case 4: activityStr = "ForceRootAllowed"
+        case 5: activityStr = "RemoteCmstrAllowed"
         default: activityStr = "Unknown (\(snapshot.busManager.fullBMActivityLevel))"
         }
         appendRow("Full BM Activity Level", activityStr)
+
+        // --- Milestone 5: Cycle Master Policy ---
+        appendTitle("Cycle Master Policy (Milestone 5)")
+        
+        let cycleDecisionStr: String
+        switch snapshot.busManager.cyclePolicyDecision {
+        case 0: cycleDecisionStr = "None"
+        case 1: cycleDecisionStr = "SuppressedByRoleMode"
+        case 2: cycleDecisionStr = "SuppressedByActivityLevel"
+        case 3: cycleDecisionStr = "SuppressedByTopology"
+        case 4: cycleDecisionStr = "SuppressedByGeneration"
+        case 5: cycleDecisionStr = "SuppressedNotBMOrFallbackIRM"
+        case 6: cycleDecisionStr = "AlreadySatisfiedCycleStartObserved"
+        case 7: cycleDecisionStr = "AlreadySatisfiedLocalCycleMasterEnabled"
+        case 8: cycleDecisionStr = "DeferRootCmcUnknown"
+        case 9: cycleDecisionStr = "LocalRootEnableCycleMaster"
+        case 10: cycleDecisionStr = "RemoteRootSetCmstr"
+        case 11: cycleDecisionStr = "RootSelectionRequired"
+        default: cycleDecisionStr = "Unknown (\(snapshot.busManager.cyclePolicyDecision))"
+        }
+        appendRow("Cycle Decision", cycleDecisionStr)
+        
+        let cycleActionStr: String
+        switch snapshot.busManager.cyclePolicyAction {
+        case 0: cycleActionStr = "None"
+        case 1: cycleActionStr = "EnableLocalCycleMaster"
+        case 2: cycleActionStr = "WriteRemoteStateSetCmstr"
+        case 3: cycleActionStr = "ReportRootSelectionRequired"
+        default: cycleActionStr = "Unknown (\(snapshot.busManager.cyclePolicyAction))"
+        }
+        appendRow("Cycle Action", cycleActionStr)
+        
+        appendRow("Cycle Target Node", snapshot.busManager.cyclePolicyTargetNode == 0x3F ? "none" : "node \(snapshot.busManager.cyclePolicyTargetNode)")
+        appendRow("Local Master Before", snapshot.busManager.cyclePolicyLocalLowLevelMasterBefore != 0 ? "Yes" : "No")
+        appendRow("Local Master After", snapshot.busManager.cyclePolicyLocalLowLevelMasterAfter != 0 ? "Yes" : "No")
+        appendRow("Remote CMSTR In Flight", snapshot.busManager.cyclePolicyRemoteCmstrInFlight != 0 ? "Yes" : "No")
+        appendRow("Local Enable Count", snapshot.busManager.cyclePolicyLocalEnableCount)
+        appendRow("Remote Submit Count", snapshot.busManager.cyclePolicyRemoteSubmitCount)
+        appendRow("Cycle Master Policy", "Active. Root/gap policy disabled.")
 
         // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
         // Generation-scoped gates anchored to Self-ID completion. Reporting only:
