@@ -2010,6 +2010,28 @@ target_include_directories(CyclePolicyCoordinatorTests PRIVATE ${ASFW_COMMON_INC
 
 gtest_discover_tests(CyclePolicyCoordinatorTests)
 
+# Cycle Policy Executor Tests (Milestone 5)
+add_executable(CyclePolicyExecutorTests
+    "${ASFW_TESTS_DIR}/CyclePolicyExecutorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager/CyclePolicyCoordinator.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(CyclePolicyExecutorTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(CyclePolicyExecutorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CyclePolicyExecutorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CyclePolicyExecutorTests)
+
 # Post-Reset Timing Core (Milestone 2) - generation-scoped post-reset timing gates
 add_executable(PostResetTimingTests
     "${ASFW_TESTS_DIR}/PostResetTimingTests.cpp"

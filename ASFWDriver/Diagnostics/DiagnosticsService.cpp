@@ -716,6 +716,19 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->irmFallbackRemainingMs = static_cast<uint32_t>(snap.remainingNs / 1000000ULL);
     }
 
+    if (auto* const cycle = controller_->GetCyclePolicyCoordinator()) {
+        auto snap = cycle->Snapshot();
+        out->cyclePolicyDecision = static_cast<uint32_t>(snap.lastDecision);
+        out->cyclePolicyAction = static_cast<uint32_t>(snap.lastAction);
+        out->cyclePolicyTargetNode = snap.targetNode;
+        out->cyclePolicyLocalLowLevelMasterBefore = snap.localCycleMasterBefore ? 1 : 0;
+        out->cyclePolicyLocalLowLevelMasterAfter = snap.localCycleMasterAfter ? 1 : 0;
+        out->cyclePolicyRemoteCmstrInFlight = snap.remoteCmstrInFlight ? 1 : 0;
+        out->cyclePolicyRemoteCmstrStatus = snap.remoteCmstrStatus;
+        out->cyclePolicyLocalEnableCount = snap.localCycleMasterEnableCount;
+        out->cyclePolicyRemoteSubmitCount = snap.remoteCmstrSubmitCount;
+    }
+
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {
         return ASFWDiagStatusStaleGeneration;

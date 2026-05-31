@@ -51,6 +51,8 @@ namespace ASFW::Async {
 struct FWHandle {
     uint32_t value{0};
     explicit operator bool() const { return value != 0; }
+    [[nodiscard]] bool IsValid() const noexcept { return value != 0; }
+    void Invalidate() noexcept { value = 0; }
 };
 using AsyncHandle = FWHandle;
 

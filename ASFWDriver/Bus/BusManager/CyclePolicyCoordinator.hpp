@@ -9,9 +9,31 @@
 #include "../../Controller/ControllerConfig.hpp"
 #include "../../Controller/ControllerTypes.hpp"
 #include "../BusManager/BusManagerRuntimeState.hpp"
+#include "../../Async/Interfaces/IAsyncControllerPort.hpp"
 #include <cstdint>
+#include <memory>
 
 namespace ASFW::Bus {
+
+/**
+ * @brief Executor interface for cycle policy mutations.
+ */
+struct ICyclePolicyExecutor {
+    virtual ~ICyclePolicyExecutor() = default;
+
+    /**
+     * @brief Enables the local OHCI cycle master.
+     * Returns true if success verified via readback.
+     */
+    virtual bool EnableLocalCycleMasterMutation(uint32_t generation) = 0;
+
+    /**
+     * @brief Sends a remote STATE_SET.cmstr write to the target node.
+     */
+    virtual Async::AsyncHandle WriteRemoteStateSetCmstr(uint32_t generation,
+                                                        uint16_t busBase16,
+                                                        uint8_t targetNodeId) = 0;
+};
 
 /**
  * @brief Functional decision for cycle repair.
@@ -121,8 +143,12 @@ public:
     CyclePolicyCoordinator& operator=(const CyclePolicyCoordinator&) = delete;
 
     /**
-     * @brief Evaluates current bus state and returns a decision.
-     * Pure planner logic.
+     * @brief Evaluates current bus state, returns a decision, and performs mutation if needed.
+     */
+    void Evaluate(const CyclePolicyInputs& inputs, ICyclePolicyExecutor& executor) noexcept;
+
+    /**
+     * @brief Pure planner logic for testing.
      */
     [[nodiscard]] CyclePolicyDecision Plan(const CyclePolicyInputs& inputs) const noexcept;
 
@@ -133,8 +159,19 @@ public:
      */
     void OnBusResetStarted(uint32_t generation) noexcept;
 
+    /**
+     * @brief Completion callback for remote CMSTR write.
+     */
+    void OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,
+                               Async::AsyncStatus status) noexcept;
+
 private:
     CyclePolicySnapshot snapshot_{};
+
+    uint32_t lastLocalCycleMasterGeneration_{0};
+    uint32_t lastRemoteCmstrGeneration_{0};
+    uint8_t lastRemoteCmstrTargetNode_{0x3F};
+    Async::AsyncHandle remoteCmstrHandle_{};
 };
 
 } // namespace ASFW::Bus

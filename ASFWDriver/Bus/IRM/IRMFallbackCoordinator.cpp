@@ -15,9 +15,17 @@ IRMFallbackCoordinator::IRMFallbackCoordinator(Deps deps) noexcept
     : deps_(deps), snapshot_{}, csr_(deps.hardware) {}
 
 void IRMFallbackCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
+    const uint32_t staleCount = snapshot_.staleGenerationDrops;
+    const uint32_t suppressedCount = snapshot_.suppressedByPolicy;
+    const uint32_t probeFailCount = snapshot_.probeFailures;
+
     snapshot_ = {};
     snapshot_.generation = generation;
     snapshot_.state = IRMFallbackState::WaitingForTopology;
+    
+    snapshot_.staleGenerationDrops = staleCount;
+    snapshot_.suppressedByPolicy = suppressedCount;
+    snapshot_.probeFailures = probeFailCount;
 }
 
 void IRMFallbackCoordinator::OnTopologyReady(const Driver::TopologySnapshot& topology,

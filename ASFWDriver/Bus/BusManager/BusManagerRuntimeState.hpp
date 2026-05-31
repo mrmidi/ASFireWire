@@ -21,6 +21,8 @@ enum class BMPolicyVerdict : uint8_t {
 
 struct BusManagerRuntimeState {
     uint32_t generation{0};
+    uint16_t busBase16{0x03FF};
+    bool topologyValid{false};
     bool localIsIRM{false};
     bool localIsBM{false};
     bool localIsRoot{false};
