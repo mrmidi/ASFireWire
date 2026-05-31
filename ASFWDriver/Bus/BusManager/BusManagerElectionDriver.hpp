@@ -44,6 +44,7 @@ public:
         ASFW::Driver::HardwareInterface* hardware{nullptr};
         LocalIRMResourceController* localIrmController{nullptr};
         Timing::PostResetTimingCoordinator* timing{nullptr};
+        uint64_t (*monotonicNowNs)() noexcept {nullptr};
     };
 
     BusManagerElectionDriver(Deps deps, ASFW::Driver::RolePolicy rolePolicy) noexcept;

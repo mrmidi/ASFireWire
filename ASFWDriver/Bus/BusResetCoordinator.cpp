@@ -171,7 +171,7 @@ BusResetCoordinator::ResetDiagnostics BusResetCoordinator::Diagnostics() const {
     };
 }
 
-uint64_t BusResetCoordinator::MonotonicNow() {
+uint64_t BusResetCoordinator::MonotonicNow() noexcept {
 #ifdef ASFW_HOST_TEST
     return ASFW::Testing::HostMonotonicNow();
 #else

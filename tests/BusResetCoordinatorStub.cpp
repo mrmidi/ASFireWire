@@ -2,7 +2,7 @@
 
 namespace ASFW::Driver {
 
-uint64_t BusResetCoordinator::MonotonicNow() {
+uint64_t BusResetCoordinator::MonotonicNow() noexcept {
     return ASFW::Testing::HostMonotonicNow();
 }
 

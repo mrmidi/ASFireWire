@@ -88,7 +88,7 @@ inline std::function<uint64_t()>& HostMonotonicClockOverride() {
     return clockOverride;
 }
 
-inline uint64_t HostMonotonicNow() {
+inline uint64_t HostMonotonicNow() noexcept {
     auto& clockOverride = HostMonotonicClockOverride();
     if (clockOverride) {
         return clockOverride();
