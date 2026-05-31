@@ -1896,6 +1896,7 @@ add_executable(BusManagerElectionTests
     "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElectionDriver.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceController.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/LocalCSRAccessor.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/Timing/PostResetTimingCoordinator.cpp"
     "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"

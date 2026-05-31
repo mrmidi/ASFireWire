@@ -118,6 +118,9 @@ class BusResetCoordinator {
     const ASFW::Bus::Timing::PostResetTimingCoordinator& PostResetTiming() const noexcept {
         return postResetTiming_;
     }
+    ASFW::Bus::Timing::PostResetTimingCoordinator& PostResetTiming() noexcept {
+        return postResetTiming_;
+    }
     /// Return the current FSM state.
     State GetState() const { return state_; }
     const char* StateString() const;
@@ -200,6 +203,8 @@ class BusResetCoordinator {
                                 std::optional<uint8_t> gapCount,
                                 std::optional<bool> setContender,
                                 std::string reason);
+
+    static uint64_t MonotonicNow();
 
   private:
 #ifdef ASFW_HOST_TEST
@@ -311,8 +316,6 @@ class BusResetCoordinator {
     bool G_IsRoot() const;
 
     bool ReadyForDiscovery(Discovery::Generation gen);
-
-    static uint64_t MonotonicNow();
 
     State state_{State::Idle};
     uint64_t stateEntryTime_{0};

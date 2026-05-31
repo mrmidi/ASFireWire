@@ -10,6 +10,7 @@
 #include "../../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../../Controller/ControllerTypes.hpp"
 #include "../CSR/CSRResponder.hpp"
+#include "../../Controller/ControllerConfig.hpp"
 #include "../../Scheduling/Scheduler.hpp"
 #include "BusManagerElection.hpp"
 
@@ -20,6 +21,10 @@ class HardwareInterface;
 }
 
 namespace ASFW::Bus {
+
+namespace Timing {
+class PostResetTimingCoordinator;
+}
 
 class LocalIRMResourceController;
 
@@ -38,15 +43,17 @@ public:
         ASFW::Bus::CSRResponder* csrResponder{nullptr};
         ASFW::Driver::HardwareInterface* hardware{nullptr};
         LocalIRMResourceController* localIrmController{nullptr};
+        Timing::PostResetTimingCoordinator* timing{nullptr};
     };
 
-    BusManagerElectionDriver(Deps deps, ASFW::FW::RoleMode roleMode) noexcept;
+    BusManagerElectionDriver(Deps deps, ASFW::Driver::RolePolicy rolePolicy) noexcept;
     ~BusManagerElectionDriver() = default;
 
-    void OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap) noexcept;
+    void OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap, uint64_t nowNs) noexcept;
     void OnBusReset() noexcept;
     void Stop() noexcept;
 
+    void SetRolePolicy(const ASFW::Driver::RolePolicy& policy) noexcept { rolePolicy_ = policy; }
     void SetObserver(IBMRoleEvents* observer) noexcept { observer_ = observer; }
 
     // Accessors for diagnostics / testing
@@ -62,13 +69,15 @@ private:
     void HandleCompareSwapResult(uint32_t generation, uint8_t localNodeId, ASFW::Async::AsyncStatus status, uint32_t oldValue, bool compareMatched) noexcept;
 
     Deps deps_;
-    ASFW::FW::RoleMode roleMode_;
+    ASFW::Driver::RolePolicy rolePolicy_;
     BusManagerElection fsm_;
     IBMRoleEvents* observer_{nullptr};
     ASFW::Async::AsyncHandle inFlightHandle_{};
     bool wasIncumbent_{false};
     bool inFlight_{false};
     uint32_t inFlightGen_{0};
+    uint32_t attemptedGeneration_{0};
+    uint8_t attemptsThisGeneration_{0};
     bool active_{true};
 };
 
