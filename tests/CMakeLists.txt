@@ -304,6 +304,8 @@ target_link_libraries(BroadcastChannelCSRTests
         GTest::gtest_main
 )
 
+target_include_directories(BroadcastChannelCSRTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
 gtest_discover_tests(BroadcastChannelCSRTests)
 
 # Topology Map Builder Tests (FW-20)
@@ -1892,6 +1894,7 @@ add_executable(BusManagerElectionTests
     "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElection.cpp"
     "${ASFW_DRIVER_DIR}/Bus/BusManager/BusManagerElectionDriver.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceController.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalCSRAccessor.cpp"
     "${ASFW_DRIVER_DIR}/Controller/ControllerConfig.cpp"
     "${ASFW_DRIVER_DIR}/Scheduling/Scheduler.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
@@ -1915,6 +1918,7 @@ gtest_discover_tests(BusManagerElectionTests)
 add_executable(HardwareInterfaceOrderTests
     "${ASFW_TESTS_DIR}/HardwareInterfaceOrderTests.cpp"
     "${ASFW_DRIVER_DIR}/Hardware/HardwareInterface.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -1924,12 +1928,20 @@ target_link_libraries(HardwareInterfaceOrderTests
         GTest::gmock
 )
 
+target_compile_definitions(HardwareInterfaceOrderTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(HardwareInterfaceOrderTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
 gtest_discover_tests(HardwareInterfaceOrderTests)
 
 # Local IRM Resource Controller Tests
 add_executable(LocalIRMResourceControllerTests
     "${ASFW_TESTS_DIR}/LocalIRMResourceControllerTests.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceController.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalCSRAccessor.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )

@@ -6,6 +6,7 @@
 #include "../Async/AsyncSubsystem.hpp"
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Debug/AsyncTraceCapture.hpp"
+#include "../Bus/CSR/BroadcastChannelCSR.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include <cstring>
 #include <DriverKit/IOLib.h>
@@ -564,16 +565,19 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->localIrmChannelsAvailableLo = snap.channelsAvailableLo;
 
         // Milestone 1 additions
-        if (deps.broadcastChannel) {
-            out->broadcastChannelValue = deps.broadcastChannel->Read();
+        auto* const bc = controller_->GetBroadcastChannel();
+        if (bc) {
+            out->broadcastChannelValue = bc->Read();
             out->broadcastChannelValid = (out->broadcastChannelValue & 0x40000000U) != 0 ? 1 : 0;
         }
 
         // Initial registers (from hardware directly)
-        if (deps.hardware) {
-            out->initialBandwidthAvailable = deps.hardware->Read(Register32::kInitialBandwidthAvailable);
-            out->initialChannelsAvailableHi = deps.hardware->Read(Register32::kInitialChannelsAvailableHi);
-            out->initialChannelsAvailableLo = deps.hardware->Read(Register32::kInitialChannelsAvailableLo);
+        auto* const hw = controller_->GetHardware();
+        if (hw) {
+            using namespace ASFW::Driver;
+            out->initialBandwidthAvailable = hw->Read(Register32::kInitialBandwidthAvailable);
+            out->initialChannelsAvailableHi = hw->Read(Register32::kInitialChannelsAvailableHi);
+            out->initialChannelsAvailableLo = hw->Read(Register32::kInitialChannelsAvailableLo);
         }
     }
 

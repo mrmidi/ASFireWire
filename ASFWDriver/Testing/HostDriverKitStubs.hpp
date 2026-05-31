@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Copyright (c) 2024 ASFireWire Project
+//
+// HostDriverKitStubs.hpp — Minimal stubs for DriverKit types to allow unit testing on host.
+
 #pragma once
 
 #ifdef ASFW_HOST_TEST
@@ -39,7 +44,37 @@ struct IOAddressSegment {
 // Forward declare for Create
 class IOBufferMemoryDescriptor;
 
-class IOService {};
+class OSObject {
+public:
+    virtual ~OSObject() = default;
+    virtual bool init() { return true; }
+    virtual void free() { delete this; }
+    void retain() {}
+    void release() {}
+};
+
+class OSAction : public OSObject {};
+
+class IOService : public OSObject {
+public:
+    virtual kern_return_t Start(IOService*) { return kIOReturnSuccess; }
+    virtual void Stop(IOService*) {}
+};
+
+using IODispatchQueueName = const char*;
+
+#define OSDynamicCast(T, obj) dynamic_cast<T*>(obj)
+
+#define kPCIBARTypeM32 1
+#define kPCIBARTypeM32PF 2
+#define kPCIBARTypeM64 3
+#define kPCIBARTypeM64PF 4
+
+struct IODMACommandSpecification {
+    uint32_t type;
+    uint32_t options;
+    uint32_t maxAddressBits;
+};
 
 namespace ASFW::Testing {
 
@@ -70,17 +105,6 @@ inline void ResetHostMonotonicClockForTesting() {
 }
 
 } // namespace ASFW::Testing
-
-class OSObject {
-public:
-    virtual ~OSObject() = default;
-    virtual bool init() { return true; }
-    virtual void free() { delete this; }
-    void retain() {}
-    void release() {}
-};
-
-class OSAction : public OSObject {};
 
 class IODispatchQueue : public OSObject {
 public:
@@ -203,12 +227,10 @@ private:
         pending_.push_back(PendingWorkItem{dueNs, work});
     }
 
+    bool manualDispatchForTesting_{false};
     mutable std::mutex pendingLock_;
     std::deque<PendingWorkItem> pending_;
-    bool manualDispatchForTesting_{false};
 };
-
-using IODispatchQueueName = const char*;
 
 class IOInterruptDispatchSource : public OSObject {
 public:
@@ -244,7 +266,7 @@ public:
     kern_return_t Cancel(void*) { return kIOReturnUnsupported; }
 };
 
-class IOPCIDevice : public OSObject {
+class IOPCIDevice : public IOService {
 public:
     virtual kern_return_t Open(IOService*) { return kIOReturnUnsupported; }
     virtual void Close(IOService*) {}

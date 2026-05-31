@@ -401,7 +401,13 @@ LocalCSRReadResult HardwareInterface::ReadLocalIRMResource(uint32_t selectCode) 
 LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept {
     return WithState(this, [selectCode, compareValue, newValue](HardwareTestState& state) -> LocalCSRLockResult {
         auto it = state.localIRMResources.find(selectCode);
-        uint32_t val = (selectCode == 0) ? 0x3F : ((selectCode == 1) ? 4915 : 0xFFFFFFFF);
+        using namespace ASFW::Driver::IRMCSR;
+        uint32_t val = 0;
+        if (selectCode == static_cast<uint32_t>(CSRSelector::BusManagerId)) val = kNoBusManagerId;
+        else if (selectCode == static_cast<uint32_t>(CSRSelector::BandwidthAvailable)) val = kInitialBandwidthAvailable;
+        else if (selectCode == static_cast<uint32_t>(CSRSelector::ChannelsAvailableHi)) val = kInitialChannelsAvailableHi;
+        else if (selectCode == static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo)) val = kInitialChannelsAvailableLo;
+
         if (it != state.localIRMResources.end()) {
             val = it->second;
         }
@@ -413,8 +419,6 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
     });
 }
 
-} // namespace ASFW::Driver
-
 kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     using namespace ASFW::Driver::IRMCSR;
     WriteAndFlush(Register32::kInitialBandwidthAvailable, kInitialBandwidthAvailable);
@@ -422,3 +426,5 @@ kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     WriteAndFlush(Register32::kInitialChannelsAvailableLo, kInitialChannelsAvailableLo);
     return kIOReturnSuccess;
 }
+
+} // namespace ASFW::Driver

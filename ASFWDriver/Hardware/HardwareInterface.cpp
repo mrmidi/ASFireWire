@@ -877,8 +877,6 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
     return {LocalCSRLockResult::Status::Timeout, 0, false};
 }
 
-} // namespace ASFW::Driver
-
 kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     if (!device_) {
         return kIOReturnNotAttached;
@@ -906,3 +904,5 @@ kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
 
     return kIOReturnSuccess;
 }
+
+} // namespace ASFW::Driver

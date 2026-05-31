@@ -14,6 +14,7 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/BroadcastChannelCSR.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"

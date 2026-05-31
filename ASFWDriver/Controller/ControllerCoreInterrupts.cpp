@@ -55,7 +55,7 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
     HandleFaultInterrupts(events);
     NotifyBusResetCoordinator(events, snapshot.timestamp);
     if ((events & IntEventBits::kBusReset) != 0U) {
-        const uint32_t generation = Read(Register32::kSelfIDGeneration);
+        const uint32_t generation = hw.Read(Register32::kSelfIDGeneration);
         if (deps_.busManagerElectionDriver) {
             deps_.busManagerElectionDriver->OnBusReset();
         }

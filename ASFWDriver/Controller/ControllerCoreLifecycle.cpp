@@ -11,6 +11,7 @@
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
+#include "../Bus/CSR/BroadcastChannelCSR.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
@@ -623,7 +624,7 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     // OHCI 1.1 spec §5.5: Program initial default values for autonomous IRM CSRs.
     // This prepares the controller to host IRM resources correctly after a bus reset.
     if (isOHCI_1_1_OrLater) {
-        kr = hw.ProgramInitialIRMResourceRegisters();
+        const kern_return_t kr = hw.ProgramInitialIRMResourceRegisters();
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Hardware, "❌ Failed to program initial IRM registers: 0x%08x", kr);
             // We continue anyway, as basic operation might still work
