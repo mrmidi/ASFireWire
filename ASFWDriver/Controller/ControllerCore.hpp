@@ -12,6 +12,8 @@
 #include "../Bus/IRM/LocalIRMResourceController.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../Bus/BusManager/CyclePolicyCoordinator.hpp"
+#include "../Bus/BusManager/RootSelectionCoordinator.hpp"
+#include "../Bus/BusManager/GapPolicyCoordinator.hpp"
 #include "../Discovery/DiscoveryTypes.hpp" // For Discovery::Generation
 #include "ControllerConfig.hpp"
 #include "ControllerTypes.hpp"
@@ -44,6 +46,7 @@ class BroadcastChannelCSR;
 class IRMFallbackCoordinator;
 class CyclePolicyCoordinator;
 class RootSelectionCoordinator;
+class GapPolicyCoordinator;
 class BusManagerElectionDriver;
 class BusManagerPolicyCoordinator;
 } // namespace ASFW::Bus
@@ -100,6 +103,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
                              public ASFW::Bus::IBMPolicyExecutor,
                              public ASFW::Bus::ICyclePolicyExecutor,
                              public ASFW::Bus::IRootSelectionExecutor,
+                             public ASFW::Bus::IGapPolicyExecutor,
                              public std::enable_shared_from_this<ControllerCore> {
   public:
     struct Dependencies {
@@ -241,6 +245,8 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void EvaluateBusManagerPolicy() noexcept;
     void EvaluateCyclePolicy() noexcept;
     void EvaluateRootSelectionPolicy() noexcept;
+    void EvaluateGapPolicy() noexcept;
+    void EvaluateActivePolicies() noexcept;
 
     // Async completion callbacks
     void OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,
@@ -280,6 +286,12 @@ class ControllerCore final : private Role::IPhyConfigReset,
                                       uint8_t targetRoot,
                                       bool longReset,
                                       std::optional<uint8_t> gapCount) override;
+
+    // ASFW::Bus::IGapPolicyExecutor implementation
+    bool ForceRootAndGapResetForBMPolicy(uint32_t generation,
+                                         uint8_t targetRoot,
+                                         bool longReset,
+                                         uint8_t gapCount) override;
 
     void SyncBusManagerRuntimeState() const noexcept;
 
@@ -322,6 +334,15 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::shared_ptr<Bus::IRMFallbackCoordinator> irmFallback_;
     std::unique_ptr<Bus::CyclePolicyCoordinator> cyclePolicy_;
     std::unique_ptr<Bus::RootSelectionCoordinator> rootSelection_;
+    std::unique_ptr<Bus::GapPolicyCoordinator> gapPolicy_;
+
+    struct PendingReset {
+        uint8_t targetRoot{0x3F};
+        bool longReset{false};
+        std::optional<uint8_t> gapCount;
+    };
+    std::optional<PendingReset> pendingReset_;
 };
 
 } // namespace ASFW::Driver
+::Driver

@@ -178,6 +178,7 @@ TopologyManager::UpdateFromSelfID(const SelfIDCapture::Result& result,
     snapshot.nodeCount = snapshot.physical.nodeCount;
     snapshot.rootNodeId = snapshot.physical.rootId;
     snapshot.irmNodeId = snapshot.physical.irmId;
+    snapshot.betaRepeatersPresent = snapshot.physical.betaRepeatersPresent;
     snapshot.gapCount = ObservedGapCount(*records);
     snapshot.gapCountConsistent = CalculateGapConsistency(result.quads);
 

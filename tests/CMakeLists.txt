@@ -2054,6 +2054,28 @@ target_include_directories(RootSelectionCoordinatorTests PRIVATE ${ASFW_COMMON_I
 
 gtest_discover_tests(RootSelectionCoordinatorTests)
 
+# Gap Policy Coordinator Tests (Milestone 7)
+add_executable(GapPolicyCoordinatorTests
+    "${ASFW_TESTS_DIR}/GapPolicyCoordinatorTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/BusManager/GapPolicyCoordinator.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(GapPolicyCoordinatorTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(GapPolicyCoordinatorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(GapPolicyCoordinatorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(GapPolicyCoordinatorTests)
+
 # Post-Reset Timing Core (Milestone 2) - generation-scoped post-reset timing gates
 add_executable(PostResetTimingTests
     "${ASFW_TESTS_DIR}/PostResetTimingTests.cpp"

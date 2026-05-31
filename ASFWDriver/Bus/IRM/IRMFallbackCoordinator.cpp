@@ -145,6 +145,21 @@ void IRMFallbackCoordinator::MaybeEvaluate(uint64_t nowNs) noexcept {
     }
 }
 
+void IRMFallbackCoordinator::OnRuntimeEvidenceUpdated(const BusManagerRuntimeState& bmState) noexcept {
+    if (bmState.generation != snapshot_.generation) {
+        return;
+    }
+
+    snapshot_.cycleStartObserved = bmState.cycleStartObserved;
+    snapshot_.cycleStartSourceNode = bmState.cycleStartSourceNode;
+    snapshot_.rootCmcKnown = bmState.rootCmcKnown;
+    snapshot_.rootCmcCapable = bmState.rootCmcCapable;
+
+    if (snapshot_.state == IRMFallbackState::NoBMDetected) {
+        snapshot_.plannedAction = PlanFallbackAction();
+    }
+}
+
 void IRMFallbackCoordinator::Disable() noexcept {
     snapshot_.state = IRMFallbackState::Disabled;
 }

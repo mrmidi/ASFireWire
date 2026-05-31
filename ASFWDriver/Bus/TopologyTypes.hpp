@@ -146,6 +146,7 @@ struct TopologyNodeRecord {
 
     uint8_t gapCount{63};
     uint8_t powerClass{0};
+    uint32_t speedCode{0};
     uint32_t maxSpeedMbps{0};
     uint32_t baseRaw{0};
 
@@ -167,6 +168,9 @@ struct PhysicalTopologyGraph {
     // quantity IEEE 1394-2008 Annex E / Table E.1 is indexed by for gap_count
     // optimization. A single-node bus is 0 hops. Computed in BuildPhysicalGraph.
     uint8_t busDiameterHops{0};
+    
+    // IEEE 1394b-2002 Beta repeaters require larger gap counts.
+    bool betaRepeatersPresent{false};
 
     std::vector<TopologyNodeRecord> nodes;
 };
@@ -216,6 +220,7 @@ struct TopologySnapshot {
     uint8_t nodeCount{0};
     uint8_t gapCount{63};
     bool gapCountConsistent{true};
+    bool betaRepeatersPresent{false};
 
     std::vector<uint32_t> rawSelfIdQuadlets;
 
@@ -375,3 +380,4 @@ struct SelfIDSequenceEnumerator {
 };
 
 } // namespace ASFW::Driver
+
