@@ -8,6 +8,7 @@
 #include "../IRM/IRMCSRConstants.hpp"
 #include "../Timing/PostResetTimingCoordinator.hpp"
 #include "../Timing/PostResetTiming.hpp"
+#include "../BusResetCoordinator.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Controller/ControllerTypes.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
@@ -17,12 +18,18 @@ namespace ASFW::Bus {
 BusManagerElectionDriver::BusManagerElectionDriver(Deps deps, ASFW::Driver::RolePolicy rolePolicy) noexcept
     : deps_(deps), rolePolicy_(rolePolicy) {}
 
+bool BusManagerElectionDriver::ElectionStillAllowed() const noexcept {
+    return active_ &&
+           rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+           rolePolicy_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;
+}
+
 void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap, uint64_t nowNs) noexcept {
     if (!active_) {
         return;
     }
 
-    if (rolePolicy_.roleMode != ASFW::FW::RoleMode::FullBusManager) {
+    if (!ElectionStillAllowed()) {
         return;
     }
 
@@ -98,21 +105,41 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
             inFlight_ = true;
             inFlightGen_ = generation;
             std::weak_ptr<BusManagerElectionDriver> weakSelf = shared_from_this();
-            deps_.scheduler->DispatchAsyncAfter(gate.remainingNs, [weakSelf, generation, localNodeId, irmNodeId, busBase16 = snap.busBase16]() {
+            deps_.scheduler->DispatchAsyncAfter(gate.remainingNs, [weakSelf, generation, localNodeId, irmNodeId, busBase16 = snap.busBase16, candidateClass]() {
                 auto self = weakSelf.lock();
                 if (!self || !self->active_) return;
                 
-                // Final check before contending
+                // Final check before contending: Role/Activity policy
+                if (!self->ElectionStillAllowed()) {
+                    ASFW_LOG(Controller, "[BM Election] Deferred contention suppressed: role/activity changed");
+                    self->inFlight_ = false;
+                    if (self->deps_.timing) self->deps_.timing->RecordRoleSuppression();
+                    return;
+                }
+
+                // Final check before contending: Generation
                 if (self->deps_.asyncController) {
                     const auto state = self->deps_.asyncController->GetBusStateSnapshot();
                     if (state.generation16 != generation) {
                         ASFW_LOG(Controller, "[BM Election] Aborting deferred contention: generation changed from %u to %u",
                                  generation, state.generation16);
                         self->inFlight_ = false;
+                        if (self->deps_.timing) self->deps_.timing->RecordStaleTimerFiring();
                         return;
                     }
                 }
                 
+                // Final check before contending: Re-validate timing gate
+                if (self->deps_.timing) {
+                    const uint64_t now = Driver::BusResetCoordinator::MonotonicNow();
+                    const auto finalGate = self->deps_.timing->CheckBMGate(generation, candidateClass, now);
+                    if (!finalGate.allowed) {
+                        ASFW_LOG(Controller, "[BM Election] Deferred contention aborted: gate still closed (state=%d)", static_cast<int>(finalGate.state));
+                        self->inFlight_ = false;
+                        return;
+                    }
+                }
+
                 self->attemptedGeneration_ = generation;
                 self->attemptsThisGeneration_++;
                 self->Contend(generation, localNodeId, irmNodeId, busBase16);
@@ -152,7 +179,7 @@ void BusManagerElectionDriver::Stop() noexcept {
 }
 
 void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId, uint8_t irmNodeId, uint16_t busBase16) noexcept {
-    if (!active_ || !deps_.asyncController) {
+    if (!ElectionStillAllowed() || !deps_.asyncController) {
         inFlight_ = false;
         return;
     }

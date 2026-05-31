@@ -275,6 +275,9 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
     // Delay scheduled, not executed yet
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
 
+    // ADVANCE CLOCK to open the gate (+125ms)
+    ASFW::Testing::SetHostMonotonicClockForTesting([now]() { return now + 126000000ULL; });
+
     // Drain queue tasks (drains delayed contention)
     queue->DrainAllForTesting();
 
@@ -282,6 +285,8 @@ TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
     EXPECT_EQ(mockAsync->compareSwapCount, 1);
     EXPECT_EQ(mockAsync->lastCompareSwapParams.compareValue, 0x3F);
     EXPECT_EQ(mockAsync->lastCompareSwapParams.swapValue, 1);
+    
+    ASFW::Testing::ResetHostMonotonicClockForTesting();
 }
 
 TEST(BusManagerElectionDriver, GenerationSafetyChecks) {
@@ -359,20 +364,93 @@ TEST(BusManagerElectionDriver, MaxOneAttemptPerGeneration) {
 
     // First call: attempt starts
     driver->OnTopologyReady(snap, now);
-    EXPECT_EQ(mockAsync->compareSwapCount, 0); // Delayed
+    
+    // In our manual scheduler stub, if delay is 0 it might run immediately
+    // or if the gate is OPEN it contends immediately.
+    // timing.OnSelfIDComplete(generation, now) makes the gate OPEN immediately for incumbents
+    // but CLOSED (+125ms) for challengers.
+    
+    // Challenger case: should be CLOSED
+    EXPECT_EQ(mockAsync->compareSwapCount, 0); 
     
     // Call again before task executes: should do nothing (inFlight guard)
     driver->OnTopologyReady(snap, now);
     EXPECT_EQ(mockAsync->compareSwapCount, 0);
     
+    // ADVANCE CLOCK
+    ASFW::Testing::SetHostMonotonicClockForTesting([now]() { return now + 126000000ULL; });
+
     queue->DrainAllForTesting();
     EXPECT_EQ(mockAsync->compareSwapCount, 1);
     
     // Attempt finished. Now call OnTopologyReady again for same generation.
     // Throttling guard should prevent 2nd attempt.
-    driver->OnTopologyReady(snap, now);
+    driver->OnTopologyReady(snap, now + 126000000ULL);
+    // Even if we drain, count should stay 1
     queue->DrainAllForTesting();
-    EXPECT_EQ(mockAsync->compareSwapCount, 1); // Still 1
+    EXPECT_EQ(mockAsync->compareSwapCount, 1); 
+    
+    ASFW::Testing::ResetHostMonotonicClockForTesting();
 }
 
 } // namespace
+
+TEST(BusManagerElection, RejectsInvalidOldValues) {
+    BusManagerElection fsm;
+    
+    // Case 1: All bits set (0xFFFFFFFF)
+    EXPECT_EQ(fsm.InterpretOldValue(0xFFFFFFFF, 0), ElectionOutcome::ElectionFailed);
+    EXPECT_EQ(fsm.Owner(), ASFW::Bus::BmOwner::Unknown);
+    
+    // Case 2: Bit 6 set (0x40)
+    EXPECT_EQ(fsm.InterpretOldValue(0x40, 0), ElectionOutcome::ElectionFailed);
+    
+    // Case 3: Sane 6-bit value still works
+    EXPECT_EQ(fsm.InterpretOldValue(0x10, 0), ElectionOutcome::RemoteBM);
+    EXPECT_EQ(fsm.Owner(), ASFW::Bus::BmOwner::Remote);
+    EXPECT_EQ(fsm.OwnerId(), 0x10);
+}
+
+TEST(BusManagerElectionDriver, DeferredElectionSuppressedByPolicyChange) {
+    OSSharedPtr<IODispatchQueue> queue(new IODispatchQueue(), OSNoRetain);
+    queue->SetManualDispatchForTesting(true);
+    
+    auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
+    scheduler->Bind(queue);
+
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+    auto mockAsync = std::make_shared<MockAsyncPort>();
+
+    BusManagerElectionDriver::Deps deps{
+        .asyncController = mockAsync.get(),
+        .scheduler = scheduler.get(),
+        .csrResponder = nullptr,
+        .timing = &timing
+    };
+
+    auto driver = std::make_shared<BusManagerElectionDriver>(deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
+
+    const uint32_t generation = 10;
+    mockAsync->currentGen16 = generation;
+    const uint64_t now = ASFW::Testing::HostMonotonicNow();
+    timing.OnSelfIDComplete(generation, now);
+
+    TopologySnapshot snap{};
+    snap.generation = generation;
+    snap.localNodeId = 1;
+    snap.irmNodeId = 2;
+    snap.busBase16 = 0x0;
+
+    // Schedule delayed election
+    driver->OnTopologyReady(snap, now);
+    EXPECT_EQ(mockAsync->compareSwapCount, 0);
+
+    // CHANGE POLICY BEFORE TIMER FIRES
+    driver->SetRolePolicy(RolePolicy{RoleMode::ClientOnly});
+
+    // Execute task
+    queue->DrainAllForTesting();
+
+    // Should be suppressed
+    EXPECT_EQ(mockAsync->compareSwapCount, 0);
+}
