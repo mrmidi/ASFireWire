@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
+#include "../Bus/IRM/IRMCSRConstants.hpp"
 #include "IEEE1394.hpp"
 #include "Logging.hpp"
 
@@ -877,3 +878,31 @@ LocalCSRLockResult HardwareInterface::CompareSwapLocalIRMResource(uint32_t selec
 }
 
 } // namespace ASFW::Driver
+
+kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
+    if (!device_) {
+        return kIOReturnNotAttached;
+    }
+
+    using namespace ASFW::Driver::IRMCSR;
+
+    ASFW_LOG(Hardware, "[IRM] Programming initial registers: bw=0x%08x hi=0x%08x lo=0x%08x",
+             kInitialBandwidthAvailable, kInitialChannelsAvailableHi, kInitialChannelsAvailableLo);
+
+    WriteAndFlush(Register32::kInitialBandwidthAvailable, kInitialBandwidthAvailable);
+    WriteAndFlush(Register32::kInitialChannelsAvailableHi, kInitialChannelsAvailableHi);
+    WriteAndFlush(Register32::kInitialChannelsAvailableLo, kInitialChannelsAvailableLo);
+
+    // Read back verification
+    uint32_t bw = Read(Register32::kInitialBandwidthAvailable);
+    uint32_t hi = Read(Register32::kInitialChannelsAvailableHi);
+    uint32_t lo = Read(Register32::kInitialChannelsAvailableLo);
+
+    if (bw != kInitialBandwidthAvailable || hi != kInitialChannelsAvailableHi || lo != kInitialChannelsAvailableLo) {
+        ASFW_LOG(Hardware, "❌ [IRM] Initial register readback mismatch! read: bw=0x%08x hi=0x%08x lo=0x%08x",
+                 bw, hi, lo);
+        return kIOReturnError;
+    }
+
+    return kIOReturnSuccess;
+}

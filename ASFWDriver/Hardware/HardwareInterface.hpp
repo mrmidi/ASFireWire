@@ -146,6 +146,13 @@ class HardwareInterface {
     [[nodiscard]] LocalCSRLockResult CompareSwapLocalIRMResource(
         uint32_t selectCode, uint32_t compareValue, uint32_t newValue) noexcept;
 
+    /**
+     * @brief Writes canonical initial values to OHCI registers 0x0B0, 0x0B4, and 0x0B8.
+     * OHCI 1.1 §5.5: These registers provide the default values for the autonomous CSRs
+     * after a bus reset.
+     */
+    kern_return_t ProgramInitialIRMResourceRegisters() noexcept;
+
 #ifdef ASFW_HOST_TEST
     enum class TestOperation : uint8_t {
         Write,
