@@ -35,8 +35,6 @@
 #include "Async/AsyncSubsystem.hpp"
 #include "Async/DMAMemoryImpl.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
-#include "Async/PacketHelpers.hpp"
-#include "Async/ResponseCode.hpp"
 #include "Audio/AudioCoordinator.hpp"
 #include "Bus/SelfIDCapture.hpp"
 #include "Common/DriverKitOwnership.hpp"
@@ -222,32 +220,6 @@ kern_return_t IMPL(ASFWDriver, Start) {
             std::make_shared<ASFW::Protocols::AVC::FCPResponseRouter>(*ctx.deps.avcDiscovery, bus);
         ctx.controller->SetFCPResponseRouter(ctx.deps.fcpResponseRouter);
         ASFW_LOG(Controller, "✅ FCPResponseRouter initialized");
-    }
-
-    if (ctx.deps.fcpResponseRouter && ctx.deps.asyncSubsystem) {
-        if (auto* router = ctx.deps.asyncSubsystem->GetPacketRouter()) {
-            router->RegisterRequestHandler(
-                0x1, // tCode for Block Write Request
-                [fcpRouter =
-                     ctx.deps.fcpResponseRouter.get()](const ASFW::Async::ARPacketView& packet) {
-                    if (fcpRouter) {
-                        const ASFW::Protocols::Ports::BlockWriteRequestView request{
-                            .sourceID = packet.sourceID,
-                            .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
-                            .payload = packet.payload,
-                        };
-
-                        const auto disposition = fcpRouter->RouteBlockWrite(request);
-                        if (disposition ==
-                            ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
-                            return ASFW::Async::ResponseCode::AddressError;
-                        }
-                        return ASFW::Async::ResponseCode::Complete;
-                    }
-                    return ASFW::Async::ResponseCode::NoResponse;
-                });
-            ASFW_LOG(Controller, "✅ FCPResponseRouter wired to PacketRouter (tCode 0x1)");
-        }
     }
 
     DriverWiring::EnsureSbp2Deps(ctx);
