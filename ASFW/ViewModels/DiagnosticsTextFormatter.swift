@@ -470,6 +470,57 @@ struct DiagnosticsTextFormatter {
         }
         appendRow("Full BM Activity Level", activityStr)
 
+        // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
+        // Generation-scoped gates anchored to Self-ID completion. Reporting only:
+        // the driver takes no bus action from these gates in this milestone, so an
+        // Open BM gate with a "Not a candidate" class still means the local node
+        // will not contend (role policy suppresses it).
+        let prt = snapshot.postResetTiming
+        // TimingGateState (ASFWDriver/Bus/Timing/PostResetTiming.hpp).
+        func gateStateName(_ v: UInt32) -> String {
+            switch v {
+            case 0: return "Unknown"
+            case 1: return "Closed"
+            case 2: return "Open"
+            case 3: return "Expired (old generation)"
+            case 4: return "Suppressed (role policy)"
+            case 5: return "Suppressed (topology)"
+            default: return "Unknown (\(v))"
+            }
+        }
+        // A delayed gate renders as "Open" or "Closed / opens in N ms".
+        func gateLine(_ state: UInt32, _ remainingNs: UInt64) -> String {
+            switch state {
+            case 2: return "Open"
+            case 1:
+                if prt.selfIdComplete == 0 { return "Closed (awaiting Self-ID)" }
+                return String(format: "Closed / opens in %.1f ms", Double(remainingNs) / 1_000_000.0)
+            default: return gateStateName(state)
+            }
+        }
+        // BMCandidateClass (ASFWDriver/Bus/Timing/PostResetTiming.hpp).
+        func candidateClassName(_ v: UInt32) -> String {
+            switch v {
+            case 0: return "Not a candidate"
+            case 1: return "Incumbent"
+            case 2: return "Non-incumbent"
+            default: return "Unknown (\(v))"
+            }
+        }
+        appendTitle("Post-Reset Timing")
+        appendRow("Self-ID Complete", prt.selfIdComplete != 0 ? "Yes" : "No")
+        appendRow("Generation", prt.generation)
+        appendRow("Self-ID Age", String(format: "%.3f ms", Double(prt.ageSinceSelfIdNs) / 1_000_000.0))
+        appendRow("BM Incumbent Gate",
+                  prt.incumbentBMGate == 2 ? "Open" : gateStateName(prt.incumbentBMGate))
+        appendRow("BM Non-Incumbent Gate", gateLine(prt.nonIncumbentBMGate, prt.nonIncumbentBMRemainingNs))
+        appendRow("IRM Fallback Gate", gateLine(prt.irmFallbackGate, prt.irmFallbackRemainingNs))
+        appendRow("New ISO Allocation Gate", gateLine(prt.newIsoAllocationGate, prt.newIsoAllocationRemainingNs))
+        appendRow("BM Candidate Class", candidateClassName(prt.bmCandidateClass))
+        appendRow("Stale Timer Firings", prt.staleTimerFirings)
+        appendRow("Suppressed By Generation", prt.suppressedByGeneration)
+        appendRow("Suppressed By Role Policy", prt.suppressedByRolePolicy)
+
         // --- OHCI Registers ---
         appendTitle("OHCI Link/Controller Snapshot")
         appendRow("OHCI Version", formatHex32(snapshot.ohci.version))

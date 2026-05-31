@@ -19,6 +19,7 @@ struct ASFWDiagnosticsSnapshot {
     let asyncTrace: ASFWDiagAsyncTrace
     let inboundCSRStats: ASFWDiagInboundCSRStats
     let busManager: ASFWDiagBusManager
+    let postResetTiming: ASFWDiagPostResetTiming
 }
 
 /// Client to invoke diagnostic selectors on the ASFW driver.
@@ -117,7 +118,12 @@ final class ASFWDiagnosticsClient {
             selector: 1009,
             expectedSize: MemoryLayout<ASFWDiagBusManager>.size
         )
-        
+
+        let postResetTiming: ASFWDiagPostResetTiming = try loadDiagStruct(
+            selector: 1010,
+            expectedSize: MemoryLayout<ASFWDiagPostResetTiming>.size
+        )
+
         // Verify cross-struct generation consistency.
         // We compare generation IDs across all collected structures.
         let gen = busContract.header.generation
@@ -125,7 +131,8 @@ final class ASFWDiagnosticsClient {
            roleCoordinator.header.generation != gen ||
            phy.header.generation != gen ||
            asyncTrace.header.generation != gen ||
-           busManager.header.generation != gen {
+           busManager.header.generation != gen ||
+           postResetTiming.header.generation != gen {
             print("[DiagClient] ⚠️ Cross-struct generation mismatch. BusContract: \(gen), Topology: \(topology.header.generation), RoleCoord: \(roleCoordinator.header.generation), PHY: \(phy.header.generation), Trace: \(asyncTrace.header.generation), BusManager: \(busManager.header.generation)")
             throw DiagnosticsError.staleGeneration
         }
@@ -139,7 +146,8 @@ final class ASFWDiagnosticsClient {
             csrContract: csrContract,
             asyncTrace: asyncTrace,
             inboundCSRStats: inboundCSRStats,
-            busManager: busManager
+            busManager: busManager,
+            postResetTiming: postResetTiming
         )
     }
     
