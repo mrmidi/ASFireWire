@@ -349,7 +349,17 @@ typedef struct ASFWDiagBusManager {
     uint32_t initialBandwidthAvailable;
     uint32_t initialChannelsAvailableHi;
     uint32_t initialChannelsAvailableLo;
-    
+
+    // Milestone 3 additions: Bus Manager Election State
+    uint32_t bmElectionState;
+    uint32_t bmElectionResultKind;
+    uint32_t bmElectionLocalFlag;
+    uint32_t bmElectionAction;
+    uint32_t bmElectionPath; // 0=none, 1=Local CSRControl, 2=Remote async lock
+    uint32_t bmElectionCompareValue;
+    uint32_t bmElectionSwapValue;
+    uint32_t bmCandidateClass;
+
     uint32_t reserved[4];
 } ASFWDiagBusManager;
 
