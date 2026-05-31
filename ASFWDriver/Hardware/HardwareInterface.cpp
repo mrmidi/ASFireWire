@@ -922,4 +922,19 @@ kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     return kIOReturnSuccess;
 }
 
+bool HardwareInterface::IsLocalCycleMasterEnabled() const noexcept {
+    return (ReadLinkControl() & LinkControlBits::kCycleMaster) != 0;
+}
+
+bool HardwareInterface::SetLocalCycleMasterEnabled(bool enable) noexcept {
+    if (enable) {
+        WriteAndFlush(Register32::kLinkControlSet, LinkControlBits::kCycleMaster);
+    } else {
+        WriteAndFlush(Register32::kLinkControlClear, LinkControlBits::kCycleMaster);
+    }
+
+    // Verify via readback
+    return IsLocalCycleMasterEnabled() == enable;
+}
+
 } // namespace ASFW::Driver

@@ -134,6 +134,18 @@ class HardwareInterface {
         return Read(Register32::kLinkControl);
     }
 
+    /**
+     * @brief Checks if the local OHCI cycleMaster bit is currently set in LinkControl.
+     */
+    [[nodiscard]] bool IsLocalCycleMasterEnabled() const noexcept;
+
+    /**
+     * @brief Sets or clears the local OHCI cycleMaster bit via LinkControlSet/Clear.
+     * Per OHCI §5.3.3: This node generates cycle-start packets only when it is the bus root.
+     * Returns true if the hardware readback matches the requested state.
+     */
+    bool SetLocalCycleMasterEnabled(bool enable) noexcept;
+
     // Cycle Timer access (OHCI §5.6, offset 0xF0)
     // Format: [seconds:7][cycles:13][offset:12] = 32 bits total
     // - seconds: 0-127 (wraps every 128 seconds, triggers cycle64Seconds interrupt)
