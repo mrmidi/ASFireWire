@@ -729,6 +729,20 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->cyclePolicyRemoteSubmitCount = snap.remoteCmstrSubmitCount;
     }
 
+    if (auto* const rootSel = controller_->GetRootSelectionCoordinator()) {
+        auto snap = rootSel->Snapshot();
+        out->rootSelectionDecision = static_cast<uint32_t>(snap.lastDecision);
+        out->rootSelectionAction = static_cast<uint32_t>(snap.lastAction);
+        out->rootSelectionSelectedRoot = snap.selectedRoot;
+        out->rootSelectionPreviousRoot = snap.previousRoot;
+        out->rootSelectionAttemptsThisTopology = snap.attemptsThisTopology;
+        out->rootSelectionTotalAttempts = snap.totalAttempts;
+        out->rootSelectionRetryLimitHit = snap.retryLimitHit ? 1 : 0;
+        out->rootSelectionResetRequested = snap.resetRequested ? 1 : 0;
+        out->rootSelectionCurrentGap = snap.currentGapCount;
+        out->rootSelectionRequestedGap = snap.requestedGapCount;
+    }
+
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {
         return ASFWDiagStatusStaleGeneration;
