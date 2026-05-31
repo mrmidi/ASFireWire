@@ -141,7 +141,11 @@ void CyclePolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     const uint32_t localCount = snapshot_.localCycleMasterEnableCount;
     const uint32_t remoteCount = snapshot_.remoteCmstrSubmitCount;
     const uint32_t suppressedCount = snapshot_.suppressedCount;
-    const uint32_t staleCount = snapshot_.staleGenerationDrops;
+    uint32_t staleCount = snapshot_.staleGenerationDrops;
+
+    if (remoteCmstrHandle_.IsValid()) {
+        staleCount++;
+    }
 
     snapshot_ = {};
     snapshot_.generation = generation;
@@ -149,6 +153,10 @@ void CyclePolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     snapshot_.remoteCmstrSubmitCount = remoteCount;
     snapshot_.suppressedCount = suppressedCount;
     snapshot_.staleGenerationDrops = staleCount;
+
+    remoteCmstrHandle_.Invalidate();
+    lastRemoteCmstrGeneration_ = 0;
+    lastRemoteCmstrTargetNode_ = 0x3F;
 }
 
 void CyclePolicyCoordinator::OnRemoteCmstrComplete(uint32_t generation, uint8_t targetNode,

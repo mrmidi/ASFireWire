@@ -110,6 +110,9 @@ struct RootSelectionInputs {
     bool rootCmcKnown{false};
     bool rootCmcCapable{false};
 
+    bool localCmcKnown{false};
+    bool localCmcCapable{false};
+
     uint8_t currentGapCount{63};
 
     const ASFW::Driver::TopologySnapshot* topology{nullptr};

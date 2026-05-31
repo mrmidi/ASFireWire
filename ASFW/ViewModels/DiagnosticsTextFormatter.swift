@@ -646,11 +646,22 @@ struct DiagnosticsTextFormatter {
         
         appendRow("Previous Root", snapshot.busManager.rootSelectionPreviousRoot == 0x3F ? "none" : "node \(snapshot.busManager.rootSelectionPreviousRoot)")
         appendRow("Selected Root", snapshot.busManager.rootSelectionSelectedRoot == 0x3F ? "none" : "node \(snapshot.busManager.rootSelectionSelectedRoot)")
-        appendRow("Reason", "current root CMC=false, no cycle start")
+        
+        let rootReasonStr: String
+        switch snapshot.busManager.rootSelectionDecision {
+        case 6: rootReasonStr = "Current root CMC=false, no cycle start"
+        case 10: rootReasonStr = "Remote-root selection (future goal; currently local only)"
+        case 11: rootReasonStr = "No cycle-master-capable candidates found"
+        case 12: rootReasonStr = "Reset attempt limit reached for this topology"
+        default: rootReasonStr = "none"
+        }
+        appendRow("Reason", rootReasonStr)
+
         appendRow("Attempts This Topology", "\(snapshot.busManager.rootSelectionAttemptsThisTopology) / 5")
         appendRow("Total Attempts", snapshot.busManager.rootSelectionTotalAttempts)
         appendRow("Reset Requested", snapshot.busManager.rootSelectionResetRequested != 0 ? "Yes" : "No")
-        appendRow("Gap Policy", "unchanged, M7 owns optimization")
+        appendRow("Current Gap Count", snapshot.busManager.rootSelectionCurrentGap)
+        appendRow("Requested Gap Count", "unchanged (M7 owns optimization)")
 
         // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
         // Generation-scoped gates anchored to Self-ID completion. Reporting only:
