@@ -4,6 +4,7 @@
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
+#include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Common/CSRSpace.hpp"
 #include "../Controller/ControllerConfig.hpp"
 #include "../Async/AsyncSubsystem.hpp"
@@ -675,6 +676,26 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
     out->lastRemoteCmstrResult = bmState.lastRemoteCmstrResult;
     out->lastRemoteCmstrGeneration = bmState.lastRemoteCmstrGeneration;
     out->lastRemoteCmstrTargetNode = bmState.lastRemoteCmstrTargetNode;
+
+    // Milestone 3 additions: Bus Manager Election State
+    if (auto* const electDriver = controller_->GetBusManagerElectionDriver()) {
+        auto electSnap = electDriver->GetSnapshot();
+        out->bmElectionState = electSnap.inFlight ? 1 : 0;
+        out->bmElectionResultKind = static_cast<uint32_t>(electDriver->FSM().Owner());
+        out->bmElectionLocalFlag = electSnap.wasIncumbent ? 1 : 0;
+        out->bmElectionPath = electSnap.lastElectionPath;
+        out->bmElectionCompareValue = 0x3F;
+        out->bmElectionSwapValue = electSnap.localNodeId;
+        
+        // Re-classify for display (policy-level)
+        out->bmCandidateClass = static_cast<uint32_t>(Bus::Timing::BMCandidateClass::NotCandidate);
+        if (rolePolicy.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+            rolePolicy.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) {
+            out->bmCandidateClass = static_cast<uint32_t>(electSnap.wasIncumbent
+                                                              ? Bus::Timing::BMCandidateClass::Incumbent
+                                                              : Bus::Timing::BMCandidateClass::NonIncumbent);
+        }
+    }
 
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {

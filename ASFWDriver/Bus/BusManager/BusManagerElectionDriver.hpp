@@ -56,6 +56,32 @@ public:
     void SetRolePolicy(const ASFW::Driver::RolePolicy& policy) noexcept { rolePolicy_ = policy; }
     void SetObserver(IBMRoleEvents* observer) noexcept { observer_ = observer; }
 
+    // Milestone 3 diagnostics
+    struct Snapshot {
+        uint32_t generation{0};
+        uint8_t localNodeId{0xFF};
+        uint8_t irmNodeId{0xFF};
+        uint32_t lastOldValue{0x3F};
+        bool inFlight{false};
+        bool wasIncumbent{false};
+        uint32_t attemptedGen{0};
+        uint8_t attemptsThisGen{0};
+        uint8_t lastElectionPath{0}; // 0=none, 1=Local, 2=Remote
+    };
+    [[nodiscard]] Snapshot GetSnapshot() const noexcept {
+        return Snapshot{
+            .generation = inFlightGen_,
+            .localNodeId = localNodeId_,
+            .irmNodeId = irmNodeId_,
+            .lastOldValue = fsm_.LastOldValue(),
+            .inFlight = inFlight_,
+            .wasIncumbent = wasIncumbent_,
+            .attemptedGen = attemptedGeneration_,
+            .attemptsThisGen = attemptsThisGeneration_,
+            .lastElectionPath = lastElectionPath_
+        };
+    }
+
     // Accessors for diagnostics / testing
     [[nodiscard]] const BusManagerElection& FSM() const noexcept { return fsm_; }
     [[nodiscard]] BusManagerElection& FSM() noexcept { return fsm_; }
@@ -78,6 +104,9 @@ private:
     uint32_t inFlightGen_{0};
     uint32_t attemptedGeneration_{0};
     uint8_t attemptsThisGeneration_{0};
+    uint8_t localNodeId_{0xFF};
+    uint8_t irmNodeId_{0xFF};
+    uint8_t lastElectionPath_{0};
     bool active_{true};
 };
 

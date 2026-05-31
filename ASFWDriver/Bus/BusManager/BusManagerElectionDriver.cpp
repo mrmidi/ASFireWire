@@ -35,6 +35,9 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
     const uint8_t irmNodeId = snap.irmNodeId;
     const uint32_t generation = snap.generation;
 
+    localNodeId_ = localNodeId;
+    irmNodeId_ = irmNodeId;
+
     // Milestone 3: Max one election attempt per generation
     if (attemptedGeneration_ == generation && attemptsThisGeneration_ >= 1) {
         return;
@@ -128,6 +131,7 @@ void BusManagerElectionDriver::OnBusReset() noexcept {
     inFlight_ = false;
     inFlightGen_ = 0;
     attemptsThisGeneration_ = 0;
+    lastElectionPath_ = 0;
     if (inFlightHandle_) {
         if (deps_.asyncController) {
             deps_.asyncController->Cancel(inFlightHandle_);
@@ -164,7 +168,8 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
     // Local Loopback Compare-Swap Branching (FW-14)
     if (irmNodeId == localNodeId) {
         ASFW_LOG(Controller, "[BM Election] Local node is IRM; routing CompareSwap through local CSRControl loopback");
-        
+        lastElectionPath_ = 1; // Local
+
         ASFW::Driver::LocalCSRLockResult result;
         if (deps_.hardware == nullptr) {
             ASFW_LOG(Controller, "[BM Election] Cannot perform local CompareSwap: hardware interface is null");
@@ -193,6 +198,8 @@ void BusManagerElectionDriver::Contend(uint32_t generation, uint8_t localNodeId,
         HandleCompareSwapResult(generation, localNodeId, ASFW::Async::AsyncStatus::kSuccess, result.oldValue, result.compareMatched);
         return;
     }
+
+    lastElectionPath_ = 2; // Remote
 
     ASFW::Async::CompareSwapParams params{
         .destinationID = ASFW::Driver::ComposeNodeID(busBase16, irmNodeId),
