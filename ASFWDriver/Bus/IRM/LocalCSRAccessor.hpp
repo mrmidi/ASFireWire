@@ -31,6 +31,10 @@ public:
     [[nodiscard]] ASFW::Driver::LocalCSRLockResult ProbeChannelsHiNoChange(uint32_t expected) noexcept;
     [[nodiscard]] ASFW::Driver::LocalCSRLockResult ProbeChannelsLoNoChange(uint32_t expected) noexcept;
 
+    // Real Compare-Swap for election
+    [[nodiscard]] ASFW::Driver::LocalCSRLockResult CompareSwapBusManagerId(uint32_t compareValue,
+                                                                         uint32_t newValue) noexcept;
+
 private:
     ASFW::Driver::HardwareInterface& hw_;
 };

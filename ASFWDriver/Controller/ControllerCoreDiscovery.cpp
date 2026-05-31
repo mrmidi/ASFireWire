@@ -131,6 +131,21 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         bmState_.localIsIRM = false;
     }
 
+    if (snap.rootNodeId != Driver::kInvalidPhysicalId) {
+        bmState_.rootNodeId = snap.rootNodeId;
+        bmState_.localIsRoot = (snap.localNodeId == snap.rootNodeId);
+    } else {
+        bmState_.rootNodeId = 0x3F;
+        bmState_.localIsRoot = false;
+    }
+
+    // Clear stale BM ownership from previous generation.
+    // Only OnLocalWonBM / OnRemoteBM may set these after the new election.
+    bmState_.localIsBM = false;
+    bmState_.bmNodeId = 0x3F;
+    bmState_.bmOwnerSource = ASFW::Bus::BMOwnerSource::Unknown;
+    bmState_.ResetGenerationScopedPolicy();
+
     const bool roleAllowsIRMHost =
         rolePolicy_.roleMode == ASFW::FW::RoleMode::IRMResourceHost ||
         rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager;
@@ -146,21 +161,6 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         irmFallback_->OnTopologyReady(snap, rolePolicy_, GetBusManagerRuntimeState(),
                                       BusResetCoordinator::MonotonicNow());
     }
-
-    if (snap.rootNodeId != Driver::kInvalidPhysicalId) {
-        bmState_.rootNodeId = snap.rootNodeId;
-        bmState_.localIsRoot = (snap.localNodeId == snap.rootNodeId);
-    } else {
-        bmState_.rootNodeId = 0x3F;
-        bmState_.localIsRoot = false;
-    }
-
-    // Clear stale BM ownership from previous generation.
-    // Only OnLocalWonBM / OnRemoteBM may set these after the new election.
-    bmState_.localIsBM = false;
-    bmState_.bmNodeId = 0x3F;
-    bmState_.bmOwnerSource = ASFW::Bus::BMOwnerSource::Unknown;
-    bmState_.ResetGenerationScopedPolicy();
 
     // FW-6/FW-7: hand the new topology/generation to role policy before any
     // discovery-specific early returns — role policy is independent of ROM scan.

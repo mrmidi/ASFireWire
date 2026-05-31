@@ -352,12 +352,12 @@ enum class RoleMode : uint8_t {
     // Full Bus Manager: bmc=1, irmc=1 (legal only once FW-18/19/20/21 land).
     FullBusManager = 3,
 };
-
 // Capability ladder for FullBusManager mode, ordered least- to most-invasive so
-// the `>=` threshold gates compose correctly. RemoteCmstrAllowed is LAST and the
-// hardest to unlock: writing a remote STATE_SET.cmstr is done by neither the
-// Apple nor the Linux reference stack (see FW-16/FW-17), so it is an explicit
-// experimental/spec-only deviation, never implied by enabling force-root.
+// the `>=` threshold gates compose correctly. RemoteCmstrAllowed is LAST:
+// sending remote STATE_SET.cmstr writes to the root node if it is CMC-capable
+// but not currently cycling. This is a spec/Linux-compatible path; not the
+// Apple-compatible default; explicit opt-in only.
+//
 // NOTE: the numeric values cross the diagnostics ABI to the Swift GUI
 // (ASFWDiagnosticsABI.h + DiagnosticsTextFormatter.swift) — keep both in sync.
 enum class FullBMActivityLevel : uint8_t {

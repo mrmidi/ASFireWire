@@ -344,7 +344,7 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
 
     if (deps_.hardware && deps_.busReset) {
         Bus::IRMFallbackCoordinator::Deps fallbackDeps{
-            .hardware = deps_.hardware.get(),
+            .hardware = *deps_.hardware,
             .timing = &deps_.busReset->PostResetTiming(),
             .scheduler = deps_.scheduler.get()
         };

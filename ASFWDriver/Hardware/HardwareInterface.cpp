@@ -805,8 +805,9 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
     
     // OHCI 1.1 §5.5.1: Write sequence is kCSRData, kCSRCompareData, then kCSRControl.
     // Cross-validated with Linux: firewire/ohci.c:1680-1682
+    const uint32_t expectedOld = currentValResult.value;
     Write(Register32::kCSRData, value);
-    Write(Register32::kCSRCompareData, currentValResult.value);
+    Write(Register32::kCSRCompareData, expectedOld);
     Write(Register32::kCSRControl, selectCode & 0x3u);
     FlushPostedWrites();
     
@@ -814,6 +815,20 @@ LocalCSRWriteResult HardwareInterface::WriteLocalIRMResource(uint32_t selectCode
     for (int i = 0; i < kMaxTries; ++i) {
         uint32_t ctrl = Read(Register32::kCSRControl);
         if (ctrl & 0x80000000u) {
+            // OHCI places the previous value into CSRData upon completion.
+            const uint32_t actualOld = Read(Register32::kCSRData);
+            if (actualOld != expectedOld) {
+                ASFW_LOG(Hardware, "❌ WriteLocalIRMResource raced: expected old 0x%08x, got 0x%08x", expectedOld, actualOld);
+                return {LocalCSRLockResult::Status::Timeout}; // Reuse timeout or add Raced
+            }
+            
+            // Final verification readback
+            const auto finalVal = ReadLocalIRMResource(selectCode);
+            if (finalVal.status == LocalCSRLockResult::Status::Success && finalVal.value != value) {
+                ASFW_LOG(Hardware, "❌ WriteLocalIRMResource verification failed: expected 0x%08x, read back 0x%08x", value, finalVal.value);
+                return {LocalCSRLockResult::Status::Timeout};
+            }
+
             return {LocalCSRLockResult::Status::Success};
         }
 #ifndef ASFW_HOST_TEST
@@ -899,9 +914,11 @@ kern_return_t HardwareInterface::ProgramInitialIRMResourceRegisters() noexcept {
     if (bw != kInitialBandwidthAvailable || hi != kInitialChannelsAvailableHi || lo != kInitialChannelsAvailableLo) {
         ASFW_LOG(Hardware, "❌ [IRM] Initial register readback mismatch! read: bw=0x%08x hi=0x%08x lo=0x%08x",
                  bw, hi, lo);
+        initialIRMRegistersProgrammed_ = false;
         return kIOReturnError;
     }
 
+    initialIRMRegistersProgrammed_ = true;
     return kIOReturnSuccess;
 }
 
