@@ -306,9 +306,9 @@ ASFWDiagStatus DiagnosticsService::CollectPostResetTiming(ASFWDiagPostResetTimin
     // — including the ObserveOnly default — is NotCandidate, so the report makes
     // clear that an Open BM gate does not imply the local node will contend.
     out->bmCandidateClass = static_cast<uint32_t>(Bus::Timing::BMCandidateClass::NotCandidate);
-    const auto& cfg = controller_->GetConfig();
-    if (cfg.roleMode == ASFW::FW::RoleMode::FullBusManager &&
-        cfg.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) {
+    const auto& rolePolicy = controller_->GetRolePolicy();
+    if (rolePolicy.roleMode == ASFW::FW::RoleMode::FullBusManager &&
+        rolePolicy.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) {
         const auto& bmState = controller_->GetBusManagerRuntimeState();
         const bool incumbent = (bmState.bmNodeId != 0x3F) && (bmState.localNodeId == bmState.bmNodeId);
         out->bmCandidateClass = static_cast<uint32_t>(incumbent
