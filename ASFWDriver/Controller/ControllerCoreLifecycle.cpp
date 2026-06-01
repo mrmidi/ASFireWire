@@ -364,6 +364,9 @@ ControllerCore::ControllerCore(ControllerConfig config, RolePolicy initialPolicy
     powerLinkPolicy_ = std::make_unique<Bus::PowerLinkPolicyCoordinator>(Bus::PowerLinkPolicyConfig{});
     ASFW_LOG(Controller, "✅ PowerLinkPolicyCoordinator created");
 
+    speedMapService_ = std::make_shared<Bus::SpeedMapService>();
+    ASFW_LOG(Controller, "✅ SpeedMapService created");
+
     if (deps_.asyncController && deps_.topology) {
         busImpl_ =
             std::make_unique<Async::FireWireBusImpl>(*deps_.asyncController, *deps_.topology);

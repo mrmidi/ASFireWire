@@ -105,6 +105,7 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
 
     std::span<uint32_t, 256> outSpan(hostMap_);
     const uint32_t filledQuads = BuildTopologyMap(snapshot, generation_, outSpan);
+    publishStatus_ = TopologyMapPublishStatus::Valid;
 
     // Sync to big-endian DMA mirror
     if (dmaMap_) {
@@ -130,8 +131,33 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
              generation_, snapshot.nodeCount, selfIdCount);
 }
 
+void TopologyMapService::PublishZeroLength(uint32_t generation) noexcept {
+    ASFW::Async::IOScopedLock guard(lock_);
+    if (!started_ && !StartLocked()) {
+        return;
+    }
+
+    // A zero-length map according to IEEE 1212 is just a header with length=0.
+    // We use our local generation_ for continuity.
+    generation_++;
+    publishStatus_ = TopologyMapPublishStatus::ZeroLengthDueToTopologyError;
+
+    std::memset(hostMap_, 0, sizeof(hostMap_));
+    // q0: [length:16][generation:16]
+    hostMap_[0] = (generation & 0xFFFFu); // length = 0
+
+    if (dmaMap_) {
+        auto* const base = reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(dmaMap_->GetAddress()));
+        base[0] = OSSwapHostToBigInt32(hostMap_[0]);
+        OSSynchronizeIO();
+    }
+
+    ASFW_LOG(Controller, "TopologyMapService: Zero-length map published for generation %u", generation_);
+}
+
 void TopologyMapService::InvalidateLocked() noexcept {
     hostMap_[0] = 0;
+    publishStatus_ = TopologyMapPublishStatus::Invalid;
     if (dmaMap_) {
         auto* const base = reinterpret_cast<uint32_t*>(static_cast<uintptr_t>(dmaMap_->GetAddress()));
         base[0] = 0;

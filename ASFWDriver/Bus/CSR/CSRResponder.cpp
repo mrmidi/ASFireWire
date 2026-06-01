@@ -49,8 +49,9 @@ CSRResponder::Result CSRResponder::HandleStateRead() const noexcept {
 
 CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t value) noexcept {
     // The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
+    // If it is implemented, it should be read-only.
     if (InSpeedMapRegion(csrOffsetLo)) {
-        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+        return Result{.mine = true, .rcode = ResponseCode::TypeError, .readValue = 0};
     }
 
     switch (csrOffsetLo) {
@@ -85,11 +86,6 @@ CSRResponder::Result CSRResponder::WriteQuadlet(uint32_t csrOffsetLo, uint32_t v
 }
 
 CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
-    // The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
-    if (InSpeedMapRegion(csrOffsetLo)) {
-        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
-    }
-
     switch (csrOffsetLo) {
     case FW::kCSR_StateSet:
     case FW::kCSR_StateClear:
@@ -125,13 +121,28 @@ CSRResponder::Result CSRResponder::ReadQuadlet(uint32_t csrOffsetLo) noexcept {
         return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
     }
 
+    if (InSpeedMapRegion(csrOffsetLo)) {
+        if ((csrOffsetLo & 0x3u) != 0) {
+            return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+        }
+        if (deps_.speedMap == nullptr) {
+            return Result{.mine = false};
+        }
+        const uint32_t regionOffset = csrOffsetLo - FW::kCSR_SpeedMapBase;
+        uint32_t out = 0;
+        if (deps_.speedMap->ReadQuadlet(regionOffset, out)) {
+            return Result{.mine = true, .rcode = ResponseCode::Complete, .readValue = out};
+        }
+        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+    }
+
     return Result{.mine = false};
 }
 
 CSRResponder::Result CSRResponder::BlockReadClaim(uint32_t csrOffsetLo, uint32_t length) noexcept {
-    // The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
     if (InSpeedMapRegion(csrOffsetLo)) {
-        return Result{.mine = true, .rcode = ResponseCode::AddressError, .readValue = 0};
+        // SPEED_MAP is obsolete but readable.
+        return Result{.mine = true, .rcode = ResponseCode::TypeError, .readValue = 0};
     }
     if (!InTopologyRegion(csrOffsetLo)) {
         return Result{.mine = false};

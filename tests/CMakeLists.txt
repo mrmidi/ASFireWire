@@ -2098,6 +2098,80 @@ target_include_directories(PowerLinkPolicyCoordinatorTests PRIVATE ${ASFW_COMMON
 
 gtest_discover_tests(PowerLinkPolicyCoordinatorTests)
 
+# SPEED_MAP Service Tests (Milestone 9)
+add_executable(SpeedMapServiceTests
+    "${ASFW_TESTS_DIR}/SpeedMapServiceTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/SpeedMapService.cpp"
+)
+
+target_link_libraries(SpeedMapServiceTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SpeedMapServiceTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SpeedMapServiceTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SpeedMapServiceTests)
+
+# CSR Responder Contract Tests (Milestone 9)
+add_executable(CSRResponderContractTests
+    "${ASFW_TESTS_DIR}/CSRResponderContractTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/CSRResponder.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapService.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/SpeedMapService.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(CSRResponderContractTests
+    PRIVATE
+        GTest::gtest_main
+        GTest::gmock
+)
+
+target_compile_definitions(CSRResponderContractTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CSRResponderContractTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CSRResponderContractTests)
+
+# CSR Contract Verifier Tests (Milestone 9)
+add_executable(CSRContractVerifierTests
+    "${ASFW_TESTS_DIR}/CSRContractVerifierTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/CSRContractVerifier.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/CSRResponder.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapService.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/TopologyMapBuilder.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/CSR/SpeedMapService.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceController.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalCSRAccessor.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(CSRContractVerifierTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(CSRContractVerifierTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(CSRContractVerifierTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(CSRContractVerifierTests)
+
 # Post-Reset Timing Core (Milestone 2) - generation-scoped post-reset timing gates
 add_executable(PostResetTimingTests
     "${ASFW_TESTS_DIR}/PostResetTimingTests.cpp"
