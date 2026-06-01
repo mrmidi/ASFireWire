@@ -101,7 +101,7 @@ void TopologyMapService::Rebuild(const ASFW::Driver::TopologySnapshot& snapshot)
         return;
     }
 
-    generation_++;
+    generation_ = snapshot.generation;
 
     std::span<uint32_t, 256> outSpan(hostMap_);
     const uint32_t filledQuads = BuildTopologyMap(snapshot, generation_, outSpan);
@@ -138,8 +138,7 @@ void TopologyMapService::PublishZeroLength(uint32_t generation) noexcept {
     }
 
     // A zero-length map according to IEEE 1212 is just a header with length=0.
-    // We use our local generation_ for continuity.
-    generation_++;
+    generation_ = generation;
     publishStatus_ = TopologyMapPublishStatus::ZeroLengthDueToTopologyError;
 
     std::memset(hostMap_, 0, sizeof(hostMap_));

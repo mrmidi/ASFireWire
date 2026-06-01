@@ -469,7 +469,8 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
     // Offsets/ownership follow IEEE 1212 / 1394 + Apple IOFireWireFamilyCommon.h:
     //   STATE_CLEAR=+0x000, STATE_SET=+0x004 (were swapped); BROADCAST_CHANNEL=+0x234 (was 0x22C).
     // IRM resource registers (BUS_MANAGER_ID/BANDWIDTH/CHANNELS) are serviced by the OHCI
-    // CSR engine; TOPOLOGY_MAP/SPEED_MAP are not OHCI-served and are not yet implemented here.
+    // CSR engine. TOPOLOGY_MAP is software-owned; SPEED_MAP is obsolete in IEEE
+    // 1394-2008, but ASFW serves a bounded software legacy window for readers.
     static const LocalCSREntryDef CSR_DEFS[] = {
         { 0xFFFFF0000000ULL, 0x000, ASFWDiagCSROwnerASFWSoftware,         true,  "STATE_CLEAR" },
         { 0xFFFFF0000004ULL, 0x004, ASFWDiagCSROwnerASFWSoftware,         true,  "STATE_SET" },
@@ -480,7 +481,7 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
         { 0xFFFFF0000234ULL, 0x234, ASFWDiagCSROwnerASFWSoftware,         true,  "BROADCAST_CHANNEL" },
         { 0xFFFFF0000400ULL, 0x400, ASFWDiagCSROwnerOHCIHardware,         true,  "CONFIG_ROM" },
         { 0xFFFFF0001000ULL, 0x1000, ASFWDiagCSROwnerASFWSoftware,         true,  "TOPOLOGY_MAP" },
-        { 0xFFFFF0002000ULL, 0x2000, ASFWDiagCSROwnerOmittedAddressError, false, "SPEED_MAP" }
+        { 0xFFFFF0002000ULL, 0x2000, ASFWDiagCSROwnerASFWSoftware,         true,  "SPEED_MAP" }
     };
 
     constexpr uint32_t entryCount = sizeof(CSR_DEFS) / sizeof(CSR_DEFS[0]);

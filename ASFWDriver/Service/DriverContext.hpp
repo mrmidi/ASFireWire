@@ -30,7 +30,8 @@ struct ServiceContext {
     // Initial (wiring-time) role policy. The runtime-mutable copy is owned by
     // ControllerCore; this is the seed passed at construction and read by
     // wiring that runs before ControllerCore exists (e.g. the election driver).
-    ASFW::Driver::RolePolicy rolePolicy{};
+    ASFW::Driver::RolePolicy rolePolicy{
+        ASFW::Driver::RolePolicy::MakeHardwareValidationDefault()};
     std::shared_ptr<ASFW::Driver::ControllerCore> controller;
     OSSharedPtr<IODispatchQueue> workQueue;
     OSSharedPtr<OSAction> interruptAction;
