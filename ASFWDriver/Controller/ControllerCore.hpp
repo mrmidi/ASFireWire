@@ -43,6 +43,7 @@ class ICycleMasterControl;
 class IBusResetTrigger;
 class CSRResponder;
 class TopologyMapService;
+class SpeedMapService;
 class BroadcastChannelCSR;
 class IRMFallbackCoordinator;
 class CyclePolicyCoordinator;
@@ -221,6 +222,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     }
 
     ASFW::Bus::TopologyMapService* GetTopologyMapService() const { return deps_.topologyMapService.get(); }
+    ASFW::Bus::SpeedMapService* GetSpeedMapService() const { return speedMapService_.get(); }
     Bus::LocalIRMResourceController* GetLocalIRMResourceController() const { return localIrmController_.get(); }
     Bus::IRMFallbackCoordinator* GetIRMFallbackCoordinator() const { return irmFallback_.get(); }
     Bus::CyclePolicyCoordinator* GetCyclePolicyCoordinator() const { return cyclePolicy_.get(); }
@@ -344,6 +346,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     std::unique_ptr<Bus::RootSelectionCoordinator> rootSelection_;
     std::unique_ptr<Bus::GapPolicyCoordinator> gapPolicy_;
     std::unique_ptr<Bus::PowerLinkPolicyCoordinator> powerLinkPolicy_;
+    std::shared_ptr<Bus::SpeedMapService> speedMapService_;
 
     struct PendingReset {
         uint8_t targetRoot{0x3F};

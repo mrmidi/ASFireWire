@@ -20,6 +20,16 @@
 
 namespace ASFW::Bus {
 
+/**
+ * @brief Status of the published TOPOLOGY_MAP.
+ */
+enum class TopologyMapPublishStatus : uint8_t {
+    Invalid = 0,
+    Valid,
+    ZeroLengthDueToTopologyError,
+    StaleGeneration,
+};
+
 class TopologyMapService final : public ITopologyMapProvider {
 public:
     explicit TopologyMapService(ASFW::Driver::HardwareInterface* hw) noexcept;
@@ -42,6 +52,11 @@ public:
     void Stop() noexcept;
 
     void Rebuild(const ASFW::Driver::TopologySnapshot& snapshot) noexcept;
+
+    /**
+     * @brief Publishes a zero-length map header for an invalid topology.
+     */
+    void PublishZeroLength(uint32_t generation) noexcept;
 
     /**
      * @brief Thread-safely invalidates the map, clearing its validation status and contents.
@@ -74,6 +89,10 @@ public:
         ASFW::Async::IOScopedLock guard(lock_);
         return started_ && dmaMap_;
     }
+    [[nodiscard]] TopologyMapPublishStatus PublishStatus() const noexcept {
+        ASFW::Async::IOScopedLock guard(lock_);
+        return publishStatus_;
+    }
 
 private:
     ASFW::Driver::HardwareInterface* hardware_;
@@ -81,6 +100,7 @@ private:
 
     // Monotonic generation counter, never reset. Bumps on each Rebuild.
     uint32_t generation_{0};
+    TopologyMapPublishStatus publishStatus_{TopologyMapPublishStatus::Invalid};
 
     // Host-order copy for fast CPU quadlet reads.
     // Index 0..255 maps to region offsets 0..0x3FC.

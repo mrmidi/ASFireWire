@@ -425,7 +425,24 @@ typedef struct ASFWDiagBusManager {
     uint32_t linkOnAttemptsThisGeneration;
     uint32_t linkOnTotalAttempts;
 
-    uint32_t reserved[2];
+    // Milestone 9: CSR Compliance / Maps
+    uint32_t topologyMapPublishStatus;
+    uint32_t topologyMapGeneration;
+    uint32_t topologyMapLengthQuadlets;
+
+    uint32_t speedMapStatus;
+    uint32_t speedMapGeneration;
+    uint32_t speedMapNodeCount;
+    uint32_t speedMapEncodedQuadlets;
+    uint32_t speedMapBetaKnown;
+    uint32_t speedMapBetaPresent;
+
+    uint32_t csrContractVerdict;
+    uint32_t csrSoftwareAnsweredHardwareOwned;
+    uint32_t csrHardwareOwnedSoftwareHits;
+    uint32_t csrUnsupportedAccesses;
+
+    uint32_t reserved[1];
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus

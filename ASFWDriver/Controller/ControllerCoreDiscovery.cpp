@@ -179,6 +179,14 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         deps_.topologyMapService->Rebuild(snap);
     }
 
+    if (speedMapService_) {
+        speedMapService_->PublishFromTopology(snap);
+    }
+
+    if (deps_.csrResponder) {
+        deps_.csrResponder->SetSpeedMapProvider(speedMapService_.get());
+    }
+
     const bool electionAllowed =
         rolePolicy_.roleMode == ASFW::FW::RoleMode::FullBusManager &&
         rolePolicy_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;

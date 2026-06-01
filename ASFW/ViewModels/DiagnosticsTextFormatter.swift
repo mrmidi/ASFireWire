@@ -785,6 +785,42 @@ struct DiagnosticsTextFormatter {
         appendRow("Succeeded", snapshot.busManager.linkOnSuccessCount)
         appendRow("Failed", snapshot.busManager.linkOnFailureCount)
 
+        // --- Milestone 9: CSR Compliance / Maps ---
+        appendTitle("CSR Compliance / Maps (Milestone 9)")
+        
+        let topoStatusStr: String
+        switch snapshot.busManager.topologyMapPublishStatus {
+        case 1: topoStatusStr = "Valid"
+        case 2: topoStatusStr = "ZeroLength (topology error)"
+        case 3: topoStatusStr = "StaleGeneration"
+        default: topoStatusStr = "Invalid"
+        }
+        appendRow("TOPOLOGY_MAP Owner", "Software")
+        appendRow("TOPOLOGY_MAP State", topoStatusStr)
+        appendRow("TOPOLOGY_MAP Generation", snapshot.busManager.topologyMapGeneration)
+        appendRow("TOPOLOGY_MAP Self-IDs", snapshot.busManager.topologyMapSelfIdCount)
+
+        let speedStatusStr: String
+        switch snapshot.busManager.speedMapStatus {
+        case 1: speedStatusStr = "Valid"
+        case 2: speedStatusStr = "ConservativeFallback"
+        case 3: speedStatusStr = "UnsupportedBetaPath"
+        default: speedStatusStr = "Invalid"
+        }
+        appendRow("SPEED_MAP Owner", "Software")
+        appendRow("SPEED_MAP State", speedStatusStr)
+        appendRow("SPEED_MAP Generation", snapshot.busManager.speedMapGeneration)
+        appendRow("SPEED_MAP Nodes", snapshot.busManager.speedMapNodeCount)
+        appendRow("SPEED_MAP Encoding", "\(snapshot.busManager.speedMapEncodedQuadlets) quadlets")
+
+        appendRow("Core IRM CSRs Owner", "OHCI hardware")
+        appendRow("Unexpected SW Hits", snapshot.busManager.unexpectedResourceCsrSoftwareCount)
+        appendRow("CSR Contract Verdict", snapshot.busManager.csrContractVerdict != 0 ? "OK" : "Mismatch")
+        if snapshot.busManager.csrContractVerdict == 0 {
+            appendRow("SW Answered HW-owned", snapshot.busManager.csrSoftwareAnsweredHardwareOwned)
+            appendRow("HW-owned SW Hits", snapshot.busManager.csrHardwareOwnedSoftwareHits)
+        }
+
         // --- Post-Reset Timing (IEEE 1394-2008 §8.x) ---
         // Generation-scoped gates anchored to Self-ID completion. Reporting only:
         // the driver takes no bus action from these gates in this milestone, so an

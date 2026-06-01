@@ -64,13 +64,21 @@ struct ITopologyMapProvider {
                                                 uint64_t& outPayloadDeviceAddress, uint32_t& outPayloadLength) const noexcept = 0;
 };
 
+// Supplies SPEED_MAP quadlets (Milestone 9).
+struct ISpeedMapProvider {
+    virtual ~ISpeedMapProvider() = default;
+    [[nodiscard]] virtual bool ReadQuadlet(uint32_t regionByteOffset,
+                                           uint32_t& outValue) const noexcept = 0;
+};
+
 class CSRResponder {
 public:
     struct Deps {
         IRootStatus* root{nullptr};
         ICycleMasterControl* cycleMaster{nullptr};
         IBusResetTrigger* resetTrigger{nullptr};
-        ITopologyMapProvider* topologyMap{nullptr}; // null until FW-20
+        ITopologyMapProvider* topologyMap{nullptr};
+        ISpeedMapProvider* speedMap{nullptr};
         BroadcastChannelCSR* broadcastChannel{nullptr};
     };
 
@@ -110,6 +118,10 @@ public:
 
     void SetTopologyMapProvider(ITopologyMapProvider* provider) noexcept {
         deps_.topologyMap = provider;
+    }
+
+    void SetSpeedMapProvider(ISpeedMapProvider* provider) noexcept {
+        deps_.speedMap = provider;
     }
 
     [[nodiscard]] uint32_t UnexpectedResourceCsrSoftwareCount() const noexcept {

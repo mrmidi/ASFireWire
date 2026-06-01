@@ -784,6 +784,39 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->linkOnTotalAttempts = snap.totalAttempts;
     }
 
+    if (auto* const topoService = controller_->GetTopologyMapService()) {
+        out->topologyMapPublishStatus = static_cast<uint32_t>(topoService->PublishStatus());
+        out->topologyMapGeneration = topoService->GetGeneration();
+        out->topologyMapSelfIdCount = topoService->GetSelfIdCount();
+        out->topologyMapCRC = topoService->GetCRC();
+        out->topologyMapDMAReady = topoService->IsDMAReady() ? 1 : 0;
+    }
+
+    if (auto* const speedService = controller_->GetSpeedMapService()) {
+        auto snap = speedService->Snapshot();
+        out->speedMapStatus = static_cast<uint32_t>(snap.status);
+        out->speedMapGeneration = snap.generation;
+        out->speedMapNodeCount = snap.nodeCount;
+        out->speedMapEncodedQuadlets = snap.encodedLengthQuadlets;
+        out->speedMapBetaKnown = 1; // Assuming known if we reached this point
+        out->speedMapBetaPresent = snap.betaRepeatersPresent ? 1 : 0;
+    }
+
+    if (auto* const responder = controller_->GetCSRResponder()) {
+        ASFW::Bus::CSRContractVerifier verifier;
+        auto* topo = controller_->GetTopologyMapService();
+        auto* speed = controller_->GetSpeedMapService();
+        auto* irm = controller_->GetLocalIRMResourceController();
+
+        if (topo && speed && irm) {
+            auto check = verifier.Verify(*responder, *topo, *speed, *irm);
+            out->csrContractVerdict = check.ok ? 1 : 0;
+            out->csrHardwareOwnedSoftwareHits = check.hardwareOwnedSoftwareHits;
+            out->csrSoftwareAnsweredHardwareOwned = check.softwareAnsweredHardwareOwned;
+            out->csrUnsupportedAccesses = check.unsupportedAccesses;
+        }
+    }
+
     const uint32_t endGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
     if (startGen != endGen) {
         return ASFWDiagStatusStaleGeneration;
