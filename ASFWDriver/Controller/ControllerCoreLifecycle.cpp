@@ -13,6 +13,7 @@
 #include "../Bus/TopologyManager.hpp"
 #include "../Bus/CSR/BroadcastChannelCSR.hpp"
 #include "../Bus/CSR/TopologyMapService.hpp"
+#include "../Bus/CSR/SpeedMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusManager/BusManagerPolicyCoordinator.hpp"
 #include "../Bus/IRM/IRMFallbackCoordinator.hpp"
