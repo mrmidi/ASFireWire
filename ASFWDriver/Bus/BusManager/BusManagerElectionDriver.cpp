@@ -24,6 +24,65 @@ bool BusManagerElectionDriver::ElectionStillAllowed() const noexcept {
            rolePolicy_.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly;
 }
 
+bool BusManagerElectionDriver::ShouldYieldForStableRemoteIRM(const ASFW::Driver::TopologySnapshot& snap) noexcept {
+    if (stormYieldPending_) {
+        stormYieldPending_ = false;
+        stormYieldActive_ =
+            snap.localNodeId != Driver::kInvalidPhysicalId &&
+            snap.rootNodeId != Driver::kInvalidPhysicalId &&
+            snap.irmNodeId != Driver::kInvalidPhysicalId &&
+            snap.localNodeId != snap.rootNodeId &&
+            snap.rootNodeId == snap.irmNodeId;
+        if (stormYieldActive_) {
+            stormYieldKey_ = YieldTopologyKey{
+                .localNodeId = snap.localNodeId,
+                .rootNodeId = snap.rootNodeId,
+                .irmNodeId = snap.irmNodeId,
+                .nodeCount = snap.nodeCount
+            };
+            ASFW_LOG(Controller,
+                     "[BM Election] Fast reset after local BM win; yielding BM contention while "
+                     "remote root/IRM topology stays stable (local=%u root=%u irm=%u nodes=%u)",
+                     static_cast<unsigned>(stormYieldKey_.localNodeId),
+                     static_cast<unsigned>(stormYieldKey_.rootNodeId),
+                     static_cast<unsigned>(stormYieldKey_.irmNodeId),
+                     static_cast<unsigned>(stormYieldKey_.nodeCount));
+        }
+    }
+
+    if (!stormYieldActive_) {
+        return false;
+    }
+
+    const bool sameTopology =
+        snap.localNodeId == stormYieldKey_.localNodeId &&
+        snap.rootNodeId == stormYieldKey_.rootNodeId &&
+        snap.irmNodeId == stormYieldKey_.irmNodeId &&
+        snap.nodeCount == stormYieldKey_.nodeCount;
+    if (!sameTopology) {
+        ASFW_LOG(Controller,
+                 "[BM Election] Clearing fast-reset BM yield: topology changed "
+                 "(local=%u root=%u irm=%u nodes=%u)",
+                 static_cast<unsigned>(snap.localNodeId),
+                 static_cast<unsigned>(snap.rootNodeId),
+                 static_cast<unsigned>(snap.irmNodeId),
+                 static_cast<unsigned>(snap.nodeCount));
+        stormYieldActive_ = false;
+        return false;
+    }
+
+    // cross-validated with Linux: core-topology.c:483-485 Apple: IOFireWireController.cpp:3258-3263
+    ASFW_LOG(Controller,
+             "[BM Election] Yielding BM contention for gen=%u after fast reset storm evidence "
+             "(stable remote root/IRM=%u, local=%u)",
+             snap.generation, static_cast<unsigned>(snap.irmNodeId),
+             static_cast<unsigned>(snap.localNodeId));
+    lastAction_ = 3;
+    lastElectionPath_ = 0;
+    inFlight_ = false;
+    return true;
+}
+
 void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnapshot& snap, uint64_t nowNs) noexcept {
     if (!active_) {
         return;
@@ -44,6 +103,10 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
 
     localNodeId_ = localNodeId;
     irmNodeId_ = irmNodeId;
+
+    if (ShouldYieldForStableRemoteIRM(snap)) {
+        return;
+    }
 
     // Milestone 3: Max one election attempt per generation
     if (attemptedGeneration_ == generation && attemptsThisGeneration_ >= 1) {
@@ -152,7 +215,19 @@ void BusManagerElectionDriver::OnTopologyReady(const ASFW::Driver::TopologySnaps
 }
 
 void BusManagerElectionDriver::OnBusReset() noexcept {
-    if (fsm_.Owner() == BmOwner::Local) {
+    const bool localWasBM = fsm_.Owner() == BmOwner::Local;
+    if (localWasBM && deps_.monotonicNowNs && lastLocalBMWinNs_ != 0) {
+        const uint64_t nowNs = deps_.monotonicNowNs();
+        if (nowNs >= lastLocalBMWinNs_ && nowNs - lastLocalBMWinNs_ <= kFastResetAfterBMWinNs) {
+            stormYieldPending_ = true;
+            ASFW_LOG(Controller,
+                     "[BM Election] Reset arrived %llu ms after local BM win; next stable "
+                     "remote-root topology may suppress BM re-contention",
+                     (nowNs - lastLocalBMWinNs_) / 1000000ULL);
+        }
+    }
+
+    if (localWasBM && !stormYieldPending_) {
         wasIncumbent_ = true;
     } else {
         wasIncumbent_ = false;
@@ -290,12 +365,18 @@ void BusManagerElectionDriver::HandleCompareSwapResult(uint32_t generation, uint
     switch (outcome) {
     case ElectionOutcome::WonBM:
         ASFW_LOG(Controller, "[BM Election] WON Bus Manager election! (oldValue=0x%X, compareMatched=%d)", oldValue, compareMatched);
+        if (deps_.monotonicNowNs) {
+            lastLocalBMWinNs_ = deps_.monotonicNowNs();
+        }
         if (observer_) {
             observer_->OnLocalWonBM(generation, localNodeId);
         }
         break;
     case ElectionOutcome::IncumbentReestablished:
         ASFW_LOG(Controller, "[BM Election] Re-established BM incumbency.");
+        if (deps_.monotonicNowNs) {
+            lastLocalBMWinNs_ = deps_.monotonicNowNs();
+        }
         if (observer_) {
             observer_->OnLocalWonBM(generation, localNodeId);
         }

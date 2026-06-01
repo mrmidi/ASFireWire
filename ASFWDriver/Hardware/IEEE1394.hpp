@@ -93,6 +93,7 @@ constexpr uint8_t kPhyGapCountMask = 0x3Fu; // 6-bit gap count field in PHY reg1
 // PHY register 1: bus reset control
 // Bit 6 = IBR (Initiate Bus Reset) — long bus reset
 constexpr uint8_t kPhyReg1Address = 1;
+constexpr uint8_t kPhyRootHoldOff = 0x80;       // Bit 7
 constexpr uint8_t kPhyInitiateBusReset = 0x40;  // Bit 6
 
 // PHY register 5: IEEE 1394a enhancement bits

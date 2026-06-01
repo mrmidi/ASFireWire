@@ -147,7 +147,7 @@ TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateOpen_NoBM_PlansAction) {
     EXPECT_EQ(snap.plannedAction, IRMFallbackAction::LocalRootEnableCycleMasterRequired);
 }
 
-TEST_F(IRMFallbackCoordinatorTests, LocalIRM_RemoteRootCmc_PlansRootSelectionConservatively) {
+TEST_F(IRMFallbackCoordinatorTests, LocalIRM_RemoteRoot_PlansRootSelectionConservatively) {
     IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
 

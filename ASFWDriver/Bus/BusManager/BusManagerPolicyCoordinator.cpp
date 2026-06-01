@@ -34,30 +34,28 @@ void BusManagerPolicyCoordinator::Evaluate(BusManagerRuntimeState& state) noexce
             ASFW_LOG(Controller, "[BM Policy] Local node is BM and root; but cycleMaster activation is suppressed (level=%u)", state.fullBMActivityLevel);
         }
     } else {
-        // We are BM but NOT root.
-        if (!state.rootCmcKnown) {
+        // We are BM but NOT root. BIB CMC gates only the remote CMSTR write;
+        // root-selection policy is handled elsewhere from Self-ID evidence.
+        if (state.cycleStartObserved) {
+            state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::RemoteRootAlreadyCycling);
+            state.remoteCmstrAlreadySatisfied = true;
+            state.remoteCmstrNeeded = false;
+            ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root already cycling. Satisfied.", state.rootNodeId);
+        } else if (!state.rootCmcKnown) {
             state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::ObserveOnly);
             state.remoteCmstrNeeded = false;
             state.remoteCmstrAlreadySatisfied = false;
-            ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root CMC status unknown. ObserveOnly.", state.rootNodeId);
+            ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root BIB CMC unknown; defer remote CMSTR.", state.rootNodeId);
         } else if (!state.rootCmcCapable) {
             state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::ObserveOnly);
             state.remoteCmstrNeeded = false;
             state.remoteCmstrAlreadySatisfied = false;
-            ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root CMC is false (unsuitable). ObserveOnly.", state.rootNodeId);
+            ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root BIB CMC=0; not writing remote CMSTR.", state.rootNodeId);
         } else {
-            // Root is CMC capable
-            if (state.cycleStartObserved) {
-                state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::RemoteRootAlreadyCycling);
-                state.remoteCmstrAlreadySatisfied = true;
-                state.remoteCmstrNeeded = false;
-                ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root already cycling. Satisfied.", state.rootNodeId);
-            } else {
-                state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::RemoteCMSTRNeeded);
-                state.remoteCmstrAlreadySatisfied = false;
-                state.remoteCmstrNeeded = true;
-                ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root CMC capable but not cycling. Remote CMSTR needed.", state.rootNodeId);
-            }
+            state.bmPolicyVerdict = static_cast<uint8_t>(BMPolicyVerdict::RemoteCMSTRNeeded);
+            state.remoteCmstrAlreadySatisfied = false;
+            state.remoteCmstrNeeded = true;
+            ASFW_LOG(Controller, "[BM Policy] We are BM, remote root (id=%u). Root BIB CMC=1; remote CMSTR needed.", state.rootNodeId);
         }
     }
 }

@@ -70,7 +70,8 @@ public:
         uint32_t attemptedGen{0};
         uint8_t attemptsThisGen{0};
         uint8_t lastElectionPath{0}; // 0=none, 1=Local, 2=Remote
-        uint8_t lastAction{0};       // 0=none, 1=Immediate, 2=Grace
+        uint8_t lastAction{0};       // 0=none, 1=Immediate, 2=Grace, 3=Yield
+        bool stormYieldActive{false};
     };
     [[nodiscard]] Snapshot GetSnapshot() const noexcept {
         return Snapshot{
@@ -83,7 +84,8 @@ public:
             .attemptedGen = attemptedGeneration_,
             .attemptsThisGen = attemptsThisGeneration_,
             .lastElectionPath = lastElectionPath_,
-            .lastAction = lastAction_
+            .lastAction = lastAction_,
+            .stormYieldActive = stormYieldActive_
         };
     }
 
@@ -96,8 +98,18 @@ public:
     [[nodiscard]] uint32_t InFlightGen() const noexcept { return inFlightGen_; }
 
 private:
+    struct YieldTopologyKey {
+        uint8_t localNodeId{0xFF};
+        uint8_t rootNodeId{0xFF};
+        uint8_t irmNodeId{0xFF};
+        uint8_t nodeCount{0};
+    };
+
+    [[nodiscard]] bool ShouldYieldForStableRemoteIRM(const ASFW::Driver::TopologySnapshot& snap) noexcept;
     void Contend(uint32_t generation, uint8_t localNodeId, uint8_t irmNodeId, uint16_t busBase16) noexcept;
     void HandleCompareSwapResult(uint32_t generation, uint8_t localNodeId, ASFW::Async::AsyncStatus status, uint32_t oldValue, bool compareMatched) noexcept;
+
+    static constexpr uint64_t kFastResetAfterBMWinNs = 750000000ULL;
 
     Deps deps_;
     ASFW::Driver::RolePolicy rolePolicy_;
@@ -114,6 +126,10 @@ private:
     uint8_t lastElectionPath_{0};
     uint8_t lastAction_{0};
     bool active_{true};
+    uint64_t lastLocalBMWinNs_{0};
+    bool stormYieldPending_{false};
+    bool stormYieldActive_{false};
+    YieldTopologyKey stormYieldKey_{};
 };
 
 } // namespace ASFW::Bus

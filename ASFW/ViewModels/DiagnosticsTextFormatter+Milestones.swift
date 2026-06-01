@@ -30,6 +30,7 @@ extension DiagnosticsTextFormatter {
         case 0: electActionStr = "none (DoNotContend)"
         case 1: electActionStr = "Immediate (incumbent retry)"
         case 2: electActionStr = "Grace Period (125ms challenger delay)"
+        case 3: electActionStr = "Yielded (fast-reset storm guard)"
         default: electActionStr = "Unknown (\(snapshot.busManager.bmElectionAction))"
         }
         r.row("Election Decision Action", electActionStr)
@@ -54,7 +55,17 @@ extension DiagnosticsTextFormatter {
         r.row("Stale Election Abort Count", snapshot.busManager.staleElectionAbortCount)
         r.row("Failed Election Count", snapshot.busManager.failedElectionCount)
 
-        r.row("ElectionOnly Active Mutations", "BUS_MANAGER_ID only. Cycle/root/gap policy disabled.")
+        let activeMutationStr: String
+        switch snapshot.busManager.fullBMActivityLevel {
+        case 0: activeMutationStr = "none (ObserveOnly)"
+        case 1: activeMutationStr = "BUS_MANAGER_ID only"
+        case 2: activeMutationStr = "BUS_MANAGER_ID + cycle policy"
+        case 3: activeMutationStr = "BUS_MANAGER_ID + cycle + gap policy"
+        case 4: activeMutationStr = "BUS_MANAGER_ID + cycle + root/gap policy"
+        case 5: activeMutationStr = "BUS_MANAGER_ID + cycle + root/gap + legacy remote CMSTR"
+        default: activeMutationStr = "Unknown (\(snapshot.busManager.fullBMActivityLevel))"
+        }
+        r.row("Active BM Mutations", activeMutationStr)
     }
 
     // --- Milestone 4: IRM Fallback Planner ---
@@ -145,14 +156,15 @@ extension DiagnosticsTextFormatter {
         case 5: cycleDecisionStr = "SuppressedNotBMOrFallbackIRM"
         case 6: cycleDecisionStr = "AlreadySatisfiedCycleStartObserved"
         case 7: cycleDecisionStr = "AlreadySatisfiedLocalCycleMasterEnabled"
-        case 8: cycleDecisionStr = "DeferRootCmcUnknown"
-        case 9: cycleDecisionStr = "DeferLocalCmcUnknown"
+        case 8: cycleDecisionStr = "DeferRootSelfIDUnknown"
+        case 9: cycleDecisionStr = "DeferLocalSelfIDUnknown"
         case 10: cycleDecisionStr = "LocalRootEnableCycleMaster"
         case 11: cycleDecisionStr = "RemoteRootSetCmstr"
         case 12: cycleDecisionStr = "RootSelectionRequired"
         case 13: cycleDecisionStr = "FailedHardwareUnavailable"
         case 14: cycleDecisionStr = "FailedAsyncSubmit"
         case 15: cycleDecisionStr = "FailedGenerationStale"
+        case 16: cycleDecisionStr = "DeferRootBibCmcUnknown"
         default: cycleDecisionStr = "Unknown (\(snapshot.busManager.cyclePolicyDecision))"
         }
         r.row("Cycle Decision", cycleDecisionStr)
@@ -171,9 +183,37 @@ extension DiagnosticsTextFormatter {
         r.row("Local Master Before", snapshot.busManager.cyclePolicyLocalLowLevelMasterBefore != 0 ? "Yes" : "No")
         r.row("Local Master After", snapshot.busManager.cyclePolicyLocalLowLevelMasterAfter != 0 ? "Yes" : "No")
         r.row("Remote CMSTR In Flight", snapshot.busManager.cyclePolicyRemoteCmstrInFlight != 0 ? "Yes" : "No")
+        if snapshot.busManager.cyclePolicyRemoteSubmitCount > 0 ||
+            snapshot.busManager.cyclePolicyRemoteCmstrInFlight != 0 {
+            let statusStr: String
+            if snapshot.busManager.cyclePolicyRemoteCmstrInFlight != 0 {
+                statusStr = "in flight"
+            } else {
+                switch snapshot.busManager.cyclePolicyRemoteCmstrStatus {
+                case 0: statusStr = "success"
+                case 1: statusStr = "timeout"
+                case 2: statusStr = "short_read"
+                case 3: statusStr = "busy_retry_exhausted"
+                case 4: statusStr = "aborted"
+                case 5: statusStr = "hardware_error"
+                case 6: statusStr = "lock_compare_fail"
+                case 7: statusStr = "stale_generation"
+                default: statusStr = "unknown (\(snapshot.busManager.cyclePolicyRemoteCmstrStatus))"
+                }
+            }
+            r.row("Remote CMSTR Status", statusStr)
+        }
         r.row("Local Enable Count", snapshot.busManager.cyclePolicyLocalEnableCount)
         r.row("Remote Submit Count", snapshot.busManager.cyclePolicyRemoteSubmitCount)
-        r.row("Cycle Master Policy", "Active. Root/gap policy disabled.")
+
+        let cycleScopeStr: String
+        switch snapshot.busManager.fullBMActivityLevel {
+        case 0, 1: cycleScopeStr = "Suppressed until CyclePolicyAllowed."
+        case 2: cycleScopeStr = "Active. Root/gap policy disabled."
+        case 3: cycleScopeStr = "Active. Gap policy may run separately; root forcing disabled."
+        default: cycleScopeStr = "Active. Root/gap policy may run separately."
+        }
+        r.row("Cycle Master Policy", cycleScopeStr)
     }
 
     // --- Milestone 6: Root Selection / Force-Root Policy ---
@@ -190,7 +230,7 @@ extension DiagnosticsTextFormatter {
         case 4: rootDecisionStr = "SuppressedNotBMOrFallbackIRM"
         case 5: rootDecisionStr = "SuppressedCycleAlreadyObserved"
         case 6: rootDecisionStr = "SuppressedRootAlreadySuitable"
-        case 7: rootDecisionStr = "DeferredRootEvidenceIncomplete"
+        case 7: rootDecisionStr = "DeferredRootSelfIDEvidenceIncomplete"
         case 8: rootDecisionStr = "DeferredCandidateEvidenceIncomplete"
         case 9: rootDecisionStr = "SelectLocalRoot"
         case 10: rootDecisionStr = "SelectRemoteRoot"
@@ -217,9 +257,9 @@ extension DiagnosticsTextFormatter {
 
         let rootReasonStr: String
         switch snapshot.busManager.rootSelectionDecision {
-        case 6: rootReasonStr = "Current root already suitable / CMC-capable"
-        case 10: rootReasonStr = "Remote-root selection (future goal; currently local only)"
-        case 11: rootReasonStr = "No cycle-master-capable candidates found"
+        case 6: rootReasonStr = "Current root already Self-ID contender/link-active"
+        case 10: rootReasonStr = "Remote Self-ID contender selected"
+        case 11: rootReasonStr = "No Self-ID contender candidates found"
         case 12: rootReasonStr = "Reset attempt limit reached for this topology"
         default: rootReasonStr = "none"
         }
@@ -383,7 +423,7 @@ extension DiagnosticsTextFormatter {
         case 3: speedStatusStr = "UnsupportedBetaPath"
         default: speedStatusStr = "Invalid"
         }
-        r.row("SPEED_MAP Owner", "Software")
+        r.row("SPEED_MAP Owner", "Software (legacy; obsolete in IEEE 1394-2008)")
         r.row("SPEED_MAP State", speedStatusStr)
         r.row("SPEED_MAP Generation", snapshot.busManager.speedMapGeneration)
         r.row("SPEED_MAP Nodes", snapshot.busManager.speedMapNodeCount)

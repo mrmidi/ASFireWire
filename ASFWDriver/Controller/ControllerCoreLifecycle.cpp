@@ -72,10 +72,15 @@ kern_return_t EnableLinkPowerStatus(ASFW::Driver::HardwareInterface& hw) {
 
 void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
     const uint8_t kTargetGap = ASFW::Driver::kPhyGapCountMask;
-    const uint8_t newReg1 = (reg1Value & 0xC0U) | kTargetGap;
+    const uint8_t clearReg1Bits = ASFW::Driver::kPhyGapCountMask |
+                                  ASFW::Driver::kPhyRootHoldOff |
+                                  ASFW::Driver::kPhyInitiateBusReset;
+    // cross-validated with Linux: ohci.c:2510-2511 Apple: IOFireWireController.cpp:1312-1313
+    const uint8_t newReg1 =
+        static_cast<uint8_t>((reg1Value & ~clearReg1Bits) | kTargetGap);
 
-    ASFW_LOG_PHY("Forcing PHY Gap Count write (Reg 1): 0x%02x -> 0x%02x", reg1Value,
-                 newReg1);
+    ASFW_LOG_PHY("Forcing PHY Gap Count write (Reg 1): 0x%02x -> 0x%02x (RHB clear)",
+                 reg1Value, newReg1);
 
     constexpr int kMaxPhyWriteAttempts = 3;
     for (int attempt = 0; attempt < kMaxPhyWriteAttempts; ++attempt) {
@@ -89,7 +94,8 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
         IODelay(2000);
 
         const auto verify = hw.ReadPhyRegister(1);
-        if (verify && ((*verify & ASFW::Driver::kPhyGapCountMask) == kTargetGap)) {
+        if (verify && ((*verify & ASFW::Driver::kPhyGapCountMask) == kTargetGap) &&
+            ((*verify & ASFW::Driver::kPhyRootHoldOff) == 0)) {
             ASFW_LOG_PHY("✅ PHY Gap Count confirmed: 0x%02x -> 0x%02x (attempt %d)",
                          reg1Value, *verify, attempt + 1);
             return;
@@ -114,8 +120,8 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     // ClientOnly is intentionally absent here: a pure client that advertises no
     // BM/IRM capability also does NOT set the Self-ID/PHY contender bit, so it can
     // never win an IRM/BM election. ServiceContext now seeds the live driver with
-    // FullBusManager/ElectionOnly for hardware validation, matching the reference
-    // stacks' contender posture while keeping later bus mutations gated.
+    // FullBusManager/CyclePolicyAllowed for hardware validation, matching the
+    // reference stacks' contender posture while keeping root/gap resets gated.
     // cross-validated with Linux: ohci.c:2510 Apple: IOFireWireController.cpp:2414
     const bool shouldAdvertiseContender =
         (policy.roleMode == ASFW::FW::RoleMode::FullBusManager &&
@@ -131,7 +137,11 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
 
     ASFW_LOG_PHY("Configuring PHY register 4 (link_on=1 contender=%d)",
                  shouldAdvertiseContender ? 1 : 0);
-    bool phyConfigOk = hw.UpdatePhyRegister(ASFW::Driver::kPhyReg4Address, 0, phyReg4Bits);
+    const uint8_t clearReg4Bits =
+        shouldAdvertiseContender ? uint8_t{0} : ASFW::Driver::kPhyContender;
+    bool phyConfigOk = hw.UpdatePhyRegister(ASFW::Driver::kPhyReg4Address,
+                                            clearReg4Bits,
+                                            phyReg4Bits);
     if (!phyConfigOk) {
         ASFW_LOG(Hardware, "Failed to configure PHY register 4");
         return false;
@@ -782,11 +792,9 @@ kern_return_t ControllerCore::StageConfigROM(uint32_t busOptions, uint32_t guidH
     const uint64_t effectiveGuid = (config_.localGuid != 0) ? config_.localGuid : hardwareGuid;
 
     // FW-11/FW-22: advertise only the capabilities ASFW actually backs, gated by
-    // the configured role mode. The hardware BusOptions register often defaults
-    // to bmc=1, but ASFW does not (yet) implement 1394a BUS_MANAGER_ID election,
-    // so the default ClientOnly mode clears Bus Manager Capable and
-    // Isochronous Resource Manager Capable before staging the local Config ROM.
-    // Physical/other bits are preserved.
+    // the configured role mode. In FullBusManager validation mode, normalize the
+    // local BIB like an OHCI host instead of trusting a zeroed hardware capability
+    // nibble; peers use this evidence when deciding who can safely be root.
     const uint32_t localBusOptions = ASFW::FW::NormalizeLocalBusOptions(
         busOptions, rolePolicy_.roleMode, rolePolicy_.fullBMActivityLevel);
     const auto advertisedCaps = ASFW::FW::DecodeBusOptions(localBusOptions);

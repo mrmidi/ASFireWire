@@ -71,8 +71,6 @@ TEST_F(RootSelectionCoordinatorTests, ForceRootAllowed_AllowsSelection) {
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::ForceRootAllowed;
     in.localIsBM = true;
-    in.rootCmcKnown = true;
-    in.rootCmcCapable = false; // Root is unsuitable
     
     // Need a topology with a local candidate
     ASFW::Driver::TopologySnapshot topo{};
@@ -80,13 +78,12 @@ TEST_F(RootSelectionCoordinatorTests, ForceRootAllowed_AllowsSelection) {
     topo.physical.nodes.resize(2);
     topo.physical.nodes[0].physicalId = 0; // Local
     topo.physical.nodes[0].linkActive = true;
+    topo.physical.nodes[0].contender = true;
     topo.physical.nodes[1].physicalId = 1; // Root
     topo.physical.nodes[1].linkActive = true;
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
     in.topology = &topo;
     
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::SelectLocalRoot);
@@ -105,7 +102,7 @@ TEST_F(RootSelectionCoordinatorTests, CycleStartObserved_SuppressesRootSelection
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::SuppressedCycleAlreadyObserved);
 }
 
-TEST_F(RootSelectionCoordinatorTests, RootCmcUnknown_DefersRootSelection) {
+TEST_F(RootSelectionCoordinatorTests, RootSelfIDMissing_DefersRootSelection) {
     RootSelectionInputs in{};
     ASFW::Driver::TopologySnapshot topo{};
     in.topology = &topo;
@@ -113,21 +110,24 @@ TEST_F(RootSelectionCoordinatorTests, RootCmcUnknown_DefersRootSelection) {
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::ForceRootAllowed;
     in.localIsBM = true;
-    in.rootCmcKnown = false;
     
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::DeferredRootEvidenceIncomplete);
 }
 
-TEST_F(RootSelectionCoordinatorTests, RootCmcCapable_SuppressesRootSelection) {
+TEST_F(RootSelectionCoordinatorTests, RootSelfIDContenderSuppressesRootSelection) {
     RootSelectionInputs in{};
     ASFW::Driver::TopologySnapshot topo{};
+    topo.nodeCount = 1;
+    topo.physical.nodes.resize(1);
+    topo.physical.nodes[0].physicalId = 1;
+    topo.physical.nodes[0].linkActive = true;
+    topo.physical.nodes[0].contender = true;
     in.topology = &topo;
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::ForceRootAllowed;
     in.localIsBM = true;
-    in.rootCmcKnown = true;
-    in.rootCmcCapable = true;
+    in.rootNodeId = 1;
     
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::SuppressedRootAlreadySuitable);
 }
@@ -140,21 +140,18 @@ TEST_F(RootSelectionCoordinatorTests, FallbackIRM_NoBM_GateOpen_AllowsRootSelect
     in.localIsIRM = true;
     in.irmFallbackGateOpen = true;
     in.irmFallbackNoBMDetected = true;
-    in.rootCmcKnown = true;
-    in.rootCmcCapable = false;
     
     ASFW::Driver::TopologySnapshot topo{};
     topo.nodeCount = 2;
     topo.physical.nodes.resize(2);
     topo.physical.nodes[0].physicalId = 0; // Local
     topo.physical.nodes[0].linkActive = true;
+    topo.physical.nodes[0].contender = true;
     topo.physical.nodes[1].physicalId = 1; // Root
     topo.physical.nodes[1].linkActive = true;
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
     in.topology = &topo;
     
     EXPECT_EQ(coordinator_.Plan(in), RootSelectionDecision::SelectLocalRoot);
@@ -166,21 +163,18 @@ TEST_F(RootSelectionCoordinatorTests, RetryLimit_BoundsForceRootAttempts) {
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::ForceRootAllowed;
     in.localIsBM = true;
-    in.rootCmcKnown = true;
-    in.rootCmcCapable = false;
     
     ASFW::Driver::TopologySnapshot topo{};
     topo.nodeCount = 2;
     topo.physical.nodes.resize(2);
     topo.physical.nodes[0].physicalId = 0;
     topo.physical.nodes[0].linkActive = true;
+    topo.physical.nodes[0].contender = true;
     topo.physical.nodes[1].physicalId = 1;
     topo.physical.nodes[1].linkActive = true;
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
     in.topology = &topo;
 
     struct MockExecutor : public IRootSelectionExecutor {
@@ -207,21 +201,18 @@ TEST_F(RootSelectionCoordinatorTests, StableTopologyChange_ResetsRetryCounter) {
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::ForceRootAllowed;
     in.localIsBM = true;
-    in.rootCmcKnown = true;
-    in.rootCmcCapable = false;
     
     ASFW::Driver::TopologySnapshot topo1{};
     topo1.nodeCount = 2;
     topo1.physical.nodes.resize(2);
     topo1.physical.nodes[0].physicalId = 0;
     topo1.physical.nodes[0].linkActive = true;
+    topo1.physical.nodes[0].contender = true;
     topo1.physical.nodes[1].physicalId = 1;
     topo1.physical.nodes[1].linkActive = true;
     
     in.localNodeId = 0;
     in.rootNodeId = 1;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
     in.topology = &topo1;
 
     struct MockExecutor : public IRootSelectionExecutor {
@@ -244,6 +235,7 @@ TEST_F(RootSelectionCoordinatorTests, StableTopologyChange_ResetsRetryCounter) {
     topo2.physical.nodes.resize(3);
     topo2.physical.nodes[0].physicalId = 0;
     topo2.physical.nodes[0].linkActive = true;
+    topo2.physical.nodes[0].contender = true;
     topo2.physical.nodes[1].physicalId = 1;
     topo2.physical.nodes[1].linkActive = true;
     topo2.physical.nodes[2].physicalId = 2;

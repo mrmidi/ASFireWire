@@ -14,6 +14,19 @@ protected:
     CyclePolicyCoordinator planner_;
 };
 
+static void MarkLocalSelfIdRoot(CyclePolicyInputs& in) {
+    in.localSelfIdKnown = true;
+    in.localSelfIdLinkActive = true;
+    in.localSelfIdContender = true;
+}
+
+static void MarkRemoteRootSelfIdContender(CyclePolicyInputs& in, uint8_t rootNode = 2) {
+    in.rootNodeId = rootNode;
+    in.rootSelfIdKnown = true;
+    in.rootSelfIdLinkActive = true;
+    in.rootSelfIdContender = true;
+}
+
 TEST_F(CyclePolicyCoordinatorTests, ClientOnlySuppressesCyclePolicy) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
@@ -45,60 +58,78 @@ TEST_F(CyclePolicyCoordinatorTests, LocalBMAndLocalRootPlansLocalCycleMaster) {
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = true;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkLocalSelfIdRoot(in);
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, LocalRootCmcUnknownDefers) {
+TEST_F(CyclePolicyCoordinatorTests, LocalRootSelfIDUnknownDefers) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = true;
-    in.localCmcKnown = false;
     
-    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::DeferLocalCmcUnknown);
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::DeferLocalSelfIDUnknown);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, LocalRootCmcFalseRequiresRootSelection) {
+TEST_F(CyclePolicyCoordinatorTests, LocalRootLinkInactiveRequiresRootSelection) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = true;
-    in.localCmcKnown = true;
-    in.localCmcCapable = false;
+    in.localSelfIdKnown = true;
+    in.localSelfIdLinkActive = false;
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::RootSelectionRequired);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, CycleStartObservedSuppressesAllCycleRepair) {
+TEST_F(CyclePolicyCoordinatorTests, CycleStartObservedSuppressesOnlyIrmFallbackRepair) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
-    in.localIsBM = true;
+    in.roleMode = RoleMode::IRMResourceHost;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsIRM = true;
+    in.irmFallbackGateOpen = true;
+    in.irmFallbackNoBMDetected = true;
     in.localIsRoot = true;
     in.cycleStartObserved = true;
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::AlreadySatisfiedCycleStartObserved);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, RemoteRootCmcUnknownDefers) {
+TEST_F(CyclePolicyCoordinatorTests, RemoteRootSelfIDUnknownDefers) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::RemoteCmstrAllowed;
     in.localIsBM = true;
     in.localIsRoot = false;
-    in.rootCmcKnown = false;
+    in.rootNodeId = 2;
+    in.irmNodeId = 1;
     
-    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::DeferRootCmcUnknown);
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::DeferRootSelfIDUnknown);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, RemoteRootCmcFalseRequiresRootSelection) {
+TEST_F(CyclePolicyCoordinatorTests, RemoteRootIsIrmDefersCmstrBeforeBib) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = false;
+    in.rootNodeId = 2;
+    in.irmNodeId = 2;
+    in.rootCmcKnown = false;
+    MarkRemoteRootSelfIdContender(in, 2);
+
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::DeferRootBibCmcUnknown);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, RemoteRootBibCmcFalseAndCycleSeenSuppressesCmstr) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
@@ -107,24 +138,13 @@ TEST_F(CyclePolicyCoordinatorTests, RemoteRootCmcFalseRequiresRootSelection) {
     in.localIsRoot = false;
     in.rootCmcKnown = true;
     in.rootCmcCapable = false;
+    MarkRemoteRootSelfIdContender(in);
+    in.cycleStartObserved = true;
     
-    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::RootSelectionRequired);
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::AlreadySatisfiedCycleStartObserved);
 }
 
-TEST_F(CyclePolicyCoordinatorTests, RemoteRootCmcTrueButRemoteCmstrNotAllowedSuppresses) {
-    CyclePolicyInputs in{};
-    in.topologyValid = true;
-    in.roleMode = RoleMode::FullBusManager;
-    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
-    in.localIsBM = true;
-    in.localIsRoot = false;
-    in.rootCmcKnown = true;
-    in.rootCmcCapable = true;
-    
-    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::SuppressedByActivityLevel);
-}
-
-TEST_F(CyclePolicyCoordinatorTests, RemoteRootCmcTrueAndRemoteCmstrAllowedPlansWrite) {
+TEST_F(CyclePolicyCoordinatorTests, RemoteRootBibCmcFalseWithoutCycleRequiresRootSelection) {
     CyclePolicyInputs in{};
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
@@ -132,8 +152,37 @@ TEST_F(CyclePolicyCoordinatorTests, RemoteRootCmcTrueAndRemoteCmstrAllowedPlansW
     in.localIsBM = true;
     in.localIsRoot = false;
     in.rootCmcKnown = true;
+    in.rootCmcCapable = false;
+    MarkRemoteRootSelfIdContender(in);
+
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::RootSelectionRequired);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, RemoteRootSelfIDContenderAtCyclePolicyAllowedPlansWrite) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = false;
+    MarkRemoteRootSelfIdContender(in);
+    in.rootCmcKnown = true;
     in.rootCmcCapable = true;
-    in.rootNodeId = 2;
+    
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::RemoteRootSetCmstr);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, RemoteRootSelfIDContenderStillPlansWriteWhenCycleStartObserved) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = false;
+    MarkRemoteRootSelfIdContender(in);
+    in.rootCmcKnown = true;
+    in.rootCmcCapable = true;
+    in.cycleStartObserved = true;
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::RemoteRootSetCmstr);
 }
@@ -148,8 +197,7 @@ TEST_F(CyclePolicyCoordinatorTests, IRMFallbackLocalRootPlansLocalCycleMaster) {
     in.irmFallbackGateOpen = true;
     in.irmFallbackNoBMDetected = true;
     in.localIsRoot = true;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkLocalSelfIdRoot(in);
     
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
 }
@@ -163,6 +211,7 @@ TEST_F(CyclePolicyCoordinatorTests, IRMFallbackRemoteRootDoesNotSendRemoteCmstrI
     in.irmFallbackGateOpen = true;
     in.irmFallbackNoBMDetected = true;
     in.localIsRoot = false;
+    MarkRemoteRootSelfIdContender(in);
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     

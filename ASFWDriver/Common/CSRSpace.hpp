@@ -349,14 +349,17 @@ enum class RoleMode : uint8_t {
     // BROADCAST_CHANNEL and policy/diagnostics. This mode does not perform
     // full Bus Manager election or topology mutation.
     IRMResourceHost = 2,
-    // Full Bus Manager: bmc=1, irmc=1 (legal only once FW-18/19/20/21 land).
+    // Full Bus Manager: bmc=1, irmc=1, cmc=1, isc=1 (legal only once
+    // FW-18/19/20/21 land). OHCI can generate cycle-start packets and has
+    // isochronous DMA contexts; Linux advertises the full quartet instead of
+    // trusting a zeroed BusOptions capability nibble.
     FullBusManager = 3,
 };
 // Capability ladder for FullBusManager mode, ordered least- to most-invasive so
-// the `>=` threshold gates compose correctly. RemoteCmstrAllowed is LAST:
-// sending remote STATE_SET.cmstr writes to the root node if it is CMC-capable
-// but not currently cycling. This is a spec/Linux-compatible path; not the
-// Apple-compatible default; explicit opt-in only.
+// the `>=` threshold gates compose correctly. CyclePolicyAllowed is the first
+// active BM tier: it may enable the local cycle master or write STATE_SET.cmstr
+// to a Self-ID-qualified remote root. Gap/root-reset policy remains gated by
+// higher tiers. RemoteCmstrAllowed is kept as an ABI-compatible legacy superset.
 //
 // NOTE: the numeric values cross the diagnostics ABI to the Swift GUI
 // (ASFWDiagnosticsABI.h + DiagnosticsTextFormatter.swift) — keep both in sync.
@@ -401,7 +404,8 @@ enum class FullBMActivityLevel : uint8_t {
         break;
     case RoleMode::FullBusManager:
         if (activityLevel >= FullBMActivityLevel::ElectionOnly) {
-            out |= (kBMCMask | kIRMCMask); // bmc=1 implies irmc=1
+            // cross-validated with Linux: core-card.c:113 Apple: IOFireWireController.cpp:2414
+            out |= (kBMCMask | kIRMCMask | kCMCMask | kISCMask);
         } else {
             out &= ~(kBMCMask | kIRMCMask); // bmc=0, irmc=0 (ObserveOnly is fully passive)
         }
@@ -434,9 +438,11 @@ static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::IRMResourceHost) 
               "IRMResourceHost must set irmc=1 and bmc=0");
 static_assert((NormalizeLocalBusOptions(0x00000000u, RoleMode::FullBusManager,
                                         FullBMActivityLevel::ElectionOnly) &
-               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask)) ==
-                  (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask),
-              "FullBusManager at ElectionOnly+ must set bmc=1 and irmc=1");
+               (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask |
+                BusOptionsFields::kCMCMask | BusOptionsFields::kISCMask)) ==
+                  (BusOptionsFields::kIRMCMask | BusOptionsFields::kBMCMask |
+                   BusOptionsFields::kCMCMask | BusOptionsFields::kISCMask),
+              "FullBusManager at ElectionOnly+ must set bmc=1, irmc=1, cmc=1, isc=1");
 static_assert(IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::LegacyBmcCleared)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::ClientOnly)) &&
               IsLegalCapabilityCombo(NormalizeLocalBusOptions(0xFFFFFFFFu, RoleMode::IRMResourceHost)) &&

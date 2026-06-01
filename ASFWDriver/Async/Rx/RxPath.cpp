@@ -528,25 +528,33 @@ void RxPath::ProcessReceivedPacket(ARContextType contextType,
     tracking_.OnRxResponse(rxResponse);
 }
 
-void RxPath::HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t newGeneration, Debug::BusResetPacketCapture* busResetCapture) {
+void RxPath::HandleSyntheticBusResetPacket(const ARPacketView& view, uint8_t newGeneration, Debug::BusResetPacketCapture* busResetCapture) {
     // OHCI §8.4.2.3, Linux handle_ar_packet() Bus-Reset path
     // This function is called when we detect the synthetic Bus-Reset packet
     // Format per OHCI Table 8-4:
     //   q0: tcode=0xE, reserved fields (big-endian)
     //   q1: selfIDGeneration[23:16], event=0x5h09[15:0] (big-endian)
 
-    if (!quadlets) {
-        ASFW_LOG(Async, "RxPath::HandleSyntheticBusResetPacket: NULL quadlets pointer");
+    const auto header = view.header;
+    if (header.size() < 8) {
+        ASFW_LOG(Async,
+                 "RxPath::HandleSyntheticBusResetPacket: short header (len=%zu)",
+                 header.size());
         return;
     }
 
     // Log raw packet data for verification
     // CRITICAL: OHCI DMA is LITTLE-ENDIAN! Must swap to get wire format.
-    // We use quadlet-by-quadlet copies to avoid alignment faults on ARM64
-    // when reading from potentially 4-byte aligned DMA memory.
-    std::array<uint32_t, 2> rawQuadlets{};
-    __builtin_memcpy(&rawQuadlets[0], &quadlets[0], 4);
-    __builtin_memcpy(&rawQuadlets[1], &quadlets[1], 4);
+    // Keep DMA-backed data byte-addressed; typed uint32_t* casts can fault on ARM64
+    // if an AR buffer segment is not naturally aligned.
+    std::array<uint32_t, 4> rawQuadlets{};
+    __builtin_memcpy(&rawQuadlets[0], header.data(), 4);
+    __builtin_memcpy(&rawQuadlets[1], header.data() + 4, 4);
+    if (header.size() >= 12) {
+        __builtin_memcpy(&rawQuadlets[2], header.data() + 8, 4);
+    }
+    rawQuadlets[3] = (static_cast<uint32_t>(view.xferStatus) << 16) |
+                     static_cast<uint32_t>(view.timeStamp);
 
     const uint32_t q0 =
         OSSwapLittleToHostInt32(rawQuadlets[0]);  // LE bytes → BE wire format
@@ -577,7 +585,7 @@ void RxPath::HandleSyntheticBusResetPacket(const uint32_t* quadlets, uint8_t new
     if (busResetCapture) {
         char context[64];
         std::snprintf(context, sizeof(context), "RxPath Synthetic packet, gen %u (informational)", newGeneration);
-        busResetCapture->CapturePacket(quadlets, newGeneration, context);
+        busResetCapture->CapturePacket(rawQuadlets.data(), newGeneration, context);
         ASFW_LOG(Async, "RxPath: Bus reset packet captured (total: %zu), packet gen=%u (informational only)",
                  busResetCapture->GetCount(), newGeneration);
     }
@@ -596,7 +604,7 @@ void RxPath::HandlePhyRequestPacket(const ARPacketView& view) {
     const uint16_t xferStatus = view.xferStatus;
     const OHCIEventCode eventCode = static_cast<OHCIEventCode>(xferStatus & 0x1F);
 
-    // Need at least q0 + q1 in header
+    // Need at least the link-internal header quadlet and first PHY payload quadlet.
     if (view.header.size() < 8) {
         ASFW_LOG(Async,
                  "RxPath AR/RQ PHY handler: short header (len=%zu), event=0x%02X",
@@ -626,9 +634,7 @@ void RxPath::HandlePhyRequestPacket(const ARPacketView& view) {
 
         if (currentBusResetCapture_) {
             // Reuse existing handler – header holds q0/q1 quadlets
-            const uint32_t* quadlets_raw =
-                reinterpret_cast<const uint32_t*>(view.header.data());
-            HandleSyntheticBusResetPacket(quadlets_raw,
+            HandleSyntheticBusResetPacket(view,
                                           genFromPacket,
                                           currentBusResetCapture_);
         }
@@ -637,24 +643,42 @@ void RxPath::HandlePhyRequestPacket(const ARPacketView& view) {
     }
 
     // Non-reset PHY packets (e.g. alpha PHY config)
-    const bool isAlphaConfig = ASFW::Driver::AlphaPhyConfig::IsConfigQuadletHostOrder(q0);
-    if (isAlphaConfig) {
-        const auto cfg = ASFW::Driver::AlphaPhyConfig::DecodeHostOrder(q0);
+    const auto phyQuadlets = ARPacketParser::ExtractPhyPacketQuadletsHostOrder(view.header);
+    if (!phyQuadlets.has_value()) {
         ASFW_LOG(Async,
-                 "RxPath AR/RQ: PHY CONFIG (non-reset): rootId=%u R=%d T=%d gap=%u event=0x%02X q0=0x%08x q1=0x%08x",
+                 "RxPath AR/RQ: PHY packet (non-reset): short payload event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
+                 static_cast<unsigned>(eventCode),
+                 q0,
+                 q1,
+                 view.header.size());
+        return;
+    }
+
+    const uint32_t phy0 = (*phyQuadlets)[0];
+    const uint32_t phy1 = (*phyQuadlets)[1];
+    const bool inverseValid = (phy1 == ~phy0);
+    const bool isAlphaConfig = ASFW::Driver::AlphaPhyConfig::IsConfigQuadletHostOrder(phy0);
+    if (isAlphaConfig) {
+        const auto cfg = ASFW::Driver::AlphaPhyConfig::DecodeHostOrder(phy0);
+        ASFW_LOG(Async,
+                 "RxPath AR/RQ: PHY CONFIG (non-reset): rootId=%u R=%d T=%d gapRaw=%u inverse=%d event=0x%02X q0=0x%08x phy0=0x%08x phy1=0x%08x",
                  cfg.rootId,
                  cfg.forceRoot ? 1 : 0,
                  cfg.gapCountOptimization ? 1 : 0,
                  cfg.gapCount,
+                 inverseValid ? 1 : 0,
                  static_cast<unsigned>(eventCode),
                  q0,
-                 q1);
+                 phy0,
+                 phy1);
     } else {
         ASFW_LOG(Async,
-                 "RxPath AR/RQ: PHY packet (non-reset): event=0x%02X q0=0x%08x q1=0x%08x len=%zu",
+                 "RxPath AR/RQ: PHY packet (non-reset): event=0x%02X q0=0x%08x phy0=0x%08x phy1=0x%08x inverse=%d len=%zu",
                  static_cast<unsigned>(eventCode),
                  q0,
-                 q1,
+                 phy0,
+                 phy1,
+                 inverseValid ? 1 : 0,
                  view.header.size());
     }
 }

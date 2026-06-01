@@ -21,6 +21,18 @@ static inline uint32_t le32_at(const uint8_t* p) {
     return OSSwapLittleToHostInt32(v);  // LE to host (no-op on arm64, documents intent)
 }
 
+std::optional<std::array<uint32_t, 2>> ARPacketParser::ExtractPhyPacketQuadletsHostOrder(
+    std::span<const uint8_t> header) {
+    if (header.size() < 12) {
+        return std::nullopt;
+    }
+
+    return std::array<uint32_t, 2>{
+        le32_at(header.data() + 4),
+        le32_at(header.data() + 8),
+    };
+}
+
 std::optional<ARPacketParser::PacketInfo> ARPacketParser::ParseNext(
     std::span<const uint8_t> buffer,
     size_t offset)
@@ -184,8 +196,8 @@ size_t ARPacketParser::GetHeaderLength(uint8_t tCode) {
             // TCODE_LINK_INTERNAL: p.header_length = 12 (3 quadlets)
             // PHY packet structure per OHCI §8.4.2.3:
             //   Quadlet 0: tcode[31:28]=0xE, event[3:0]
-            //   Quadlet 1: selfIDGeneration[23:16] + reserved  
-            //   Quadlet 2: PHY-specific data
+            //   Quadlets 1-2: PHY payload; synthetic bus-reset markers reuse
+            //   quadlet 1 for the selfIDGeneration[23:16] field.
             // Total: 12 bytes header + 4 bytes trailer = 16 bytes
             length = 12;  // 3 quadlets (matches Linux!)
             break;

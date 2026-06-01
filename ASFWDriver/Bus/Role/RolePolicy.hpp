@@ -7,12 +7,10 @@
 // whole FW-12 scenario matrix is tested against — build a RoleInputs, assert a
 // RoleAction. See the FW-6 design comment in Linear for the three-layer split.
 //
-// POLICY (FW-17): EvaluateRolePolicy is Apple-compatible by default — root CMC is
-// diagnostics-only (never a trigger), remote STATE_SET.cmstr is reachable only at
-// the top experimental ladder rung, and every mutating RoleAction is gated by
-// FullBMActivityLevel (ObserveOnly emits a verdict but requests no bus action).
-// Linux-shaped force-root on a verified CMC=0 root is opt-in only. See the impl
-// notes in RolePolicy.cpp and [[apple-ignores-cmc-irm-probing]].
+// POLICY (FW-17): this legacy RoleCoordinator layer is Apple-compatible by
+// default: root CMC is diagnostics-only here, and every mutating RoleAction is
+// gated by FullBMActivityLevel. The live Linux-compatible BM cycle duty
+// (STATE_SET.cmstr on a verified CMC root) is owned by CyclePolicyCoordinator.
 
 #include <cstdint>
 

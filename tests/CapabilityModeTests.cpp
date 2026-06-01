@@ -58,7 +58,7 @@ TEST(CapabilityMode, IRMResourceHost_SetsIrmcClearsBmc) {
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
-TEST(CapabilityMode, FullBusManager_SetsBmcAndIrmc) {
+TEST(CapabilityMode, FullBusManager_SetsOHCIFullManagementCapabilities) {
     // bmc=1 now requires explicitly opting in to ElectionOnly-or-higher; the
     // 2-arg default is ObserveOnly (covered by FullBusManagerObserveOnly_*).
     const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager,
@@ -66,6 +66,8 @@ TEST(CapabilityMode, FullBusManager_SetsBmcAndIrmc) {
     const auto d = DecodeBusOptions(out);
     EXPECT_TRUE(d.bmc);
     EXPECT_TRUE(d.irmc); // bmc implies irmc
+    EXPECT_TRUE(d.cmc);
+    EXPECT_TRUE(d.isc);
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
@@ -77,25 +79,30 @@ TEST(CapabilityMode, FullBusManagerObserveOnly_IsFullyPassive) {
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
-TEST(CapabilityMode, FullBusManagerCyclePolicyAllowed_SetsBmcAndIrmc) {
+TEST(CapabilityMode, FullBusManagerCyclePolicyAllowed_SetsOHCIFullManagementCapabilities) {
     const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager,
                                                   ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed);
     const auto d = DecodeBusOptions(out);
     EXPECT_TRUE(d.bmc);
     EXPECT_TRUE(d.irmc);
+    EXPECT_TRUE(d.cmc);
+    EXPECT_TRUE(d.isc);
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 
 TEST(CapabilityMode, HardwareValidationDefault_AdvertisesFullBMAndIRM) {
     const auto policy = ASFW::Driver::RolePolicy::MakeHardwareValidationDefault();
     EXPECT_EQ(policy.roleMode, RoleMode::FullBusManager);
-    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::ElectionOnly);
+    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed);
 
-    const uint32_t out = NormalizeLocalBusOptions(0u, policy.roleMode,
+    const uint32_t out = NormalizeLocalBusOptions(0x0000B003u, policy.roleMode,
                                                   policy.fullBMActivityLevel);
     const auto d = DecodeBusOptions(out);
     EXPECT_TRUE(d.bmc);
     EXPECT_TRUE(d.irmc);
+    EXPECT_TRUE(d.cmc);
+    EXPECT_TRUE(d.isc);
+    EXPECT_EQ(out, 0xF000B003u);
     EXPECT_TRUE(IsLegalCapabilityCombo(out));
 }
 

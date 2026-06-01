@@ -10,6 +10,20 @@ namespace ASFW::Bus {
 
 using namespace ASFW::FW;
 
+namespace {
+
+const ASFW::Driver::TopologyNodeRecord*
+FindNode(const ASFW::Driver::TopologySnapshot& topology, uint8_t physicalId) noexcept {
+    for (const auto& node : topology.physical.nodes) {
+        if (node.physicalId == physicalId) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+} // anonymous namespace
+
 RootSelectionCoordinator::RootSelectionCoordinator(RootSelectionConfig config) noexcept
     : config_(config) {}
 
@@ -117,11 +131,17 @@ RootSelectionDecision RootSelectionCoordinator::Plan(const RootSelectionInputs& 
         return RootSelectionDecision::SuppressedCycleAlreadyObserved;
     }
 
-    if (!inputs.rootCmcKnown) {
+    const auto* const currentRoot = FindNode(*inputs.topology, inputs.rootNodeId);
+    if (currentRoot == nullptr) {
         return RootSelectionDecision::DeferredRootEvidenceIncomplete;
     }
 
-    if (inputs.rootCmcCapable) {
+    // Force-root decisions intentionally use only Self-ID evidence. Linux uses
+    // BIB CMC for this branch; Apple uses contender/link from Self-ID, which is
+    // the safer behavior for devices that advertise CMC=0 but still generate
+    // valid cycle starts when root.
+    // cross-validated with Linux: core-card.c:448-473 Apple: IOFireWireController.cpp:2364-2404
+    if (currentRoot->linkActive && currentRoot->contender) {
         return RootSelectionDecision::SuppressedRootAlreadySuitable;
     }
 
@@ -192,6 +212,7 @@ uint32_t RootSelectionCoordinator::StableTopologyKey(const RootSelectionInputs& 
         mix(node.physicalId);
         mix(node.portCount);
         mix(node.linkActive ? 1u : 0u);
+        mix(node.contender ? 1u : 0u);
         for (uint8_t p = 0; p < node.portCount; ++p) {
             const auto& link = node.links[p];
             if (link.connected) {
@@ -231,27 +252,19 @@ RootSelectionCoordinator::BuildCandidates(const RootSelectionInputs& inputs) con
 
         // If this node IS the current root, and current root was already rejected by Plan(),
         // don't consider it again unless Plan() thinks it's suitable (which it doesn't if we're here).
-        if (c.isCurrentRoot && !inputs.rootCmcCapable) {
+        if (c.isCurrentRoot) {
             continue;
         }
 
         if (c.isLocal) {
             c.transactionCapable = true;
-            c.cmcKnown = inputs.localCmcKnown;
-            c.cmcCapable = inputs.localCmcCapable;
-            c.reason = RootCandidateReason::LocalCMC;
+            c.reason = RootCandidateReason::LocalSelfIDContender;
         } else {
             c.transactionCapable = node.linkActive;
-
-            // M6 V0: remote candidates require CMC evidence from discovery/ROM cache.
-            // This function should be connected to a RootCapabilityCache in integration.
-            // Until that cache exists, remote CMC is unknown and remote candidate is rejected.
-            c.cmcKnown = false;
-            c.cmcCapable = false;
-            c.reason = RootCandidateReason::UnknownCMC;
+            c.reason = RootCandidateReason::RemoteSelfIDContender;
         }
 
-        if (!c.cmcKnown || !c.cmcCapable || !c.transactionCapable) {
+        if (!c.contender || !c.transactionCapable) {
             continue;
         }
 

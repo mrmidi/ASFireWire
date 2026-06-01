@@ -62,9 +62,9 @@ struct RolePolicy {
 
     [[nodiscard]] static constexpr RolePolicy MakeHardwareValidationDefault() noexcept {
         RolePolicy policy{};
-        // cross-validated with Linux: core-card.c:113 Apple: IOFireWireController.cpp:2414
+        // cross-validated with Linux: core-card.c:425-428 Apple: IOFireWireController.cpp:3258-3367
         policy.roleMode = ASFW::FW::RoleMode::FullBusManager;
-        policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::ElectionOnly;
+        policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed;
         return policy;
     }
 };
