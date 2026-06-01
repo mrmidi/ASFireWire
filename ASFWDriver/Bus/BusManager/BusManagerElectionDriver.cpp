@@ -27,6 +27,10 @@ bool BusManagerElectionDriver::ElectionStillAllowed() const noexcept {
 bool BusManagerElectionDriver::ShouldYieldForStableRemoteIRM(const ASFW::Driver::TopologySnapshot& snap) noexcept {
     if (stormYieldPending_) {
         stormYieldPending_ = false;
+        // IEEE 1394-2008 H.4 / 8.5.4 leave "most suitable" BM choice and
+        // abdication heuristics implementation-defined. If a remote root/IRM
+        // immediately resets after ASFW wins BM, treat that as bus-specific
+        // evidence to yield instead of fighting the incumbent device.
         stormYieldActive_ =
             snap.localNodeId != Driver::kInvalidPhysicalId &&
             snap.rootNodeId != Driver::kInvalidPhysicalId &&
@@ -54,6 +58,9 @@ bool BusManagerElectionDriver::ShouldYieldForStableRemoteIRM(const ASFW::Driver:
         return false;
     }
 
+    // IEEE 1394-2008 Q.8 explicitly permits a cable bus with an IRM and no BM.
+    // Maintaining that state is preferable to repeatedly destabilizing a bus
+    // that just rejected our BM ownership.
     const bool sameTopology =
         snap.localNodeId == stormYieldKey_.localNodeId &&
         snap.rootNodeId == stormYieldKey_.rootNodeId &&
@@ -219,6 +226,9 @@ void BusManagerElectionDriver::OnBusReset() noexcept {
     if (localWasBM && deps_.monotonicNowNs && lastLocalBMWinNs_ != 0) {
         const uint64_t nowNs = deps_.monotonicNowNs();
         if (nowNs >= lastLocalBMWinNs_ && nowNs - lastLocalBMWinNs_ <= kFastResetAfterBMWinNs) {
+            // IEEE 1394-2008 H.4 models BM abdication as a valid path when a
+            // better-suited manager is detected; the standard deliberately does
+            // not define that suitability heuristic.
             stormYieldPending_ = true;
             ASFW_LOG(Controller,
                      "[BM Election] Reset arrived %llu ms after local BM win; next stable "
