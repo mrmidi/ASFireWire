@@ -40,6 +40,7 @@ struct LocalRequestContext {
     uint32_t quadletData{0};            // host-order data quadlet (write-quadlet)
     std::span<const uint8_t> writePayload{}; // raw bytes: write-quadlet = 4B, write-block = N
     uint32_t dataLength{0};             // block length (block read/write)
+    uint16_t extendedTCode{0};           // lock extended tCode, when present
 };
 
 // Result of a participant claiming (or declining) a request.
@@ -49,6 +50,7 @@ struct LocalRequestResult {
     uint32_t readQuadlet{0};             // read-quadlet response value
     uint64_t readBlockDeviceAddress{0};  // read-block DMA payload address
     uint32_t readBlockLength{0};         // read-block payload length
+    uint32_t lockResponseQuadlet{0};      // host-order lock response old value
 
     static LocalRequestResult NotMine() noexcept { return {}; }
     static LocalRequestResult Write(ResponseCode rc) noexcept {
@@ -59,6 +61,9 @@ struct LocalRequestResult {
     }
     static LocalRequestResult Block(ResponseCode rc, uint64_t addr, uint32_t len) noexcept {
         return {.claimed = true, .rcode = rc, .readBlockDeviceAddress = addr, .readBlockLength = len};
+    }
+    static LocalRequestResult Lock(ResponseCode rc, uint32_t oldValue) noexcept {
+        return {.claimed = true, .rcode = rc, .lockResponseQuadlet = oldValue};
     }
 };
 
@@ -83,7 +88,7 @@ public:
     [[nodiscard]] size_t HandlerCount() const noexcept { return handlers_.size(); }
 
     // Production: register this dispatch as the single owner of request tCodes
-    // 0x0/0x1/0x4/0x5 on the router, and remember the sender for read responses.
+    // 0x0/0x1/0x4/0x5/0x9 on the router, and remember the sender for responses.
     void Install(PacketRouter& router, ResponseSender* sender);
 
 private:

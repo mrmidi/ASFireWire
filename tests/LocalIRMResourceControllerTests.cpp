@@ -71,13 +71,27 @@ TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_ProbesReadyChanged) 
     LocalIRMResourceController controller(hardware_, broadcastChannel_);
     
     // Setup hardware with some non-default value in BANDWIDTH_AVAILABLE (select 1)
-    hardware_.WriteLocalIRMResource(1, 1000);
+    (void)hardware_.WriteLocalIRMResource(1, 1000);
     
     controller.OnTopologyReady(10, 2, 2, true);
     
     auto snap = controller.Snapshot();
     EXPECT_EQ(snap.state, LocalIRMResourceState::ReadyChanged);
     EXPECT_EQ(snap.bandwidthAvailable, 1000);
+}
+
+TEST_F(LocalIRMResourceControllerTests, TopologyReady_IsIRM_Channel31AvailableLeavesBroadcastInvalid) {
+    hardware_.SetInitialIRMRegistersProgrammed(true);
+    LocalIRMResourceController controller(hardware_, broadcastChannel_);
+
+    // CHANNELS_AVAILABLE_HI bit 0 means channel 31 still appears available.
+    (void)hardware_.WriteLocalIRMResource(2, 0xFFFFFFFFu);
+
+    controller.OnTopologyReady(10, 2, 2, true);
+
+    auto snap = controller.Snapshot();
+    EXPECT_EQ(snap.state, LocalIRMResourceState::ReadyChanged);
+    EXPECT_EQ(broadcastChannel_.Read(), 0x8000001F);
 }
 
 TEST_F(LocalIRMResourceControllerTests, RoleDoesNotAllowIRMHost_DisablesHosting) {

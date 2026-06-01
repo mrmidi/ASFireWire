@@ -203,7 +203,9 @@ IRMFallbackAction IRMFallbackCoordinator::PlanFallbackAction() const noexcept {
     }
 
     if (snapshot_.rootCmcKnown && snapshot_.rootCmcCapable) {
-        return IRMFallbackAction::RemoteRootCmstrRequired;
+        // Conservative Milestone 5 policy keeps remote STATE_SET.cmstr reserved
+        // for a full Bus Manager; IRM fallback drives root selection instead.
+        return IRMFallbackAction::RootSelectionRequired;
     }
 
     return IRMFallbackAction::RootSelectionRequired;

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 
 #include "../ResponseCode.hpp"
 #include "../Rx/PacketRouter.hpp"
@@ -38,7 +39,19 @@ public:
                                uint64_t payloadDeviceAddress,
                                uint32_t payloadLength) noexcept;
 
+    /// Build and transmit a Lock Response (tCode 0xB) for compare-swap requests.
+    void SendLockResponse(const ARPacketView& request,
+                          ResponseCode rcode,
+                          uint32_t oldValue) noexcept;
+
 private:
+    struct ScratchRegion {
+        std::byte* base{nullptr};
+        uint64_t deviceBase{0};
+        uint32_t slotCount{0};
+        std::atomic<uint32_t> nextSlot{0};
+    };
+
     void SendResponse(const ARPacketView& request,
                       ResponseCode rcode,
                       uint8_t responseTCode,
@@ -51,6 +64,7 @@ private:
     Tx::Submitter& submitter_;
     Engine::ContextManager& ctxMgr_;
     Bus::GenerationTracker& generationTracker_;
+    ScratchRegion lockResponseScratch_;
 };
 
 } // namespace ASFW::Async

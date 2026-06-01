@@ -147,6 +147,35 @@ TEST_F(IRMFallbackCoordinatorTests, LocalIRM_GateOpen_NoBM_PlansAction) {
     EXPECT_EQ(snap.plannedAction, IRMFallbackAction::LocalRootEnableCycleMasterRequired);
 }
 
+TEST_F(IRMFallbackCoordinatorTests, LocalIRM_RemoteRootCmc_PlansRootSelectionConservatively) {
+    IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
+    auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);
+
+    RolePolicy policy{RoleMode::IRMResourceHost};
+    TopologySnapshot topo{};
+    topo.generation = 1;
+    topo.graphStatus = TopologyGraphStatus::Valid;
+    topo.localNodeId = 1;
+    topo.irmNodeId = 1;
+    topo.rootNodeId = 2; // Remote root
+
+    (void)hardware_.WriteLocalIRMResource(0, 0x3F);
+
+    BusManagerRuntimeState bmState{};
+    bmState.rootCmcKnown = true;
+    bmState.rootCmcCapable = true;
+
+    uint64_t t0 = 1000;
+    timing_.OnSelfIDComplete(1, t0);
+    uint64_t tFallback = t0 + 626000000ULL;
+
+    coordinator->OnTopologyReady(topo, policy, bmState, tFallback);
+
+    const auto snap = coordinator->Snapshot();
+    EXPECT_EQ(snap.state, IRMFallbackState::NoBMDetected);
+    EXPECT_EQ(snap.plannedAction, IRMFallbackAction::RootSelectionRequired);
+}
+
 TEST_F(IRMFallbackCoordinatorTests, StaleGeneration_Suppressed) {
     IRMFallbackCoordinator::Deps deps{hardware_, &timing_, nullptr};
     auto coordinator = std::make_shared<IRMFallbackCoordinator>(deps);

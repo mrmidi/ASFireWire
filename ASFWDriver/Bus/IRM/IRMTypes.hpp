@@ -53,7 +53,7 @@ constexpr uint32_t kMaxBandwidthUnitsS400 = 4915;
  * Bit N clear (0) = channel N allocated
  *
  * Note: Some channels may be reserved by IRM (e.g., channel 31 for broadcast).
- * Cross-validated with Linux: firewire/ohci.c:2492 - InitialChannelsAvailableHi 0xfffffffe
+ * cross-validated with Linux: ohci.c:2492 Apple: IOFireWireIRM.cpp:238
  */
 constexpr uint32_t kChannelsAvailableInitial = 0xFFFFFFFF;  ///< All channels free
 

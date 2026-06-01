@@ -42,6 +42,7 @@ struct ProvisionSpec {
     size_t atRespDescCount = 64;
     size_t arReqBufCount  = 128, arReqBufSize  = 4160;
     size_t arRespBufCount = 256, arRespBufSize = 4160;
+    size_t atRespScratchBytes = 1024;
 };
 
 struct ContextManagerSnapshot {

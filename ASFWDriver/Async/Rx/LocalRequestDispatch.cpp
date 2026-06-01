@@ -51,6 +51,7 @@ ResponseCode LocalRequestDispatch::DispatchView(const ARPacketView& view, uint32
 
     const bool isReadQuad = (view.tCode == AReq::kTcodeReadQuad);
     const bool isReadBlock = (view.tCode == AReq::kTcodeReadBlock);
+    const bool isLock = (view.tCode == AReq::kTcodeLockRequest);
 
     if (view.tCode == AReq::kTcodeWriteQuad && view.header.size() >= 16) {
         ctx.quadletData = ReadQuadletDataLE(view.header);
@@ -60,6 +61,10 @@ ResponseCode LocalRequestDispatch::DispatchView(const ARPacketView& view, uint32
         ctx.dataLength = ExtractDataLength(view.header);
     } else if (isReadBlock) {
         ctx.dataLength = ExtractDataLength(view.header);
+    } else if (isLock) {
+        ctx.writePayload = view.payload;
+        ctx.dataLength = ExtractDataLength(view.header);
+        ctx.extendedTCode = ExtractExtendedTCode(view.header);
     }
 
     const auto result = Route(ctx);
@@ -82,6 +87,12 @@ ResponseCode LocalRequestDispatch::DispatchView(const ARPacketView& view, uint32
         }
         return ResponseCode::NoResponse;
     }
+    if (isLock) {
+        if (sender_ != nullptr) {
+            sender_->SendLockResponse(view, rcode, result.lockResponseQuadlet);
+        }
+        return ResponseCode::NoResponse;
+    }
 
     // Write tCodes: PacketRouter sends the write response from this rcode.
     return rcode;
@@ -99,6 +110,7 @@ void LocalRequestDispatch::Install(PacketRouter& router, ResponseSender* sender)
     router.RegisterRequestHandler(AReq::kTcodeWriteBlock, wire);
     router.RegisterRequestHandler(AReq::kTcodeReadQuad, wire);
     router.RegisterRequestHandler(AReq::kTcodeReadBlock, wire);
+    router.RegisterRequestHandler(AReq::kTcodeLockRequest, wire);
 }
 
 } // namespace ASFW::Async

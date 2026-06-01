@@ -2,12 +2,16 @@
 
 #include "../Engine/ContextManager.hpp"
 #include "../Contexts/ATResponseContext.hpp"
+#include "../PacketHelpers.hpp"
 #include "../Tx/DescriptorBuilder.hpp"
 #include "../Tx/Submitter.hpp"
 #include "../../Bus/GenerationTracker.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOReturn.h>
+
+#include <bit>
+#include <cstring>
 #include <utility>
 
 namespace ASFW::Async {
@@ -18,6 +22,8 @@ constexpr uint8_t kSrcBusID = 0;
 constexpr uint8_t kSpeedS400 = 0x02;
 constexpr uint8_t kRetryX = 1;
 constexpr uint8_t kPriority = 0;
+constexpr std::size_t kLockResponseScratchSlots = 64;
+constexpr std::size_t kLockResponseScratchStride = 16;
 
 uint32_t BuildQ0(uint8_t tLabel, uint8_t tCode) {
     return (static_cast<uint32_t>(kSrcBusID & 0x01) << 23) |
@@ -33,6 +39,13 @@ uint32_t BuildQ1(uint16_t destID, ResponseCode rcode) {
            (static_cast<uint32_t>(static_cast<uint8_t>(rcode) & 0x0F) << 12);
 }
 
+[[nodiscard]] uint32_t HostToBE32(uint32_t value) noexcept {
+    if constexpr (std::endian::native == std::endian::little) {
+        return std::byteswap(value);
+    }
+    return value;
+}
+
 } // namespace
 
 ResponseSender::ResponseSender(DescriptorBuilder& builder,
@@ -42,7 +55,19 @@ ResponseSender::ResponseSender(DescriptorBuilder& builder,
     : builder_(builder)
     , submitter_(submitter)
     , ctxMgr_(ctxMgr)
-    , generationTracker_(generationTracker) {}
+    , generationTracker_(generationTracker) {
+    if (auto* dma = ctxMgr_.DmaManager()) {
+        const auto region =
+            dma->AllocateRegion(kLockResponseScratchSlots * kLockResponseScratchStride,
+                                kLockResponseScratchStride);
+        if (region.has_value()) {
+            lockResponseScratch_.base = reinterpret_cast<std::byte*>(region->virtualBase);
+            lockResponseScratch_.deviceBase = region->deviceBase;
+            lockResponseScratch_.slotCount =
+                static_cast<uint32_t>(region->size / kLockResponseScratchStride);
+        }
+    }
+}
 
 void ResponseSender::SendResponse(const ARPacketView& request,
                                   ResponseCode rcode,
@@ -180,6 +205,61 @@ void ResponseSender::SendReadBlockResponse(const ARPacketView& request,
                  sizeof(header),
                  responsePayloadAddress,
                  responsePayloadLen);
+}
+
+void ResponseSender::SendLockResponse(const ARPacketView& request,
+                                      ResponseCode rcode,
+                                      uint32_t oldValue) noexcept {
+    if (request.tCode != 0x9) {
+        ASFW_LOG_V3(Async,
+                    "ResponseSender: skip LockResp for non-lock tCode=0x%x",
+                    request.tCode);
+        return;
+    }
+
+    const uint16_t extTCode = ExtractExtendedTCode(request.header);
+    uint32_t header[4]{};
+    header[0] = BuildQ0(static_cast<uint8_t>(request.tLabel & 0x3F), /*LockResp*/ 0xB);
+    header[1] = BuildQ1(request.sourceID, rcode);
+    header[2] = 0;
+
+    uint64_t payloadAddress = 0;
+    std::size_t payloadLength = 0;
+    ResponseCode responseCode = rcode;
+
+    if (rcode == ResponseCode::Complete) {
+        if (lockResponseScratch_.base == nullptr || lockResponseScratch_.slotCount == 0) {
+            ASFW_LOG_ERROR(Async, "ResponseSender: no DMA scratch for lock response payload");
+            responseCode = ResponseCode::Busy;
+            header[1] = BuildQ1(request.sourceID, responseCode);
+        } else if (auto* dma = ctxMgr_.DmaManager()) {
+            const uint32_t slot =
+                lockResponseScratch_.nextSlot.fetch_add(1u, std::memory_order_relaxed) %
+                lockResponseScratch_.slotCount;
+            auto* slotBase = lockResponseScratch_.base +
+                             static_cast<std::size_t>(slot) * kLockResponseScratchStride;
+            const uint32_t oldValueBE = HostToBE32(oldValue);
+            std::memcpy(slotBase, &oldValueBE, sizeof(oldValueBE));
+            dma->PublishRange(slotBase, sizeof(oldValueBE));
+
+            payloadAddress = lockResponseScratch_.deviceBase +
+                             static_cast<uint64_t>(slot) * kLockResponseScratchStride;
+            payloadLength = sizeof(oldValueBE);
+            header[3] = (static_cast<uint32_t>(payloadLength) << 16) |
+                        static_cast<uint32_t>(extTCode);
+        } else {
+            responseCode = ResponseCode::Busy;
+            header[1] = BuildQ1(request.sourceID, responseCode);
+        }
+    }
+
+    SendResponse(request,
+                 responseCode,
+                 /*responseTCode*/ 0xB,
+                 header,
+                 sizeof(header),
+                 payloadAddress,
+                 payloadLength);
 }
 
 } // namespace ASFW::Async

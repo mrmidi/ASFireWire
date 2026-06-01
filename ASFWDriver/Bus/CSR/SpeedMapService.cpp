@@ -10,6 +10,14 @@
 
 namespace ASFW::Bus {
 
+namespace {
+constexpr uint32_t kSpeedMapCSRQuadlets = 256;
+constexpr uint32_t kSpeedMapPayloadQuadlets = kSpeedMapCSRQuadlets - 1;
+constexpr uint32_t kSpeedMapEntriesPerQuadlet = 16;
+constexpr uint32_t kSpeedMapAddressableEntries =
+    kSpeedMapPayloadQuadlets * kSpeedMapEntriesPerQuadlet;
+} // namespace
+
 SpeedMapService::SpeedMapService() noexcept {
     Invalidate(0);
 }
@@ -20,10 +28,10 @@ void SpeedMapService::Invalidate(uint32_t generation) noexcept {
     snapshot_.status = SpeedMapStatus::Invalid;
 
     encoded_.fill(0);
-    // IEEE 1394-1995 §8.3.5: q0 = [length:16][generation:16]
-    // Length is 1023 quadlets following the header.
-    encoded_[0] = (1023u << 16) | (generation & 0xFFu);
-    encodedQuadletCount_ = 256; // Full KiB
+    // SPEED_MAP is obsolete in IEEE 1394-2008; keep the legacy 0x400-byte CSR
+    // window self-consistent instead of advertising a larger unavailable image.
+    encoded_[0] = (kSpeedMapPayloadQuadlets << 16) | (generation & 0xFFu);
+    encodedQuadletCount_ = kSpeedMapCSRQuadlets;
 }
 
 bool SpeedMapService::PublishFromTopology(const ASFW::Driver::TopologySnapshot& topology) noexcept {
@@ -148,24 +156,26 @@ bool SpeedMapService::ComputeMatrix(const ASFW::Driver::TopologySnapshot& topolo
 
 void SpeedMapService::EncodeCSRImage() noexcept {
     encoded_.fill(0);
-    // q0: [length:16][generation:16]
-    encoded_[0] = (1023u << 16) | (snapshot_.generation & 0xFFu);
+    // q0: [length:16][generation:16]. SPEED_MAP is obsolete in IEEE 1394-2008,
+    // so ASFW exposes only the legacy 0x400-byte software CSR window.
+    encoded_[0] = (kSpeedMapPayloadQuadlets << 16) | (snapshot_.generation & 0xFFu);
 
-    // q1..q255: 4096 2-bit entries
+    // q1..q255: addressable 2-bit entries within the legacy CSR window.
     for (int i = 0; i < 64; ++i) {
         for (int j = 0; j < 64; ++j) {
             uint32_t index = i * 64 + j;
+            if (index >= kSpeedMapAddressableEntries) {
+                continue;
+            }
             uint8_t code = static_cast<uint8_t>(snapshot_.speedMatrix[i][j]);
             if (code > 2) code = 2; // Cap at S400 for legacy map
 
-            // Linux order: index % 16 entries per quadlet, bit-shifted by 2 * (index % 16)
+            // Legacy packed order: index % 16 entries per quadlet.
             encoded_[index / 16 + 1] |= (static_cast<uint32_t>(code) << (2 * (index % 16)));
         }
     }
 
-    // Calculate simple CRC-16 if needed? Spec says SPEED_MAP has no internal CRC, 
-    // it's just a raw data block. 1394-1995 §8.3.5 doesn't mention CRC.
-    snapshot_.encodedLengthQuadlets = 256;
+    snapshot_.encodedLengthQuadlets = kSpeedMapCSRQuadlets;
 }
 
 } // namespace ASFW::Bus

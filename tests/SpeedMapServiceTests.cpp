@@ -43,10 +43,11 @@ TEST_F(SpeedMapServiceTests, SingleNode_AllSelfSpeedsValid) {
     EXPECT_EQ(snap.status, SpeedMapStatus::Valid);
     EXPECT_EQ(snap.speedMatrix[0][0], FireWireSpeedCode::S400);
     
-    // Header q0: 1023 quadlets (0x03FF) in bits [31:16], generation 1 in [15:0]
+    // SPEED_MAP is obsolete in IEEE 1394-2008; ASFW serves a bounded legacy
+    // 0x400-byte CSR image with 255 payload quadlets after the header.
     uint32_t q0 = 0;
     EXPECT_TRUE(service_.ReadQuadlet(0, q0));
-    EXPECT_EQ(q0, (1023u << 16) | 1);
+    EXPECT_EQ(q0, (255u << 16) | 1);
 }
 
 TEST_F(SpeedMapServiceTests, TwoNodes_MinEndpointSpeed) {
@@ -116,7 +117,7 @@ TEST_F(SpeedMapServiceTests, ThreeNodeChain_MinSpeedAlongPath) {
     EXPECT_EQ(snap.speedMatrix[0][2], FireWireSpeedCode::S100);
 }
 
-TEST_F(SpeedMapServiceTests, EncodingOrder_MatchLinux) {
+TEST_F(SpeedMapServiceTests, EncodingOrder_LegacyPackedTwoBitEntries) {
     TopologySnapshot topo{};
     topo.generation = 1;
     topo.nodeCount = 2;
@@ -141,9 +142,29 @@ TEST_F(SpeedMapServiceTests, EncodingOrder_MatchLinux) {
     // In quadlet 1 (q1), entry 1 is at bits [3:2].
     // Value for S400 is 2 (10b).
     // so q1 should have bits [3:2] = 10b => value 8?
-    // Wait, Linux: index / 16 + 1. For index 1, it's quadlet 1.
-    // index % 16 is 1. Shift is 2 * 1 = 2.
-    // so q1 |= 2 << 2 => 8.
+    // index / 16 + 1 selects the payload quadlet after q0.
+    // index % 16 is 1, so q1 |= 2 << 2 => 8.
     
     EXPECT_EQ(encoded[1] & 0x0000000C, 2 << 2);
+}
+
+TEST_F(SpeedMapServiceTests, LegacyCSRWindowIsBoundedToOneKiB) {
+    TopologySnapshot topo{};
+    topo.generation = 9;
+    topo.nodeCount = 1;
+    topo.localNodeId = 0;
+    topo.graphStatus = TopologyGraphStatus::Valid;
+
+    TopologyNodeRecord node0{};
+    node0.physicalId = 0;
+    node0.linkActive = true;
+    node0.maxSpeedMbps = 400;
+    topo.physical.nodes.push_back(node0);
+
+    EXPECT_TRUE(service_.PublishFromTopology(topo));
+    EXPECT_EQ(service_.Snapshot().encodedLengthQuadlets, 256u);
+
+    uint32_t value = 0;
+    EXPECT_TRUE(service_.ReadQuadlet(1020, value));
+    EXPECT_FALSE(service_.ReadQuadlet(1024, value));
 }

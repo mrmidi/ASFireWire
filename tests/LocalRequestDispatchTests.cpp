@@ -6,9 +6,11 @@
 // longer clobbers another (the bug the central dispatch fixes).
 
 #include "Async/Rx/LocalRequestDispatch.hpp"
+#include "Async/PacketHelpers.hpp"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -116,6 +118,17 @@ TEST(LocalRequestDispatch, HandlerCountTracksRegistrations) {
     EXPECT_EQ(d.HandlerCount(), 2u);
     d.AddHandler(nullptr); // ignored
     EXPECT_EQ(d.HandlerCount(), 2u);
+}
+
+TEST(LocalRequestDispatch, LockHeaderFieldsUseQ3LittleEndianLayout) {
+    std::array<uint8_t, 16> header{};
+    header[12] = 0x02; // extended_tcode low byte
+    header[13] = 0x00;
+    header[14] = 0x08; // data_length low byte
+    header[15] = 0x00;
+
+    EXPECT_EQ(ASFW::Async::ExtractExtendedTCode(header), 0x0002u);
+    EXPECT_EQ(ASFW::Async::ExtractDataLength(header), 8u);
 }
 
 } // namespace

@@ -60,12 +60,21 @@ void LocalIRMResourceController::OnTopologyReady(uint32_t generation,
     // Local node is IRM!
     snapshot_.localIsIRM = true;
     snapshot_.state = LocalIRMResourceState::InitializingActiveResources;
-    
-    // Mark BROADCAST_CHANNEL as valid (0xC000001F)
-    broadcastChannel_.MarkValidChannel31();
 
     // Probe active OHCI autonomous resources
-    ProbeActiveResources();
+    if (!ProbeActiveResources()) {
+        broadcastChannel_.ResetImplementedInvalid();
+        return;
+    }
+
+    // Mark BROADCAST_CHANNEL valid only after the OHCI channel resource shows
+    // channel 31 reserved.
+    // cross-validated with Linux: core-card.c:258 Apple: IOFireWireIRM.cpp:301
+    if ((snapshot_.channelsAvailableHi & 0x1u) == 0) {
+        broadcastChannel_.MarkValidChannel31();
+    } else {
+        broadcastChannel_.ResetImplementedInvalid();
+    }
 }
 
 void LocalIRMResourceController::OnTopologyInvalid(uint32_t generation) noexcept {

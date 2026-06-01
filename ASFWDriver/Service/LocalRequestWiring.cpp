@@ -16,6 +16,7 @@
 #include "../Bus/CSR/TopologyMapService.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
+#include "../Bus/IRM/LocalIRMResourceCSRHandler.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Hardware/IEEE1394.hpp"
 #include "../Logging/Logging.hpp"
@@ -51,12 +52,6 @@ public:
             return LocalRequestResult::NotMine();
         }
         const uint32_t off = static_cast<uint32_t>(ctx.destOffset & 0xFFFFFFFFu);
-        if (off == ASFW::FW::kCSR_BusManagerID ||
-            off == ASFW::FW::kCSR_BandwidthAvailable ||
-            off == ASFW::FW::kCSR_ChannelsAvailableHi ||
-            off == ASFW::FW::kCSR_ChannelsAvailableLo) {
-            ASFW_LOG(Controller, "⚠️ WARNING: Inbound request targeting autonomous hardware CSR (offset=0x%x, tCode=0x%x) reached software dispatch unexpectedly!", off, ctx.tCode);
-        }
         switch (ctx.tCode) {
         case AReq::kTcodeWriteQuad: {
             const auto r = csr_->WriteQuadlet(off, ctx.quadletData);
@@ -231,9 +226,11 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     }
 
     auto dispatch = std::make_shared<ASFW::Async::LocalRequestDispatch>();
-    // Priority order: specific CSR offsets first, then FCP / DICE fixed regions,
+    // Priority order: hardware-backed IRM resource CSRs first, then software CSR
+    // offsets, FCP / DICE fixed regions,
     // then SBP-2's dynamically allocated ranges. Ranges do not overlap; each
     // handler also self-filters and declines (NotMine) addresses it does not own.
+    dispatch->AddHandler(std::make_unique<ASFW::Bus::LocalIRMResourceCSRHandler>(d.hardware.get()));
     dispatch->AddHandler(std::make_unique<CSRLocalHandler>(d.csrResponder.get()));
     if (d.fcpResponseRouter) {
         dispatch->AddHandler(std::make_unique<FcpLocalHandler>(d.fcpResponseRouter.get()));
@@ -247,7 +244,7 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
     d.localRequestDispatch = dispatch;
 
     ASFW_LOG(Controller,
-             "✅ LocalRequestDispatch wired: %zu handlers (CSR/FCP/DICE/SBP2), tCodes 0x0/0x1/0x4/0x5",
+             "✅ LocalRequestDispatch wired: %zu handlers (IRMResourceCSR/CSR/FCP/DICE/SBP2), tCodes 0x0/0x1/0x4/0x5/0x9",
              dispatch->HandlerCount());
 }
 

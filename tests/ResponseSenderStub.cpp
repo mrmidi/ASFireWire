@@ -35,6 +35,14 @@ void ResponseSender::SendReadBlockResponse(const ARPacketView& request,
     (void)payloadLength;
 }
 
+void ResponseSender::SendLockResponse(const ARPacketView& request,
+                                      ResponseCode rcode,
+                                      uint32_t oldValue) noexcept {
+    (void)request;
+    (void)rcode;
+    (void)oldValue;
+}
+
 void ResponseSender::SendResponse(const ARPacketView& request,
                                   ResponseCode rcode,
                                   uint8_t responseTCode,

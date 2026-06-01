@@ -76,8 +76,8 @@ inline constexpr uint32_t kBroadcastChannelValid   = 1u << 30;
 inline constexpr uint32_t kCSR_TopologyMapBase = kCSRCoreBase + 0x1000;
 inline constexpr uint32_t kCSR_TopologyMapEnd  = kCSRCoreBase + 0x13FF;
 
-// SPEED_MAP CSR region. The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
-// Software-served as AddressError.
+// SPEED_MAP CSR region. SPEED_MAP is obsolete in IEEE 1394-2008; ASFW serves a
+// bounded 0x400-byte synthetic legacy image for compatibility diagnostics.
 inline constexpr uint32_t kCSR_SpeedMapBase = kCSRCoreBase + 0x2000;
 inline constexpr uint32_t kCSR_SpeedMapEnd  = kCSRCoreBase + 0x23FF;
 
