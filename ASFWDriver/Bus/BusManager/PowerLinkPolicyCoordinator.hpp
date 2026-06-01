@@ -197,7 +197,8 @@ public:
     /**
      * @brief Pure planner logic for testing.
      */
-    [[nodiscard]] PowerPolicyDecision Plan(const PowerLinkPolicyInputs& inputs) const noexcept;
+    [[nodiscard]] PowerPolicyDecision Plan(const PowerLinkPolicyInputs& inputs,
+                                           const std::vector<PowerLinkNodeEvidence>& candidates) const noexcept;
 
     /**
      * @brief Builds a list of link-inactive candidates from the topology.

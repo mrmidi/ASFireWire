@@ -27,7 +27,7 @@ TEST_F(PowerLinkPolicyCoordinatorTests, ClientOnly_SuppressesPowerPolicy) {
     in.topologyValid = true;
     in.roleMode = RoleMode::ClientOnly;
     
-    EXPECT_EQ(coordinator_.Plan(in), PowerPolicyDecision::SuppressedByRoleMode);
+    EXPECT_EQ(coordinator_.Plan(in, coordinator_.BuildCandidates(in)), PowerPolicyDecision::SuppressedByRoleMode);
 }
 
 TEST_F(PowerLinkPolicyCoordinatorTests, ObserveOnlyPowerPolicy_Suppresses) {
@@ -39,7 +39,7 @@ TEST_F(PowerLinkPolicyCoordinatorTests, ObserveOnlyPowerPolicy_Suppresses) {
     in.powerPolicyLevel = PowerPolicyLevel::ObserveOnly;
     in.localIsBM = true;
     
-    EXPECT_EQ(coordinator_.Plan(in), PowerPolicyDecision::SuppressedByPolicyLevel);
+    EXPECT_EQ(coordinator_.Plan(in, coordinator_.BuildCandidates(in)), PowerPolicyDecision::SuppressedByPolicyLevel);
 }
 
 TEST_F(PowerLinkPolicyCoordinatorTests, NotBMOrFallbackIRM_Suppresses) {
@@ -52,7 +52,7 @@ TEST_F(PowerLinkPolicyCoordinatorTests, NotBMOrFallbackIRM_Suppresses) {
     in.localIsBM = false;
     in.localIsIRM = false;
     
-    EXPECT_EQ(coordinator_.Plan(in), PowerPolicyDecision::SuppressedNotBMOrFallbackIRM);
+    EXPECT_EQ(coordinator_.Plan(in, coordinator_.BuildCandidates(in)), PowerPolicyDecision::SuppressedNotBMOrFallbackIRM);
 }
 
 TEST_F(PowerLinkPolicyCoordinatorTests, InvalidTopology_Suppresses) {
@@ -62,7 +62,7 @@ TEST_F(PowerLinkPolicyCoordinatorTests, InvalidTopology_Suppresses) {
     in.powerPolicyLevel = PowerPolicyLevel::LinkOnAllowed;
     in.localIsBM = true;
     
-    EXPECT_EQ(coordinator_.Plan(in), PowerPolicyDecision::SuppressedByTopology);
+    EXPECT_EQ(coordinator_.Plan(in, {}), PowerPolicyDecision::SuppressedByTopology);
 }
 
 TEST_F(PowerLinkPolicyCoordinatorTests, PowerBudgetUnknown_DefersByDefault) {
@@ -75,7 +75,7 @@ TEST_F(PowerLinkPolicyCoordinatorTests, PowerBudgetUnknown_DefersByDefault) {
     in.localIsBM = true;
     in.powerBudgetStatus = PowerBudgetStatus::Unknown;
     
-    EXPECT_EQ(coordinator_.Plan(in), PowerPolicyDecision::DeferredPowerBudgetUnknown);
+    EXPECT_EQ(coordinator_.Plan(in, coordinator_.BuildCandidates(in)), PowerPolicyDecision::DeferredPowerBudgetUnknown);
 }
 
 TEST_F(PowerLinkPolicyCoordinatorTests, LinkInactiveRemoteNode_BecomesCandidate) {
@@ -99,9 +99,9 @@ TEST_F(PowerLinkPolicyCoordinatorTests, LinkInactiveRemoteNode_BecomesCandidate)
     in.rootNodeId = 0;
     in.powerBudgetStatus = PowerBudgetStatus::Sufficient;
     
-    EXPECT_EQ(coordinator_.Plan(in), PowerPolicyDecision::LinkOnRequired);
-    
     auto candidates = coordinator_.BuildCandidates(in);
+    EXPECT_EQ(coordinator_.Plan(in, candidates), PowerPolicyDecision::LinkOnRequired);
+    
     ASSERT_EQ(candidates.size(), 1);
     EXPECT_EQ(candidates[0].nodeId, 1);
     EXPECT_TRUE(candidates[0].eligibleForLinkOn);
