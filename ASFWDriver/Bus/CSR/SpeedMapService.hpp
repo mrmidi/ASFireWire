@@ -57,10 +57,10 @@ struct SpeedMapSnapshot {
 };
 
 /**
- * @brief Manages the generation-scoped SPEED_MAP CSR region.
+ * @brief Manages the generation-scoped legacy SPEED_MAP CSR region.
  *
- * Computes minimum path speed between all node pairs and encodes the image
- * according to IEEE 1394-1995 §8.3.5.
+ * SPEED_MAP is obsolete in IEEE 1394-2008. ASFW still serves a bounded
+ * synthetic 0x400-byte legacy image for old readers and diagnostics.
  */
 class SpeedMapService final : public ISpeedMapProvider {
 public:

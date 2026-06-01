@@ -350,6 +350,27 @@ target_include_directories(LocalRequestDispatchTests PRIVATE ${ASFW_COMMON_INCLU
 
 gtest_discover_tests(LocalRequestDispatchTests)
 
+add_executable(LocalIRMResourceCSRHandlerTests
+    "${ASFW_TESTS_DIR}/LocalIRMResourceCSRHandlerTests.cpp"
+    "${ASFW_DRIVER_DIR}/Bus/IRM/LocalIRMResourceCSRHandler.cpp"
+    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
+    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
+)
+
+target_link_libraries(LocalIRMResourceCSRHandlerTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(LocalIRMResourceCSRHandlerTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(LocalIRMResourceCSRHandlerTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(LocalIRMResourceCSRHandlerTests)
+
 add_executable(SelfIDSequenceTests
     "${ASFW_TESTS_DIR}/SelfIDSequenceTests.cpp"
 )

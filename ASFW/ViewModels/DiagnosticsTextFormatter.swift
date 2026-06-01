@@ -516,8 +516,9 @@ struct DiagnosticsTextFormatter {
         case 6: fallbackStateStr = "NoBMDetected"
         case 7: fallbackStateStr = "PlanningCycleRepair"
         case 8: fallbackStateStr = "ActionSuppressedByPolicy"
-        case 9: fallbackStateStr = "ProbeFailed"
-        case 10: fallbackStateStr = "StaleGeneration"
+        case 9: fallbackStateStr = "SuppressedByTopology"
+        case 10: fallbackStateStr = "ProbeFailed"
+        case 11: fallbackStateStr = "StaleGeneration"
         default: fallbackStateStr = "Unknown (\(snapshot.busManager.irmFallbackState))"
         }
         appendRow("Fallback State", fallbackStateStr)
@@ -585,9 +586,13 @@ struct DiagnosticsTextFormatter {
         case 6: cycleDecisionStr = "AlreadySatisfiedCycleStartObserved"
         case 7: cycleDecisionStr = "AlreadySatisfiedLocalCycleMasterEnabled"
         case 8: cycleDecisionStr = "DeferRootCmcUnknown"
-        case 9: cycleDecisionStr = "LocalRootEnableCycleMaster"
-        case 10: cycleDecisionStr = "RemoteRootSetCmstr"
-        case 11: cycleDecisionStr = "RootSelectionRequired"
+        case 9: cycleDecisionStr = "DeferLocalCmcUnknown"
+        case 10: cycleDecisionStr = "LocalRootEnableCycleMaster"
+        case 11: cycleDecisionStr = "RemoteRootSetCmstr"
+        case 12: cycleDecisionStr = "RootSelectionRequired"
+        case 13: cycleDecisionStr = "FailedHardwareUnavailable"
+        case 14: cycleDecisionStr = "FailedAsyncSubmit"
+        case 15: cycleDecisionStr = "FailedGenerationStale"
         default: cycleDecisionStr = "Unknown (\(snapshot.busManager.cyclePolicyDecision))"
         }
         appendRow("Cycle Decision", cycleDecisionStr)

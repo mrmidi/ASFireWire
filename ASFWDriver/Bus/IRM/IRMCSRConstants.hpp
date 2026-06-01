@@ -42,10 +42,11 @@ enum class CSRSelector : uint8_t {
 };
 
 // Required initial values (IEEE 1394-2008).
-// Cross-validated with Apple: IOFireWireController.cpp:6302 Linux: firewire/core.h:46
+// cross-validated with Linux: core.h:46 Apple: IOFireWireController.cpp:6302
 static constexpr uint32_t kNoBusManagerId               = 0x0000003F;
 static constexpr uint32_t kInitialBandwidthAvailable    = 0x00001333; // 4915 units
-// Channel 31 reserved (bit 0 of Hi register). Cross-validated with Apple: IOFireWireIRM.cpp:238 Linux: firewire/ohci.c:2492
+// Channel 31 reserved (bit 0 of Hi register).
+// cross-validated with Linux: ohci.c:2492 Apple: IOFireWireIRM.cpp:238
 static constexpr uint32_t kInitialChannelsAvailableHi   = 0xFFFFFFFE; 
 static constexpr uint32_t kInitialChannelsAvailableLo   = 0xFFFFFFFF;
 
