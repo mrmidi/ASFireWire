@@ -82,4 +82,34 @@ static constexpr uint32_t kSpeedMapEnd = kCoreBase + 0x23FF;
 
 } // namespace CSRContract
 
+/**
+ * @brief Authoritative table of Bus Manager CSRs.
+ */
+inline constexpr CSRRegisterContract kBusManagerCSRContract[] = {
+    {CSRContract::kStateClear, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::ReadWrite,
+     "STATE_CLEAR"},
+    {CSRContract::kStateSet, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::ReadWrite,
+     "STATE_SET"},
+    {CSRContract::kNodeIds, 4, CSRRegisterOwner::HardwareOHCI, CSRAccessPolicy::ReadOnly,
+     "NODE_IDS"},
+    {CSRContract::kResetStart, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::WriteOnly,
+     "RESET_START"},
+    {CSRContract::kCycleTime, 4, CSRRegisterOwner::HardwareOHCI, CSRAccessPolicy::ReadWrite,
+     "CYCLE_TIME"},
+    {CSRContract::kBusManagerId, 4, CSRRegisterOwner::HardwareOHCI, CSRAccessPolicy::ReadLock,
+     "BUS_MANAGER_ID"},
+    {CSRContract::kBandwidthAvailable, 4, CSRRegisterOwner::HardwareOHCI,
+     CSRAccessPolicy::ReadLock, "BANDWIDTH_AVAILABLE"},
+    {CSRContract::kChannelsAvailableHi, 4, CSRRegisterOwner::HardwareOHCI,
+     CSRAccessPolicy::ReadLock, "CHANNELS_AVAILABLE_HI"},
+    {CSRContract::kChannelsAvailableLo, 4, CSRRegisterOwner::HardwareOHCI,
+     CSRAccessPolicy::ReadLock, "CHANNELS_AVAILABLE_LO"},
+    {CSRContract::kBroadcastChannel, 4, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::ReadWrite,
+     "BROADCAST_CHANNEL"},
+    {CSRContract::kTopologyMapBase, 0x400, CSRRegisterOwner::SoftwareASFW,
+     CSRAccessPolicy::ReadOnly, "TOPOLOGY_MAP"},
+    {CSRContract::kSpeedMapBase, 0x400, CSRRegisterOwner::SoftwareASFW, CSRAccessPolicy::ReadOnly,
+     "SPEED_MAP"},
+};
+
 } // namespace ASFW::Bus
