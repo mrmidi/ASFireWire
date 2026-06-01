@@ -75,7 +75,7 @@ extension DiagnosticsTextFormatter {
 
     static func appendRoleCoordinator(_ r: DiagnosticsReport,
                                       _ snapshot: ASFWDiagnosticsSnapshot) {
-        r.title("Role Coordinator Policy Engine")
+        r.title("Legacy Role Coordinator Policy Engine")
         let rcModeStr: String
         switch snapshot.roleCoordinator.policyMode {
         case 0: rcModeStr = "Standard (no forced root)"
@@ -106,8 +106,8 @@ extension DiagnosticsTextFormatter {
             r.row("Remote CMSTR Payload", DiagFormat.hex32(snapshot.roleCoordinator.remoteCMSTRPayload))
             r.row("Remote CMSTR RCode", snapshot.roleCoordinator.remoteCMSTRRCode)
         } else {
-            r.row("Remote CMSTR Policy", "observe-only / not armed")
-            r.row("Reason", "ClientOnly / ObserveOnly; remote CMSTR disabled by policy")
+            r.row("Legacy Remote CMSTR", "not used by this engine")
+            r.row("Reason", "Live BM cycle writes are reported in Cycle Master Policy")
         }
         r.row("Cycle Start Observed", snapshot.roleCoordinator.cycleStartObserved != 0 ? "Yes" : "No")
         r.row("Cycle Start Source Node", DiagFormat.nodeStr(snapshot.roleCoordinator.cycleStartSourceNode))
@@ -198,10 +198,16 @@ extension DiagnosticsTextFormatter {
         r.row("Root CMC Capable", snapshot.busManager.rootCmcCapable != 0 ? "Yes" : "No")
         r.row("CycleStart Observed", snapshot.busManager.cycleStartObserved != 0 ? "Yes" : "No")
         r.row("CycleStart Source", DiagFormat.nodeStr(snapshot.busManager.cycleStartSourceNode))
-        r.row("Remote CMSTR Allowed", snapshot.busManager.remoteCmstrAllowed != 0 ? "Yes" : "No")
+        r.row("Legacy CMSTR Allowed", snapshot.busManager.remoteCmstrAllowed != 0 ? "Yes" : "No")
 
         let cmstrActionStr: String
-        if snapshot.busManager.remoteCmstrAllowed != 0 {
+        if snapshot.busManager.cyclePolicyRemoteSubmitCount > 0 {
+            if snapshot.busManager.cyclePolicyRemoteCmstrInFlight != 0 {
+                cmstrActionStr = "CyclePolicy submitted \(snapshot.busManager.cyclePolicyRemoteSubmitCount), in flight"
+            } else {
+                cmstrActionStr = "CyclePolicy submitted \(snapshot.busManager.cyclePolicyRemoteSubmitCount) (status \(snapshot.busManager.cyclePolicyRemoteCmstrStatus))"
+            }
+        } else if snapshot.busManager.remoteCmstrAllowed != 0 {
             if snapshot.busManager.lastRemoteCmstrResult == 0 {
                 cmstrActionStr = "success"
             } else {
@@ -210,6 +216,6 @@ extension DiagnosticsTextFormatter {
         } else {
             cmstrActionStr = "not armed"
         }
-        r.row("Remote CMSTR Action", cmstrActionStr)
+        r.row("Remote CMSTR Status", cmstrActionStr)
     }
 }

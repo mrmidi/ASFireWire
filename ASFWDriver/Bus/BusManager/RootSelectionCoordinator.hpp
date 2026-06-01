@@ -55,10 +55,10 @@ enum class RootSelectionAction : uint8_t {
  */
 enum class RootCandidateReason : uint8_t {
     None = 0,
-    LocalCMC,
-    RemoteCMCFromConfigROM,
-    CurrentRootAlreadyCMC,
-    UnknownCMC,
+    LocalSelfIDContender,
+    RemoteSelfIDContender,
+    CurrentRootSelfIDContender,
+    MissingSelfIDContender,
 };
 
 /**
@@ -71,9 +71,6 @@ struct RootCandidate {
     bool isCurrentRoot{false};
     bool linkActive{false};
     bool transactionCapable{false};
-
-    bool cmcKnown{false};
-    bool cmcCapable{false};
 
     bool contender{false};
     uint32_t maxSpeedMbps{0};
@@ -106,12 +103,6 @@ struct RootSelectionInputs {
     bool irmFallbackNoBMDetected{false};
 
     bool cycleStartObserved{false};
-
-    bool rootCmcKnown{false};
-    bool rootCmcCapable{false};
-
-    bool localCmcKnown{false};
-    bool localCmcCapable{false};
 
     uint8_t currentGapCount{63};
 
@@ -148,7 +139,7 @@ struct RootSelectionSnapshot {
 struct RootSelectionConfig {
     uint32_t maxAttemptsPerStableTopology{5};
     bool useLongResetForRootSelection{false};
-    bool preferLocalRootWhenCMC{true};
+    bool preferLocalRootWhenContender{true};
     bool allowRemoteRootSelection{true};
 };
 

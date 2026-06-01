@@ -1,8 +1,8 @@
 // RolePolicyTests.cpp — Layer 1 of RoleCoordinator (FW-6).
 //
-// Pins the Apple-compatible default policy (FW-17): root CMC is diagnostics-only,
-// remote STATE_SET.cmstr is experimental-only, and every mutating action is gated
-// by FullBMActivityLevel. Linux-style force-root on verified CMC=0 is opt-in.
+// Pins the legacy Apple-compatible RoleCoordinator policy (FW-17): root CMC is
+// diagnostics-only in this layer, and every mutating action is gated by
+// FullBMActivityLevel. Linux-compatible BM cycle duties live in CyclePolicyCoordinator.
 // See Linear FW-16 (Linux) / FW-17 (Apple) and [[apple-ignores-cmc-irm-probing]].
 
 #include <cstdint>
@@ -61,8 +61,7 @@ TEST(RolePolicyTests, UnknownCapabilityNoCycles_Defers) {
 
 // ---- Apple-compatible default (ObserveOnly): CMC is diagnostics-only -----------
 
-// Remote CMC=1 root: accept it. Apple ignores CMC; neither reference writes a
-// remote STATE_SET.cmstr as the normal cycle-master path.
+// Remote CMC=1 root: accept it in the legacy role layer.
 TEST(RolePolicyTests, Saffire_VerifiedCmcRoot_AcceptedNoRemoteCmstr) {
     const auto t = MakeTopo(/*local*/ 0, /*root*/ 2, /*irm*/ 2);
     RoleInputs in{};
@@ -73,8 +72,7 @@ TEST(RolePolicyTests, Saffire_VerifiedCmcRoot_AcceptedNoRemoteCmstr) {
     EXPECT_EQ(a.kind, RoleAction::Kind::None);
 }
 
-// Remote CMC=1 root stays accept even with force-root unlocked: only the top rung
-// (RemoteCmstrAllowed) may ever emit a remote CMSTR write.
+// Remote CMC=1 root stays accepted even with force-root unlocked.
 TEST(RolePolicyTests, CmcRoot_NoRemoteCmstrBelowTopRung) {
     const auto t = MakeTopo(0, 2, 2);
     RoleInputs in{};
@@ -146,7 +144,7 @@ TEST(RolePolicyTests, LocalRoot_GapPolicyAllowed_EnablesLocalCycleMaster) {
 
 // ---- Experimental / opt-in paths ----------------------------------------------
 
-// Remote CMSTR is reachable ONLY at the top rung (RemoteCmstrAllowed).
+// Legacy RoleCoordinator remote CMSTR remains reachable only at the top rung.
 TEST(RolePolicyTests, RemoteCmstr_OnlyAtTopRung) {
     const auto t = MakeTopo(0, 1, 1);
     RoleInputs in{};

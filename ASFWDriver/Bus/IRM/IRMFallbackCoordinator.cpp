@@ -202,12 +202,8 @@ IRMFallbackAction IRMFallbackCoordinator::PlanFallbackAction() const noexcept {
         return IRMFallbackAction::LocalRootEnableCycleMasterRequired;
     }
 
-    if (snapshot_.rootCmcKnown && snapshot_.rootCmcCapable) {
-        // Conservative Milestone 5 policy keeps remote STATE_SET.cmstr reserved
-        // for a full Bus Manager; IRM fallback drives root selection instead.
-        return IRMFallbackAction::RootSelectionRequired;
-    }
-
+    // BIB CMC evidence is diagnostics-only for fallback. The active root
+    // selector uses Self-ID contender/link bits and cycle observations.
     return IRMFallbackAction::RootSelectionRequired;
 }
 

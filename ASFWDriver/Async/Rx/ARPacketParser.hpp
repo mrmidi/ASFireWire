@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <array>
 
 namespace ASFW::Async {
 
@@ -51,6 +52,11 @@ public:
     // Extract data_length field from packet header (Phase 2.2: std::span)
     // Per IEEE 1394-1995 §6.2: data_length in quadlet 3, bits[31:16]
     static size_t GetDataLength(std::span<const uint8_t> header, uint8_t tCode);
+
+    // Extract the two PHY payload quadlets from a link-internal/PHY AR header.
+    // cross-validated with Linux: ohci.c:935-936 Apple: IOFireWireController.cpp:5178-5182
+    static std::optional<std::array<uint32_t, 2>> ExtractPhyPacketQuadletsHostOrder(
+        std::span<const uint8_t> header);
 
 private:
     // tCode values per IEEE 1394-1995 Table 6-1

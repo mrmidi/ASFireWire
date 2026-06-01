@@ -105,6 +105,51 @@ const char* RemoteCmstrDetailString(Async::AsyncStatus status) {
     }
     return "unknown";
 }
+
+const char* CyclePolicyDecisionString(Bus::CyclePolicyDecision decision) {
+    using Bus::CyclePolicyDecision;
+    switch (decision) {
+    case CyclePolicyDecision::None: return "none";
+    case CyclePolicyDecision::SuppressedByRoleMode: return "role";
+    case CyclePolicyDecision::SuppressedByActivityLevel: return "activity";
+    case CyclePolicyDecision::SuppressedByTopology: return "topology";
+    case CyclePolicyDecision::SuppressedByGeneration: return "generation";
+    case CyclePolicyDecision::SuppressedNotBMOrFallbackIRM: return "not-bm";
+    case CyclePolicyDecision::AlreadySatisfiedCycleStartObserved: return "cycle-observed";
+    case CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled: return "local-cm-already";
+    case CyclePolicyDecision::DeferRootSelfIDUnknown: return "root-selfid-unknown";
+    case CyclePolicyDecision::DeferLocalSelfIDUnknown: return "local-selfid-unknown";
+    case CyclePolicyDecision::LocalRootEnableCycleMaster: return "local-cm";
+    case CyclePolicyDecision::RemoteRootSetCmstr: return "remote-cmstr";
+    case CyclePolicyDecision::RootSelectionRequired: return "root-selection";
+    case CyclePolicyDecision::FailedHardwareUnavailable: return "hw-failed";
+    case CyclePolicyDecision::FailedAsyncSubmit: return "async-submit-failed";
+    case CyclePolicyDecision::FailedGenerationStale: return "stale";
+    case CyclePolicyDecision::DeferRootBibCmcUnknown: return "root-bib-cmc-unknown";
+    }
+    return "unknown";
+}
+
+const char* CyclePolicyActionString(Bus::CyclePolicyAction action) {
+    using Bus::CyclePolicyAction;
+    switch (action) {
+    case CyclePolicyAction::None: return "none";
+    case CyclePolicyAction::EnableLocalCycleMaster: return "local-cycle-master";
+    case CyclePolicyAction::WriteRemoteStateSetCmstr: return "remote-state-set-cmstr";
+    case CyclePolicyAction::ReportRootSelectionRequired: return "root-selection-required";
+    }
+    return "unknown";
+}
+
+const TopologyNodeRecord* FindTopologyNode(const TopologySnapshot& topology,
+                                           uint8_t physicalId) noexcept {
+    for (const auto& node : topology.physical.nodes) {
+        if (node.physicalId == physicalId) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
 } // anonymous namespace
 
 bool ControllerCore::StartDiscoveryScan(const Discovery::ROMScanRequest& request) {
@@ -672,7 +717,22 @@ void ControllerCore::EvaluateCyclePolicy() noexcept {
     in.rootCmcKnown = state.rootCmcKnown;
     in.rootCmcCapable = state.rootCmcCapable;
 
-    // Populate local CMC evidence from staged BIB
+    if (const auto topo = LatestTopology(); topo.has_value()) {
+        if (const auto* root = FindTopologyNode(*topo, state.rootNodeId)) {
+            in.rootSelfIdKnown = true;
+            in.rootSelfIdLinkActive = root->linkActive;
+            in.rootSelfIdContender = root->contender;
+        }
+        if (const auto* local = FindTopologyNode(*topo, state.localNodeId)) {
+            in.localSelfIdKnown = true;
+            in.localSelfIdLinkActive = local->linkActive;
+            in.localSelfIdContender = local->contender;
+        }
+    }
+
+    // Populate local BIB CMC for diagnostics only. Active cycle/root policy is
+    // driven by Self-ID link/contender bits so devices with broken CMC in their
+    // Bus_Info_Block do not trigger force-root loops.
     if (deps_.configRomStager) {
         const auto localCaps = ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());
         in.localCmcKnown = true;
@@ -686,6 +746,19 @@ void ControllerCore::EvaluateCyclePolicy() noexcept {
     in.activityLevel = rolePolicy_.fullBMActivityLevel;
 
     cyclePolicy_->Evaluate(in, *this);
+    const auto& snap = cyclePolicy_->Snapshot();
+    ASFW_LOG(Controller,
+             "[CyclePolicy] decision=%{public}s gen=%u local=%u root=%u irm=%u bm=%u "
+             "isBM=%d isRoot=%d rootSelfID=%d/%d bibCmc=%d/%d cycleSeen=%d "
+             "action=%{public}s(%u)",
+             CyclePolicyDecisionString(snap.lastDecision), in.generation,
+             static_cast<unsigned>(in.localNodeId), static_cast<unsigned>(in.rootNodeId),
+             static_cast<unsigned>(in.irmNodeId), static_cast<unsigned>(in.bmNodeId),
+             in.localIsBM ? 1 : 0, in.localIsRoot ? 1 : 0,
+             in.rootSelfIdLinkActive ? 1 : 0, in.rootSelfIdContender ? 1 : 0,
+             in.rootCmcKnown ? 1 : 0, in.rootCmcCapable ? 1 : 0,
+             in.cycleStartObserved ? 1 : 0, CyclePolicyActionString(snap.lastAction),
+             static_cast<unsigned>(snap.lastAction));
 }
 
 void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
@@ -709,18 +782,6 @@ void ControllerCore::EvaluateRootSelectionPolicy() noexcept {
     in.localIsIRM = state.localIsIRM;
     in.localIsBM = state.localIsBM;
     in.cycleStartObserved = state.cycleStartObserved;
-    in.rootCmcKnown = state.rootCmcKnown;
-    in.rootCmcCapable = state.rootCmcCapable;
-
-    if (deps_.configRomStager) {
-        const auto localCaps = ASFW::FW::DecodeBusOptions(deps_.configRomStager->ExpectedBusOptions());
-        in.localCmcKnown = true;
-        in.localCmcCapable = localCaps.cmc;
-    } else {
-        in.localCmcKnown = false;
-        in.localCmcCapable = false;
-    }
-
     in.currentGapCount = LatestTopology().has_value() ? LatestTopology()->gapCount : static_cast<uint8_t>(63);
 
     if (irmFallback_) {
@@ -869,6 +930,7 @@ bool ControllerCore::EnableLocalCycleMasterMutation(uint32_t generation) {
     if (generation != currentGeneration_ || !deps_.hardware) {
         return false;
     }
+    ASFW_LOG(Controller, "[CyclePolicy] enable local cycleMaster gen=%u", generation);
     return deps_.hardware->SetLocalCycleMasterEnabled(true);
 }
 
@@ -884,6 +946,11 @@ Async::AsyncHandle ControllerCore::WriteRemoteStateSetCmstr(uint32_t generation,
         .addressLo = ASFW::FW::kCSRRemoteStateSet,
         .nodeID = static_cast<uint16_t>(busBase16 | (targetNodeId & 0x3Fu)),
     }};
+
+    ASFW_LOG(Controller,
+             "[CyclePolicy] write remote STATE_SET.cmstr gen=%u target=%u nodeID=0x%04x",
+             generation, static_cast<unsigned>(targetNodeId),
+             static_cast<unsigned>(busBase16 | (targetNodeId & 0x3Fu)));
 
     std::weak_ptr<ControllerCore> weakThis = shared_from_this();
     return busImpl_->WriteQuad(
@@ -911,6 +978,10 @@ void ControllerCore::SendRemoteCmstr(uint8_t, uint32_t) {
 void ControllerCore::HandleRemoteCmstrCallback(uint32_t generation, uint8_t rootNodeId, ASFW::Async::AsyncStatus status) {
     if (generation == currentGeneration_) {
         bmState_.lastRemoteCmstrResult = static_cast<uint32_t>(status);
+        ASFW_LOG(Controller,
+                 "[CyclePolicy] remote STATE_SET.cmstr %{public}s gen=%u target=%u (%{public}s)",
+                 RemoteCmstrResultString(status), generation, static_cast<unsigned>(rootNodeId),
+                 RemoteCmstrDetailString(status));
         EvaluateBusManagerPolicy();
     }
 }

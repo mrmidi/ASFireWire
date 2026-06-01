@@ -4,6 +4,7 @@
 // HardwareInterfaceOrderTests.cpp — Regression tests for CSRControl write order and cycle master.
 
 #include "Hardware/HardwareInterface.hpp"
+#include "Hardware/IEEE1394.hpp"
 #include "Hardware/RegisterMap.hpp"
 #include "Testing/HostDriverKitStubs.hpp"
 #include <gtest/gtest.h>
@@ -151,6 +152,62 @@ TEST_F(HardwareInterfaceOrderTests, SetLocalCycleMasterEnabled_InOrder) {
         });
 
     EXPECT_TRUE(hardware_.SetLocalCycleMasterEnabled(false));
+}
+
+TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffFalseClearsRhbWithoutIssuingBusReset) {
+    InSequence seq;
+
+    constexpr uint8_t reg1WithRhb = kPhyRootHoldOff | kPhyGapCountMask;
+    constexpr uint8_t reg1Cleared = kPhyGapCountMask;
+
+    // Read PHY register 1.
+    EXPECT_CALL(*mockDevice_,
+                MemoryWrite32(0, static_cast<uint64_t>(Register32::kPhyControl), 0x8100u));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kPhyControl), _))
+        .WillOnce([=](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0x80000000u | (static_cast<uint32_t>(reg1WithRhb) << 16);
+        });
+
+    // Clear RHB. This must not set IBR (bit 6), which would request another reset.
+    EXPECT_CALL(*mockDevice_,
+                MemoryWrite32(0, static_cast<uint64_t>(Register32::kPhyControl),
+                              0x4000u | (static_cast<uint32_t>(kPhyReg1Address) << 8) |
+                                  reg1Cleared));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kPhyControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0;
+        });
+
+    hardware_.SetRootHoldOff(false);
+}
+
+TEST_F(HardwareInterfaceOrderTests, SetRootHoldOffTrueSetsRhbPreservingGap) {
+    InSequence seq;
+
+    constexpr uint8_t reg1WithoutRhb = kPhyGapCountMask;
+    constexpr uint8_t reg1WithRhb = kPhyRootHoldOff | kPhyGapCountMask;
+
+    EXPECT_CALL(*mockDevice_,
+                MemoryWrite32(0, static_cast<uint64_t>(Register32::kPhyControl), 0x8100u));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kPhyControl), _))
+        .WillOnce([=](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0x80000000u | (static_cast<uint32_t>(reg1WithoutRhb) << 16);
+        });
+
+    EXPECT_CALL(*mockDevice_,
+                MemoryWrite32(0, static_cast<uint64_t>(Register32::kPhyControl),
+                              0x4000u | (static_cast<uint32_t>(kPhyReg1Address) << 8) |
+                                  reg1WithRhb));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kHCControl), _));
+    EXPECT_CALL(*mockDevice_, MemoryRead32(0, static_cast<uint64_t>(Register32::kPhyControl), _))
+        .WillOnce([](uint8_t, uint64_t, uint32_t* val) {
+            *val = 0;
+        });
+
+    hardware_.SetRootHoldOff(true);
 }
 
 } // namespace

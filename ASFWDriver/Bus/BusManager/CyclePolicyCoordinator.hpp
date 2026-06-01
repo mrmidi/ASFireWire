@@ -50,8 +50,8 @@ enum class CyclePolicyDecision : uint8_t {
     AlreadySatisfiedCycleStartObserved,
     AlreadySatisfiedLocalCycleMasterEnabled,
 
-    DeferRootCmcUnknown,
-    DeferLocalCmcUnknown,
+    DeferRootSelfIDUnknown,
+    DeferLocalSelfIDUnknown,
 
     LocalRootEnableCycleMaster,
     RemoteRootSetCmstr,
@@ -60,6 +60,7 @@ enum class CyclePolicyDecision : uint8_t {
     FailedHardwareUnavailable,
     FailedAsyncSubmit,
     FailedGenerationStale,
+    DeferRootBibCmcUnknown,
 };
 
 /**
@@ -96,9 +97,19 @@ struct CyclePolicyInputs {
     bool cycleStartObserved{false};
     uint8_t cycleStartSourceNode{0x3F};
 
+    bool rootSelfIdKnown{false};
+    bool rootSelfIdLinkActive{false};
+    bool rootSelfIdContender{false};
+
+    bool localSelfIdKnown{false};
+    bool localSelfIdLinkActive{false};
+    bool localSelfIdContender{false};
+
+    // BIB CMC evidence gates only remote STATE_SET.cmstr. It must not drive
+    // root selection because some devices report CMC=0 while their
+    // Self-ID/behavior proves they can host cycle services.
     bool rootCmcKnown{false};
     bool rootCmcCapable{false};
-
     bool localCmcKnown{false};
     bool localCmcCapable{false};
 
@@ -179,4 +190,3 @@ private:
 };
 
 } // namespace ASFW::Bus
-

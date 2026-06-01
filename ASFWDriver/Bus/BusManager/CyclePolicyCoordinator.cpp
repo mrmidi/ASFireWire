@@ -80,10 +80,6 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
         return CyclePolicyDecision::SuppressedByTopology;
     }
 
-    if (inputs.cycleStartObserved) {
-        return CyclePolicyDecision::AlreadySatisfiedCycleStartObserved;
-    }
-
     // Two paths to cycle repair: 
     // A. We are the elected Bus Manager.
     // B. We are the IRM and the fallback gate is open without a detected BM.
@@ -105,35 +101,50 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
         return CyclePolicyDecision::SuppressedByActivityLevel;
     }
 
-    // If local is root, always use local enable path (safest and most spec-compliant).
+    if (!isBM && inputs.cycleStartObserved) {
+        return CyclePolicyDecision::AlreadySatisfiedCycleStartObserved;
+    }
+
+    // If local is root, always use local enable path. The active decision is
+    // based on Self-ID link state, not BIB CMC.
     if (inputs.localIsRoot) {
-        if (!inputs.localCmcKnown) {
-            return CyclePolicyDecision::DeferLocalCmcUnknown;
+        if (!inputs.localSelfIdKnown) {
+            return CyclePolicyDecision::DeferLocalSelfIDUnknown;
         }
-        if (!inputs.localCmcCapable) {
+        if (!inputs.localSelfIdLinkActive) {
             return CyclePolicyDecision::RootSelectionRequired;
         }
         return CyclePolicyDecision::LocalRootEnableCycleMaster;
     }
 
-    // Remote Root Path:
-    // This requires root CMC evidence.
-    if (!inputs.rootCmcKnown) {
-        return CyclePolicyDecision::DeferRootCmcUnknown;
+    // Remote root path: root suitability is based on Self-ID contender+link bits.
+    // The remote STATE_SET.cmstr write is separately gated by BIB CMC below.
+    // cross-validated with Linux: core-card.c:448-473 Apple: IOFireWireController.cpp:2364-2404
+    if (!inputs.rootSelfIdKnown) {
+        return CyclePolicyDecision::DeferRootSelfIDUnknown;
     }
 
-    if (!inputs.rootCmcCapable) {
-        // Root cannot cycle; active root selection required (Milestone 6).
+    if (!inputs.rootSelfIdLinkActive || !inputs.rootSelfIdContender) {
         return CyclePolicyDecision::RootSelectionRequired;
     }
 
-    // If we are BM, we can send remote CMSTR if activity level allows.
-    if (isBM) {
-        if (inputs.activityLevel >= FullBMActivityLevel::RemoteCmstrAllowed) {
-            return CyclePolicyDecision::RemoteRootSetCmstr;
-        } else {
-            return CyclePolicyDecision::SuppressedByActivityLevel;
+    if (!inputs.rootCmcKnown) {
+        return CyclePolicyDecision::DeferRootBibCmcUnknown;
+    }
+
+    if (!inputs.rootCmcCapable) {
+        if (inputs.cycleStartObserved) {
+            return CyclePolicyDecision::AlreadySatisfiedCycleStartObserved;
         }
+        return CyclePolicyDecision::RootSelectionRequired;
+    }
+
+    // Elected BM duty: make sure a BIB-CMC-qualified root generates cycle starts.
+    // Linux writes remote STATE_SET.cmstr only when root_device_is_cmc; Apple
+    // instead forces/keeps itself root before enabling the local cycle master.
+    // cross-validated with Linux: core-card.c:520-528 Apple: IOFireWireController.cpp:3366-3367
+    if (isBM) {
+        return CyclePolicyDecision::RemoteRootSetCmstr;
     }
 
     // IRM fallback path (no BM exists):

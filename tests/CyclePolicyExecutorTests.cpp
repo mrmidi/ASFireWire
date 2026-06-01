@@ -24,6 +24,19 @@ protected:
     MockCyclePolicyExecutor executor_;
 };
 
+static void MarkLocalSelfIdRoot(CyclePolicyInputs& in) {
+    in.localSelfIdKnown = true;
+    in.localSelfIdLinkActive = true;
+    in.localSelfIdContender = true;
+}
+
+static void MarkRemoteRootSelfIdContender(CyclePolicyInputs& in, uint8_t rootNode = 2) {
+    in.rootNodeId = rootNode;
+    in.rootSelfIdKnown = true;
+    in.rootSelfIdLinkActive = true;
+    in.rootSelfIdContender = true;
+}
+
 TEST_F(CyclePolicyExecutorTests, ExecutorEnablesLocalCycleMasterOnlyOncePerGeneration) {
     CyclePolicyInputs in{};
     in.generation = 5;
@@ -32,8 +45,7 @@ TEST_F(CyclePolicyExecutorTests, ExecutorEnablesLocalCycleMasterOnlyOncePerGener
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = true;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkLocalSelfIdRoot(in);
     in.cycleStartObserved = false;
 
     // First call: should trigger mutation
@@ -49,26 +61,27 @@ TEST_F(CyclePolicyExecutorTests, ExecutorEnablesLocalCycleMasterOnlyOncePerGener
     EXPECT_EQ(coordinator_.Snapshot().localCycleMasterEnableCount, 1);
 }
 
-TEST_F(CyclePolicyExecutorTests, ExecutorDoesNotEnableLocalCycleMasterWhenNotRoot) {
+TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWhenNotRoot) {
     CyclePolicyInputs in{};
     in.generation = 5;
+    in.busBase16 = 0xFFC0;
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
     in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = false; // Not root!
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkRemoteRootSelfIdContender(in, 2);
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     in.cycleStartObserved = false;
 
+    ASFW::Async::AsyncHandle handle{123};
     EXPECT_CALL(executor_, EnableLocalCycleMasterMutation(_)).Times(0);
+    EXPECT_CALL(executor_, WriteRemoteStateSetCmstr(5, 0xFFC0, 2)).WillOnce(Return(handle));
     coordinator_.Evaluate(in, executor_);
     
-    // In CyclePolicyAllowed mode, remote CMSTR is suppressed
-    EXPECT_EQ(coordinator_.Snapshot().lastDecision, CyclePolicyDecision::SuppressedByActivityLevel);
-    EXPECT_EQ(coordinator_.Snapshot().lastAction, CyclePolicyAction::None);
+    EXPECT_EQ(coordinator_.Snapshot().lastDecision, CyclePolicyDecision::RemoteRootSetCmstr);
+    EXPECT_EQ(coordinator_.Snapshot().lastAction, CyclePolicyAction::WriteRemoteStateSetCmstr);
 }
 
 TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWriteWithCorrectAddress) {
@@ -77,14 +90,12 @@ TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWriteWithCorrectAddre
     in.busBase16 = 0xFFC0;
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
-    in.activityLevel = FullBMActivityLevel::RemoteCmstrAllowed;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
     in.localIsBM = true;
     in.localIsRoot = false;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkRemoteRootSelfIdContender(in, 2);
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
-    in.rootNodeId = 2;
     in.cycleStartObserved = false;
 
     ASFW::Async::AsyncHandle handle{123};
@@ -96,16 +107,15 @@ TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWriteWithCorrectAddre
     EXPECT_EQ(coordinator_.Snapshot().remoteCmstrSubmitCount, 1);
 }
 
-TEST_F(CyclePolicyExecutorTests, ExecutorSuppressesRemoteCmstrBelowRemoteCmstrAllowed) {
+TEST_F(CyclePolicyExecutorTests, ExecutorSuppressesRemoteCmstrAtElectionOnly) {
     CyclePolicyInputs in{};
     in.generation = 5;
     in.topologyValid = true;
     in.roleMode = RoleMode::FullBusManager;
-    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed; // Too low for remote CMSTR
+    in.activityLevel = FullBMActivityLevel::ElectionOnly;
     in.localIsBM = true;
     in.localIsRoot = false;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkRemoteRootSelfIdContender(in, 2);
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
     in.cycleStartObserved = false;
@@ -123,11 +133,9 @@ TEST_F(CyclePolicyExecutorTests, RemoteCmstrCallbackStaleGenerationIgnored) {
     in.activityLevel = FullBMActivityLevel::RemoteCmstrAllowed;
     in.localIsBM = true;
     in.localIsRoot = false;
-    in.localCmcKnown = true;
-    in.localCmcCapable = true;
+    MarkRemoteRootSelfIdContender(in, 2);
     in.rootCmcKnown = true;
     in.rootCmcCapable = true;
-    in.rootNodeId = 2;
     
     ASFW::Async::AsyncHandle handle{123};
     EXPECT_CALL(executor_, WriteRemoteStateSetCmstr(5, _, 2)).WillOnce(Return(handle));
@@ -141,4 +149,25 @@ TEST_F(CyclePolicyExecutorTests, RemoteCmstrCallbackStaleGenerationIgnored) {
     
     EXPECT_EQ(coordinator_.Snapshot().staleGenerationDrops, 1);
     EXPECT_EQ(coordinator_.Snapshot().remoteCmstrInFlight, false);
+}
+
+TEST_F(CyclePolicyExecutorTests, ExecutorDoesNotSubmitRemoteCmstrWhenBibCmcFalseAndCycleSeen) {
+    CyclePolicyInputs in{};
+    in.generation = 5;
+    in.busBase16 = 0xFFC0;
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = false;
+    MarkRemoteRootSelfIdContender(in, 2);
+    in.rootCmcKnown = true;
+    in.rootCmcCapable = false;
+    in.cycleStartObserved = true;
+
+    EXPECT_CALL(executor_, WriteRemoteStateSetCmstr(_, _, _)).Times(0);
+    coordinator_.Evaluate(in, executor_);
+    EXPECT_EQ(coordinator_.Snapshot().lastDecision,
+              CyclePolicyDecision::AlreadySatisfiedCycleStartObserved);
+    EXPECT_EQ(coordinator_.Snapshot().lastAction, CyclePolicyAction::None);
 }

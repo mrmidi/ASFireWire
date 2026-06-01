@@ -7,8 +7,8 @@ namespace ASFW::Driver::Role {
 //   * Root CMC is NOT a policy trigger. Apple's IOFireWireFamily never reads the
 //     Config ROM CMC bit; it drives root/cycle-master from Self-ID contender/link
 //     and empirical IRM probing. So CMC=1 is "accept", CMC=0 is diagnostics-only.
-//   * Remote STATE_SET.cmstr is done by NEITHER Apple nor Linux. It lives behind
-//     the top ladder rung (RemoteCmstrAllowed) as an explicit experiment.
+//   * This legacy role layer leaves Linux-style remote STATE_SET.cmstr to
+//     CyclePolicyCoordinator, so old callers still need the top ladder rung.
 //   * Force-root on verified CMC=0 is Linux-shaped, not Apple — opt-in only via
 //     linuxStyleCmcForceRoot AND ForceRootAllowed AND local==IRM.
 //   * Every mutating RoleAction is gated by FullBMActivityLevel; at ObserveOnly
@@ -65,16 +65,16 @@ RoleAction EvaluateRolePolicy(const RoleInputs& in) noexcept {
     switch (in.rootCap) {
     case RootCapability::CapableByBIB:
         // Apple ignores CMC and would self-promote if it were IRM; Linux keeps a
-        // CMC root. Both treat a working CMC root as fine — so accept it. Remote
-        // CMSTR is experimental-only and never the default for a CMC root.
+        // CMC root and the BM cycle policy may write STATE_SET.cmstr. This
+        // legacy role layer only reports the old explicit opt-in action.
         if (in.activity >= Level::RemoteCmstrAllowed) {
             action.kind = RoleAction::Kind::EnableRemoteCycleMaster;
             action.targetRoot = rootNode;
-            action.reason = "remote root CMC=1: experimental remote STATE_SET.cmstr (RemoteCmstrAllowed)";
+            action.reason = "remote root CMC=1: legacy remote STATE_SET.cmstr (RemoteCmstrAllowed)";
         } else {
             action.kind = RoleAction::Kind::None;
             action.targetRoot = rootNode;
-            action.reason = "remote root CMC=1: accept (Apple ignores CMC; no remote CMSTR)";
+            action.reason = "remote root CMC=1: accept in legacy role layer";
         }
         return action;
 

@@ -49,7 +49,7 @@ private:
                                Debug::BusResetPacketCapture* busResetCapture);
 
     // Handle synthetic bus reset packet
-    void HandleSyntheticBusResetPacket(const uint32_t* quadlets,
+    void HandleSyntheticBusResetPacket(const ARPacketView& view,
                                        uint8_t newGeneration,
                                        Debug::BusResetPacketCapture* busResetCapture);
 

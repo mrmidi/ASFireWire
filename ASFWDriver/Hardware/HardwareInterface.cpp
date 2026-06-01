@@ -411,14 +411,14 @@ void HardwareInterface::InitializePhyReg4Cache() {
 }
 
 void HardwareInterface::SetRootHoldOff(bool enable) {
-    const auto currentOpt = ReadPhyRegister(1);
+    const auto currentOpt = ReadPhyRegister(kPhyReg1Address);
     if (!currentOpt.has_value()) {
         ASFW_LOG_ERROR(Hardware, "Failed to read PHY Register 1 for SetRootHoldOff(%d)", enable);
         return;
     }
 
     const uint8_t current = currentOpt.value();
-    const bool rhbSet = (current & 0x80) != 0;
+    const bool rhbSet = (current & kPhyRootHoldOff) != 0;
 
     if (enable) {
         if (rhbSet) {
@@ -426,8 +426,8 @@ void HardwareInterface::SetRootHoldOff(bool enable) {
             return;
         }
 
-        const uint8_t newValue = current | 0x80;
-        if (WritePhyRegister(1, newValue)) {
+        const uint8_t newValue = current | kPhyRootHoldOff;
+        if (WritePhyRegister(kPhyReg1Address, newValue)) {
             ASFW_LOG(Hardware, "PHY Register 1 RHB enabled");
         } else {
             ASFW_LOG_ERROR(Hardware, "Failed to enable RHB");
@@ -438,8 +438,13 @@ void HardwareInterface::SetRootHoldOff(bool enable) {
             return;
         }
 
-        ASFW_LOG(Hardware, "PHY Register 1 RHB set, triggering bus reset to clear");
-        InitiateBusReset(false);
+        const uint8_t newValue = current & static_cast<uint8_t>(~kPhyRootHoldOff);
+        if (WritePhyRegister(kPhyReg1Address, newValue)) {
+            ASFW_LOG(Hardware, "PHY Register 1 RHB cleared (0x%02x -> 0x%02x)",
+                     current, newValue);
+        } else {
+            ASFW_LOG_ERROR(Hardware, "Failed to clear RHB");
+        }
     }
 }
 

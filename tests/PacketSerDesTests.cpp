@@ -13,6 +13,7 @@
 //           bytes:  [0-1: destID] [2: tLabel|rt] [3: tCode|pri]
 
 #include <gtest/gtest.h>
+#include <array>
 #include <cstring>
 #include <span>
 
@@ -20,8 +21,10 @@
 #include "ASFWDriver/Async/Rx/ARPacketParser.hpp"
 #include "ASFWDriver/Async/Rx/PacketRouter.hpp"
 #include "ASFWDriver/Async/AsyncTypes.hpp"
+#include "ASFWDriver/Phy/PhyPackets.hpp"
 
 using namespace ASFW::Async;
+using namespace ASFW::Driver;
 
 // =============================================================================
 // Test Fixture
@@ -81,6 +84,28 @@ TEST_F(PacketSerDesTest, ARResponse_ExtractTLabel_ReadQuadletResponse) {
 
     uint16_t destID = ExtractDestIDWireFormat(expectedResponsePacket);
     EXPECT_EQ(0x6001, destID) << "Destination ID should be 0x6001";
+}
+
+TEST_F(PacketSerDesTest, ARRequest_PhyPacketExtractsPayloadQuadletsNotLinkHeader) {
+    // Regression for the "Bus reset shitstorm" capture. OHCI AR PHY packets use
+    // a 3-quadlet link-internal header: q0 is the link header, while q1/q2 are the
+    // PHY packet payload passed by Apple as processPHYPacket(data[1], data[2]).
+    // cross-validated with Linux: ohci.c:935-936 Apple: IOFireWireController.cpp:5178-5182
+    const std::array<uint8_t, 12> phyHeader = {
+        0xE0, 0x00, 0x00, 0x00, // q0: link-internal tCode header, not PHY config data
+        0x00, 0x00, 0x80, 0x02, // q1: 0x02800000, "PHY Config, force_root = 02"
+        0xFF, 0xFF, 0x7F, 0xFD, // q2: inverse of q1
+    };
+
+    const auto quadlets = ARPacketParser::ExtractPhyPacketQuadletsHostOrder(phyHeader);
+    ASSERT_TRUE(quadlets.has_value());
+    EXPECT_EQ((*quadlets)[0], 0x02800000u);
+    EXPECT_EQ((*quadlets)[1], 0xFD7FFFFFu);
+
+    const AlphaPhyConfig decoded = AlphaPhyConfig::DecodeHostOrder((*quadlets)[0]);
+    EXPECT_EQ(decoded.rootId, 2);
+    EXPECT_TRUE(decoded.forceRoot);
+    EXPECT_FALSE(decoded.gapCountOptimization);
 }
 
 // =============================================================================
