@@ -107,9 +107,10 @@ void RootSelectionCoordinator::Evaluate(const RootSelectionInputs& inputs,
 // IEEE 1394-2008 Annex H:
 // If bus-management policy determines that the current root cannot provide
 // cycle-start service, the active bus manager / fallback IRM may select a
-// suitable cycle-master-capable node as root by PHY configuration followed by
-// a bus reset. This is a bus-configuration action, not topology validation.
-// Do not call this path for Annex P graph errors.
+// suitable root by PHY configuration followed by a bus reset. ASFW uses
+// Self-ID contender/link evidence for suitability here; BIB CMC gates only
+// remote STATE_SET.cmstr. This is a bus-configuration action, not topology
+// validation. Do not call this path for Annex P graph errors.
 RootSelectionDecision RootSelectionCoordinator::Plan(const RootSelectionInputs& inputs) const noexcept {
     if (!inputs.topologyValid || inputs.topology == nullptr) {
         return RootSelectionDecision::SuppressedByTopology;

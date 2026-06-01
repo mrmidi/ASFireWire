@@ -316,6 +316,83 @@ TEST(BusManagerElectionDriver, FastResetAfterLocalBMWonYieldsStableRemoteRootIRM
     EXPECT_EQ(driver->GetSnapshot().lastAction, 3);
 }
 
+TEST(BusManagerElectionDriver, FastResetYieldClearsWhenTopologyChanges) {
+    OSSharedPtr<IODispatchQueue> queue(new IODispatchQueue(), OSNoRetain);
+    queue->SetManualDispatchForTesting(true);
+
+    auto scheduler = std::make_shared<ASFW::Driver::Scheduler>();
+    scheduler->Bind(queue);
+
+    ASFW::Bus::Timing::PostResetTimingCoordinator timing;
+    auto mockAsync = std::make_shared<MockAsyncPort>();
+
+    BusManagerElectionDriver::Deps deps{
+        .asyncController = mockAsync.get(),
+        .scheduler = scheduler.get(),
+        .csrResponder = nullptr,
+        .timing = &timing,
+        .monotonicNowNs = ASFW::Testing::HostMonotonicNow
+    };
+
+    auto driver = std::make_shared<BusManagerElectionDriver>(
+        deps, RolePolicy{RoleMode::FullBusManager, FullBMActivityLevel::ElectionOnly});
+
+    constexpr uint64_t t0 = 2000000000ULL;
+    const uint32_t generation = 31;
+    mockAsync->currentGen16 = generation;
+    timing.OnSelfIDComplete(generation, t0);
+
+    TopologySnapshot snap{};
+    snap.generation = generation;
+    snap.localNodeId = 0;
+    snap.rootNodeId = 2;
+    snap.irmNodeId = 2;
+    snap.nodeCount = 3;
+    snap.busBase16 = 0x0;
+
+    driver->OnTopologyReady(snap, t0);
+    {
+        ScopedMockClock clock([t0]() { return t0 + 126000000ULL; });
+        queue->DrainAllForTesting();
+        ASSERT_EQ(mockAsync->compareSwapCount, 1);
+        ASSERT_TRUE(static_cast<bool>(mockAsync->lastCompareSwapCallback));
+        mockAsync->lastCompareSwapCallback(ASFW::Async::AsyncStatus::kSuccess, 0x3F, true);
+    }
+
+    {
+        ScopedMockClock clock([t0]() { return t0 + 300000000ULL; });
+        driver->OnBusReset();
+    }
+
+    const uint32_t yieldedGeneration = 32;
+    mockAsync->currentGen16 = yieldedGeneration;
+    timing.OnSelfIDComplete(yieldedGeneration, t0 + 301000000ULL);
+    snap.generation = yieldedGeneration;
+
+    driver->OnTopologyReady(snap, t0 + 301000000ULL);
+    EXPECT_EQ(driver->GetSnapshot().lastAction, 3);
+    EXPECT_EQ(mockAsync->compareSwapCount, 1);
+
+    driver->OnBusReset();
+
+    const uint32_t changedGeneration = 33;
+    mockAsync->currentGen16 = changedGeneration;
+    timing.OnSelfIDComplete(changedGeneration, t0 + 302000000ULL);
+    snap.generation = changedGeneration;
+    snap.nodeCount = 4;
+
+    driver->OnTopologyReady(snap, t0 + 302000000ULL);
+    EXPECT_EQ(driver->GetSnapshot().lastAction, 2);
+    EXPECT_EQ(mockAsync->compareSwapCount, 1);
+
+    {
+        ScopedMockClock clock([t0]() { return t0 + 428000000ULL; });
+        queue->DrainAllForTesting();
+    }
+
+    EXPECT_EQ(mockAsync->compareSwapCount, 2);
+}
+
 TEST(BusManagerElectionDriver, ChallengerGracePeriod) {
     OSSharedPtr<IODispatchQueue> queue(new IODispatchQueue(), OSNoRetain);
     queue->SetManualDispatchForTesting(true);

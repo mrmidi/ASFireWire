@@ -162,8 +162,8 @@ struct IRootSelectionExecutor {
 /**
  * @brief Coordinates root selection and force-root policy (Milestone 6).
  *
- * This class selects a suitable cycle-master-capable node as root and forces
- * a bus reset when the current root is unsuitable. It implements strict
+ * This class selects a suitable Self-ID contender/link-active node as root and
+ * forces a bus reset when the current root is unsuitable. It implements strict
  * retry limits per stable topology to prevent reset storms.
  */
 class RootSelectionCoordinator final {
