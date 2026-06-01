@@ -227,6 +227,9 @@ class ControllerCore final : private Role::IPhyConfigReset,
     Bus::IRMFallbackCoordinator* GetIRMFallbackCoordinator() const { return irmFallback_.get(); }
     Bus::CyclePolicyCoordinator* GetCyclePolicyCoordinator() const { return cyclePolicy_.get(); }
     Bus::RootSelectionCoordinator* GetRootSelectionCoordinator() const { return rootSelection_.get(); }
+    Bus::GapPolicyCoordinator* GetGapPolicyCoordinator() const { return gapPolicy_.get(); }
+    Bus::PowerLinkPolicyCoordinator* GetPowerLinkPolicyCoordinator() const { return powerLinkPolicy_.get(); }
+    Bus::CSRResponder* GetCSRResponder() const { return deps_.csrResponder.get(); }
     Bus::BroadcastChannelCSR* GetBroadcastChannel() const { return broadcastChannel_.get(); }
 
   private:
@@ -251,6 +254,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     void EvaluateCyclePolicy() noexcept;
     void EvaluateRootSelectionPolicy() noexcept;
     void EvaluateGapPolicy() noexcept;
+    void EvaluatePowerLinkPolicy() noexcept;
     void EvaluateActivePolicies() noexcept;
 
     // Async completion callbacks
