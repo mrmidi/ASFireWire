@@ -46,9 +46,10 @@ enum class PowerPolicyLevel : uint8_t {
 };
 
 // FW-22: roleMode selects which capabilities the local Config ROM advertises.
-//   Default ClientOnly = advertise neither BM nor IRM (conservative, and
-//   intentionally MORE conservative than Apple/Linux, which advertise bmc=1).
-//   Use LegacyBmcCleared only for backwards-compatible behavior verification.
+//   The value-initialized policy remains ClientOnly for unit tests and explicit
+//   passive construction. The live driver seeds ServiceContext with the hardware
+//   validation profile below so ASFW advertises BM/IRM capability and can be
+//   observed against Linux/Apple-like behavior on a real bus.
 struct RolePolicy {
     ASFW::FW::RoleMode roleMode{ASFW::FW::RoleMode::ClientOnly};
     ASFW::FW::FullBMActivityLevel fullBMActivityLevel{ASFW::FW::FullBMActivityLevel::ObserveOnly};
@@ -58,6 +59,14 @@ struct RolePolicy {
     // Apple never does this, so it is OFF by default and only takes effect when the
     // activity ladder is also at ForceRootAllowed or higher and local == IRM.
     bool linuxStyleCmcForceRoot{false};
+
+    [[nodiscard]] static constexpr RolePolicy MakeHardwareValidationDefault() noexcept {
+        RolePolicy policy{};
+        // cross-validated with Linux: core-card.c:113 Apple: IOFireWireController.cpp:2414
+        policy.roleMode = ASFW::FW::RoleMode::FullBusManager;
+        policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::ElectionOnly;
+        return policy;
+    }
 };
 
 } // namespace ASFW::Driver

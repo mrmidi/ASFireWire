@@ -56,6 +56,7 @@
 #include "Bus/IRM/IRMClient.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
 #include "Isoch/Transmit/IsochTransmitContext.hpp"
+#include "Isoch/Encoding/TimingUtils.hpp"
 #include "Logging/LogConfig.hpp"
 #include "Logging/Logging.hpp"
 #include "Protocols/AVC/AVCDiscovery.hpp"
@@ -240,6 +241,13 @@ kern_return_t IMPL(ASFWDriver, Start) {
         DriverWiring::CleanupStartFailure(ctx);
         return kr;
     }
+    // Populate the shared host timebase before any interrupt can fire. The
+    // InterruptOccurred handler converts the DriverKit mach-tick timestamp to
+    // nanoseconds via ASFW::Timing::hostTicksToNanos(), which needs
+    // gHostTimebaseInfo initialized. Bus-reset IRQs arrive long before the isoch
+    // paths that were previously the only initializers of it.
+    (void)ASFW::Timing::initializeHostTimebase();
+
     kr = DriverWiring::PrepareInterrupts(*this, provider, ctx);
     if (kr != kIOReturnSuccess) {
         DriverWiring::CleanupStartFailure(ctx);
@@ -523,7 +531,16 @@ void ASFWDriver::InterruptOccurred_Impl(ASFWDriver_InterruptOccurred_Args) {
         ASFW_LOG(Controller, "InterruptOccurred: no controller or hardware");
         return;
     }
-    auto snap = ctx.deps.hardware->CaptureInterruptSnapshot(time);
+    // DriverKit delivers `time` in mach_absolute_time() ticks, NOT nanoseconds
+    // (IOInterruptDispatchSource.iig: kIOInterruptSourceContinuousTime only swaps
+    // mach_absolute→mach_continuous, never the unit; our source uses plain index 0).
+    // Convert to ns at this single boundary so the value that flows into
+    // snapshot.timestamp lands on the same scale as MonotonicNow(). Storing raw
+    // ticks made every downstream "now(ns) − timestamp" ≈ uptime, which silently
+    // defeated the IEEE 1394-2008 §8.2.1 two-second repeated-reset holdoff and
+    // forced the Annex H post-reset timing gates permanently open.
+    const uint64_t timestampNs = ASFW::Timing::hostTicksToNanos(time);
+    auto snap = ctx.deps.hardware->CaptureInterruptSnapshot(timestampNs);
     ASFW_LOG_V2(Controller, "InterruptOccurred: captured snapshot intEvent=0x%08x", snap.intEvent);
     ctx.interruptDispatcher.HandleSnapshot(snap, *ctx.controller, *ctx.deps.hardware,
                                            *ctx.workQueue, ctx.isoch, ctx.statusPublisher,

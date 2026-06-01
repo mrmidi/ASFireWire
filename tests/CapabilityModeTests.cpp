@@ -4,6 +4,7 @@
 // CapabilityModeTests.cpp — FW-22 role-mode capability advertisement.
 
 #include "Common/CSRSpace.hpp"
+#include "Controller/ControllerConfig.hpp"
 
 #include <gtest/gtest.h>
 
@@ -79,6 +80,19 @@ TEST(CapabilityMode, FullBusManagerObserveOnly_IsFullyPassive) {
 TEST(CapabilityMode, FullBusManagerCyclePolicyAllowed_SetsBmcAndIrmc) {
     const uint32_t out = NormalizeLocalBusOptions(0u, RoleMode::FullBusManager,
                                                   ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed);
+    const auto d = DecodeBusOptions(out);
+    EXPECT_TRUE(d.bmc);
+    EXPECT_TRUE(d.irmc);
+    EXPECT_TRUE(IsLegalCapabilityCombo(out));
+}
+
+TEST(CapabilityMode, HardwareValidationDefault_AdvertisesFullBMAndIRM) {
+    const auto policy = ASFW::Driver::RolePolicy::MakeHardwareValidationDefault();
+    EXPECT_EQ(policy.roleMode, RoleMode::FullBusManager);
+    EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::ElectionOnly);
+
+    const uint32_t out = NormalizeLocalBusOptions(0u, policy.roleMode,
+                                                  policy.fullBMActivityLevel);
     const auto d = DecodeBusOptions(out);
     EXPECT_TRUE(d.bmc);
     EXPECT_TRUE(d.irmc);

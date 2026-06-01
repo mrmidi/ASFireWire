@@ -61,6 +61,44 @@ TEST_F(CSRContractVerifierTests, ValidMaps_Ok) {
     EXPECT_TRUE(result.speedMapGenerationMatch);
 }
 
+TEST_F(CSRContractVerifierTests, TopologyMapUsesBusGeneration) {
+    TopologySnapshot topo{};
+    topo.generation = 7;
+    topo.nodeCount = 1;
+    topo.graphStatus = TopologyGraphStatus::Valid;
+
+    topologyMap_.Start();
+    topologyMap_.Rebuild(topo);
+    EXPECT_EQ(topologyMap_.GetGeneration(), 7u);
+
+    topo.generation = 11;
+    topologyMap_.Rebuild(topo);
+    EXPECT_EQ(topologyMap_.GetGeneration(), 11u);
+}
+
+TEST_F(CSRContractVerifierTests, DetectsStaleSpeedMapGeneration) {
+    CSRResponder::Deps deps{};
+    CSRResponder responder(deps);
+    CSRContractVerifier verifier;
+
+    TopologySnapshot topo{};
+    topo.generation = 9;
+    topo.nodeCount = 1;
+    topo.graphStatus = TopologyGraphStatus::Valid;
+    topo.physical.nodes.resize(1);
+    topo.physical.nodes[0].linkActive = true;
+
+    topologyMap_.Start();
+    topologyMap_.Rebuild(topo);
+    topo.generation = 8;
+    speedMap_.PublishFromTopology(topo);
+
+    auto result = verifier.Verify(responder, topologyMap_, speedMap_, irm_);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.topologyMapGenerationMatch);
+    EXPECT_FALSE(result.speedMapGenerationMatch);
+}
+
 TEST_F(CSRContractVerifierTests, DetectsUnexpectedSoftwareHits) {
     CSRResponder::Deps deps{};
     CSRResponder responder(deps);

@@ -98,7 +98,8 @@ private:
     ASFW::Driver::HardwareInterface* hardware_;
     mutable ASFW::Async::IOLockWrapper lock_;
 
-    // Monotonic generation counter, never reset. Bumps on each Rebuild.
+    // Published map generation. Mirrors the Self-ID/bus generation used by the
+    // rest of the CSR diagnostics instead of a private publish counter.
     uint32_t generation_{0};
     TopologyMapPublishStatus publishStatus_{TopologyMapPublishStatus::Invalid};
 

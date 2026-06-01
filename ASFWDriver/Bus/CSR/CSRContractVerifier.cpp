@@ -17,8 +17,10 @@ CSRContractCheckResult CSRContractVerifier::Verify(const CSRResponder& responder
     const auto speedSnap = speedMap.Snapshot();
 
     // 1. Generation checks
-    result.topologyMapGenerationMatch = (topologyMap.GetGeneration() != 0);
-    result.speedMapGenerationMatch = (speedSnap.generation == currentGen && speedSnap.status != SpeedMapStatus::Invalid);
+    result.topologyMapGenerationMatch = topologyMap.IsValid() && currentGen != 0;
+    result.speedMapGenerationMatch =
+        result.topologyMapGenerationMatch && speedSnap.status != SpeedMapStatus::Invalid &&
+        speedSnap.generation == currentGen;
 
     // 2. Ownership & Hit checks
     result.hardwareOwnedSoftwareHits = responder.UnexpectedResourceCsrSoftwareCount();

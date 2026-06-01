@@ -113,9 +113,10 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
                                       const ASFW::Driver::RolePolicy& policy) {
     // ClientOnly is intentionally absent here: a pure client that advertises no
     // BM/IRM capability also does NOT set the Self-ID/PHY contender bit, so it can
-    // never win an IRM/BM election. This is deliberately MORE conservative than
-    // Apple/Linux (which make the local PHY contender-capable at init) and keeps
-    // the PHY consistent with the bmc=0/irmc=0 BIB advertisement.
+    // never win an IRM/BM election. ServiceContext now seeds the live driver with
+    // FullBusManager/ElectionOnly for hardware validation, matching the reference
+    // stacks' contender posture while keeping later bus mutations gated.
+    // cross-validated with Linux: ohci.c:2510 Apple: IOFireWireController.cpp:2414
     const bool shouldAdvertiseContender =
         (policy.roleMode == ASFW::FW::RoleMode::FullBusManager &&
          policy.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) ||
