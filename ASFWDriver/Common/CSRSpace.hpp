@@ -79,7 +79,7 @@ inline constexpr uint32_t kCSR_TopologyMapEnd  = kCSRCoreBase + 0x13FF;
 // SPEED_MAP CSR region. The SPEED_MAP is explicitly marked as Obsoleted in the 1394-2008 standard.
 // Software-served as AddressError.
 inline constexpr uint32_t kCSR_SpeedMapBase = kCSRCoreBase + 0x2000;
-inline constexpr uint32_t kCSR_SpeedMapEnd  = kCSRCoreBase + 0x2FFF;
+inline constexpr uint32_t kCSR_SpeedMapEnd  = kCSRCoreBase + 0x23FF;
 
 // Config ROM Base Address (IEEE 1394-1995 §8.3.2.2)
 // Low 32b offset within CSR register space (0xF0000400)

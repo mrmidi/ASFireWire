@@ -14,6 +14,7 @@
 
 using namespace ASFW::Bus;
 using namespace ASFW::Driver;
+namespace FW = ASFW::FW;
 
 class CSRContractVerifierTests : public ::testing::Test {
 protected:
@@ -66,7 +67,7 @@ TEST_F(CSRContractVerifierTests, DetectsUnexpectedSoftwareHits) {
     CSRContractVerifier verifier;
     
     // Simulate remote read of BUS_MANAGER_ID (HW owned) hitting SW responder
-    (void)responder.ReadQuadlet(CSRContract::kBusManagerId);
+    (void)responder.ReadQuadlet(FW::kCSR_BusManagerID);
     
     auto result = verifier.Verify(responder, topologyMap_, speedMap_, irm_);
     EXPECT_FALSE(result.ok);
