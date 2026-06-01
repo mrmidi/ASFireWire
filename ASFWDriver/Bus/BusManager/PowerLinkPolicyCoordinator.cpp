@@ -36,13 +36,13 @@ void PowerLinkPolicyCoordinator::Evaluate(const PowerLinkPolicyInputs& inputs,
     snapshot_.generation = inputs.generation;
     snapshot_.powerBudgetStatus = inputs.powerBudgetStatus;
     
-    snapshot_.lastDecision = Plan(inputs);
-    snapshot_.lastAction = PowerPolicyAction::None;
-    snapshot_.targetNodeCount = 0;
-    
     const auto candidates = BuildCandidates(inputs);
     snapshot_.eligibleNodeCount = static_cast<uint32_t>(candidates.size());
 
+    snapshot_.lastDecision = Plan(inputs, candidates);
+    snapshot_.lastAction = PowerPolicyAction::None;
+    snapshot_.targetNodeCount = 0;
+    
     for (const auto& c : candidates) {
         if (snapshot_.targetNodeCount >= snapshot_.targetNodes.size()) {
             break;
@@ -76,7 +76,8 @@ void PowerLinkPolicyCoordinator::Evaluate(const PowerLinkPolicyInputs& inputs,
     snapshot_.totalAttempts++;
 }
 
-PowerPolicyDecision PowerLinkPolicyCoordinator::Plan(const PowerLinkPolicyInputs& inputs) const noexcept {
+PowerPolicyDecision PowerLinkPolicyCoordinator::Plan(const PowerLinkPolicyInputs& inputs,
+                                                      const std::vector<PowerLinkNodeEvidence>& candidates) const noexcept {
     if (!inputs.topologyValid || inputs.topology == nullptr) {
         return PowerPolicyDecision::SuppressedByTopology;
     }
@@ -103,7 +104,6 @@ PowerPolicyDecision PowerLinkPolicyCoordinator::Plan(const PowerLinkPolicyInputs
         return PowerPolicyDecision::DeferredPowerBudgetUnknown;
     }
 
-    const auto candidates = BuildCandidates(inputs);
     if (candidates.empty()) {
         return PowerPolicyDecision::NoEligibleNodes;
     }
