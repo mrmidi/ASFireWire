@@ -39,6 +39,7 @@
 #include "Async/PacketHelpers.hpp"
 #include "Async/ResponseCode.hpp"
 #include "Audio/AudioCoordinator.hpp"
+#include "Audio/AudioRuntimeRegistry.hpp"
 #include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
 #include "Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "Bus/SelfIDCapture.hpp"
@@ -799,10 +800,14 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     const uint32_t pcmChannels = nub->GetOutputChannelCount();
     uint32_t am824Slots = pcmChannels;
     ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
+    std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocol;
+    if (ctx.deps.audioRuntimeRegistry) {
+        protocol = ctx.deps.audioRuntimeRegistry->FindShared(*guid);
+    }
     if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
-        record && record->protocol) {
+        record && protocol) {
         ASFW::Audio::AudioStreamRuntimeCaps caps{};
-        if (record->protocol->GetRuntimeAudioStreamCaps(caps) && caps.hostToDeviceAm824Slots > 0) {
+        if (protocol->GetRuntimeAudioStreamCaps(caps) && caps.hostToDeviceAm824Slots > 0) {
             am824Slots = caps.hostToDeviceAm824Slots;
         }
         wireFormat = ResolveHostToDeviceWireFormat(record->vendorId,

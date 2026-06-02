@@ -3,7 +3,6 @@
 #include <limits>
 #include "../Logging/Logging.hpp"
 #include "../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
-#include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 
 namespace ASFW::Discovery {
 
@@ -76,48 +75,6 @@ void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
     }
 }
 
-void MaybeCreateKnownProtocol(DeviceRecord& device,
-                              Guid64 guid,
-                              uint16_t romNodeId,
-                              std::optional<uint8_t> operationalNodeId,
-                              Async::IFireWireBusOps* busOps,
-                              Async::IFireWireBusInfo* busInfo,
-                              IRM::IRMClient* irmClient) {
-#if !defined(ASFW_HOST_TEST)
-    if (device.protocol || !busOps || !busInfo || !operationalNodeId.has_value()) {
-        if (!device.protocol && (!busOps || !busInfo || !operationalNodeId.has_value())) {
-            ASFW_LOG(Discovery, "Protocol instance needed for device GUID=0x%016llx node=%u - "
-                     "FireWire bus ports not provided",
-                     guid,
-                     romNodeId);
-        }
-        return;
-    }
-
-    ASFW_LOG(Discovery, "Creating protocol instance for GUID=0x%016llx node=%u",
-             guid, romNodeId);
-    device.protocol = Audio::DeviceProtocolFactory::Create(
-        device.vendorId, device.modelId, *busOps, *busInfo, *operationalNodeId, irmClient);
-
-    if (device.protocol) {
-        ASFW_LOG(Discovery, "✅ Protocol created: %{public}s - starting initialization",
-                 device.protocol->GetName());
-        device.protocol->Initialize();
-        return;
-    }
-
-    ASFW_LOG(Discovery, "❌ Protocol creation failed for vendor=0x%06x model=0x%06x",
-             device.vendorId, device.modelId);
-#else
-    (void)device;
-    (void)guid;
-    (void)romNodeId;
-    (void)operationalNodeId;
-    (void)busOps;
-    (void)busInfo;
-#endif
-}
-
 const char* DeviceKindString(DeviceKind kind) noexcept {
     switch (kind) {
         case DeviceKind::AV_C:
@@ -156,10 +113,7 @@ void LogDeviceUpsert(Guid64 guid, const DeviceRecord& device, const ConfigROM& r
 
 DeviceRegistry::DeviceRegistry() = default;
 
-DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link,
-                                             Async::IFireWireBusOps* busOps,
-                                             Async::IFireWireBusInfo* busInfo,
-                                             IRM::IRMClient* irmClient) {
+DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPolicy& link) {
     const Guid64 guid = rom.bib.guid;
     const auto operationalNodeId = TryOperationalNodeId(rom.nodeId);
     
@@ -190,7 +144,6 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
             device.kind = ClassifyDevice(rom);
             device.isAudioCandidate = IsAudioCandidate(rom);
         }
-        MaybeCreateKnownProtocol(device, guid, rom.nodeId, operationalNodeId, busOps, busInfo, irmClient);
     } else {
         device.kind = ClassifyDevice(rom);
         device.isAudioCandidate = IsAudioCandidate(rom);

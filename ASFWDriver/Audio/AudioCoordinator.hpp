@@ -25,12 +25,15 @@ class IOService;
 
 namespace ASFW::Audio {
 
+class AudioRuntimeRegistry;
+
 class AudioCoordinator final : public Discovery::IDeviceObserver,
                                public IAVCAudioConfigListener {
 public:
     AudioCoordinator(IOService* driver,
                      Discovery::IDeviceManager& deviceManager,
                      Discovery::DeviceRegistry& registry,
+                     AudioRuntimeRegistry& runtime,
                      Driver::IsochService& isoch,
                      Driver::HardwareInterface& hardware) noexcept;
     ~AudioCoordinator() noexcept override;
@@ -72,6 +75,7 @@ private:
 
     Discovery::IDeviceManager& deviceManager_;
     Discovery::DeviceRegistry& registry_;
+    AudioRuntimeRegistry& runtime_;
 
     IOLock* lock_{nullptr};
     uint64_t activeGuid_{0};

@@ -21,11 +21,15 @@
 
 namespace ASFW::Audio {
 
+class AudioRuntimeRegistry;
+class IDeviceProtocol;
+
 class DiceDuplexRestartCoordinator final {
 public:
     using QueueProviderFactory = std::function<std::unique_ptr<IDiceQueueMemoryProvider>(uint64_t guid)>;
 
     DiceDuplexRestartCoordinator(Discovery::DeviceRegistry& registry,
+                                 AudioRuntimeRegistry& runtime,
                                  IDiceHostTransport& hostTransport,
                                  Driver::HardwareInterface& hardware,
                                  QueueProviderFactory queueProviderFactory) noexcept;
@@ -82,8 +86,13 @@ private:
                                              const DICE::DiceDesiredClockConfig& desiredClock,
                                              DICE::DiceRestartReason reason) noexcept;
 
-    [[nodiscard]] Discovery::DeviceRecord* RequireDiceRecord(uint64_t guid,
-                                                             DICE::IDICEDuplexProtocol*& outDiceProtocol) noexcept;
+    // Resolves the record + its DICE duplex surface for `guid`. `outHold` receives a
+    // shared_ptr to the owning IDeviceProtocol; callers must keep it alive for as long as
+    // they use `outDiceProtocol` (it is a view into the held protocol).
+    [[nodiscard]] Discovery::DeviceRecord* RequireDiceRecord(
+        uint64_t guid,
+        DICE::IDICEDuplexProtocol*& outDiceProtocol,
+        std::shared_ptr<IDeviceProtocol>& outHold) noexcept;
     [[nodiscard]] std::unique_ptr<IDiceQueueMemoryProvider> MakeQueueProvider(uint64_t guid) const noexcept;
     [[nodiscard]] bool TryAcquireGuid(uint64_t guid) noexcept;
     void ReleaseGuid(uint64_t guid) noexcept;
@@ -108,6 +117,7 @@ private:
     void StoreSession(const DICE::DiceRestartSession& session) noexcept;
 
     Discovery::DeviceRegistry& registry_;
+    AudioRuntimeRegistry& runtime_;
     IDiceHostTransport& hostTransport_;
     Driver::HardwareInterface& hardware_;
     QueueProviderFactory queueProviderFactory_;

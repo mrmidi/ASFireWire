@@ -10,6 +10,7 @@
 #include "../Async/ResponseCode.hpp"
 #include "../Async/Tx/ResponseSender.hpp"
 #include "../Audio/AudioCoordinator.hpp"
+#include "../Audio/AudioRuntimeRegistry.hpp"
 #include "../Bus/BusManager.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/SelfIDCapture.hpp"
@@ -141,9 +142,18 @@ void DriverWiring::EnsureDeps(ASFWDriver* driver, ::ServiceContext& ctx) {
         d.deviceManager = std::make_shared<ASFW::Discovery::DeviceManager>();
     }
 
-    if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware) {
+    // Runtime owner of device-specific IDeviceProtocol instances. Constructed here,
+    // before AudioCoordinator and ControllerCore, so both can hold the same instance:
+    // the controller triggers creation from its discovery path; the Audio layer reads it.
+    if (!d.audioRuntimeRegistry) {
+        d.audioRuntimeRegistry = std::make_shared<ASFW::Audio::AudioRuntimeRegistry>();
+    }
+
+    if (!ctx.audioCoordinator && d.deviceManager && d.deviceRegistry && d.hardware &&
+        d.audioRuntimeRegistry) {
         ctx.audioCoordinator = std::make_shared<ASFW::Audio::AudioCoordinator>(
-            driver, *d.deviceManager, *d.deviceRegistry, ctx.isoch, *d.hardware);
+            driver, *d.deviceManager, *d.deviceRegistry, *d.audioRuntimeRegistry, ctx.isoch,
+            *d.hardware);
         ASFW_LOG(Controller, "[Controller] ✅ AudioCoordinator initialized");
     }
 

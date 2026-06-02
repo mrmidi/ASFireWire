@@ -24,10 +24,13 @@
 
 namespace ASFW::Audio {
 
+class AudioRuntimeRegistry;
+
 class DiceAudioBackend final : public IAudioBackend {
 public:
     DiceAudioBackend(AudioNubPublisher& publisher,
                      Discovery::DeviceRegistry& registry,
+                     AudioRuntimeRegistry& runtime,
                      Driver::IsochService& isoch,
                      Driver::HardwareInterface& hardware) noexcept;
     ~DiceAudioBackend() noexcept override;
@@ -58,6 +61,7 @@ private:
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
+    AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
     DiceIsochHostTransport hostTransport_;
     DiceDuplexRestartCoordinator restartCoordinator_;
