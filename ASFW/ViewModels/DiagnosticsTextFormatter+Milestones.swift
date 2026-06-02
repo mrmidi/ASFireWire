@@ -55,17 +55,17 @@ extension DiagnosticsTextFormatter {
         r.row("Stale Election Abort Count", snapshot.busManager.staleElectionAbortCount)
         r.row("Failed Election Count", snapshot.busManager.failedElectionCount)
 
-        let activeMutationStr: String
+        let mutationCapabilityStr: String
         switch snapshot.busManager.fullBMActivityLevel {
-        case 0: activeMutationStr = "none (ObserveOnly)"
-        case 1: activeMutationStr = "BUS_MANAGER_ID only"
-        case 2: activeMutationStr = "BUS_MANAGER_ID + cycle policy"
-        case 3: activeMutationStr = "BUS_MANAGER_ID + cycle + gap policy"
-        case 4: activeMutationStr = "BUS_MANAGER_ID + cycle + root/gap policy"
-        case 5: activeMutationStr = "BUS_MANAGER_ID + cycle + root/gap + legacy remote CMSTR"
-        default: activeMutationStr = "Unknown (\(snapshot.busManager.fullBMActivityLevel))"
+        case 0: mutationCapabilityStr = "none (ObserveOnly)"
+        case 1: mutationCapabilityStr = "BUS_MANAGER_ID only"
+        case 2: mutationCapabilityStr = "BUS_MANAGER_ID + cycle policy"
+        case 3: mutationCapabilityStr = "BUS_MANAGER_ID + cycle + gap policy"
+        case 4: mutationCapabilityStr = "BUS_MANAGER_ID + cycle + root/gap policy"
+        case 5: mutationCapabilityStr = "BUS_MANAGER_ID + cycle + root/gap + legacy remote CMSTR"
+        default: mutationCapabilityStr = "Unknown (\(snapshot.busManager.fullBMActivityLevel))"
         }
-        r.row("Active BM Mutations", activeMutationStr)
+        r.row("BM Mutation Capability", mutationCapabilityStr)
     }
 
     // --- Milestone 4: IRM Fallback Planner ---
@@ -401,7 +401,7 @@ extension DiagnosticsTextFormatter {
             let targets: [UInt32] = withUnsafeBytes(of: snapshot.busManager.powerTargetNodes) { buffer in
                 Array(buffer.bindMemory(to: UInt32.self).prefix(targetCount))
             }
-            r.row("Target Nodes", targets.map(DiagFormat.nodeStr).joined(separator: ", "))
+            r.row("Target Nodes", targets.map { DiagFormat.nodeStr($0) }.joined(separator: ", "))
         }
 
         r.row("Attempts This Generation", "\(snapshot.busManager.linkOnAttemptsThisGeneration) / 1")
