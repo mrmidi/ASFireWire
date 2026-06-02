@@ -7,6 +7,10 @@
 
 #include "IDeviceProtocol.hpp"
 #include "../Ports/FireWireBusPort.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
+#include "../../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
+#include "../../DeviceProfiles/Audio/AudioProfileTypes.hpp"
+#include "../../DeviceProfiles/Common/DeviceProfileTypes.hpp"
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -18,43 +22,54 @@ class IRMClient;
 namespace ASFW::Audio {
 
 /// Integration mode for a recognized device profile.
-enum class DeviceIntegrationMode : uint8_t {
-    kNone = 0,
-    kHardcodedNub,  // Legacy path using hardcoded ASFWAudioDevice profile.
-    kAVCDriven,     // AV/C discovery path with vendor extension controls.
-};
+///
+/// The canonical definition lives in DeviceProfiles; this alias keeps existing
+/// audio-internal call sites (e.g. DeviceIntegrationMode::kHardcodedNub) unchanged while
+/// DeviceProfiles owns the data.
+using DeviceIntegrationMode = DeviceProfiles::Audio::AudioIntegrationMode;
 
 /// Factory for creating device-specific protocol handlers
 ///
 /// Call Create() during device discovery to instantiate the appropriate
 /// protocol handler for known devices. Returns nullptr for unknown devices.
+///
+/// Identity/profile metadata (which vendor/model is known, its display names, its
+/// integration mode) is owned by ASFW::DeviceProfiles::Audio. The lookup helpers below
+/// delegate to it so there is a single source of truth; this factory's remaining job is
+/// runtime instantiation (Create).
 class DeviceProtocolFactory {
 public:
-    static constexpr uint32_t kFocusriteVendorId = 0x00130e;
-    static constexpr uint32_t kSPro40ModelId = 0x000005;
-    static constexpr uint32_t kLiquidS56ModelId = 0x000006;
-    static constexpr uint32_t kSPro24ModelId = 0x000007;
-    static constexpr uint32_t kSPro24DspModelId = 0x000008;
-    static constexpr uint32_t kSPro14ModelId = 0x000009;
-    static constexpr uint32_t kSPro26ModelId = 0x000012;
-    static constexpr uint32_t kSPro40Tcd3070ModelId = 0x0000de;
-    static constexpr uint32_t kApogeeVendorId = 0x0003db;
-    static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
-    static constexpr uint32_t kAlesisVendorId = 0x000595;
-    static constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
-    static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 = 0x13;
-    static constexpr const char* kFocusriteVendorName = "Focusrite";
-    static constexpr const char* kSPro40ModelName = "Saffire Pro 40";
-    static constexpr const char* kLiquidS56ModelName = "Liquid Saffire 56";
-    static constexpr const char* kSPro24ModelName = "Saffire Pro 24";
-    static constexpr const char* kSPro24DspModelName = "Saffire Pro 24 DSP";
-    static constexpr const char* kSPro14ModelName = "Saffire Pro 14";
-    static constexpr const char* kSPro26ModelName = "Saffire Pro 26";
-    static constexpr const char* kSPro40Tcd3070ModelName = "Saffire Pro 40 (TCD3070)";
-    static constexpr const char* kApogeeVendorName = "Apogee";
-    static constexpr const char* kApogeeDuetModelName = "Duet";
-    static constexpr const char* kAlesisVendorName = "Alesis";
-    static constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
+    // Identity constants are defined in DeviceProfiles/Audio/AudioDeviceIds.hpp (single
+    // source of truth) and re-exported here so existing DeviceProtocolFactory::kX call
+    // sites keep resolving.
+    static constexpr uint32_t kFocusriteVendorId = DeviceProfiles::Audio::kFocusriteVendorId;
+    static constexpr uint32_t kSPro40ModelId = DeviceProfiles::Audio::kSPro40ModelId;
+    static constexpr uint32_t kLiquidS56ModelId = DeviceProfiles::Audio::kLiquidS56ModelId;
+    static constexpr uint32_t kSPro24ModelId = DeviceProfiles::Audio::kSPro24ModelId;
+    static constexpr uint32_t kSPro24DspModelId = DeviceProfiles::Audio::kSPro24DspModelId;
+    static constexpr uint32_t kSPro14ModelId = DeviceProfiles::Audio::kSPro14ModelId;
+    static constexpr uint32_t kSPro26ModelId = DeviceProfiles::Audio::kSPro26ModelId;
+    static constexpr uint32_t kSPro40Tcd3070ModelId = DeviceProfiles::Audio::kSPro40Tcd3070ModelId;
+    static constexpr uint32_t kApogeeVendorId = DeviceProfiles::Audio::kApogeeVendorId;
+    static constexpr uint32_t kApogeeDuetModelId = DeviceProfiles::Audio::kApogeeDuetModelId;
+    static constexpr uint32_t kAlesisVendorId = DeviceProfiles::Audio::kAlesisVendorId;
+    static constexpr uint32_t kAlesisMultiMixModelId = DeviceProfiles::Audio::kAlesisMultiMixModelId;
+    static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =
+        DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070;
+    static constexpr const char* kFocusriteVendorName = DeviceProfiles::Audio::kFocusriteVendorName;
+    static constexpr const char* kSPro40ModelName = DeviceProfiles::Audio::kSPro40ModelName;
+    static constexpr const char* kLiquidS56ModelName = DeviceProfiles::Audio::kLiquidS56ModelName;
+    static constexpr const char* kSPro24ModelName = DeviceProfiles::Audio::kSPro24ModelName;
+    static constexpr const char* kSPro24DspModelName = DeviceProfiles::Audio::kSPro24DspModelName;
+    static constexpr const char* kSPro14ModelName = DeviceProfiles::Audio::kSPro14ModelName;
+    static constexpr const char* kSPro26ModelName = DeviceProfiles::Audio::kSPro26ModelName;
+    static constexpr const char* kSPro40Tcd3070ModelName =
+        DeviceProfiles::Audio::kSPro40Tcd3070ModelName;
+    static constexpr const char* kApogeeVendorName = DeviceProfiles::Audio::kApogeeVendorName;
+    static constexpr const char* kApogeeDuetModelName = DeviceProfiles::Audio::kApogeeDuetModelName;
+    static constexpr const char* kAlesisVendorName = DeviceProfiles::Audio::kAlesisVendorName;
+    static constexpr const char* kAlesisMultiMixModelName =
+        DeviceProfiles::Audio::kAlesisMultiMixModelName;
 
     struct KnownIdentity {
         uint32_t vendorId{0};
@@ -72,83 +87,39 @@ public:
         return KnownIdentity{vendorId, modelId, integrationMode, vendorName, modelName};
     }
 
+    /// Resolve a known device identity by vendor/model. Delegates to DeviceProfiles.
     static constexpr std::optional<KnownIdentity> LookupKnownIdentity(
         uint32_t vendorId,
         uint32_t modelId
     ) noexcept {
-        if (vendorId == kFocusriteVendorId) {
-            switch (modelId) {
-                case kSPro14ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                             kFocusriteVendorName, kSPro14ModelName);
-                case kSPro24ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                             kFocusriteVendorName, kSPro24ModelName);
-                case kSPro24DspModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                             kFocusriteVendorName, kSPro24DspModelName);
-                case kSPro40ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kSPro40ModelName);
-                case kLiquidS56ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kLiquidS56ModelName);
-                case kSPro26ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kSPro26ModelName);
-                case kSPro40Tcd3070ModelId:
-                    return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kNone,
-                                             kFocusriteVendorName, kSPro40Tcd3070ModelName);
-                default:
-                    break;
-            }
-        }
-        if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
-            return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kAVCDriven,
-                                     kApogeeVendorName, kApogeeDuetModelName);
-        }
-        if (vendorId == kAlesisVendorId && modelId == kAlesisMultiMixModelId) {
-            return MakeKnownIdentity(vendorId, modelId, DeviceIntegrationMode::kHardcodedNub,
-                                     kAlesisVendorName, kAlesisMultiMixModelName);
-        }
-        return std::nullopt;
+        return Combine(DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId, .modelId = modelId});
     }
 
-    // Focusrite DICE devices encode the board model in GUID bits [27:22].
-    // The legacy macOS driver uses the same field during probe.
+    // Focusrite DICE devices encode the board model in GUID bits [27:22]. The legacy
+    // macOS driver uses the same field during probe. Delegates to DeviceProfiles.
     static constexpr std::optional<KnownIdentity> LookupKnownIdentityByGuid(
         uint64_t guid
     ) noexcept {
-        constexpr uint64_t kOuiMask = 0x00FFFFFFULL;
-        constexpr unsigned kOuiShift = 40;
-        constexpr unsigned kFocusriteModelShift = 22;
-        constexpr uint64_t kFocusriteModelMask = 0x3FULL;
-
-        const auto vendorId = static_cast<uint32_t>((guid >> kOuiShift) & kOuiMask);
-        if (vendorId == kFocusriteVendorId) {
-            auto modelId =
-                static_cast<uint32_t>((guid >> kFocusriteModelShift) & kFocusriteModelMask);
-            if (modelId == kFocusriteGuidModelSPro40Tcd3070) {
-                modelId = kSPro40Tcd3070ModelId;
-            }
-            return LookupKnownIdentity(vendorId, modelId);
+        const auto identity = DeviceProfiles::Audio::AudioProfileRegistry::LookupIdentity(
+            DeviceProfiles::DeviceProfileQuery{.guid = guid});
+        if (!identity.has_value()) {
+            return std::nullopt;
         }
-
-        return std::nullopt;
+        return Combine(DeviceProfiles::DeviceProfileQuery{.vendorId = identity->vendorId,
+                                                          .modelId = identity->modelId});
     }
 
-    /// Resolve integration mode for a known vendor/model pair.
+    /// Resolve integration mode for a known vendor/model pair. Delegates to DeviceProfiles.
     static constexpr DeviceIntegrationMode LookupIntegrationMode(
         uint32_t vendorId,
         uint32_t modelId
     ) noexcept {
-        if (const auto known = LookupKnownIdentity(vendorId, modelId); known.has_value()) {
-            return known->integrationMode;
-        }
-        return DeviceIntegrationMode::kNone;
+        const auto profile = DeviceProfiles::Audio::AudioProfileRegistry{}.LookupBestAudioProfile(
+            DeviceProfiles::DeviceProfileQuery{.vendorId = vendorId, .modelId = modelId});
+        return profile.has_value() ? profile->mode : DeviceIntegrationMode::kNone;
     }
 
-    /// Check if a device identity is recognized by the factory.
+    /// Check if a device identity is recognized.
     static constexpr bool IsKnownDevice(uint32_t vendorId, uint32_t modelId) noexcept {
         return LookupKnownIdentity(vendorId, modelId).has_value();
     }
@@ -168,6 +139,23 @@ public:
         uint16_t nodeId,
         ::ASFW::IRM::IRMClient* irmClient = nullptr
     );
+
+private:
+    // Assemble a legacy KnownIdentity from the DeviceProfiles identity + profile hints
+    // for a resolved (vendorId, modelId) query.
+    static constexpr std::optional<KnownIdentity> Combine(
+        const DeviceProfiles::DeviceProfileQuery& query
+    ) noexcept {
+        const DeviceProfiles::Audio::AudioProfileRegistry registry{};
+        const auto identity = registry.LookupIdentity(query);
+        if (!identity.has_value()) {
+            return std::nullopt;
+        }
+        const auto profile = registry.LookupBestAudioProfile(query);
+        const auto mode = profile.has_value() ? profile->mode : DeviceIntegrationMode::kNone;
+        return MakeKnownIdentity(identity->vendorId, identity->modelId, mode, identity->vendorName,
+                                 identity->modelName);
+    }
 };
 
 } // namespace ASFW::Audio
