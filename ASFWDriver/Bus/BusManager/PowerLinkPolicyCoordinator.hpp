@@ -27,6 +27,7 @@ enum class PowerPolicyDecision : uint8_t {
 
     NoEligibleNodes,
     DeferredPowerBudgetUnknown,
+    DeferredInsufficientPower,
     DeferredNodeEvidenceIncomplete,
 
     LinkOnRequired,
@@ -56,6 +57,16 @@ enum class PowerBudgetStatus : uint8_t {
 };
 
 /**
+ * @brief Conservative power budget estimate from Self-ID pwr fields.
+ */
+struct PowerBudgetEstimate {
+    PowerBudgetStatus status{PowerBudgetStatus::Unknown};
+    uint32_t availableMilliWatts{0};
+    uint32_t requiredMilliWatts{0};
+    uint32_t unknownPowerClassNodes{0};
+};
+
+/**
  * @brief Reason for targeting a node for Link-On.
  */
 enum class LinkOnTargetReason : uint8_t {
@@ -66,7 +77,7 @@ enum class LinkOnTargetReason : uint8_t {
 
 /**
  * @brief Evidence gathered for a potential Link-On target.
- * Cross-validated with linux: core-topology.c:26-36.
+ * cross-validated with Linux: core-topology.c:26-36.
  */
 struct PowerLinkNodeEvidence {
     uint8_t nodeId{0x3F};
@@ -123,6 +134,10 @@ struct PowerLinkPolicySnapshot {
     PowerBudgetStatus powerBudgetStatus{PowerBudgetStatus::Unknown};
 
     uint32_t eligibleNodeCount{0};
+    uint32_t powerAvailableMilliWatts{0};
+    uint32_t powerRequiredMilliWatts{0};
+    uint32_t unknownPowerClassNodes{0};
+
     uint32_t linkOnSubmittedCount{0};
     uint32_t linkOnSuccessCount{0};
     uint32_t linkOnFailureCount{0};
@@ -160,7 +175,7 @@ struct ILinkOnExecutor {
 
     /**
      * @brief Sends a Link-On PHY packet to the target node.
-     * Cross-validated with linux: core-cdev.c:1624-1640.
+     * cross-validated with Linux: core-cdev.c:1624-1640.
      */
     virtual bool SendLinkOnPacket(uint32_t generation,
                                   uint16_t busBase16,
@@ -206,12 +221,19 @@ public:
     [[nodiscard]] std::vector<PowerLinkNodeEvidence>
     BuildCandidates(const PowerLinkPolicyInputs& inputs) const;
 
+    /**
+     * @brief Computes a conservative bus power budget from Self-ID pwr fields.
+     */
+    [[nodiscard]] PowerBudgetEstimate
+    EstimatePowerBudget(const PowerLinkPolicyInputs& inputs) const noexcept;
+
     [[nodiscard]] const PowerLinkPolicySnapshot& Snapshot() const noexcept {
         return snapshot_;
     }
 
 private:
     [[nodiscard]] bool IsAllowedActor(const PowerLinkPolicyInputs& inputs) const noexcept;
+    [[nodiscard]] PowerPolicyDecision BudgetDecision(PowerBudgetStatus status) const noexcept;
 
     PowerLinkPolicyConfig config_{};
     PowerLinkPolicySnapshot snapshot_{};

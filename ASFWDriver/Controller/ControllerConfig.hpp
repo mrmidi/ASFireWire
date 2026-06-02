@@ -65,6 +65,7 @@ struct RolePolicy {
         // cross-validated with Linux: core-card.c:425-428 Apple: IOFireWireController.cpp:3258-3367
         policy.roleMode = ASFW::FW::RoleMode::FullBusManager;
         policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed;
+        policy.powerPolicyLevel = PowerPolicyLevel::LinkOnAllowed;
         return policy;
     }
 };

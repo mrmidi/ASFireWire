@@ -94,6 +94,7 @@ TEST(CapabilityMode, HardwareValidationDefault_AdvertisesFullBMAndIRM) {
     const auto policy = ASFW::Driver::RolePolicy::MakeHardwareValidationDefault();
     EXPECT_EQ(policy.roleMode, RoleMode::FullBusManager);
     EXPECT_EQ(policy.fullBMActivityLevel, ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed);
+    EXPECT_EQ(policy.powerPolicyLevel, ASFW::Driver::PowerPolicyLevel::LinkOnAllowed);
 
     const uint32_t out = NormalizeLocalBusOptions(0x0000B003u, policy.roleMode,
                                                   policy.fullBMActivityLevel);
