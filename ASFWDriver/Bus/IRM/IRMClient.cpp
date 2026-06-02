@@ -1,14 +1,68 @@
 #include "IRMClient.hpp"
 #include "../../Common/CallbackUtils.hpp"
 #include "../../Logging/Logging.hpp"
+#include "IRMCSRConstants.hpp"
 #ifdef ASFW_HOST_TEST
 #include "../../Testing/HostDriverKitStubs.hpp"
 #endif
 #include <DriverKit/IOLib.h>
 #include <array>
 #include <cstring>
+#include <optional>
+#include <utility>
 
 namespace ASFW::IRM {
+
+namespace {
+
+[[nodiscard]] std::optional<uint32_t> LocalIRMSelectorForAddress(uint32_t addressLo) noexcept {
+    using namespace ASFW::Driver::IRMCSR;
+    constexpr uint32_t kCSRRegisterSpaceBaseLo = 0xF0000000u;
+
+    switch (addressLo) {
+    case kCSRRegisterSpaceBaseLo + kCSRBusManagerIdOffset:
+        return static_cast<uint32_t>(CSRSelector::BusManagerId);
+    case IRMRegisters::kBandwidthAvailable:
+        return static_cast<uint32_t>(CSRSelector::BandwidthAvailable);
+    case IRMRegisters::kChannelsAvailable31_0:
+        return static_cast<uint32_t>(CSRSelector::ChannelsAvailableHi);
+    case IRMRegisters::kChannelsAvailable63_32:
+        return static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo);
+    default:
+        return std::nullopt;
+    }
+}
+
+[[nodiscard]] const char* LocalIRMSelectorName(uint32_t selector) noexcept {
+    using namespace ASFW::Driver::IRMCSR;
+
+    switch (static_cast<CSRSelector>(selector & 0x3u)) {
+    case CSRSelector::BusManagerId:
+        return "BUS_MANAGER_ID";
+    case CSRSelector::BandwidthAvailable:
+        return "BANDWIDTH_AVAILABLE";
+    case CSRSelector::ChannelsAvailableHi:
+        return "CHANNELS_AVAILABLE_31_0";
+    case CSRSelector::ChannelsAvailableLo:
+        return "CHANNELS_AVAILABLE_63_32";
+    }
+    return "UNKNOWN";
+}
+
+[[nodiscard]] const char* LocalCSRStatusName(
+    Driver::LocalCSRLockResult::Status status) noexcept {
+    switch (status) {
+    case Driver::LocalCSRLockResult::Status::Success:
+        return "success";
+    case Driver::LocalCSRLockResult::Status::Timeout:
+        return "timeout";
+    case Driver::LocalCSRLockResult::Status::HardwareUnavailable:
+        return "hardware_unavailable";
+    }
+    return "unknown";
+}
+
+} // namespace
 
 struct IRMClient::ChannelLockState {
     AllocationCallback userCallback;
@@ -30,8 +84,9 @@ struct IRMClient::BandwidthLockState {
 // Constructor / Destructor
 // ============================================================================
 
-IRMClient::IRMClient(Async::IFireWireBus& bus)
+IRMClient::IRMClient(Async::IFireWireBus& bus, LocalIRMAccess localIRMAccess)
     : bus_(bus)
+    , localIRMAccess_(std::move(localIRMAccess))
 {
 }
 
@@ -55,6 +110,19 @@ AllocationStatus IRMClient::MapAsyncStatus(const Async::AsyncStatus status) noex
     return AllocationStatus::Failed;
 }
 
+AllocationStatus IRMClient::MapLocalCSRStatus(
+    const Driver::LocalCSRLockResult::Status status) noexcept {
+    switch (status) {
+    case Driver::LocalCSRLockResult::Status::Success:
+        return AllocationStatus::Success;
+    case Driver::LocalCSRLockResult::Status::Timeout:
+        return AllocationStatus::Timeout;
+    case Driver::LocalCSRLockResult::Status::HardwareUnavailable:
+        return AllocationStatus::Failed;
+    }
+    return AllocationStatus::Failed;
+}
+
 uint64_t IRMClient::CurrentMonotonicNowNs() noexcept {
 #ifdef ASFW_HOST_TEST
     return ASFW::Testing::HostMonotonicNow();
@@ -66,6 +134,15 @@ uint64_t IRMClient::CurrentMonotonicNowNs() noexcept {
     const uint64_t ticks = mach_absolute_time();
     return (ticks * timebase.numer) / timebase.denom;
 #endif
+}
+
+bool IRMClient::IsLocalIRMNode() const noexcept {
+    if (irmNodeId_ == 0xFF) {
+        return false;
+    }
+
+    const auto localNodeId = bus_.GetLocalNodeID();
+    return (irmNodeId_ & 0x3Fu) == (localNodeId.value & 0x3Fu);
 }
 
 void IRMClient::DelayForPostResetQuietPeriod() const {
@@ -94,6 +171,38 @@ void IRMClient::ReadIRMQuadlet(
     uint32_t addressLo,
     std::function<void(AllocationStatus status, uint32_t value)> callback)
 {
+    if (IsLocalIRMNode()) {
+        const auto selector = LocalIRMSelectorForAddress(addressLo);
+        if (selector.has_value()) {
+            if (bus_.GetGeneration() != FW::Generation{generation_.value}) {
+                callback(AllocationStatus::GenerationMismatch, 0u);
+                return;
+            }
+
+            if (!localIRMAccess_.read) {
+                ASFW_LOG_ERROR(IRM,
+                               "ReadIRMQuadlet: local IRM addr=0x%08x but no local CSR backend",
+                               addressLo);
+                callback(AllocationStatus::Failed, 0u);
+                return;
+            }
+
+            const auto result = localIRMAccess_.read(*selector);
+            const AllocationStatus mapped = MapLocalCSRStatus(result.status);
+            ASFW_LOG(IRM,
+                     "IRMClient: local CSR read %{public}s selector=%u addr=0x%08x "
+                     "status=%{public}s mapped=%{public}s value=0x%08x",
+                     LocalIRMSelectorName(*selector),
+                     *selector,
+                     addressLo,
+                     LocalCSRStatusName(result.status),
+                     ToString(mapped),
+                     result.value);
+            callback(mapped, result.value);
+            return;
+        }
+    }
+
     auto callbackState = Common::ShareCallback(std::move(callback));
     Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = IRMRegisters::kAddressHi,
@@ -131,6 +240,42 @@ void IRMClient::CompareSwapIRMQuadlet(
     uint32_t desired,
     std::function<void(AllocationStatus status, uint32_t oldValue)> callback)
 {
+    if (IsLocalIRMNode()) {
+        const auto selector = LocalIRMSelectorForAddress(addressLo);
+        if (selector.has_value()) {
+            if (bus_.GetGeneration() != FW::Generation{generation_.value}) {
+                callback(AllocationStatus::GenerationMismatch, 0u);
+                return;
+            }
+
+            if (!localIRMAccess_.compareSwap) {
+                ASFW_LOG_ERROR(IRM,
+                               "CompareSwapIRMQuadlet: local IRM addr=0x%08x but no local CSR backend",
+                               addressLo);
+                callback(AllocationStatus::Failed, 0u);
+                return;
+            }
+
+            const auto result = localIRMAccess_.compareSwap(*selector, expected, desired);
+            const AllocationStatus mapped = MapLocalCSRStatus(result.status);
+            ASFW_LOG(IRM,
+                     "IRMClient: local CSR CAS %{public}s selector=%u addr=0x%08x "
+                     "expected=0x%08x desired=0x%08x status=%{public}s "
+                     "mapped=%{public}s old=0x%08x matched=%u",
+                     LocalIRMSelectorName(*selector),
+                     *selector,
+                     addressLo,
+                     expected,
+                     desired,
+                     LocalCSRStatusName(result.status),
+                     ToString(mapped),
+                     result.oldValue,
+                     result.compareMatched ? 1u : 0u);
+            callback(mapped, result.oldValue);
+            return;
+        }
+    }
+
     auto callbackState = Common::ShareCallback(std::move(callback));
     Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = IRMRegisters::kAddressHi,
@@ -296,103 +441,54 @@ void IRMClient::AllocateResources(uint8_t channel,
                                    AllocationCallback callback,
                                    const RetryPolicy& retryPolicy)
 {
-    struct ResourceContext {
-        uint8_t channel;
-        uint32_t bandwidthUnits;
-        RetryPolicy retryPolicy;
-        AllocationCallback userCallback;
-        uint8_t retriesLeft{0};
-    };
+    auto callbackState = Common::ShareCallback(std::move(callback));
 
-    auto ctx = std::make_shared<ResourceContext>(ResourceContext{
-        channel, bandwidthUnits, retryPolicy, std::move(callback), retryPolicy.maxRetries
-    });
-
-    if (ctx->channel >= 64) {
-        ctx->userCallback(AllocationStatus::Failed);
+    if (channel >= 64) {
+        Common::InvokeSharedCallback(callbackState, AllocationStatus::Failed);
         return;
     }
     if (irmNodeId_ == 0xFF) {
-        ctx->userCallback(AllocationStatus::NotFound);
+        Common::InvokeSharedCallback(callbackState, AllocationStatus::NotFound);
         return;
     }
 
     DelayForPostResetQuietPeriod();
 
-    auto attempt = std::make_shared<std::function<void()>>();
-    *attempt = [this, ctx, attempt]() {
-        ReadIRMWindow([this, ctx, attempt](AllocationStatus snapshotStatus, ResourceSnapshot snapshot) {
-            if (snapshotStatus != AllocationStatus::Success) {
-                ctx->userCallback(snapshotStatus);
+    AllocateChannel(channel,
+        [this, callbackState, channel, bandwidthUnits, retryPolicy](AllocationStatus channelStatus) mutable {
+            if (channelStatus != AllocationStatus::Success) {
+                Common::InvokeSharedCallback(callbackState, channelStatus);
                 return;
             }
 
-            if (snapshot.bandwidthAvailable < ctx->bandwidthUnits) {
-                ctx->userCallback(AllocationStatus::NoResources);
-                return;
-            }
-
-            const uint32_t currentChannels =
-                (ctx->channel < 32) ? snapshot.channelsAvailable31_0 : snapshot.channelsAvailable63_32;
-            const uint32_t bitMask = ChannelToBitMask(ctx->channel);
-            if ((currentChannels & bitMask) == 0) {
-                ctx->userCallback(AllocationStatus::NoResources);
-                return;
-            }
-
-            const uint32_t desiredBandwidth = snapshot.bandwidthAvailable - ctx->bandwidthUnits;
-            CompareSwapBandwidth(
-                snapshot.bandwidthAvailable,
-                desiredBandwidth,
-                [this, ctx, snapshot, currentChannels, bitMask, attempt](AllocationStatus bwStatus,
-                                                                         uint32_t oldBandwidth) mutable {
-                    if (bwStatus != AllocationStatus::Success) {
-                        const bool retryable =
-                            (bwStatus == AllocationStatus::NoResources) &&
-                            (oldBandwidth >= ctx->bandwidthUnits) &&
-                            (ctx->retriesLeft > 0);
-                        if (retryable) {
-                            --ctx->retriesLeft;
-                            (*attempt)();
-                            return;
-                        }
-                        ctx->userCallback(bwStatus);
+            AllocateBandwidth(bandwidthUnits,
+                [this, callbackState, channel, retryPolicy](AllocationStatus bandwidthStatus) mutable {
+                    if (bandwidthStatus == AllocationStatus::Success) {
+                        Common::InvokeSharedCallback(callbackState, AllocationStatus::Success);
                         return;
                     }
 
-                    const uint32_t desiredChannels = currentChannels & ~bitMask;
-                    CompareSwapChannel(
-                        ctx->channel,
-                        currentChannels,
-                        desiredChannels,
-                        [this, ctx, bitMask, attempt](AllocationStatus channelStatus,
-                                                      uint32_t oldChannels) mutable {
-                            if (channelStatus == AllocationStatus::Success) {
-                                ctx->userCallback(AllocationStatus::Success);
-                                return;
+                    if (bandwidthStatus == AllocationStatus::GenerationMismatch) {
+                        Common::InvokeSharedCallback(callbackState, bandwidthStatus);
+                        return;
+                    }
+
+                    ReleaseChannel(channel,
+                        [callbackState, bandwidthStatus](AllocationStatus releaseStatus) mutable {
+                            if (releaseStatus != AllocationStatus::Success) {
+                                ASFW_LOG_ERROR(IRM,
+                                               "AllocateResources: rollback release channel failed "
+                                               "status=%{public}s original=%{public}s",
+                                               ToString(releaseStatus),
+                                               ToString(bandwidthStatus));
                             }
-
-                            ReleaseBandwidth(
-                                ctx->bandwidthUnits,
-                                [ctx, bitMask, attempt, channelStatus, oldChannels](AllocationStatus) mutable {
-                                    const bool retryable =
-                                        (channelStatus == AllocationStatus::NoResources) &&
-                                        ((oldChannels & bitMask) != 0) &&
-                                        (ctx->retriesLeft > 0);
-                                    if (retryable) {
-                                        --ctx->retriesLeft;
-                                        (*attempt)();
-                                        return;
-                                    }
-                                    ctx->userCallback(channelStatus);
-                                },
-                                ctx->retryPolicy);
-                        });
-                });
-        });
-    };
-
-    (*attempt)();
+                            Common::InvokeSharedCallback(callbackState, bandwidthStatus);
+                        },
+                        retryPolicy);
+                },
+                retryPolicy);
+        },
+        retryPolicy);
 }
 
 void IRMClient::ReadResourcesSnapshot(ResourceSnapshotCallback callback)

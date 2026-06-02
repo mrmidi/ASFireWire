@@ -3,6 +3,7 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
+#include "Bus/IRM/IRMCSRConstants.hpp"
 #include "Bus/IRM/IRMClient.hpp"
 #include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
 #include "Protocols/Audio/DICE/Core/DICETransaction.hpp"
@@ -347,6 +348,10 @@ public:
         generation_ = generation;
     }
 
+    void SetLocalNodeID(NodeId nodeId) {
+        localNodeId_ = nodeId;
+    }
+
     void SetIRMResourceState(uint32_t bandwidthAvailable,
                              uint32_t channelsAvailable31_0,
                              uint32_t channelsAvailable63_32) {
@@ -679,6 +684,52 @@ private:
     std::span<const ResponseStep> scriptedResponses_{};
     std::size_t scriptedRequestIndex_{0};
     std::size_t scriptedResponseIndex_{0};
+};
+
+class LocalIRMCSRTestBackend {
+public:
+    LocalIRMCSRTestBackend(uint32_t bandwidthAvailable,
+                           uint32_t channelsAvailableHi,
+                           uint32_t channelsAvailableLo) {
+        using namespace ASFW::Driver::IRMCSR;
+        values_[static_cast<uint32_t>(CSRSelector::BusManagerId)] = kNoBusManagerId;
+        values_[static_cast<uint32_t>(CSRSelector::BandwidthAvailable)] = bandwidthAvailable;
+        values_[static_cast<uint32_t>(CSRSelector::ChannelsAvailableHi)] = channelsAvailableHi;
+        values_[static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo)] = channelsAvailableLo;
+    }
+
+    IRMClient::LocalIRMAccess Access() {
+        return IRMClient::LocalIRMAccess{
+            .read = [this](uint32_t selector) -> ASFW::Driver::LocalCSRReadResult {
+                ++readCount_;
+                return {ASFW::Driver::LocalCSRLockResult::Status::Success, values_.at(selector)};
+            },
+            .compareSwap =
+                [this](uint32_t selector,
+                       uint32_t compareValue,
+                       uint32_t newValue) -> ASFW::Driver::LocalCSRLockResult {
+                ++compareSwapCount_;
+                const uint32_t oldValue = values_.at(selector);
+                if (oldValue == compareValue) {
+                    values_[selector] = newValue;
+                    return {ASFW::Driver::LocalCSRLockResult::Status::Success, oldValue, true};
+                }
+                return {ASFW::Driver::LocalCSRLockResult::Status::Success, oldValue, false};
+            },
+        };
+    }
+
+    [[nodiscard]] uint32_t Value(uint32_t selector) const {
+        return values_.at(selector);
+    }
+
+    [[nodiscard]] uint32_t ReadCount() const { return readCount_; }
+    [[nodiscard]] uint32_t CompareSwapCount() const { return compareSwapCount_; }
+
+private:
+    std::array<uint32_t, 4> values_{};
+    uint32_t readCount_{0};
+    uint32_t compareSwapCount_{0};
 };
 
 struct HostClockResetGuard {
@@ -1205,9 +1256,9 @@ TEST(DICEDuplexBringupControllerTests, IRMReadResourcesSnapshotUsesQuadletReads)
     ExpectOperations(bus.Operations(), expected);
 }
 
-TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesUsesSnapshotThenCompareSwap) {
+TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesAllocatesChannelThenBandwidthLikeApple) {
     RecordingFireWireBus bus;
-    bus.SetIRMResourceState(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFEU, 0xFFFFFFFFU);
 
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1218,22 +1269,90 @@ TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesUsesSnapshotThenCompa
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::Success);
     EXPECT_EQ(bus.BandwidthAvailable(), 4595U);
-    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x7FFFFFFFU);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0x7FFFFFFEU);
 
     const std::vector<ExpectedOp> expected{
+        {OpKind::Read, 0xF0000224U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000224U, 8, FwSpeed::S100},
+        {OpKind::Read, 0xF0000220U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000220U, 8, FwSpeed::S100},
+    };
+    ExpectOperations(bus.Operations(), expected);
+}
+
+TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesRollsBackChannelWhenBandwidthUnavailable) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(100U, 0xFFFFFFFEU, 0xFFFFFFFFU);
+
+    IRMClient irm(bus);
+    irm.SetIRMNode(0x03, Generation{1});
+
+    std::optional<ASFW::IRM::AllocationStatus> status;
+    irm.AllocateResources(0, 320U, [&](ASFW::IRM::AllocationStatus s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::NoResources);
+    EXPECT_EQ(bus.BandwidthAvailable(), 100U);
+    EXPECT_EQ(bus.ChannelsAvailable31_0(), 0xFFFFFFFEU);
+
+    const std::vector<ExpectedOp> expected{
+        {OpKind::Read, 0xF0000224U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000224U, 8, FwSpeed::S100},
         {OpKind::Read, 0xF0000220U, 4, FwSpeed::S100},
         {OpKind::Read, 0xF0000224U, 4, FwSpeed::S100},
-        {OpKind::Read, 0xF0000228U, 4, FwSpeed::S100},
-        {OpKind::Lock, 0xF0000220U, 8, FwSpeed::S100},
         {OpKind::Lock, 0xF0000224U, 8, FwSpeed::S100},
     };
     ExpectOperations(bus.Operations(), expected);
 }
 
-TEST(DICEDuplexBringupControllerTests, IRMPlaybackAllocationMatchesGeneratedReferenceSegment) {
+TEST(DICEDuplexBringupControllerTests, IRMLocalAllocateResourcesUsesLocalCSRBackendWithoutAT) {
+    using namespace ASFW::Driver::IRMCSR;
+
     RecordingFireWireBus bus;
-    bus.SetScript(ReferencePhase0ParityFixture::kIrmPlaybackExpectedRequests,
-                  ReferencePhase0ParityFixture::kIrmPlaybackResponseSteps);
+    bus.SetLocalNodeID(NodeId{0x02});
+    LocalIRMCSRTestBackend localCSR(4915U, 0xFFFFFFFEU, 0xFFFFFFFFU);
+
+    IRMClient irm(bus, localCSR.Access());
+    irm.SetIRMNode(0x02, Generation{1});
+
+    std::optional<ASFW::IRM::AllocationStatus> status;
+    irm.AllocateResources(0, 320U, [&](ASFW::IRM::AllocationStatus s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::Success);
+    EXPECT_TRUE(bus.Operations().empty());
+    EXPECT_EQ(localCSR.Value(static_cast<uint32_t>(CSRSelector::BandwidthAvailable)), 4595U);
+    EXPECT_EQ(localCSR.Value(static_cast<uint32_t>(CSRSelector::ChannelsAvailableHi)), 0x7FFFFFFEU);
+    EXPECT_EQ(localCSR.Value(static_cast<uint32_t>(CSRSelector::ChannelsAvailableLo)), 0xFFFFFFFFU);
+    EXPECT_EQ(localCSR.ReadCount(), 2U);
+    EXPECT_EQ(localCSR.CompareSwapCount(), 2U);
+}
+
+TEST(DICEDuplexBringupControllerTests, IRMLocalAllocateResourcesChecksGenerationBeforeCSRAccess) {
+    using namespace ASFW::Driver::IRMCSR;
+
+    RecordingFireWireBus bus;
+    bus.SetLocalNodeID(NodeId{0x02});
+    bus.SetGeneration(Generation{2});
+    LocalIRMCSRTestBackend localCSR(4915U, 0xFFFFFFFFU, 0xFFFFFFFFU);
+
+    IRMClient irm(bus, localCSR.Access());
+    irm.SetIRMNode(0x02, Generation{1});
+
+    std::optional<ASFW::IRM::AllocationStatus> status;
+    irm.AllocateResources(0, 320U, [&](ASFW::IRM::AllocationStatus s) { status = s; });
+
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::GenerationMismatch);
+    EXPECT_TRUE(bus.Operations().empty());
+    EXPECT_EQ(localCSR.Value(static_cast<uint32_t>(CSRSelector::BandwidthAvailable)), 4915U);
+    EXPECT_EQ(localCSR.ReadCount(), 0U);
+    EXPECT_EQ(localCSR.CompareSwapCount(), 0U);
+}
+
+TEST(DICEDuplexBringupControllerTests, IRMPlaybackAllocationUsesAppleChannelThenBandwidthOrder) {
+    RecordingFireWireBus bus;
+    bus.SetIRMResourceState(4915U, 0xFFFFFFFEU, 0xFFFFFFFFU);
 
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1243,14 +1362,19 @@ TEST(DICEDuplexBringupControllerTests, IRMPlaybackAllocationMatchesGeneratedRefe
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::Success);
-    ExpectRequests(bus.Operations(), ReferencePhase0ParityFixture::kIrmPlaybackExpectedRequests);
-    EXPECT_TRUE(bus.ScriptConsumed());
+
+    const std::vector<ExpectedOp> expected{
+        {OpKind::Read, 0xF0000224U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000224U, 8, FwSpeed::S100},
+        {OpKind::Read, 0xF0000220U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000220U, 8, FwSpeed::S100},
+    };
+    ExpectOperations(bus.Operations(), expected);
 }
 
-TEST(DICEDuplexBringupControllerTests, IRMCaptureAllocationMatchesGeneratedReferenceSegment) {
+TEST(DICEDuplexBringupControllerTests, IRMCaptureAllocationUsesAppleChannelThenBandwidthOrder) {
     RecordingFireWireBus bus;
-    bus.SetScript(ReferencePhase0ParityFixture::kIrmCaptureExpectedRequests,
-                  ReferencePhase0ParityFixture::kIrmCaptureResponseSteps);
+    bus.SetIRMResourceState(4595U, 0x7FFFFFFEU, 0xFFFFFFFFU);
 
     IRMClient irm(bus);
     irm.SetIRMNode(0x03, Generation{1});
@@ -1260,8 +1384,14 @@ TEST(DICEDuplexBringupControllerTests, IRMCaptureAllocationMatchesGeneratedRefer
 
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(*status, ASFW::IRM::AllocationStatus::Success);
-    ExpectRequests(bus.Operations(), ReferencePhase0ParityFixture::kIrmCaptureExpectedRequests);
-    EXPECT_TRUE(bus.ScriptConsumed());
+
+    const std::vector<ExpectedOp> expected{
+        {OpKind::Read, 0xF0000224U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000224U, 8, FwSpeed::S100},
+        {OpKind::Read, 0xF0000220U, 4, FwSpeed::S100},
+        {OpKind::Lock, 0xF0000220U, 8, FwSpeed::S100},
+    };
+    ExpectOperations(bus.Operations(), expected);
 }
 
 TEST(DICEDuplexBringupControllerTests, IRMAllocateResourcesReturnsGenerationMismatchWhenBusMoves) {
