@@ -260,7 +260,9 @@ extension DiagnosticsTextFormatter {
 
         let rootReasonStr: String
         switch snapshot.busManager.rootSelectionDecision {
+        case 5: rootReasonStr = "Remote cycle continuity already observed"
         case 6: rootReasonStr = "Current root already Self-ID contender/link-active"
+        case 9: rootReasonStr = "Local Self-ID contender selected"
         case 10: rootReasonStr = "Remote Self-ID contender selected"
         case 11: rootReasonStr = "No Self-ID contender candidates found"
         case 12: rootReasonStr = "Reset attempt limit reached for this topology"
@@ -316,6 +318,7 @@ extension DiagnosticsTextFormatter {
         r.row("Current Gap", snapshot.busManager.gapPolicyCurrentGap)
         r.row("Expected Gap", snapshot.busManager.gapPolicyExpectedGap)
         r.row("Requested Gap", snapshot.busManager.gapPolicyRequestedGap)
+        r.row("Gap Matches Target", snapshot.busManager.gapPolicyCurrentGap == snapshot.busManager.gapPolicyExpectedGap ? "Yes" : "No")
 
         let gapSourceStr: String
         switch snapshot.busManager.gapPolicyComputationSource {
@@ -328,7 +331,7 @@ extension DiagnosticsTextFormatter {
         r.row("Computation Source", gapSourceStr)
 
         r.row("Max Hops From Root", snapshot.busManager.gapPolicyMaxHopsKnown != 0 ? "\(snapshot.busManager.gapPolicyMaxHops)" : "unknown")
-        r.row("Gap Count Consistent", snapshot.busManager.gapPolicyGapConsistent != 0 ? "Yes" : "No")
+        r.row("Observed Gap Fields Agree", snapshot.busManager.gapPolicyGapConsistent != 0 ? "Yes" : "No")
 
         let betaStr: String
         if snapshot.busManager.gapPolicyBetaKnown == 0 {
