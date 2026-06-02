@@ -33,13 +33,21 @@ void PowerLinkPolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept
 
 void PowerLinkPolicyCoordinator::Evaluate(const PowerLinkPolicyInputs& inputs,
                                           ILinkOnExecutor& executor) noexcept {
+    auto effectiveInputs = inputs;
+    const auto estimate = EstimatePowerBudget(effectiveInputs);
+    effectiveInputs.powerBudgetStatus = estimate.status;
+
     snapshot_.generation = inputs.generation;
-    snapshot_.powerBudgetStatus = inputs.powerBudgetStatus;
+    snapshot_.powerBudgetStatus = effectiveInputs.powerBudgetStatus;
+
+    snapshot_.powerAvailableMilliWatts = estimate.availableMilliWatts;
+    snapshot_.powerRequiredMilliWatts = estimate.requiredMilliWatts;
+    snapshot_.unknownPowerClassNodes = estimate.unknownPowerClassNodes;
     
-    const auto candidates = BuildCandidates(inputs);
+    const auto candidates = BuildCandidates(effectiveInputs);
     snapshot_.eligibleNodeCount = static_cast<uint32_t>(candidates.size());
 
-    snapshot_.lastDecision = Plan(inputs, candidates);
+    snapshot_.lastDecision = Plan(effectiveInputs, candidates);
     snapshot_.lastAction = PowerPolicyAction::None;
     snapshot_.targetNodeCount = 0;
     
@@ -61,8 +69,8 @@ void PowerLinkPolicyCoordinator::Evaluate(const PowerLinkPolicyInputs& inputs,
     snapshot_.lastAction = PowerPolicyAction::SendLinkOnPackets;
 
     for (const auto& c : candidates) {
-        const bool ok = executor.SendLinkOnPacket(inputs.generation,
-                                                  inputs.busBase16,
+        const bool ok = executor.SendLinkOnPacket(effectiveInputs.generation,
+                                                  effectiveInputs.busBase16,
                                                   c.nodeId);
         snapshot_.linkOnSubmittedCount++;
         if (ok) {
@@ -94,14 +102,9 @@ PowerPolicyDecision PowerLinkPolicyCoordinator::Plan(const PowerLinkPolicyInputs
         return PowerPolicyDecision::SuppressedNotBMOrFallbackIRM;
     }
 
-    if (config_.requireKnownPowerBudget &&
-        inputs.powerBudgetStatus == PowerBudgetStatus::Unknown &&
-        !config_.allowWhenPowerBudgetUnknown) {
-        return PowerPolicyDecision::DeferredPowerBudgetUnknown;
-    }
-
-    if (inputs.powerBudgetStatus == PowerBudgetStatus::Insufficient) {
-        return PowerPolicyDecision::DeferredPowerBudgetUnknown;
+    if (auto decision = BudgetDecision(inputs.powerBudgetStatus);
+        decision != PowerPolicyDecision::None) {
+        return decision;
     }
 
     if (candidates.empty()) {
@@ -115,6 +118,73 @@ PowerPolicyDecision PowerLinkPolicyCoordinator::Plan(const PowerLinkPolicyInputs
     return PowerPolicyDecision::LinkOnRequired;
 }
 
+PowerPolicyDecision
+PowerLinkPolicyCoordinator::BudgetDecision(PowerBudgetStatus status) const noexcept {
+    if (config_.requireKnownPowerBudget &&
+        status == PowerBudgetStatus::Unknown &&
+        !config_.allowWhenPowerBudgetUnknown) {
+        return PowerPolicyDecision::DeferredPowerBudgetUnknown;
+    }
+
+    if (status == PowerBudgetStatus::Insufficient) {
+        return PowerPolicyDecision::DeferredInsufficientPower;
+    }
+
+    return PowerPolicyDecision::None;
+}
+
+PowerBudgetEstimate
+PowerLinkPolicyCoordinator::EstimatePowerBudget(const PowerLinkPolicyInputs& inputs) const noexcept {
+    PowerBudgetEstimate estimate{};
+
+    if (!inputs.topologyValid || inputs.topology == nullptr) {
+        return estimate;
+    }
+
+    // IEEE 1394 Self-ID pwr is a capability class, not a measured wattage.
+    // Map it conservatively: reserved/unknown classes block automatic Link-On.
+    // cross-validated with Linux: phy-packet-definitions.h:174-182
+    for (const auto& node : inputs.topology->physical.nodes) {
+        switch (static_cast<ASFW::Driver::PowerClass>(node.powerClass & 0x07u)) {
+        case ASFW::Driver::PowerClass::NoPower:
+            break;
+        case ASFW::Driver::PowerClass::SelfPower_15W:
+            estimate.availableMilliWatts += 15000;
+            break;
+        case ASFW::Driver::PowerClass::SelfPower_30W:
+            estimate.availableMilliWatts += 30000;
+            break;
+        case ASFW::Driver::PowerClass::SelfPower_45W:
+            estimate.availableMilliWatts += 45000;
+            break;
+        case ASFW::Driver::PowerClass::BusPowered_UpTo3W:
+            estimate.requiredMilliWatts += 3000;
+            break;
+        case ASFW::Driver::PowerClass::Reserved101:
+            estimate.unknownPowerClassNodes++;
+            break;
+        case ASFW::Driver::PowerClass::BusPowered_3W_plus3:
+            estimate.availableMilliWatts += 3000;
+            estimate.requiredMilliWatts += 3000;
+            break;
+        case ASFW::Driver::PowerClass::BusPowered_3W_plus7:
+            estimate.availableMilliWatts += 7000;
+            estimate.requiredMilliWatts += 3000;
+            break;
+        }
+    }
+
+    if (estimate.unknownPowerClassNodes != 0) {
+        estimate.status = PowerBudgetStatus::Unknown;
+    } else if (estimate.requiredMilliWatts <= estimate.availableMilliWatts) {
+        estimate.status = PowerBudgetStatus::Sufficient;
+    } else {
+        estimate.status = PowerBudgetStatus::Insufficient;
+    }
+
+    return estimate;
+}
+
 std::vector<PowerLinkNodeEvidence>
 PowerLinkPolicyCoordinator::BuildCandidates(const PowerLinkPolicyInputs& inputs) const {
     std::vector<PowerLinkNodeEvidence> out;
@@ -123,7 +193,7 @@ PowerLinkPolicyCoordinator::BuildCandidates(const PowerLinkPolicyInputs& inputs)
         return out;
     }
 
-    // Cross-validated with linux: core-topology.c:26-36.
+    // cross-validated with Linux: core-topology.c:26-36.
     // Linux reads the link_active (L-bit) from Self-ID packets.
     for (const auto& node : inputs.topology->physical.nodes) {
         PowerLinkNodeEvidence ev{};
@@ -170,7 +240,7 @@ PowerLinkPolicyCoordinator::BuildCandidates(const PowerLinkPolicyInputs& inputs)
 
 /**
  * @brief Checks if the local node is an allowed actor for BM/fallback duties.
- * Cross-validated with linux: core-card.c:347-352.
+ * cross-validated with Linux: core-card.c:347-352.
  */
 bool PowerLinkPolicyCoordinator::IsAllowedActor(const PowerLinkPolicyInputs& inputs) const noexcept {
     const bool activeBM =

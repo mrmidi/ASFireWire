@@ -221,6 +221,26 @@ TEST(PhyPackets, AppleReference_PhyGlobalResumeWithNode2) {
     EXPECT_EQ(encoded[0], 0x023C0000u);
 }
 
+TEST(PhyPackets, LinkOnPacket_EncodesTargetNodeAndInverse) {
+    LinkOnPacket packet{};
+    packet.phyId = 2;
+
+    const auto encoded = packet.EncodeHostOrder();
+
+    EXPECT_EQ(encoded[0], 0x42000000u);
+    EXPECT_EQ(encoded[1], ~0x42000000u);
+}
+
+TEST(PhyPackets, LinkOnPacket_ClampsTargetToSixBits) {
+    LinkOnPacket packet{};
+    packet.phyId = 0xFF;
+
+    const auto encoded = packet.EncodeHostOrder();
+
+    EXPECT_EQ(encoded[0], 0x7F000000u);
+    EXPECT_EQ(encoded[1], ~0x7F000000u);
+}
+
 TEST(PhyPackets, AppleReference_IsConfigQuadlet) {
     // Apple's PHY Config packets should be recognized as config packets
     Quadlet appleForceRoot2 = 0x00800000u | (2u << 24);  // R=1, root=2

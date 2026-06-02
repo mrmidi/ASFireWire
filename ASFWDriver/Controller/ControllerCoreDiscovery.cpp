@@ -884,9 +884,6 @@ void ControllerCore::EvaluatePowerLinkPolicy() noexcept {
     if (topo.has_value()) {
         in.topology = &(*topo);
     }
-    
-    // M8 V0: Power budget is conservatively unknown.
-    in.powerBudgetStatus = Bus::PowerBudgetStatus::Unknown;
 
     powerLinkPolicy_->Evaluate(in, *this);
 }
