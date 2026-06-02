@@ -113,8 +113,23 @@ TEST_F(BufferRingDMATest, FinalizeProgramsDataAddressAndBranchWords) {
             static_cast<uint32_t>((descBaseIOVA_ + nextIndex * sizeof(Async::HW::OHCIDescriptor)) & 0xFFFFFFF0u);
         const uint32_t branchAddr = Async::HW::DecodeBranchPhys32_AR(desc->branchWord);
         EXPECT_EQ(branchAddr, expectedNextDescAddr);
+        EXPECT_EQ(desc->branchWord & 0xFu, 1u);
         EXPECT_NE(desc->branchWord, 0u);
     }
+}
+
+TEST_F(BufferRingDMATest, InitializeProgramsInputMoreControlWithLinuxDescriptorBits) {
+    auto* desc = ring_.GetDescriptor(0);
+    ASSERT_NE(desc, nullptr);
+
+    const uint16_t controlHi = static_cast<uint16_t>(desc->control >> Async::HW::OHCIDescriptor::kControlHighShift);
+    EXPECT_EQ((controlHi >> Async::HW::OHCIDescriptor::kCmdShift) & 0xFu,
+              Async::HW::OHCIDescriptor::kCmdInputMore);
+    EXPECT_EQ((controlHi >> Async::HW::OHCIDescriptor::kStatusShift) & 0x1u, 1u);
+    EXPECT_EQ((controlHi >> Async::HW::OHCIDescriptor::kIntShift) & 0x3u,
+              Async::HW::OHCIDescriptor::kIntAlways);
+    EXPECT_EQ((controlHi >> Async::HW::OHCIDescriptor::kBranchShift) & 0x3u,
+              Async::HW::OHCIDescriptor::kBranchAlways);
 }
 
 TEST(DMASafeCopyTest, PreservesBytesFromFourByteAlignedEightByteMisalignedSource) {

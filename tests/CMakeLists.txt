@@ -634,6 +634,27 @@ target_include_directories(DescriptorRingDMATests PRIVATE ${ASFW_COMMON_INCLUDES
 gtest_discover_tests(DescriptorRingDMATests)
 
 # =============================================================================
+# AT Descriptor Encoding Tests - OHCI branch Z/control-word validation
+# =============================================================================
+add_executable(ATDescriptorTests
+    "${ASFW_TESTS_DIR}/ATDescriptorTests.cpp"
+)
+
+target_link_libraries(ATDescriptorTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(ATDescriptorTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(ATDescriptorTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(ATDescriptorTests)
+
+# =============================================================================
 # Buffer Ring DMA Tests - BufferRing logic with fake DMA
 # =============================================================================
 add_executable(BufferRingDMATests

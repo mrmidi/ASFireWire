@@ -75,11 +75,16 @@ void ConfigureGapCount(ASFW::Driver::HardwareInterface& hw, uint8_t reg1Value) {
     const uint8_t clearReg1Bits = ASFW::Driver::kPhyGapCountMask |
                                   ASFW::Driver::kPhyRootHoldOff |
                                   ASFW::Driver::kPhyInitiateBusReset;
-    // cross-validated with Linux: ohci.c:2510-2511 Apple: IOFireWireController.cpp:1312-1313
     const uint8_t newReg1 =
         static_cast<uint8_t>((reg1Value & ~clearReg1Bits) | kTargetGap);
 
-    ASFW_LOG_PHY("Forcing PHY Gap Count write (Reg 1): 0x%02x -> 0x%02x (RHB clear)",
+    if (newReg1 == reg1Value) {
+        ASFW_LOG_PHY("PHY Register 1 already gap=0x%02x with RHB/IBR clear; skipping cold-init write",
+                     kTargetGap);
+        return;
+    }
+
+    ASFW_LOG_PHY("Updating PHY Gap Count (Reg 1): 0x%02x -> 0x%02x (RHB/IBR clear)",
                  reg1Value, newReg1);
 
     constexpr int kMaxPhyWriteAttempts = 3;
@@ -122,7 +127,7 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     // never win an IRM/BM election. ServiceContext now seeds the live driver with
     // FullBusManager/CyclePolicyAllowed for hardware validation, matching the
     // reference stacks' contender posture while keeping root/gap resets gated.
-    // cross-validated with Linux: ohci.c:2510 Apple: IOFireWireController.cpp:2414
+    // cross-validated with Linux: ohci.c:2510-2511
     const bool shouldAdvertiseContender =
         (policy.roleMode == ASFW::FW::RoleMode::FullBusManager &&
          policy.fullBMActivityLevel >= ASFW::FW::FullBMActivityLevel::ElectionOnly) ||
@@ -151,14 +156,16 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
                  shouldAdvertiseContender ? 1 : 0);
     hw.InitializePhyReg4Cache();
 
+    const uint8_t phyReg5EnhanceBits =
+        ASFW::Driver::kPhyEnableAcceleration | ASFW::Driver::kPhyEnableMulti;
     const bool accelEnabled =
-        hw.UpdatePhyRegister(ASFW::Driver::kPhyReg5Address, 0, ASFW::Driver::kPhyEnableAcceleration);
+        hw.UpdatePhyRegister(ASFW::Driver::kPhyReg5Address, 0, phyReg5EnhanceBits);
     if (!accelEnabled) {
-        ASFW_LOG(Hardware, "Failed to enable PHY accelerated arbitration (reg5 bit6)");
+        ASFW_LOG(Hardware, "Failed to enable PHY accelerated/multi arbitration (reg5 bits 1:0)");
         return false;
     }
 
-    ASFW_LOG_PHY("PHY reg5 configured: Enab_accel=1 (gap writes will stick)");
+    ASFW_LOG_PHY("PHY reg5 configured: Enab_accel=1 Enab_multi=1");
     return true;
 }
 
@@ -219,7 +226,7 @@ void ConfigureAtRetries(ASFW::Driver::HardwareInterface& hw) {
     const uint32_t atRetriesVal = ASFW::Driver::kDefaultATRetries;
     hw.WriteAndFlush(ASFW::Driver::Register32::kATRetries, atRetriesVal);
     const uint32_t atRetriesReadback = hw.Read(ASFW::Driver::Register32::kATRetries);
-    ASFW_LOG(Hardware, "ATRetries configured: maxReq=3 maxResp=3 maxPhys=3 cycleLimit=200");
+    ASFW_LOG(Hardware, "ATRetries configured: maxReq=15 maxResp=2 maxPhys=8 cycleLimit=200");
     ASFW_LOG(Hardware, "ATRetries write/readback: 0x%08x / 0x%08x", atRetriesVal,
              atRetriesReadback);
 }

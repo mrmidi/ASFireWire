@@ -26,8 +26,19 @@ constexpr uint32_t kDefaultLinkControl = LinkControlBits::kRcvSelfID |
 constexpr uint32_t kPostedWritePrimingBits = HCControlBits::kPostedWriteEnable |
 											 HCControlBits::kLPS;
 
-// Default ATRetries value (cycleLimit=200 maxPhys=3 maxResp=3 maxReq=3)
-constexpr uint32_t kDefaultATRetries = (3u << 0) | (3u << 4) | (3u << 8) | (200u << 16);
+// Default ATRetries value.
+// cross-validated with Linux: ohci.c:252-254 ohci.c:2476-2480
+constexpr uint32_t kDefaultATReqRetries = 0xFu;
+constexpr uint32_t kDefaultATRespRetries = 0x2u;
+constexpr uint32_t kDefaultATPhysRespRetries = 0x8u;
+constexpr uint32_t kDefaultATCycleLimit = 200u;
+constexpr uint32_t kDefaultATRetries =
+    (kDefaultATReqRetries << 0) |
+    (kDefaultATRespRetries << 4) |
+    (kDefaultATPhysRespRetries << 8) |
+    (kDefaultATCycleLimit << 16);
+static_assert(kDefaultATRetries == 0x00C8082Fu,
+              "ATRetries must match Linux ohci_enable default");
 
 // Node capabilities advertised in our local Config ROM. Keep the baseline
 // conservative and only set cPhyEnhance when the PHY/Link 1394a enhancement
@@ -48,9 +59,13 @@ constexpr uint32_t kNodeCapabilitiesBase =
     return kNodeCapabilitiesBase |
            (phyEnhanceEnabled ? NodeCapabilityBits::kCPhyEnhance : 0u);
 }
+static_assert(kNodeCapabilitiesBase ==
+              (NodeCapabilityBits::kSLink | NodeCapabilityBits::kInitReq |
+               NodeCapabilityBits::kRespReq));
 
 // OHCI version check for 1.1 (0x010010) used in initial channel configuration
 constexpr uint32_t kOHCI_1_1 = 0x010010u;
+static_assert(kOHCI_1_1 == 0x010010u);
 
 // Soft reset timeouts used by controller reset sequences
 constexpr uint32_t kSoftResetTimeoutUsec = 500'000u; // 500ms
@@ -166,6 +181,16 @@ constexpr uint32_t kIEEE1394_DataLengthMask  = 0xFFFF0000u;
 
 constexpr uint32_t kIEEE1394_ExtendedTCodeShift = 0;
 constexpr uint32_t kIEEE1394_ExtendedTCodeMask  = 0x0000FFFFu;
+static_assert(kIEEE1394_DestinationIDShift == 16 && kIEEE1394_DestinationIDMask == 0xFFFF0000u);
+static_assert(kIEEE1394_TLabelShift == 10 && kIEEE1394_TLabelMask == 0x0000FC00u);
+static_assert(kIEEE1394_RetryShift == 8 && kIEEE1394_RetryMask == 0x00000300u);
+static_assert(kIEEE1394_TCodeShift == 4 && kIEEE1394_TCodeMask == 0x000000F0u);
+static_assert(kIEEE1394_PriorityShift == 0 && kIEEE1394_PriorityMask == 0x0000000Fu);
+static_assert(kIEEE1394_SourceIDShift == 16 && kIEEE1394_SourceIDMask == 0xFFFF0000u);
+static_assert(kIEEE1394_OffsetHighShift == 0 && kIEEE1394_OffsetHighMask == 0x0000FFFFu);
+static_assert(kIEEE1394_DataLengthShift == 16 && kIEEE1394_DataLengthMask == 0xFFFF0000u);
+static_assert(kIEEE1394_ExtendedTCodeShift == 0 &&
+              kIEEE1394_ExtendedTCodeMask == 0x0000FFFFu);
 
 // Transaction codes (IEEE 1394-1995 Table 3-2)
 constexpr uint8_t kIEEE1394_TCodeWriteQuadRequest   = 0x0;
@@ -180,6 +205,18 @@ constexpr uint8_t kIEEE1394_TCodeLockRequest        = 0x9;
 constexpr uint8_t kIEEE1394_TCodeIsochronousBlock   = 0xA;
 constexpr uint8_t kIEEE1394_TCodeLockResponse       = 0xB;
 constexpr uint8_t kIEEE1394_TCodePhyPacket         = 0xE; // Link internal/PHY packet
+static_assert(kIEEE1394_TCodeWriteQuadRequest == 0x0);
+static_assert(kIEEE1394_TCodeWriteBlockRequest == 0x1);
+static_assert(kIEEE1394_TCodeWriteResponse == 0x2);
+static_assert(kIEEE1394_TCodeReadQuadRequest == 0x4);
+static_assert(kIEEE1394_TCodeReadBlockRequest == 0x5);
+static_assert(kIEEE1394_TCodeReadQuadResponse == 0x6);
+static_assert(kIEEE1394_TCodeReadBlockResponse == 0x7);
+static_assert(kIEEE1394_TCodeCycleStart == 0x8);
+static_assert(kIEEE1394_TCodeLockRequest == 0x9);
+static_assert(kIEEE1394_TCodeIsochronousBlock == 0xA);
+static_assert(kIEEE1394_TCodeLockResponse == 0xB);
+static_assert(kIEEE1394_TCodePhyPacket == 0xE);
 
 // Retry codes (IEEE 1394-1995 §6.2.4.3)
 constexpr uint8_t kIEEE1394_RetryNew = 0x0;

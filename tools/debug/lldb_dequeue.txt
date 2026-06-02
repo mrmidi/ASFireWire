@@ -31,7 +31,7 @@ expr -R -- uint16_t $res     = (uint16_t)($stat_sw & 0xFFFF)
 expr -R -- size_t   $filled  = (size_t)$req - (size_t)$res
 
 # Branch nibble + physical next
-expr -R -- uint32_t $z         = (uint32_t)(($brch >> 28) & 0xF)
+expr -R -- uint32_t $z         = (uint32_t)($brch & 0xF)
 expr -R -- uint32_t $next_phys = (uint32_t)($brch & 0xFFFFFFF0)
 
 # Quick peek of the start of the buffer
