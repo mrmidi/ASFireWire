@@ -782,6 +782,9 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->powerPolicyDecision = static_cast<uint32_t>(snap.lastDecision);
         out->powerPolicyAction = static_cast<uint32_t>(snap.lastAction);
         out->powerBudgetStatus = static_cast<uint32_t>(snap.powerBudgetStatus);
+        out->powerAvailableMilliWatts = snap.powerAvailableMilliWatts;
+        out->powerRequiredMilliWatts = snap.powerRequiredMilliWatts;
+        out->powerUnknownPowerClassNodes = snap.unknownPowerClassNodes;
         out->powerEligibleNodeCount = snap.eligibleNodeCount;
         out->powerTargetNodeCount = snap.targetNodeCount;
         for (uint32_t i = 0; i < 16; ++i) {

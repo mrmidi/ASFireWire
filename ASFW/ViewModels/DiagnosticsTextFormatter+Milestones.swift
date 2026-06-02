@@ -386,21 +386,45 @@ extension DiagnosticsTextFormatter {
         default: budgetStr = "Invalid (\(snapshot.busManager.powerBudgetStatus))"
         }
         r.row("Power Budget", budgetStr)
+        r.row("Power Available", Self.formatMilliWatts(snapshot.busManager.powerAvailableMilliWatts))
+        r.row("Power Required", Self.formatMilliWatts(snapshot.busManager.powerRequiredMilliWatts))
+        let powerMargin = Int64(snapshot.busManager.powerAvailableMilliWatts) -
+            Int64(snapshot.busManager.powerRequiredMilliWatts)
+        r.row("Power Margin", Self.formatMilliWattDelta(powerMargin))
+        r.row("Unknown Power Classes", snapshot.busManager.powerUnknownPowerClassNodes)
 
         r.row("Eligible Nodes", snapshot.busManager.powerEligibleNodeCount)
 
         if snapshot.busManager.powerTargetNodeCount > 0 {
-            // Safe access to fixed-size array powerTargetNodes[16] via mirroring or manual indexing
-            // Since we're in Swift, we treat it as a tuple or use Reflection if needed.
-            // For now, let's assume we can access them if the ABI allows.
-            // Actually, we'll just report the count and first few if possible.
             r.row("Target Node Count", snapshot.busManager.powerTargetNodeCount)
+            let targetCount = Int(min(snapshot.busManager.powerTargetNodeCount, 16))
+            let targets: [UInt32] = withUnsafeBytes(of: snapshot.busManager.powerTargetNodes) { buffer in
+                Array(buffer.bindMemory(to: UInt32.self).prefix(targetCount))
+            }
+            r.row("Target Nodes", targets.map(DiagFormat.nodeStr).joined(separator: ", "))
         }
 
         r.row("Attempts This Generation", "\(snapshot.busManager.linkOnAttemptsThisGeneration) / 1")
         r.row("Submitted", snapshot.busManager.linkOnSubmittedCount)
         r.row("Succeeded", snapshot.busManager.linkOnSuccessCount)
         r.row("Failed", snapshot.busManager.linkOnFailureCount)
+    }
+
+    private static func formatMilliWatts(_ milliWatts: UInt32) -> String {
+        if milliWatts == 0 {
+            return "0 mW"
+        }
+        return String(format: "%u mW (%.1f W)", milliWatts, Double(milliWatts) / 1000.0)
+    }
+
+    private static func formatMilliWattDelta(_ milliWatts: Int64) -> String {
+        if milliWatts == 0 {
+            return "0 mW"
+        }
+        let sign = milliWatts > 0 ? "+" : "-"
+        let magnitude = UInt64(milliWatts.magnitude)
+        return String(format: "%@%llu mW (%.1f W)",
+                      sign, magnitude, Double(magnitude) / 1000.0)
     }
 
     // --- Milestone 9: CSR Compliance / Maps ---
