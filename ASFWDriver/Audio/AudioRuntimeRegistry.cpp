@@ -48,6 +48,9 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
     IRM::IRMClient* irmClient) noexcept {
     const uint64_t guid = record.guid;
 
+    // Creation is orchestrator-serialized: EnsureForDevice runs only on the single Default
+    // queue (the controller discovery path), so there is no concurrent create for the same
+    // GUID. The lock below still guards the map against off-queue FindShared/Remove callers.
     // Idempotent: an existing instance short-circuits (e.g. re-scan on resume).
     if (auto existing = FindShared(guid)) {
         return existing;

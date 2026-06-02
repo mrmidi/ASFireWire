@@ -49,6 +49,11 @@ void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
     controller.reset();
     audioCoordinator.reset();
+    // Tear down the runtime audio protocols while the services they were built from
+    // (bus/hardware/IRM) are still alive. controller.reset() above dropped the controller's
+    // copy of this shared_ptr, so the deps copy is the last owner; resetting it here lets the
+    // protocol destructors run before the bus/IRM teardown below.
+    deps.audioRuntimeRegistry.reset();
     deps.hardware.reset();
     deps.busReset.reset();
     deps.busManager.reset();
