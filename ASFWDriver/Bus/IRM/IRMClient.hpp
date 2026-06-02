@@ -2,8 +2,10 @@
 
 #include "IRMTypes.hpp"
 #include "../../Async/Interfaces/IFireWireBus.hpp"
+#include "../../Hardware/HardwareInterface.hpp"
 #include <functional>
 #include <memory>
+#include <utility>
 
 namespace ASFW::IRM {
 
@@ -26,7 +28,18 @@ using ResourceSnapshotCallback = std::function<void(AllocationStatus status, Res
 
 class IRMClient {
 public:
-    explicit IRMClient(Async::IFireWireBus& bus);
+    struct LocalIRMAccess {
+        using ReadFn = std::function<Driver::LocalCSRReadResult(uint32_t selector)>;
+        using CompareSwapFn = std::function<Driver::LocalCSRLockResult(
+            uint32_t selector,
+            uint32_t compareValue,
+            uint32_t newValue)>;
+
+        ReadFn read;
+        CompareSwapFn compareSwap;
+    };
+
+    explicit IRMClient(Async::IFireWireBus& bus, LocalIRMAccess localIRMAccess = {});
     ~IRMClient();
 
     void SetIRMNode(uint8_t irmNodeId, Generation generation, uint64_t lastBusResetNs = 0);
@@ -77,6 +90,7 @@ private:
     struct BandwidthLockState;
 
     Async::IFireWireBus& bus_;
+    LocalIRMAccess localIRMAccess_;
 
     uint8_t irmNodeId_{0xFF};
     Generation generation_{0};
@@ -96,7 +110,10 @@ private:
     void DelayForPostResetQuietPeriod() const;
 
     [[nodiscard]] static AllocationStatus MapAsyncStatus(Async::AsyncStatus status) noexcept;
+    [[nodiscard]] static AllocationStatus
+    MapLocalCSRStatus(Driver::LocalCSRLockResult::Status status) noexcept;
     [[nodiscard]] static uint64_t CurrentMonotonicNowNs() noexcept;
+    [[nodiscard]] bool IsLocalIRMNode() const noexcept;
 
     void PerformChannelLock(uint8_t channel, bool allocate,
                            AllocationCallback callback,

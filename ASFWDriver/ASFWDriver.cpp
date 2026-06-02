@@ -51,6 +51,7 @@
 #include "Diagnostics/MetricsSink.hpp"
 #include "Discovery/DeviceManager.hpp"
 #include "Discovery/FWDevice.hpp"
+#include "Hardware/HardwareInterface.hpp"
 #include "Hardware/InterruptManager.hpp"
 #include "Hardware/OHCIConstants.hpp"
 #include "Hardware/RegisterMap.hpp"
@@ -88,6 +89,27 @@ constexpr uint64_t kAsyncWatchdogPeriodUsec = 1000; // 1 ms tick (hybrid: interr
         return ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
     }
     return ASFW::Encoding::AudioWireFormat::kAM824;
+}
+
+[[nodiscard]] ASFW::IRM::IRMClient::LocalIRMAccess
+MakeLocalIRMAccess(const std::shared_ptr<HardwareInterface>& hardware) {
+    return ASFW::IRM::IRMClient::LocalIRMAccess{
+        .read = [hardware](uint32_t selector) -> LocalCSRReadResult {
+            if (!hardware) {
+                return {LocalCSRLockResult::Status::HardwareUnavailable, 0};
+            }
+            return hardware->ReadLocalIRMResource(selector);
+        },
+        .compareSwap =
+            [hardware](uint32_t selector,
+                       uint32_t compareValue,
+                       uint32_t newValue) -> LocalCSRLockResult {
+            if (!hardware) {
+                return {LocalCSRLockResult::Status::HardwareUnavailable, 0, false};
+            }
+            return hardware->CompareSwapLocalIRMResource(selector, compareValue, newValue);
+        },
+    };
 }
 
 #ifndef ASFW_HOST_TEST
@@ -309,7 +331,9 @@ kern_return_t IMPL(ASFWDriver, Start) {
     }
 
     if (!ctx.deps.irmClient) {
-        ctx.deps.irmClient = std::make_shared<ASFW::IRM::IRMClient>(ctx.controller->Bus());
+        ctx.deps.irmClient = std::make_shared<ASFW::IRM::IRMClient>(
+            ctx.controller->Bus(),
+            MakeLocalIRMAccess(ctx.deps.hardware));
         ctx.controller->SetIRMClient(ctx.deps.irmClient);
         ASFW_LOG(Controller, "✅ IRMClient initialized");
     }
