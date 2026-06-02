@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define ASFW_DIAG_ABI_VERSION 10u
+#define ASFW_DIAG_ABI_VERSION 11u
 #define ASFW_DIAG_MAX_NODES 64u
 #define ASFW_DIAG_MAX_PORTS 27u
 #define ASFW_DIAG_MAX_SELF_ID_QUADS 256u
@@ -416,6 +416,9 @@ typedef struct ASFWDiagBusManager {
     uint32_t powerPolicyDecision;
     uint32_t powerPolicyAction;
     uint32_t powerBudgetStatus;
+    uint32_t powerAvailableMilliWatts;
+    uint32_t powerRequiredMilliWatts;
+    uint32_t powerUnknownPowerClassNodes;
     uint32_t powerEligibleNodeCount;
     uint32_t powerTargetNodeCount;
     uint32_t powerTargetNodes[16];
