@@ -1657,6 +1657,7 @@ gtest_discover_tests(DICERestartSessionTests)
 add_executable(DiceDuplexRestartCoordinatorTests
     "${ASFW_TESTS_DIR}/DiceDuplexRestartCoordinatorTests.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Backends/DiceDuplexRestartCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"

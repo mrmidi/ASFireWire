@@ -3,6 +3,7 @@
 
 #include "DiceDuplexRestartCoordinator.hpp"
 
+#include "../AudioRuntimeRegistry.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/Audio/DICE/Core/IDICEDuplexProtocol.hpp"
 #include "../../Protocols/Audio/DICE/TCAT/DICEKnownProfiles.hpp"
@@ -106,14 +107,15 @@ struct DiceRecoveryDecision {
 }
 
 [[nodiscard]] AudioDuplexChannels ResolveDuplexChannelsForRecord(
-    const Discovery::DeviceRecord& record) noexcept {
+    const Discovery::DeviceRecord& record,
+    const IDeviceProtocol* protocol) noexcept {
     AudioDuplexChannels channels{
         .deviceToHostIsoChannel = kDefaultIrChannel,
         .hostToDeviceIsoChannel = kDefaultItChannel,
     };
 
     AudioStreamRuntimeCaps caps{};
-    bool haveCaps = record.protocol && record.protocol->GetRuntimeAudioStreamCaps(caps);
+    bool haveCaps = protocol && protocol->GetRuntimeAudioStreamCaps(caps);
     if (!haveCaps) {
         haveCaps = DICE::TCAT::TryGetKnownDICEProfile(record.vendorId, record.modelId, caps);
     }
@@ -581,10 +583,12 @@ inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
 
 DiceDuplexRestartCoordinator::DiceDuplexRestartCoordinator(
     Discovery::DeviceRegistry& registry,
+    AudioRuntimeRegistry& runtime,
     IDiceHostTransport& hostTransport,
     Driver::HardwareInterface& hardware,
     QueueProviderFactory queueProviderFactory) noexcept
     : registry_(registry)
+    , runtime_(runtime)
     , hostTransport_(hostTransport)
     , hardware_(hardware)
     , queueProviderFactory_(std::move(queueProviderFactory)) {
@@ -799,7 +803,8 @@ std::optional<DiceRestartSession> DiceDuplexRestartCoordinator::GetSession(uint6
 
 IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept {
     DICE::IDICEDuplexProtocol* diceProtocol = nullptr;
-    auto* record = RequireDiceRecord(guid, diceProtocol);
+    std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
+    auto* record = RequireDiceRecord(guid, diceProtocol, protoHold);
     if (!record || !diceProtocol) {
         FailPendingClockRequest(guid, DiceClockRequestOutcome::kFailed, kIOReturnNotReady);
         return kIOReturnNotReady;
@@ -884,7 +889,8 @@ IOReturn DiceDuplexRestartCoordinator::RunStartStreaming(uint64_t guid) noexcept
 
 IOReturn DiceDuplexRestartCoordinator::RunStopStreaming(uint64_t guid) noexcept {
     DICE::IDICEDuplexProtocol* diceProtocol = nullptr;
-    auto* record = RequireDiceRecord(guid, diceProtocol);
+    std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
+    auto* record = RequireDiceRecord(guid, diceProtocol, protoHold);
     if (!record || !diceProtocol) {
         DiceRestartSession session = LoadSession(guid);
         ClearFailureSnapshot(session);
@@ -901,7 +907,8 @@ IOReturn DiceDuplexRestartCoordinator::RunStopStreaming(uint64_t guid) noexcept 
 IOReturn DiceDuplexRestartCoordinator::RunRecoveryStreaming(uint64_t guid,
                                                             DiceRestartReason reason) noexcept {
     DICE::IDICEDuplexProtocol* diceProtocol = nullptr;
-    auto* record = RequireDiceRecord(guid, diceProtocol);
+    std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
+    auto* record = RequireDiceRecord(guid, diceProtocol, protoHold);
     DiceRestartSession session = LoadSession(guid);
     session.guid = guid;
     if (IsRecoveryReason(reason)) {
@@ -1068,7 +1075,8 @@ IOReturn DiceDuplexRestartCoordinator::ApplyClockRequest(uint64_t guid,
     }
 
     DICE::IDICEDuplexProtocol* diceProtocol = nullptr;
-    auto* record = RequireDiceRecord(guid, diceProtocol);
+    std::shared_ptr<IDeviceProtocol> protoHold; // keeps the protocol alive for this op
+    auto* record = RequireDiceRecord(guid, diceProtocol, protoHold);
     if (!record || !diceProtocol) {
         return kIOReturnNotReady;
     }
@@ -1105,7 +1113,8 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     const DiceDesiredClockConfig& desiredClock,
     DiceRestartReason reason) noexcept {
     const FW::Generation topologyGeneration = record.gen;
-    const AudioDuplexChannels channels = ResolveDuplexChannelsForRecord(record);
+    auto runtimeProtocol = runtime_.FindShared(record.guid);
+    const AudioDuplexChannels channels = ResolveDuplexChannelsForRecord(record, runtimeProtocol.get());
     const uint64_t restartId = AllocateRestartId();
 
     auto finalizeFailure = [&](IOReturn failureStatus,
@@ -1595,15 +1604,27 @@ IOReturn DiceDuplexRestartCoordinator::RunIdleClockApply(
 
 Discovery::DeviceRecord* DiceDuplexRestartCoordinator::RequireDiceRecord(
     uint64_t guid,
-    DICE::IDICEDuplexProtocol*& outDiceProtocol) noexcept {
+    DICE::IDICEDuplexProtocol*& outDiceProtocol,
+    std::shared_ptr<IDeviceProtocol>& outHold) noexcept {
     outDiceProtocol = nullptr;
+    outHold.reset();
     auto* record = registry_.FindByGuid(guid);
-    if (!record || !record->protocol) {
+    if (!record) {
         return nullptr;
     }
 
-    outDiceProtocol = record->protocol->AsDiceDuplexProtocol();
-    return (outDiceProtocol != nullptr) ? record : nullptr;
+    auto protocol = runtime_.FindShared(guid);
+    if (!protocol) {
+        return nullptr;
+    }
+
+    outDiceProtocol = protocol->AsDiceDuplexProtocol();
+    if (outDiceProtocol == nullptr) {
+        return nullptr;
+    }
+
+    outHold = std::move(protocol);
+    return record;
 }
 
 std::unique_ptr<IDiceQueueMemoryProvider> DiceDuplexRestartCoordinator::MakeQueueProvider(uint64_t guid) const noexcept {

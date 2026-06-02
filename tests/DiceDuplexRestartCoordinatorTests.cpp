@@ -3,6 +3,7 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Audio/Backends/DiceDuplexRestartCoordinator.hpp"
+#include "Audio/AudioRuntimeRegistry.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Bus/IRM/IRMClient.hpp"
@@ -45,6 +46,7 @@ using ASFW::Audio::DICE::DiceRestartReason;
 using ASFW::Audio::DICE::DiceRestartState;
 using ASFW::Audio::DICE::DiceRestartSession;
 using ASFW::Audio::DICE::IDICEDuplexProtocol;
+using ASFW::Audio::AudioRuntimeRegistry;
 using ASFW::Audio::DiceDuplexRestartCoordinator;
 using ASFW::Audio::IDeviceProtocol;
 using ASFW::Audio::IDiceHostTransport;
@@ -517,6 +519,7 @@ protected:
         , hostTransport_(log_)
         , protocol_(std::make_shared<FakeDiceProtocol>(log_, irmClient_))
         , coordinator_(registry_,
+                       runtime_,
                        hostTransport_,
                        hardware_,
                        [](uint64_t) {
@@ -527,17 +530,17 @@ protected:
     }
 
     void InstallDevice(const std::shared_ptr<IDeviceProtocol>& protocol) {
-        auto& record = registry_.UpsertFromROM(MakeConfigRom(kTestGuid), LinkPolicy{});
-        record.protocol = protocol;
+        registry_.UpsertFromROM(MakeConfigRom(kTestGuid), LinkPolicy{});
+        runtime_.Insert(kTestGuid, protocol);
     }
 
     void InstallDeviceAtGeneration(Generation gen, const std::shared_ptr<IDeviceProtocol>& protocol) {
-        auto& record = registry_.UpsertFromROM(MakeConfigRom(kTestGuid,
-                                                             kFocusriteVendorId,
-                                                             kSPro24DspModelId,
-                                                             gen),
-                                               LinkPolicy{});
-        record.protocol = protocol;
+        registry_.UpsertFromROM(MakeConfigRom(kTestGuid,
+                                              kFocusriteVendorId,
+                                              kSPro24DspModelId,
+                                              gen),
+                                LinkPolicy{});
+        runtime_.Insert(kTestGuid, protocol);
     }
 
     [[nodiscard]] std::optional<DiceRestartSession> GetSession() const {
@@ -554,6 +557,7 @@ protected:
     IRMClient irmClient_;
     HardwareInterface hardware_{};
     DeviceRegistry registry_{};
+    AudioRuntimeRegistry runtime_{};
     SharedCallLog log_{};
     FakeDiceHostTransport hostTransport_;
     std::shared_ptr<FakeDiceProtocol> protocol_;

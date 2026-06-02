@@ -8,11 +8,6 @@
 #include <string>
 #include <vector>
 
-// Forward declaration for device protocol
-namespace ASFW::Audio {
-    class IDeviceProtocol;
-}
-
 namespace ASFW::Discovery {
 
 // ============================================================================
@@ -214,9 +209,6 @@ struct DeviceRecord {
     // ---- Optional metadata ----
     std::optional<uint32_t> unitSpecId;
     std::optional<uint32_t> unitSwVersion;
-    
-    // ---- Device-specific protocol handler (for DICE, etc.) ----
-    std::shared_ptr<Audio::IDeviceProtocol> protocol;
 };
 
 // ============================================================================

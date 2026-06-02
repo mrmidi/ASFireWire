@@ -8,6 +8,7 @@
 
 #include "ASFWAudioNub.h"
 #include "ASFWDriver.h"
+#include "../../Audio/AudioRuntimeRegistry.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -56,6 +57,9 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
 
 struct ProtocolRuntimeBinding {
     ASFW::Discovery::DeviceRecord* device{nullptr};
+    // `protocolOwner` keeps the protocol alive for the lifetime of the binding (the
+    // caller's stack frame); `protocol` is the borrowed view used by the call sites.
+    std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocolOwner{};
     ASFW::Audio::IDeviceProtocol* protocol{nullptr};
     ASFW::Protocols::AVC::IAVCDiscovery* avcDiscovery{nullptr};
 };
@@ -214,7 +218,13 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
     if (!device) {
         return kIOReturnNotFound;
     }
-    if (!device->protocol) {
+
+    auto* runtime = controllerCore->GetAudioRuntimeRegistry();
+    if (!runtime) {
+        return kIOReturnNotReady;
+    }
+    auto protocol = runtime->FindShared(iv->guid);
+    if (!protocol) {
         return kIOReturnUnsupported;
     }
 
@@ -224,7 +234,8 @@ static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
     }
 
     outBinding.device = device;
-    outBinding.protocol = device->protocol.get();
+    outBinding.protocolOwner = std::move(protocol);
+    outBinding.protocol = outBinding.protocolOwner.get();
     outBinding.avcDiscovery = avcDiscovery;
     return kIOReturnSuccess;
 }

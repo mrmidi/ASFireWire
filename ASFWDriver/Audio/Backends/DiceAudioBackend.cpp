@@ -3,6 +3,7 @@
 
 #include "DiceAudioBackend.hpp"
 
+#include "../AudioRuntimeRegistry.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
 #include "../../Protocols/Audio/DICE/TCAT/DICEKnownProfiles.hpp"
@@ -20,13 +21,16 @@ namespace ASFW::Audio {
 
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
+                                   AudioRuntimeRegistry& runtime,
                                    Driver::IsochService& isoch,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
+    , runtime_(runtime)
     , hardware_(hardware)
     , hostTransport_(isoch)
     , restartCoordinator_(registry,
+                          runtime,
                           hostTransport_,
                           hardware,
                           [this](uint64_t guid) { return MakeQueueProvider(guid); }) {
@@ -151,8 +155,10 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
 }
 
 void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept {
-    const auto* record = registry_.FindByGuid(guid);
-    auto* diceProtocol = (record && record->protocol) ? record->protocol->AsDiceDuplexProtocol() : nullptr;
+    // Hold a shared_ptr for the duration of the (blocking) health probe so the
+    // protocol cannot be torn down underneath us by a concurrent device removal.
+    auto protocol = runtime_.FindShared(guid);
+    auto* diceProtocol = protocol ? protocol->AsDiceDuplexProtocol() : nullptr;
     if (!diceProtocol) {
         return;
     }
@@ -258,12 +264,13 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
 
-    if (!record->protocol) {
+    auto protocol = runtime_.FindShared(guid);
+    if (!protocol) {
         return;
     }
 
     AudioStreamRuntimeCaps caps{};
-    const bool ready = record->protocol->GetRuntimeAudioStreamCaps(caps);
+    const bool ready = protocol->GetRuntimeAudioStreamCaps(caps);
 
     if (!ready || caps.sampleRateHz == 0 || caps.hostInputPcmChannels == 0 || caps.hostOutputPcmChannels == 0) {
         if (DICE::TCAT::TryGetKnownDICEProfile(record->vendorId, record->modelId, caps)) {
@@ -326,7 +333,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.modelId = record->modelId;
     dev.deviceName = !record->vendorName.empty() && !record->modelName.empty()
         ? (record->vendorName + " " + record->modelName)
-        : std::string(record->protocol ? record->protocol->GetName() : "DICE Audio");
+        : std::string(protocol ? protocol->GetName() : "DICE Audio");
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
 

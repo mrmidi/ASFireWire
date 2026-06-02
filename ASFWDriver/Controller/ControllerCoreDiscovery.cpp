@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_set>
 
+#include "../Audio/AudioRuntimeRegistry.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
 #include "../Async/Interfaces/IFireWireBusOps.hpp"
@@ -566,11 +567,20 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         auto policy = deps_.speedPolicy->ForNode(*nodeId);
 
         auto& bus = this->Bus();
-        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(
-            rom, policy, static_cast<Async::IFireWireBusOps*>(&bus),
-            static_cast<Async::IFireWireBusInfo*>(&bus),
-            deps_.irmClient.get());
+        auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
         discoveredGuids.insert(deviceRecord.guid);
+
+        // Create the device-specific runtime protocol here, in the orchestrator layer,
+        // where the bus + IRM are already in scope. No-op for unknown devices. This is the
+        // permanent home of the trigger that formerly lived inside the Discovery data layer
+        // (DeviceRegistry::MaybeCreateKnownProtocol); Discovery now carries metadata only.
+        if (deps_.audioRuntimeRegistry) {
+            deps_.audioRuntimeRegistry->EnsureForDevice(
+                deviceRecord,
+                static_cast<Async::IFireWireBusOps*>(&bus),
+                static_cast<Async::IFireWireBusInfo*>(&bus),
+                deps_.irmClient.get());
+        }
 
         if (deps_.deviceManager) {
             auto fwDevice = deps_.deviceManager->UpsertDevice(deviceRecord, rom);

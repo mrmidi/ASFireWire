@@ -94,6 +94,10 @@ Discovery::DeviceRegistry* ControllerCore::GetDeviceRegistry() const {
     return deps_.deviceRegistry.get();
 }
 
+Audio::AudioRuntimeRegistry* ControllerCore::GetAudioRuntimeRegistry() const {
+    return deps_.audioRuntimeRegistry.get();
+}
+
 Protocols::AVC::IAVCDiscovery* ControllerCore::GetAVCDiscovery() const {
     return deps_.avcDiscovery.get();
 }

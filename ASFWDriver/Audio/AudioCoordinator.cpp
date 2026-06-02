@@ -3,6 +3,7 @@
 
 #include "AudioCoordinator.hpp"
 
+#include "AudioRuntimeRegistry.hpp"
 #include "../Discovery/FWDevice.hpp"
 
 namespace ASFW::Audio {
@@ -10,13 +11,15 @@ namespace ASFW::Audio {
 AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Discovery::IDeviceManager& deviceManager,
                                    Discovery::DeviceRegistry& registry,
+                                   AudioRuntimeRegistry& runtime,
                                    Driver::IsochService& isoch,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(driver)
-    , dice_(publisher_, registry, isoch, hardware)
+    , dice_(publisher_, registry, runtime, isoch, hardware)
     , avc_(publisher_, registry, isoch, hardware)
     , deviceManager_(deviceManager)
-    , registry_(registry) {
+    , registry_(registry)
+    , runtime_(runtime) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "AudioCoordinator: Failed to allocate lock");
@@ -94,6 +97,11 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // Ensure isoch transport is stopped (best-effort) and nubs are terminated.
     dice_.OnDeviceRemoved(guid);
     avc_.OnDeviceRemoved(guid);
+
+    // Drop the device-specific protocol instance now the device is gone. The runtime
+    // registry hands callers shared_ptr copies, so any in-flight control operation
+    // keeps its protocol alive until it completes.
+    runtime_.Remove(guid);
 
     if (lock_) {
         IOLockLock(lock_);

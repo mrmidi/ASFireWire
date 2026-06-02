@@ -94,6 +94,9 @@ class IRMClient;
 namespace ASFW::CMP {
 class CMPClient;
 }
+namespace ASFW::Audio {
+class AudioRuntimeRegistry;
+}
 
 namespace ASFW::Driver {
 
@@ -130,6 +133,12 @@ class ControllerCore final : private Role::IPhyConfigReset,
         std::shared_ptr<ASFW::Discovery::DeviceRegistry> deviceRegistry;
         std::shared_ptr<ASFW::Discovery::ROMScanner> romScanner;
         std::shared_ptr<ASFW::Discovery::DeviceManager> deviceManager;
+
+        // Runtime owner of device-specific IDeviceProtocol instances. Lives in the
+        // controller deps (constructed before AudioCoordinator + ControllerCore) so the
+        // controller can trigger creation from its discovery path, where bus + IRM are
+        // already in scope. The Audio layer holds the same shared instance by reference.
+        std::shared_ptr<ASFW::Audio::AudioRuntimeRegistry> audioRuntimeRegistry;
 
         std::shared_ptr<ASFW::Protocols::AVC::AVCDiscovery> avcDiscovery;
         std::shared_ptr<ASFW::Protocols::AVC::FCPResponseRouter> fcpResponseRouter;
@@ -195,6 +204,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
     Discovery::IDeviceManager* GetDeviceManager() const;
     Discovery::IUnitRegistry* GetUnitRegistry() const;
     Discovery::DeviceRegistry* GetDeviceRegistry() const;
+    Audio::AudioRuntimeRegistry* GetAudioRuntimeRegistry() const;
 
     Protocols::AVC::IAVCDiscovery* GetAVCDiscovery() const;
     void SetAVCDiscovery(std::shared_ptr<Protocols::AVC::AVCDiscovery> avcDiscovery);
