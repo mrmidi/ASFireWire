@@ -28,6 +28,12 @@ struct ICyclePolicyExecutor {
     virtual bool EnableLocalCycleMasterMutation(uint32_t generation) = 0;
 
     /**
+     * @brief Clears the local OHCI cycle master when the local node is not root.
+     * Returns true if success verified via readback.
+     */
+    virtual bool ClearLocalCycleMasterMutation(uint32_t generation) = 0;
+
+    /**
      * @brief Sends a remote STATE_SET.cmstr write to the target node.
      */
     virtual Async::AsyncHandle WriteRemoteStateSetCmstr(uint32_t generation,
@@ -50,6 +56,8 @@ enum class CyclePolicyDecision : uint8_t {
     AlreadySatisfiedCycleStartObserved,
     AlreadySatisfiedLocalCycleMasterEnabled,
 
+    LocalCycleMasterClearNotRoot,
+
     DeferRootSelfIDUnknown,
     DeferLocalSelfIDUnknown,
 
@@ -69,6 +77,7 @@ enum class CyclePolicyDecision : uint8_t {
 enum class CyclePolicyAction : uint8_t {
     None = 0,
     EnableLocalCycleMaster,
+    ClearLocalCycleMaster,
     WriteRemoteStateSetCmstr,
     ReportRootSelectionRequired,
 };
@@ -90,6 +99,7 @@ struct CyclePolicyInputs {
     bool localIsRoot{false};
     bool localIsIRM{false};
     bool localIsBM{false};
+    bool localCycleMasterEnabled{false};
 
     bool irmFallbackNoBMDetected{false};
     bool irmFallbackGateOpen{false};
@@ -137,6 +147,7 @@ struct CyclePolicySnapshot {
     uint8_t remoteCmstrStatus{0}; // ASFW::Async::AsyncStatus
 
     uint32_t localCycleMasterEnableCount{0};
+    uint32_t localCycleMasterClearCount{0};
     uint32_t remoteCmstrSubmitCount{0};
     uint32_t suppressedCount{0};
     uint32_t staleGenerationDrops{0};

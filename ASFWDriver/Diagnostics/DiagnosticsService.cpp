@@ -454,7 +454,11 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
 
     std::memset(out, 0, sizeof(ASFWDiagCSRContract));
 
-    // Get statistics to populate CSR access counts
+    // Get statistics to populate software-visible CSR access counts. OHCI-owned
+    // IRM resource CSRs may be accessed by remote nodes without any software AR
+    // packet reaching ASFW, so their zero counters are not evidence of no bus
+    // activity; they only describe requests that escaped OHCI autonomy and hit
+    // the software request chain.
     auto* stats = controller_->AsyncSubsystem().GetInboundCSRStats();
     
     // Static definition of standard FireWire CSR space entries
@@ -468,9 +472,10 @@ ASFWDiagStatus DiagnosticsService::CollectCSRContract(ASFWDiagCSRContract* out) 
 
     // Offsets/ownership follow IEEE 1212 / 1394 + Apple IOFireWireFamilyCommon.h:
     //   STATE_CLEAR=+0x000, STATE_SET=+0x004 (were swapped); BROADCAST_CHANNEL=+0x234 (was 0x22C).
-    // IRM resource registers (BUS_MANAGER_ID/BANDWIDTH/CHANNELS) are serviced by the OHCI
-    // CSR engine. TOPOLOGY_MAP is software-owned; SPEED_MAP is obsolete in IEEE
-    // 1394-2008, but ASFW serves a bounded software legacy window for readers.
+    // IRM resource registers (BUS_MANAGER_ID/BANDWIDTH/CHANNELS) are serviced by
+    // the OHCI CSR engine. Remote access telemetry for them is not generally
+    // software-visible. TOPOLOGY_MAP is software-owned; SPEED_MAP is obsolete in
+    // IEEE 1394-2008, but ASFW serves a bounded software legacy window for readers.
     static const LocalCSREntryDef CSR_DEFS[] = {
         { 0xFFFFF0000000ULL, 0x000, ASFWDiagCSROwnerASFWSoftware,         true,  "STATE_CLEAR" },
         { 0xFFFFF0000004ULL, 0x004, ASFWDiagCSROwnerASFWSoftware,         true,  "STATE_SET" },
@@ -611,6 +616,7 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
     const uint32_t startGen = controller_->AsyncSubsystem().GetBusStateSnapshot().generation16;
 
     std::memset(out, 0, sizeof(ASFWDiagBusManager));
+    out->csrContractVerdict = 2; // 0=mismatch, 1=OK, 2=verifier unavailable
 
     const auto& rolePolicy = controller_->GetRolePolicy();
     out->roleMode = static_cast<uint32_t>(rolePolicy.roleMode);
@@ -732,6 +738,7 @@ ASFWDiagStatus DiagnosticsService::CollectBusManager(ASFWDiagBusManager* out) co
         out->cyclePolicyRemoteCmstrInFlight = snap.remoteCmstrInFlight ? 1 : 0;
         out->cyclePolicyRemoteCmstrStatus = snap.remoteCmstrStatus;
         out->cyclePolicyLocalEnableCount = snap.localCycleMasterEnableCount;
+        out->cyclePolicyLocalClearCount = snap.localCycleMasterClearCount;
         out->cyclePolicyRemoteSubmitCount = snap.remoteCmstrSubmitCount;
     }
 

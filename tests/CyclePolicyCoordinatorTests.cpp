@@ -63,6 +63,31 @@ TEST_F(CyclePolicyCoordinatorTests, LocalBMAndLocalRootPlansLocalCycleMaster) {
     EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalRootEnableCycleMaster);
 }
 
+TEST_F(CyclePolicyCoordinatorTests, LocalRootWithCycleMasterAlreadyEnabledIsSatisfied) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::FullBusManager;
+    in.activityLevel = FullBMActivityLevel::CyclePolicyAllowed;
+    in.localIsBM = true;
+    in.localIsRoot = true;
+    in.localCycleMasterEnabled = true;
+    MarkLocalSelfIdRoot(in);
+
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled);
+}
+
+TEST_F(CyclePolicyCoordinatorTests, LocalCycleMasterSetWhileNotRootPlansClearBeforeRoleSuppression) {
+    CyclePolicyInputs in{};
+    in.topologyValid = true;
+    in.roleMode = RoleMode::ClientOnly;
+    in.activityLevel = FullBMActivityLevel::ObserveOnly;
+    in.localIsBM = false;
+    in.localIsRoot = false;
+    in.localCycleMasterEnabled = true;
+
+    EXPECT_EQ(planner_.Plan(in), CyclePolicyDecision::LocalCycleMasterClearNotRoot);
+}
+
 TEST_F(CyclePolicyCoordinatorTests, LocalRootSelfIDUnknownDefers) {
     CyclePolicyInputs in{};
     in.topologyValid = true;

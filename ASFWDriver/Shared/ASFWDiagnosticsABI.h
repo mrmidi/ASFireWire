@@ -442,7 +442,8 @@ typedef struct ASFWDiagBusManager {
     uint32_t csrHardwareOwnedSoftwareHits;
     uint32_t csrUnsupportedAccesses;
 
-    uint32_t reserved[1];
+    // Former reserved[0]; keep at the tail to preserve existing field offsets.
+    uint32_t cyclePolicyLocalClearCount;
 } ASFWDiagBusManager;
 
 #ifdef __cplusplus

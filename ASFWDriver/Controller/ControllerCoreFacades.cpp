@@ -10,6 +10,8 @@
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/BusResetCoordinator.hpp"
 #include "../Bus/BusManager/BusManagerElectionDriver.hpp"
+#include "../Bus/CSR/CSRResponder.hpp"
+#include "../Bus/CSR/SpeedMapService.hpp"
 #include "../Bus/SelfIDCapture.hpp"
 #include "../Bus/TopologyManager.hpp"
 #include "../ConfigROM/ConfigROMBuilder.hpp"
@@ -132,6 +134,13 @@ Bus::BusManagerElectionDriver* ControllerCore::GetBusManagerElectionDriver() con
 
 void ControllerCore::SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver) {
     deps_.busManagerElectionDriver = std::move(driver);
+}
+
+void ControllerCore::SetCSRResponder(std::shared_ptr<Bus::CSRResponder> responder) {
+    deps_.csrResponder = std::move(responder);
+    if (deps_.csrResponder) {
+        deps_.csrResponder->SetSpeedMapProvider(speedMapService_.get());
+    }
 }
 
 // Diagnostic accessors for UserClient handlers

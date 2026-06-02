@@ -57,7 +57,15 @@ void LocalIRMResourceController::OnTopologyReady(uint32_t generation,
         return;
     }
 
-    // Local node is IRM!
+    // Local node is IRM.
+    //
+    // This is not a software election result. The bus elected us because, after
+    // Self-ID, our physical node ID is the highest among contender-capable
+    // nodes that also transmitted link-active Self-ID. From this point the OHCI
+    // CSR engine hosts BUS_MANAGER_ID, BANDWIDTH_AVAILABLE, and
+    // CHANNELS_AVAILABLE_* autonomously for remote read/lock requests. Software
+    // only validates the active ledger state via local CSRControl and exposes
+    // the software-owned BROADCAST_CHANNEL.
     snapshot_.localIsIRM = true;
     snapshot_.state = LocalIRMResourceState::InitializingActiveResources;
 
@@ -88,8 +96,14 @@ bool LocalIRMResourceController::ProbeActiveResources() noexcept {
     snapshot_.activeProbeAttempted = true;
     
     // Probe all four core IRM resources using "no-change" Compare-Swap.
-    // This allows us to discover the current state without blindly overwriting
-    // potentially allocated resources from remote nodes.
+    //
+    // Important: this is local software talking to its own OHCI CSR engine via
+    // CSRData/CSRCompareData/CSRControl. It does not imply that ASFW can observe
+    // every remote node's resource allocation request; those remote read/lock
+    // transactions are normally completed autonomously by OHCI on the wire.
+    //
+    // The no-change CAS lets diagnostics discover the current ledger state
+    // without blindly overwriting resources already allocated by remote nodes.
     auto rBM = csr_.ProbeBusManagerIdNoChange(kNoBusManagerId);
     auto rBW = csr_.ProbeBandwidthNoChange(kInitialBandwidthAvailable);
     auto rCHi = csr_.ProbeChannelsHiNoChange(kInitialChannelsAvailableHi);

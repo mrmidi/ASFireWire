@@ -156,15 +156,16 @@ extension DiagnosticsTextFormatter {
         case 5: cycleDecisionStr = "SuppressedNotBMOrFallbackIRM"
         case 6: cycleDecisionStr = "AlreadySatisfiedCycleStartObserved"
         case 7: cycleDecisionStr = "AlreadySatisfiedLocalCycleMasterEnabled"
-        case 8: cycleDecisionStr = "DeferRootSelfIDUnknown"
-        case 9: cycleDecisionStr = "DeferLocalSelfIDUnknown"
-        case 10: cycleDecisionStr = "LocalRootEnableCycleMaster"
-        case 11: cycleDecisionStr = "RemoteRootSetCmstr"
-        case 12: cycleDecisionStr = "RootSelectionRequired"
-        case 13: cycleDecisionStr = "FailedHardwareUnavailable"
-        case 14: cycleDecisionStr = "FailedAsyncSubmit"
-        case 15: cycleDecisionStr = "FailedGenerationStale"
-        case 16: cycleDecisionStr = "DeferRootBibCmcUnknown"
+        case 8: cycleDecisionStr = "LocalCycleMasterClearNotRoot"
+        case 9: cycleDecisionStr = "DeferRootSelfIDUnknown"
+        case 10: cycleDecisionStr = "DeferLocalSelfIDUnknown"
+        case 11: cycleDecisionStr = "LocalRootEnableCycleMaster"
+        case 12: cycleDecisionStr = "RemoteRootSetCmstr"
+        case 13: cycleDecisionStr = "RootSelectionRequired"
+        case 14: cycleDecisionStr = "FailedHardwareUnavailable"
+        case 15: cycleDecisionStr = "FailedAsyncSubmit"
+        case 16: cycleDecisionStr = "FailedGenerationStale"
+        case 17: cycleDecisionStr = "DeferRootBibCmcUnknown"
         default: cycleDecisionStr = "Unknown (\(snapshot.busManager.cyclePolicyDecision))"
         }
         r.row("Cycle Decision", cycleDecisionStr)
@@ -173,8 +174,9 @@ extension DiagnosticsTextFormatter {
         switch snapshot.busManager.cyclePolicyAction {
         case 0: cycleActionStr = "None"
         case 1: cycleActionStr = "EnableLocalCycleMaster"
-        case 2: cycleActionStr = "WriteRemoteStateSetCmstr"
-        case 3: cycleActionStr = "ReportRootSelectionRequired"
+        case 2: cycleActionStr = "ClearLocalCycleMaster"
+        case 3: cycleActionStr = "WriteRemoteStateSetCmstr"
+        case 4: cycleActionStr = "ReportRootSelectionRequired"
         default: cycleActionStr = "Unknown (\(snapshot.busManager.cyclePolicyAction))"
         }
         r.row("Cycle Action", cycleActionStr)
@@ -204,6 +206,7 @@ extension DiagnosticsTextFormatter {
             r.row("Remote CMSTR Status", statusStr)
         }
         r.row("Local Enable Count", snapshot.busManager.cyclePolicyLocalEnableCount)
+        r.row("Local Clear Count", snapshot.busManager.cyclePolicyLocalClearCount)
         r.row("Remote Submit Count", snapshot.busManager.cyclePolicyRemoteSubmitCount)
 
         let cycleScopeStr: String
@@ -429,12 +432,32 @@ extension DiagnosticsTextFormatter {
         r.row("SPEED_MAP Nodes", snapshot.busManager.speedMapNodeCount)
         r.row("SPEED_MAP Encoding", "\(snapshot.busManager.speedMapEncodedQuadlets) quadlets")
 
-        r.row("Core IRM CSRs Owner", "OHCI hardware")
+        r.row("Core IRM CSRs Owner", "OHCI hardware (remote telemetry not observable)")
         r.row("Unexpected SW Hits", snapshot.busManager.unexpectedResourceCsrSoftwareCount)
-        r.row("CSR Contract Verdict", snapshot.busManager.csrContractVerdict != 0 ? "OK" : "Mismatch")
+        r.row("CSR Verdict Scope", "ownership + TOPOLOGY_MAP; SPEED_MAP is legacy/obsolete")
+        let csrVerdictStr: String
+        switch snapshot.busManager.csrContractVerdict {
+        case 1: csrVerdictStr = "OK"
+        case 2: csrVerdictStr = "Verifier unavailable"
+        default: csrVerdictStr = "Mismatch"
+        }
+        r.row("CSR Contract Verdict", csrVerdictStr)
+        if snapshot.busManager.speedMapStatus == 0 ||
+            snapshot.busManager.speedMapGeneration != snapshot.busManager.topologyMapGeneration {
+            r.row("SPEED_MAP Legacy Health", "stale/invalid (not fatal)")
+        } else {
+            r.row("SPEED_MAP Legacy Health", "fresh")
+        }
         if snapshot.busManager.csrContractVerdict == 0 {
+            if snapshot.busManager.topologyMapPublishStatus != 1 || snapshot.busManager.topologyMapGeneration == 0 {
+                r.row("Mismatch Reason", "TOPOLOGY_MAP invalid or not published")
+            }
+            if snapshot.busManager.unexpectedResourceCsrSoftwareCount != 0 {
+                r.row("Mismatch Reason", "OHCI-owned CSR reached software responder")
+            }
             r.row("SW Answered HW-owned", snapshot.busManager.csrSoftwareAnsweredHardwareOwned)
             r.row("HW-owned SW Hits", snapshot.busManager.csrHardwareOwnedSoftwareHits)
+            r.row("Unsupported Accesses", snapshot.busManager.csrUnsupportedAccesses)
         }
     }
 

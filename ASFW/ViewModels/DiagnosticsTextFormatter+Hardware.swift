@@ -3,8 +3,8 @@
 //  ASFW
 //
 //  OHCI link/controller snapshot, PHY interface/interpretation/consistency,
-//  inbound CSR telemetry, CSR contract allocations, and the async transaction
-//  trace.
+//  software-visible CSR telemetry, CSR ownership/health, and the async
+//  transaction trace.
 //
 
 import Foundation
@@ -13,10 +13,15 @@ extension DiagnosticsTextFormatter {
 
     static func appendOHCI(_ r: DiagnosticsReport,
                            _ snapshot: ASFWDiagnosticsSnapshot) {
+        let atRetries = snapshot.ohci.atRetries
+        let atRetryText = "\(DiagFormat.hex32(atRetries)) " +
+            "(req=\(atRetries & 0x0F) resp=\((atRetries >> 4) & 0x0F) " +
+            "phys=\((atRetries >> 8) & 0x0F) cycleLimit=\((atRetries >> 16) & 0xFFFF))"
+
         r.title("OHCI Link/Controller Snapshot")
         r.row("OHCI Version", DiagFormat.hex32(snapshot.ohci.version))
         r.row("GUID ROM Present", snapshot.ohci.guidROM != 0 ? "Yes" : "No")
-        r.row("AT Tx Retries", snapshot.ohci.atRetries)
+        r.row("AT Tx Retries", atRetryText)
         r.row("CSR Control Register", DiagFormat.hex32(snapshot.ohci.csrControl))
         r.row("Config ROM Header Reg", DiagFormat.hex32(snapshot.ohci.configROMHeader))
         r.row("Bus Options Register", DiagFormat.hex32(snapshot.ohci.busOptions))
@@ -123,16 +128,13 @@ extension DiagnosticsTextFormatter {
 
     static func appendInboundCSRStats(_ r: DiagnosticsReport,
                                       _ snapshot: ASFWDiagnosticsSnapshot) {
-        r.title("Inbound CSR Telemetry Stats (software-observed standard CSR only)")
+        r.title("Software-Visible CSR Telemetry")
         r.row("Config ROM Reads", snapshot.inboundCSRStats.inboundConfigROMReads)
         r.row("STATE_SET Writes", snapshot.inboundCSRStats.inboundStateSetWrites)
         r.row("STATE_CLEAR Writes", snapshot.inboundCSRStats.inboundStateClearWrites)
-        r.row("Bus Manager ID Reads", snapshot.inboundCSRStats.inboundBusManagerIdReads)
-        r.row("Bus Manager ID Locks", snapshot.inboundCSRStats.inboundBusManagerIdLocks)
-        r.row("Bandwidth Register Reads", snapshot.inboundCSRStats.inboundBandwidthReads)
-        r.row("Bandwidth Register Locks", snapshot.inboundCSRStats.inboundBandwidthLocks)
-        r.row("Channel Register Reads", snapshot.inboundCSRStats.inboundChannelReads)
-        r.row("Channel Register Locks", snapshot.inboundCSRStats.inboundChannelLocks)
+        r.row("BUS_MANAGER_ID Accesses", "not observable (OHCI-owned)")
+        r.row("BANDWIDTH_AVAILABLE Accesses", "not observable (OHCI-owned)")
+        r.row("CHANNELS_AVAILABLE Accesses", "not observable (OHCI-owned)")
         r.row("Broadcast Channel Reads", snapshot.inboundCSRStats.inboundBroadcastChannelReads)
         r.row("Broadcast Channel Writes", snapshot.inboundCSRStats.inboundBroadcastChannelWrites)
         r.row("Topology Map Reads", snapshot.inboundCSRStats.inboundTopologyMapReads)

@@ -15,6 +15,7 @@ using testing::Return;
 class MockCyclePolicyExecutor : public ICyclePolicyExecutor {
 public:
     MOCK_METHOD(bool, EnableLocalCycleMasterMutation, (uint32_t generation), (override));
+    MOCK_METHOD(bool, ClearLocalCycleMasterMutation, (uint32_t generation), (override));
     MOCK_METHOD(ASFW::Async::AsyncHandle, WriteRemoteStateSetCmstr, (uint32_t generation, uint16_t busBase16, uint8_t targetNodeId), (override));
 };
 
@@ -82,6 +83,28 @@ TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWhenNotRoot) {
     
     EXPECT_EQ(coordinator_.Snapshot().lastDecision, CyclePolicyDecision::RemoteRootSetCmstr);
     EXPECT_EQ(coordinator_.Snapshot().lastAction, CyclePolicyAction::WriteRemoteStateSetCmstr);
+}
+
+TEST_F(CyclePolicyExecutorTests, ExecutorClearsLocalCycleMasterWhenNotRoot) {
+    CyclePolicyInputs in{};
+    in.generation = 5;
+    in.topologyValid = true;
+    in.roleMode = RoleMode::ClientOnly;
+    in.activityLevel = FullBMActivityLevel::ObserveOnly;
+    in.localIsRoot = false;
+    in.localCycleMasterEnabled = true;
+
+    EXPECT_CALL(executor_, ClearLocalCycleMasterMutation(5)).WillOnce(Return(true));
+    EXPECT_CALL(executor_, EnableLocalCycleMasterMutation(_)).Times(0);
+    EXPECT_CALL(executor_, WriteRemoteStateSetCmstr(_, _, _)).Times(0);
+
+    coordinator_.Evaluate(in, executor_);
+
+    EXPECT_EQ(coordinator_.Snapshot().lastDecision, CyclePolicyDecision::LocalCycleMasterClearNotRoot);
+    EXPECT_EQ(coordinator_.Snapshot().lastAction, CyclePolicyAction::ClearLocalCycleMaster);
+    EXPECT_EQ(coordinator_.Snapshot().localCycleMasterBefore, true);
+    EXPECT_EQ(coordinator_.Snapshot().localCycleMasterAfter, false);
+    EXPECT_EQ(coordinator_.Snapshot().localCycleMasterClearCount, 1);
 }
 
 TEST_F(CyclePolicyExecutorTests, ExecutorSubmitsRemoteCmstrWriteWithCorrectAddress) {

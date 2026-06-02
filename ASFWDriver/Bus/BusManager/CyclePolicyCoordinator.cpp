@@ -14,8 +14,21 @@ void CyclePolicyCoordinator::Evaluate(const CyclePolicyInputs& inputs, ICyclePol
     snapshot_.lastDecision = Plan(inputs);
     snapshot_.lastAction = CyclePolicyAction::None;
     snapshot_.targetNode = 0x3F;
+    snapshot_.localCycleMasterBefore = inputs.localCycleMasterEnabled;
+    snapshot_.localCycleMasterAfter = inputs.localCycleMasterEnabled;
 
     switch (snapshot_.lastDecision) {
+    case CyclePolicyDecision::LocalCycleMasterClearNotRoot: {
+        snapshot_.lastAction = CyclePolicyAction::ClearLocalCycleMaster;
+        if (executor.ClearLocalCycleMasterMutation(inputs.generation)) {
+            snapshot_.localCycleMasterAfter = false;
+            snapshot_.localCycleMasterClearCount++;
+        } else {
+            snapshot_.lastDecision = CyclePolicyDecision::FailedHardwareUnavailable;
+        }
+        break;
+    }
+
     case CyclePolicyDecision::LocalRootEnableCycleMaster: {
         if (lastLocalCycleMasterGeneration_ == inputs.generation) {
             snapshot_.lastDecision = CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled;
@@ -80,6 +93,14 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
         return CyclePolicyDecision::SuppressedByTopology;
     }
 
+    // OHCI cycleMaster is meaningful only for the root node. Clear stale local
+    // state before authority checks so a host that won root in one generation
+    // does not keep emitting/advertising cycle-master state after another node
+    // becomes root. cross-validated with Linux: ohci.c:2760-2765,2805-2819 Apple: IOFireWireController.cpp:3366-3367
+    if (!inputs.localIsRoot && inputs.localCycleMasterEnabled) {
+        return CyclePolicyDecision::LocalCycleMasterClearNotRoot;
+    }
+
     // Two paths to cycle repair: 
     // A. We are the elected Bus Manager.
     // B. We are the IRM and the fallback gate is open without a detected BM.
@@ -113,6 +134,9 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
         }
         if (!inputs.localSelfIdLinkActive) {
             return CyclePolicyDecision::RootSelectionRequired;
+        }
+        if (inputs.localCycleMasterEnabled) {
+            return CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled;
         }
         return CyclePolicyDecision::LocalRootEnableCycleMaster;
     }
@@ -156,6 +180,7 @@ CyclePolicyDecision CyclePolicyCoordinator::Plan(const CyclePolicyInputs& inputs
 void CyclePolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     // Preserve cumulative counters
     const uint32_t localCount = snapshot_.localCycleMasterEnableCount;
+    const uint32_t localClearCount = snapshot_.localCycleMasterClearCount;
     const uint32_t remoteCount = snapshot_.remoteCmstrSubmitCount;
     const uint32_t suppressedCount = snapshot_.suppressedCount;
     uint32_t staleCount = snapshot_.staleGenerationDrops;
@@ -167,6 +192,7 @@ void CyclePolicyCoordinator::OnBusResetStarted(uint32_t generation) noexcept {
     snapshot_ = {};
     snapshot_.generation = generation;
     snapshot_.localCycleMasterEnableCount = localCount;
+    snapshot_.localCycleMasterClearCount = localClearCount;
     snapshot_.remoteCmstrSubmitCount = remoteCount;
     snapshot_.suppressedCount = suppressedCount;
     snapshot_.staleGenerationDrops = staleCount;
