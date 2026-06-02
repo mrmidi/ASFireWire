@@ -125,8 +125,8 @@ bool ConfigurePhyOperationalRegisters(ASFW::Driver::HardwareInterface& hw,
     // ClientOnly is intentionally absent here: a pure client that advertises no
     // BM/IRM capability also does NOT set the Self-ID/PHY contender bit, so it can
     // never win an IRM/BM election. ServiceContext now seeds the live driver with
-    // FullBusManager/CyclePolicyAllowed for hardware validation, matching the
-    // reference stacks' contender posture while keeping root/gap resets gated.
+    // FullBusManager/ForceRootAllowed for hardware validation, matching the
+    // reference stacks' contender posture and exercising root/gap BM duties.
     // cross-validated with Linux: ohci.c:2510-2511
     const bool shouldAdvertiseContender =
         (policy.roleMode == ASFW::FW::RoleMode::FullBusManager &&

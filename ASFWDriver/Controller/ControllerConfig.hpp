@@ -64,7 +64,10 @@ struct RolePolicy {
         RolePolicy policy{};
         // cross-validated with Linux: core-card.c:425-428 Apple: IOFireWireController.cpp:3258-3367
         policy.roleMode = ASFW::FW::RoleMode::FullBusManager;
-        policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::CyclePolicyAllowed;
+        // Hardware validation needs the complete BM mutation envelope except the
+        // legacy remote STATE_SET.cmstr path. ForceRootAllowed unlocks M6 root
+        // selection and M7 gap optimization; RemoteCmstrAllowed remains opt-in.
+        policy.fullBMActivityLevel = ASFW::FW::FullBMActivityLevel::ForceRootAllowed;
         policy.powerPolicyLevel = PowerPolicyLevel::LinkOnAllowed;
         return policy;
     }
