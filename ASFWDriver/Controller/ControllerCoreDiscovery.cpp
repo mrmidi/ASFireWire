@@ -570,9 +570,9 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
         auto& deviceRecord = deps_.deviceRegistry->UpsertFromROM(rom, policy);
         discoveredGuids.insert(deviceRecord.guid);
 
-        // Create the device-specific runtime protocol here, in the orchestrator layer,
+        // Create the device-specific runtime protocol here, at the orchestrator layer,
         // where the bus + IRM are already in scope. No-op for unknown devices. This is the
-        // permanent home of the trigger that formerly lived inside the Discovery data layer
+        // trigger that formerly lived inside the Discovery data layer
         // (DeviceRegistry::MaybeCreateKnownProtocol); Discovery now carries metadata only.
         if (deps_.audioRuntimeRegistry) {
             deps_.audioRuntimeRegistry->EnsureForDevice(
