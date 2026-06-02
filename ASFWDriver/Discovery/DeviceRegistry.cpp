@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <limits>
 #include "../Logging/Logging.hpp"
+#include "../DeviceProfiles/Audio/AudioProfileRegistry.hpp"
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
 
 namespace ASFW::Discovery {
@@ -45,39 +46,34 @@ void PopulateDeviceIdentity(DeviceRecord& device, const ConfigROM& rom) {
 }
 
 void MaybeInferKnownIdentityFromGuid(DeviceRecord& device, Guid64 guid) {
-    if (const auto known =
-            Audio::DeviceProtocolFactory::LookupKnownIdentity(device.vendorId, device.modelId);
-        known.has_value()) {
-        if (device.vendorName.empty() && known->vendorName) {
-            device.vendorName = known->vendorName;
-        }
-        if (device.modelName.empty() && known->modelName) {
-            device.modelName = known->modelName;
-        }
+    const DeviceProfiles::DeviceProfileQuery query{
+        .guid = guid, .vendorId = device.vendorId, .modelId = device.modelId};
+
+    const auto identity = DeviceProfiles::Audio::AudioProfileRegistry::LookupIdentity(query);
+    if (!identity.has_value()) {
         return;
     }
 
-    const auto inferred = Audio::DeviceProtocolFactory::LookupKnownIdentityByGuid(guid);
-    if (!inferred.has_value()) {
-        return;
+    // A GUID-based match refines the vendor/model identity when the Config ROM did not
+    // surface usable IDs (e.g. Focusrite DICE boards encode the model in the GUID). A
+    // direct vendor/model match leaves the IDs unchanged.
+    if (identity->vendorId != device.vendorId || identity->modelId != device.modelId) {
+        const uint32_t prevVendorId = device.vendorId;
+        const uint32_t prevModelId = device.modelId;
+        device.vendorId = identity->vendorId;
+        device.modelId = identity->modelId;
+        ASFW_LOG(Discovery,
+                 "Inferred known device identity from GUID=0x%016llx: vendor 0x%06x->0x%06x model "
+                 "0x%06x->0x%06x",
+                 guid, prevVendorId, device.vendorId, prevModelId, device.modelId);
     }
 
-    const uint32_t prevVendorId = device.vendorId;
-    const uint32_t prevModelId = device.modelId;
-    device.vendorId = inferred->vendorId;
-    device.modelId = inferred->modelId;
-
-    if (device.vendorName.empty() && inferred->vendorName) {
-        device.vendorName = inferred->vendorName;
+    if (device.vendorName.empty() && identity->vendorName) {
+        device.vendorName = identity->vendorName;
     }
-    if (device.modelName.empty() && inferred->modelName) {
-        device.modelName = inferred->modelName;
+    if (device.modelName.empty() && identity->modelName) {
+        device.modelName = identity->modelName;
     }
-
-    ASFW_LOG(Discovery,
-             "Inferred known device identity from GUID=0x%016llx: vendor 0x%06x->0x%06x model "
-             "0x%06x->0x%06x",
-             guid, prevVendorId, device.vendorId, prevModelId, device.modelId);
 }
 
 void MaybeCreateKnownProtocol(DeviceRecord& device,
@@ -175,15 +171,19 @@ DeviceRecord& DeviceRegistry::UpsertFromROM(const ConfigROM& rom, const LinkPoli
     // Known device profiles can choose their integration mode:
     // - kHardcodedNub: vendor-specific audio backend (DICE/TCAT, no AV/C).
     // - kAVCDriven: AV/C discovery drives audio topology; vendor protocol is for extra controls only.
-    const auto integrationMode = Audio::DeviceProtocolFactory::LookupIntegrationMode(device.vendorId, device.modelId);
+    const auto audioProfile = DeviceProfiles::Audio::AudioProfileRegistry::LookupBestAudioProfile(
+        DeviceProfiles::DeviceProfileQuery{.vendorId = device.vendorId, .modelId = device.modelId});
+    const auto integrationMode = audioProfile.has_value()
+                                     ? audioProfile->mode
+                                     : DeviceProfiles::Audio::AudioIntegrationMode::kNone;
 
-    if (integrationMode != Audio::DeviceIntegrationMode::kNone) {
+    if (integrationMode != DeviceProfiles::Audio::AudioIntegrationMode::kNone) {
         ASFW_LOG(Discovery,
                  "Known device profile available for vendor=0x%06x model=0x%06x integration=%u",
                  device.vendorId,
                  device.modelId,
                  static_cast<unsigned>(integrationMode));
-        if (integrationMode == Audio::DeviceIntegrationMode::kHardcodedNub) {
+        if (integrationMode == DeviceProfiles::Audio::AudioIntegrationMode::kHardcodedNub) {
             device.kind = DeviceKind::VendorSpecificAudio;
             device.isAudioCandidate = true;
         } else {

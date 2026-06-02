@@ -1544,6 +1544,25 @@ target_include_directories(DeviceProtocolFactoryTests PRIVATE ${ASFW_COMMON_INCL
 
 gtest_discover_tests(DeviceProtocolFactoryTests)
 
+# Device profile metadata registry tests (header-only DeviceProfiles layer)
+add_executable(AudioProfileRegistryTests
+    "${ASFW_TESTS_DIR}/AudioProfileRegistryTests.cpp"
+)
+
+target_link_libraries(AudioProfileRegistryTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioProfileRegistryTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioProfileRegistryTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioProfileRegistryTests)
+
 # DICE / Focusrite protocol serialization tests
 add_executable(DiceFocusriteSerializationTests
     "${ASFW_TESTS_DIR}/DiceFocusriteSerializationTests.cpp"
