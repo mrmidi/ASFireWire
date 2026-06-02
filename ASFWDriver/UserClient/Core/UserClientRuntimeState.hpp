@@ -51,10 +51,11 @@ class UserClientRuntimeState final {
 
         auto* controllerCore = GetControllerCorePtr(driver);
         auto* avcDiscovery = controllerCore ? controllerCore->GetAVCDiscovery() : nullptr;
-        auto* sbp2Manager = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
+        auto* sbp2Mgr = controllerCore ? controllerCore->GetSbp2AddressSpaceManager() : nullptr;
+        auto* sbp2Registry = controllerCore ? controllerCore->GetSBP2SessionRegistry() : nullptr;
         avcHandler_ = std::make_unique<AVCHandler>(avcDiscovery);
         isochHandler_ = std::make_unique<IsochHandler>(driver);
-        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Manager);
+        sbp2Handler_ = std::make_unique<SBP2Handler>(sbp2Mgr, sbp2Registry);
 
         return HandlersReady();
     }
@@ -72,7 +73,10 @@ class UserClientRuntimeState final {
     }
 
     void ReleaseOwner(void* owner) noexcept {
-        if (owner != nullptr && sbp2Handler_ != nullptr) {
+        if (owner == nullptr) {
+            return;
+        }
+        if (sbp2Handler_ != nullptr) {
             sbp2Handler_->ReleaseOwner(owner);
         }
     }

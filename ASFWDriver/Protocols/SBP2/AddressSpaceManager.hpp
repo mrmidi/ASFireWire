@@ -1,11 +1,13 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <limits>
+#include <memory>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -32,9 +34,20 @@ class AddressSpaceManager {
 public:
     // Callback invoked when a remote write arrives for a registered range.
     // Parameters: handle, offset within range, payload data.
+    //
+    // AddressSpaceManager invokes callbacks outside its lock. Callback targets
+    // must capture weak/shared lifetime state, not raw owning object pointers.
     using RemoteWriteCallback = std::function<void(uint64_t handle,
                                                    uint32_t offset,
                                                    std::span<const uint8_t> payload)>;
+    struct RemoteWriteCallbackSlot {
+        explicit RemoteWriteCallbackSlot(RemoteWriteCallback callbackIn)
+            : callback(std::move(callbackIn)) {}
+
+        RemoteWriteCallback callback;
+        std::atomic<bool> enabled{true};
+    };
+
     struct AddressRangeMeta {
         uint64_t handle{0};
         uint64_t address{0};
@@ -46,6 +59,7 @@ public:
     struct ReadSlice {
         uint64_t payloadDeviceAddress{0};
         uint32_t payloadLength{0};
+        std::shared_ptr<void> backingLease{};
     };
 
     explicit AddressSpaceManager(ASFW::Driver::HardwareInterface* hardware) noexcept
@@ -229,6 +243,9 @@ public:
         if (!lock_) {
             return kIOReturnBadArgument;
         }
+        if (data.size() > std::numeric_limits<uint32_t>::max()) {
+            return kIOReturnBadArgument;
+        }
 
         IOLockLock(lock_);
         auto it = ranges_.find(handle);
@@ -256,8 +273,11 @@ public:
         if (!lock_ || payload.empty()) {
             return Async::ResponseCode::AddressError;
         }
+        if (payload.size() > std::numeric_limits<uint32_t>::max()) {
+            return Async::ResponseCode::DataError;
+        }
 
-        RemoteWriteCallback callback;
+        std::shared_ptr<RemoteWriteCallbackSlot> callbackSlot;
         uint64_t handle = 0;
         uint32_t offset = 0;
 
@@ -272,9 +292,10 @@ public:
 
             offset = static_cast<uint32_t>(address - range->meta.address);
             ASFW_ADDRSPACE_LOG(
-                "AddressSpaceManager[%p] remote write addr=0x%012llx len=%zu src=%p "
+                "AddressSpaceManager[%p] remote write label=%s addr=0x%012llx len=%zu src=%p "
                 "handle=0x%llx rangeAddr=0x%012llx off=%u buf=%p mapped=%p backing=%u",
                 this,
+                DebugLabelCString(*range),
                 static_cast<unsigned long long>(address),
                 payload.size(),
                 payload.data(),
@@ -282,17 +303,18 @@ public:
                 static_cast<unsigned long long>(range->meta.address),
                 offset,
                 range->buffer.data(),
-                range->mappedBytes,
-                range->hasBacking ? 1u : 0u);
+                range->backing ? range->backing->mappedBytes : nullptr,
+                range->backing && range->backing->hasBacking ? 1u : 0u);
             WriteBytesLocked(*range, offset, payload);
-            callback = range->onRemoteWrite;
+            callbackSlot = range->remoteWriteSlot;
             handle = range->meta.handle;
             IOLockUnlock(lock_);
         }
 
         // Fire callback outside lock to avoid deadlock.
-        if (callback) {
-            callback(handle, offset, payload);
+        if (callbackSlot && callbackSlot->enabled.load(std::memory_order_acquire) &&
+            callbackSlot->callback) {
+            callbackSlot->callback(handle, offset, payload);
         }
 
         return Async::ResponseCode::Complete;
@@ -313,13 +335,14 @@ public:
             return Async::ResponseCode::AddressError;
         }
 
-        if (!range->hasBacking || range->deviceAddress == 0) {
+        if (!range->backing || !range->backing->hasBacking ||
+            range->backing->deviceAddress == 0) {
             IOLockUnlock(lock_);
             return Async::ResponseCode::DataError;
         }
 
         const uint64_t offset = address - range->meta.address;
-        const uint64_t payloadAddress = range->deviceAddress + offset;
+        const uint64_t payloadAddress = range->backing->deviceAddress + offset;
         if (payloadAddress > 0xFFFF'FFFFULL) {
             IOLockUnlock(lock_);
             return Async::ResponseCode::DataError;
@@ -327,6 +350,19 @@ public:
 
         outSlice->payloadDeviceAddress = payloadAddress;
         outSlice->payloadLength = length;
+        outSlice->backingLease = range->backing;
+
+        ASFW_ADDRSPACE_LOG(
+            "AddressSpaceManager[%p] remote read-block label=%s addr=0x%012llx len=%u "
+            "handle=0x%llx rangeAddr=0x%012llx off=%llu dma=0x%08x",
+            this,
+            DebugLabelCString(*range),
+            static_cast<unsigned long long>(address),
+            length,
+            static_cast<unsigned long long>(range->meta.handle),
+            static_cast<unsigned long long>(range->meta.address),
+            static_cast<unsigned long long>(offset),
+            static_cast<unsigned>(payloadAddress));
 
         IOLockUnlock(lock_);
         return Async::ResponseCode::Complete;
@@ -348,6 +384,17 @@ public:
         std::memcpy(outValue,
                     range->buffer.data() + static_cast<std::size_t>(offset),
                     sizeof(uint32_t));
+
+        ASFW_ADDRSPACE_LOG(
+            "AddressSpaceManager[%p] remote read-quadlet label=%s addr=0x%012llx "
+            "handle=0x%llx rangeAddr=0x%012llx off=%u value=0x%08x",
+            this,
+            DebugLabelCString(*range),
+            static_cast<unsigned long long>(address),
+            static_cast<unsigned long long>(range->meta.handle),
+            static_cast<unsigned long long>(range->meta.address),
+            offset,
+            *outValue);
 
         IOLockUnlock(lock_);
         return Async::ResponseCode::Complete;
@@ -379,6 +426,10 @@ public:
 
     // Register a callback to fire when a remote write arrives for the given handle.
     // Must be called after AllocateAddressRange. Replaces any previous callback.
+    //
+    // Replacing or clearing the callback invalidates callbacks copied but not
+    // yet dispatched. Callback targets must still use weak/shared lifetime
+    // capture because callbacks run outside the manager lock.
     void SetRemoteWriteCallback(uint64_t handle, RemoteWriteCallback callback) {
         if (!lock_ || handle == 0) {
             return;
@@ -387,7 +438,20 @@ public:
         IOLockLock(lock_);
         auto it = ranges_.find(handle);
         if (it != ranges_.end()) {
-            it->second.onRemoteWrite = std::move(callback);
+            ReplaceRemoteWriteCallbackLocked(it->second, std::move(callback));
+        }
+        IOLockUnlock(lock_);
+    }
+
+    void SetDebugLabel(uint64_t handle, const char* label) {
+        if (!lock_ || handle == 0) {
+            return;
+        }
+
+        IOLockLock(lock_);
+        auto it = ranges_.find(handle);
+        if (it != ranges_.end()) {
+            CopyDebugLabel(it->second, label);
         }
         IOLockUnlock(lock_);
     }
@@ -410,12 +474,29 @@ private:
     static constexpr uint32_t kAutoAddressWindowStartLo = 0x0010'0000u;
     static constexpr uint32_t kAutoAddressWindowEndLo = 0x0FFF'FFFFu;
     static constexpr uint64_t kAutoAddressAlignment = 8ULL;
+    static constexpr std::size_t kDebugLabelCapacity = 64;
 
-    struct AddressRange {
-        AddressRangeMeta meta{};
-        void* owner{nullptr};
-        std::vector<uint8_t> buffer;
-        RemoteWriteCallback onRemoteWrite;
+    struct AddressRangeBacking {
+        ~AddressRangeBacking() {
+            if (mapping) {
+                mapping->release();
+                mapping = nullptr;
+            }
+
+            if (dmaCommand) {
+                dmaCommand->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+                dmaCommand.reset();
+            }
+
+            descriptor.reset();
+            mappedBytes = nullptr;
+            deviceAddress = 0;
+            hasBacking = false;
+        }
+
+        AddressRangeBacking() = default;
+        AddressRangeBacking(const AddressRangeBacking&) = delete;
+        AddressRangeBacking& operator=(const AddressRangeBacking&) = delete;
 
         OSSharedPtr<IOBufferMemoryDescriptor> descriptor{};
         OSSharedPtr<IODMACommand> dmaCommand{};
@@ -423,6 +504,15 @@ private:
         uint8_t* mappedBytes{nullptr};
         uint64_t deviceAddress{0};
         bool hasBacking{false};
+    };
+
+    struct AddressRange {
+        AddressRangeMeta meta{};
+        void* owner{nullptr};
+        std::vector<uint8_t> buffer;
+        std::shared_ptr<RemoteWriteCallbackSlot> remoteWriteSlot;
+        std::array<char, kDebugLabelCapacity> debugLabel{};
+        std::shared_ptr<AddressRangeBacking> backing{};
     };
 
     static uint64_t ComposeAddress(uint16_t hi, uint32_t lo) {
@@ -451,6 +541,28 @@ private:
     static bool WithinRange(const AddressRange& range, uint32_t offset, uint32_t length) {
         const uint64_t end = static_cast<uint64_t>(offset) + static_cast<uint64_t>(length);
         return end <= static_cast<uint64_t>(range.meta.length);
+    }
+
+    static void CopyDebugLabel(AddressRange& range, const char* label) {
+        const char* source = label != nullptr ? label : "unlabeled";
+        range.debugLabel.fill('\0');
+        std::strncpy(range.debugLabel.data(), source, range.debugLabel.size() - 1);
+    }
+
+    static const char* DebugLabelCString(const AddressRange& range) {
+        return range.debugLabel[0] != '\0' ? range.debugLabel.data() : "unlabeled";
+    }
+
+    static void ReplaceRemoteWriteCallbackLocked(AddressRange& range,
+                                                 RemoteWriteCallback callback) {
+        if (range.remoteWriteSlot) {
+            range.remoteWriteSlot->enabled.store(false, std::memory_order_release);
+            range.remoteWriteSlot.reset();
+        }
+        if (callback) {
+            range.remoteWriteSlot =
+                std::make_shared<RemoteWriteCallbackSlot>(std::move(callback));
+        }
     }
 
     AddressRange* FindRangeByAddressLocked(uint64_t address, uint32_t length) {
@@ -485,14 +597,15 @@ private:
         for (const auto& entry : ranges_) {
             const auto& range = entry.second;
             ASFW_ADDRSPACE_LOG(
-                "AddressSpaceManager[%p] range handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
+                "AddressSpaceManager[%p] range label=%s handle=0x%llx owner=%p addr=0x%012llx len=%u backing=%u dma=0x%08x",
                 this,
+                DebugLabelCString(range),
                 static_cast<unsigned long long>(range.meta.handle),
                 range.owner,
                 static_cast<unsigned long long>(range.meta.address),
                 range.meta.length,
-                range.hasBacking ? 1u : 0u,
-                static_cast<unsigned>(range.deviceAddress));
+                range.backing && range.backing->hasBacking ? 1u : 0u,
+                static_cast<unsigned>(range.backing ? range.backing->deviceAddress : 0));
         }
     }
 
@@ -518,6 +631,7 @@ private:
         }
 
         AddressRange range{};
+        CopyDebugLabel(range, nullptr);
         range.owner = owner;
         range.meta.handle = nextHandle_++;
         range.meta.address = start;
@@ -549,6 +663,7 @@ private:
 
     kern_return_t AllocateBacking(AddressRange& range) {
         const std::size_t size = static_cast<std::size_t>(range.meta.length);
+        const std::size_t backingSize = static_cast<std::size_t>(AlignUp(size, 16));
 
         // IOBufferMemoryDescriptor::Create expects memory-direction options only.
         // Cache policy is set at CreateMapping time, not in allocation options.
@@ -556,12 +671,12 @@ private:
 
         std::optional<ASFW::Driver::HardwareInterface::DMABuffer> dma;
         if (hardware_) {
-            dma = hardware_->AllocateDMA(size, options, 16);
+            dma = hardware_->AllocateDMA(backingSize, options, 16);
         }
 
         if (!dma.has_value()) {
 #ifdef ASFW_HOST_TEST
-            range.hasBacking = false;
+            range.backing.reset();
             return kIOReturnSuccess;
 #else
             ASFW_LOG(UserClient,
@@ -576,7 +691,7 @@ private:
             kIOMemoryMapCacheModeInhibit,
             0,
             0,
-            size,
+            backingSize,
             0,
             &mapping);
         if (kr != kIOReturnSuccess || !mapping) {
@@ -597,44 +712,33 @@ private:
             return kIOReturnNoMemory;
         }
 
-        std::memset(mapped, 0, size);
+        std::memset(mapped, 0, backingSize);
         OSSynchronizeIO();
 
-        range.descriptor = std::move(dma->descriptor);
-        range.dmaCommand = std::move(dma->dmaCommand);
-        range.mapping = mapping;
-        range.mappedBytes = mapped;
-        range.deviceAddress = dma->deviceAddress;
-        range.hasBacking = true;
+        auto backing = std::make_shared<AddressRangeBacking>();
+        backing->descriptor = std::move(dma->descriptor);
+        backing->dmaCommand = std::move(dma->dmaCommand);
+        backing->mapping = mapping;
+        backing->mappedBytes = mapped;
+        backing->deviceAddress = dma->deviceAddress;
+        backing->hasBacking = true;
+        range.backing = std::move(backing);
 
         return kIOReturnSuccess;
     }
 
     static void CleanupBacking(AddressRange& range) {
-        if (range.mapping) {
-            range.mapping->release();
-            range.mapping = nullptr;
-        }
-
-        if (range.dmaCommand) {
-            range.dmaCommand->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-            range.dmaCommand.reset();
-        }
-
-        range.descriptor.reset();
-        range.mappedBytes = nullptr;
-        range.deviceAddress = 0;
-        range.hasBacking = false;
+        range.backing.reset();
     }
 
     static void SyncRange(AddressRange& range, uint64_t offset, uint64_t length) {
-        if (!range.hasBacking) {
+        if (!range.backing || !range.backing->hasBacking) {
             return;
         }
 
 #if defined(IODMACommand_Synchronize_ID)
-        if (range.dmaCommand) {
-            const kern_return_t syncKr = range.dmaCommand->Synchronize(
+        if (range.backing->dmaCommand) {
+            const kern_return_t syncKr = range.backing->dmaCommand->Synchronize(
                 0,
                 offset,
                 length);
@@ -682,14 +786,16 @@ private:
             data.size(),
             data.data(),
             range.buffer.data(),
-            range.mappedBytes,
+            range.backing ? range.backing->mappedBytes : nullptr,
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(data.data()) & 0x7ULL),
             static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.buffer.data()) & 0x7ULL),
-            static_cast<unsigned long>(reinterpret_cast<uintptr_t>(range.mappedBytes) & 0x7ULL));
+            static_cast<unsigned long>(
+                reinterpret_cast<uintptr_t>(range.backing ? range.backing->mappedBytes : nullptr) &
+                0x7ULL));
         CopyPayloadBytes(range.buffer.data() + static_cast<std::size_t>(offset), data);
 
-        if (range.hasBacking && range.mappedBytes) {
-            CopyPayloadBytes(range.mappedBytes + static_cast<std::size_t>(offset), data);
+        if (range.backing && range.backing->hasBacking && range.backing->mappedBytes) {
+            CopyPayloadBytes(range.backing->mappedBytes + static_cast<std::size_t>(offset), data);
             std::atomic_thread_fence(std::memory_order_release);
             SyncRange(range, offset, data.size());
         }

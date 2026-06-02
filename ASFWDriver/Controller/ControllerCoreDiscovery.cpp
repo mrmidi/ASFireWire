@@ -30,6 +30,7 @@
 #include "../Protocols/AVC/AVCDiscovery.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
+#include "../Protocols/SBP2/SBP2SessionRegistry.hpp"
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "ControllerStateMachine.hpp"
@@ -116,6 +117,18 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
         // CMP (PCR) operations target a *specific device's* plug registers, not the IRM node.
         // Device-scoped CMP wiring is done at stream start time (IsochService).
     }
+
+    if (deps_.sbp2SessionRegistry) {
+        deps_.sbp2SessionRegistry->OnBusReset(static_cast<uint16_t>(snap.generation));
+    }
+
+    // NOTE: CSR STATE_SET CMSTR write removed. Apple IOFireWireFamily does NOT write
+    // CSR STATE_SET via async transactions — it uses the OHCI LinkControl register
+    // directly (kCycleMaster bit), which ASFWDriver already sets in kDefaultLinkControl
+    // during controller initialization. Async loopback to the local node does not work
+    // in ASFWDriver (always returns timeout), so the previous implementation was a no-op.
+    // OHCI hardware generates cycle-start packets automatically when the node is root
+    // and kCycleMaster is set in LinkControl.
 }
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -218,7 +231,7 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     } else if (deps_.deviceManager && zeroRomScanInconclusive) {
         ASFW_LOG(Discovery,
                  "ROM scan for gen=%u produced 0 ROMs but topology still has remote "
-                 "link-active nodes; keeping existing devices until a conclusive scan",
+                 "link-active nodes — keeping existing devices until a conclusive scan",
                  gen.value);
     }
 
@@ -226,6 +239,14 @@ void ControllerCore::OnDiscoveryScanComplete(Discovery::Generation gen,
     ASFW_LOG(Discovery, "Discovery complete: %zu devices processed in gen=%u", roms.size(),
              gen.value);
     ASFW_LOG(Discovery, "═══════════════════════════════════════════════════════");
+
+    if (deps_.sbp2SessionRegistry && !zeroRomScanInconclusive) {
+        deps_.sbp2SessionRegistry->RefreshTargets(gen);
+    } else if (deps_.sbp2SessionRegistry) {
+        ASFW_LOG(Discovery,
+                 "Skipping SBP-2 target refresh for inconclusive zero-ROM scan gen=%u",
+                 gen.value);
+    }
 }
 
 } // namespace ASFW::Driver

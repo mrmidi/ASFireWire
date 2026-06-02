@@ -563,7 +563,10 @@ void AsyncSubsystem::Teardown(bool disableHardware) {
         txnMgr_.reset();
     }
 
-    responseSender_.reset();
+    if (responseSender_) {
+        responseSender_->ClearOutstandingResponses();
+        responseSender_.reset();
+    }
     descriptorBuilder_ = nullptr;
     descriptorBuilderResponse_ = nullptr;
     packetBuilder_.reset();

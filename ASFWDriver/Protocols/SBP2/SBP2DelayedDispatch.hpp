@@ -12,6 +12,22 @@
 
 namespace ASFW::Protocols::SBP2 {
 
+inline void DispatchAsyncCompat(IODispatchQueue* queue,
+                                std::function<void()> callback) noexcept {
+    if (queue == nullptr || !callback) {
+        return;
+    }
+
+#ifdef ASFW_HOST_TEST
+    queue->DispatchAsync(std::move(callback));
+#else
+    auto work = std::move(callback);
+    queue->DispatchAsync(^{
+        work();
+    });
+#endif
+}
+
 inline void DispatchAfterCompat(IODispatchQueue* queue,
                                 uint64_t delayNs,
                                 std::function<void()> callback) noexcept {

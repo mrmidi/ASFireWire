@@ -1,13 +1,15 @@
 #pragma once
 
 // SBP-2 (Serial Bus Protocol 2) wire-format definitions.
-// Based on ANSI INCITS 335-1999 (SBP-2).
+// Based on ANSI INCITS 335-1999 (SBP-2) and Apple IOFireWireSBP2 structures.
 // All multi-byte fields are stored in **big-endian** (bus/wire) order.
 // Use ToBusOrder / FromBusOrder from Core/PhyPackets.hpp or std::byteswap for conversion.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 namespace ASFW::Protocols::SBP2::Wire {
 
@@ -154,17 +156,24 @@ struct NormalORB {
     // Access via CommandBlock() helper.
 
     [[nodiscard]] uint32_t* CommandBlock() noexcept {
-        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + 16);
+        return reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(this) + kHeaderSize);
     }
     [[nodiscard]] const uint32_t* CommandBlock() const noexcept {
-        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + 16);
+        return reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + kHeaderSize);
     }
 
     // Minimum ORB size (no command block)
-    static constexpr uint32_t kHeaderSize = 16;
+    static constexpr uint32_t kHeaderSize = 20;
     // Null next-ORB indicator (bit 31 set in hi address)
     static constexpr uint32_t kNextORBNull = 0x80000000u;
 };
+
+static_assert(sizeof(NormalORB) == NormalORB::kHeaderSize, "NormalORB header must be 20 bytes");
+static_assert(std::is_trivially_copyable_v<NormalORB>, "NormalORB must stay trivially copyable");
+static_assert(offsetof(NormalORB, nextORBAddressHi) == 0, "NormalORB next hi offset changed");
+static_assert(offsetof(NormalORB, dataDescriptorHi) == 8, "NormalORB data descriptor hi offset changed");
+static_assert(offsetof(NormalORB, options) == 16, "NormalORB options offset changed");
+static_assert(offsetof(NormalORB, dataSize) == 18, "NormalORB data size offset changed");
 
 // Page Table Entry — maps data buffer for DMA.
 // Ref: SBP-2 §5.1.2
@@ -177,14 +186,18 @@ struct PageTableEntry {
 };
 
 static_assert(sizeof(PageTableEntry) == PageTableEntry::kSize, "PTE must be 8 bytes");
+static_assert(std::is_trivially_copyable_v<PageTableEntry>,
+              "PageTableEntry must stay trivially copyable");
+static_assert(offsetof(PageTableEntry, segmentLength) == 0, "PTE length offset changed");
+static_assert(offsetof(PageTableEntry, segmentBaseAddressLo) == 4, "PTE addressLo offset changed");
 
 // ---------------------------------------------------------------------------
 // SBP-2 Status Block
-// Ref: SBP-2 §5.2
+// Ref: SBP-2 §5.3 status blocks
 // ---------------------------------------------------------------------------
 
 struct StatusBlock {
-    uint8_t  details{0};     // [7] Src, [6:4] Resp, [3:2] D, [1:0] Len
+    uint8_t  details{0};     // [7:6] Src, [5:4] Resp, [3] D, [2:0] Len
     uint8_t  sbpStatus{0};   // SBP-2 specific status code
     uint16_t orbOffsetHi{0};
     uint32_t orbOffsetLo{0};
@@ -192,13 +205,18 @@ struct StatusBlock {
 
     static constexpr uint32_t kMaxSize = 32; // header (8) + max status (24)
 
-    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 7) & 0x1; }
-    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x7; }
-    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 2) & 0x1; }
-    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x3; }
+    [[nodiscard]] uint8_t Source() const noexcept { return (details >> 6) & 0x3; }
+    [[nodiscard]] uint8_t Response() const noexcept { return (details >> 4) & 0x3; }
+    [[nodiscard]] uint8_t DeadBit() const noexcept { return (details >> 3) & 0x1; }
+    [[nodiscard]] uint8_t Length() const noexcept { return details & 0x7; }
 };
 
 static_assert(sizeof(StatusBlock) == 32, "StatusBlock must be 32 bytes");
+static_assert(std::is_trivially_copyable_v<StatusBlock>,
+              "StatusBlock must stay trivially copyable");
+static_assert(offsetof(StatusBlock, details) == 0, "StatusBlock details offset changed");
+static_assert(offsetof(StatusBlock, orbOffsetHi) == 2, "StatusBlock orbOffsetHi offset changed");
+static_assert(offsetof(StatusBlock, orbOffsetLo) == 4, "StatusBlock orbOffsetLo offset changed");
 
 // ---------------------------------------------------------------------------
 // SBP-2 Management ORB (Task Management)
@@ -219,6 +237,14 @@ struct TaskManagementORB {
 };
 
 static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
+static_assert(std::is_trivially_copyable_v<TaskManagementORB>,
+              "TaskManagementORB must stay trivially copyable");
+static_assert(offsetof(TaskManagementORB, orbOffsetHi) == 0,
+              "TaskManagementORB orbOffsetHi offset changed");
+static_assert(offsetof(TaskManagementORB, options) == 16,
+              "TaskManagementORB options offset changed");
+static_assert(offsetof(TaskManagementORB, statusFIFOAddressHi) == 24,
+              "TaskManagementORB status FIFO hi offset changed");
 
 // ---------------------------------------------------------------------------
 // Management Agent address calculation
@@ -231,8 +257,8 @@ static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
 }
 
 // SBP-2 ORBs embed a full 16-bit node ID in bus addresses. ASFW's generic
-// bus-info path may expose only the local 6-bit physical node number, so expand
-// it to the local-bus form (0xffc0 | phyId) before writing ORBs.
+// bus-info path exposes only the local 6-bit physical node number, so expand it
+// to the local-bus form Apple uses (0xffc0 | phyId) before writing ORBs.
 [[nodiscard]] inline constexpr uint16_t NormalizeBusNodeID(uint16_t nodeID) noexcept {
     if ((nodeID & 0xFFC0u) == 0xFFC0u) {
         return nodeID;
@@ -247,6 +273,7 @@ static_assert(sizeof(TaskManagementORB) == TaskManagementORB::kSize);
 }
 
 // Command Block Agent register offsets (relative to agent base from login response).
+// Verified against Apple IOFireWireSBP2Login::clearAllTasksInSet / login response processing.
 struct CommandBlockAgentOffsets {
     static constexpr uint32_t kAgentReset               = 0x04; // Fetch agent reset (quadlet write)
     static constexpr uint32_t kFetchAgent               = 0x08; // ORB pointer write (fetch agent, non-fast-start)
@@ -288,19 +315,21 @@ namespace Options {
     static constexpr uint32_t kFunctionTargetReset    = 0xF;
 }
 
-// SBP-2 status codes (from sbpStatus field)
+// SBP-2 §5.3.1 request status codes (from sbpStatus field)
 namespace SBPStatus {
-    static constexpr uint8_t kNoAdditionalInfo   = 0;
-    static constexpr uint8_t kReqTypeNotSupported = 1;
-    static constexpr uint8_t kSpeedNotSupported   = 2;
-    static constexpr uint8_t kPageSizeNotSupported = 3;
-    static constexpr uint8_t kAccessDenied        = 4;
-    static constexpr uint8_t kResourceUnavailable = 5;
-    static constexpr uint8_t kFunctionRejected    = 6;
-    static constexpr uint8_t kLoginIDNotRecognized = 7;
-    static constexpr uint8_t kDummyORBCompleted   = 8;
-    static constexpr uint8_t kRequestAborted      = 0xB;
-    static constexpr uint8_t kUnspecifiedError    = 0xFF;
+    static constexpr uint8_t kNoAdditionalInfo       = 0;
+    static constexpr uint8_t kReqTypeNotSupported    = 1;
+    static constexpr uint8_t kSpeedNotSupported      = 2;
+    static constexpr uint8_t kPageSizeNotSupported   = 3;
+    static constexpr uint8_t kAccessDenied           = 4;
+    static constexpr uint8_t kLogicalUnitNotSupported = 5;
+    static constexpr uint8_t kMaxPayloadTooSmall     = 6;
+    static constexpr uint8_t kResourcesUnavailable   = 8;
+    static constexpr uint8_t kFunctionRejected       = 9;
+    static constexpr uint8_t kLoginIDNotRecognized   = 10;
+    static constexpr uint8_t kDummyORBCompleted      = 11;
+    static constexpr uint8_t kRequestAborted         = 12;
+    static constexpr uint8_t kUnspecifiedError       = 0xFF;
 }
 
 // Busy timeout register (CSR address 0xFFFFF0000210)
