@@ -51,8 +51,10 @@ extension DiagnosticsTextFormatter {
         } else {
             r.row("Max Hops", snapshot.busContract.maxHops)
         }
-        r.row("Cycle Start Observed", snapshot.busContract.cycleStartObserved != 0 ? "Yes" : "No")
-        r.row("Cycle Start Source Node", DiagFormat.nodeStr(snapshot.busContract.cycleStartSourceNode))
+        r.row("Remote Cycle Continuity", snapshot.busContract.cycleStartObserved != 0 ? "Yes" : "No")
+        r.row("Cycle Evidence Source Node",
+              Self.cycleEvidenceSource(snapshot.busContract.cycleStartObserved,
+                                       snapshot.busContract.cycleStartSourceNode))
         r.row("Local Cycle Master Enabled", snapshot.busContract.localCycleMasterEnabled != 0 ? "Yes" : "No")
         r.row("Local Cycle Timer Enabled", snapshot.busContract.localCycleTimerEnabled != 0 ? "Yes" : "No")
         r.row("ASFW-Initiated Reset Count", snapshot.busContract.asfwInitiatedResetCount)
@@ -109,8 +111,10 @@ extension DiagnosticsTextFormatter {
             r.row("Legacy Remote CMSTR", "not used by this engine")
             r.row("Reason", "Live BM cycle writes are reported in Cycle Master Policy")
         }
-        r.row("Cycle Start Observed", snapshot.roleCoordinator.cycleStartObserved != 0 ? "Yes" : "No")
-        r.row("Cycle Start Source Node", DiagFormat.nodeStr(snapshot.roleCoordinator.cycleStartSourceNode))
+        r.row("Remote Cycle Continuity", snapshot.roleCoordinator.cycleStartObserved != 0 ? "Yes" : "No")
+        r.row("Cycle Evidence Source Node",
+              Self.cycleEvidenceSource(snapshot.roleCoordinator.cycleStartObserved,
+                                       snapshot.roleCoordinator.cycleStartSourceNode))
         r.row("Reset Guard Active", snapshot.roleCoordinator.resetGuardActive != 0 ? "Yes" : "No")
         r.row("BM Retry Count", snapshot.roleCoordinator.bmRetryCount)
         r.row("Gap Mismatch Detected", snapshot.roleCoordinator.gapMismatchDetected != 0 ? "Yes" : "No")
@@ -156,9 +160,13 @@ extension DiagnosticsTextFormatter {
         let irmStateStr: String
         switch snapshot.busManager.localIrmResourceState {
         case 0: irmStateStr = "disabled"
-        case 1: irmStateStr = "initialized"
-        case 2: irmStateStr = "failed"
-        default: irmStateStr = "Unknown"
+        case 1: irmStateStr = "not local IRM"
+        case 2: irmStateStr = "initial registers programmed"
+        case 3: irmStateStr = "probing active resources"
+        case 4: irmStateStr = "ready (defaults)"
+        case 5: irmStateStr = "ready (changed)"
+        case 6: irmStateStr = "probe failed"
+        default: irmStateStr = "Unknown (\(snapshot.busManager.localIrmResourceState))"
         }
         r.row("Local IRM Resource State", irmStateStr)
         r.row("Local IRM Readback Valid", snapshot.busManager.localIrmReadbackValid != 0 ? "Yes" : "No")
@@ -196,8 +204,10 @@ extension DiagnosticsTextFormatter {
         r.row("BM Policy Verdict", verdictStr)
         r.row("Root CMC Known", snapshot.busManager.rootCmcKnown != 0 ? "Yes" : "No")
         r.row("Root CMC Capable", snapshot.busManager.rootCmcCapable != 0 ? "Yes" : "No")
-        r.row("CycleStart Observed", snapshot.busManager.cycleStartObserved != 0 ? "Yes" : "No")
-        r.row("CycleStart Source", DiagFormat.nodeStr(snapshot.busManager.cycleStartSourceNode))
+        r.row("Remote Cycle Continuity", snapshot.busManager.cycleStartObserved != 0 ? "Yes" : "No")
+        r.row("Cycle Evidence Source",
+              Self.cycleEvidenceSource(snapshot.busManager.cycleStartObserved,
+                                       snapshot.busManager.cycleStartSourceNode))
         r.row("Legacy CMSTR Allowed", snapshot.busManager.remoteCmstrAllowed != 0 ? "Yes" : "No")
 
         let cmstrActionStr: String
@@ -217,5 +227,9 @@ extension DiagnosticsTextFormatter {
             cmstrActionStr = "not armed"
         }
         r.row("Remote CMSTR Status", cmstrActionStr)
+    }
+
+    private static func cycleEvidenceSource(_ observed: UInt32, _ node: UInt32) -> String {
+        observed != 0 ? DiagFormat.nodeStr(node) : "none (not observed)"
     }
 }
