@@ -211,6 +211,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     Bus::BusManagerElectionDriver* GetBusManagerElectionDriver() const;
     void SetBusManagerElectionDriver(std::shared_ptr<Bus::BusManagerElectionDriver> driver);
+    void SetCSRResponder(std::shared_ptr<Bus::CSRResponder> responder);
 
     const Bus::BusManagerRuntimeState& GetBusManagerRuntimeState() const {
         SyncBusManagerRuntimeState();
@@ -287,6 +288,7 @@ class ControllerCore final : private Role::IPhyConfigReset,
 
     // ASFW::Bus::ICyclePolicyExecutor implementation
     bool EnableLocalCycleMasterMutation(uint32_t generation) override;
+    bool ClearLocalCycleMasterMutation(uint32_t generation) override;
     Async::AsyncHandle WriteRemoteStateSetCmstr(uint32_t generation, uint16_t busBase16,
                                                 uint8_t targetNodeId) override;
 
@@ -361,4 +363,3 @@ class ControllerCore final : private Role::IPhyConfigReset,
 };
 
 } // namespace ASFW::Driver
-

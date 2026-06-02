@@ -76,7 +76,7 @@ TEST_F(CSRContractVerifierTests, TopologyMapUsesBusGeneration) {
     EXPECT_EQ(topologyMap_.GetGeneration(), 11u);
 }
 
-TEST_F(CSRContractVerifierTests, DetectsStaleSpeedMapGeneration) {
+TEST_F(CSRContractVerifierTests, ReportsStaleSpeedMapGenerationButDoesNotFailVerdict) {
     CSRResponder::Deps deps{};
     CSRResponder responder(deps);
     CSRContractVerifier verifier;
@@ -94,7 +94,7 @@ TEST_F(CSRContractVerifierTests, DetectsStaleSpeedMapGeneration) {
     speedMap_.PublishFromTopology(topo);
 
     auto result = verifier.Verify(responder, topologyMap_, speedMap_, irm_);
-    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.ok);
     EXPECT_TRUE(result.topologyMapGenerationMatch);
     EXPECT_FALSE(result.speedMapGenerationMatch);
 }

@@ -117,6 +117,7 @@ const char* CyclePolicyDecisionString(Bus::CyclePolicyDecision decision) {
     case CyclePolicyDecision::SuppressedNotBMOrFallbackIRM: return "not-bm";
     case CyclePolicyDecision::AlreadySatisfiedCycleStartObserved: return "cycle-observed";
     case CyclePolicyDecision::AlreadySatisfiedLocalCycleMasterEnabled: return "local-cm-already";
+    case CyclePolicyDecision::LocalCycleMasterClearNotRoot: return "local-cm-clear-not-root";
     case CyclePolicyDecision::DeferRootSelfIDUnknown: return "root-selfid-unknown";
     case CyclePolicyDecision::DeferLocalSelfIDUnknown: return "local-selfid-unknown";
     case CyclePolicyDecision::LocalRootEnableCycleMaster: return "local-cm";
@@ -135,6 +136,7 @@ const char* CyclePolicyActionString(Bus::CyclePolicyAction action) {
     switch (action) {
     case CyclePolicyAction::None: return "none";
     case CyclePolicyAction::EnableLocalCycleMaster: return "local-cycle-master";
+    case CyclePolicyAction::ClearLocalCycleMaster: return "clear-local-cycle-master";
     case CyclePolicyAction::WriteRemoteStateSetCmstr: return "remote-state-set-cmstr";
     case CyclePolicyAction::ReportRootSelectionRequired: return "root-selection-required";
     }
@@ -450,8 +452,19 @@ void ControllerCore::EnableLocalCycleMaster(uint32_t generation) {
         return;
     }
 
+    const auto topo = LatestTopology();
+    if (!topo || topo->localNodeId != topo->rootNodeId) {
+        ASFW_LOG(Controller,
+                 "RoleCoordinator: suppress local cycleMaster gen=%u local is not root",
+                 generation);
+        if (deps_.hardware->IsLocalCycleMasterEnabled()) {
+            (void)deps_.hardware->SetLocalCycleMasterEnabled(false);
+        }
+        return;
+    }
+
     ASFW_LOG(Controller, "RoleCoordinator: enabling local cycleMaster gen=%u", generation);
-    deps_.hardware->SetLinkControlBits(LinkControlBits::kCycleMaster);
+    (void)deps_.hardware->SetLocalCycleMasterEnabled(true);
 }
 
 void ControllerCore::ClearLocalContenderAndDelegate(uint8_t targetRoot, uint32_t generation) {
@@ -705,6 +718,7 @@ void ControllerCore::EvaluateCyclePolicy() noexcept {
     in.localIsRoot = state.localIsRoot;
     in.localIsIRM = state.localIsIRM;
     in.localIsBM = state.localIsBM;
+    in.localCycleMasterEnabled = deps_.hardware ? deps_.hardware->IsLocalCycleMasterEnabled() : false;
 
     if (irmFallback_) {
         const auto& snap = irmFallback_->Snapshot();
@@ -932,6 +946,14 @@ bool ControllerCore::EnableLocalCycleMasterMutation(uint32_t generation) {
     }
     ASFW_LOG(Controller, "[CyclePolicy] enable local cycleMaster gen=%u", generation);
     return deps_.hardware->SetLocalCycleMasterEnabled(true);
+}
+
+bool ControllerCore::ClearLocalCycleMasterMutation(uint32_t generation) {
+    if (generation != currentGeneration_ || !deps_.hardware) {
+        return false;
+    }
+    ASFW_LOG(Controller, "[CyclePolicy] clear local cycleMaster gen=%u local-not-root", generation);
+    return deps_.hardware->SetLocalCycleMasterEnabled(false);
 }
 
 Async::AsyncHandle ControllerCore::WriteRemoteStateSetCmstr(uint32_t generation,

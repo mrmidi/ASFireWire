@@ -16,7 +16,7 @@ CSRContractCheckResult CSRContractVerifier::Verify(const CSRResponder& responder
     const uint32_t currentGen = topologyMap.GetGeneration();
     const auto speedSnap = speedMap.Snapshot();
 
-    // 1. Generation checks
+    // 1. Generation checks.
     result.topologyMapGenerationMatch = topologyMap.IsValid() && currentGen != 0;
     result.speedMapGenerationMatch =
         result.topologyMapGenerationMatch && speedSnap.status != SpeedMapStatus::Invalid &&
@@ -32,9 +32,13 @@ CSRContractCheckResult CSRContractVerifier::Verify(const CSRResponder& responder
         result.ok = false;
     }
 
-    if (!result.topologyMapGenerationMatch || !result.speedMapGenerationMatch) {
+    if (!result.topologyMapGenerationMatch) {
         result.ok = false;
     }
+
+    // SPEED_MAP is obsolete in IEEE 1394-2008. Keep reporting freshness for
+    // legacy/diagnostic readers, but do not classify stale/invalid SPEED_MAP
+    // state as a hard CSR ownership mismatch by itself.
 
     return result;
 }

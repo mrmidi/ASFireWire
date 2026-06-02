@@ -83,6 +83,16 @@ LocalRequestResult LocalIRMResourceCSRHandler::HandleLocalRequest(
         return LocalRequestResult::NotMine();
     }
 
+    // Normal remote accesses to these OHCI-owned IRM resource CSRs should be
+    // answered by the controller's autonomous CSR engine before ASFW sees an AR
+    // request. This handler is therefore only a narrow safety/loopback path for
+    // software-dispatched local requests that did reach the local request chain.
+    // Do not treat hits here as comprehensive IRM telemetry.
+    //
+    // If ASFW itself needs to allocate from local-as-IRM, the preferred path is
+    // still HardwareInterface::{Read,CompareSwap}LocalIRMResource(), which drives
+    // CSRData/CSRCompareData/CSRControl directly.
+
     // cross-validated with Linux: ohci.c:1653 Apple: IOFireWireIRM.cpp:241
     if (ctx.tCode == AReq::kTcodeReadQuad) {
         const auto result = hardware_->ReadLocalIRMResource(*selector);

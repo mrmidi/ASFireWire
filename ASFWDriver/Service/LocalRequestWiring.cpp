@@ -204,25 +204,30 @@ void WireLocalRequestDispatch(::ServiceContext& ctx) {
             .broadcastChannel = d.broadcastChannel.get(),
         });
         ASFW_LOG(Controller, "[Controller] CSRResponder initialized with TopologyMapService (FW-20)");
+    }
 
-        // Create and wire the Bus Manager election driver (FW-18)
-        if (!d.busManagerElectionDriver && d.asyncController && d.scheduler) {
-            ASFW::Bus::BusManagerElectionDriver::Deps electDeps{
-                .asyncController = d.asyncController.get(),
-                .scheduler = d.scheduler.get(),
-                .csrResponder = d.csrResponder.get(),
-                .hardware = d.hardware.get(),
-                .localIrmController = ctx.controller ? ctx.controller->GetLocalIRMResourceController() : nullptr,
-                .timing = d.busReset ? &d.busReset->PostResetTiming() : nullptr,
-                .monotonicNowNs = ASFW::Driver::BusResetCoordinator::MonotonicNow,
-            };
-            d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.rolePolicy);
-            if (ctx.controller) {
-                d.busManagerElectionDriver->SetObserver(ctx.controller.get());
-                ctx.controller->SetBusManagerElectionDriver(d.busManagerElectionDriver);
-            }
-            ASFW_LOG(Controller, "[Controller] BusManagerElectionDriver initialized (FW-18)");
+    if (ctx.controller && d.csrResponder &&
+        ctx.controller->GetCSRResponder() != d.csrResponder.get()) {
+        ctx.controller->SetCSRResponder(d.csrResponder);
+    }
+
+    // Create and wire the Bus Manager election driver (FW-18)
+    if (!d.busManagerElectionDriver && d.csrResponder && d.asyncController && d.scheduler) {
+        ASFW::Bus::BusManagerElectionDriver::Deps electDeps{
+            .asyncController = d.asyncController.get(),
+            .scheduler = d.scheduler.get(),
+            .csrResponder = d.csrResponder.get(),
+            .hardware = d.hardware.get(),
+            .localIrmController = ctx.controller ? ctx.controller->GetLocalIRMResourceController() : nullptr,
+            .timing = d.busReset ? &d.busReset->PostResetTiming() : nullptr,
+            .monotonicNowNs = ASFW::Driver::BusResetCoordinator::MonotonicNow,
+        };
+        d.busManagerElectionDriver = std::make_shared<ASFW::Bus::BusManagerElectionDriver>(electDeps, ctx.rolePolicy);
+        if (ctx.controller) {
+            d.busManagerElectionDriver->SetObserver(ctx.controller.get());
+            ctx.controller->SetBusManagerElectionDriver(d.busManagerElectionDriver);
         }
+        ASFW_LOG(Controller, "[Controller] BusManagerElectionDriver initialized (FW-18)");
     }
 
     auto dispatch = std::make_shared<ASFW::Async::LocalRequestDispatch>();
