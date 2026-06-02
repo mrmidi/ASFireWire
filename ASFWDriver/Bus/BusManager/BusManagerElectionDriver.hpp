@@ -109,7 +109,9 @@ private:
     void Contend(uint32_t generation, uint8_t localNodeId, uint8_t irmNodeId, uint16_t busBase16) noexcept;
     void HandleCompareSwapResult(uint32_t generation, uint8_t localNodeId, ASFW::Async::AsyncStatus status, uint32_t oldValue, bool compareMatched) noexcept;
 
-    static constexpr uint64_t kFastResetAfterBMWinNs = 750000000ULL;
+    // Keep this below the Annex H +625 ms IRM fallback window so ordinary
+    // fallback/configuration resets are not mistaken for immediate BM rejection.
+    static constexpr uint64_t kFastResetAfterBMWinNs = 500000000ULL;
 
     Deps deps_;
     ASFW::Driver::RolePolicy rolePolicy_;

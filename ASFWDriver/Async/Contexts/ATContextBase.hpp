@@ -863,7 +863,7 @@ bool ATContextBase<Derived, Tag>::DecodeCompletionState(ScanState& state) const 
 
     if (state.eventCodeRaw == 0x10 && hw_->HasAgereQuirk()) {
         ASFW_LOG(Async,
-                 "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=3)",
+                 "  ⚠️  Agere/LSI quirk: eventCode 0x10→kAckComplete (ackCount=%u exceeds ATRetries maxReq=15)",
                  state.ackCount);
         state.eventCode = OHCIEventCode::kAckComplete;
         state.eventCodeRaw = static_cast<uint8_t>(OHCIEventCode::kAckComplete);
@@ -967,7 +967,7 @@ void ATContextBase<Derived, Tag>::LogCompletionTelemetry(const ScanState& state)
 
     if (state.ackCount > 3 && hw_->HasAgereQuirk()) {
         ASFW_LOG(Async,
-                 "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=3 (Agere/LSI ignores ATRetries register)",
+                 "  ⚠️  Hardware retry limit exceeded: ackCount=%u > configured maxReq=15 (Agere/LSI ignores ATRetries register)",
                  state.ackCount);
     }
 

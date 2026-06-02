@@ -237,7 +237,7 @@ void BusManagerElectionDriver::OnBusReset() noexcept {
         }
     }
 
-    if (localWasBM && !stormYieldPending_) {
+    if (localWasBM) {
         wasIncumbent_ = true;
     } else {
         wasIncumbent_ = false;

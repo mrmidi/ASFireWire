@@ -16,7 +16,7 @@ protected:
     static constexpr uint8_t kZEndOfList = 0;     // Valid: end-of-list marker
     static constexpr uint8_t kZReserved = 1;      // INVALID: Reserved (causes UnrecoverableError)
     static constexpr uint8_t kZMinValid = 2;      // Minimum valid Z (2 blocks = 32 bytes)
-    static constexpr uint8_t kZMaxValid = 15;     // Maximum valid Z (15 blocks = 240 bytes)
+    static constexpr uint8_t kZMaxValid = 8;      // Maximum valid ASFW AT Z (8 blocks = 128 bytes)
 
     // Standard descriptor sizes
     static constexpr uint8_t kBlocksOutputLastImmediate = 2;  // 32 bytes = 2×16-byte blocks
@@ -51,8 +51,8 @@ TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_AcceptsZ0_EndOfList) {
     EXPECT_NE(result, 0u) << "Z=0 is valid for branchWord (end-of-chain marker)";
 
     // Verify Z=0 is encoded
-    const uint32_t extractedZ = result >> 28;
-    EXPECT_EQ(extractedZ, 0u) << "Z=0 should be encoded in upper nibble";
+    const uint32_t extractedZ = result & 0xF;
+    EXPECT_EQ(extractedZ, 0u) << "Z=0 should be encoded in the low nibble";
 }
 
 TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_AcceptsZ2_OutputLastImmediate) {
@@ -65,15 +65,14 @@ TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_AcceptsZ2_OutputLastImmediate) 
 
     EXPECT_NE(result, 0u) << "MakeBranchWordAT must accept Z=2";
 
-    // Verify encoding: branchWord = (Z << 28) | (physAddr >> 4)
-    const uint32_t expectedZ = static_cast<uint32_t>(zCorrect) << 28;
-    const uint32_t expectedAddr = static_cast<uint32_t>(physAddr >> 4) & 0x0FFFFFFFu;
-    const uint32_t expected = expectedZ | expectedAddr;
+    // Verify encoding: branchWord = physAddr[31:4] | Z[3:0]
+    const uint32_t expected = (static_cast<uint32_t>(physAddr) & 0xFFFFFFF0u) |
+                              static_cast<uint32_t>(zCorrect);
 
     EXPECT_EQ(result, expected) << "MakeBranchWordAT encoding incorrect";
 }
 
-TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_AcceptsValidRange_Z2to15) {
+TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_AcceptsValidRange_Z2to8) {
     constexpr uint64_t physAddr = 0xABCD0000;  // 16-byte aligned
 
     for (uint8_t z = kZMinValid; z <= kZMaxValid; ++z) {
@@ -81,18 +80,18 @@ TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_AcceptsValidRange_Z2to15) {
         EXPECT_NE(result, 0u) << "MakeBranchWordAT must accept Z=" << static_cast<int>(z);
 
         // Verify Z field extraction
-        const uint32_t extractedZ = result >> 28;
+        const uint32_t extractedZ = result & 0xF;
         EXPECT_EQ(extractedZ, static_cast<uint32_t>(z)) << "Z field not encoded correctly";
     }
 }
 
-TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_RejectsInvalidZ_Above15) {
+TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_RejectsReservedZ9) {
     constexpr uint64_t physAddr = 0x12345000;
-    constexpr uint8_t zInvalid = 16;  // Out of range
+    constexpr uint8_t zInvalid = 9;  // Reserved for ASFW descriptor chains
 
     const uint32_t result = MakeBranchWordAT(physAddr, zInvalid);
 
-    EXPECT_EQ(result, 0u) << "MakeBranchWordAT must reject Z>15";
+    EXPECT_EQ(result, 0u) << "MakeBranchWordAT must reject Z=9";
 }
 
 TEST_F(ATDescriptorZValueTests, MakeBranchWordAT_RejectsMisalignedAddress) {
@@ -207,18 +206,17 @@ TEST_F(ATDescriptorZValueTests, OHCIDescriptor_ControlWordEncoding) {
 TEST_F(ATDescriptorZValueTests, ExtractTLabel_FromImmediateDescriptor) {
     OHCIDescriptorImmediate desc{};
 
-    // Build IEEE 1394 async packet header (big-endian, per IEEE 1394-1995 §6.2)
+    // Build the host-order immediate Q0 produced by PacketBuilder before Submitter
+    // performs final descriptor byte-order handling.
     // Quadlet 0 format: [destination_ID:16][tLabel:6][rt:2][tCode:4][pri:4]
     // CRITICAL: tLabel is at bits[15:10], NOT bits[23:18]!
     constexpr uint8_t tLabel = 0x15;  // 6-bit value (0-63)
     constexpr uint32_t controlQuadletHost = (static_cast<uint32_t>(tLabel) << 10) | (0x4u << 4);  // tCode=0x4 (READ_QUADLET)
-
-    // Store in big-endian format (IEEE 1394 wire format)
-    desc.immediateData[0] = __builtin_bswap32(controlQuadletHost);
+    desc.immediateData[0] = controlQuadletHost;
 
     const uint8_t extracted = ExtractTLabel(&desc);
 
-    EXPECT_EQ(extracted, tLabel) << "ExtractTLabel must extract tLabel from IEEE 1394 wire format";
+    EXPECT_EQ(extracted, tLabel) << "ExtractTLabel must extract tLabel from host-order immediate Q0";
 }
 
 TEST_F(ATDescriptorZValueTests, ExtractTLabel_HandlesNullPointer) {
@@ -228,7 +226,8 @@ TEST_F(ATDescriptorZValueTests, ExtractTLabel_HandlesNullPointer) {
 
 TEST_F(ATDescriptorZValueTests, ExtractTLabel_RealHardwarePacket) {
     // Real packet data from hardware logs (see DECOMPILATION.md tLabel extraction bug fix)
-    // TX descriptor sent with tLabel=0, hardware completion showed 0xFFC00140 in immediateData[0]
+    // TX descriptor sent with tLabel=0; in host-order immediate data this is
+    // 0xFFC00140 before submit-time byte-order conversion.
     //
     // IEEE 1394 format breakdown of 0xFFC00140:
     //   Bits[31:16] = 0xFFC0 (destinationID)
@@ -241,7 +240,7 @@ TEST_F(ATDescriptorZValueTests, ExtractTLabel_RealHardwarePacket) {
     // Before fix: extracted bits[23:18] → 0x30 = 48 (WRONG)
     // After fix: extract bits[15:10] → 0x00 = 0 (CORRECT)
     OHCIDescriptorImmediate desc{};
-    desc.immediateData[0] = 0x4001C0FFu;  // Little-endian memory representation of big-endian 0xFFC00140
+    desc.immediateData[0] = 0xFFC00140u;
 
     const uint8_t extracted = ExtractTLabel(&desc);
 
@@ -297,12 +296,12 @@ TEST_F(ATDescriptorZValueTests, CommandPtr_RoundTrip_Z2) {
     const uint32_t commandPtr = MakeBranchWordAT(physAddrOrig, zOrig);
     ASSERT_NE(commandPtr, 0u);
 
-    // Decode physical address (AT format: Z[31:28] | branchAddr[27:0])
+    // Decode physical address (AT format: branchAddr[31:4] | Z[3:0])
     const uint32_t decodedPhys = DecodeBranchPhys32_AT(commandPtr);
     EXPECT_EQ(decodedPhys, physAddrOrig & 0xFFFFFFF0u);
 
     // Decode Z value
-    const uint8_t decodedZ = static_cast<uint8_t>(commandPtr >> 28);
+    const uint8_t decodedZ = static_cast<uint8_t>(commandPtr & 0xF);
     EXPECT_EQ(decodedZ, zOrig);
 }
 
@@ -310,9 +309,10 @@ TEST_F(ATDescriptorZValueTests, BranchWord_AR_vs_AT_Encoding) {
     // CRITICAL: AR and AT have DIFFERENT Z-value encoding!
     constexpr uint64_t physAddr = 0x12345670;
 
-    // AT: Z in bits [31:28] (4 bits), address in bits [27:0]
+    // AT: Z in bits [3:0] (4 bits), address in bits [31:4]
     const uint32_t atBranch = MakeBranchWordAT(physAddr, 2);
-    EXPECT_EQ(atBranch >> 28, 2u) << "AT: Z in upper nibble";
+    EXPECT_EQ(atBranch & 0xF, 2u) << "AT: Z in low nibble";
+    EXPECT_EQ(atBranch & 0xFFFFFFF0u, physAddr & 0xFFFFFFF0u) << "AT: address not shifted";
 
     // AR: Z in bit [0] (1 bit), address in bits [31:4]
     const uint32_t arBranch = MakeBranchWordAR(physAddr, true);

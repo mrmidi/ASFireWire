@@ -36,6 +36,10 @@ bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span
         ASFW_LOG(Async, "BufferRing::Initialize: buffer storage too small (%zu < %zu)", buffers.size(), bufferCount * bufferSize);
         return false;
     }
+    if (bufferSize > 0xFFFFu) {
+        ASFW_LOG(Async, "BufferRing::Initialize: buffer size too large for OHCI reqCount (%zu)", bufferSize);
+        return false;
+    }
     if (reinterpret_cast<uintptr_t>(descriptors.data()) % 16 != 0) {
         ASFW_LOG(Async, "BufferRing::Initialize: descriptors not 16-byte aligned");
         return false;
@@ -50,15 +54,18 @@ bool BufferRing::Initialize(std::span<HW::OHCIDescriptor> descriptors, std::span
     for (size_t i = 0; i < bufferCount; ++i) {
         auto& desc = descriptors_[i];
         desc = HW::OHCIDescriptor{};
-        constexpr uint32_t kCmdInputMore = HW::OHCIDescriptor::kCmdInputMore;
-        constexpr uint32_t kKeyStandard = HW::OHCIDescriptor::kKeyStandard;
-        constexpr uint32_t kS = 1u;  
-        constexpr uint32_t kIntAlways = HW::OHCIDescriptor::kIntAlways;
-        constexpr uint32_t kBranchAlways = HW::OHCIDescriptor::kBranchAlways;
-        desc.control = (kCmdInputMore << 28) | (kKeyStandard << 25) | (kS << 24) | (kIntAlways << 22) | (kBranchAlways << 20) | static_cast<uint32_t>(bufferSize);
+        // cross-validated with Linux: ohci.c:1102-1107
+        desc.control = HW::OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(bufferSize),
+            .command = HW::OHCIDescriptor::kCmdInputMore,
+            .key = HW::OHCIDescriptor::kKeyStandard,
+            .interruptBits = HW::OHCIDescriptor::kIntAlways,
+            .branchBits = HW::OHCIDescriptor::kBranchAlways,
+        });
+        desc.control |= (1u << (HW::OHCIDescriptor::kStatusShift +
+                                HW::OHCIDescriptor::kControlHighShift));
         desc.dataAddress = static_cast<uint32_t>(i * bufferSize);
-        size_t nextIndex = (i + 1) % bufferCount;
-        desc.branchWord = (1u << 28) | (static_cast<uint32_t>(nextIndex) << 4);
+        desc.branchWord = 0; // Finalize() patches real IOVA branch words once DMA addresses are known.
         HW::AR_init_status(desc, static_cast<uint16_t>(bufferSize));
     }
     ASFW_LOG(Async, "BufferRing initialized: %zu buffers x %zu bytes", bufferCount, bufferSize);

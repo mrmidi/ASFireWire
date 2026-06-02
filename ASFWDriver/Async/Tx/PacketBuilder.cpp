@@ -146,7 +146,7 @@ std::size_t PacketBuilder::BuildReadQuadlet(const ReadParams& params,
 
     // OHCI INTERNAL AT Data Format (host byte order) - controller converts to wire format
     // CRITICAL FIX: tLabel must be at bits[15:10], NOT bits[23:18]!
-    // Per ExtractTLabel in OHCI_HW_Specs.hpp and Apple reference implementation.
+    // Per ExtractTLabel in OHCIDescriptors.hpp.
     //
     // Quadlet 0: [source_bus_ID:1][reserved:4][spd:3][tl:6][rt:2][tCode:4][reserved:4]
     //            bit[31]           [30:27]     [26:24] [23:18] [9:8] [7:4]   [3:0]

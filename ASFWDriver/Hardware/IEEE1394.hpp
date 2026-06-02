@@ -38,17 +38,15 @@ namespace ASFW::Async::HW {
     return (static_cast<uint32_t>(dataLength & 0xFFFF) << Driver::kIEEE1394_DataLengthShift) |
            (static_cast<uint32_t>(extendedTCode & 0xFFFF) << Driver::kIEEE1394_ExtendedTCodeShift);
 }
+// cross-validated with Linux: packet-header-definitions.h:12-30 packet-serdes-test.c:67-108
+static_assert(BuildIEEE1394Quadlet0(0xffc0u, 0x3cu, 0x1u, Driver::kIEEE1394_TCodeReadQuadRequest, 0u) ==
+              0xffc0f140u);
+static_assert(BuildIEEE1394Quadlet1(0xffc1u, 0xffffu) == 0xffc1ffffu);
+static_assert(BuildIEEE1394Quadlet3Block(0x0020u, 0u) == 0x00200000u);
 
+// Constants holder only. Do not reinterpret DMA bytes as this type; packet
+// builders/parsers use explicit quadlet construction so endian order is visible.
 struct AsyncRequestHeader {
-    uint32_t control{0};
-    uint16_t destinationID{0};
-    uint16_t destinationOffsetHigh{0};
-    uint32_t destinationOffsetLow{0};
-    union {
-        uint32_t quadletData;
-        uint16_t dataLength;
-        uint16_t extendedTCode;
-    } payload_info{};
     static constexpr uint32_t kLabelShift = 10;
     static constexpr uint32_t kRetryShift = 8;
     static constexpr uint32_t kTcodeShift = 4;
@@ -60,24 +58,16 @@ struct AsyncRequestHeader {
     static constexpr uint8_t kTcodeStreamData = Driver::kIEEE1394_TCodeIsochronousBlock;
     static constexpr uint8_t kTcodePhyPacket = Driver::kIEEE1394_TCodePhyPacket;
 };
-
-struct __attribute__((packed)) AsyncReceiveHeader {
-    uint16_t destinationID{0};
-    uint8_t  tl_tcode_rt{0};
-    uint8_t  headerControl{0};
-    uint16_t sourceID{0};
-    uint16_t destinationOffsetHigh{0};
-    uint32_t destinationOffsetLow{0};
-    static constexpr uint8_t kTLabelMask = 0xFC;
-    static constexpr uint8_t kTLabelShift = 2;
-    static constexpr uint8_t kTCodeMask = 0x0F;
-    static constexpr uint8_t kRetryShift = 6;
-};
-
-struct __attribute__((packed)) ARPacketTrailer {
-    uint16_t timeStamp{0};
-    uint16_t xferStatus{0};
-};
+static_assert(AsyncRequestHeader::kLabelShift == Driver::kIEEE1394_TLabelShift);
+static_assert(AsyncRequestHeader::kRetryShift == Driver::kIEEE1394_RetryShift);
+static_assert(AsyncRequestHeader::kTcodeShift == Driver::kIEEE1394_TCodeShift);
+static_assert(AsyncRequestHeader::kTcodeWriteQuad == 0x0);
+static_assert(AsyncRequestHeader::kTcodeWriteBlock == 0x1);
+static_assert(AsyncRequestHeader::kTcodeReadQuad == 0x4);
+static_assert(AsyncRequestHeader::kTcodeReadBlock == 0x5);
+static_assert(AsyncRequestHeader::kTcodeLockRequest == 0x9);
+static_assert(AsyncRequestHeader::kTcodeStreamData == 0xA);
+static_assert(AsyncRequestHeader::kTcodePhyPacket == 0xE);
 
 } // namespace ASFW::Async::HW
 
@@ -87,6 +77,8 @@ namespace ASFW::Driver {
 constexpr uint8_t kPhyReg4Address = 4;
 constexpr uint8_t kPhyLinkActive = 0x80;  // Bit 7
 constexpr uint8_t kPhyContender  = 0x40;  // Bit 6
+static_assert(kPhyLinkActive == 0x80 && kPhyContender == 0x40,
+              "PHY reg4 link/contender bits must match Linux core.h");
 // PHY gap count mask (register-level value: lower 6 bits)
 constexpr uint8_t kPhyGapCountMask = 0x3Fu; // 6-bit gap count field in PHY reg1
 
@@ -95,14 +87,20 @@ constexpr uint8_t kPhyGapCountMask = 0x3Fu; // 6-bit gap count field in PHY reg1
 constexpr uint8_t kPhyReg1Address = 1;
 constexpr uint8_t kPhyRootHoldOff = 0x80;       // Bit 7
 constexpr uint8_t kPhyInitiateBusReset = 0x40;  // Bit 6
+static_assert(kPhyGapCountMask == 0x3F && kPhyRootHoldOff == 0x80 &&
+              kPhyInitiateBusReset == 0x40,
+              "PHY reg1 gap/RHB/IBR bits must match IEEE 1394 PHY register layout");
 
-// PHY register 5: IEEE 1394a enhancement bits
-// Bit 6 = SBR (Initiate Short Bus Reset) per IEEE 1394a §7.2.2
-// Bit 6 = Enab_accel (accelerated arbitration)
-// Bit 5 = Enab_multi (multi-speed packet concatenation)
+// PHY register 5: IEEE 1394a enhancement bits.
+// cross-validated with Linux: core.h:39-44 ohci.c:2372-2377
+// Bit 6 is SBR (Initiate Short Bus Reset); acceleration/multi are low bits.
 // Per Linux firewire_ohci configure_1394a_enhancements(): both bits are set together.
 constexpr uint8_t kPhyReg5Address = 5;
-constexpr uint8_t kPhyEnableAcceleration = 0x40;  // Bit 6 (also SBR when written standalone)
+constexpr uint8_t kPhyEnableAcceleration = 0x02;
 constexpr uint8_t kPhyInitiateShortBusReset = 0x40; // Bit 6 = SBR (IEEE 1394a)
-constexpr uint8_t kPhyEnableMulti = 0x20;            // Bit 5
+constexpr uint8_t kPhyEnableMulti = 0x01;
+static_assert(kPhyEnableAcceleration == 0x02 && kPhyEnableMulti == 0x01,
+              "PHY reg5 IEEE 1394a enhancement bits must match Linux core.h");
+static_assert(kPhyInitiateShortBusReset != kPhyEnableAcceleration,
+              "PHY reg5 SBR must not alias accelerated arbitration");
 }

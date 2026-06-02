@@ -74,6 +74,22 @@ enum class Register32 : uint32_t {
     kRegisterSpaceEnd = 0x1000
 };
 
+static_assert(static_cast<uint32_t>(Register32::kVersion) == 0x000);
+static_assert(static_cast<uint32_t>(Register32::kATRetries) == 0x008);
+static_assert(static_cast<uint32_t>(Register32::kCSRControl) == 0x014);
+static_assert(static_cast<uint32_t>(Register32::kConfigROMHeader) == 0x018);
+static_assert(static_cast<uint32_t>(Register32::kHCControlSet) == 0x050);
+static_assert(static_cast<uint32_t>(Register32::kSelfIDBuffer) == 0x064);
+static_assert(static_cast<uint32_t>(Register32::kIntEventSet) == 0x080);
+static_assert(static_cast<uint32_t>(Register32::kIntMaskSet) == 0x088);
+static_assert(static_cast<uint32_t>(Register32::kInitialChannelsAvailableHi) == 0x0B4);
+static_assert(static_cast<uint32_t>(Register32::kLinkControlSet) == 0x0E0);
+static_assert(static_cast<uint32_t>(Register32::kNodeID) == 0x0E8);
+static_assert(static_cast<uint32_t>(Register32::kPhyControl) == 0x0EC);
+static_assert(static_cast<uint32_t>(Register32::kCycleTimer) == 0x0F0);
+static_assert(static_cast<uint32_t>(Register32::kAsReqFilterHiSet) == 0x100);
+static_assert(static_cast<uint32_t>(Register32::kPhyUpperBound) == 0x120);
+
 [[nodiscard]] constexpr Register32 Register32FromOffsetUnchecked(uint32_t offset) noexcept {
     // Some OHCI registers (DMA context blocks) are computed at runtime.
     // This helper isolates the unavoidable integer->enum cast from call sites.
@@ -93,14 +109,27 @@ struct HCControlBits {
     static constexpr uint32_t kNoByteSwap = 1u << 30;
     static constexpr uint32_t kBibImageValid = 1u << 31;
 };
+static_assert(HCControlBits::kSoftReset == 0x00010000u);
+static_assert(HCControlBits::kLinkEnable == 0x00020000u);
+static_assert(HCControlBits::kPostedWriteEnable == 0x00040000u);
+static_assert(HCControlBits::kLPS == 0x00080000u);
+static_assert(HCControlBits::kAPhyEnhanceEnable == 0x00400000u);
+static_assert(HCControlBits::kProgramPhyEnable == 0x00800000u);
+static_assert(HCControlBits::kNoByteSwap == 0x40000000u);
+static_assert(HCControlBits::kBibImageValid == 0x80000000u);
 
 /// \brief NodeID register bit definitions (OHCI 1.1 §5.9, Table 5-15).
 struct NodeIDBits {
     static constexpr uint32_t kIDValid = 1u << 31;     ///< NodeID fields valid (set after Self-ID)
     static constexpr uint32_t kRoot = 1u << 30;        ///< This controller is the bus root
     static constexpr uint32_t kCPS = 1u << 27;         ///< Cable power status
+    static constexpr uint32_t kBusNumberMask = 0x0000FFC0u; ///< [15:6] bus number
     static constexpr uint32_t kNodeNumberMask = 0x3Fu; ///< [5:0] physical node number
 };
+static_assert(NodeIDBits::kIDValid == 0x80000000u);
+static_assert(NodeIDBits::kRoot == 0x40000000u);
+static_assert(NodeIDBits::kBusNumberMask == 0x0000FFC0u);
+static_assert(NodeIDBits::kNodeNumberMask == 0x0000003Fu);
 
 /// \brief LinkControl register bit definitions (OHCI 1.1 §5.10, Table 5-17).
 ///
@@ -160,6 +189,10 @@ struct LinkControlBits {
     // source; soft reset no effect. static constexpr uint32_t kTag1SyncFilterLock = 1u << <b>; ///<
     // rs: HW clears on hard reset; soft reset has no effect.
 };
+static_assert(LinkControlBits::kRcvSelfID == 0x00000200u);
+static_assert(LinkControlBits::kRcvPhyPkt == 0x00000400u);
+static_assert(LinkControlBits::kCycleTimerEnable == 0x00100000u);
+static_assert(LinkControlBits::kCycleMaster == 0x00200000u);
 
 struct IntEventBits {
     static constexpr uint32_t kReqTxComplete = 1u << 0;
@@ -192,6 +225,21 @@ struct IntEventBits {
     static constexpr uint32_t kVendorSpecific = 1u << 30; // Vendor-specific event
     // Bit 31 is NOT an IntEvent bit; it belongs to IntMask (masterIntEnable)
 };
+static_assert(IntEventBits::kReqTxComplete == 0x00000001u);
+static_assert(IntEventBits::kRespTxComplete == 0x00000002u);
+static_assert(IntEventBits::kARRQ == 0x00000004u);
+static_assert(IntEventBits::kARRS == 0x00000008u);
+static_assert(IntEventBits::kRQPkt == 0x00000010u);
+static_assert(IntEventBits::kRSPkt == 0x00000020u);
+static_assert(IntEventBits::kSelfIDComplete == 0x00010000u);
+static_assert(IntEventBits::kBusReset == 0x00020000u);
+static_assert(IntEventBits::kRegAccessFail == 0x00040000u);
+static_assert(IntEventBits::kPhy == 0x00080000u);
+static_assert(IntEventBits::kCycle64Seconds == 0x00200000u);
+static_assert(IntEventBits::kCycleInconsistent == 0x00800000u);
+static_assert(IntEventBits::kUnrecoverableError == 0x01000000u);
+static_assert(IntEventBits::kCycleTooLong == 0x02000000u);
+static_assert(IntEventBits::kPhyRegRcvd == 0x04000000u);
 
 // IntMask register bits (OHCI §5.7)
 // IntMask has same layout as IntEvent (bits 0-30) plus bit 31 for master enable.
@@ -199,6 +247,7 @@ struct IntEventBits {
 struct IntMaskBits {
     static constexpr uint32_t kMasterIntEnable = 1u << 31; // Master interrupt enable (OHCI §5.7)
 };
+static_assert(IntMaskBits::kMasterIntEnable == 0x80000000u);
 
 // Policy: Baseline interrupt mask for normal operation.
 // Includes all critical events we want delivered during steady-state operation.
@@ -231,6 +280,11 @@ struct SelfIDCountBits {
     static constexpr uint32_t kSizeMask = 0x000007FCu;
     static constexpr uint32_t kSizeShift = 2;
 };
+static_assert(SelfIDCountBits::kError == 0x80000000u);
+static_assert(SelfIDCountBits::kGenerationMask == 0x00FF0000u);
+static_assert(SelfIDCountBits::kGenerationShift == 16);
+static_assert(SelfIDCountBits::kSizeMask == 0x000007FCu);
+static_assert(SelfIDCountBits::kSizeShift == 2);
 
 } // namespace ASFW::Driver
 
@@ -286,3 +340,11 @@ struct DMAContextHelpers {
     // IR Context Control bits
     static constexpr uint32_t kIRContextMultiChannelMode = 0x10000000u; // Bit 28
 };
+
+static_assert(DMAContextHelpers::AsReqTrContextBase == 0x180);
+static_assert(DMAContextHelpers::AsRspTrContextBase == 0x1A0);
+static_assert(DMAContextHelpers::AsReqRcvContextBase == 0x1C0);
+static_assert(DMAContextHelpers::AsRspRcvContextBase == 0x1E0);
+static_assert(DMAContextHelpers::IsoXmitContextBase(3) == 0x230);
+static_assert(DMAContextHelpers::IsoRcvContextBase(3) == 0x460);
+static_assert(DMAContextHelpers::kIRContextMultiChannelMode == 0x10000000u);
