@@ -1203,6 +1203,26 @@ target_include_directories(AM824EncoderTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(AM824EncoderTests)
 
+# RawPcm24In32 Tests
+add_executable(RawPcm24In32Tests
+    "${ASFW_TESTS_DIR}/RawPcm24In32Tests.cpp"
+)
+
+target_link_libraries(RawPcm24In32Tests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(RawPcm24In32Tests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(RawPcm24In32Tests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(RawPcm24In32Tests)
+
+
 # CIP Header Builder Tests
 add_executable(CIPHeaderBuilderTests
     "${ASFW_TESTS_DIR}/CIPHeaderBuilderTests.cpp"
