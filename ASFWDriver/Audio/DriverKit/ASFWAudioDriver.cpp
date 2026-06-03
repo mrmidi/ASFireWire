@@ -17,7 +17,6 @@
 #include "../../AudioEngine/Direct/FireWireAudioEngine.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
-#include "../../Shared/TxSharedQueue.hpp"
 #include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
 
@@ -32,8 +31,6 @@
 #include <cstring>
 #include <limits>
 #include <utility>
-
-static constexpr bool kEnableZeroCopyOutputPath = false;  // temporary A/B gate
 
 // Report only hardware/presentation pipeline latency to HAL.
 // Software queue/ring buffering should not be baked into device latency fields.
@@ -70,7 +67,6 @@ struct AudioDriverDeviceState {
 struct AudioDriverSharedMemoryState {
     OSSharedPtr<IOBufferMemoryDescriptor> txQueueMem;
     OSSharedPtr<IOMemoryMap> txQueueMap;
-    ASFW::Shared::TxSharedQueueSPSC txQueueWriter;
     uint64_t txQueueBytes{0};
     bool txQueueValid{false};
 
@@ -82,7 +78,6 @@ struct AudioDriverSharedMemoryState {
 
     OSSharedPtr<IOBufferMemoryDescriptor> rxQueueMem;
     OSSharedPtr<IOMemoryMap> rxQueueMap;
-    ASFW::Shared::TxSharedQueueSPSC rxQueueReader;
     uint64_t rxQueueBytes{0};
     bool rxQueueValid{false};
 };

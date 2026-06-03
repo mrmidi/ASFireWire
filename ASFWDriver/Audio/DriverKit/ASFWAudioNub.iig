@@ -41,22 +41,7 @@ public:
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
 
-    // RPC method: AudioDriver calls this to get shared TX queue memory
-    // Returns a retained IOBufferMemoryDescriptor that the caller must release
-    // This is NOT LOCALONLY - it's callable across process boundaries
-    virtual kern_return_t CopyTransmitQueueMemory(
-        IOBufferMemoryDescriptor** outMemory,
-        uint64_t* outBytes);
-
-    // RPC method: AudioDriver calls this to get shared output audio buffer
-    // This buffer is used by IOUserAudioStream AND IT DMA for ZERO-COPY
-    // CoreAudio writes here, IT DMA reads directly - no intermediate copy!
-    virtual kern_return_t CopyOutputAudioMemory(
-        IOBufferMemoryDescriptor** outMemory,
-        uint64_t* outBytes);
-
     // RPC method: AudioDriver calls this to start/stop audio streaming for this GUID.
-    // This replaces the previous side-effect-based autostart from CopyTransmitQueueMemory().
     virtual kern_return_t StartAudioStreaming();
     virtual kern_return_t StopAudioStreaming();
 
@@ -64,17 +49,11 @@ public:
     ASFWDriver* GetParentDriver() const LOCALONLY;
 
     // Get the local mapping of the TX queue for IT context to consume
-    uint8_t* GetTxQueueLocalMapping() const LOCALONLY;
-    uint64_t GetTxQueueBytes() const LOCALONLY;
 
     // ZERO-COPY: Get the local mapping of output audio buffer for IT DMA
     // This is the same memory that IOUserAudioStream writes to
-    uint8_t* GetOutputAudioLocalMapping() const LOCALONLY;
-    uint64_t GetOutputAudioBytes() const LOCALONLY;
-    uint32_t GetOutputAudioFrameCapacity() const LOCALONLY;
     
     // Set channel count directly (called by AVCDiscovery after Create())
-    // Must be called before CopyTransmitQueueMemory / CopyOutputAudioMemory
     void SetChannelCount(uint32_t channels) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;
     uint32_t GetInputChannelCount() const LOCALONLY;
@@ -87,8 +66,6 @@ public:
 
     // ZERO-COPY SYNC: Write position tracking
     // Called by ASFWAudioDriver after each CoreAudio write completes
-    void UpdateOutputWritePosition(uint32_t newWriteFrame) LOCALONLY;
-    uint32_t GetOutputWritePosition() const LOCALONLY;
 
     // Direct duplex audio binding: same-process raw view of the ADK output/input buffers +
     // the shared transport control block. Registered by ASFWAudioDriver on direct-skeleton bind,
@@ -120,16 +97,7 @@ public:
 
     void* GetDirectAudioBindingSource() LOCALONLY;
 
-    // RPC method: AudioDriver calls this to get shared RX queue memory
-    // Returns a retained IOBufferMemoryDescriptor that the caller must release
-    virtual kern_return_t CopyRxQueueMemory(
-        IOBufferMemoryDescriptor** outMemory,
-        uint64_t* outBytes);
-
     // LOCALONLY methods for controller-side RX queue access (same process)
-    uint8_t* GetRxQueueLocalMapping() const LOCALONLY;
-    uint64_t GetRxQueueBytes() const LOCALONLY;
-    void EnsureRxQueueCreated() LOCALONLY;
 
     // Device identity for protocol bridge routing
     void SetGuid(uint64_t guid) LOCALONLY;

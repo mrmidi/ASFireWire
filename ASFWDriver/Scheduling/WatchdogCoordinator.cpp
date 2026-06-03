@@ -135,7 +135,6 @@ void WatchdogCoordinator::TickIsochReceive(
     }
     isochLogDivider_ = 0;
     if (isRunning && (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3)) {
-        isochReceiveContext->GetStreamProcessor().LogStatistics();
         isochReceiveContext->LogHardwareState();
     }
 }
