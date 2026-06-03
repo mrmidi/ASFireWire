@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -110,6 +111,21 @@ TEST(DirectAudioEngineTests, OutputReaderUsesClientCursorAvailability) {
 
     EXPECT_TRUE(engine.OutputReader().IsFrameRangeAvailable(1000, 128));
     EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(1100, 64));
+}
+
+TEST(DirectAudioEngineTests, OutputReaderRejectsOverflowingFrameRange) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 16> input{};
+    std::array<int32_t, 16> output{};
+    FireWireAudioEngine engine{};
+
+    const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
+    ASSERT_TRUE(engine.Bind(binding));
+
+    constexpr uint64_t kMaxFrame = std::numeric_limits<uint64_t>::max();
+
+    EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(kMaxFrame - 1, 4));
 }
 
 } // namespace

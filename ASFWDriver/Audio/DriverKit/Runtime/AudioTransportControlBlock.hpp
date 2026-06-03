@@ -24,7 +24,9 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> discontinuities{0};
 
     void ResetForStart() noexcept {
-        generation.fetch_add(1, std::memory_order_acq_rel);
+        client.Reset();
+        device.Reset();
+        counters.Reset();
 
         inputProducedEndFrame.store(0, std::memory_order_release);
         outputConsumedEndFrame.store(0, std::memory_order_release);
@@ -32,6 +34,8 @@ struct AudioTransportControlBlock final {
         inputOverruns.store(0, std::memory_order_release);
         outputUnderruns.store(0, std::memory_order_release);
         discontinuities.store(0, std::memory_order_release);
+
+        generation.fetch_add(1, std::memory_order_acq_rel);
     }
 };
 

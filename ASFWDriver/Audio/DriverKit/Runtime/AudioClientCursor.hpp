@@ -16,6 +16,18 @@ struct AudioClientCursor final {
     std::atomic<uint32_t> outputWriteEndFrames{0};
     std::atomic<uint64_t> outputClientWriteEndFrame{0};
 
+    void Reset() noexcept {
+        inputBeginReadSampleFrame.store(0, std::memory_order_relaxed);
+        inputBeginReadHostTicks.store(0, std::memory_order_relaxed);
+        inputBeginReadFrames.store(0, std::memory_order_relaxed);
+        inputClientReadEndFrame.store(0, std::memory_order_release);
+
+        outputWriteEndSampleFrame.store(0, std::memory_order_relaxed);
+        outputWriteEndHostTicks.store(0, std::memory_order_relaxed);
+        outputWriteEndFrames.store(0, std::memory_order_relaxed);
+        outputClientWriteEndFrame.store(0, std::memory_order_release);
+    }
+
     void PublishBeginRead(uint64_t sampleFrame,
                           uint64_t hostTicks,
                           uint32_t frameCount) noexcept {
