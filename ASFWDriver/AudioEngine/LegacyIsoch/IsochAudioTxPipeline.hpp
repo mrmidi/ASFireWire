@@ -31,7 +31,7 @@ namespace ASFW::Isoch {
 /// into near-HW slots (latency control).
 class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider, public Tx::IIsochTxAudioInjector {
 public:
-    static constexpr bool kEnableDirectTxHardwarePath = false;
+    static constexpr bool kEnableDirectTxHardwarePath = true;
 
     struct Counters {
         std::atomic<uint64_t> resyncApplied{0};

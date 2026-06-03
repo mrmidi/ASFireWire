@@ -23,6 +23,8 @@
 
 class ASFWDriver;
 
+namespace ASFW { namespace Audio { namespace Runtime { struct AudioTransportControlBlock; } } }
+
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
 // Properties set by ASFWDriver:
 //   - ASFWDeviceName (OSString): Device name from config ROM
@@ -87,6 +89,26 @@ public:
     void UpdateOutputWritePosition(uint32_t newWriteFrame) LOCALONLY;
     uint32_t GetOutputWritePosition() const LOCALONLY;
 
+    // Direct TX: same-process registration of the ADK output buffer view +
+    // shared transport control block, so the isoch TX path can read the exact
+    // frames CoreAudio writes and the WriteEnd cursor it publishes. Raw pointers
+    // are valid because both IOService classes share one dext server process
+    // (identical IOUserServerName). ASFWAudioDriver registers on bind, clears on
+    // Stop; ASFWDriver fetches at StartIsochTransmit.
+    void SetDirectAudioBinding(const int32_t* outputBase,
+                               uint64_t outputBytes,
+                               uint32_t outputFrames,
+                               uint32_t outputChannels,
+                               ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+                               uint32_t sampleRateHz) LOCALONLY;
+    void ClearDirectAudioBinding() LOCALONLY;
+    bool GetDirectAudioBinding(const int32_t** outBase,
+                               uint64_t* outBytes,
+                               uint32_t* outFrames,
+                               uint32_t* outChannels,
+                               ASFW::Audio::Runtime::AudioTransportControlBlock** outControl,
+                               uint32_t* outSampleRateHz) const LOCALONLY;
+
     // RPC method: AudioDriver calls this to get shared RX queue memory
     // Returns a retained IOBufferMemoryDescriptor that the caller must release
     virtual kern_return_t CopyRxQueueMemory(
@@ -136,6 +158,16 @@ struct ASFWAudioNub_IVars {
     // ZERO-COPY SYNC: Atomic write position updated by ASFWAudioDriver
     // IT Context reads this to know safe read zone
     std::atomic<uint32_t> outputAudioWriteFrame{0};
+
+    // Direct TX binding: same-process raw view of the ADK output buffer + the
+    // shared transport control block (see SetDirectAudioBinding). Registered by
+    // ASFWAudioDriver on direct-skeleton bind, cleared on Stop.
+    const int32_t* directOutputBase{nullptr};
+    uint64_t directOutputBytes{0};
+    uint32_t directOutputFrames{0};
+    uint32_t directOutputChannels{0};
+    ASFW::Audio::Runtime::AudioTransportControlBlock* directControl{nullptr};
+    uint32_t directSampleRateHz{0};
 
     // RX shared memory queue (mirrors TX queue pattern)
     IOBufferMemoryDescriptor* rxQueueMem{nullptr};

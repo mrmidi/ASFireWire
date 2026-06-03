@@ -843,8 +843,27 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
     const uint32_t streamModeRaw = nub->GetStreamMode();
 
+    // Direct TX: fetch the ADK-registered output buffer view + shared transport
+    // control block (same dext process; raw pointers valid). When present, the
+    // isoch path reads CoreAudio's frames directly; otherwise it falls back to
+    // the legacy queue path. Re-fetched every start.
+    const int32_t* directBase = nullptr;
+    uint64_t directBytes = 0;
+    uint32_t directFrames = 0;
+    uint32_t directChannels = 0;
+    ASFW::Audio::Runtime::AudioTransportControlBlock* directControl = nullptr;
+    uint32_t directRate = 0;
+    const bool directReady = nub->GetDirectAudioBinding(&directBase, &directBytes, &directFrames,
+                                                        &directChannels, &directControl, &directRate);
+    ASFW_LOG(Controller,
+             "[Isoch] StartIsochTransmit direct binding %{public}s base=%p frames=%u ch=%u rate=%u",
+             directReady ? "ready" : "absent",
+             static_cast<const void*>(directBase), directFrames, directChannels, directRate);
+
     return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
-                                   am824Slots, wireFormat, txMem, txBytes, nullptr, 0, 0);
+                                   am824Slots, wireFormat, txMem, txBytes, nullptr, 0, 0,
+                                   directBase, directBytes, directFrames, directControl,
+                                   directRate, directReady);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {
