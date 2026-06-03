@@ -3,6 +3,7 @@
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 
 #include <cstdint>
+#include <limits>
 
 namespace ASFW::AudioEngine::Direct {
 
@@ -42,6 +43,11 @@ public:
         }
 
         const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
+        constexpr uint64_t kMaxFrame = std::numeric_limits<uint64_t>::max();
+        if (firstFrame > (kMaxFrame - frameCount)) {
+            return false;
+        }
+
         return writtenEnd >= (firstFrame + frameCount);
     }
 

@@ -21,6 +21,23 @@ struct AudioRtCounters final {
 
     std::atomic<uint64_t> ztsPublished{0};
 
+    void Reset() noexcept {
+        ioBeginReadCount.store(0, std::memory_order_relaxed);
+        ioWriteEndCount.store(0, std::memory_order_relaxed);
+
+        txPackets.store(0, std::memory_order_relaxed);
+        txDataPackets.store(0, std::memory_order_relaxed);
+        txNoDataPackets.store(0, std::memory_order_relaxed);
+        txSilenceSubstitutions.store(0, std::memory_order_relaxed);
+        txUnderruns.store(0, std::memory_order_relaxed);
+
+        rxPackets.store(0, std::memory_order_relaxed);
+        rxDecodedFrames.store(0, std::memory_order_relaxed);
+        rxDiscontinuities.store(0, std::memory_order_relaxed);
+
+        ztsPublished.store(0, std::memory_order_relaxed);
+    }
+
     void CountBeginRead() noexcept {
         ioBeginReadCount.fetch_add(1, std::memory_order_relaxed);
     }

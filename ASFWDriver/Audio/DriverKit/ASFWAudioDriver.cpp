@@ -44,21 +44,6 @@ static constexpr uint32_t kReportedDeviceLatencyFrames = 24;  // ~0.5ms @ 48kHz
 static constexpr uint32_t kReportedSafetyOffsetFrames =
     ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
 
-namespace {
-
-const char* AudioOperationName(IOUserAudioIOOperation operation) {
-    switch (operation) {
-        case IOUserAudioIOOperationBeginRead:
-            return "BeginRead";
-        case IOUserAudioIOOperationWriteEnd:
-            return "WriteEnd";
-        default:
-            return "Other";
-    }
-}
-
-} // namespace
-
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
@@ -618,19 +603,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         
         const uint64_t callbackOrdinal =
             driverIvars->runtime.ioMetrics.callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
-
-        // Triage: which IO operations does CoreAudio actually drive? BeginRead is the
-        // only site that latches RX startup alignment; if it never appears, ZTS stays in
-        // synthetic fallback forever (playback-only client → no input pull).
-        if (callbackOrdinal <= 16) {
-            ASFW_LOG(Audio,
-                     "IO op=%{public}s cb=%llu frames=%u sample=%llu rxValid=%d",
-                     AudioOperationName(operation),
-                     callbackOrdinal,
-                     ioBufferFrameSize,
-                     sampleTime,
-                     driverIvars->shared.rxQueueValid);
-        }
 
         if (driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire)) {
             auto& control = driverIvars->runtime.directAudioControl;

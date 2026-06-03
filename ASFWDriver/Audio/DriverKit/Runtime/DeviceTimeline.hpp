@@ -11,6 +11,13 @@ struct DeviceTimeline final {
     std::atomic<uint32_t> hostNanosPerSampleQ8{0};
     std::atomic<uint64_t> generation{0};
 
+    void Reset() noexcept {
+        sampleFrame.store(0, std::memory_order_relaxed);
+        hostTicks.store(0, std::memory_order_relaxed);
+        hostNanosPerSampleQ8.store(0, std::memory_order_relaxed);
+        generation.store(0, std::memory_order_release);
+    }
+
     void Publish(uint64_t inSampleFrame,
                  uint64_t inHostTicks,
                  uint32_t inHostNanosPerSampleQ8) noexcept {

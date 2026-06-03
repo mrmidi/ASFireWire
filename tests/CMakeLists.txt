@@ -1379,6 +1379,7 @@ gtest_discover_tests(AudioIOPathTests)
 add_executable(AudioDirectRuntimeTests
     "${ASFW_TESTS_DIR}/AudioRuntime/AudioStreamMemoryTests.cpp"
     "${ASFW_TESTS_DIR}/AudioRuntime/AudioClientCursorTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioRuntime/AudioTransportControlBlockTests.cpp"
     "${ASFW_TESTS_DIR}/AudioRuntime/AudioGraphBindingTests.cpp"
     "${ASFW_TESTS_DIR}/AudioRuntime/DirectAudioEngineTests.cpp"
 )
