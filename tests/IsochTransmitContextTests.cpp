@@ -331,7 +331,7 @@ TEST(IsochTransmitContext, TxPipelineMatchesFocusritePlaybackSytSequence) {
     EXPECT_EQ(pkt4Dbc, 0x18);
 }
 
-TEST(IsochTransmitContext, PrimeSyncFailsWhenRxSeedIsStale) {
+TEST(IsochTransmitContext, PrimeSyncSucceedsWithNominalPhaseWhenRxSeedIsStale) {
     constexpr uint32_t kQueueChannels = 8;
     constexpr uint32_t kAm824Slots = 9;
     constexpr uint32_t kCapacityFrames = 256;
@@ -365,7 +365,12 @@ TEST(IsochTransmitContext, PrimeSyncFailsWhenRxSeedIsStale) {
     pipeline.SetExternalSyncBridge(&bridge);
     pipeline.ResetForStart();
     pipeline.SetCycleTrackingValid(true);
-    EXPECT_FALSE(pipeline.PrimeSyncFromExternalBridge());
+    EXPECT_TRUE(pipeline.PrimeSyncFromExternalBridge());
+
+    const auto pkt0 = pipeline.NextSilentPacket(/*transmitCycle=*/5150);
+    const auto pkt1 = pipeline.NextSilentPacket(/*transmitCycle=*/5151);
+    EXPECT_TRUE(pkt1.isData);
+    EXPECT_EQ(ReadPacketSyt(pkt1), 0x0000);
 }
 
 TEST(IsochTransmitContext, PrimeSyncSucceedsWithFreshQualifiedSeedAfterLiveClockDrops) {

@@ -529,6 +529,20 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         
         const uint64_t callbackOrdinal =
             driverIvars->runtime.ioMetrics.callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
+
+        // Triage: which IO operations does CoreAudio actually drive? BeginRead is the
+        // only site that latches RX startup alignment; if it never appears, ZTS stays in
+        // synthetic fallback forever (playback-only client → no input pull).
+        if (callbackOrdinal <= 16) {
+            ASFW_LOG(Audio,
+                     "IO op=%{public}s cb=%llu frames=%u sample=%llu rxValid=%d",
+                     AudioOperationName(operation),
+                     callbackOrdinal,
+                     ioBufferFrameSize,
+                     sampleTime,
+                     driverIvars->shared.rxQueueValid);
+        }
+
         ASFW::Isoch::Audio::AudioIOPathState ioPathState{
             .inputBuffer = driverIvars->inputBuffer.get(),
             .outputBuffer = driverIvars->outputBuffer.get(),

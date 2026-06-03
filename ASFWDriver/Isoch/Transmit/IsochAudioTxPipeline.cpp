@@ -308,7 +308,7 @@ bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
         }();
         ASFW_LOG(Isoch,
                  "IT: SYT seed unavailable (%{public}s bridge=%d active=%d established=%d startupReady=%d seq=%u "
-                 "syt=0x%04x fdf=0x%02x dbs=%u ageUs=%llu staleUs=%llu)",
+                 "syt=0x%04x fdf=0x%02x dbs=%u ageUs=%llu staleUs=%llu). Bootstrapping with nominal phase (0x0000).",
                  statusName,
                  syncState.bridgePresent,
                  syncState.active,
@@ -320,7 +320,8 @@ bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
                  syncState.rxDbs,
                  syncState.ageUsec,
                  syncState.staleThresholdUsec);
-        return false;
+        sytGenerator_.seedFromRxSyt(0x0000);
+        return true;
     }
 
     sytGenerator_.seedFromRxSyt(syncState.rxSyt);

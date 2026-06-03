@@ -585,7 +585,7 @@ void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time) {
         publishedHostTime = currentHostTime;
         ASFW_LOG_RL(Audio,
                     "zts/fallback",
-                    1000,
+                    30000,
                     OS_LOG_TYPE_DEFAULT,
                     "ZTS fallback synthetic sample=%llu host=%llu q8=%u aligned=%d",
                     publishedSampleTime,

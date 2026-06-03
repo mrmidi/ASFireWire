@@ -76,6 +76,17 @@ void MaybeLatchTransportStartupAlignment(AudioIOPathState& state, uint64_t sampl
 
     const auto transportTiming = state.rxQueueReader->ReadTransportTiming();
     if (!transportTiming.valid || transportTiming.anchorHostTicks == 0) {
+        ASFW_LOG_RL(Audio,
+                    "zts/align-wait",
+                    30000,
+                    OS_LOG_TYPE_DEFAULT,
+                    "trying to align startup timing from RX but transport not ready sample=%llu valid=%d anchorSample=%llu anchorHost=%llu q8=%u seq=%u",
+                    sampleTime,
+                    transportTiming.valid,
+                    transportTiming.anchorSampleFrame,
+                    transportTiming.anchorHostTicks,
+                    transportTiming.hostNanosPerSampleQ8,
+                    transportTiming.seq);
         return;
     }
 
@@ -124,7 +135,6 @@ kern_return_t HandleBeginRead(AudioIOPathState& state,
     }
 
     const uint64_t offsetBytes = uint64_t(offsetFrames) * sizeof(int32_t) * ch;
-    MaybeLatchTransportStartupAlignment(state, sampleTime);
     MaybeDrainRxStartup(state, ioBufferFrameSize, sampleTime);
 
     auto* pcmFirst = reinterpret_cast<int32_t*>(segment.address + offsetBytes);
@@ -296,6 +306,12 @@ kern_return_t HandleIOOperation(AudioIOPathState& state,
                                 IOUserAudioIOOperation operation, // NOLINT(bugprone-easily-swappable-parameters)
                                 uint32_t ioBufferFrameSize,
                                 uint64_t sampleTime) {
+    // Latch RX startup alignment from the device-wide HAL sample timeline regardless of
+    // direction. The anchor feeds the zero timestamp used by both playback and capture, so
+    // it must not depend on an input pull (BeginRead) that never arrives in output-only
+    // sessions. Any IO operation carries a usable sampleTime reference.
+    detail::MaybeLatchTransportStartupAlignment(state, sampleTime);
+
     switch (operation) {
         case IOUserAudioIOOperationBeginRead:
             return detail::HandleBeginRead(state, ioBufferFrameSize, sampleTime);

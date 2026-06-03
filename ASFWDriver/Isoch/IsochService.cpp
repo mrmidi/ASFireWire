@@ -25,80 +25,6 @@ struct SyncAllocationState {
 
 constexpr uint32_t kIRMWaitTimeoutMs = 5000;
 constexpr uint32_t kIRMWaitPollMs = 10;
-constexpr uint64_t kExternalSyncSeedStaleNanos =
-    ASFW::Isoch::Core::kExternalSyncStartupSeedGraceNanos;
-
-struct ExternalSyncSeedGateState {
-    bool ready{false};
-    bool active{false};
-    bool clockEstablished{false};
-    bool startupQualified{false};
-    uint32_t updateSeq{0};
-    uint16_t lastSyt{ASFW::Isoch::Core::ExternalSyncBridge::kNoInfoSyt};
-    uint8_t lastFdf{0};
-    uint8_t lastDbs{0};
-    uint64_t ageMs{0};
-    const char* reason{"unknown"};
-};
-
-[[nodiscard]] uint64_t ExternalSyncSeedStaleThresholdTicks() noexcept {
-    uint64_t staleThresholdTicks = ASFW::Timing::nanosToHostTicks(kExternalSyncSeedStaleNanos);
-    if (staleThresholdTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
-        staleThresholdTicks = ASFW::Timing::nanosToHostTicks(kExternalSyncSeedStaleNanos);
-    }
-    return staleThresholdTicks;
-}
-
-[[nodiscard]] ExternalSyncSeedGateState ReadExternalSyncSeedGateState(
-    const ASFW::Isoch::Core::ExternalSyncBridge& bridge) noexcept {
-    ExternalSyncSeedGateState state{};
-
-    const uint32_t packed = bridge.lastPackedRx.load(std::memory_order_acquire);
-    state.active = bridge.active.load(std::memory_order_acquire);
-    state.clockEstablished = bridge.clockEstablished.load(std::memory_order_acquire);
-    state.startupQualified = bridge.startupQualified.load(std::memory_order_acquire);
-    state.updateSeq = bridge.updateSeq.load(std::memory_order_acquire);
-    state.lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
-    state.lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
-    state.lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
-
-    if (!state.active) {
-        state.reason = "bridge-inactive";
-        return state;
-    }
-    if (!state.startupQualified) {
-        state.reason = "startup-not-qualified";
-        return state;
-    }
-
-    const uint64_t staleThresholdTicks = ExternalSyncSeedStaleThresholdTicks();
-    const uint64_t lastTicks = bridge.lastUpdateHostTicks.load(std::memory_order_acquire);
-    if (staleThresholdTicks == 0 || lastTicks == 0) {
-        state.reason = "missing-rx-timestamp";
-        return state;
-    }
-
-    const uint64_t nowTicks = mach_absolute_time();
-    if (nowTicks >= lastTicks) {
-        state.ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
-    }
-    if (nowTicks < lastTicks || (nowTicks - lastTicks) > staleThresholdTicks) {
-        state.reason = "stale-rx-syt";
-        return state;
-    }
-    if (state.lastSyt == ASFW::Isoch::Core::ExternalSyncBridge::kNoInfoSyt) {
-        state.reason = "rx-syt-noinfo";
-        return state;
-    }
-    if (state.lastFdf != ASFW::Isoch::Core::ExternalSyncBridge::kFdf48k) {
-        state.reason = "unsupported-fdf";
-        return state;
-    }
-
-    state.ready = true;
-    state.reason = "ok";
-    return state;
-}
 
 [[nodiscard]] kern_return_t AllocationStatusToIOReturn(const ASFW::IRM::AllocationStatus status) noexcept {
     using ASFW::IRM::AllocationStatus;
@@ -390,38 +316,6 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         IOSleep(5);
     }
 
-    // Validate the RX-seeded SYT bridge immediately before IT::Start(). The shared-TX
-    // fill wait above can consume most of the freshness budget, so gating earlier can
-    // admit a seed that is stale by the time Start() primes the ring.
-    constexpr uint32_t kSytGateTimeoutMs = 500;
-    constexpr uint32_t kSytGatePollMs = 5;
-    bool sytSeedReady = false;
-    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
-        if (ReadExternalSyncSeedGateState(externalSyncBridge_).ready) {
-            sytSeedReady = true;
-            break;
-        }
-        IOSleep(kSytGatePollMs);
-    }
-    if (!sytSeedReady) {
-        const auto gateState = ReadExternalSyncSeedGateState(externalSyncBridge_);
-        ASFW_LOG(Controller,
-                 "[Isoch] ❌ StartTransmit timeout: missing usable IR SYT seed (waited %ums reason=%{public}s seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d startupReady=%d)",
-                 kSytGateTimeoutMs,
-                 gateState.reason,
-                 gateState.updateSeq,
-                 gateState.lastSyt,
-                 gateState.lastFdf,
-                 gateState.lastDbs,
-                 gateState.ageMs,
-                 gateState.active,
-                 gateState.clockEstablished,
-                 gateState.startupQualified);
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
-        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
-        txQueue_.Reset();
-        return kIOReturnTimeout;
-    }
 
     result = isochTransmitContext_->Start();
     if (result != kIOReturnSuccess) {
