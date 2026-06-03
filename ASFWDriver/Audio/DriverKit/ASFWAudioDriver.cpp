@@ -14,6 +14,9 @@
 #include "Config/AudioDriverConfig.hpp"
 #include "LegacyBridge/AudioIOPath.hpp"
 #include "LegacyBridge/AudioSharedMemoryBridge.hpp"
+#include "Runtime/AudioGraphBinding.hpp"
+#include "Runtime/AudioTransportControlBlock.hpp"
+#include "../../AudioEngine/Direct/FireWireAudioEngine.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
@@ -29,6 +32,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 static constexpr bool kEnableZeroCopyOutputPath = false;  // temporary A/B gate
@@ -115,6 +119,11 @@ struct AudioDriverRuntimeState {
     ASFW::Isoch::Audio::ClockSyncState clockSync;
     ASFW::Isoch::Audio::ZeroCopyTimelineState zeroCopyTimeline;
     bool rxStartupDrained{false};
+
+    ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
+    ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
+    ASFW::AudioEngine::Direct::FireWireAudioEngine directAudioEngine;
+    std::atomic<bool> directAudioSkeletonBound{false};
 };
 
 namespace {
@@ -147,6 +156,10 @@ void LogIoCallbackMetrics(AudioDriverRuntimeState& runtime,
     const bool frameSizeChanged = (previousFrameSize != 0) && (previousFrameSize != ioBufferFrameSize);
     const bool sampleTimeWentBackwards = (previousSampleTime != 0) && (sampleTime < previousSampleTime);
     const bool firstFewCallbacks = callbackOrdinal <= 8;
+    static_cast<void>(previousOperation);
+    static_cast<void>(frameSizeChanged);
+    static_cast<void>(sampleTimeWentBackwards);
+    static_cast<void>(firstFewCallbacks);
 
     // DEBUG
     // if (frameSizeChanged) {
@@ -223,6 +236,78 @@ struct ASFWAudioDriver_IVars {
     AudioDriverRuntimeState runtime;
 };
 
+namespace {
+
+[[nodiscard]] uint32_t FrameCapacityFromSegment(const IOAddressSegment& segment,
+                                                uint32_t channels) noexcept {
+    if (segment.address == 0 || segment.length == 0 || channels == 0) {
+        return 0;
+    }
+
+    const uint64_t bytesPerFrame = uint64_t{sizeof(int32_t)} * channels;
+    if (bytesPerFrame == 0) {
+        return 0;
+    }
+
+    const uint64_t frameCapacity = segment.length / bytesPerFrame;
+    constexpr uint32_t kMaxFrameCapacity = std::numeric_limits<uint32_t>::max();
+    return frameCapacity > kMaxFrameCapacity
+         ? kMaxFrameCapacity
+         : static_cast<uint32_t>(frameCapacity);
+}
+
+[[nodiscard]] ASFW::Audio::Runtime::AudioStreamMode DirectStreamModeFromRaw(uint32_t streamModeRaw) noexcept {
+    return streamModeRaw == std::to_underlying(ASFW::Isoch::Audio::StreamMode::kBlocking)
+         ? ASFW::Audio::Runtime::AudioStreamMode::kBlocking
+         : ASFW::Audio::Runtime::AudioStreamMode::kNonBlocking;
+}
+
+[[nodiscard]] bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
+    IOAddressSegment inputSegment{};
+    IOAddressSegment outputSegment{};
+
+    if (ivars.inputBuffer) {
+        const kern_return_t status = ivars.inputBuffer->GetAddressRange(&inputSegment);
+        if (status != kIOReturnSuccess) {
+            inputSegment = {};
+        }
+    }
+
+    if (ivars.outputBuffer) {
+        const kern_return_t status = ivars.outputBuffer->GetAddressRange(&outputSegment);
+        if (status != kIOReturnSuccess) {
+            outputSegment = {};
+        }
+    }
+
+    ivars.runtime.directAudioControl.ResetForStart();
+    ivars.runtime.directAudioGraph = ASFW::Audio::Runtime::AudioGraphBinding{
+        .guid = ivars.device.guid,
+        .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
+        .memory = ASFW::Audio::Runtime::AudioStreamMemory{
+            .inputBase = reinterpret_cast<int32_t*>(inputSegment.address),
+            .outputBase = reinterpret_cast<const int32_t*>(outputSegment.address),
+            .inputFrameCapacity = FrameCapacityFromSegment(inputSegment, ivars.device.inputChannelCount),
+            .outputFrameCapacity = FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount),
+            .inputChannels = ivars.device.inputChannelCount,
+            .outputChannels = ivars.device.outputChannelCount,
+            .storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native,
+        },
+        .control = &ivars.runtime.directAudioControl,
+        .deviceToHostAm824Slots = ivars.device.inputChannelCount,
+        .hostToDeviceAm824Slots = ivars.device.outputChannelCount,
+        .streamMode = DirectStreamModeFromRaw(ivars.device.streamModeRaw),
+        .hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824,
+        .audioDevice = ivars.audioDevice.get(),
+    };
+
+    const bool bound = ivars.runtime.directAudioEngine.Bind(ivars.runtime.directAudioGraph);
+    ivars.runtime.directAudioSkeletonBound.store(bound, std::memory_order_release);
+    return bound;
+}
+
+} // namespace
+
 bool ASFWAudioDriver::init()
 {
     bool result = super::init();
@@ -285,6 +370,10 @@ void ASFWAudioDriver::free()
             ivars->runtime.timestampTimer.reset();
         }
         ivars->runtime.timestampTimerAction.reset();
+
+        ivars->runtime.directAudioSkeletonBound.store(false, std::memory_order_release);
+        ivars->runtime.directAudioEngine.Unbind();
+        ivars->runtime.directAudioGraph = {};
 
         // Release ZERO-COPY shared output buffer resources
         ASFW::Isoch::Audio::ResetZeroCopyState(ivars->shared.sharedOutputBuffer,
@@ -543,6 +632,18 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                      driverIvars->shared.rxQueueValid);
         }
 
+        if (driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire)) {
+            auto& control = driverIvars->runtime.directAudioControl;
+
+            if (operation == IOUserAudioIOOperationBeginRead) {
+                control.client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
+                control.counters.CountBeginRead();
+            } else if (operation == IOUserAudioIOOperationWriteEnd) {
+                control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
+                control.counters.CountWriteEnd();
+            }
+        }
+
         ASFW::Isoch::Audio::AudioIOPathState ioPathState{
             .inputBuffer = driverIvars->inputBuffer.get(),
             .outputBuffer = driverIvars->outputBuffer.get(),
@@ -725,6 +826,11 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     ivars->outputStream->SetName(outputName.get());
     ivars->outputStream->SetAvailableStreamFormats(outputFormats, formatCount);
     ivars->outputStream->SetCurrentStreamFormat(&outputFormats[0]);  // Initial format
+
+    const bool directAudioSkeletonBound = BindDirectAudioSkeleton(*ivars);
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: Direct audio skeleton %{public}s",
+             directAudioSkeletonBound ? "bound" : "inactive");
 
     // Stream-level latency (no additional latency beyond device-level)
     ivars->outputStream->SetLatency(0);
