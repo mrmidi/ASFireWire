@@ -14,6 +14,7 @@
 #include <atomic>
 #include <memory>
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#include "../../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include <string>
 #include <vector>
 
@@ -33,7 +34,10 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                           runtime,
                           hostTransport_,
                           hardware,
-                          [this](uint64_t guid) { return MakeQueueProvider(guid); }) {
+                          [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
+                              auto* nub = publisher_.GetNub(guid);
+                              return nub ? static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource()) : nullptr;
+                          }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceAudioBackend: Failed to allocate lock");
@@ -359,13 +363,7 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     }
 }
 
-std::unique_ptr<IDiceQueueMemoryProvider> DiceAudioBackend::MakeQueueProvider(uint64_t guid) noexcept {
-    auto* nub = publisher_.GetNub(guid);
-    if (!nub) {
-        return nullptr;
-    }
-    return std::make_unique<DiceNubQueueMemoryProvider>(*nub);
-}
+
 
 IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) {

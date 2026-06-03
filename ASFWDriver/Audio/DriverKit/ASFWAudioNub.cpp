@@ -9,6 +9,7 @@
 #include "ASFWAudioNub.h"
 #include "ASFWDriver.h"
 #include "../Core/AudioRuntimeRegistry.hpp"
+#include "Runtime/DirectAudioBindingSource.hpp"
 #include "../../Controller/ControllerCore.hpp"
 #include "../../Discovery/DeviceRegistry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -466,6 +467,25 @@ bool ASFWAudioNub::init()
         return false;
     }
 
+    ivars->bindingLock = IOLockAlloc();
+    if (!ivars->bindingLock) {
+        ASFW_LOG(Audio, "ASFWAudioNub: Failed to allocate binding lock");
+        IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
+        return false;
+    }
+    ivars->directGeneration = 0;
+    ivars->directOutputBase = nullptr;
+    ivars->directOutputBytes = 0;
+    ivars->directOutputFrames = 0;
+    ivars->directOutputChannels = 0;
+    ivars->directInputBase = nullptr;
+    ivars->directInputBytes = 0;
+    ivars->directInputFrames = 0;
+    ivars->directInputChannels = 0;
+    ivars->directControl = nullptr;
+    ivars->directSampleRateHz = 0;
+    ivars->directBindingSource = nullptr;
+
     ivars->parentDriver = nullptr;
     ivars->txQueueMem = nullptr;
     ivars->txQueueMap = nullptr;
@@ -490,6 +510,11 @@ void ASFWAudioNub::free()
 {
     ASFW_LOG(Audio, "ASFWAudioNub: free()");
     if (ivars) {
+        if (ivars->bindingLock) {
+            IOLockFree(ivars->bindingLock);
+            ivars->bindingLock = nullptr;
+        }
+
         // Release ZERO-COPY output audio buffer
         if (ivars->outputAudioMap) {
             ivars->outputAudioMap->release();
@@ -519,6 +544,10 @@ void ASFWAudioNub::free()
             ivars->txQueueMem->release();
             ivars->txQueueMem = nullptr;
         }
+        if (ivars->directBindingSource) {
+            delete static_cast<ASFW::Audio::Runtime::NubDirectAudioBindingSource*>(ivars->directBindingSource);
+            ivars->directBindingSource = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
     }
     super::free();
@@ -547,6 +576,8 @@ kern_return_t IMPL(ASFWAudioNub, Start)
         ASFW_LOG(Audio, "ASFWAudioNub: RegisterService() failed: %d", error);
         return error;
     }
+
+    ivars->directBindingSource = new ASFW::Audio::Runtime::NubDirectAudioBindingSource(this);
 
     ASFW_LOG(Audio, "ASFWAudioNub[%p]: Started and registered", this);
     return kIOReturnSuccess;
@@ -809,63 +840,111 @@ uint32_t ASFWAudioNub::GetOutputAudioFrameCapacity() const
     return ivars ? ivars->outputAudioFrameCapacity : 0;
 }
 
-// LOCALONLY: Register the direct TX binding (same dext process; raw pointers).
+// LOCALONLY: Register the direct duplex audio binding (same dext process; raw pointers).
 void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
                                          uint64_t outputBytes,
                                          uint32_t outputFrames,
                                          uint32_t outputChannels,
+                                         int32_t* inputBase,
+                                         uint64_t inputBytes,
+                                         uint32_t inputFrames,
+                                         uint32_t inputChannels,
                                          ASFW::Audio::Runtime::AudioTransportControlBlock* control,
-                                         uint32_t sampleRateHz)
+                                         uint32_t sampleRateHz,
+                                         IOUserAudioDevice* audioDevice)
 {
-    if (!ivars) {
+    if (!ivars || !ivars->bindingLock) {
         return;
     }
+    IOLockLock(ivars->bindingLock);
     ivars->directOutputBase = outputBase;
     ivars->directOutputBytes = outputBytes;
     ivars->directOutputFrames = outputFrames;
     ivars->directOutputChannels = outputChannels;
+    ivars->directInputBase = inputBase;
+    ivars->directInputBytes = inputBytes;
+    ivars->directInputFrames = inputFrames;
+    ivars->directInputChannels = inputChannels;
     ivars->directControl = control;
     ivars->directSampleRateHz = sampleRateHz;
+    ivars->directAudioDevice = audioDevice;
+    ivars->directGeneration++;
+    IOLockUnlock(ivars->bindingLock);
+
     ASFW_LOG(Audio,
-             "ASFWAudioNub: SetDirectAudioBinding base=%p bytes=%llu frames=%u ch=%u control=%p rate=%u",
-             static_cast<const void*>(outputBase), outputBytes, outputFrames, outputChannels,
-             static_cast<const void*>(control), sampleRateHz);
+             "ASFWAudioNub: SetDirectAudioBinding outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p rate=%u dev=%p gen=%llu",
+             static_cast<const void*>(outputBase), outputFrames, outputChannels,
+             static_cast<void*>(inputBase), inputFrames, inputChannels,
+             static_cast<const void*>(control), sampleRateHz, static_cast<void*>(audioDevice), ivars->directGeneration);
 }
 
-// LOCALONLY: Clear the direct TX binding (called from ASFWAudioDriver::Stop).
+// LOCALONLY: Clear the direct duplex audio binding (called from ASFWAudioDriver::Stop).
 void ASFWAudioNub::ClearDirectAudioBinding()
 {
-    if (!ivars) {
+    if (!ivars || !ivars->bindingLock) {
         return;
     }
+    IOLockLock(ivars->bindingLock);
     ivars->directOutputBase = nullptr;
     ivars->directOutputBytes = 0;
     ivars->directOutputFrames = 0;
     ivars->directOutputChannels = 0;
+    ivars->directInputBase = nullptr;
+    ivars->directInputBytes = 0;
+    ivars->directInputFrames = 0;
+    ivars->directInputChannels = 0;
     ivars->directControl = nullptr;
     ivars->directSampleRateHz = 0;
-    ASFW_LOG(Audio, "ASFWAudioNub: ClearDirectAudioBinding");
+    ivars->directAudioDevice = nullptr;
+    ivars->directGeneration++;
+    IOLockUnlock(ivars->bindingLock);
+
+    ASFW_LOG(Audio, "ASFWAudioNub: ClearDirectAudioBinding gen=%llu", ivars->directGeneration);
 }
 
-// LOCALONLY: Fetch the direct TX binding for the isoch TX path. Returns false
-// (and leaves out-params untouched) unless a usable binding is registered.
-bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outBase,
-                                         uint64_t* outBytes,
-                                         uint32_t* outFrames,
-                                         uint32_t* outChannels,
+// LOCALONLY: Fetch the direct duplex audio binding. Returns false if no valid control block is registered.
+bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
+                                         uint64_t* outOutputBytes,
+                                         uint32_t* outOutputFrames,
+                                         uint32_t* outOutputChannels,
+                                         int32_t** outInputBase,
+                                         uint64_t* outInputBytes,
+                                         uint32_t* outInputFrames,
+                                         uint32_t* outInputChannels,
                                          ASFW::Audio::Runtime::AudioTransportControlBlock** outControl,
-                                         uint32_t* outSampleRateHz) const
+                                         uint32_t* outSampleRateHz,
+                                         IOUserAudioDevice** outAudioDevice,
+                                         uint64_t* outGeneration) const
 {
-    if (!ivars || !ivars->directOutputBase || !ivars->directControl || ivars->directOutputFrames == 0) {
+    if (!ivars || !ivars->bindingLock) {
         return false;
     }
-    if (outBase) { *outBase = ivars->directOutputBase; }
-    if (outBytes) { *outBytes = ivars->directOutputBytes; }
-    if (outFrames) { *outFrames = ivars->directOutputFrames; }
-    if (outChannels) { *outChannels = ivars->directOutputChannels; }
+    IOLockLock(ivars->bindingLock);
+    if (!ivars->directControl || ivars->directSampleRateHz == 0) {
+        IOLockUnlock(ivars->bindingLock);
+        return false;
+    }
+
+    if (outOutputBase) { *outOutputBase = ivars->directOutputBase; }
+    if (outOutputBytes) { *outOutputBytes = ivars->directOutputBytes; }
+    if (outOutputFrames) { *outOutputFrames = ivars->directOutputFrames; }
+    if (outOutputChannels) { *outOutputChannels = ivars->directOutputChannels; }
+    if (outInputBase) { *outInputBase = ivars->directInputBase; }
+    if (outInputBytes) { *outInputBytes = ivars->directInputBytes; }
+    if (outInputFrames) { *outInputFrames = ivars->directInputFrames; }
+    if (outInputChannels) { *outInputChannels = ivars->directInputChannels; }
     if (outControl) { *outControl = ivars->directControl; }
     if (outSampleRateHz) { *outSampleRateHz = ivars->directSampleRateHz; }
+    if (outAudioDevice) { *outAudioDevice = ivars->directAudioDevice; }
+    if (outGeneration) { *outGeneration = ivars->directGeneration; }
+
+    IOLockUnlock(ivars->bindingLock);
     return true;
+}
+
+void* ASFWAudioNub::GetDirectAudioBindingSource()
+{
+    return ivars ? ivars->directBindingSource : nullptr;
 }
 
 // LOCALONLY: Update write position (called by ASFWAudioDriver after CoreAudio write)

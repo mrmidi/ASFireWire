@@ -17,7 +17,17 @@
 #include "../Memory/IIsochDMAMemory.hpp"
 
 #include "IsochRxDmaRing.hpp"
-#include "../../AudioEngine/LegacyIsoch/IsochAudioRxPipeline.hpp"
+#include "../../AudioEngine/Direct/DirectInputWriter.hpp"
+#include "../../AudioEngine/Direct/AudioClockPublisher.hpp"
+#include "../../AudioEngine/Direct/Rx/RxAudioPacketProcessor.hpp"
+#include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
+#include "../Core/ExternalSyncBridge.hpp"
+
+namespace ASFW {
+namespace Audio::Runtime {
+class IDirectAudioBindingSource;
+}
+}
 
 namespace ASFW::Isoch {
 
@@ -68,18 +78,21 @@ public:
     static constexpr size_t kNumDescriptors = 512;
     static constexpr size_t kMaxPacketSize = 4096;
 
-    kern_return_t Configure(uint8_t channel, uint8_t contextIndex);
+    kern_return_t Configure(uint8_t channel,
+                            uint8_t contextIndex,
+                            Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+                            uint32_t am824Slots = 0);
     kern_return_t Start();
     void Stop();
     uint32_t Poll();
 
     void SetCallback(IsochReceiveCallback callback);
 
-    StreamProcessor& GetStreamProcessor() { return audio_.StreamProcessorRef(); }
-
-    void SetSharedRxQueue(uint8_t* base, uint64_t bytes);
+    void SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept;
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
-    void SetTimingLossCallback(Rx::IsochAudioRxPipeline::TimingLossCallback callback) noexcept;
+    
+    using TimingLossCallback = std::function<void()>;
+    void SetTimingLossCallback(TimingLossCallback callback) noexcept;
 
     void LogHardwareState();
 
@@ -101,10 +114,27 @@ private:
     ::ASFW::Shared::DescriptorRing descriptorRing_{};
 
     Rx::IsochRxDmaRing rxRing_{};
-    Rx::IsochAudioRxPipeline audio_{};
 
     IsochReceiveCallback callback_{nullptr};
     std::atomic_flag rxLock_ = ATOMIC_FLAG_INIT;
+
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* directAudioBindingSource_{nullptr};
+    uint64_t lastDirectAudioGeneration_{0};
+
+    ASFW::AudioEngine::Direct::DirectInputWriter directInputWriter_{};
+    ASFW::AudioEngine::Direct::Rx::RxAudioPacketProcessor directProcessor_{directInputWriter_};
+    ASFW::Audio::Runtime::AudioGraphBinding directInputView_{};
+    ASFW::AudioEngine::Direct::AudioClockPublisher clockPublisher_{};
+
+    Encoding::AudioWireFormat wireFormat_{Encoding::AudioWireFormat::kAM824};
+    uint32_t am824Slots_{0};
+
+    uint64_t absoluteFrameCursor_{0};
+    bool cursorInitialized_{false};
+
+    Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
+    Core::ExternalSyncClockState externalSyncClockState_{};
+    TimingLossCallback timingLossCallback_{nullptr};
 
     Registers GetRegisters(uint8_t index) const;
 };

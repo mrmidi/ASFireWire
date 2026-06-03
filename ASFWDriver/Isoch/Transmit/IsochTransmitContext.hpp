@@ -4,12 +4,12 @@
 // Public façade for IT transmit.
 // Internals are modular:
 //   - Tx::IsochTxDmaRing: low-level OHCI descriptor/payload engine (no audio semantics)
-//   - IsochAudioTxPipeline: CIP/AM824 + buffering policy + near-HW audio injection
+//   - IsochAudioTxPipeline: CIP/AM824 + direct ADK memory mapping
 //   - IsochTxVerifier + IsochTxRecoveryController: dev-only verification + restart gating
 
 #pragma once
 
-#include "../../AudioEngine/LegacyIsoch/IsochAudioTxPipeline.hpp"
+#include "../../AudioEngine/DirectIsoch/IsochAudioTxPipeline.hpp"
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
 #include "IsochTxVerifier.hpp"
@@ -33,6 +33,10 @@
 #endif
 
 namespace ASFW {
+
+namespace Audio::Runtime {
+class IDirectAudioBindingSource;
+}
 
 namespace Driver { class HardwareInterface; }
 
@@ -100,18 +104,10 @@ public:
     void SetRecoveryCallback(RecoveryCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
-    Encoding::AudioRingBuffer<>& RingBuffer() noexcept { return audio_.RingBuffer(); }
 
-    void SetSharedTxQueue(uint8_t* base, uint64_t bytes) noexcept;
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
-    uint32_t SharedTxFillLevelFrames() const noexcept;
-    uint32_t SharedTxCapacityFrames() const noexcept;
     
-    // ZERO-COPY: Set direct output audio buffer (from ASFWAudioNub)
-    // This is the same buffer that CoreAudio writes to via IOUserAudioStream
-    // No intermediate copy needed - IT DMA reads directly!
-    void SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes, uint32_t frameCapacity) noexcept;
-    bool IsZeroCopyEnabled() const noexcept { return audio_.IsZeroCopyEnabled(); }
+    void SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept;
     void SetDirectTxRuntimeBinding(const IsochAudioTxPipeline::DirectTxRuntimeBinding& binding) noexcept;
     Encoding::StreamMode RequestedStreamMode() const noexcept { return audio_.RequestedStreamMode(); }
     Encoding::StreamMode EffectiveStreamMode() const noexcept { return audio_.EffectiveStreamMode(); }
@@ -119,8 +115,6 @@ public:
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
     uint64_t DataPackets() const noexcept { return dataPackets_; }
     uint64_t NoDataPackets() const noexcept { return noDataPackets_; }
-    uint64_t UnderrunCount() const noexcept { return audio_.UnderrunCount(); }
-    uint32_t BufferFillLevel() const noexcept { return audio_.BufferFillLevel(); }
     
     void LogStatistics() const noexcept;
     void DumpPayloadBuffers(uint32_t numPackets = 4) const noexcept;
@@ -145,6 +139,9 @@ private:
     Driver::HardwareInterface* hardware_{nullptr};
     std::shared_ptr<Memory::IIsochDMAMemory> dmaMemory_;
 
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* directAudioBindingSource_{nullptr};
+    uint64_t lastDirectAudioGeneration_{0};
+
     uint64_t packetsAssembled_{0};
     uint64_t dataPackets_{0};
     uint64_t noDataPackets_{0};
@@ -156,16 +153,13 @@ private:
     uint64_t lastInterruptCountSeen_{0};
     uint32_t irqStallTicks_{0};
 
-    // 1F: Refill Latency Histogram (buckets: <50us, 50-200us, 200-500us, >500us)
+    // Refill Latency Histogram (buckets: <50us, 50-200us, 200-500us, >500us)
     std::atomic<uint64_t> latencyBucket0_{0};
     std::atomic<uint64_t> latencyBucket1_{0};
     std::atomic<uint64_t> latencyBucket2_{0};
     std::atomic<uint64_t> latencyBucket3_{0};
     std::atomic<uint32_t> maxRefillLatencyUs_{0};
     std::atomic<uint64_t> irqWatchdogKicks_{0};
-
-    // 1A: Last underrun count seen (for delta logging in Poll)
-    uint64_t lastUnderrunCount_{0};
 
     RecoveryCallback recoveryCallback_{};
 };

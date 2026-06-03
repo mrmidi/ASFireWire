@@ -1,4 +1,5 @@
 #include "IsochReceiveContext.hpp"
+#include "../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 
 #include "../../Common/DriverKitUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
@@ -56,7 +57,10 @@ IsochReceiveContext::Registers IsochReceiveContext::GetRegisters(uint8_t index) 
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextIndex) {
+kern_return_t IsochReceiveContext::Configure(uint8_t channel,
+                                            uint8_t contextIndex,
+                                            Encoding::AudioWireFormat wireFormat,
+                                            uint32_t am824Slots) {
     if (!hardware_ || !dmaMemory_) {
         return kIOReturnNotReady;
     }
@@ -68,8 +72,8 @@ kern_return_t IsochReceiveContext::Configure(uint8_t channel, uint8_t contextInd
     contextIndex_ = contextIndex;
     channel_ = channel;
     registers_ = GetRegisters(contextIndex_);
-
-    audio_.ConfigureFor48k();
+    wireFormat_ = wireFormat;
+    am824Slots_ = am824Slots;
 
     return rxRing_.SetupRings(*dmaMemory_, kNumDescriptors, kMaxPacketSize);
 }
@@ -106,26 +110,13 @@ kern_return_t IsochReceiveContext::Start() {
     hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
     ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
 
-    const uint32_t readMatch = hardware_->Read(registers_.ContextMatch);
-    const uint32_t readCmd = hardware_->Read(registers_.CommandPtr);
-    const uint32_t readCtl = hardware_->Read(registers_.ContextControlSet);
-
-    ASFW_LOG(Isoch, "Start: Wrote Match=0x%08x Cmd=0x%08x Ctl=0x%08x", contextMatch, cmdPtr, ctlValue);
-    ASFW_LOG(Isoch, "Start: Readback Match=0x%08x Cmd=0x%08x Ctl=0x%08x", readMatch, readCmd, readCtl);
-
-    const bool deadSet = (readCtl & Driver::ContextControl::kDead) != 0;
-    if (deadSet) {
-        ASFW_LOG(Isoch, "❌ Start: Context is DEAD! Check descriptor program.");
-        return kIOReturnNotPermitted;
-    }
-
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }
 
     Transition(IRPolicy::State::Running, 0, "Start");
-
     rxRing_.ResetForStart();
-    audio_.OnStart();
+    absoluteFrameCursor_ = 0;
+    cursorInitialized_ = false;
 
     rxLock_.clear(std::memory_order_release);
     return kIOReturnSuccess;
@@ -148,8 +139,6 @@ void IsochReceiveContext::Stop() {
 
     Transition(IRPolicy::State::Stopped, 0, "Stop");
 
-    audio_.OnStop();
-
     rxLock_.clear(std::memory_order_release);
 }
 
@@ -163,11 +152,92 @@ uint32_t IsochReceiveContext::Poll() {
         return 0;
     }
 
-    const uint64_t start = mach_absolute_time();
+    if (directAudioBindingSource_) {
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
+        if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
+            if (snapshot.generation != lastDirectAudioGeneration_) {
+                if (snapshot.valid && snapshot.HasInput()) {
+                    ASFW_LOG(Isoch, "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx.",
+                             lastDirectAudioGeneration_, snapshot.generation);
+
+                    directInputView_.guid = 0;
+                    directInputView_.sampleRateHz = snapshot.sampleRateHz;
+                    directInputView_.memory.inputBase = snapshot.inputBase;
+                    directInputView_.memory.inputFrameCapacity = snapshot.inputFrames;
+                    directInputView_.memory.inputChannels = snapshot.inputChannels;
+                    directInputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native;
+                    directInputView_.control = snapshot.control;
+                    directInputView_.deviceToHostAm824Slots = am824Slots_ > 0 ? am824Slots_ : snapshot.inputChannels;
+                    directInputView_.hostToDeviceAm824Slots = snapshot.outputChannels;
+                    directInputView_.streamMode = ASFW::Audio::Runtime::AudioStreamMode::kUnknown;
+                    directInputView_.hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
+                    directInputView_.audioDevice = snapshot.audioDevice;
+
+                    directInputWriter_.Bind(&directInputView_);
+                    clockPublisher_.Bind(&directInputView_);
+                } else {
+                    ASFW_LOG(Isoch, "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming.",
+                             lastDirectAudioGeneration_, snapshot.generation);
+                    directInputWriter_.Unbind();
+                    clockPublisher_.Unbind();
+                }
+                lastDirectAudioGeneration_ = snapshot.generation;
+            }
+        } else {
+            if (lastDirectAudioGeneration_ != 0) {
+                ASFW_LOG(Isoch, "IR: direct audio binding cleared/unavailable. Disarming.");
+                directInputWriter_.Unbind();
+                clockPublisher_.Unbind();
+                lastDirectAudioGeneration_ = 0;
+            }
+        }
+    }
 
     const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [this](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         if (pkt.payload) {
-            audio_.OnPacket(pkt.payload, pkt.actualLength);
+            const uint32_t channels = directInputView_.memory.inputChannels;
+            const uint32_t slots = directInputView_.deviceToHostAm824Slots;
+            const auto result = directProcessor_.ProcessPacket(pkt.payload,
+                                                               pkt.actualLength,
+                                                               absoluteFrameCursor_,
+                                                               channels,
+                                                               slots,
+                                                               wireFormat_);
+            if (result.status == AudioEngine::Direct::Rx::DirectRxWriteStatus::kAvailable ||
+                result.status == AudioEngine::Direct::Rx::DirectRxWriteStatus::kInvalidBinding) {
+                
+                if (!cursorInitialized_ && result.hasValidCip && directInputView_.control) {
+                    absoluteFrameCursor_ = directInputView_.control->inputProducedEndFrame.load(std::memory_order_acquire);
+                    cursorInitialized_ = true;
+                }
+
+                if (result.hasValidCip && result.syt != 0xFFFF && clockPublisher_.IsBound()) {
+                    const uint64_t ticks = mach_absolute_time();
+                    const uint32_t hostNanosPerSampleQ8 = static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
+                    clockPublisher_.Publish(absoluteFrameCursor_, ticks, hostNanosPerSampleQ8);
+                }
+
+                if (externalSyncBridge_ && result.hasValidCip) {
+                    uint32_t updateSeq = 0;
+                    const uint64_t nowTicks = mach_absolute_time();
+                    const bool establishTransition = externalSyncClockState_.ObserveSample(
+                        *externalSyncBridge_,
+                        nowTicks,
+                        result.syt,
+                        result.fdf,
+                        result.dbs,
+                        &updateSeq
+                    );
+                    if (establishTransition) {
+                        ASFW_LOG(Isoch, "IR SYT CLOCK ESTABLISHED syt=0x%04x fdf=0x%02x dbs=%u seq=%u",
+                                 result.syt, result.fdf, result.dbs, updateSeq);
+                        externalSyncBridge_->clockEstablished.store(true, std::memory_order_release);
+                        externalSyncBridge_->startupQualified.store(true, std::memory_order_release);
+                    }
+                }
+
+                absoluteFrameCursor_ += result.framesDecoded;
+            }
         }
 
         if (callback_) {
@@ -176,23 +246,21 @@ uint32_t IsochReceiveContext::Poll() {
         }
     });
 
-    audio_.OnPollEnd(*hardware_, processed, start);
-
     rxLock_.clear(std::memory_order_release);
     return processed;
 }
 
-void IsochReceiveContext::SetSharedRxQueue(uint8_t* base, uint64_t bytes) {
-    audio_.SetSharedRxQueue(base, bytes);
+void IsochReceiveContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept {
+    directAudioBindingSource_ = source;
+    lastDirectAudioGeneration_ = 0;
 }
 
 void IsochReceiveContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
-    audio_.SetExternalSyncBridge(bridge);
+    externalSyncBridge_ = bridge;
 }
 
-void IsochReceiveContext::SetTimingLossCallback(
-    Rx::IsochAudioRxPipeline::TimingLossCallback callback) noexcept {
-    audio_.SetTimingLossCallback(std::move(callback));
+void IsochReceiveContext::SetTimingLossCallback(TimingLossCallback callback) noexcept {
+    timingLossCallback_ = std::move(callback);
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
@@ -200,9 +268,6 @@ void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
 }
 
 void IsochReceiveContext::LogHardwareState() {
-#if 0
-    // Keep disabled unless troubleshooting; should be reimplemented using rxRing_ accessors.
-#endif
 }
 
 } // namespace ASFW::Isoch

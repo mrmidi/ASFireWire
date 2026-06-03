@@ -18,6 +18,10 @@
 #include "../Audio/Model/ASFWAudioDevice.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 
+namespace ASFW::Audio::Runtime {
+class IDirectAudioBindingSource;
+}
+
 namespace ASFW::IRM {
 class IRMClient;
 }
@@ -40,28 +44,12 @@ struct IsochDuplexStartParams {
 
     uint32_t deviceToHostAm824Slots{0};
     uint32_t hostToDeviceAm824Slots{0};
+    ASFW::Encoding::AudioWireFormat deviceToHostWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
     ASFW::Encoding::AudioWireFormat hostToDeviceWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
 
-    ASFW::Audio::Model::StreamMode streamMode{ASFW::Audio::Model::StreamMode::kNonBlocking};
+    ASFW::Encoding::StreamMode streamMode{ASFW::Encoding::StreamMode::kNonBlocking};
 
-    OSSharedPtr<IOBufferMemoryDescriptor> rxQueueMemory{};
-    uint64_t rxQueueBytes{0};
-    OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory{};
-    uint64_t txQueueBytes{0};
-
-    const int32_t* zeroCopyBase{nullptr};
-    uint64_t zeroCopyBytes{0};
-    uint32_t zeroCopyFrames{0};
-
-    // Direct TX: RT-safe view of the ADK host->device output stream memory and
-    // the shared transport control block. Threaded as plain shared-memory
-    // handles (no ADK object pointers), mirroring zeroCopy* above. Disabled
-    // unless directTxEnabled is set and the compile-time hardware path is on.
-    const int32_t* directOutputBase{nullptr};
-    uint64_t directOutputBytes{0};
-    uint32_t directOutputFrames{0};
-    ASFW::Audio::Runtime::AudioTransportControlBlock* directAudioControl{nullptr};
-    bool directTxEnabled{false};
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* directAudioBindingSource{nullptr};
 };
 
 class IsochService {
@@ -74,8 +62,9 @@ public:
 
     kern_return_t StartReceive(uint8_t channel,
                                HardwareInterface& hardware,
-                               OSSharedPtr<IOBufferMemoryDescriptor> rxQueueMemory,
-                               uint64_t rxQueueBytes);
+                               ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                               ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+                               uint32_t am824Slots = 0);
 
     kern_return_t StopReceive();
 
@@ -86,17 +75,7 @@ public:
                                 uint32_t pcmChannels,
                                 uint32_t am824Slots,
                                 ASFW::Encoding::AudioWireFormat wireFormat,
-                                OSSharedPtr<IOBufferMemoryDescriptor> txQueueMemory,
-                                uint64_t txQueueBytes,
-                                const int32_t* zeroCopyBase,
-                                uint64_t zeroCopyBytes,
-                                uint32_t zeroCopyFrames,
-                                const int32_t* directOutputBase = nullptr,
-                                uint64_t directOutputBytes = 0,
-                                uint32_t directOutputFrames = 0,
-                                ASFW::Audio::Runtime::AudioTransportControlBlock* directAudioControl = nullptr,
-                                uint32_t directSampleRateHz = 0,
-                                bool directTxEnabled = false);
+                                ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource);
 
     kern_return_t StopTransmit();
 
@@ -129,28 +108,9 @@ private:
     void OnReceiveTimingLossDetected() noexcept;
     [[nodiscard]] bool OnTransmitRecoveryRequested(uint32_t reasonBits) noexcept;
 
-    struct SharedQueueMapping {
-        OSSharedPtr<IOBufferMemoryDescriptor> memory{};
-        OSSharedPtr<IOMemoryMap> map{};
-        uint64_t bytes{0};
-
-        void Reset() noexcept {
-            map.reset();
-            memory.reset();
-            bytes = 0;
-        }
-
-        [[nodiscard]] uint8_t* BaseAddress() const noexcept {
-            return map ? reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(map->GetAddress())) : nullptr;
-        }
-    };
-
     ASFW::Isoch::Core::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
-
-    SharedQueueMapping rxQueue_{};
-    SharedQueueMapping txQueue_{};
 
     uint64_t activeGuid_{0};
     TimingLossCallback timingLossCallback_{};

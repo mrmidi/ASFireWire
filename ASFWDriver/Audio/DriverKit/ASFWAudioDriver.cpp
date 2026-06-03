@@ -10,10 +10,7 @@
 #include "ASFWAudioNub.h"
 #include "ASFWProtocolBooleanControl.h"
 #include "Controls/AudioControlBuilder.hpp"
-#include "LegacyBridge/AudioClockEngine.hpp"
 #include "Config/AudioDriverConfig.hpp"
-#include "LegacyBridge/AudioIOPath.hpp"
-#include "LegacyBridge/AudioSharedMemoryBridge.hpp"
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
@@ -98,12 +95,8 @@ struct AudioDriverRuntimeState {
     uint64_t hostTicksPerBuffer{0};
     std::atomic<bool> isRunning{false};
 
-    ASFW::Isoch::Audio::IOMetricsState ioMetrics;
     uint64_t metricsLogCounter{0};
     ASFW::Encoding::PacketAssembler packetAssembler;
-    ASFW::Isoch::Audio::EncodingMetricsState encodingMetrics;
-    ASFW::Isoch::Audio::ClockSyncState clockSync;
-    ASFW::Isoch::Audio::ZeroCopyTimelineState zeroCopyTimeline;
     bool rxStartupDrained{false};
 
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
@@ -114,104 +107,6 @@ struct AudioDriverRuntimeState {
 };
 
 namespace {
-
-void LogIoCallbackMetrics(AudioDriverRuntimeState& runtime,
-                          IOUserAudioIOOperation operation,
-                          uint32_t ioBufferFrameSize,
-                          uint64_t sampleTime,
-                          uint64_t hostTime,
-                          uint32_t rxQueueFillFrames,
-                          uint32_t txQueueFillFrames,
-                          uint32_t assemblerFillFrames,
-                          uint64_t callbackOrdinal) {
-    auto& ioMetrics = runtime.ioMetrics;
-    const uint32_t previousFrameSize =
-        ioMetrics.lastIoBufferFrameSize.exchange(ioBufferFrameSize, std::memory_order_relaxed);
-    const uint64_t previousSampleTime =
-        ioMetrics.lastCallbackSampleTime.exchange(sampleTime, std::memory_order_relaxed);
-    const uint32_t previousOperation =
-        ioMetrics.lastCallbackOperation.exchange(static_cast<uint32_t>(operation), std::memory_order_relaxed);
-
-    const int64_t sampleDelta = (previousSampleTime == 0)
-                              ? 0
-                              : static_cast<int64_t>(sampleTime) - static_cast<int64_t>(previousSampleTime);
-    ioMetrics.lastCallbackSampleDelta.store(sampleDelta, std::memory_order_relaxed);
-    ioMetrics.lastRxQueueFillFrames.store(rxQueueFillFrames, std::memory_order_relaxed);
-    ioMetrics.lastTxQueueFillFrames.store(txQueueFillFrames, std::memory_order_relaxed);
-    ioMetrics.lastAssemblerFillFrames.store(assemblerFillFrames, std::memory_order_relaxed);
-
-    const bool frameSizeChanged = (previousFrameSize != 0) && (previousFrameSize != ioBufferFrameSize);
-    const bool sampleTimeWentBackwards = (previousSampleTime != 0) && (sampleTime < previousSampleTime);
-    const bool firstFewCallbacks = callbackOrdinal <= 8;
-    static_cast<void>(previousOperation);
-    static_cast<void>(firstFewCallbacks);
-
-    if (frameSizeChanged) {
-        ioMetrics.ioBufferFrameSizeChangeCount.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (sampleTimeWentBackwards) {
-        ioMetrics.sampleTimeRegressionCount.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // DEBUG
-    // if (frameSizeChanged) {
-    //     ASFW_LOG(Audio,
-    //              "IO callback frame-size change cb=%llu op=%{public}s prev=%u now=%u sample=%llu host=%llu rxFill=%u txFill=%u asmFill=%u",
-    //              callbackOrdinal,
-    //              AudioOperationName(operation),
-    //              previousFrameSize,
-    //              ioBufferFrameSize,
-    //              sampleTime,
-    //              hostTime,
-    //              rxQueueFillFrames,
-    //              txQueueFillFrames,
-    //              assemblerFillFrames);
-    // }
-
-    // if (sampleTimeWentBackwards) {
-    //     ASFW_LOG(Audio,
-    //              "IO callback sampleTime regression cb=%llu op=%{public}s prev=%llu now=%llu delta=%lld prevOp=%{public}s",
-    //              callbackOrdinal,
-    //              AudioOperationName(operation),
-    //              previousSampleTime,
-    //              sampleTime,
-    //              sampleDelta,
-    //              AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)));
-    // }
-
-    // if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-    //     if (firstFewCallbacks) {
-    //         ASFW_LOG(Audio,
-    //                  "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u",
-    //                  callbackOrdinal,
-    //                  AudioOperationName(operation),
-    //                  ioBufferFrameSize,
-    //                  sampleTime,
-    //                  sampleDelta,
-    //                  AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
-    //                  hostTime,
-    //                  rxQueueFillFrames,
-    //                  txQueueFillFrames,
-    //                  assemblerFillFrames);
-    //     } else {
-    //         ASFW_LOG_RL(Audio,
-    //                     "io/callback",
-    //                     1000,
-    //                     OS_LOG_TYPE_DEFAULT,
-    //                     "IO callback cb=%llu op=%{public}s frames=%u sample=%llu delta=%lld prevOp=%{public}s host=%llu rxFill=%u txFill=%u asmFill=%u",
-    //                     callbackOrdinal,
-    //                     AudioOperationName(operation),
-    //                     ioBufferFrameSize,
-    //                     sampleTime,
-    //                     sampleDelta,
-    //                     AudioOperationName(static_cast<IOUserAudioIOOperation>(previousOperation)),
-    //                     hostTime,
-    //                     rxQueueFillFrames,
-    //                     txQueueFillFrames,
-    //                     assemblerFillFrames);
-    //     }
-    // }
-}
 
 } // namespace
 
@@ -230,24 +125,6 @@ struct ASFWAudioDriver_IVars {
 
 namespace ASFW::Audio::DriverKit::DirectDiagnostics {
 
-[[nodiscard]] bool OutputReaderCanSeeLatestWrite(AudioDriverRuntimeState& runtime) noexcept {
-    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
-                       runtime.directAudioEngine.IsBound();
-    if (!bound || !runtime.directAudioGraph.control) {
-        return false;
-    }
-
-    const auto& client = runtime.directAudioGraph.control->client;
-    const uint32_t frameCount = client.outputWriteEndFrames.load(std::memory_order_relaxed);
-    const uint64_t writtenEnd = client.OutputWrittenEndFrame();
-    if (frameCount == 0 || writtenEnd < frameCount) {
-        return false;
-    }
-
-    return runtime.directAudioEngine.OutputReader().IsFrameRangeAvailable(writtenEnd - frameCount,
-                                                                         frameCount);
-}
-
 void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept {
     if (!ASFW::LogConfig::Shared().IsStatisticsEnabled() ||
         ASFW::LogConfig::Shared().GetDirectAudioVerbosity() < 1) {
@@ -256,16 +133,15 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
 
     const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
                        runtime.directAudioEngine.IsBound();
-    const bool outputAvailable = OutputReaderCanSeeLatestWrite(runtime);
     const auto snapshot = ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot(
         runtime.directAudioGraph,
         bound,
-        runtime.ioMetrics.lastIoBufferFrameSize.load(std::memory_order_relaxed),
+        0, // ioBufferFrameSize
         ASFW::Isoch::Config::kAudioIoPeriodFrames,
-        runtime.ioMetrics.lastCallbackSampleDelta.load(std::memory_order_relaxed),
-        runtime.ioMetrics.sampleTimeRegressionCount.load(std::memory_order_relaxed),
-        runtime.ioMetrics.ioBufferFrameSizeChangeCount.load(std::memory_order_relaxed),
-        outputAvailable);
+        0, // sampleDelta
+        0, // regressionCount
+        0, // frameSizeChanges
+        true); // outputAvailable
 
     if (!ASFW::Audio::Runtime::ShouldLogDirectAudioDebugSnapshot(
             runtime.directAudioDebugLog,
@@ -275,7 +151,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK snapshot bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u sampleDelta=%lld sampleBack=%llu frameSizeChanges=%llu outputAvailable=%d txPackets=%llu txUnderruns=%llu txSilence=%llu",
+             "ADK snapshot bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d txPackets=%llu txUnderruns=%llu txSilence=%llu",
              snapshot.bound,
              snapshot.inputBufferAddress,
              snapshot.outputBufferAddress,
@@ -293,9 +169,6 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.outputWriteEndFrameCount,
              snapshot.ioBufferFrameSize,
              snapshot.expectedIoBufferFrameSize,
-             snapshot.lastSampleDelta,
-             snapshot.sampleTimeRegressionCount,
-             snapshot.ioBufferFrameSizeChangeCount,
              snapshot.outputReaderAvailableAtWriteEnd,
              snapshot.directTxPackets,
              snapshot.directTxUnderruns,
@@ -444,13 +317,6 @@ void ASFWAudioDriver::free()
         ivars->runtime.directAudioEngine.Unbind();
         ivars->runtime.directAudioGraph = {};
 
-        // Release ZERO-COPY shared output buffer resources
-        ASFW::Isoch::Audio::ResetZeroCopyState(ivars->shared.sharedOutputBuffer,
-                       ivars->shared.sharedOutputMap,
-                       ivars->shared.sharedOutputBytes,
-                       ivars->shared.zeroCopyFrameCapacity,
-                       ivars->shared.zeroCopyEnabled);
-
         // Release shared RX queue resources
         ivars->shared.rxQueueValid = false;
         ivars->shared.rxQueueMap.reset();
@@ -577,62 +443,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     // Bring-up note: dynamic sample-rate advertisement is intentionally deferred.
     ASFW_LOG(Audio, "ASFWAudioDriver: Forcing single advertised format: 48kHz / 24-bit");
 
-    // Get shared TX queue from provider (ASFWAudioNub)
-    // This enables cross-process audio streaming to IsochTransmitContext.
-    ASFWAudioNub* nub = ivars->device.audioNub;
-
-    // Map shared RX queue from nub (for BeginRead audio data from FireWire IR context)
-    {
-        const kern_return_t rxErr = ASFW::Isoch::Audio::MapRxQueueFromNub(*nub,
-                                                                           ivars->shared.rxQueueMem,
-                                                                           ivars->shared.rxQueueMap,
-                                                                           ivars->shared.rxQueueBytes,
-                                                                           ivars->shared.rxQueueReader,
-                                                                           ivars->shared.rxQueueValid);
-        if (rxErr == kIOReturnSuccess && ivars->shared.rxQueueValid) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: RX shared queue mapped: %llu bytes",
-                     ivars->shared.rxQueueBytes);
-        } else {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: CopyRxQueueMemory/map failed: 0x%x (RX input will be silent until IR starts)",
-                     rxErr);
-        }
-    }
-
-    {
-        const kern_return_t txErr = ASFW::Isoch::Audio::MapTxQueueFromNub(*nub,
-                                                                           ivars->shared.txQueueMem,
-                                                                           ivars->shared.txQueueMap,
-                                                                           ivars->shared.txQueueBytes,
-                                                                           ivars->shared.txQueueWriter,
-                                                                           ivars->shared.txQueueValid);
-        if (txErr == kIOReturnSuccess && ivars->shared.txQueueValid) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: TX shared queue attached - bytes=%llu capacity=%u frames",
-                     ivars->shared.txQueueBytes,
-                     ivars->shared.txQueueWriter.CapacityFrames());
-        } else {
-            ASFW_LOG(Audio, "ASFWAudioDriver: CopyTransmitQueueMemory/map failed: 0x%x", txErr);
-        }
-    }
-
-    // Runtime truth: shared queue headers reflect the actual channel topology used by
-    // the ASFWDriver process (which may be refined from protocol caps after nub creation).
-    if (ivars->shared.rxQueueValid) {
-        ivars->device.inputChannelCount = ivars->shared.rxQueueReader.Channels();
-    }
-    if (ivars->shared.txQueueValid) {
-        ivars->device.outputChannelCount = ivars->shared.txQueueWriter.Channels();
-    }
-    if (ivars->device.inputChannelCount == 0) {
-        ivars->device.inputChannelCount = ivars->device.channelCount;
-    }
-    if (ivars->device.outputChannelCount == 0) {
-        ivars->device.outputChannelCount = ivars->device.channelCount;
-    }
-    ivars->device.channelCount = std::max(ivars->device.inputChannelCount,
-                                          ivars->device.outputChannelCount);
+    ivars->device.inputChannelCount = ivars->device.channelCount;
+    ivars->device.outputChannelCount = ivars->device.channelCount;
 
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
@@ -640,15 +452,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
              ivars->device.outputChannelCount,
              ivars->device.channelCount);
 
-    // PacketAssembler is for host->device playback path, so it must use output channels.
-    ivars->runtime.packetAssembler.reconfigure(ivars->device.outputChannelCount, 0);
-    ivars->runtime.packetAssembler.setStreamMode(
-        ivars->device.streamModeRaw == std::to_underlying(ASFW::Isoch::Audio::StreamMode::kBlocking)
-            ? ASFW::Encoding::StreamMode::kBlocking
-            : ASFW::Encoding::StreamMode::kNonBlocking);
-    ASFW_LOG(Audio, "ASFWAudioDriver: PacketAssembler configured for %u playback channels",
-             ivars->device.outputChannelCount);
-    
     // Create audio device
     auto deviceUID = OSSharedPtr(OSString::withCString("ASFWAudioDevice"), OSNoRetain);
     auto modelUID = OSSharedPtr(OSString::withCString(ivars->device.deviceName), OSNoRetain);
@@ -685,9 +488,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             return kIOReturnBadArgument;
         }
         
-        const uint64_t callbackOrdinal =
-            driverIvars->runtime.ioMetrics.callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
-
         if (driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire)) {
             auto& control = driverIvars->runtime.directAudioControl;
 
@@ -698,56 +498,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                 control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 control.counters.CountWriteEnd();
             }
-        }
-
-        ASFW::Isoch::Audio::AudioIOPathState ioPathState{
-            .inputBuffer = driverIvars->inputBuffer.get(),
-            .outputBuffer = driverIvars->outputBuffer.get(),
-            .inputChannelCount = driverIvars->device.inputChannelCount,
-            .outputChannelCount = driverIvars->device.outputChannelCount,
-            .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
-            .rxStartupDrained = &driverIvars->runtime.rxStartupDrained,
-            .rxQueueValid = driverIvars->shared.rxQueueValid,
-            .rxQueueReader = &driverIvars->shared.rxQueueReader,
-            .txQueueValid = driverIvars->shared.txQueueValid,
-            .txQueueWriter = &driverIvars->shared.txQueueWriter,
-            .zeroCopyEnabled = driverIvars->shared.zeroCopyEnabled,
-            .zeroCopyFrameCapacity = driverIvars->shared.zeroCopyFrameCapacity,
-            .zeroCopyTimeline = &driverIvars->runtime.zeroCopyTimeline,
-            .packetAssembler = &driverIvars->runtime.packetAssembler,
-            .encodingOverruns = &driverIvars->runtime.encodingMetrics.overruns,
-        };
-
-        const kern_return_t operationStatus = ASFW::Isoch::Audio::HandleIOOperation(ioPathState,
-                                                                                      operation,
-                                                                                      ioBufferFrameSize,
-                                                                                      sampleTime);
-
-        if (operationStatus != kIOReturnSuccess) {
-            return operationStatus;
-        }
-
-        const uint32_t rxQueueFillFrames = driverIvars->shared.rxQueueValid
-                                         ? driverIvars->shared.rxQueueReader.FillLevelFrames()
-                                         : 0;
-        const uint32_t txQueueFillFrames = driverIvars->shared.txQueueValid
-                                         ? driverIvars->shared.txQueueWriter.FillLevelFrames()
-                                         : 0;
-        const uint32_t assemblerFillFrames = driverIvars->runtime.packetAssembler.bufferFillLevel();
-        LogIoCallbackMetrics(driverIvars->runtime,
-                             operation,
-                             ioBufferFrameSize,
-                             sampleTime,
-                             hostTime,
-                             rxQueueFillFrames,
-                             txQueueFillFrames,
-                             assemblerFillFrames,
-                             callbackOrdinal);
-
-        if (operation == IOUserAudioIOOperationBeginRead) {
-            driverIvars->runtime.ioMetrics.totalFramesSent.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
-        } else if (operation == IOUserAudioIOOperationWriteEnd) {
-            driverIvars->runtime.ioMetrics.totalFramesReceived.fetch_add(ioBufferFrameSize, std::memory_order_relaxed);
         }
         
         return kIOReturnSuccess;
@@ -827,45 +577,12 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     ivars->inputStream->SetAvailableStreamFormats(inputFormats, formatCount);
     ivars->inputStream->SetCurrentStreamFormat(&inputFormats[0]);  // Initial format
     
-    // ========================================================================
-    // ZERO-COPY: Try to get shared output buffer from ASFWAudioNub
-    // If successful, CoreAudio writes here and IT DMA reads directly!
-    // ========================================================================
-    {
-        const kern_return_t zeroCopyErr = ASFW::Isoch::Audio::MapZeroCopyOutputFromNub(
-            kEnableZeroCopyOutputPath,
-            *nub,
-            ivars->device.outputChannelCount,
-            ivars->outputBuffer,
-            ivars->shared.sharedOutputBuffer,
-            ivars->shared.sharedOutputMap,
-            ivars->shared.sharedOutputBytes,
-            ivars->shared.zeroCopyFrameCapacity,
-            ivars->shared.zeroCopyEnabled);
-
-        if (zeroCopyErr == kIOReturnSuccess && ivars->shared.zeroCopyEnabled) {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: ✅ ZERO-COPY enabled! Shared output buffer: %llu bytes (%u frames)",
-                     ivars->shared.sharedOutputBytes,
-                     ivars->shared.zeroCopyFrameCapacity);
-        } else if (!kEnableZeroCopyOutputPath) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: ZERO-COPY disabled by build flag; using TX queue path");
-        } else {
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: ZERO-COPY mapping failed: 0x%x, using local buffer",
-                     zeroCopyErr);
-        }
-    }
-    
-    // Fallback: Create local output buffer if ZERO-COPY not available
-    if (!ivars->shared.zeroCopyEnabled) {
-        error = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, outputBufferBytes, 0,
-                                                  ivars->outputBuffer.attach());
-        if (error != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output buffer: %d", error);
-            return error;
-        }
-        ASFW_LOG(Audio, "ASFWAudioDriver: Using local output buffer (fallback)");
+    // Create output buffer and stream
+    error = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, outputBufferBytes, 0,
+                                              ivars->outputBuffer.attach());
+    if (error != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output buffer: %d", error);
+        return error;
     }
     
     // Create output stream with the appropriate buffer (shared or local)
@@ -888,20 +605,27 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
              "ASFWAudioDriver: Direct audio skeleton %{public}s",
              directAudioSkeletonBound ? "bound" : "inactive");
 
-    // Register the direct TX binding with the nub so the isoch TX path (same
-    // dext process) can read the exact output buffer + WriteEnd cursor that
-    // CoreAudio writes. The graph's memory view already holds the local base,
-    // frame capacity, channel stride, control block and sample rate.
+    // Register the direct binding with the nub so the isoch TX and RX paths (same
+    // dext process) can read/write the exact buffers + cursors that
+    // CoreAudio uses. The graph's memory view already holds the local bases,
+    // frame capacities, channel strides, control block and sample rate.
     if (directAudioSkeletonBound && ivars->device.audioNub) {
         const auto& graph = ivars->runtime.directAudioGraph;
         const uint64_t directBytes = static_cast<uint64_t>(graph.memory.outputFrameCapacity) *
                                      graph.memory.outputChannels * sizeof(int32_t);
+        const uint64_t inputBytes = static_cast<uint64_t>(graph.memory.inputFrameCapacity) *
+                                    graph.memory.inputChannels * sizeof(int32_t);
         ivars->device.audioNub->SetDirectAudioBinding(graph.memory.outputBase,
                                                       directBytes,
                                                       graph.memory.outputFrameCapacity,
                                                       graph.memory.outputChannels,
+                                                      graph.memory.inputBase,
+                                                      inputBytes,
+                                                      graph.memory.inputFrameCapacity,
+                                                      graph.memory.inputChannels,
                                                       graph.control,
-                                                      graph.sampleRateHz);
+                                                      graph.sampleRateHz,
+                                                      graph.audioDevice);
     } else if (ivars->device.audioNub) {
         ivars->device.audioNub->ClearDirectAudioBinding();
     }
@@ -1012,9 +736,13 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
     
     if (ivars) {
-        // Clear the direct TX binding while the nub (provider) is still valid;
-        // the control block lives in our ivars and dies at free().
+        // Safe teardown: synchronously stop audio streaming so that the isoch contexts
+        // disarm and stop accessing our direct memory views/control blocks.
         if (ivars->device.audioNub) {
+            kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
+            if (stopKr != kIOReturnSuccess) {
+                ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
+            }
             ivars->device.audioNub->ClearDirectAudioBinding();
         }
         ivars->device.audioNub = nullptr;
@@ -1044,7 +772,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice(id=%u)", in_object_id);
     
-    if (!ivars || !ivars->audioDevice || !ivars->runtime.timestampTimer) {
+    if (!ivars || !ivars->audioDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - not initialized");
         return kIOReturnNotReady;
     }
@@ -1057,30 +785,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         }
     }
 
-    ASFW::Isoch::Audio::AudioClockEngineState clockState{
-        .audioDevice = ivars->audioDevice.get(),
-        .timestampTimer = ivars->runtime.timestampTimer.get(),
-        .txQueueValid = ivars->shared.txQueueValid,
-        .txQueueWriter = &ivars->shared.txQueueWriter,
-        .rxQueueValid = ivars->shared.rxQueueValid,
-        .rxQueueReader = &ivars->shared.rxQueueReader,
-        .zeroCopyEnabled = ivars->shared.zeroCopyEnabled,
-        .zeroCopyFrameCapacity = ivars->shared.zeroCopyFrameCapacity,
-        .zeroCopyTimeline = &ivars->runtime.zeroCopyTimeline,
-        .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
-        .currentSampleRate = ivars->device.currentSampleRate,
-        .hostTicksPerBuffer = &ivars->runtime.hostTicksPerBuffer,
-        .clockSync = &ivars->runtime.clockSync,
-        .ioMetrics = &ivars->runtime.ioMetrics,
-        .metricsLogCounter = &ivars->runtime.metricsLogCounter,
-        .packetAssembler = &ivars->runtime.packetAssembler,
-        .encodingMetrics = &ivars->runtime.encodingMetrics,
-        .rxStartupDrained = &ivars->runtime.rxStartupDrained,
-    };
-    ASFW::Isoch::Audio::PrepareClockEngineForStart(clockState);
-    
     ivars->runtime.isRunning.store(true, std::memory_order_release);
-    ASFW_LOG(Audio, "ASFWAudioDriver: Timestamp timer started");
+    ASFW_LOG(Audio, "ASFWAudioDriver: Device started");
     
     return kIOReturnSuccess;
 }
@@ -1098,15 +804,6 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
             ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed: 0x%x", stopKr);
         }
     }
-
-    ASFW::Isoch::Audio::AudioClockEngineState clockState{
-        .timestampTimer = ivars ? ivars->runtime.timestampTimer.get() : nullptr,
-        .rxQueueValid = ivars ? ivars->shared.rxQueueValid : false,
-        .rxQueueReader = ivars ? &ivars->shared.rxQueueReader : nullptr,
-        .zeroCopyTimeline = ivars ? &ivars->runtime.zeroCopyTimeline : nullptr,
-        .clockSync = ivars ? &ivars->runtime.clockSync : nullptr,
-    };
-    ASFW::Isoch::Audio::PrepareClockEngineForStop(clockState);
 
     return kIOReturnSuccess;
 }
@@ -1134,35 +831,7 @@ kern_return_t ASFWAudioDriver::ReadProtocolBooleanControl(uint32_t classIdFourCC
     return ivars->device.audioNub->GetProtocolBooleanControl(classIdFourCC, element, outValue);
 }
 
-// Timer callback - called periodically to update zero timestamps
-void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, uint64_t time)
+// Timer callback - no-op in direct-only mode
+void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, [[maybe_unused]] uint64_t time)
 {
-
-    if (!ivars || !ivars->runtime.isRunning.load(std::memory_order_acquire) || !ivars->audioDevice) {
-        return;
-    }
-
-    ASFW::Isoch::Audio::AudioClockEngineState clockState{
-        .audioDevice = ivars->audioDevice.get(),
-        .timestampTimer = ivars->runtime.timestampTimer.get(),
-        .txQueueValid = ivars->shared.txQueueValid,
-        .txQueueWriter = &ivars->shared.txQueueWriter,
-        .rxQueueValid = ivars->shared.rxQueueValid,
-        .rxQueueReader = &ivars->shared.rxQueueReader,
-        .zeroCopyEnabled = ivars->shared.zeroCopyEnabled,
-        .zeroCopyFrameCapacity = ivars->shared.zeroCopyFrameCapacity,
-        .zeroCopyTimeline = &ivars->runtime.zeroCopyTimeline,
-        .ioBufferPeriodFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames,
-        .currentSampleRate = ivars->device.currentSampleRate,
-        .hostTicksPerBuffer = &ivars->runtime.hostTicksPerBuffer,
-        .clockSync = &ivars->runtime.clockSync,
-        .ioMetrics = &ivars->runtime.ioMetrics,
-        .metricsLogCounter = &ivars->runtime.metricsLogCounter,
-        .packetAssembler = &ivars->runtime.packetAssembler,
-        .encodingMetrics = &ivars->runtime.encodingMetrics,
-        .rxStartupDrained = &ivars->runtime.rxStartupDrained,
-    };
-
-    ASFW::Audio::DriverKit::DirectDiagnostics::MaybeLogDirectAudioDebugSnapshot(ivars->runtime);
-    ASFW::Isoch::Audio::HandleClockTimerTick(clockState, time);
 }
