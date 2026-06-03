@@ -20,27 +20,6 @@ void DiceIsochHostTransport::SetTxRecoveryCallback(
     isoch_.SetTxRecoveryCallback(std::move(callback));
 }
 
-kern_return_t DiceNubQueueMemoryProvider::CopyRxQueueMemory(
-    OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-    uint64_t& outBytes) noexcept {
-    nub_.EnsureRxQueueCreated();
-    IOBufferMemoryDescriptor* raw = nullptr;
-    outBytes = 0;
-    const kern_return_t status = nub_.CopyRxQueueMemory(&raw, &outBytes);
-    outMem = Common::AdoptRetained(raw);
-    return status;
-}
-
-kern_return_t DiceNubQueueMemoryProvider::CopyTransmitQueueMemory(
-    OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-    uint64_t& outBytes) noexcept {
-    IOBufferMemoryDescriptor* raw = nullptr;
-    outBytes = 0;
-    const kern_return_t status = nub_.CopyTransmitQueueMemory(&raw, &outBytes);
-    outMem = Common::AdoptRetained(raw);
-    return status;
-}
-
 kern_return_t DiceIsochHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
     return isoch_.BeginSplitDuplex(guid);
 }
