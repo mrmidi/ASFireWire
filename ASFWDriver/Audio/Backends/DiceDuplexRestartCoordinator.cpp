@@ -1371,25 +1371,6 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     session.hostCaptureReserved = true;
     StoreSession(session);
 
-    const kern_return_t startReceiveStatus = hostTransport_.StartReceive(
-        channels.deviceToHostIsoChannel,
-        hardware_,
-        rxMem,
-        rxBytes);
-    if (startReceiveStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startReceiveStatus,
-                                 DiceRestartPhase::kStartingHostReceive,
-                                 DiceRestartFailureCause::kStartReceive);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostReceive,
-                                      DiceRestartFailureCause::kStartReceive);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
-    session.hostReceiveStarted = true;
-    StoreSession(session);
-
     const auto programTx = WaitForAsyncResult<DiceDuplexStageResult>(
         [&](auto callback) { diceProtocol.ProgramTxAndEnableDuplex(std::move(callback)); },
         kSyncBridgeTimeoutMs,
@@ -1411,6 +1392,25 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         ? programTx.value.runtimeCaps
         : session.runtimeCaps;
     SetSessionPhase(session, DiceRestartPhase::kDeviceTxArmed);
+    StoreSession(session);
+
+    const kern_return_t startReceiveStatus = hostTransport_.StartReceive(
+        channels.deviceToHostIsoChannel,
+        hardware_,
+        rxMem,
+        rxBytes);
+    if (startReceiveStatus != kIOReturnSuccess) {
+        return rollbackToFailure(startReceiveStatus,
+                                 DiceRestartPhase::kStartingHostReceive,
+                                 DiceRestartFailureCause::kStartReceive);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kStartingHostReceive,
+                                      DiceRestartFailureCause::kStartReceive);
+    }
+    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
+    session.hostReceiveStarted = true;
     StoreSession(session);
 
     OSSharedPtr<IOBufferMemoryDescriptor> txMem;

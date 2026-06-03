@@ -250,7 +250,7 @@ TEST(DICETcatProtocolTests, InitializeIsSideEffectFree) {
     EXPECT_EQ(bus.lockCount, 0);
 }
 
-TEST(DICETcatProtocolTests, RuntimeCapsAggregateActiveConfiguredStreams) {
+TEST(DICETcatProtocolTests, RuntimeCapsAggregateTotalConfiguredStreams) {
     CountingFireWireBus bus;
     DICETcatProtocol protocol(bus, bus, 2, nullptr);
 
@@ -278,10 +278,10 @@ TEST(DICETcatProtocolTests, RuntimeCapsAggregateActiveConfiguredStreams) {
     AudioStreamRuntimeCaps caps{};
     ASSERT_TRUE(protocol.GetRuntimeAudioStreamCaps(caps));
     EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 10U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 11U);
-    EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
-    EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
+    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
+    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
+    EXPECT_EQ(caps.hostOutputPcmChannels, 12U);
+    EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
     EXPECT_EQ(caps.deviceToHostIsoChannel, 1U);
     EXPECT_EQ(caps.hostToDeviceIsoChannel, 0U);
 }

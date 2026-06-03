@@ -56,10 +56,10 @@ void CacheRuntimeCaps(AudioStreamRuntimeCaps& caps,
                       const GlobalState& global,
                       const StreamConfig& tx,
                       const StreamConfig& rx) noexcept {
-    caps.hostInputPcmChannels = tx.ActivePcmChannels();
-    caps.deviceToHostAm824Slots = tx.ActiveAm824Slots();
-    caps.hostOutputPcmChannels = rx.ActivePcmChannels();
-    caps.hostToDeviceAm824Slots = rx.ActiveAm824Slots();
+    caps.hostInputPcmChannels = tx.TotalPcmChannels();
+    caps.deviceToHostAm824Slots = tx.TotalAm824Slots();
+    caps.hostOutputPcmChannels = rx.TotalPcmChannels();
+    caps.hostToDeviceAm824Slots = rx.TotalAm824Slots();
     caps.sampleRateHz = global.sampleRate;
     caps.deviceToHostIsoChannel =
         tx.FirstActiveIsoChannel(AudioStreamRuntimeCaps::kInvalidIsoChannel);
@@ -1150,6 +1150,9 @@ void DICEDuplexBringupController::DoPollSourceLock(
                         }
 
                         if (attempt * kPollIntervalMs >= kReadyTimeoutMs) {
+                            ASFW_LOG_ERROR(DICE,
+                                           "ConfirmDuplex48kStart: DICE clock failed to lock within %u ms (status=0x%08x)",
+                                           kReadyTimeoutMs, statusValue);
                             (void)StopDuplex();
                             cb(kIOReturnTimeout);
                             return;
