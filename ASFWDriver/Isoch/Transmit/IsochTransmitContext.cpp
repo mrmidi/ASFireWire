@@ -80,6 +80,11 @@ void IsochTransmitContext::SetZeroCopyOutputBuffer(const int32_t* base, uint64_t
     audio_.SetZeroCopyOutputBuffer(base, bytes, frameCapacity);
 }
 
+void IsochTransmitContext::SetDirectTxRuntimeBinding(
+    const IsochAudioTxPipeline::DirectTxRuntimeBinding& binding) noexcept {
+    audio_.SetDirectTxRuntimeBinding(binding);
+}
+
 kern_return_t IsochTransmitContext::Configure(uint8_t channel,
                                               uint8_t sid,
                                               uint32_t streamModeRaw,

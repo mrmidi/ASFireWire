@@ -4,7 +4,11 @@
 
 #include "../../AudioWire/AMDTP/TimingUtils.hpp"
 
+#include <limits>
+
 namespace ASFW::Isoch {
+
+using DirectTxReadStatus = ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus;
 
 namespace {
 
@@ -160,6 +164,11 @@ void IsochAudioTxPipeline::SetZeroCopyOutputBuffer(const int32_t* base, uint64_t
              assembler_.isZeroCopyEnabled() ? "ENABLED" : "fallback");
 }
 
+void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept {
+    directTxBinding_ = binding;
+    directOutputFrameCursor_ = 0;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
                                               uint32_t streamModeRaw,
@@ -258,6 +267,10 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     counters_.prePrimeLimitHit.store(0, std::memory_order_relaxed);
     counters_.peakAssemblerFill.store(0, std::memory_order_relaxed);
     counters_.peakSharedTxFill.store(0, std::memory_order_relaxed);
+    counters_.directTxPackets.store(0, std::memory_order_relaxed);
+    counters_.directTxUnderrunSilencedPackets.store(0, std::memory_order_relaxed);
+    counters_.directTxFallbackPackets.store(0, std::memory_order_relaxed);
+    counters_.directTxInvalidPackets.store(0, std::memory_order_relaxed);
 
     fillLevelAlert_ = {};
 
@@ -270,6 +283,7 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     adaptiveFill_.lastCombinedUnderruns = 0;
 
     audioWriteIndex_ = 0;
+    directOutputFrameCursor_ = 0;
 
     dbcTracker_.lastDbc = 0;
     dbcTracker_.lastDataBlockCount = 0;
@@ -721,14 +735,126 @@ IsochAudioTxPipeline::BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept {
 
 bool IsochAudioTxPipeline::PacketCarriesAudio(uint32_t packetIndex,
                                               Tx::IsochTxDescriptorSlab& slab) noexcept {
+    return PacketPayloadByteCount(packetIndex, slab) > Encoding::kCIPHeaderSize;
+}
+
+uint32_t IsochAudioTxPipeline::PacketPayloadByteCount(uint32_t packetIndex,
+                                                      Tx::IsochTxDescriptorSlab& slab) noexcept {
     const uint32_t descBase = packetIndex * Tx::Layout::kBlocksPerPacket;
     auto* lastDesc = slab.GetDescriptorPtr(descBase + 2);
     if (!lastDesc) {
+        return 0;
+    }
+
+    return static_cast<uint16_t>(lastDesc->control & 0xFFFF);
+}
+
+bool IsochAudioTxPipeline::IsDirectTxHardwarePathReady(const AudioInjectionPlan& plan) const noexcept {
+    if constexpr (!kEnableDirectTxHardwarePath) {
         return false;
     }
 
-    const uint16_t reqCount = static_cast<uint16_t>(lastDesc->control & 0xFFFF);
-    return reqCount > Encoding::kCIPHeaderSize;
+    if (!directTxBinding_.enabled ||
+        !directTxBinding_.directSkeletonBound ||
+        !directTxBinding_.directEngineBound ||
+        !directTxBinding_.writePacket) {
+        return false;
+    }
+
+    if (directTxBinding_.sampleRateHz != 48000 ||
+        directTxBinding_.streamModeRaw != 1u ||
+        effectiveStreamMode_ != Encoding::StreamMode::kBlocking ||
+        assembler_.audioWireFormat() != Encoding::AudioWireFormat::kAM824) {
+        return false;
+    }
+
+    if (directTxBinding_.outputChannels == 0 ||
+        directTxBinding_.outputChannels != plan.pcmChannels ||
+        directTxBinding_.am824Slots < directTxBinding_.outputChannels ||
+        directTxBinding_.am824Slots != plan.am824Slots) {
+        return false;
+    }
+
+    return plan.framesPerPacket > 0 && plan.packetsToInject > 0;
+}
+
+IsochAudioTxPipeline::PacketCipFields
+IsochAudioTxPipeline::ReadPacketCipFields(const uint8_t* packetBytes) noexcept {
+    PacketCipFields fields{};
+    if (!packetBytes) {
+        return fields;
+    }
+
+    fields.sid = static_cast<uint8_t>(packetBytes[0] & 0x3Fu);
+    fields.dbc = packetBytes[3];
+    fields.syt = static_cast<uint16_t>(
+        (static_cast<uint16_t>(packetBytes[6]) << 8) | static_cast<uint16_t>(packetBytes[7]));
+    return fields;
+}
+
+void IsochAudioTxPipeline::PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept {
+    if (directTxBinding_.publishConsumedEndFrame) {
+        directTxBinding_.publishConsumedEndFrame(directTxBinding_.consumedContext, consumedEndFrame);
+    }
+}
+
+bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
+                                                  Tx::IsochTxDescriptorSlab& slab,
+                                                  const AudioInjectionPlan& plan) noexcept {
+    if (!IsDirectTxHardwarePathReady(plan)) {
+        return false;
+    }
+
+    if (directOutputFrameCursor_ >
+        (std::numeric_limits<uint64_t>::max() - static_cast<uint64_t>(plan.framesPerPacket))) {
+        counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    uint8_t* payloadVirt = slab.PayloadPtr(packetIndex);
+    const uint32_t payloadBytes = PacketPayloadByteCount(packetIndex, slab);
+    if (!payloadVirt || payloadBytes <= Encoding::kCIPHeaderSize) {
+        counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    const PacketCipFields cip = ReadPacketCipFields(payloadVirt);
+    const DirectTxWriteRequest request{
+        .firstFrame = directOutputFrameCursor_,
+        .frameCount = plan.framesPerPacket,
+        .channels = plan.pcmChannels,
+        .am824Slots = plan.am824Slots,
+        .sid = cip.sid,
+        .dbc = cip.dbc,
+        .syt = cip.syt,
+        .dataPacket = true,
+        .packetBytes = payloadVirt,
+        .packetCapacityBytes = payloadBytes,
+    };
+
+    const DirectTxWriteResult result = directTxBinding_.writePacket(directTxBinding_.writeContext,
+                                                                    request);
+    if (result.readStatus != DirectTxReadStatus::kAvailable &&
+        result.readStatus != DirectTxReadStatus::kUnderrun) {
+        counters_.directTxFallbackPackets.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (result.bytesWritten != payloadBytes || result.framesEncoded != plan.framesPerPacket) {
+        counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
+        counters_.directTxFallbackPackets.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (result.readStatus == DirectTxReadStatus::kUnderrun || result.usedSilence) {
+        counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    const uint64_t consumedEndFrame = directOutputFrameCursor_ + plan.framesPerPacket;
+    directOutputFrameCursor_ = consumedEndFrame;
+    PublishDirectTxConsumedEndFrame(consumedEndFrame);
+    counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 IsochAudioTxPipeline::PacketReadResult
@@ -829,6 +955,10 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
     for (uint32_t i = 0; i < plan.packetsToInject; ++i) {
         const uint32_t packetIndex = (audioWriteIndex_ + i) % kNumPackets;
         if (!PacketCarriesAudio(packetIndex, slab)) {
+            continue;
+        }
+
+        if (TryWriteDirectTxPacket(packetIndex, slab, plan)) {
             continue;
         }
 

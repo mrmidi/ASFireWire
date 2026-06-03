@@ -8,6 +8,7 @@
 
 #include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 #include "../../AudioWire/AMDTP/SYTGenerator.hpp"
+#include "../Direct/Tx/DirectTxTypes.hpp"
 #include "../../Isoch/Core/ExternalSyncBridge.hpp"
 #include "../../Isoch/Core/ExternalSyncDiscipline48k.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
@@ -26,6 +27,8 @@ namespace ASFW::Isoch {
 /// into near-HW slots (latency control).
 class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider, public Tx::IIsochTxAudioInjector {
 public:
+    static constexpr bool kEnableDirectTxHardwarePath = false;
+
     struct Counters {
         std::atomic<uint64_t> resyncApplied{0};
         std::atomic<uint64_t> staleFramesDropped{0};
@@ -47,6 +50,53 @@ public:
         std::atomic<uint32_t> prePrimeLimitHit{0};
         std::atomic<uint32_t> peakAssemblerFill{0};
         std::atomic<uint32_t> peakSharedTxFill{0};
+        std::atomic<uint64_t> directTxPackets{0};
+        std::atomic<uint64_t> directTxUnderrunSilencedPackets{0};
+        std::atomic<uint64_t> directTxFallbackPackets{0};
+        std::atomic<uint64_t> directTxInvalidPackets{0};
+    };
+
+    struct DirectTxWriteRequest final {
+        uint64_t firstFrame{0};
+        uint32_t frameCount{0};
+        uint32_t channels{0};
+        uint32_t am824Slots{0};
+
+        uint8_t sid{0};
+        uint8_t dbc{0};
+        uint16_t syt{0};
+        bool dataPacket{true};
+
+        uint8_t* packetBytes{nullptr};
+        uint32_t packetCapacityBytes{0};
+    };
+
+    struct DirectTxWriteResult final {
+        ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus readStatus{
+            ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus::kUnavailable};
+        uint32_t bytesWritten{0};
+        uint32_t framesEncoded{0};
+        bool usedSilence{false};
+    };
+
+    using DirectTxWriteCallback = DirectTxWriteResult (*)(void* context,
+                                                          const DirectTxWriteRequest& request) noexcept;
+    using DirectTxPublishConsumedCallback = void (*)(void* context, uint64_t consumedEndFrame) noexcept;
+
+    struct DirectTxRuntimeBinding final {
+        void* writeContext{nullptr};
+        DirectTxWriteCallback writePacket{nullptr};
+
+        void* consumedContext{nullptr};
+        DirectTxPublishConsumedCallback publishConsumedEndFrame{nullptr};
+
+        bool enabled{false};
+        bool directSkeletonBound{false};
+        bool directEngineBound{false};
+        uint32_t sampleRateHz{0};
+        uint32_t streamModeRaw{0};
+        uint32_t outputChannels{0};
+        uint32_t am824Slots{0};
     };
 
     IsochAudioTxPipeline() noexcept = default;
@@ -62,6 +112,8 @@ public:
     void SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes,
                                  uint32_t frameCapacity) noexcept;
     [[nodiscard]] bool IsZeroCopyEnabled() const noexcept { return zeroCopyEnabled_; }
+
+    void SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept;
 
     [[nodiscard]] Encoding::StreamMode RequestedStreamMode() const noexcept { return requestedStreamMode_; }
     [[nodiscard]] Encoding::StreamMode EffectiveStreamMode() const noexcept { return effectiveStreamMode_; }
@@ -159,6 +211,12 @@ private:
         bool leaveSilence{false};
     };
 
+    struct PacketCipFields {
+        uint8_t sid{0};
+        uint8_t dbc{0};
+        uint16_t syt{0};
+    };
+
     void ApplyPendingSharedQueueResync() noexcept;
     [[nodiscard]] LegacyPumpResult PumpLegacyAssemblerRing(uint32_t targetRbFillFrames) noexcept;
     void RecordLegacyPumpResult(const LegacyPumpResult& result) noexcept;
@@ -170,6 +228,14 @@ private:
     [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
     [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
     [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;
+    [[nodiscard]] uint32_t PacketPayloadByteCount(uint32_t packetIndex,
+                                                  Tx::IsochTxDescriptorSlab& slab) noexcept;
+    [[nodiscard]] bool IsDirectTxHardwarePathReady(const AudioInjectionPlan& plan) const noexcept;
+    [[nodiscard]] static PacketCipFields ReadPacketCipFields(const uint8_t* packetBytes) noexcept;
+    [[nodiscard]] bool TryWriteDirectTxPacket(uint32_t packetIndex,
+                                              Tx::IsochTxDescriptorSlab& slab,
+                                              const AudioInjectionPlan& plan) noexcept;
+    void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
     [[nodiscard]] PacketReadResult ReadPacketSamples(const AudioInjectionPlan& plan, int32_t* samples) noexcept;
     [[nodiscard]] PacketReadResult ReadZeroCopyPacketSamples(const AudioInjectionPlan& plan,
                                                              int32_t* samples) noexcept;
@@ -206,6 +272,9 @@ private:
     uint64_t zeroCopyAudioBytes_{0};
     uint32_t zeroCopyFrameCapacity_{0};
     bool zeroCopyEnabled_{false};
+
+    DirectTxRuntimeBinding directTxBinding_{};
+    uint64_t directOutputFrameCursor_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};
     Encoding::StreamMode effectiveStreamMode_{Encoding::StreamMode::kNonBlocking};

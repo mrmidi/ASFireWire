@@ -112,6 +112,7 @@ public:
     // No intermediate copy needed - IT DMA reads directly!
     void SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes, uint32_t frameCapacity) noexcept;
     bool IsZeroCopyEnabled() const noexcept { return audio_.IsZeroCopyEnabled(); }
+    void SetDirectTxRuntimeBinding(const IsochAudioTxPipeline::DirectTxRuntimeBinding& binding) noexcept;
     Encoding::StreamMode RequestedStreamMode() const noexcept { return audio_.RequestedStreamMode(); }
     Encoding::StreamMode EffectiveStreamMode() const noexcept { return audio_.EffectiveStreamMode(); }
     

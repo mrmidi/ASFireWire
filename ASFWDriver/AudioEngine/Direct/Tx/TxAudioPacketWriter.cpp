@@ -1,4 +1,4 @@
-#include "TxAudioPacketProcessor.hpp"
+#include "TxAudioPacketWriter.hpp"
 
 #include "DirectTxPacketEncoder.hpp"
 #include "DirectTxProbe.hpp"
@@ -7,15 +7,14 @@
 
 namespace ASFW::AudioEngine::Direct::Tx {
 
-uint32_t TxAudioPacketProcessor::EffectiveAm824Slots(const TxAudioPacketRequest& request) noexcept {
+uint32_t TxAudioPacketWriter::EffectiveAm824Slots(const TxAudioPacketWriteRequest& request) noexcept {
     return request.am824Slots == 0 ? request.channels : request.am824Slots;
 }
 
-TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPacketRequest& request,
-                                                               DirectTxPacketScratch& scratch) noexcept {
-    scratch.Reset();
-
-    TxAudioPacketResult result{};
+TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWriteRequest& request,
+                                                          uint8_t* packetBytes,
+                                                          uint32_t packetCapacityBytes) noexcept {
+    TxAudioPacketWriteResult result{};
 
     if (!reader_.IsBound()) {
         result.readStatus = DirectTxReadStatus::kInvalidBinding;
@@ -31,6 +30,12 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
     }
 
     if (!request.dataPacket) {
+        if (!packetBytes || packetCapacityBytes < kDirectTxCipHeaderBytes) {
+            result.readStatus = DirectTxReadStatus::kInvalidRange;
+            return result;
+        }
+
+        uint32_t bytesWritten = 0;
         const DirectTxPacketHeaderRequest header{
             .sid = request.sid,
             .am824Slots = am824Slots,
@@ -38,16 +43,23 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
             .syt = ASFW::Encoding::kSYTNoData,
             .isNoData = true,
         };
-        if (!BeginDirectTxScratchPacket(header, scratch)) {
+        if (!BeginDirectTxPacket(header, packetBytes, packetCapacityBytes, bytesWritten)) {
             result.readStatus = DirectTxReadStatus::kInvalidRange;
             return result;
         }
 
         result.readStatus = DirectTxReadStatus::kAvailable;
+        result.bytesWritten = bytesWritten;
         return result;
     }
 
     if (!IsValidDirectTxGeometry(request.frameCount, request.channels, am824Slots)) {
+        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        return result;
+    }
+
+    const uint32_t packetBytesNeeded = DirectTxPacketByteCount(request.frameCount, am824Slots);
+    if (!packetBytes || packetCapacityBytes < packetBytesNeeded) {
         result.readStatus = DirectTxReadStatus::kInvalidRange;
         return result;
     }
@@ -66,6 +78,19 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
     }
 
     const bool useSilence = read.status == DirectTxReadStatus::kUnderrun;
+    const int32_t* inputFrames[kMaxDirectTxScratchFrames]{};
+    if (!useSilence) {
+        for (uint32_t frame = 0; frame < request.frameCount; ++frame) {
+            const int32_t* frameIn = reader_.Frame(request.firstFrame + frame);
+            if (!frameIn) {
+                result.readStatus = DirectTxReadStatus::kInvalidBinding;
+                return result;
+            }
+            inputFrames[frame] = frameIn;
+        }
+    }
+
+    uint32_t bytesWritten = 0;
     const DirectTxPacketHeaderRequest header{
         .sid = request.sid,
         .am824Slots = am824Slots,
@@ -73,12 +98,17 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
         .syt = request.syt,
         .isNoData = false,
     };
-    if (!BeginDirectTxScratchPacket(header, scratch)) {
+    if (!BeginDirectTxPacket(header, packetBytes, packetCapacityBytes, bytesWritten)) {
         result.readStatus = DirectTxReadStatus::kInvalidRange;
         return result;
     }
 
-    auto* payload = DirectTxScratchPayloadQuadlets(scratch);
+    auto* payload = DirectTxPacketPayloadQuadlets(packetBytes);
+    if (!payload) {
+        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        return result;
+    }
+
     for (uint32_t frame = 0; frame < request.frameCount; ++frame) {
         auto* frameOut = payload + (static_cast<size_t>(frame) * am824Slots);
         if (useSilence) {
@@ -86,19 +116,10 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
             continue;
         }
 
-        const int32_t* frameIn = reader_.Frame(request.firstFrame + frame);
-        if (!frameIn) {
-            result.readStatus = DirectTxReadStatus::kInvalidBinding;
-            scratch.Reset();
-            return result;
-        }
-        EncodeDirectTxPcmFrameToAm824(frameIn, request.channels, am824Slots, frameOut);
+        EncodeDirectTxPcmFrameToAm824(inputFrames[frame], request.channels, am824Slots, frameOut);
     }
 
-    scratch.length = DirectTxPacketByteCount(request.frameCount, am824Slots);
-    scratch.framesEncoded = request.frameCount;
-    scratch.usedSilence = useSilence;
-
+    result.bytesWritten = packetBytesNeeded;
     result.framesEncoded = request.frameCount;
     result.usedSilence = useSilence;
     return result;
