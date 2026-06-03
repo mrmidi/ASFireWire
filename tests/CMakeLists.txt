@@ -1428,6 +1428,8 @@ add_executable(IsochTransmitContextTests
     "${ASFW_TESTS_DIR}/IsochTransmitContextTests.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioTxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxVerifier.cpp"

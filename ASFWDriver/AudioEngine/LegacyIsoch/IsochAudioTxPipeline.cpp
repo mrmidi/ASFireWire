@@ -8,6 +8,7 @@
 
 namespace ASFW::Isoch {
 
+namespace Direct = ASFW::AudioEngine::Direct;
 using DirectTxReadStatus = ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus;
 
 namespace {
@@ -167,6 +168,27 @@ void IsochAudioTxPipeline::SetZeroCopyOutputBuffer(const int32_t* base, uint64_t
 void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept {
     directTxBinding_ = binding;
     directOutputFrameCursor_ = 0;
+    directCursorInitialized_ = false;
+
+    // Rebuild the isoch-owned read view over the shared output memory + control
+    // block. No ADK object pointers are stored; the reader only ever touches
+    // raw stream memory and the atomic transport cursors.
+    directOutputView_ = {};
+    directOutputView_.memory.outputBase = binding.outputBase;
+    directOutputView_.memory.outputFrameCapacity = binding.outputFrames;
+    directOutputView_.memory.outputChannels = binding.outputChannels;
+    directOutputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native;
+    directOutputView_.hostToDeviceAm824Slots = binding.am824Slots;
+    directOutputView_.control = binding.control;
+    directOutputReader_.Bind(&directOutputView_);
+
+    ASFW_LOG(Isoch,
+             "IT: DIRECT-TX binding %{public}s base=%p frames=%u ch=%u slots=%u rate=%u mode=%u bound=%{public}s",
+             binding.enabled ? "set(enabled)" : "set(disabled)",
+             static_cast<const void*>(binding.outputBase),
+             binding.outputFrames, binding.outputChannels, binding.am824Slots,
+             binding.sampleRateHz, binding.streamModeRaw,
+             directOutputReader_.IsBound() ? "yes" : "no");
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -284,6 +306,7 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
 
     audioWriteIndex_ = 0;
     directOutputFrameCursor_ = 0;
+    directCursorInitialized_ = false;
 
     dbcTracker_.lastDbc = 0;
     dbcTracker_.lastDataBlockCount = 0;
@@ -755,9 +778,9 @@ bool IsochAudioTxPipeline::IsDirectTxHardwarePathReady(const AudioInjectionPlan&
     }
 
     if (!directTxBinding_.enabled ||
-        !directTxBinding_.directSkeletonBound ||
-        !directTxBinding_.directEngineBound ||
-        !directTxBinding_.writePacket) {
+        directTxBinding_.outputBase == nullptr ||
+        directTxBinding_.control == nullptr ||
+        !directOutputReader_.IsBound()) {
         return false;
     }
 
@@ -793,15 +816,50 @@ IsochAudioTxPipeline::ReadPacketCipFields(const uint8_t* packetBytes) noexcept {
 }
 
 void IsochAudioTxPipeline::PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept {
-    if (directTxBinding_.publishConsumedEndFrame) {
-        directTxBinding_.publishConsumedEndFrame(directTxBinding_.consumedContext, consumedEndFrame);
+    // RT-safe publish of how far the isoch TX hot path has consumed the output
+    // stream, into the shared transport control block. No callback into the ADK
+    // object; the audio side reads this atomic when it wants TX progress.
+    if (directTxBinding_.control) {
+        directTxBinding_.control->outputConsumedEndFrame.store(consumedEndFrame,
+                                                               std::memory_order_release);
     }
+}
+
+bool IsochAudioTxPipeline::InitializeDirectOutputCursor(const AudioInjectionPlan& plan) noexcept {
+    // Anchor the direct output cursor a few packets behind the client's WriteEnd
+    // so the frames we read are already published. Defer until the client has
+    // written at least one buffer; starting from 0 would point at stale
+    // modulo-buffer frames and immediately underrun-probe.
+    const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
+    if (writtenEnd == 0) {
+        return false;
+    }
+
+    // Safety lead: keep ~64 frames (or a few DATA packets, whichever is larger)
+    // of margin behind WriteEnd. ~64 frames @48k ≈ 1.33 ms.
+    constexpr uint64_t kMinSafetyLeadFrames = 64;
+    const uint64_t packetLead = static_cast<uint64_t>(plan.framesPerPacket) * 3u;
+    const uint64_t safetyLead = (packetLead > kMinSafetyLeadFrames) ? packetLead : kMinSafetyLeadFrames;
+
+    directOutputFrameCursor_ = (writtenEnd > safetyLead) ? (writtenEnd - safetyLead) : 0;
+    directCursorInitialized_ = true;
+
+    ASFW_LOG(Isoch,
+             "IT: DIRECT-TX cursor init writtenEnd=%llu safetyLead=%llu cursor=%llu ch=%u slots=%u framesPerPacket=%u",
+             writtenEnd, safetyLead, directOutputFrameCursor_,
+             plan.pcmChannels, plan.am824Slots, plan.framesPerPacket);
+    return true;
 }
 
 bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                                                   Tx::IsochTxDescriptorSlab& slab,
                                                   const AudioInjectionPlan& plan) noexcept {
     if (!IsDirectTxHardwarePathReady(plan)) {
+        return false;
+    }
+
+    if (!directCursorInitialized_ && !InitializeDirectOutputCursor(plan)) {
+        // Client has not published a buffer yet; let the legacy path run.
         return false;
     }
 
@@ -819,7 +877,7 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
     }
 
     const PacketCipFields cip = ReadPacketCipFields(payloadVirt);
-    const DirectTxWriteRequest request{
+    const Direct::Tx::TxAudioPacketWriteRequest request{
         .firstFrame = directOutputFrameCursor_,
         .frameCount = plan.framesPerPacket,
         .channels = plan.pcmChannels,
@@ -828,12 +886,11 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
         .dbc = cip.dbc,
         .syt = cip.syt,
         .dataPacket = true,
-        .packetBytes = payloadVirt,
-        .packetCapacityBytes = payloadBytes,
     };
 
-    const DirectTxWriteResult result = directTxBinding_.writePacket(directTxBinding_.writeContext,
-                                                                    request);
+    Direct::Tx::TxAudioPacketWriter writer(directOutputReader_);
+    const Direct::Tx::TxAudioPacketWriteResult result =
+        writer.WritePacket(request, payloadVirt, payloadBytes);
     if (result.readStatus != DirectTxReadStatus::kAvailable &&
         result.readStatus != DirectTxReadStatus::kUnderrun) {
         counters_.directTxFallbackPackets.fetch_add(1, std::memory_order_relaxed);

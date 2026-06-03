@@ -9,6 +9,10 @@
 #include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 #include "../../AudioWire/AMDTP/SYTGenerator.hpp"
 #include "../Direct/Tx/DirectTxTypes.hpp"
+#include "../Direct/Tx/TxAudioPacketWriter.hpp"
+#include "../Direct/DirectOutputReader.hpp"
+#include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
+#include "../../Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "../../Isoch/Core/ExternalSyncBridge.hpp"
 #include "../../Isoch/Core/ExternalSyncDiscipline48k.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
@@ -56,43 +60,18 @@ public:
         std::atomic<uint64_t> directTxInvalidPackets{0};
     };
 
-    struct DirectTxWriteRequest final {
-        uint64_t firstFrame{0};
-        uint32_t frameCount{0};
-        uint32_t channels{0};
-        uint32_t am824Slots{0};
-
-        uint8_t sid{0};
-        uint8_t dbc{0};
-        uint16_t syt{0};
-        bool dataPacket{true};
-
-        uint8_t* packetBytes{nullptr};
-        uint32_t packetCapacityBytes{0};
-    };
-
-    struct DirectTxWriteResult final {
-        ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus readStatus{
-            ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus::kUnavailable};
-        uint32_t bytesWritten{0};
-        uint32_t framesEncoded{0};
-        bool usedSilence{false};
-    };
-
-    using DirectTxWriteCallback = DirectTxWriteResult (*)(void* context,
-                                                          const DirectTxWriteRequest& request) noexcept;
-    using DirectTxPublishConsumedCallback = void (*)(void* context, uint64_t consumedEndFrame) noexcept;
-
+    // Plain, RT-safe view of the ADK output stream memory + shared transport
+    // control block. The isoch TX hot path reads this directly; it never calls
+    // back into the AudioDriverKit object graph (no IOUserAudioDevice/Stream,
+    // no FireWireAudioEngine, no std::function). Mirrors the zero-copy precedent
+    // of threading raw shared-memory handles across the IOService boundary.
     struct DirectTxRuntimeBinding final {
-        void* writeContext{nullptr};
-        DirectTxWriteCallback writePacket{nullptr};
-
-        void* consumedContext{nullptr};
-        DirectTxPublishConsumedCallback publishConsumedEndFrame{nullptr};
+        const int32_t* outputBase{nullptr};
+        uint64_t outputBytes{0};
+        uint32_t outputFrames{0};
+        ASFW::Audio::Runtime::AudioTransportControlBlock* control{nullptr};
 
         bool enabled{false};
-        bool directSkeletonBound{false};
-        bool directEngineBound{false};
         uint32_t sampleRateHz{0};
         uint32_t streamModeRaw{0};
         uint32_t outputChannels{0};
@@ -235,6 +214,10 @@ private:
     [[nodiscard]] bool TryWriteDirectTxPacket(uint32_t packetIndex,
                                               Tx::IsochTxDescriptorSlab& slab,
                                               const AudioInjectionPlan& plan) noexcept;
+    // Anchors directOutputFrameCursor_ near the client's WriteEnd on the first
+    // DATA injection. Returns false (defer to legacy path) until the client has
+    // published at least one buffer (WriteEnd > 0).
+    [[nodiscard]] bool InitializeDirectOutputCursor(const AudioInjectionPlan& plan) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
     [[nodiscard]] PacketReadResult ReadPacketSamples(const AudioInjectionPlan& plan, int32_t* samples) noexcept;
     [[nodiscard]] PacketReadResult ReadZeroCopyPacketSamples(const AudioInjectionPlan& plan,
@@ -274,7 +257,13 @@ private:
     bool zeroCopyEnabled_{false};
 
     DirectTxRuntimeBinding directTxBinding_{};
+    // Local, isoch-owned view over the shared ADK output memory + control block.
+    // Rebuilt from directTxBinding_ in SetDirectTxRuntimeBinding(); the reader
+    // points at directOutputView_ which lives for the pipeline's lifetime.
+    ASFW::Audio::Runtime::AudioGraphBinding directOutputView_{};
+    ASFW::AudioEngine::Direct::DirectOutputReader directOutputReader_{};
     uint64_t directOutputFrameCursor_{0};
+    bool directCursorInitialized_{false};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};
     Encoding::StreamMode effectiveStreamMode_{Encoding::StreamMode::kNonBlocking};

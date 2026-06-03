@@ -174,7 +174,13 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           uint64_t txQueueBytes,
                                           const int32_t* zeroCopyBase,
                                           uint64_t zeroCopyBytes,
-                                          uint32_t zeroCopyFrames) {
+                                          uint32_t zeroCopyFrames,
+                                          const int32_t* directOutputBase,
+                                          uint64_t directOutputBytes,
+                                          uint32_t directOutputFrames,
+                                          ASFW::Audio::Runtime::AudioTransportControlBlock* directAudioControl,
+                                          uint32_t directSampleRateHz,
+                                          bool directTxEnabled) {
 
     if (isochTransmitContext_ &&
         isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
@@ -283,6 +289,36 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         txQueue_.Reset();
         return result;
+    }
+
+    // Direct TX: hand the isoch context a plain shared-memory view of the ADK
+    // output stream + transport control block. Gated by directTxEnabled (and the
+    // pipeline's compile-time kEnableDirectTxHardwarePath); when off, this is a
+    // benign cleared binding.
+    {
+        ASFW::Isoch::IsochAudioTxPipeline::DirectTxRuntimeBinding directBinding{};
+        const bool directViable = directTxEnabled &&
+                                  directOutputBase != nullptr &&
+                                  directOutputFrames > 0 &&
+                                  directAudioControl != nullptr;
+        if (directViable) {
+            directBinding.outputBase = directOutputBase;
+            directBinding.outputBytes = directOutputBytes;
+            directBinding.outputFrames = directOutputFrames;
+            directBinding.control = directAudioControl;
+            directBinding.enabled = true;
+            directBinding.sampleRateHz = directSampleRateHz;
+            directBinding.streamModeRaw = streamModeRaw;
+            directBinding.outputChannels = pcmChannels;
+            directBinding.am824Slots = am824Slots;
+        }
+        isochTransmitContext_->SetDirectTxRuntimeBinding(directBinding);
+        ASFW_LOG(Controller,
+                 "[Isoch] DIRECT-TX %{public}s rate=%u mode=%u ch=%u slots=%u base=%p frames=%u control=%p",
+                 directViable ? "enabled" : "disabled",
+                 directSampleRateHz, streamModeRaw, pcmChannels, am824Slots,
+                 static_cast<const void*>(directOutputBase), directOutputFrames,
+                 static_cast<const void*>(directAudioControl));
     }
 
     const auto& txProfile = ASFW::Isoch::Config::kTxBufferProfile;
@@ -553,7 +589,13 @@ kern_return_t IsochService::StartDuplex(const IsochDuplexStartParams& params,
                                             params.txQueueBytes,
                                             params.zeroCopyBase,
                                             params.zeroCopyBytes,
-                                            params.zeroCopyFrames);
+                                            params.zeroCopyFrames,
+                                            params.directOutputBase,
+                                            params.directOutputBytes,
+                                            params.directOutputFrames,
+                                            params.directAudioControl,
+                                            params.sampleRateHz,
+                                            params.directTxEnabled);
     if (krTx != kIOReturnSuccess) {
         StopReceive();
         activeGuid_ = 0;
