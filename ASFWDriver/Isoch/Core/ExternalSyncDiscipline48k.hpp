@@ -132,8 +132,11 @@ public:
 
     [[nodiscard]] static int32_t SytToTickIndex(uint16_t syt) noexcept {
         const int32_t cycle4 = static_cast<int32_t>((syt >> 12) & 0x0F);
-        const int32_t ticks12 = static_cast<int32_t>(syt & 0x0FFF);
-        return (cycle4 * kTicksPerCycle) + (ticks12 % kTicksPerCycle);
+        const int32_t ticks12_raw = static_cast<int32_t>(syt & 0x0FFF);
+        const int32_t extraCycles = ticks12_raw / kTicksPerCycle;
+        const int32_t ticks12 = ticks12_raw % kTicksPerCycle;
+        const int32_t finalCycle4 = (cycle4 + extraCycles) & 0x0F;
+        return (finalCycle4 * kTicksPerCycle) + ticks12;
     }
 
     [[nodiscard]] static int32_t WrapSignedTicks(int32_t ticks) noexcept {
