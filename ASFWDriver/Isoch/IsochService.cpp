@@ -7,6 +7,7 @@
 #include "../Logging/Logging.hpp"
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
+#include "Memory/IsochDMAMemoryManager.hpp"
 
 namespace ASFW::Driver {
 
@@ -18,7 +19,24 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
                                          ASFW::Encoding::AudioWireFormat wireFormat,
                                          uint32_t am824Slots) {
     if (!isochReceiveContext_) {
-        isochReceiveContext_ = IsochReceiveContext::Create(&hardware, 0);
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
+        config.packetSizeBytes = ASFW::Isoch::IsochReceiveContext::kMaxPacketSize;
+        config.descriptorAlignment = 16;
+        config.payloadPageAlignment = 16384;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem) {
+            ASFW_LOG(Isoch, "IsochService: Failed to create RX DMA memory manager");
+            return kIOReturnNoMemory;
+        }
+
+        if (!isochMem->Initialize(hardware)) {
+            ASFW_LOG(Isoch, "IsochService: Failed to initialize RX DMA memory");
+            return kIOReturnNoMemory;
+        }
+
+        isochReceiveContext_ = IsochReceiveContext::Create(&hardware, isochMem);
         if (!isochReceiveContext_) {
             ASFW_LOG(Isoch, "IsochService: Failed to create IR context");
             return kIOReturnNoMemory;
@@ -56,7 +74,24 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           ASFW::Encoding::AudioWireFormat wireFormat,
                                           ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) {
     if (!isochTransmitContext_) {
-        isochTransmitContext_ = IsochTransmitContext::Create(&hardware, nullptr);
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::IsochTransmitContext::kRingBlocks;
+        config.packetSizeBytes = ASFW::Isoch::IsochTransmitContext::kMaxPacketSize;
+        config.descriptorAlignment = ASFW::Isoch::IsochTransmitContext::kOHCIPageSize;
+        config.payloadPageAlignment = 16384;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem) {
+            ASFW_LOG(Isoch, "IsochService: Failed to create TX DMA memory manager");
+            return kIOReturnNoMemory;
+        }
+
+        if (!isochMem->Initialize(hardware)) {
+            ASFW_LOG(Isoch, "IsochService: Failed to initialize TX DMA memory");
+            return kIOReturnNoMemory;
+        }
+
+        isochTransmitContext_ = IsochTransmitContext::Create(&hardware, isochMem);
         if (!isochTransmitContext_) {
             ASFW_LOG(Isoch, "IsochService: Failed to create IT context");
             return kIOReturnNoMemory;
