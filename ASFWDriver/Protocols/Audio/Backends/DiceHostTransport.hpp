@@ -21,18 +21,6 @@ class ASFWAudioNub;
 
 namespace ASFW::Audio {
 
-class IDiceQueueMemoryProvider {
-public:
-    virtual ~IDiceQueueMemoryProvider() = default;
-
-    [[nodiscard]] virtual kern_return_t CopyRxQueueMemory(
-        OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-        uint64_t& outBytes) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t CopyTransmitQueueMemory(
-        OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-        uint64_t& outBytes) noexcept = 0;
-};
-
 class IDiceHostTransport {
 public:
     virtual ~IDiceHostTransport() = default;
@@ -64,22 +52,6 @@ public:
     [[nodiscard]] virtual kern_return_t StopDuplex(
         uint64_t guid,
         ::ASFW::IRM::IRMClient* irmClient) noexcept = 0;
-};
-
-class DiceNubQueueMemoryProvider final : public IDiceQueueMemoryProvider {
-public:
-    explicit DiceNubQueueMemoryProvider(ASFWAudioNub& nub) noexcept
-        : nub_(nub) {}
-
-    [[nodiscard]] kern_return_t CopyRxQueueMemory(
-        OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-        uint64_t& outBytes) noexcept override;
-    [[nodiscard]] kern_return_t CopyTransmitQueueMemory(
-        OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-        uint64_t& outBytes) noexcept override;
-
-private:
-    ASFWAudioNub& nub_;
 };
 
 class DiceIsochHostTransport final : public IDiceHostTransport {

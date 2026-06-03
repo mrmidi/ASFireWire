@@ -51,7 +51,6 @@ using ASFW::Audio::AudioRuntimeRegistry;
 using ASFW::Audio::DiceDuplexRestartCoordinator;
 using ASFW::Audio::IDeviceProtocol;
 using ASFW::Audio::IDiceHostTransport;
-using ASFW::Audio::IDiceQueueMemoryProvider;
 using ASFW::Discovery::CfgKey;
 using ASFW::Discovery::ConfigROM;
 using ASFW::Discovery::DeviceRegistry;
