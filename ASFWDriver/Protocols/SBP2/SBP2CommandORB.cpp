@@ -2,6 +2,7 @@
 // Ref: SBP-2 §5.1.1 (Normal Command ORB format)
 
 #include "SBP2CommandORB.hpp"
+#include <DriverKit/IOLib.h>
 #include "SBP2DelayedDispatch.hpp"
 #include "../../Common/FWCommon.hpp"
 
@@ -90,16 +91,16 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
     const uint16_t busNodeID = Wire::NormalizeBusNodeID(localNodeID);
 
     // Null next-ORB pointer (bit 31 set = null terminator)
-    orb->nextORBAddressHi = Wire::ToBE32(Wire::NormalORB::kNextORBNull);
+    orb->nextORBAddressHi = OSSwapHostToBigInt32(Wire::NormalORB::kNextORBNull);
     orb->nextORBAddressLo = 0;
 
     // Data descriptor: fill in localNodeID in the hi word
     if (dataDescriptor_.isDirect) {
         // Direct mode: preserve addressHi and inject local node ID.
-        orb->dataDescriptorHi = Wire::ToBE32(
+        orb->dataDescriptorHi = OSSwapHostToBigInt32(
             Wire::ComposeBusAddressHi(
                 busNodeID,
-                static_cast<uint16_t>(Wire::FromBE32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu)));
+                static_cast<uint16_t>(OSSwapBigToHostInt32(dataDescriptor_.dataDescriptorHi) & 0xFFFFu)));
         orb->dataDescriptorLo = dataDescriptor_.dataDescriptorLo;
     } else {
         // Page table mode: dataDescriptorHi already has nodeID + addressHi from Build()
@@ -112,11 +113,11 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
 
     // ORB format: Normal = 0x0000, Reserved = 0x2000, Vendor = 0x4000, Dummy = 0x6000
     if (flags_ & kDummyORB) {
-        options |= Wire::ToBE16(0x6000);
+        options |= OSSwapHostToBigInt16(0x6000);
     } else if (flags_ & kVendorORB) {
-        options |= Wire::ToBE16(0x4000);
+        options |= OSSwapHostToBigInt16(0x4000);
     } else if (flags_ & kReservedORB) {
-        options |= Wire::ToBE16(0x2000);
+        options |= OSSwapHostToBigInt16(0x2000);
     }
     // kNormalORB (default) → 0x0000, no bits needed
 
@@ -139,7 +140,7 @@ void SBP2CommandORB::PrepareForExecution(uint16_t localNodeID,
     }
 
     // Max payload size (log2 of max payload in quadlets, shifted left by 4)
-    options |= Wire::ToBE16(
+    options |= OSSwapHostToBigInt16(
         static_cast<uint16_t>(maxPayloadLog << Wire::Options::kMaxPayloadShift));
 
     // Page table format bits from data descriptor
@@ -189,9 +190,9 @@ void SBP2CommandORB::SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept {
 void SBP2CommandORB::SetToDummy() noexcept {
     // Set rq_fmt=3 (bits [13:12] = 11) to make device skip this ORB
     auto* orb = reinterpret_cast<Wire::NormalORB*>(orbStorage_.data());
-    uint16_t hostOptions = Wire::FromBE16(orb->options);
+    uint16_t hostOptions = OSSwapBigToHostInt16(orb->options);
     hostOptions = (hostOptions & ~0x3000u) | 0x6000u;
-    orb->options = Wire::ToBE16(hostOptions);
+    orb->options = OSSwapHostToBigInt16(hostOptions);
     WriteORBToAddressSpace();
 }
 

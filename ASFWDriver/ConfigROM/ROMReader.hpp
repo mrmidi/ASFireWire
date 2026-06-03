@@ -1,5 +1,7 @@
 #pragma once
 
+#include <DriverKit/IOLib.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>

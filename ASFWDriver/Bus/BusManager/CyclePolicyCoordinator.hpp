@@ -8,7 +8,7 @@
 #include "../../Common/CSRSpace.hpp"
 #include "../../Controller/ControllerConfig.hpp"
 #include "../../Controller/ControllerTypes.hpp"
-#include "../BusManager/BusManagerRuntimeState.hpp"
+#include "BusManagerRuntimeState.hpp"
 #include "../../Async/Interfaces/IAsyncControllerPort.hpp"
 #include <cstdint>
 #include <memory>

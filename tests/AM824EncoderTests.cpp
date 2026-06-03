@@ -6,7 +6,7 @@
 //
 
 #include <gtest/gtest.h>
-#include "Isoch/Encoding/AM824Encoder.hpp"
+#include "AudioWire/AM824/AM824Encoder.hpp"
 
 using namespace ASFW::Encoding;
 

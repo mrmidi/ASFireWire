@@ -251,8 +251,8 @@ constexpr uint32_t kOHCIBranchAddressBits = 28;   // Bits [31:4] in branch word
 
 ```cpp
 // Packet header fields (big-endian)
-uint32_t header = ToBigEndian32(destOffset);
-uint16_t length = FromBigEndian16(packetLength);
+uint32_t header = OSSwapHostToBigInt32(destOffset);
+uint16_t length = OSSwapBigToHostInt16(packetLength);
 
 // Descriptor fields (host order - NO CONVERSION)
 desc.control = controlBits;  // Already in host order

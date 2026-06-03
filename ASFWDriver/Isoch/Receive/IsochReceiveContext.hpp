@@ -13,11 +13,11 @@
 #include "../../Shared/Memory/IDMAMemory.hpp"
 #include "../../Shared/Rings/DescriptorRing.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
-#include "../IsochTypes.hpp"
+#include "../Core/IsochTypes.hpp"
 #include "../Memory/IIsochDMAMemory.hpp"
 
 #include "IsochRxDmaRing.hpp"
-#include "IsochAudioRxPipeline.hpp"
+#include "../../AudioEngine/LegacyIsoch/IsochAudioRxPipeline.hpp"
 
 namespace ASFW::Isoch {
 

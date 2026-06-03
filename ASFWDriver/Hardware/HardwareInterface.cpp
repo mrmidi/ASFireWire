@@ -5,7 +5,7 @@
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Bus/IRM/IRMCSRConstants.hpp"
 #include "IEEE1394.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 #ifndef ASFW_HOST_TEST
 #include <DriverKit/IOLib.h>

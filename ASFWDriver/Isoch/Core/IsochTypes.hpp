@@ -2,24 +2,17 @@
 // IsochTypes.hpp
 // ASFWDriver
 //
-// Core Isochronous Type Definitions
+// Core Isochronous Type Definitions and OHCI context definitions.
 //
 
 #pragma once
 
 #include <cstdint>
-#include <TargetConditionals.h> // For __BYTE_ORDER__ checks if needed by system headers? No, compiler defines it.
+#include <functional>
+#include <span>
+#include <TargetConditionals.h>
 
 namespace ASFW::Isoch {
-
-// Endianness helper
-inline uint32_t SwapBigToHost(uint32_t x) {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap32(x);
-#else
-    return x;
-#endif
-}
 
 /// Sample rate family determines timing algorithm
 enum class SampleRateFamily : uint8_t {
@@ -52,7 +45,7 @@ enum class SampleRate : uint8_t {
 }
 
 /// SYT intervals per sample rate (from Linux amdtp_syt_intervals)
- constexpr uint8_t kSYTIntervals[] = {
+constexpr uint8_t kSYTIntervals[] = {
     8,   // 32kHz
     8,   // 44.1kHz
     8,   // 48kHz
@@ -61,5 +54,11 @@ enum class SampleRate : uint8_t {
     32,  // 176.4kHz
     32,  // 192kHz
 };
+
+// Callback for received packets
+// @param data: Span containing packet data (header + payload)
+// @param status: Status bits from descriptor
+// @param timestamp: Timestamp of reception
+using IsochReceiveCallback = std::function<void(std::span<const uint8_t> data, uint32_t status, uint64_t timestamp)>;
 
 } // namespace ASFW::Isoch

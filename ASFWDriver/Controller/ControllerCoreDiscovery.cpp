@@ -5,7 +5,7 @@
 #include <string>
 #include <unordered_set>
 
-#include "../Audio/AudioRuntimeRegistry.hpp"
+#include "../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../Async/DMAMemoryImpl.hpp"
 #include "../Async/FireWireBusImpl.hpp"
 #include "../Async/Interfaces/IFireWireBusOps.hpp"
@@ -46,7 +46,7 @@
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "ControllerStateMachine.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace ASFW::Driver {
 

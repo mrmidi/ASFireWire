@@ -2,8 +2,8 @@
 
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
-#include "Audio/Backends/DiceDuplexRestartCoordinator.hpp"
-#include "Audio/AudioRuntimeRegistry.hpp"
+#include "Protocols/Audio/Backends/DiceDuplexRestartCoordinator.hpp"
+#include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Bus/IRM/IRMClient.hpp"

@@ -5,7 +5,7 @@
 //
 
 #include <gtest/gtest.h>
-#include "Isoch/Encoding/AudioRingBuffer.hpp"
+#include "AudioWire/AMDTP/AudioRingBuffer.hpp"
 #include <thread>
 #include <vector>
 

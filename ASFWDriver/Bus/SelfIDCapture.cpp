@@ -8,7 +8,7 @@
 #include "../Common/BarrierUtils.hpp"
 #include "../Hardware/RegisterMap.hpp"
 #include "../Hardware/HardwareInterface.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 #include "TopologyTypes.hpp"
 
 namespace {

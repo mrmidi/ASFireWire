@@ -275,7 +275,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
 
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const uint32_t ctrl = hw.Read(ctrlReg);
-    const bool dead = (ctrl & ContextControl::kDead) != 0;
+    const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
     if (dead) {
         counters_.exitDead.fetch_add(1, std::memory_order_relaxed);
         out.dead = true;
@@ -343,13 +343,13 @@ void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t c
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const uint32_t ctrl = hw.Read(ctrlReg);
 
-    const bool run = (ctrl & ContextControl::kRun) != 0;
-    const bool dead = (ctrl & ContextControl::kDead) != 0;
-    const bool active = (ctrl & ContextControl::kActive) != 0;
+    const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
+    const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
+    const bool active = (ctrl & Driver::ContextControl::kActive) != 0;
 
     if (run && !dead && !active) {
         Register32 ctrlSetReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlSet(contextIndex));
-        hw.Write(ctrlSetReg, ContextControl::kWake);
+        hw.Write(ctrlSetReg, Driver::ContextControl::kWake);
     }
 }
 

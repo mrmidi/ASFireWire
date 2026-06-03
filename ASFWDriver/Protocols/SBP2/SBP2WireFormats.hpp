@@ -5,34 +5,12 @@
 // All multi-byte fields are stored in **big-endian** (bus/wire) order.
 // Use ToBusOrder / FromBusOrder from Core/PhyPackets.hpp or std::byteswap for conversion.
 
+#include <DriverKit/IOLib.h>
 #include <array>
 #include <cstdint>
 #include <cstring>
 
 namespace ASFW::Protocols::SBP2::Wire {
-
-// ---------------------------------------------------------------------------
-// Big-endian helpers (inline, constexpr)
-// ---------------------------------------------------------------------------
-
-[[nodiscard]] inline constexpr uint16_t ToBE16(uint16_t v) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap16(v);
-#else
-    return v;
-#endif
-}
-
-[[nodiscard]] inline constexpr uint32_t ToBE32(uint32_t v) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap32(v);
-#else
-    return v;
-#endif
-}
-
-[[nodiscard]] inline constexpr uint16_t FromBE16(uint16_t v) noexcept { return ToBE16(v); }
-[[nodiscard]] inline constexpr uint32_t FromBE32(uint32_t v) noexcept { return ToBE32(v); }
 
 // ---------------------------------------------------------------------------
 // SBP-2 Management Agent ORB types
@@ -260,25 +238,25 @@ struct CommandBlockAgentOffsets {
 
 namespace Options {
     // Login ORB options
-    static constexpr uint16_t kLoginNotify    = ToBE16(0x8000);
-    static constexpr uint16_t kExclusiveLogin = ToBE16(0x1000);
+    static constexpr uint16_t kLoginNotify    = OSSwapHostToBigInt16(0x8000);
+    static constexpr uint16_t kExclusiveLogin = OSSwapHostToBigInt16(0x1000);
 
     // Reconnect ORB options
-    static constexpr uint16_t kReconnectNotify = ToBE16(0x8003); // reconnect + notify
+    static constexpr uint16_t kReconnectNotify = OSSwapHostToBigInt16(0x8003); // reconnect + notify
 
     // Logout ORB options
-    static constexpr uint16_t kLogoutNotify = ToBE16(0x8007); // logout + notify
+    static constexpr uint16_t kLogoutNotify = OSSwapHostToBigInt16(0x8007); // logout + notify
 
     // Normal ORB options
-    static constexpr uint16_t kNotify         = ToBE16(0x8000);
-    static constexpr uint16_t kDirectionRead  = ToBE16(0x0800); // data from target
+    static constexpr uint16_t kNotify         = OSSwapHostToBigInt16(0x8000);
+    static constexpr uint16_t kDirectionRead  = OSSwapHostToBigInt16(0x0800); // data from target
     static constexpr uint16_t kSpeedShift     = 8;
-    static constexpr uint16_t kSpeed100       = ToBE16(0x0000);
-    static constexpr uint16_t kSpeed200       = ToBE16(0x0100);
-    static constexpr uint16_t kSpeed400       = ToBE16(0x0200);
-    static constexpr uint16_t kSpeed800       = ToBE16(0x0300);
+    static constexpr uint16_t kSpeed100       = OSSwapHostToBigInt16(0x0000);
+    static constexpr uint16_t kSpeed200       = OSSwapHostToBigInt16(0x0100);
+    static constexpr uint16_t kSpeed400       = OSSwapHostToBigInt16(0x0200);
+    static constexpr uint16_t kSpeed800       = OSSwapHostToBigInt16(0x0300);
     static constexpr uint16_t kMaxPayloadShift = 4;
-    static constexpr uint16_t kPageTableUnrestricted = ToBE16(0x0008);
+    static constexpr uint16_t kPageTableUnrestricted = OSSwapHostToBigInt16(0x0008);
 
     // Management ORB function codes
     static constexpr uint32_t kFunctionQueryLogins    = 1;

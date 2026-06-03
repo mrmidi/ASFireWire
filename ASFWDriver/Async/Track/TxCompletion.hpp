@@ -4,8 +4,8 @@
 
 #include <cstdint>
 #include <cstddef>
-#include "OHCIEventCodes.hpp"
-#include "OHCIDescriptors.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
+#include "../../Hardware/OHCIDescriptors.hpp"
 
 namespace ASFW::Async {
 

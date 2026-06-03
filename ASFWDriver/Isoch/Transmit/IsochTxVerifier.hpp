@@ -7,9 +7,9 @@
 #include "IsochTxRecoveryController.hpp"
 #include "TxVerifierDecode.hpp"
 
-#include "../Encoding/AM824Encoder.hpp"
-#include "../Encoding/CIPHeaderBuilder.hpp"
-#include "../Encoding/PacketAssembler.hpp"
+#include "../../AudioWire/AM824/AM824Encoder.hpp"
+#include "../../AudioWire/CIP/CIPHeaderBuilder.hpp"
+#include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 

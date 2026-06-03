@@ -11,7 +11,7 @@
 #include "../Async/Interfaces/IAsyncSubsystemPort.hpp"
 #include "../Controller/ControllerCore.hpp"
 #include "../Controller/ControllerStateMachine.hpp"
-#include "../Diagnostics/MetricsSink.hpp"
+#include "MetricsSink.hpp"
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWDriverUserClient.h>
 
 namespace ASFW::Driver {

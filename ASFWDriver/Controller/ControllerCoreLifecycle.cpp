@@ -40,7 +40,7 @@
 #include "../Version/DriverVersion.hpp"
 #include "BringupOverrides.hpp"
 #include "ControllerStateMachine.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace {
 // NOTE: OHCI hardware constants moved to OHCIConstants.hpp

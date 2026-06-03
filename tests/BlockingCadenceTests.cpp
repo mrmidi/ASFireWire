@@ -6,7 +6,7 @@
 //
 
 #include <gtest/gtest.h>
-#include "Isoch/Encoding/BlockingCadence48k.hpp"
+#include "AudioWire/AMDTP/BlockingCadence48k.hpp"
 
 using namespace ASFW::Encoding;
 

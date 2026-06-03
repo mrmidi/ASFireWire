@@ -36,7 +36,7 @@
 #include "../Scheduling/Scheduler.hpp"
 #include "../Version/DriverVersion.hpp"
 #include "ControllerStateMachine.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 namespace ASFW::Driver {
 
