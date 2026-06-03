@@ -809,6 +809,65 @@ uint32_t ASFWAudioNub::GetOutputAudioFrameCapacity() const
     return ivars ? ivars->outputAudioFrameCapacity : 0;
 }
 
+// LOCALONLY: Register the direct TX binding (same dext process; raw pointers).
+void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
+                                         uint64_t outputBytes,
+                                         uint32_t outputFrames,
+                                         uint32_t outputChannels,
+                                         ASFW::Audio::Runtime::AudioTransportControlBlock* control,
+                                         uint32_t sampleRateHz)
+{
+    if (!ivars) {
+        return;
+    }
+    ivars->directOutputBase = outputBase;
+    ivars->directOutputBytes = outputBytes;
+    ivars->directOutputFrames = outputFrames;
+    ivars->directOutputChannels = outputChannels;
+    ivars->directControl = control;
+    ivars->directSampleRateHz = sampleRateHz;
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: SetDirectAudioBinding base=%p bytes=%llu frames=%u ch=%u control=%p rate=%u",
+             static_cast<const void*>(outputBase), outputBytes, outputFrames, outputChannels,
+             static_cast<const void*>(control), sampleRateHz);
+}
+
+// LOCALONLY: Clear the direct TX binding (called from ASFWAudioDriver::Stop).
+void ASFWAudioNub::ClearDirectAudioBinding()
+{
+    if (!ivars) {
+        return;
+    }
+    ivars->directOutputBase = nullptr;
+    ivars->directOutputBytes = 0;
+    ivars->directOutputFrames = 0;
+    ivars->directOutputChannels = 0;
+    ivars->directControl = nullptr;
+    ivars->directSampleRateHz = 0;
+    ASFW_LOG(Audio, "ASFWAudioNub: ClearDirectAudioBinding");
+}
+
+// LOCALONLY: Fetch the direct TX binding for the isoch TX path. Returns false
+// (and leaves out-params untouched) unless a usable binding is registered.
+bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outBase,
+                                         uint64_t* outBytes,
+                                         uint32_t* outFrames,
+                                         uint32_t* outChannels,
+                                         ASFW::Audio::Runtime::AudioTransportControlBlock** outControl,
+                                         uint32_t* outSampleRateHz) const
+{
+    if (!ivars || !ivars->directOutputBase || !ivars->directControl || ivars->directOutputFrames == 0) {
+        return false;
+    }
+    if (outBase) { *outBase = ivars->directOutputBase; }
+    if (outBytes) { *outBytes = ivars->directOutputBytes; }
+    if (outFrames) { *outFrames = ivars->directOutputFrames; }
+    if (outChannels) { *outChannels = ivars->directOutputChannels; }
+    if (outControl) { *outControl = ivars->directControl; }
+    if (outSampleRateHz) { *outSampleRateHz = ivars->directSampleRateHz; }
+    return true;
+}
+
 // LOCALONLY: Update write position (called by ASFWAudioDriver after CoreAudio write)
 void ASFWAudioNub::UpdateOutputWritePosition(uint32_t newWriteFrame)
 {

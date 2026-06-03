@@ -888,6 +888,24 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
              "ASFWAudioDriver: Direct audio skeleton %{public}s",
              directAudioSkeletonBound ? "bound" : "inactive");
 
+    // Register the direct TX binding with the nub so the isoch TX path (same
+    // dext process) can read the exact output buffer + WriteEnd cursor that
+    // CoreAudio writes. The graph's memory view already holds the local base,
+    // frame capacity, channel stride, control block and sample rate.
+    if (directAudioSkeletonBound && ivars->device.audioNub) {
+        const auto& graph = ivars->runtime.directAudioGraph;
+        const uint64_t directBytes = static_cast<uint64_t>(graph.memory.outputFrameCapacity) *
+                                     graph.memory.outputChannels * sizeof(int32_t);
+        ivars->device.audioNub->SetDirectAudioBinding(graph.memory.outputBase,
+                                                      directBytes,
+                                                      graph.memory.outputFrameCapacity,
+                                                      graph.memory.outputChannels,
+                                                      graph.control,
+                                                      graph.sampleRateHz);
+    } else if (ivars->device.audioNub) {
+        ivars->device.audioNub->ClearDirectAudioBinding();
+    }
+
     // Stream-level latency (no additional latency beyond device-level)
     ivars->outputStream->SetLatency(0);
     ivars->inputStream->SetLatency(0);
@@ -994,6 +1012,11 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
     ASFW_LOG(Audio, "ASFWAudioDriver: Stop()");
     
     if (ivars) {
+        // Clear the direct TX binding while the nub (provider) is still valid;
+        // the control block lives in our ivars and dies at free().
+        if (ivars->device.audioNub) {
+            ivars->device.audioNub->ClearDirectAudioBinding();
+        }
         ivars->device.audioNub = nullptr;
     }
 
