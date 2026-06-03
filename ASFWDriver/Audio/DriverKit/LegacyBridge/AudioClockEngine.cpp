@@ -456,6 +456,8 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
     state.ioMetrics->lastIoBufferFrameSize.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackSampleTime.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackSampleDelta.store(0, std::memory_order_relaxed);
+    state.ioMetrics->sampleTimeRegressionCount.store(0, std::memory_order_relaxed);
+    state.ioMetrics->ioBufferFrameSizeChangeCount.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastCallbackOperation.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastRxQueueFillFrames.store(0, std::memory_order_relaxed);
     state.ioMetrics->lastTxQueueFillFrames.store(0, std::memory_order_relaxed);

@@ -36,14 +36,16 @@
 			<integer>1</integer>
 			<key>ASFWDICEVerbosity</key>
 			<integer>1</integer>
-				<key>ASFWEnableHexDumps</key>
-				<false/>
-				<key>ASFWEnableIsochTxVerifier</key>
-				<false/>
-				<key>ASFWAutoStartAudioStreams</key>
-				<true/>
-				<key>ASFWLogStatistics</key>
-				<true/>
+			<key>ASFWDirectAudioVerbosity</key>
+			<integer>1</integer>
+			<key>ASFWEnableHexDumps</key>
+			<false/>
+			<key>ASFWEnableIsochTxVerifier</key>
+			<false/>
+			<key>ASFWAutoStartAudioStreams</key>
+			<true/>
+			<key>ASFWLogStatistics</key>
+			<true/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>
@@ -72,6 +74,8 @@
 			</dict>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>ASFWDirectAudioVerbosity</key>
+			<integer>1</integer>
 			<key>IOClass</key>
 			<string>IOUserService</string>
 			<key>IOProviderClass</key>

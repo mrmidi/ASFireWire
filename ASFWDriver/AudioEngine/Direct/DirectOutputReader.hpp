@@ -31,6 +31,22 @@ public:
         return binding_->memory.OutputFrame(absoluteFrame);
     }
 
+    [[nodiscard]] uint32_t OutputChannels() const noexcept {
+        if (!IsBound()) {
+            return 0;
+        }
+
+        return binding_->memory.outputChannels;
+    }
+
+    [[nodiscard]] uint64_t OutputWrittenEndFrame() const noexcept {
+        if (!binding_ || !binding_->control) {
+            return 0;
+        }
+
+        return binding_->control->client.OutputWrittenEndFrame();
+    }
+
     [[nodiscard]] bool IsFrameRangeAvailable(uint64_t firstFrame,
                                              uint32_t frameCount) const noexcept {
         if (!IsBound() || frameCount == 0) {
@@ -42,7 +58,7 @@ public:
             return false;
         }
 
-        const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
+        const uint64_t writtenEnd = OutputWrittenEndFrame();
         constexpr uint64_t kMaxFrame = std::numeric_limits<uint64_t>::max();
         if (firstFrame > (kMaxFrame - frameCount)) {
             return false;
