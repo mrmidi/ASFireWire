@@ -11,7 +11,7 @@
 
 namespace ASFW::AudioEngine::Direct::Tx {
 
-struct DirectTxScratchHeaderRequest final {
+struct DirectTxPacketHeaderRequest final {
     uint8_t sid{0};
     uint32_t am824Slots{0};
     uint8_t dbc{0};
@@ -68,10 +68,14 @@ inline void EncodeDirectTxSilenceFrameToAm824(uint32_t pcmChannels,
     }
 }
 
-[[nodiscard]] inline bool BeginDirectTxScratchPacket(const DirectTxScratchHeaderRequest& request,
-                                                     DirectTxPacketScratch& scratch) noexcept {
-    scratch.Reset();
-
+[[nodiscard]] inline bool BeginDirectTxPacket(const DirectTxPacketHeaderRequest& request,
+                                              uint8_t* packetBytes,
+                                              uint32_t packetCapacityBytes,
+                                              uint32_t& bytesWritten) noexcept {
+    bytesWritten = 0;
+    if (!packetBytes || packetCapacityBytes < kDirectTxCipHeaderBytes) {
+        return false;
+    }
     if (request.am824Slots == 0 || request.am824Slots > ASFW::Isoch::Config::kMaxAmdtpDbs) {
         return false;
     }
@@ -81,18 +85,41 @@ inline void EncodeDirectTxSilenceFrameToAm824(uint32_t pcmChannels,
         ? builder.buildNoData(request.dbc)
         : builder.build(request.dbc, request.syt, false);
 
-    std::memcpy(scratch.bytes.data(), &cip.q0, sizeof(cip.q0));
-    std::memcpy(scratch.bytes.data() + sizeof(cip.q0), &cip.q1, sizeof(cip.q1));
-    scratch.length = kDirectTxCipHeaderBytes;
+    std::memcpy(packetBytes, &cip.q0, sizeof(cip.q0));
+    std::memcpy(packetBytes + sizeof(cip.q0), &cip.q1, sizeof(cip.q1));
+    bytesWritten = kDirectTxCipHeaderBytes;
     return true;
 }
 
+[[nodiscard]] inline uint32_t* DirectTxPacketPayloadQuadlets(uint8_t* packetBytes) noexcept {
+    if (!packetBytes) {
+        return nullptr;
+    }
+    return reinterpret_cast<uint32_t*>(packetBytes + kDirectTxCipHeaderBytes);
+}
+
+[[nodiscard]] inline const uint32_t* DirectTxPacketPayloadQuadlets(const uint8_t* packetBytes) noexcept {
+    if (!packetBytes) {
+        return nullptr;
+    }
+    return reinterpret_cast<const uint32_t*>(packetBytes + kDirectTxCipHeaderBytes);
+}
+
+[[nodiscard]] inline bool BeginDirectTxScratchPacket(const DirectTxPacketHeaderRequest& request,
+                                                     DirectTxPacketScratch& scratch) noexcept {
+    scratch.Reset();
+    return BeginDirectTxPacket(request,
+                               scratch.bytes.data(),
+                               static_cast<uint32_t>(scratch.bytes.size()),
+                               scratch.length);
+}
+
 [[nodiscard]] inline uint32_t* DirectTxScratchPayloadQuadlets(DirectTxPacketScratch& scratch) noexcept {
-    return reinterpret_cast<uint32_t*>(scratch.bytes.data() + kDirectTxCipHeaderBytes);
+    return DirectTxPacketPayloadQuadlets(scratch.bytes.data());
 }
 
 [[nodiscard]] inline const uint32_t* DirectTxScratchPayloadQuadlets(const DirectTxPacketScratch& scratch) noexcept {
-    return reinterpret_cast<const uint32_t*>(scratch.bytes.data() + kDirectTxCipHeaderBytes);
+    return DirectTxPacketPayloadQuadlets(scratch.bytes.data());
 }
 
 } // namespace ASFW::AudioEngine::Direct::Tx

@@ -1403,8 +1403,10 @@ gtest_discover_tests(AudioDirectRuntimeTests)
 add_executable(AudioEngineDirectTxTests
     "${ASFW_TESTS_DIR}/AudioEngineDirect/DirectTxProbeTests.cpp"
     "${ASFW_TESTS_DIR}/AudioEngineDirect/TxAudioPacketProcessorTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioEngineDirect/TxAudioPacketWriterTests.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
 )
 
 target_link_libraries(AudioEngineDirectTxTests
