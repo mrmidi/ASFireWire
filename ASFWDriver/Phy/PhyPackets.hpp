@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <DriverKit/IOLib.h>
+
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -17,14 +19,14 @@ using Quadlet = std::uint32_t;
 // Helpers for endian conversion between host order and bus (big-endian) order.
 constexpr Quadlet ToBusOrder(Quadlet value) noexcept {
     if constexpr (std::endian::native == std::endian::little) {
-        return std::byteswap(value);
+        return OSSwapBigToHostInt32(value);
     }
     return value;
 }
 
 constexpr Quadlet FromBusOrder(Quadlet value) noexcept {
     if constexpr (std::endian::native == std::endian::little) {
-        return std::byteswap(value);
+        return OSSwapBigToHostInt32(value);
     }
     return value;
 }

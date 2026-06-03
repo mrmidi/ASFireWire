@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "IsochAudioTxPipeline.hpp"
+#include "../../AudioEngine/LegacyIsoch/IsochAudioTxPipeline.hpp"
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
 #include "IsochTxVerifier.hpp"

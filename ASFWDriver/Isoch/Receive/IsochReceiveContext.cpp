@@ -99,7 +99,7 @@ kern_return_t IsochReceiveContext::Start() {
     hardware_->Write(registers_.CommandPtr, cmdPtr);
 
     hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);
-    const uint32_t ctlValue = ContextControl::kRun | ContextControl::kIsochHeader;
+    const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
     hardware_->Write(registers_.ContextControlSet, ctlValue);
 
     const uint32_t contextMask = 1u << contextIndex_;
@@ -113,7 +113,7 @@ kern_return_t IsochReceiveContext::Start() {
     ASFW_LOG(Isoch, "Start: Wrote Match=0x%08x Cmd=0x%08x Ctl=0x%08x", contextMatch, cmdPtr, ctlValue);
     ASFW_LOG(Isoch, "Start: Readback Match=0x%08x Cmd=0x%08x Ctl=0x%08x", readMatch, readCmd, readCtl);
 
-    const bool deadSet = (readCtl & ContextControl::kDead) != 0;
+    const bool deadSet = (readCtl & Driver::ContextControl::kDead) != 0;
     if (deadSet) {
         ASFW_LOG(Isoch, "❌ Start: Context is DEAD! Check descriptor program.");
         return kIOReturnNotPermitted;
@@ -140,7 +140,7 @@ void IsochReceiveContext::Stop() {
         return;
     }
 
-    hardware_->Write(registers_.ContextControlClear, ContextControl::kRun);
+    hardware_->Write(registers_.ContextControlClear, Driver::ContextControl::kRun);
 
     const uint32_t contextMask = 1u << contextIndex_;
     hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskClear, contextMask);

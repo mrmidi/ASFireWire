@@ -2,6 +2,7 @@
 // Ref: SBP-2 §6 (Task Management)
 
 #include "SBP2ManagementORB.hpp"
+#include <DriverKit/IOLib.h>
 #include "SBP2DelayedDispatch.hpp"
 
 #include "../../Async/Interfaces/IFireWireBus.hpp"
@@ -94,19 +95,19 @@ void SBP2ManagementORB::BuildManagementORB() noexcept {
 
     // Options: notify (bit 15) | function code (low nibble)
     const auto fn = static_cast<uint16_t>(function_);
-    orbBuffer_.options = ToBE16(static_cast<uint16_t>(0x8000u | fn));
-    orbBuffer_.loginID = ToBE16(loginID_);
+    orbBuffer_.options = OSSwapHostToBigInt16(static_cast<uint16_t>(0x8000u | fn));
+    orbBuffer_.loginID = OSSwapHostToBigInt16(loginID_);
 
     // For AbortTask: set target ORB address (quadlet-aligned, big-endian)
     if (function_ == Function::AbortTask) {
-        orbBuffer_.orbOffsetHi = ToBE32(targetORBAddressHi_);
-        orbBuffer_.orbOffsetLo = ToBE32(targetORBAddressLo_ & 0xFFFFFFFCu);
+        orbBuffer_.orbOffsetHi = OSSwapHostToBigInt32(targetORBAddressHi_);
+        orbBuffer_.orbOffsetLo = OSSwapHostToBigInt32(targetORBAddressLo_ & 0xFFFFFFFCu);
     }
 
     // Status FIFO address
-    orbBuffer_.statusFIFOAddressHi = ToBE32(
+    orbBuffer_.statusFIFOAddressHi = OSSwapHostToBigInt32(
         ComposeBusAddressHi(localNode, statusBlockMeta_.addressHi));
-    orbBuffer_.statusFIFOAddressLo = ToBE32(statusBlockMeta_.addressLo);
+    orbBuffer_.statusFIFOAddressLo = OSSwapHostToBigInt32(statusBlockMeta_.addressLo);
 
     // Write ORB to address space
     addrMgr_.WriteLocalData(
@@ -119,7 +120,7 @@ void SBP2ManagementORB::BuildManagementORB() noexcept {
     orbAddressBE_[1] = static_cast<uint8_t>(localNode & 0xFF);
     orbAddressBE_[2] = static_cast<uint8_t>(orbMeta_.addressHi >> 8);
     orbAddressBE_[3] = static_cast<uint8_t>(orbMeta_.addressHi & 0xFF);
-    const uint32_t addrLoBE = ToBE32(orbMeta_.addressLo);
+    const uint32_t addrLoBE = OSSwapHostToBigInt32(orbMeta_.addressLo);
     std::memcpy(&orbAddressBE_[4], &addrLoBE, sizeof(uint32_t));
 
     ASFW_LOG(Async,

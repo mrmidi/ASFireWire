@@ -9,7 +9,7 @@
 #include "../Async/Interfaces/IAsyncControllerPort.hpp"
 #include "../Hardware/HardwareInterface.hpp"
 #include "BusManager.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 #include "TopologyManager.hpp"
 #include "../ConfigROM/ROMScanner.hpp"
 #include "CSR/TopologyMapService.hpp"

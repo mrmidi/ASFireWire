@@ -8,7 +8,7 @@
 
 #include "IsochTransmitContext.hpp"
 
-#include "../Encoding/TimingUtils.hpp"
+#include "../../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/LogConfig.hpp"
 
@@ -207,14 +207,14 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ASFW_LOG(Isoch, "IT: Writing CommandPtr=0x%08x (Z=%u)", cmdPtr, Tx::Layout::kBlocksPerPacket);
     hardware_->Write(cmdPtrReg, cmdPtr);
 
-    hardware_->Write(ctrlClrReg, ContextControl::kWritableBits);
+    hardware_->Write(ctrlClrReg, Driver::ContextControl::kWritableBits);
 
     hardware_->Write(Register32::kIsoXmitIntEventClear, 0xFFFFFFFF);
     hardware_->Write(Register32::kIsoXmitIntMaskSet, (1u << contextIndex_));
     hardware_->Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
     ASFW_LOG(Isoch, "IT: Enabled IT interrupt for context %u", contextIndex_);
 
-    hardware_->Write(ctrlSetReg, ContextControl::kRun);
+    hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
 
     const uint32_t readCmd = hardware_->Read(cmdPtrReg);
     const uint32_t readCtl = hardware_->Read(ctrlReg);
@@ -222,10 +222,10 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     const uint32_t isoXmitIntMask = hardware_->Read(Register32::kIsoXmitIntMaskSet);
     const uint32_t intMask = hardware_->Read(Register32::kIntMaskSet);
 
-    const bool runSet = (readCtl & ContextControl::kRun) != 0;
-    const bool activeSet = (readCtl & ContextControl::kActive) != 0;
-    const bool deadSet = (readCtl & ContextControl::kDead) != 0;
-    const uint32_t eventCode = (readCtl & ContextControl::kEventCodeMask) >> ContextControl::kEventCodeShift;
+    const bool runSet = (readCtl & Driver::ContextControl::kRun) != 0;
+    const bool activeSet = (readCtl & Driver::ContextControl::kActive) != 0;
+    const bool deadSet = (readCtl & Driver::ContextControl::kDead) != 0;
+    const uint32_t eventCode = (readCtl & Driver::ContextControl::kEventCodeMask) >> Driver::ContextControl::kEventCodeShift;
 
     ASFW_LOG(Isoch, "IT: Readback Cmd=0x%08x Ctl=0x%08x (run=%d active=%d dead=%d evt=0x%02x)",
              readCmd, readCtl, runSet, activeSet, deadSet, eventCode);
@@ -245,7 +245,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 void IsochTransmitContext::Stop() noexcept {
     if (state_ == State::Running && hardware_) {
         Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
-        hardware_->Write(ctrlClrReg, ContextControl::kRun);
+        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
 
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
 
@@ -494,10 +494,10 @@ void IsochTransmitContext::LogStatistics() const noexcept {
     const uint32_t cmdPtr = hardware_->Read(static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_)));
     const uint32_t ctrl = hardware_->Read(static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
 
-    const bool run = (ctrl & ContextControl::kRun) != 0;
-    const bool active = (ctrl & ContextControl::kActive) != 0;
-    const bool dead = (ctrl & ContextControl::kDead) != 0;
-    const uint32_t eventCode = (ctrl & ContextControl::kEventCodeMask) >> ContextControl::kEventCodeShift;
+    const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
+    const bool active = (ctrl & Driver::ContextControl::kActive) != 0;
+    const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
+    const uint32_t eventCode = (ctrl & Driver::ContextControl::kEventCodeMask) >> Driver::ContextControl::kEventCodeShift;
 
     // DEBUG-ONLY: periodic IT state logging to help identify patterns in IT failures. Not super lightweight, so gated behind a config flag and not on the hot path of Poll().
     // ASFW_LOG(Isoch, "IT: run=%d active=%d dead=%d evt=0x%02x pkts=%llu IRQ=%llu | CmdPtr=0x%08x Ctrl=0x%08x",

@@ -1,25 +1,10 @@
 #pragma once
 
+#include <DriverKit/IOLib.h>
 #include <cstdint>
 #include "OHCIConstants.hpp"
 
 namespace ASFW::Async::HW {
-
-[[nodiscard]] constexpr uint16_t ToBigEndian16(uint16_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap16(value);
-#else
-    return value;
-#endif
-}
-
-[[nodiscard]] constexpr uint32_t ToBigEndian32(uint32_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap32(value);
-#else
-    return value;
-#endif
-}
 
 [[nodiscard]] inline constexpr uint32_t BuildIEEE1394Quadlet0(uint16_t destID, uint8_t tLabel, uint8_t retry, uint8_t tCode, uint8_t priority) noexcept {
     return (static_cast<uint32_t>(destID & 0xFFFF) << Driver::kIEEE1394_DestinationIDShift) |

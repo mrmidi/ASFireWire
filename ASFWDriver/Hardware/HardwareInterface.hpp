@@ -5,7 +5,7 @@
 
 
 #ifdef ASFW_HOST_TEST
-#include "Testing/HostDriverKitStubs.hpp"
+#include "../Testing/HostDriverKitStubs.hpp"
 #include <vector>
 #else
 #include <DriverKit/IOBufferMemoryDescriptor.h>

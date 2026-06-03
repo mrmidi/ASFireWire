@@ -30,7 +30,7 @@ constexpr uint16_t ClampHeaderFirstEntryCount(uint16_t entryCount) noexcept {
 
 constexpr uint32_t BusNameQuadletWireOrder() noexcept {
     if constexpr (std::endian::native == std::endian::little) {
-        return std::byteswap(ASFW::FW::kBusNameQuadlet);
+        return OSSwapHostToBigInt32(ASFW::FW::kBusNameQuadlet);
     }
     return ASFW::FW::kBusNameQuadlet;
 }

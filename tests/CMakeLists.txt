@@ -1130,7 +1130,7 @@ add_executable(IsochReceiveContextTests
     "${ASFW_TESTS_DIR}/IsochRxDmaRingTests.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochAudioRxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioRxPipeline.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
@@ -1318,7 +1318,7 @@ gtest_discover_tests(AudioRingBufferTests)
 # Audio Driver config policy tests (pure bring-up/config behavior)
 add_executable(AudioDriverConfigPolicyTests
     "${ASFW_TESTS_DIR}/AudioDriverConfigPolicyTests.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Audio/AudioDriverConfigPolicy.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioDriverConfigPolicy.cpp"
 )
 
 target_link_libraries(AudioDriverConfigPolicyTests
@@ -1357,7 +1357,7 @@ gtest_discover_tests(PacketAssemblerTests)
 # Audio IO path tests (host-side queue/ring behavior without ADK runtime)
 add_executable(AudioIOPathTests
     "${ASFW_TESTS_DIR}/AudioIOPathTests.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Audio/AudioIOPath.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/LegacyBridge/AudioIOPath.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -1379,12 +1379,12 @@ gtest_discover_tests(AudioIOPathTests)
 add_executable(IsochTransmitContextTests
     "${ASFW_TESTS_DIR}/IsochTransmitContextTests.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochAudioTxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioTxPipeline.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxVerifier.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxRecoveryController.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Encoding/SYTGenerator.cpp"
+    "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
@@ -1428,7 +1428,7 @@ gtest_discover_tests(IsochTxDescriptorSlabTests)
 # SYT generator tests
 add_executable(SYTGeneratorTests
     "${ASFW_TESTS_DIR}/SYTGeneratorTests.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Encoding/SYTGenerator.cpp"
+    "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
 
@@ -1468,7 +1468,7 @@ gtest_discover_tests(ExternalSyncBridgeTests)
 # Isoch audio RX pipeline timing-loss tests
 add_executable(IsochAudioRxPipelineTests
     "${ASFW_TESTS_DIR}/IsochAudioRxPipelineTests.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochAudioRxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioRxPipeline.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
     "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
 )
@@ -1656,8 +1656,8 @@ gtest_discover_tests(DICERestartSessionTests)
 # DICE duplex restart coordinator FSM tests
 add_executable(DiceDuplexRestartCoordinatorTests
     "${ASFW_TESTS_DIR}/DiceDuplexRestartCoordinatorTests.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/Backends/DiceDuplexRestartCoordinator.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/AudioRuntimeRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/Audio/Backends/DiceDuplexRestartCoordinator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Core/AudioRuntimeRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Bus/IRM/IRMClient.cpp"
     "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"

@@ -8,7 +8,7 @@
 #endif
 
 #include <utility>
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 #include "RegisterMap.hpp"
 #include "HardwareInterface.hpp"
 

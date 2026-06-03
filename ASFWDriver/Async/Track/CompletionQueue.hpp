@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "AsyncTypes.hpp"
-#include "OHCIEventCodes.hpp"
+#include "../AsyncTypes.hpp"
+#include "../../Hardware/OHCIEventCodes.hpp"
 #include "../../Shared/Completion/CompletionQueue.hpp"
 
 namespace ASFW::Async {

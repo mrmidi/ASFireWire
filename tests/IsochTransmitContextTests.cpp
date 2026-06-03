@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
-#include "../ASFWDriver/Isoch/Encoding/TimingUtils.hpp"
+#include "../ASFWDriver/AudioWire/AMDTP/TimingUtils.hpp"
 #include "../ASFWDriver/Isoch/Core/ExternalSyncBridge.hpp"
 #include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
 #include "../ASFWDriver/Shared/TxSharedQueue.hpp"

@@ -1,6 +1,6 @@
 #include "BusManager.hpp"
 #include "GapCountOptimizer.hpp"
-#include "Logging.hpp"
+#include "../Logging/Logging.hpp"
 
 #include <algorithm>
 #include <span>

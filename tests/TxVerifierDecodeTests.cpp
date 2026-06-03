@@ -4,8 +4,8 @@
 #include <gtest/gtest.h>
 
 #include "../ASFWDriver/Isoch/Transmit/TxVerifierDecode.hpp"
-#include "../ASFWDriver/Isoch/Encoding/CIPHeaderBuilder.hpp"
-#include "../ASFWDriver/Isoch/Encoding/AM824Encoder.hpp"
+#include "../ASFWDriver/AudioWire/CIP/CIPHeaderBuilder.hpp"
+#include "../ASFWDriver/AudioWire/AM824/AM824Encoder.hpp"
 
 using ASFW::Isoch::TxVerify::ByteSwap32;
 using ASFW::Isoch::TxVerify::ParseCIPFromHostWords;

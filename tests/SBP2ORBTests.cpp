@@ -18,13 +18,9 @@ using ASFW::Protocols::SBP2::AddressSpaceManager;
 using ASFW::Protocols::SBP2::SBP2CommandORB;
 using ASFW::Protocols::SBP2::SBP2ManagementORB;
 using ASFW::Protocols::SBP2::SBP2PageTable;
-using ASFW::Protocols::SBP2::Wire::FromBE16;
-using ASFW::Protocols::SBP2::Wire::FromBE32;
 using ASFW::Protocols::SBP2::Wire::ManagementAgentAddressLo;
 using ASFW::Protocols::SBP2::Wire::NormalizeBusNodeID;
 using ASFW::Protocols::SBP2::Wire::StatusBlock;
-using ASFW::Protocols::SBP2::Wire::ToBE16;
-using ASFW::Protocols::SBP2::Wire::ToBE32;
 namespace SBPStatus = ASFW::Protocols::SBP2::Wire::SBPStatus;
 
 uint64_t ComposeAddress(uint16_t hi, uint32_t lo) {
@@ -49,10 +45,10 @@ uint32_t ReadQuadlet(AddressSpaceManager& manager, uint64_t address) {
 }
 
 uint64_t ReadStatusAddressFromManagementORB(AddressSpaceManager& manager, uint64_t orbAddress) {
-    const uint32_t hi = FromBE32(ReadQuadlet(
+    const uint32_t hi = OSSwapBigToHostInt32(ReadQuadlet(
         manager,
         orbAddress + offsetof(ASFW::Protocols::SBP2::Wire::TaskManagementORB, statusFIFOAddressHi)));
-    const uint32_t lo = FromBE32(ReadQuadlet(
+    const uint32_t lo = OSSwapBigToHostInt32(ReadQuadlet(
         manager,
         orbAddress + offsetof(ASFW::Protocols::SBP2::Wire::TaskManagementORB, statusFIFOAddressLo)));
     return ComposeAddress(static_cast<uint16_t>(hi & 0xFFFFu), lo);
@@ -147,9 +143,9 @@ TEST(SBP2ORBTests, PageTableUsesDirectDescriptorForSingleAlignedSegment) {
     const auto& result = pageTable.GetResult();
     EXPECT_TRUE(result.isDirect);
     EXPECT_EQ(1u, pageTable.EntryCount());
-    EXPECT_EQ(0x0001u, FromBE32(result.dataDescriptorHi) & 0xFFFFu);
-    EXPECT_EQ(0x2345'6000u, FromBE32(result.dataDescriptorLo));
-    EXPECT_EQ(512u, FromBE16(result.dataSize));
+    EXPECT_EQ(0x0001u, OSSwapBigToHostInt32(result.dataDescriptorHi) & 0xFFFFu);
+    EXPECT_EQ(0x2345'6000u, OSSwapBigToHostInt32(result.dataDescriptorLo));
+    EXPECT_EQ(512u, OSSwapBigToHostInt16(result.dataSize));
     EXPECT_EQ(0u, result.options);
 }
 
@@ -166,20 +162,20 @@ TEST(SBP2ORBTests, PageTableSplitsSegmentsIntoPublishedEntries) {
     const auto& result = pageTable.GetResult();
     ASSERT_FALSE(result.isDirect);
     ASSERT_EQ(3u, pageTable.EntryCount());
-    EXPECT_EQ(3u, FromBE16(result.dataSize));
+    EXPECT_EQ(3u, OSSwapBigToHostInt16(result.dataSize));
     EXPECT_EQ(ASFW::Protocols::SBP2::Wire::Options::kPageTableUnrestricted,
               result.options);
 
-    const uint32_t descriptorHi = FromBE32(result.dataDescriptorHi);
+    const uint32_t descriptorHi = OSSwapBigToHostInt32(result.dataDescriptorHi);
     const uint16_t expectedNode = NormalizeBusNodeID(0x21);
     EXPECT_EQ(expectedNode, static_cast<uint16_t>(descriptorHi >> 16));
     EXPECT_EQ(0xFFFFu, descriptorHi & 0xFFFFu);
 
     const uint64_t tableAddress =
         ComposeAddress(static_cast<uint16_t>(descriptorHi & 0xFFFFu),
-                       FromBE32(result.dataDescriptorLo));
-    const uint32_t firstEntryHeader = FromBE32(ReadQuadlet(rig.addressManager, tableAddress));
-    const uint32_t firstEntryLo = FromBE32(ReadQuadlet(rig.addressManager, tableAddress + 4));
+                       OSSwapBigToHostInt32(result.dataDescriptorLo));
+    const uint32_t firstEntryHeader = OSSwapBigToHostInt32(ReadQuadlet(rig.addressManager, tableAddress));
+    const uint32_t firstEntryLo = OSSwapBigToHostInt32(ReadQuadlet(rig.addressManager, tableAddress + 4));
 
     EXPECT_EQ(0x0010u, firstEntryHeader >> 16);
     EXPECT_EQ(0x0001u, firstEntryHeader & 0xFFFFu);
@@ -237,7 +233,7 @@ TEST(SBP2ORBTests, ManagementORBUsesFullBusNodeIdInEmbeddedAddresses) {
     const uint16_t payloadNode =
         static_cast<uint16_t>((static_cast<uint16_t>(write.data[0]) << 8) | write.data[1]);
     const uint64_t orbAddress = DecodeOrbAddressFromPayload(write.data);
-    const uint32_t statusHi = FromBE32(ReadQuadlet(
+    const uint32_t statusHi = OSSwapBigToHostInt32(ReadQuadlet(
         rig.addressManager,
         orbAddress + offsetof(ASFW::Protocols::SBP2::Wire::TaskManagementORB, statusFIFOAddressHi)));
 
@@ -251,9 +247,9 @@ TEST(SBP2ORBTests, CommandORBDirectDescriptorUsesFullBusNodeId) {
 
     SBP2CommandORB orb(rig.addressManager, reinterpret_cast<void*>(0x7), 16);
     ASFW::Protocols::SBP2::SBP2PageTable::Result descriptor{};
-    descriptor.dataDescriptorHi = ToBE32(0x0000FFFFu);
-    descriptor.dataDescriptorLo = ToBE32(0x00112200u);
-    descriptor.dataSize = ToBE16(512);
+    descriptor.dataDescriptorHi = OSSwapHostToBigInt32(0x0000FFFFu);
+    descriptor.dataDescriptorLo = OSSwapHostToBigInt32(0x00112200u);
+    descriptor.dataSize = OSSwapHostToBigInt16(512);
     descriptor.isDirect = true;
 
     orb.SetDataDescriptor(descriptor);
@@ -261,7 +257,7 @@ TEST(SBP2ORBTests, CommandORBDirectDescriptorUsesFullBusNodeId) {
 
     const auto orbAddress = orb.GetORBAddress();
     const uint64_t packedAddress = ComposeAddress(orbAddress.addressHi, orbAddress.addressLo);
-    const uint32_t dataDescriptorHi = FromBE32(ReadQuadlet(
+    const uint32_t dataDescriptorHi = OSSwapBigToHostInt32(ReadQuadlet(
         rig.addressManager,
         packedAddress + offsetof(ASFW::Protocols::SBP2::Wire::NormalORB, dataDescriptorHi)));
 

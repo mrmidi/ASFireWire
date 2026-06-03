@@ -1,17 +1,29 @@
+#include <DriverKit/IOLib.h>
 #include "ResponseSender.hpp"
 
+#include <DriverKit/IOLib.h>
 #include "../Engine/ContextManager.hpp"
+#include <DriverKit/IOLib.h>
 #include "../Contexts/ATResponseContext.hpp"
+#include <DriverKit/IOLib.h>
 #include "../PacketHelpers.hpp"
-#include "../Tx/DescriptorBuilder.hpp"
-#include "../Tx/Submitter.hpp"
+#include <DriverKit/IOLib.h>
+#include "DescriptorBuilder.hpp"
+#include <DriverKit/IOLib.h>
+#include "Submitter.hpp"
+#include <DriverKit/IOLib.h>
 #include "../../Bus/GenerationTracker.hpp"
+#include <DriverKit/IOLib.h>
 #include "../../Logging/Logging.hpp"
 
+#include <DriverKit/IOLib.h>
 #include <DriverKit/IOReturn.h>
 
+#include <DriverKit/IOLib.h>
 #include <bit>
+#include <DriverKit/IOLib.h>
 #include <cstring>
+#include <DriverKit/IOLib.h>
 #include <utility>
 
 namespace ASFW::Async {
@@ -39,12 +51,6 @@ uint32_t BuildQ1(uint16_t destID, ResponseCode rcode) {
            (static_cast<uint32_t>(static_cast<uint8_t>(rcode) & 0x0F) << 12);
 }
 
-[[nodiscard]] uint32_t HostToBE32(uint32_t value) noexcept {
-    if constexpr (std::endian::native == std::endian::little) {
-        return std::byteswap(value);
-    }
-    return value;
-}
 
 } // namespace
 
@@ -238,7 +244,7 @@ void ResponseSender::SendLockResponse(const ARPacketView& request,
                 lockResponseScratch_.slotCount;
             auto* slotBase = lockResponseScratch_.base +
                              static_cast<std::size_t>(slot) * kLockResponseScratchStride;
-            const uint32_t oldValueBE = HostToBE32(oldValue);
+            const uint32_t oldValueBE = OSSwapHostToBigInt32(oldValue);
             std::memcpy(slotBase, &oldValueBE, sizeof(oldValueBE));
             dma->PublishRange(slotBase, sizeof(oldValueBE));
 

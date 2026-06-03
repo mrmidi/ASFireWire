@@ -63,7 +63,7 @@ using AReq = ASFW::Async::HW::AsyncRequestHeader;
     uint32_t raw = 0;
     std::memcpy(&raw, bytes.data() + offset, sizeof(raw));
     if constexpr (std::endian::native == std::endian::little) {
-        raw = std::byteswap(raw);
+        raw = OSSwapHostToBigInt32(raw);
     }
     out = raw;
     return true;

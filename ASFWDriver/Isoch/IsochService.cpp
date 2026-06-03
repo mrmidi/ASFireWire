@@ -8,7 +8,7 @@
 #include "Transmit/IsochTransmitContext.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/AudioTxProfiles.hpp"
-#include "Encoding/TimingUtils.hpp"
+#include "../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../Bus/IRM/IRMClient.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 #include "../Hardware/HardwareInterface.hpp"

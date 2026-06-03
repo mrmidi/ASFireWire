@@ -1,5 +1,7 @@
 #pragma once
 
+#include <DriverKit/IOLib.h>
+
 #include <cstdint>
 
 namespace ASFW::Shared {
@@ -49,13 +51,6 @@ static_assert(kOHCIBranchAddressBits == 28,
 ///
 /// @param value Host-order 16-bit value
 /// @return Big-endian 16-bit value for wire transmission
-[[nodiscard]] constexpr uint16_t ToBigEndian16(uint16_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap16(value);
-#else
-    return value;
-#endif
-}
 
 /// Convert 32-bit host value to big-endian (IEEE 1394 wire format).
 ///
@@ -64,13 +59,6 @@ static_assert(kOHCIBranchAddressBits == 28,
 ///
 /// @param value Host-order 32-bit value
 /// @return Big-endian 32-bit value for wire transmission
-[[nodiscard]] constexpr uint32_t ToBigEndian32(uint32_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap32(value);
-#else
-    return value;
-#endif
-}
 
 /// Convert 64-bit host value to big-endian (IEEE 1394 wire format).
 ///
@@ -79,13 +67,6 @@ static_assert(kOHCIBranchAddressBits == 28,
 ///
 /// @param value Host-order 64-bit value
 /// @return Big-endian 64-bit value for wire transmission
-[[nodiscard]] constexpr uint64_t ToBigEndian64(uint64_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap64(value);
-#else
-    return value;
-#endif
-}
 
 /// Convert 16-bit big-endian value to host byte order.
 ///
@@ -93,13 +74,6 @@ static_assert(kOHCIBranchAddressBits == 28,
 ///
 /// @param value Big-endian 16-bit value from wire
 /// @return Host-order 16-bit value
-[[nodiscard]] constexpr uint16_t FromBigEndian16(uint16_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap16(value);
-#else
-    return value;
-#endif
-}
 
 /// Convert 32-bit big-endian value to host byte order.
 ///
@@ -107,13 +81,6 @@ static_assert(kOHCIBranchAddressBits == 28,
 ///
 /// @param value Big-endian 32-bit value from wire
 /// @return Host-order 32-bit value
-[[nodiscard]] constexpr uint32_t FromBigEndian32(uint32_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap32(value);
-#else
-    return value;
-#endif
-}
 
 /// Convert 64-bit big-endian value to host byte order.
 ///
@@ -121,12 +88,5 @@ static_assert(kOHCIBranchAddressBits == 28,
 ///
 /// @param value Big-endian 64-bit value from wire
 /// @return Host-order 64-bit value
-[[nodiscard]] constexpr uint64_t FromBigEndian64(uint64_t value) noexcept {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-    return __builtin_bswap64(value);
-#else
-    return value;
-#endif
-}
 
 } // namespace ASFW::Shared

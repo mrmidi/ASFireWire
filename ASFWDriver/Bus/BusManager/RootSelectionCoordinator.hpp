@@ -8,7 +8,7 @@
 #include "../../Controller/ControllerConfig.hpp"
 #include "../../Controller/ControllerTypes.hpp"
 #include "../TopologyManager.hpp"
-#include "../BusManager/BusManagerRuntimeState.hpp"
+#include "BusManagerRuntimeState.hpp"
 #include <array>
 #include <cstdint>
 #include <optional>

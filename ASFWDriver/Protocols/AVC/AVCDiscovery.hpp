@@ -21,7 +21,7 @@
 #include "../../Discovery/IDeviceManager.hpp"
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
-#include "../../Audio/IAVCAudioConfigListener.hpp"
+#include "../../Audio/Core/IAVCAudioConfigListener.hpp"
 #include "../Audio/Oxford/Apogee/ApogeeTypes.hpp"
 
 // Forward declarations

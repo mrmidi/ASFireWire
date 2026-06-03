@@ -2,8 +2,8 @@
 
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Hardware/HardwareInterface.hpp"
-#include "Isoch/Encoding/TimingUtils.hpp"
-#include "Isoch/Receive/IsochAudioRxPipeline.hpp"
+#include "AudioWire/AMDTP/TimingUtils.hpp"
+#include "AudioEngine/LegacyIsoch/IsochAudioRxPipeline.hpp"
 
 namespace {
 

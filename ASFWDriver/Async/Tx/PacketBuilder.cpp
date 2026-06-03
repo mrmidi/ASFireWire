@@ -10,8 +10,6 @@ namespace ASFW::Async {
 namespace {
 
 using HW::AsyncRequestHeader;
-using HW::ToBigEndian16;
-using HW::ToBigEndian32;
 
 constexpr uint8_t kRetryX = 0b01;
 constexpr uint16_t kNodeIDMask = 0xFFFFu;
@@ -331,7 +329,7 @@ std::size_t PacketBuilder::BuildWriteQuadlet(const WriteParams& params,
     std::memcpy(&payloadQuadlet, params.payload, sizeof(payloadQuadlet));
 #if ASFW_SWAP_IMMEDIATE
     // Convert immediate payload to big-endian if hardware doesn't convert it
-    payloadQuadlet = ToBigEndian32(payloadQuadlet);
+    payloadQuadlet = OSSwapHostToBigInt32(payloadQuadlet);
 #endif
 
     // Write all four quadlets in native byte order
@@ -517,9 +515,9 @@ std::size_t PacketBuilder::BuildPhyPacket(uint8_t label,
 
     // Quadlets 1-2: PHY configuration data in big-endian wire format
     // params.quadlet1/2 are already in the format expected on the wire (big-endian)
-    // So convert them to wire format using ToBigEndian32
-    const uint32_t data1Wire = ToBigEndian32(params.quadlet1);
-    const uint32_t data2Wire = ToBigEndian32(params.quadlet2);
+    // So convert them to wire format using OSSwapHostToBigInt32
+    const uint32_t data1Wire = OSSwapHostToBigInt32(params.quadlet1);
+    const uint32_t data2Wire = OSSwapHostToBigInt32(params.quadlet2);
     std::memcpy(bytes + 4, &data1Wire, 4);
     std::memcpy(bytes + 8, &data2Wire, 4);
 

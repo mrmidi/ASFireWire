@@ -25,7 +25,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "../Encoding/PacketAssembler.hpp"
+#include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 
 namespace ASFW::Isoch::Sim {
 
