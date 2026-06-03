@@ -1,0 +1,288 @@
+#include <AudioDriverKit/AudioDriverKit.h>
+
+#include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
+#include "AudioEngine/Direct/DirectOutputReader.hpp"
+#include "AudioEngine/Direct/Tx/DirectTxPacketScratch.hpp"
+#include "AudioEngine/Direct/Tx/TxAudioPacketProcessor.hpp"
+#include "AudioWire/AM824/AM824Encoder.hpp"
+#include "Isoch/Transmit/TxVerifierDecode.hpp"
+
+#include <gtest/gtest.h>
+
+#include <array>
+#include <cstdint>
+#include <cstring>
+
+namespace ASFW::Tests::AudioEngineDirect {
+
+using ASFW::Audio::Runtime::AudioGraphBinding;
+using ASFW::Audio::Runtime::AudioStreamMemory;
+using ASFW::Audio::Runtime::AudioStreamMode;
+using ASFW::Audio::Runtime::AudioTransportControlBlock;
+using ASFW::Audio::Runtime::AudioWireFormat;
+using ASFW::AudioEngine::Direct::DirectOutputReader;
+using ASFW::AudioEngine::Direct::Tx::DirectTxPacketScratch;
+using ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus;
+using ASFW::AudioEngine::Direct::Tx::kDirectTxCipHeaderBytes;
+using ASFW::AudioEngine::Direct::Tx::TxAudioPacketProcessor;
+using ASFW::AudioEngine::Direct::Tx::TxAudioPacketRequest;
+using ASFW::Isoch::TxVerify::ParseCIPFromHostWords;
+
+AudioGraphBinding MakeOutputBinding(AudioTransportControlBlock& control,
+                                    IOUserAudioDevice& audioDevice,
+                                    const int32_t* output,
+                                    uint32_t frameCapacity,
+                                    uint32_t channels,
+                                    uint32_t am824Slots = 0) {
+    const uint32_t slots = am824Slots == 0 ? channels : am824Slots;
+    return AudioGraphBinding{
+        .guid = 0x1122334455667788ULL,
+        .sampleRateHz = 48000,
+        .memory = AudioStreamMemory{
+            .outputBase = output,
+            .outputFrameCapacity = frameCapacity,
+            .outputChannels = channels,
+        },
+        .control = &control,
+        .hostToDeviceAm824Slots = slots,
+        .streamMode = AudioStreamMode::kBlocking,
+        .hostToDeviceWireFormat = AudioWireFormat::kAM824,
+        .audioDevice = &audioDevice,
+    };
+}
+
+uint32_t ScratchWordAt(const DirectTxPacketScratch& scratch, uint32_t byteOffset) {
+    uint32_t word = 0;
+    std::memcpy(&word, scratch.bytes.data() + byteOffset, sizeof(word));
+    return word;
+}
+
+TEST(TxAudioPacketProcessorTests, DataAvailableUsesRealPcm) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 16> output{};
+    output[4] = 0x00123456;
+    output[5] = static_cast<int32_t>(0x00FEDCBA);
+    output[6] = 0x00000056;
+    output[7] = static_cast<int32_t>(0x00E55654);
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 8, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    control.client.PublishWriteEnd(2, 0, 2);
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .firstFrame = 2,
+        .frameCount = 2,
+        .channels = 2,
+        .sid = 0x02,
+        .dbc = 0xC0,
+        .syt = 0x79FE,
+        .dataPacket = true,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
+    EXPECT_EQ(result.framesEncoded, 2U);
+    EXPECT_FALSE(result.usedSilence);
+    EXPECT_EQ(scratch.length, kDirectTxCipHeaderBytes + (2U * 2U * 4U));
+    EXPECT_EQ(scratch.framesEncoded, 2U);
+    EXPECT_FALSE(scratch.usedSilence);
+
+    const auto cip = ParseCIPFromHostWords(ScratchWordAt(scratch, 0), ScratchWordAt(scratch, 4));
+    EXPECT_EQ(cip.sid, 0x02);
+    EXPECT_EQ(cip.dbs, 2);
+    EXPECT_EQ(cip.dbc, 0xC0);
+    EXPECT_EQ(cip.fmt, 0x10);
+    EXPECT_EQ(cip.fdf, 0x02);
+    EXPECT_EQ(cip.syt, 0x79FE);
+
+    EXPECT_EQ(ScratchWordAt(scratch, 8), ASFW::Encoding::AM824Encoder::encode(output[4]));
+    EXPECT_EQ(ScratchWordAt(scratch, 12), ASFW::Encoding::AM824Encoder::encode(output[5]));
+    EXPECT_EQ(ScratchWordAt(scratch, 16), ASFW::Encoding::AM824Encoder::encode(output[6]));
+    EXPECT_EQ(ScratchWordAt(scratch, 20), ASFW::Encoding::AM824Encoder::encode(output[7]));
+}
+
+TEST(TxAudioPacketProcessorTests, DataUnavailableBuildsSilenceDataPacket) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 16> output{};
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 8, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .firstFrame = 0,
+        .frameCount = 2,
+        .channels = 2,
+        .sid = 0x02,
+        .dbc = 0xC0,
+        .syt = 0x79FE,
+        .dataPacket = true,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kUnderrun);
+    EXPECT_EQ(result.framesEncoded, 2U);
+    EXPECT_TRUE(result.usedSilence);
+    EXPECT_EQ(scratch.length, kDirectTxCipHeaderBytes + (2U * 2U * 4U));
+    EXPECT_TRUE(scratch.usedSilence);
+
+    const auto cip = ParseCIPFromHostWords(ScratchWordAt(scratch, 0), ScratchWordAt(scratch, 4));
+    EXPECT_EQ(cip.syt, 0x79FE);
+
+    const uint32_t silence = ASFW::Encoding::AM824Encoder::encodeSilence();
+    EXPECT_EQ(ScratchWordAt(scratch, 8), silence);
+    EXPECT_EQ(ScratchWordAt(scratch, 12), silence);
+    EXPECT_EQ(ScratchWordAt(scratch, 16), silence);
+    EXPECT_EQ(ScratchWordAt(scratch, 20), silence);
+}
+
+TEST(TxAudioPacketProcessorTests, NoDataDoesNotRequirePcmAvailability) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 16> output{};
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 8, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .frameCount = 0,
+        .channels = 2,
+        .sid = 0x02,
+        .dbc = 0xC0,
+        .syt = 0x1234,
+        .dataPacket = false,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
+    EXPECT_EQ(result.framesEncoded, 0U);
+    EXPECT_FALSE(result.usedSilence);
+    EXPECT_EQ(scratch.length, kDirectTxCipHeaderBytes);
+    EXPECT_EQ(scratch.framesEncoded, 0U);
+
+    const auto cip = ParseCIPFromHostWords(ScratchWordAt(scratch, 0), ScratchWordAt(scratch, 4));
+    EXPECT_EQ(cip.sid, 0x02);
+    EXPECT_EQ(cip.dbs, 2);
+    EXPECT_EQ(cip.dbc, 0xC0);
+    EXPECT_EQ(cip.syt, 0xFFFF);
+}
+
+TEST(TxAudioPacketProcessorTests, InvalidBindingFailsCleanly) {
+    DirectOutputReader reader{};
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    scratch.length = 123;
+    scratch.framesEncoded = 4;
+    scratch.usedSilence = true;
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .firstFrame = 0,
+        .frameCount = 1,
+        .channels = 2,
+        .dataPacket = true,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kInvalidBinding);
+    EXPECT_EQ(scratch.length, 0U);
+    EXPECT_EQ(scratch.framesEncoded, 0U);
+    EXPECT_FALSE(scratch.usedSilence);
+}
+
+TEST(TxAudioPacketProcessorTests, FrameWrapUsesModuloMemoryFrames) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 8> output{};
+    output[6] = 0x00111111;
+    output[7] = 0x00222222;
+    output[0] = 0x00333333;
+    output[1] = 0x00444444;
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 4, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    control.client.PublishWriteEnd(3, 0, 2);
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .firstFrame = 3,
+        .frameCount = 2,
+        .channels = 2,
+        .sid = 0x02,
+        .dbc = 0xC0,
+        .syt = 0x79FE,
+        .dataPacket = true,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
+    EXPECT_EQ(ScratchWordAt(scratch, 8), ASFW::Encoding::AM824Encoder::encode(output[6]));
+    EXPECT_EQ(ScratchWordAt(scratch, 12), ASFW::Encoding::AM824Encoder::encode(output[7]));
+    EXPECT_EQ(ScratchWordAt(scratch, 16), ASFW::Encoding::AM824Encoder::encode(output[0]));
+    EXPECT_EQ(ScratchWordAt(scratch, 20), ASFW::Encoding::AM824Encoder::encode(output[1]));
+}
+
+TEST(TxAudioPacketProcessorTests, ExtraAm824SlotsUseMidiPlaceholders) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 8> output{};
+    output[0] = 0x00111111;
+    output[1] = 0x00222222;
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 4, 2, 3);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    control.client.PublishWriteEnd(0, 0, 1);
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .firstFrame = 0,
+        .frameCount = 1,
+        .channels = 2,
+        .am824Slots = 3,
+        .sid = 0x02,
+        .dbc = 0xC0,
+        .syt = 0x79FE,
+        .dataPacket = true,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
+    EXPECT_EQ(scratch.length, kDirectTxCipHeaderBytes + (1U * 3U * 4U));
+
+    const auto cip = ParseCIPFromHostWords(ScratchWordAt(scratch, 0), ScratchWordAt(scratch, 4));
+    EXPECT_EQ(cip.dbs, 3);
+    EXPECT_EQ(ScratchWordAt(scratch, 8), ASFW::Encoding::AM824Encoder::encode(output[0]));
+    EXPECT_EQ(ScratchWordAt(scratch, 12), ASFW::Encoding::AM824Encoder::encode(output[1]));
+    EXPECT_EQ(ScratchWordAt(scratch, 16), ASFW::Encoding::AM824Encoder::encodeLabelOnly(0x80));
+}
+
+TEST(TxAudioPacketProcessorTests, OversizedScratchRequestReturnsInvalidRange) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 64> output{};
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 32, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    TxAudioPacketProcessor processor(reader);
+    DirectTxPacketScratch scratch{};
+
+    control.client.PublishWriteEnd(0, 0, 9);
+
+    const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
+        .firstFrame = 0,
+        .frameCount = 9,
+        .channels = 2,
+        .dataPacket = true,
+    }, scratch);
+
+    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kInvalidRange);
+    EXPECT_EQ(scratch.length, 0U);
+}
+
+} // namespace ASFW::Tests::AudioEngineDirect

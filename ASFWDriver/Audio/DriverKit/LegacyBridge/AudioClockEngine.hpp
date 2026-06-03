@@ -19,6 +19,8 @@ struct IOMetricsState {
     std::atomic<uint32_t> lastIoBufferFrameSize{0};
     std::atomic<uint64_t> lastCallbackSampleTime{0};
     std::atomic<int64_t> lastCallbackSampleDelta{0};
+    std::atomic<uint64_t> sampleTimeRegressionCount{0};
+    std::atomic<uint64_t> ioBufferFrameSizeChangeCount{0};
     std::atomic<uint32_t> lastCallbackOperation{0};
     std::atomic<uint32_t> lastRxQueueFillFrames{0};
     std::atomic<uint32_t> lastTxQueueFillFrames{0};

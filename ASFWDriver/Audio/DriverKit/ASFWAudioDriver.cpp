@@ -15,6 +15,7 @@
 #include "LegacyBridge/AudioIOPath.hpp"
 #include "LegacyBridge/AudioSharedMemoryBridge.hpp"
 #include "Runtime/AudioGraphBinding.hpp"
+#include "Runtime/DirectAudioDebugSnapshot.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "../../AudioEngine/Direct/FireWireAudioEngine.hpp"
 #include "../../Logging/Logging.hpp"
@@ -108,6 +109,7 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::AudioTransportControlBlock directAudioControl;
     ASFW::Audio::Runtime::AudioGraphBinding directAudioGraph;
     ASFW::AudioEngine::Direct::FireWireAudioEngine directAudioEngine;
+    ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
 };
 
@@ -142,9 +144,14 @@ void LogIoCallbackMetrics(AudioDriverRuntimeState& runtime,
     const bool sampleTimeWentBackwards = (previousSampleTime != 0) && (sampleTime < previousSampleTime);
     const bool firstFewCallbacks = callbackOrdinal <= 8;
     static_cast<void>(previousOperation);
-    static_cast<void>(frameSizeChanged);
-    static_cast<void>(sampleTimeWentBackwards);
     static_cast<void>(firstFewCallbacks);
+
+    if (frameSizeChanged) {
+        ioMetrics.ioBufferFrameSizeChangeCount.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (sampleTimeWentBackwards) {
+        ioMetrics.sampleTimeRegressionCount.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // DEBUG
     // if (frameSizeChanged) {
@@ -221,6 +228,82 @@ struct ASFWAudioDriver_IVars {
     AudioDriverRuntimeState runtime;
 };
 
+namespace ASFW::Audio::DriverKit::DirectDiagnostics {
+
+[[nodiscard]] bool OutputReaderCanSeeLatestWrite(AudioDriverRuntimeState& runtime) noexcept {
+    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
+                       runtime.directAudioEngine.IsBound();
+    if (!bound || !runtime.directAudioGraph.control) {
+        return false;
+    }
+
+    const auto& client = runtime.directAudioGraph.control->client;
+    const uint32_t frameCount = client.outputWriteEndFrames.load(std::memory_order_relaxed);
+    const uint64_t writtenEnd = client.OutputWrittenEndFrame();
+    if (frameCount == 0 || writtenEnd < frameCount) {
+        return false;
+    }
+
+    return runtime.directAudioEngine.OutputReader().IsFrameRangeAvailable(writtenEnd - frameCount,
+                                                                         frameCount);
+}
+
+void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept {
+    if (!ASFW::LogConfig::Shared().IsStatisticsEnabled() ||
+        ASFW::LogConfig::Shared().GetDirectAudioVerbosity() < 1) {
+        return;
+    }
+
+    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
+                       runtime.directAudioEngine.IsBound();
+    const bool outputAvailable = OutputReaderCanSeeLatestWrite(runtime);
+    const auto snapshot = ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot(
+        runtime.directAudioGraph,
+        bound,
+        runtime.ioMetrics.lastIoBufferFrameSize.load(std::memory_order_relaxed),
+        ASFW::Isoch::Config::kAudioIoPeriodFrames,
+        runtime.ioMetrics.lastCallbackSampleDelta.load(std::memory_order_relaxed),
+        runtime.ioMetrics.sampleTimeRegressionCount.load(std::memory_order_relaxed),
+        runtime.ioMetrics.ioBufferFrameSizeChangeCount.load(std::memory_order_relaxed),
+        outputAvailable);
+
+    if (!ASFW::Audio::Runtime::ShouldLogDirectAudioDebugSnapshot(
+            runtime.directAudioDebugLog,
+            snapshot,
+            ASFW::LogDetail::NowNs())) {
+        return;
+    }
+
+    ASFW_LOG(DirectAudio,
+             "ADK snapshot bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u sampleDelta=%lld sampleBack=%llu frameSizeChanges=%llu outputAvailable=%d txPackets=%llu txUnderruns=%llu txSilence=%llu",
+             snapshot.bound,
+             snapshot.inputBufferAddress,
+             snapshot.outputBufferAddress,
+             snapshot.inputFrameCapacity,
+             snapshot.outputFrameCapacity,
+             snapshot.inputChannels,
+             snapshot.outputChannels,
+             snapshot.ioBeginReadCount,
+             snapshot.ioWriteEndCount,
+             snapshot.inputBeginReadSampleFrame,
+             snapshot.inputClientReadEndFrame,
+             snapshot.outputWriteEndSampleFrame,
+             snapshot.outputClientWriteEndFrame,
+             snapshot.inputBeginReadFrameCount,
+             snapshot.outputWriteEndFrameCount,
+             snapshot.ioBufferFrameSize,
+             snapshot.expectedIoBufferFrameSize,
+             snapshot.lastSampleDelta,
+             snapshot.sampleTimeRegressionCount,
+             snapshot.ioBufferFrameSizeChangeCount,
+             snapshot.outputReaderAvailableAtWriteEnd,
+             snapshot.directTxPackets,
+             snapshot.directTxUnderruns,
+             snapshot.directTxSilenceSubstitutions);
+}
+
+} // namespace ASFW::Audio::DriverKit::DirectDiagnostics
+
 namespace {
 
 [[nodiscard]] uint32_t FrameCapacityFromSegment(const IOAddressSegment& segment,
@@ -287,6 +370,7 @@ namespace {
     };
 
     const bool bound = ivars.runtime.directAudioEngine.Bind(ivars.runtime.directAudioGraph);
+    ivars.runtime.directAudioDebugLog.Reset();
     ivars.runtime.directAudioSkeletonBound.store(bound, std::memory_order_release);
     return bound;
 }
@@ -1056,5 +1140,6 @@ void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, u
         .rxStartupDrained = &ivars->runtime.rxStartupDrained,
     };
 
+    ASFW::Audio::DriverKit::DirectDiagnostics::MaybeLogDirectAudioDebugSnapshot(ivars->runtime);
     ASFW::Isoch::Audio::HandleClockTimerTick(clockState, time);
 }

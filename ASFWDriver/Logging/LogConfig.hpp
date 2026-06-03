@@ -25,6 +25,7 @@ namespace ASFW {
  * - ASFWControllerVerbosity (integer 0-4): Controls Controller logging (future)
  * - ASFWHardwareVerbosity (integer 0-4): Controls Hardware logging (future)
  * - ASFWDICEVerbosity (integer 0-4): Controls DICE/FSM logging detail
+ * - ASFWDirectAudioVerbosity (integer 0-4): Controls slow direct ADK metrics logging
  * - ASFWEnableHexDumps (boolean): Force enable/disable packet dumps
  * - ASFWLogStatistics (boolean): Enable aggregate statistics logging
  * - ASFWEnableIsochTxVerifier (boolean): Enable dev-only IT TX verifier (expensive)
@@ -107,6 +108,7 @@ public:
     uint8_t GetAVCVerbosity() const;
     uint8_t GetDICEVerbosity() const;
     uint8_t GetIsochVerbosity() const;
+    uint8_t GetDirectAudioVerbosity() const;
 
     /**
      * @brief Check if hex dumps are enabled
@@ -188,6 +190,7 @@ public:
     void SetAVCVerbosity(uint8_t level);
     void SetDICEVerbosity(uint8_t level);
     void SetIsochVerbosity(uint8_t level);
+    void SetDirectAudioVerbosity(uint8_t level);
     void SetHexDumps(bool enable);
 
     /**
@@ -242,6 +245,7 @@ private:
     std::atomic<uint8_t> avcVerbosity_;
     std::atomic<uint8_t> diceVerbosity_;
     std::atomic<uint8_t> isochVerbosity_;
+    std::atomic<uint8_t> directAudioVerbosity_;
     std::atomic<bool> enableHexDumps_;
     std::atomic<bool> isochTxVerifierEnabled_;
     std::atomic<bool> audioAutoStartEnabled_;

@@ -1382,6 +1382,7 @@ add_executable(AudioDirectRuntimeTests
     "${ASFW_TESTS_DIR}/AudioRuntime/AudioTransportControlBlockTests.cpp"
     "${ASFW_TESTS_DIR}/AudioRuntime/AudioGraphBindingTests.cpp"
     "${ASFW_TESTS_DIR}/AudioRuntime/DirectAudioEngineTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioRuntime/DirectAudioDebugSnapshotTests.cpp"
 )
 
 target_link_libraries(AudioDirectRuntimeTests
@@ -1397,6 +1398,28 @@ target_compile_definitions(AudioDirectRuntimeTests
 target_include_directories(AudioDirectRuntimeTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(AudioDirectRuntimeTests)
+
+# Direct TX sidecar tests (read-only ADK memory probe + scratch packet formatting)
+add_executable(AudioEngineDirectTxTests
+    "${ASFW_TESTS_DIR}/AudioEngineDirect/DirectTxProbeTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioEngineDirect/TxAudioPacketProcessorTests.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketProcessor.cpp"
+)
+
+target_link_libraries(AudioEngineDirectTxTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioEngineDirectTxTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioEngineDirectTxTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioEngineDirectTxTests)
 
 # Isoch Transmit Context Tests
 add_executable(IsochTransmitContextTests
