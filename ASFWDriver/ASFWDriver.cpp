@@ -758,17 +758,35 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    nub->EnsureRxQueueCreated();
-
-    IOBufferMemoryDescriptor* rxMemRaw = nullptr;
-    uint64_t rxBytes = 0;
-    const kern_return_t rxCopy = nub->CopyRxQueueMemory(&rxMemRaw, &rxBytes);
-    auto rxMem = ASFW::Common::AdoptRetained(rxMemRaw);
-    if (rxCopy != kIOReturnSuccess || !rxMem || rxBytes == 0) {
-        return (rxCopy == kIOReturnSuccess) ? kIOReturnNoMemory : rxCopy;
+    auto* bindingSource = static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource());
+    if (!bindingSource) {
+        return kIOReturnNotReady;
     }
 
-    return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, rxMem, rxBytes);
+    const uint32_t pcmChannels = nub->GetInputChannelCount();
+    uint32_t am824Slots = pcmChannels;
+    ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
+    std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocol;
+    if (ctx.deps.audioRuntimeRegistry) {
+        protocol = ctx.deps.audioRuntimeRegistry->FindShared(*guid);
+    }
+    if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
+        record && protocol) {
+        ASFW::Audio::AudioStreamRuntimeCaps caps{};
+        if (protocol->GetRuntimeAudioStreamCaps(caps) && caps.deviceToHostAm824Slots > 0) {
+            am824Slots = caps.deviceToHostAm824Slots;
+        }
+        if (record->vendorId == ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId &&
+            record->modelId == ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId &&
+            pcmChannels == 8 &&
+            am824Slots == 9) {
+            wireFormat = ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
+        } else {
+            wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
+        }
+    }
+
+    return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, bindingSource, wireFormat, am824Slots);
 }
 
 kern_return_t ASFWDriver::StopIsochReceive() {
@@ -813,12 +831,9 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    IOBufferMemoryDescriptor* txMemRaw = nullptr;
-    uint64_t txBytes = 0;
-    const kern_return_t txCopy = nub->CopyTransmitQueueMemory(&txMemRaw, &txBytes);
-    auto txMem = ASFW::Common::AdoptRetained(txMemRaw);
-    if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
-        return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
+    auto* bindingSource = static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource());
+    if (!bindingSource) {
+        return kIOReturnNotReady;
     }
 
     const uint32_t pcmChannels = nub->GetOutputChannelCount();
@@ -843,27 +858,8 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
     const uint32_t streamModeRaw = nub->GetStreamMode();
 
-    // Direct TX: fetch the ADK-registered output buffer view + shared transport
-    // control block (same dext process; raw pointers valid). When present, the
-    // isoch path reads CoreAudio's frames directly; otherwise it falls back to
-    // the legacy queue path. Re-fetched every start.
-    const int32_t* directBase = nullptr;
-    uint64_t directBytes = 0;
-    uint32_t directFrames = 0;
-    uint32_t directChannels = 0;
-    ASFW::Audio::Runtime::AudioTransportControlBlock* directControl = nullptr;
-    uint32_t directRate = 0;
-    const bool directReady = nub->GetDirectAudioBinding(&directBase, &directBytes, &directFrames,
-                                                        &directChannels, &directControl, &directRate);
-    ASFW_LOG(Controller,
-             "[Isoch] StartIsochTransmit direct binding %{public}s base=%p frames=%u ch=%u rate=%u",
-             directReady ? "ready" : "absent",
-             static_cast<const void*>(directBase), directFrames, directChannels, directRate);
-
     return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
-                                   am824Slots, wireFormat, txMem, txBytes, nullptr, 0, 0,
-                                   directBase, directBytes, directFrames, directControl,
-                                   directRate, directReady);
+                                   am824Slots, wireFormat, bindingSource);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {

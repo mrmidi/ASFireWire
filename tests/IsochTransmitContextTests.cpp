@@ -16,7 +16,6 @@
 #include "../ASFWDriver/AudioWire/AMDTP/TimingUtils.hpp"
 #include "../ASFWDriver/Isoch/Core/ExternalSyncBridge.hpp"
 #include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
-#include "../ASFWDriver/Shared/TxSharedQueue.hpp"
 
 using namespace ASFW::Isoch;
 using namespace ASFW::Encoding;

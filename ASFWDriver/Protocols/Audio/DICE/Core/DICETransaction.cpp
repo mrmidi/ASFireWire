@@ -68,7 +68,7 @@ DICETransaction::DICETransaction(Protocols::Ports::ProtocolRegisterIO& io)
 
 void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSections)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    io_.ReadBlock(MakeDICEAddress(0),
+    (void)io_.ReadBlock(MakeDICEAddress(0),
                   static_cast<uint32_t>(GeneralSections::kWireSize),
                   [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess || payload.size() < GeneralSections::kWireSize) {
@@ -90,7 +90,7 @@ void DICETransaction::ReadGeneralSections(std::function<void(IOReturn, GeneralSe
 
 void DICETransaction::ReadExtensionSections(std::function<void(IOReturn, ExtensionSections)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    io_.ReadBlock(MakeDICEAddress(kDICEExtensionOffset),
+    (void)io_.ReadBlock(MakeDICEAddress(kDICEExtensionOffset),
                   static_cast<uint32_t>(ExtensionSections::kWireSize),
                   [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
                   if (status != Async::AsyncStatus::kSuccess ||
@@ -124,7 +124,7 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
                                            size_t readSize,
                                            std::function<void(IOReturn, GlobalState)> callback) {
     auto callbackState = Common::ShareCallback(std::move(callback));
-    io_.ReadBlock(MakeDICEAddress(sections.global.offset),
+    (void)io_.ReadBlock(MakeDICEAddress(sections.global.offset),
                   static_cast<uint32_t>(readSize),
                   [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess) {
@@ -377,7 +377,7 @@ void DICETransaction::ReadRxStreamConfig(const GeneralSections& sections,
                  sections.rxStreamFormat.size, readSize);
     }
     
-    io_.ReadBlock(MakeDICEAddress(sections.rxStreamFormat.offset),
+    (void)io_.ReadBlock(MakeDICEAddress(sections.rxStreamFormat.offset),
                   static_cast<uint32_t>(readSize),
                   [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
         if (status != Async::AsyncStatus::kSuccess) {
@@ -404,7 +404,7 @@ void DICETransaction::ReadTxStreamConfig(const GeneralSections& sections,
                  sections.txStreamFormat.size, readSize);
     }
 
-    io_.ReadBlock(MakeDICEAddress(sections.txStreamFormat.offset),
+    (void)io_.ReadBlock(MakeDICEAddress(sections.txStreamFormat.offset),
               static_cast<uint32_t>(readSize),
               [callbackState](Async::AsyncStatus status, std::span<const uint8_t> payload) {
                   if (status != Async::AsyncStatus::kSuccess) {

@@ -21,18 +21,22 @@
 
 namespace ASFW::Audio {
 
+namespace Runtime {
+class IDirectAudioBindingSource;
+}
+
 class AudioRuntimeRegistry;
 class IDeviceProtocol;
 
 class DiceDuplexRestartCoordinator final {
 public:
-    using QueueProviderFactory = std::function<std::unique_ptr<IDiceQueueMemoryProvider>(uint64_t guid)>;
+    using DirectAudioBindingSourceProvider = std::function<ASFW::Audio::Runtime::IDirectAudioBindingSource*(uint64_t guid)>;
 
     DiceDuplexRestartCoordinator(Discovery::DeviceRegistry& registry,
                                  AudioRuntimeRegistry& runtime,
                                  IDiceHostTransport& hostTransport,
                                  Driver::HardwareInterface& hardware,
-                                 QueueProviderFactory queueProviderFactory) noexcept;
+                                 DirectAudioBindingSourceProvider bindingSourceProvider) noexcept;
     ~DiceDuplexRestartCoordinator() noexcept;
 
     DiceDuplexRestartCoordinator(const DiceDuplexRestartCoordinator&) = delete;
@@ -93,7 +97,7 @@ private:
         uint64_t guid,
         DICE::IDICEDuplexProtocol*& outDiceProtocol,
         std::shared_ptr<IDeviceProtocol>& outHold) noexcept;
-    [[nodiscard]] std::unique_ptr<IDiceQueueMemoryProvider> MakeQueueProvider(uint64_t guid) const noexcept;
+    [[nodiscard]] ASFW::Audio::Runtime::IDirectAudioBindingSource* GetDirectAudioBindingSource(uint64_t guid) const noexcept;
     [[nodiscard]] bool TryAcquireGuid(uint64_t guid) noexcept;
     void ReleaseGuid(uint64_t guid) noexcept;
     void RequestStopIntent(uint64_t guid) noexcept;
@@ -120,7 +124,7 @@ private:
     AudioRuntimeRegistry& runtime_;
     IDiceHostTransport& hostTransport_;
     Driver::HardwareInterface& hardware_;
-    QueueProviderFactory queueProviderFactory_;
+    DirectAudioBindingSourceProvider bindingSourceProvider_;
 
     IOLock* lock_{nullptr};
     std::unordered_set<uint64_t> activeGuids_{};

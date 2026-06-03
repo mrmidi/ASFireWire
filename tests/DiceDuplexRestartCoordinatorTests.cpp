@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Testing/HostDriverKitStubs.hpp"
+#include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Protocols/Audio/Backends/DiceDuplexRestartCoordinator.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
@@ -144,41 +145,21 @@ public:
     [[nodiscard]] NodeId GetLocalNodeID() const override { return NodeId{0}; }
 };
 
-class FakeQueueMemoryProvider final : public IDiceQueueMemoryProvider {
+class FakeDirectAudioBindingSource final : public ASFW::Audio::Runtime::IDirectAudioBindingSource {
 public:
-    FakeQueueMemoryProvider() {
-        rxMem_ = MakeBuffer(kQueueBytes);
-        txMem_ = MakeBuffer(kQueueBytes);
+    bool CopyDirectAudioBinding(ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
+        out.generation = 1;
+        out.valid = true;
+        out.inputBase = reinterpret_cast<int32_t*>(0x1234);
+        out.inputFrames = 512;
+        out.inputChannels = 8;
+        out.outputBase = reinterpret_cast<const int32_t*>(0x5678);
+        out.outputFrames = 512;
+        out.outputChannels = 8;
+        out.control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(0x9abc);
+        out.sampleRateHz = 48000;
+        return true;
     }
-
-    kern_return_t CopyRxQueueMemory(OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-                                    uint64_t& outBytes) noexcept override {
-        outMem = rxMem_;
-        outBytes = kQueueBytes;
-        ++rxCopies;
-        return kIOReturnSuccess;
-    }
-
-    kern_return_t CopyTransmitQueueMemory(OSSharedPtr<IOBufferMemoryDescriptor>& outMem,
-                                          uint64_t& outBytes) noexcept override {
-        outMem = txMem_;
-        outBytes = kQueueBytes;
-        ++txCopies;
-        return kIOReturnSuccess;
-    }
-
-    int rxCopies{0};
-    int txCopies{0};
-
-private:
-    static OSSharedPtr<IOBufferMemoryDescriptor> MakeBuffer(uint64_t length) {
-        IOBufferMemoryDescriptor* raw = nullptr;
-        EXPECT_EQ(IOBufferMemoryDescriptor::Create(0, length, 16, &raw), kIOReturnSuccess);
-        return OSSharedPtr<IOBufferMemoryDescriptor>(raw, OSNoRetain);
-    }
-
-    OSSharedPtr<IOBufferMemoryDescriptor> rxMem_{};
-    OSSharedPtr<IOBufferMemoryDescriptor> txMem_{};
 };
 
 class FakeDiceHostTransport final : public IDiceHostTransport {
@@ -219,11 +200,14 @@ public:
 
     kern_return_t StartReceive(uint8_t channel,
                                HardwareInterface&,
-                               const OSSharedPtr<IOBufferMemoryDescriptor>&,
-                               uint64_t rxBytes) noexcept override {
+                               ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                               ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+                               uint32_t am824Slots = 0) noexcept override {
         log_.Add("host.start_receive");
         lastReceiveChannel = channel;
-        lastReceiveBytes = rxBytes;
+        lastReceiveBindingSource = bindingSource;
+        lastReceiveWireFormat = wireFormat;
+        lastReceiveAm824Slots = am824Slots;
         ++startReceiveCalls;
         return startReceiveStatus;
     }
@@ -235,11 +219,7 @@ public:
                                 uint32_t pcmChannels,
                                 uint32_t dataBlockSize,
                                 ASFW::Encoding::AudioWireFormat wireFormat,
-                                const OSSharedPtr<IOBufferMemoryDescriptor>&,
-                                uint64_t txBytes,
-                                const int32_t*,
-                                uint64_t,
-                                uint32_t) noexcept override {
+                                ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept override {
         log_.Add("host.start_transmit");
         lastTransmitChannel = channel;
         lastTransmitSourceId = sourceId;
@@ -247,7 +227,7 @@ public:
         lastTransmitPcmChannels = pcmChannels;
         lastTransmitDataBlockSize = dataBlockSize;
         lastTransmitWireFormat = wireFormat;
-        lastTransmitBytes = txBytes;
+        lastTransmitBindingSource = bindingSource;
         ++startTransmitCalls;
         return startTransmitStatus;
     }
@@ -272,7 +252,9 @@ public:
     uint8_t lastCaptureChannel{0};
     uint32_t lastCaptureBandwidth{0};
     uint8_t lastReceiveChannel{0};
-    uint64_t lastReceiveBytes{0};
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* lastReceiveBindingSource{nullptr};
+    ASFW::Encoding::AudioWireFormat lastReceiveWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
+    uint32_t lastReceiveAm824Slots{0};
     uint8_t lastTransmitChannel{0};
     uint8_t lastTransmitSourceId{0};
     uint32_t lastTransmitMode{0};
@@ -280,7 +262,7 @@ public:
     uint32_t lastTransmitDataBlockSize{0};
     ASFW::Encoding::AudioWireFormat lastTransmitWireFormat{
         ASFW::Encoding::AudioWireFormat::kAM824};
-    uint64_t lastTransmitBytes{0};
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* lastTransmitBindingSource{nullptr};
 
     int beginCalls{0};
     int reservePlaybackCalls{0};
@@ -522,8 +504,8 @@ protected:
                        runtime_,
                        hostTransport_,
                        hardware_,
-                       [](uint64_t) {
-                           return std::make_unique<FakeQueueMemoryProvider>();
+                       [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
+                           return &bindingSource_;
                        }) {
         hardware_.SetTestRegister(Register32::kNodeID, 0);
         InstallDevice(protocol_);
@@ -561,6 +543,7 @@ protected:
     SharedCallLog log_{};
     FakeDiceHostTransport hostTransport_;
     std::shared_ptr<FakeDiceProtocol> protocol_;
+    FakeDirectAudioBindingSource bindingSource_{};
     DiceDuplexRestartCoordinator coordinator_;
 };
 
@@ -799,6 +782,7 @@ TEST_F(DiceDuplexRestartCoordinatorTests, LatestPendingClockRequestWinsDuringRes
         secondPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kRecoverAfterTimingLoss));
     });
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     std::thread thirdThread([&] {
         thirdPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kBusResetRebind));

@@ -1,5 +1,5 @@
 // IsochAudioTxPipeline.hpp
-// ASFW - Audio semantics layer for IT transmit (CIP/AM824 + buffering policy).
+// ASFW - Audio semantics layer for IT transmit (CIP/AM824 + direct ADK memory).
 
 #pragma once
 
@@ -16,7 +16,6 @@
 #include "../../Isoch/Core/ExternalSyncBridge.hpp"
 #include "../../Isoch/Core/ExternalSyncDiscipline48k.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
-#include "../../Shared/TxSharedQueue.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <array>
@@ -26,45 +25,25 @@
 
 namespace ASFW::Isoch {
 
-/// Owns all "audio semantics" (PacketAssembler/CIP/AM824) and buffering policy.
+/// Owns all "audio semantics" (PacketAssembler/CIP/AM824) and direct mapping policy.
 /// Provides silent packets to the low-level DMA engine and injects real audio
-/// into near-HW slots (latency control).
+/// into near-HW slots by reading directly from ADK stream memory.
 class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider, public Tx::IIsochTxAudioInjector {
 public:
     static constexpr bool kEnableDirectTxHardwarePath = true;
 
     struct Counters {
         std::atomic<uint64_t> resyncApplied{0};
-        std::atomic<uint64_t> staleFramesDropped{0};
-        std::atomic<uint64_t> legacyPumpMovedFrames{0};
-        std::atomic<uint64_t> legacyPumpSkipped{0};
-        std::atomic<uint64_t> exitZeroRefill{0};
-        std::atomic<uint64_t> underrunSilencedPackets{0};
         std::atomic<uint64_t> audioInjectCursorResets{0};
         std::atomic<uint64_t> audioInjectMissedPackets{0};
 
-        // Fill level low-water alerts (with hysteresis)
-        std::atomic<uint64_t> rbLowEvents{0};
-        std::atomic<uint64_t> txqLowEvents{0};
-        std::atomic<uint32_t> prePrimeFillBefore{0};
-        std::atomic<uint32_t> prePrimeTransferred{0};
-        std::atomic<uint32_t> prePrimeAssemblerFillAfter{0};
-        std::atomic<uint32_t> prePrimeQueueFillAfter{0};
-        std::atomic<uint32_t> prePrimeLimitFrames{0};
-        std::atomic<uint32_t> prePrimeLimitHit{0};
-        std::atomic<uint32_t> peakAssemblerFill{0};
-        std::atomic<uint32_t> peakSharedTxFill{0};
         std::atomic<uint64_t> directTxPackets{0};
         std::atomic<uint64_t> directTxUnderrunSilencedPackets{0};
-        std::atomic<uint64_t> directTxFallbackPackets{0};
         std::atomic<uint64_t> directTxInvalidPackets{0};
     };
 
-    // Plain, RT-safe view of the ADK output stream memory + shared transport
-    // control block. The isoch TX hot path reads this directly; it never calls
-    // back into the AudioDriverKit object graph (no IOUserAudioDevice/Stream,
-    // no FireWireAudioEngine, no std::function). Mirrors the zero-copy precedent
-    // of threading raw shared-memory handles across the IOService boundary.
+    /// Plain, RT-safe view of the ADK output stream memory + shared transport
+    /// control block retrieved via DirectAudioBindingSource snapshot.
     struct DirectTxRuntimeBinding final {
         const int32_t* outputBase{nullptr};
         uint64_t outputBytes{0};
@@ -80,63 +59,33 @@ public:
 
     IsochAudioTxPipeline() noexcept = default;
 
-    // Public-ish facade methods (delegated by IsochTransmitContext)
-    void SetSharedTxQueue(uint8_t* base, uint64_t bytes) noexcept;
-    [[nodiscard]] uint32_t SharedTxFillLevelFrames() const noexcept;
-    [[nodiscard]] uint32_t SharedTxCapacityFrames() const noexcept;
-    [[nodiscard]] bool SharedTxQueueValid() const noexcept { return sharedTxQueue_.IsValid(); }
-
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
-
-    void SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes,
-                                 uint32_t frameCapacity) noexcept;
-    [[nodiscard]] bool IsZeroCopyEnabled() const noexcept { return zeroCopyEnabled_; }
-
     void SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept;
 
     [[nodiscard]] Encoding::StreamMode RequestedStreamMode() const noexcept { return requestedStreamMode_; }
     [[nodiscard]] Encoding::StreamMode EffectiveStreamMode() const noexcept { return effectiveStreamMode_; }
     [[nodiscard]] Encoding::AudioWireFormat WireFormat() const noexcept { return assembler_.audioWireFormat(); }
 
-    [[nodiscard]] Encoding::AudioRingBuffer<>& RingBuffer() noexcept { return assembler_.ringBuffer(); }
-    [[nodiscard]] uint64_t UnderrunCount() const noexcept { return assembler_.underrunCount(); }
-    [[nodiscard]] uint32_t BufferFillLevel() const noexcept { return assembler_.bufferFillLevel(); }
-
     [[nodiscard]] uint32_t FramesPerDataPacket() const noexcept { return assembler_.samplesPerDataPacket(); }
-    [[nodiscard]] uint32_t ChannelCount() const noexcept { return assembler_.channelCount(); } // PCM channels
+    [[nodiscard]] uint32_t ChannelCount() const noexcept { return assembler_.channelCount(); } 
     [[nodiscard]] uint32_t Am824SlotCount() const noexcept { return assembler_.am824SlotCount(); }
-    [[nodiscard]] uint64_t DbcDiscontinuityCount() const noexcept { return dbcTracker_.discontinuityCount.load(std::memory_order_relaxed); }
 
     void ResetForStart() noexcept;
     void SetCycleTrackingValid(bool v) noexcept { cycleTrackingValid_ = v; }
     [[nodiscard]] bool PrimeSyncFromExternalBridge() noexcept;
 
-    // Configure audio packetization from shared queue metadata.
+    // Configure audio packetization.
     [[nodiscard]] kern_return_t Configure(uint8_t sid,
                                           uint32_t streamModeRaw,
                                           uint32_t requestedChannels,
                                           uint32_t requestedAm824Slots,
                                           Encoding::AudioWireFormat wireFormat) noexcept;
 
-    // Start-time pre-prime: move some frames from shared queue into assembler ring.
-    void PrePrimeFromSharedQueue() noexcept;
-
-    // Called from refill path before touching HW ring: maintains legacy jitter-buffer policy.
-    void OnRefillTickPreHW() noexcept;
-
-    // Called from 1ms watchdog Poll() to update adaptive fill target.
-    void OnPollTick1ms() noexcept;
-
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
-    [[nodiscard]] uint32_t CurrentFillTarget() const noexcept { return adaptiveFill_.currentTarget; }
-    [[nodiscard]] uint32_t BaseFillTarget() const noexcept { return adaptiveFill_.baseTarget; }
-    [[nodiscard]] uint32_t MaxFillTarget() const noexcept { return adaptiveFill_.maxTarget; }
 
     // -------------------------------------------------------------------------
     // Tx::IIsochTxPacketProvider
     // -------------------------------------------------------------------------
-    // The returned payload pointer remains valid until the next
-    // NextSilentPacket() call on this pipeline instance.
     [[nodiscard]] Tx::IsochTxPacket NextSilentPacket(uint32_t transmitCycle) noexcept override;
 
     // -------------------------------------------------------------------------
@@ -145,11 +94,6 @@ public:
     void InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescriptorSlab& slab) noexcept override;
 
 private:
-    struct LegacyPumpResult {
-        uint32_t pumpedFrames{0};
-        bool skipped{true};
-    };
-
     struct ExternalSyncState {
         enum class SeedStatus : uint8_t {
             Ok = 0,
@@ -177,17 +121,11 @@ private:
     };
 
     struct AudioInjectionPlan {
-        bool zeroCopySync{false};
         uint32_t audioTarget{0};
         uint32_t packetsToInject{0};
         uint32_t framesPerPacket{0};
         uint32_t pcmChannels{0};
         uint32_t am824Slots{0};
-    };
-
-    struct PacketReadResult {
-        uint32_t framesRead{0};
-        bool leaveSilence{false};
     };
 
     struct PacketCipFields {
@@ -196,12 +134,6 @@ private:
         uint16_t syt{0};
     };
 
-    void ApplyPendingSharedQueueResync() noexcept;
-    [[nodiscard]] LegacyPumpResult PumpLegacyAssemblerRing(uint32_t targetRbFillFrames) noexcept;
-    void RecordLegacyPumpResult(const LegacyPumpResult& result) noexcept;
-    void UpdateLegacyFillLevelAlerts() noexcept;
-    void AdvanceAdaptiveFillWindow() noexcept;
-    void ApplyAdaptiveFillPolicy() noexcept;
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
     [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
@@ -214,52 +146,14 @@ private:
     [[nodiscard]] bool TryWriteDirectTxPacket(uint32_t packetIndex,
                                               Tx::IsochTxDescriptorSlab& slab,
                                               const AudioInjectionPlan& plan) noexcept;
-    // Anchors directOutputFrameCursor_ near the client's WriteEnd on the first
-    // DATA injection. Returns false (defer to legacy path) until the client has
-    // published at least one buffer (WriteEnd > 0).
+
     [[nodiscard]] bool InitializeDirectOutputCursor(const AudioInjectionPlan& plan) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
-    [[nodiscard]] PacketReadResult ReadPacketSamples(const AudioInjectionPlan& plan, int32_t* samples) noexcept;
-    [[nodiscard]] PacketReadResult ReadZeroCopyPacketSamples(const AudioInjectionPlan& plan,
-                                                             int32_t* samples) noexcept;
-    void CopyZeroCopyFrames(const AudioInjectionPlan& plan, int32_t* samples) noexcept;
-    void PadPacketSamples(const AudioInjectionPlan& plan, uint32_t framesRead, int32_t* samples) noexcept;
-    void EncodeInjectedPacket(uint32_t packetIndex,
-                              Tx::IsochTxDescriptorSlab& slab,
-                              const AudioInjectionPlan& plan,
-                              const int32_t* samples) noexcept;
-
-    // Fill-level alerts (with hysteresis)
-    struct FillLevelAlert {
-        bool rbLow{false};
-        bool txqLow{false};
-    } fillLevelAlert_;
-
-    // Adaptive Fill Level Target
-    struct AdaptiveFill {
-        uint32_t currentTarget{0};
-        uint32_t baseTarget{0};
-        uint32_t maxTarget{0};
-        uint32_t underrunsInWindow{0};
-        uint32_t windowTickCount{0};
-        uint32_t cleanWindows{0};
-        uint64_t lastCombinedUnderruns{0};
-    } adaptiveFill_;
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
-    Shared::TxSharedQueueSPSC sharedTxQueue_{};
-
-    // ZERO-COPY: Direct pointer to CoreAudio output buffer
-    const int32_t* zeroCopyAudioBase_{nullptr};
-    uint64_t zeroCopyAudioBytes_{0};
-    uint32_t zeroCopyFrameCapacity_{0};
-    bool zeroCopyEnabled_{false};
 
     DirectTxRuntimeBinding directTxBinding_{};
-    // Local, isoch-owned view over the shared ADK output memory + control block.
-    // Rebuilt from directTxBinding_ in SetDirectTxRuntimeBinding(); the reader
-    // points at directOutputView_ which lives for the pipeline's lifetime.
     ASFW::Audio::Runtime::AudioGraphBinding directOutputView_{};
     ASFW::AudioEngine::Direct::DirectOutputReader directOutputReader_{};
     uint64_t directOutputFrameCursor_{0};
@@ -283,6 +177,13 @@ private:
         uint8_t lastDataBlockCount{0};
         bool firstPacket{true};
         std::atomic<uint64_t> discontinuityCount{0};
+
+        void Reset() noexcept {
+            lastDbc = 0;
+            lastDataBlockCount = 0;
+            firstPacket = true;
+            discontinuityCount.store(0, std::memory_order_relaxed);
+        }
     } dbcTracker_{};
 
     Counters counters_{};

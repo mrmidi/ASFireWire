@@ -82,7 +82,7 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
     for (uint32_t frame = 0; frame < request.frameCount; ++frame) {
         auto* frameOut = payload + (static_cast<size_t>(frame) * am824Slots);
         if (useSilence) {
-            EncodeDirectTxSilenceFrameToAm824(request.channels, am824Slots, frameOut);
+            EncodeDirectTxSilenceFrame(request.channels, am824Slots, request.wireFormat, frameOut);
             continue;
         }
 
@@ -92,7 +92,7 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
             scratch.Reset();
             return result;
         }
-        EncodeDirectTxPcmFrameToAm824(frameIn, request.channels, am824Slots, frameOut);
+        EncodeDirectTxPcmFrame(frameIn, request.channels, am824Slots, request.wireFormat, frameOut);
     }
 
     scratch.length = DirectTxPacketByteCount(request.frameCount, am824Slots);

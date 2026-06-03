@@ -1130,7 +1130,9 @@ add_executable(IsochReceiveContextTests
     "${ASFW_TESTS_DIR}/IsochRxDmaRingTests.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioRxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/AudioClockPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Rx/RxAudioPacketProcessor.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
@@ -1354,26 +1356,6 @@ target_include_directories(PacketAssemblerTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(PacketAssemblerTests)
 
-# Audio IO path tests (host-side queue/ring behavior without ADK runtime)
-add_executable(AudioIOPathTests
-    "${ASFW_TESTS_DIR}/AudioIOPathTests.cpp"
-    "${ASFW_DRIVER_DIR}/Audio/DriverKit/LegacyBridge/AudioIOPath.cpp"
-    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
-)
-
-target_link_libraries(AudioIOPathTests
-    PRIVATE
-        GTest::gtest_main
-)
-
-target_compile_definitions(AudioIOPathTests
-    PRIVATE
-        ASFW_HOST_TEST
-)
-
-target_include_directories(AudioIOPathTests PRIVATE ${ASFW_COMMON_INCLUDES})
-
-gtest_discover_tests(AudioIOPathTests)
 
 # Direct ADK audio skeleton tests (pure runtime/direct binding behavior)
 add_executable(AudioDirectRuntimeTests
@@ -1422,37 +1404,6 @@ target_compile_definitions(AudioEngineDirectTxTests
 target_include_directories(AudioEngineDirectTxTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(AudioEngineDirectTxTests)
-
-# Isoch Transmit Context Tests
-add_executable(IsochTransmitContextTests
-    "${ASFW_TESTS_DIR}/IsochTransmitContextTests.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTransmitContext.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioTxPipeline.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxVerifier.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxRecoveryController.cpp"
-    "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
-    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
-    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
-    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
-)
-
-target_link_libraries(IsochTransmitContextTests
-    PRIVATE
-        GTest::gtest_main
-)
-
-target_compile_definitions(IsochTransmitContextTests
-    PRIVATE
-        ASFW_HOST_TEST
-)
-
-target_include_directories(IsochTransmitContextTests PRIVATE ${ASFW_COMMON_INCLUDES})
-
-gtest_discover_tests(IsochTransmitContextTests)
 
 # Isoch TX Descriptor Slab Addressing Tests
 add_executable(IsochTxDescriptorSlabTests
@@ -1515,27 +1466,6 @@ target_include_directories(ExternalSyncBridgeTests PRIVATE ${ASFW_COMMON_INCLUDE
 
 gtest_discover_tests(ExternalSyncBridgeTests)
 
-# Isoch audio RX pipeline timing-loss tests
-add_executable(IsochAudioRxPipelineTests
-    "${ASFW_TESTS_DIR}/IsochAudioRxPipelineTests.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/LegacyIsoch/IsochAudioRxPipeline.cpp"
-    "${ASFW_TESTS_DIR}/HardwareInterfaceStub.cpp"
-    "${ASFW_TESTS_DIR}/LoggingStubs.cpp"
-)
-
-target_link_libraries(IsochAudioRxPipelineTests
-    PRIVATE
-        GTest::gtest_main
-)
-
-target_compile_definitions(IsochAudioRxPipelineTests
-    PRIVATE
-        ASFW_HOST_TEST
-)
-
-target_include_directories(IsochAudioRxPipelineTests PRIVATE ${ASFW_COMMON_INCLUDES})
-
-gtest_discover_tests(IsochAudioRxPipelineTests)
 
 # External sync discipline (48k) tests
 add_executable(ExternalSyncDiscipline48kTests

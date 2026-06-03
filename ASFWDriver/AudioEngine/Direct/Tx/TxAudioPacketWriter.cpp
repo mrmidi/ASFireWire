@@ -112,11 +112,11 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
     for (uint32_t frame = 0; frame < request.frameCount; ++frame) {
         auto* frameOut = payload + (static_cast<size_t>(frame) * am824Slots);
         if (useSilence) {
-            EncodeDirectTxSilenceFrameToAm824(request.channels, am824Slots, frameOut);
+            EncodeDirectTxSilenceFrame(request.channels, am824Slots, request.wireFormat, frameOut);
             continue;
         }
 
-        EncodeDirectTxPcmFrameToAm824(inputFrames[frame], request.channels, am824Slots, frameOut);
+        EncodeDirectTxPcmFrame(inputFrames[frame], request.channels, am824Slots, request.wireFormat, frameOut);
     }
 
     result.bytesWritten = packetBytesNeeded;

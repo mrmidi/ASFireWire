@@ -5,6 +5,8 @@
 #include "../../../AudioWire/AM824/AM824Encoder.hpp"
 #include "../../../AudioWire/CIP/CIPHeaderBuilder.hpp"
 #include "../../../Isoch/Config/AudioConstants.hpp"
+#include "../../../AudioWire/RawPcm24In32/RawPcm24In32Encoder.hpp"
+#include "../../../AudioWire/AMDTP/PacketAssembler.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -42,26 +44,35 @@ struct DirectTxPacketHeaderRequest final {
     return ASFW::Encoding::AM824Encoder::encodeLabelOnly(label);
 }
 
-inline void EncodeDirectTxPcmFrameToAm824(const int32_t* pcmFrame,
-                                          uint32_t pcmChannels,
-                                          uint32_t am824Slots,
-                                          uint32_t* outWireQuadlets) noexcept {
+inline void EncodeDirectTxPcmFrame(const int32_t* pcmFrame,
+                                   uint32_t pcmChannels,
+                                   uint32_t am824Slots,
+                                   ASFW::Encoding::AudioWireFormat format,
+                                   uint32_t* outWireQuadlets) noexcept {
     const uint32_t midiSlots = (am824Slots > pcmChannels) ? (am824Slots - pcmChannels) : 0;
     for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
-        outWireQuadlets[ch] = ASFW::Encoding::AM824Encoder::encode(pcmFrame[ch]);
+        if (format == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+            outWireQuadlets[ch] = ASFW::Encoding::RawPcm24In32::Encode(pcmFrame[ch]);
+        } else {
+            outWireQuadlets[ch] = ASFW::Encoding::AM824Encoder::encode(pcmFrame[ch]);
+        }
     }
     for (uint32_t s = 0; s < midiSlots; ++s) {
         outWireQuadlets[pcmChannels + s] = EncodeDirectTxMidiPlaceholder(s);
     }
 }
 
-inline void EncodeDirectTxSilenceFrameToAm824(uint32_t pcmChannels,
-                                              uint32_t am824Slots,
-                                              uint32_t* outWireQuadlets) noexcept {
-    const uint32_t silence = ASFW::Encoding::AM824Encoder::encodeSilence();
+inline void EncodeDirectTxSilenceFrame(uint32_t pcmChannels,
+                                      uint32_t am824Slots,
+                                      ASFW::Encoding::AudioWireFormat format,
+                                      uint32_t* outWireQuadlets) noexcept {
     const uint32_t midiSlots = (am824Slots > pcmChannels) ? (am824Slots - pcmChannels) : 0;
     for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
-        outWireQuadlets[ch] = silence;
+        if (format == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+            outWireQuadlets[ch] = ASFW::Encoding::RawPcm24In32::EncodeSilence();
+        } else {
+            outWireQuadlets[ch] = ASFW::Encoding::AM824Encoder::encodeSilence();
+        }
     }
     for (uint32_t s = 0; s < midiSlots; ++s) {
         outWireQuadlets[pcmChannels + s] = EncodeDirectTxMidiPlaceholder(s);

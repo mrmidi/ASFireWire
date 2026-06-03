@@ -3,10 +3,11 @@
 //
 // NOTE:
 // OHCI IT programming details are in Tx::IsochTxDmaRing.
-// Audio semantics (CIP/AM824/queue/zero-copy/external sync) are in IsochAudioTxPipeline.
+// Audio semantics (CIP/AM824 + direct ADK memory mapping) are in IsochAudioTxPipeline.
 //
 
 #include "IsochTransmitContext.hpp"
+#include "../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 
 #include "../../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
@@ -55,10 +56,6 @@ IsochTransmitContext::~IsochTransmitContext() noexcept {
     verifier_.Shutdown();
 }
 
-void IsochTransmitContext::SetSharedTxQueue(uint8_t* base, uint64_t bytes) noexcept {
-    audio_.SetSharedTxQueue(base, bytes);
-}
-
 void IsochTransmitContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
     audio_.SetExternalSyncBridge(bridge);
 }
@@ -67,22 +64,14 @@ void IsochTransmitContext::SetRecoveryCallback(RecoveryCallback callback) noexce
     recoveryCallback_ = std::move(callback);
 }
 
-uint32_t IsochTransmitContext::SharedTxFillLevelFrames() const noexcept {
-    return audio_.SharedTxFillLevelFrames();
-}
-
-uint32_t IsochTransmitContext::SharedTxCapacityFrames() const noexcept {
-    return audio_.SharedTxCapacityFrames();
-}
-
-void IsochTransmitContext::SetZeroCopyOutputBuffer(const int32_t* base, uint64_t bytes,
-                                                   uint32_t frameCapacity) noexcept {
-    audio_.SetZeroCopyOutputBuffer(base, bytes, frameCapacity);
-}
-
 void IsochTransmitContext::SetDirectTxRuntimeBinding(
     const IsochAudioTxPipeline::DirectTxRuntimeBinding& binding) noexcept {
     audio_.SetDirectTxRuntimeBinding(binding);
+}
+
+void IsochTransmitContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept {
+    directAudioBindingSource_ = source;
+    lastDirectAudioGeneration_ = 0;
 }
 
 kern_return_t IsochTransmitContext::Configure(uint8_t channel,
@@ -120,7 +109,7 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
     }
 
     state_ = State::Configured;
-    ASFW_LOG(Isoch, "IT: Configured ch=%u sid=%u requestedChannels=%u queueChannels=%u",
+    ASFW_LOG(Isoch, "IT: Configured ch=%u sid=%u requestedChannels=%u wireChannels=%u",
              channel, sid, requestedChannels, audio_.ChannelCount());
     return kIOReturnSuccess;
 }
@@ -157,8 +146,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     maxRefillLatencyUs_.store(0, std::memory_order_relaxed);
     irqWatchdogKicks_.store(0, std::memory_order_relaxed);
 
-    lastUnderrunCount_ = 0;
-
     ring_.ResetForStart();
     audio_.ResetForStart();
 
@@ -172,10 +159,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
         return kIOReturnNotReady;
     }
 
-    if (audio_.SharedTxQueueValid() && !audio_.IsZeroCopyEnabled()) {
-        audio_.PrePrimeFromSharedQueue();
-    }
-
     ring_.DebugFillDescriptorSlab(0xDE);
     ASFW_LOG(Isoch, "IT: Pre-filled descriptor slab (%zu bytes) with 0xDE pattern", Tx::Layout::kDescriptorRingSize);
 
@@ -186,13 +169,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ASFW_LOG(Isoch, "IT: Ring primed with %llu packets (%llu DATA, %llu NO-DATA)",
              packetsAssembled_, dataPackets_, noDataPackets_);
-
-    constexpr uint32_t kMinPrimeData = Config::kTxBufferProfile.minPrimeDataPackets;
-    if (kMinPrimeData > 0 && dataPackets_ < kMinPrimeData) {
-        ASFW_LOG(Isoch, "IT: WARNING: PrimeRing produced only %llu DATA packets (minimum=%u). "
-                 "Audio may click at start.",
-                 dataPackets_, kMinPrimeData);
-    }
 
     ring_.DumpDescriptorRing(0, 4);
     ring_.DumpDescriptorRing(7, 1);
@@ -224,9 +200,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     const uint32_t readCmd = hardware_->Read(cmdPtrReg);
     const uint32_t readCtl = hardware_->Read(ctrlReg);
 
-    const uint32_t isoXmitIntMask = hardware_->Read(Register32::kIsoXmitIntMaskSet);
-    const uint32_t intMask = hardware_->Read(Register32::kIntMaskSet);
-
     const bool runSet = (readCtl & Driver::ContextControl::kRun) != 0;
     const bool activeSet = (readCtl & Driver::ContextControl::kActive) != 0;
     const bool deadSet = (readCtl & Driver::ContextControl::kDead) != 0;
@@ -234,8 +207,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ASFW_LOG(Isoch, "IT: Readback Cmd=0x%08x Ctl=0x%08x (run=%d active=%d dead=%d evt=0x%02x)",
              readCmd, readCtl, runSet, activeSet, deadSet, eventCode);
-    ASFW_LOG(Isoch, "IT: IntMasks - IsoXmit=0x%08x Global=0x%08x (IsochTx bit=%d)",
-             isoXmitIntMask, intMask, (intMask & IntEventBits::kIsochTx) != 0);
 
     if (deadSet) {
         ASFW_LOG(Isoch, "❌ IT: Context is DEAD immediately! Check descriptor program.");
@@ -275,8 +246,6 @@ void IsochTransmitContext::DoRefillOnce() noexcept {
         return;
     }
 
-    audio_.OnRefillTickPreHW();
-
     Tx::IsochTxCaptureHook* capture = nullptr;
     if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
         capture = &verifier_;
@@ -295,6 +264,41 @@ void IsochTransmitContext::DoRefillOnce() noexcept {
 void IsochTransmitContext::Poll() noexcept {
     if (state_ != State::Running) return;
     ++tickCount_;
+
+    if (directAudioBindingSource_) {
+        ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
+        if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
+            if (snapshot.generation != lastDirectAudioGeneration_) {
+                if (snapshot.valid && snapshot.HasOutput()) {
+                    ASFW_LOG(Isoch, "IT: direct audio binding changed (gen %llu -> %llu). Arming direct Tx.",
+                             lastDirectAudioGeneration_, snapshot.generation);
+                    IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
+                    binding.outputBase = snapshot.outputBase;
+                    binding.outputBytes = snapshot.outputBytes;
+                    binding.outputFrames = snapshot.outputFrames;
+                    binding.control = snapshot.control;
+                    binding.enabled = true;
+                    binding.sampleRateHz = snapshot.sampleRateHz;
+                    binding.outputChannels = snapshot.outputChannels;
+                    binding.am824Slots = audio_.Am824SlotCount();
+                    SetDirectTxRuntimeBinding(binding);
+                } else {
+                    ASFW_LOG(Isoch, "IT: direct audio binding invalid or has no output (gen %llu -> %llu). Disarming.",
+                             lastDirectAudioGeneration_, snapshot.generation);
+                    IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
+                    SetDirectTxRuntimeBinding(binding);
+                }
+                lastDirectAudioGeneration_ = snapshot.generation;
+            }
+        } else {
+            if (lastDirectAudioGeneration_ != 0) {
+                ASFW_LOG(Isoch, "IT: direct audio binding cleared/unavailable. Disarming.");
+                IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
+                SetDirectTxRuntimeBinding(binding);
+                lastDirectAudioGeneration_ = 0;
+            }
+        }
+    }
 
     // IRQ-stall watchdog
     const uint64_t irqNow = interruptCount_.load(std::memory_order_relaxed);
@@ -334,55 +338,18 @@ void IsochTransmitContext::Poll() noexcept {
         irqStallTicks_ = 0;
     }
 
-    audio_.OnPollTick1ms();
-
     // Periodic non-RT diagnostics.
     if (tickCount_ == 1 || (tickCount_ % 1000) == 0) {
-        const uint32_t rbFill = audio_.BufferFillLevel();
-        const uint32_t txFill = audio_.SharedTxFillLevelFrames();
-
-        const uint64_t underrunNow = audio_.UnderrunCount();
-        const uint64_t underrunDelta = underrunNow - lastUnderrunCount_;
-        lastUnderrunCount_ = underrunNow;
-        if (underrunDelta > 0) {
-            ASFW_LOG(Isoch, "IT: UNDERRUN %llu frames (total=%llu) rbFill=%u txFill=%u",
-                     underrunDelta, underrunNow, rbFill, txFill);
-        }
-
         if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
             const auto& ringC = ring_.RTCounters();
             const auto& audioC = audio_.RTCounters();
-            ASFW_LOG(Isoch, "IT: Poll tick=%llu zeroCopy=%{public}s rbFill=%u txFill=%u target=%u base=%u max=%u peakRb=%u peakTx=%u prePrime(txBefore=%u moved=%u asmAfter=%u txAfter=%u limit=%u hit=%u) | ring(calls=%llu refills=%llu pkts=%llu dead=%llu dec=%llu oob=%llu gapCrit=%llu) audio(resync=%llu drop=%llu pumpMoved=%llu pumpSkip=%llu injectReset=%llu injectMiss=%llu zeroExit=%llu silenced=%llu)",
+            ASFW_LOG(Isoch, "IT: Poll tick=%llu | ring(refills=%llu pkts=%llu) audio(directPackets=%llu underrunSilenced=%llu invalid=%llu)",
                      tickCount_,
-                     audio_.IsZeroCopyEnabled() ? "YES" : "NO",
-                     rbFill,
-                     txFill,
-                     audio_.CurrentFillTarget(),
-                     audio_.BaseFillTarget(),
-                     audio_.MaxFillTarget(),
-                     audioC.peakAssemblerFill.load(std::memory_order_relaxed),
-                     audioC.peakSharedTxFill.load(std::memory_order_relaxed),
-                     audioC.prePrimeFillBefore.load(std::memory_order_relaxed),
-                     audioC.prePrimeTransferred.load(std::memory_order_relaxed),
-                     audioC.prePrimeAssemblerFillAfter.load(std::memory_order_relaxed),
-                     audioC.prePrimeQueueFillAfter.load(std::memory_order_relaxed),
-                     audioC.prePrimeLimitFrames.load(std::memory_order_relaxed),
-                     audioC.prePrimeLimitHit.load(std::memory_order_relaxed),
-                     ringC.calls.load(std::memory_order_relaxed),
                      ringC.refills.load(std::memory_order_relaxed),
                      ringC.packetsRefilled.load(std::memory_order_relaxed),
-                     ringC.exitDead.load(std::memory_order_relaxed),
-                     ringC.exitDecodeFail.load(std::memory_order_relaxed),
-                     ringC.exitHwOOB.load(std::memory_order_relaxed),
-                     ringC.criticalGapEvents.load(std::memory_order_relaxed),
-                     audioC.resyncApplied.load(std::memory_order_relaxed),
-                     audioC.staleFramesDropped.load(std::memory_order_relaxed),
-                     audioC.legacyPumpMovedFrames.load(std::memory_order_relaxed),
-                     audioC.legacyPumpSkipped.load(std::memory_order_relaxed),
-                     audioC.audioInjectCursorResets.load(std::memory_order_relaxed),
-                     audioC.audioInjectMissedPackets.load(std::memory_order_relaxed),
-                     audioC.exitZeroRefill.load(std::memory_order_relaxed),
-                     audioC.underrunSilencedPackets.load(std::memory_order_relaxed));
+                     audioC.directTxPackets.load(std::memory_order_relaxed),
+                     audioC.directTxUnderrunSilencedPackets.load(std::memory_order_relaxed),
+                     audioC.directTxInvalidPackets.load(std::memory_order_relaxed));
         }
     }
 }
@@ -432,17 +399,17 @@ void IsochTransmitContext::KickTxVerifier() noexcept {
     in.pcmChannels = audio_.ChannelCount();
     in.am824Slots = audio_.Am824SlotCount();
     in.audioWireFormat = audio_.WireFormat();
-    in.zeroCopyEnabled = audio_.IsZeroCopyEnabled();
-    in.sharedTxQueueValid = audio_.SharedTxQueueValid();
-    in.sharedTxQueueFillFrames = audio_.SharedTxFillLevelFrames();
+    in.zeroCopyEnabled = true;
+    in.sharedTxQueueValid = false;
+    in.sharedTxQueueFillFrames = 0;
 
     const auto& audioC = audio_.RTCounters();
     const auto& ringC = ring_.RTCounters();
     in.audioInjectCursorResets = audioC.audioInjectCursorResets.load(std::memory_order_relaxed);
     in.audioInjectMissedPackets = audioC.audioInjectMissedPackets.load(std::memory_order_relaxed);
-    in.underrunSilencedPackets = audioC.underrunSilencedPackets.load(std::memory_order_relaxed);
+    in.underrunSilencedPackets = audioC.directTxUnderrunSilencedPackets.load(std::memory_order_relaxed);
     in.criticalGapEvents = ringC.criticalGapEvents.load(std::memory_order_relaxed);
-    in.dbcDiscontinuities = audio_.DbcDiscontinuityCount();
+    in.dbcDiscontinuities = 0; // DBC continuity check is producer-side only now
 
     verifier_.Kick(in);
 }
@@ -492,24 +459,7 @@ void IsochTransmitContext::ServiceTxRecovery() noexcept {
 }
 
 void IsochTransmitContext::LogStatistics() const noexcept {
-    if (!hardware_ || state_ != State::Running) {
-        return;
-    }
-
-    const uint32_t cmdPtr = hardware_->Read(static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_)));
-    const uint32_t ctrl = hardware_->Read(static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_)));
-
-    const bool run = (ctrl & Driver::ContextControl::kRun) != 0;
-    const bool active = (ctrl & Driver::ContextControl::kActive) != 0;
-    const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
-    const uint32_t eventCode = (ctrl & Driver::ContextControl::kEventCodeMask) >> Driver::ContextControl::kEventCodeShift;
-
-    // DEBUG-ONLY: periodic IT state logging to help identify patterns in IT failures. Not super lightweight, so gated behind a config flag and not on the hot path of Poll().
-    // ASFW_LOG(Isoch, "IT: run=%d active=%d dead=%d evt=0x%02x pkts=%llu IRQ=%llu | CmdPtr=0x%08x Ctrl=0x%08x",
-    //          run, active, dead, eventCode,
-    //          packetsAssembled_,
-    //          interruptCount_.load(std::memory_order_relaxed),
-    //          cmdPtr, ctrl);
+    // No-op for now, simplified architecture.
 }
 
 void IsochTransmitContext::DumpPayloadBuffers(uint32_t numPackets) const noexcept {

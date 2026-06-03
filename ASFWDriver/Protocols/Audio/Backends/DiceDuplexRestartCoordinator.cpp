@@ -586,12 +586,12 @@ DiceDuplexRestartCoordinator::DiceDuplexRestartCoordinator(
     AudioRuntimeRegistry& runtime,
     IDiceHostTransport& hostTransport,
     Driver::HardwareInterface& hardware,
-    QueueProviderFactory queueProviderFactory) noexcept
+    DirectAudioBindingSourceProvider bindingSourceProvider) noexcept
     : registry_(registry)
     , runtime_(runtime)
     , hostTransport_(hostTransport)
     , hardware_(hardware)
-    , queueProviderFactory_(std::move(queueProviderFactory)) {
+    , bindingSourceProvider_(std::move(bindingSourceProvider)) {
     lock_ = IOLockAlloc();
     if (!lock_) {
         ASFW_LOG_ERROR(Audio, "DiceDuplexRestartCoordinator: failed to allocate lock");
@@ -1220,24 +1220,9 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
                                false);
     }
 
-    auto queueProvider = MakeQueueProvider(guid);
-    if (!queueProvider) {
+    auto* bindingSource = GetDirectAudioBindingSource(guid);
+    if (!bindingSource) {
         return finalizeFailure(kIOReturnNotReady,
-                               DiceRestartPhase::kPreparingDevice,
-                               DiceRestartFailureCause::kPrepare,
-                               DiceRestartErrorClass::kMissingDependency,
-                               false,
-                               kIOReturnSuccess,
-                               false,
-                               true);
-    }
-
-    OSSharedPtr<IOBufferMemoryDescriptor> rxMem;
-    uint64_t rxBytes = 0;
-    const kern_return_t rxStatus = queueProvider->CopyRxQueueMemory(rxMem, rxBytes);
-    if (rxStatus != kIOReturnSuccess || !rxMem || rxBytes == 0) {
-        const IOReturn status = (rxStatus == kIOReturnSuccess) ? kIOReturnNoMemory : rxStatus;
-        return finalizeFailure(status,
                                DiceRestartPhase::kPreparingDevice,
                                DiceRestartFailureCause::kPrepare,
                                DiceRestartErrorClass::kMissingDependency,
@@ -1394,11 +1379,21 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     SetSessionPhase(session, DiceRestartPhase::kDeviceTxArmed);
     StoreSession(session);
 
+    Encoding::AudioWireFormat rxWireFormat = Encoding::AudioWireFormat::kAM824;
+    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
+        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
+        session.runtimeCaps.hostInputPcmChannels == 8 &&
+        session.runtimeCaps.deviceToHostAm824Slots == 9) {
+        rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
+    }
+    const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
+
     const kern_return_t startReceiveStatus = hostTransport_.StartReceive(
         channels.deviceToHostIsoChannel,
         hardware_,
-        rxMem,
-        rxBytes);
+        bindingSource,
+        rxWireFormat,
+        rxAm824Slots);
     if (startReceiveStatus != kIOReturnSuccess) {
         return rollbackToFailure(startReceiveStatus,
                                  DiceRestartPhase::kStartingHostReceive,
@@ -1413,16 +1408,6 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     session.hostReceiveStarted = true;
     StoreSession(session);
 
-    OSSharedPtr<IOBufferMemoryDescriptor> txMem;
-    uint64_t txBytes = 0;
-    const kern_return_t txStatus = queueProvider->CopyTransmitQueueMemory(txMem, txBytes);
-    if (txStatus != kIOReturnSuccess || !txMem || txBytes == 0) {
-        const IOReturn status = (txStatus == kIOReturnSuccess) ? kIOReturnNoMemory : txStatus;
-        return rollbackToFailure(status,
-                                 DiceRestartPhase::kStartingHostTransmit,
-                                 DiceRestartFailureCause::kStartTransmit);
-    }
-
     const Encoding::AudioWireFormat wireFormat =
         ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
     const kern_return_t startTransmitStatus = hostTransport_.StartTransmit(
@@ -1433,11 +1418,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         session.runtimeCaps.hostOutputPcmChannels,
         session.runtimeCaps.hostToDeviceAm824Slots,
         wireFormat,
-        txMem,
-        txBytes,
-        nullptr,
-        0,
-        0);
+        bindingSource);
     if (startTransmitStatus != kIOReturnSuccess) {
         return rollbackToFailure(startTransmitStatus,
                                  DiceRestartPhase::kStartingHostTransmit,
@@ -1627,11 +1608,11 @@ Discovery::DeviceRecord* DiceDuplexRestartCoordinator::RequireDiceRecord(
     return record;
 }
 
-std::unique_ptr<IDiceQueueMemoryProvider> DiceDuplexRestartCoordinator::MakeQueueProvider(uint64_t guid) const noexcept {
-    if (!queueProviderFactory_) {
+ASFW::Audio::Runtime::IDirectAudioBindingSource* DiceDuplexRestartCoordinator::GetDirectAudioBindingSource(uint64_t guid) const noexcept {
+    if (!bindingSourceProvider_) {
         return nullptr;
     }
-    return queueProviderFactory_(guid);
+    return bindingSourceProvider_(guid);
 }
 
 bool DiceDuplexRestartCoordinator::TryAcquireGuid(uint64_t guid) noexcept {

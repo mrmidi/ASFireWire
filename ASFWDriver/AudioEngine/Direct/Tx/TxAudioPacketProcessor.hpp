@@ -3,6 +3,7 @@
 #include "../DirectOutputReader.hpp"
 #include "DirectTxPacketScratch.hpp"
 #include "DirectTxTypes.hpp"
+#include "../../../AudioWire/AMDTP/PacketAssembler.hpp"
 
 #include <cstdint>
 
@@ -18,6 +19,7 @@ struct TxAudioPacketRequest final {
     uint8_t dbc{0};
     uint16_t syt{0};
     bool dataPacket{true};
+    ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
 };
 
 struct TxAudioPacketResult final {

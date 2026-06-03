@@ -336,7 +336,7 @@ void DICEDuplexBringupController::DoReadGlobalStatus(
         return;
     }
 
-    io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kStatus),
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kStatus),
                    [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                         const IOReturn status = MapTransportStatus(transportStatus);
                         if (status != kIOReturnSuccess) {
@@ -398,7 +398,7 @@ void DICEDuplexBringupController::DoReadOwnerBeforeClaim(
         return;
     }
 
-    io_.ReadBlock(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+    (void)io_.ReadBlock(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
                   8,
                   [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
                       const IOReturn status = MapTransportStatus(transportStatus);
@@ -423,7 +423,7 @@ void DICEDuplexBringupController::DoClaimOwner(
     }
 
     const uint64_t ownerValue = OwnerValue();
-    io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+    (void)io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
                         kOwnerNoOwner,
                         ownerValue,
                         [this, channels, ownerValue, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {
@@ -450,7 +450,7 @@ void DICEDuplexBringupController::DoReadOwnerAfterClaim(
         return;
     }
 
-    io_.ReadBlock(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+    (void)io_.ReadBlock(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
                   8,
                   [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
                       const IOReturn status = MapTransportStatus(transportStatus);
@@ -478,7 +478,7 @@ void DICEDuplexBringupController::DoWriteClockSelect(
     }
 
     NotificationMailbox::Reset();
-    io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kClockSelect),
+    (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kClockSelect),
                     restartSession_.desiredClock.clockSelect,
                     [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
                          const IOReturn status = MapTransportStatus(transportStatus);
@@ -698,7 +698,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
 
     switch (step) {
     case 0:
-        io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumber),
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumber),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -709,7 +709,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 1:
-        io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumber),
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumber),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -720,7 +720,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 2:
-        io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kSize),
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kSize),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -731,7 +731,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 3:
-        io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kIsochronous),
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kIsochronous),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -742,7 +742,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 4:
-        io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumberAudio),
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumberAudio),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -753,7 +753,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 5:
-        io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumberMidi),
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kNumberMidi),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -764,7 +764,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 6:
-        io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kSpeed),
+        (void)io_.ReadQuadBE(MakeDICEAddress(txBase + TxOffset::kSpeed),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -775,7 +775,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 7:
-        io_.ReadBlock(MakeDICEAddress(txBase + TxOffset::kNames),
+        (void)io_.ReadBlock(MakeDICEAddress(txBase + TxOffset::kNames),
                       256,
                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
                           const IOReturn status = MapTransportStatus(transportStatus);
@@ -787,7 +787,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                       });
         return;
     case 8:
-        io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kSize),
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kSize),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -798,7 +798,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 9:
-        io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kIsochronous),
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kIsochronous),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -809,7 +809,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 10:
-        io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumberMidi),
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumberMidi),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -820,7 +820,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 11:
-        io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kSeqStart),
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kSeqStart),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -831,7 +831,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 12:
-        io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumberAudio),
+        (void)io_.ReadQuadBE(MakeDICEAddress(rxBase + RxOffset::kNumberAudio),
                        [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                             const IOReturn status = MapTransportStatus(transportStatus);
                             if (status != kIOReturnSuccess) {
@@ -842,7 +842,7 @@ void DICEDuplexBringupController::DoDiscoverStreams(
                         });
         return;
     case 13:
-        io_.ReadBlock(MakeDICEAddress(rxBase + RxOffset::kNames),
+        (void)io_.ReadBlock(MakeDICEAddress(rxBase + RxOffset::kNames),
                       256,
                       [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) mutable {
                           const IOReturn status = MapTransportStatus(transportStatus);
@@ -868,7 +868,7 @@ void DICEDuplexBringupController::DoProgramRx(
     }
 
     restartSession_.phase = DiceRestartPhase::kProgrammingDeviceRx;
-    io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
                     [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t rxSize) mutable {
                         const IOReturn status = MapTransportStatus(transportStatus);
                         ASFW_LOG(DICE,
@@ -886,7 +886,7 @@ void DICEDuplexBringupController::DoProgramRx(
                         ASFW_LOG(DICE,
                                  "DoProgramRx: writing RX isoch channel %u",
                                  channels.hostToDeviceIsoChannel);
-                        io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
                                         channels.hostToDeviceIsoChannel,
                                         [this, channels, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                                              const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
@@ -895,7 +895,7 @@ void DICEDuplexBringupController::DoProgramRx(
                                                  return;
                                              }
 
-                                             io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
                                                              kRxSeqStartDefault,
                                                              [this, channels, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
                                                                   const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
@@ -920,7 +920,7 @@ void DICEDuplexBringupController::DoProgramTx(
     }
 
     restartSession_.phase = DiceRestartPhase::kProgrammingDeviceTx;
-    io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
                    [this, channels, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint32_t) mutable {
                         const IOReturn status = MapTransportStatus(transportStatus);
                         if (status != kIOReturnSuccess) {
@@ -928,7 +928,7 @@ void DICEDuplexBringupController::DoProgramTx(
                             return;
                         }
 
-                        io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
                                         channels.deviceToHostIsoChannel,
                                         [this, channels, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                                              const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
@@ -937,7 +937,7 @@ void DICEDuplexBringupController::DoProgramTx(
                                                  return;
                                              }
 
-                                             io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
                                                              kTxSpeedS400,
                                                              [this, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
                                                                   const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
@@ -945,7 +945,7 @@ void DICEDuplexBringupController::DoProgramTx(
                                                                       DoRollback(speedStatus, std::move(cb));
                                                                       return;
                                                                   }
-                                                                  io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
+                                                                  (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
                                                                                   1,
                                                                                   [this, cb = std::move(cb)](Async::AsyncStatus enableTransportStatus) mutable {
                                                                                        const IOReturn enableStatus = MapTransportStatus(enableTransportStatus);
@@ -1099,7 +1099,7 @@ void DICEDuplexBringupController::DoPollSourceLock(
     }
 
     uint32_t notify = accumulatedNotify | NotificationMailbox::Consume();
-    io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kStatus),
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kStatus),
                    [this, attempt, notify, cb = std::move(cb)](Async::AsyncStatus statusTransport, uint32_t statusValue) mutable {
                         const IOReturn statusRead = MapTransportStatus(statusTransport);
                         if (statusRead != kIOReturnSuccess) {
@@ -1109,13 +1109,13 @@ void DICEDuplexBringupController::DoPollSourceLock(
                         }
 
                         if (IsSourceLocked(statusValue)) {
-                            io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kNotification),
+                            (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kNotification),
                                            [this, notify, statusValue, cb = std::move(cb)](Async::AsyncStatus notifyTransport, uint32_t nv) mutable {
                                                 const IOReturn ns = MapTransportStatus(notifyTransport);
                                                 if (ns == kIOReturnSuccess) {
                                                     notify |= nv;
                                                 }
-                                                io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kExtStatus),
+                                                (void)io_.ReadQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kExtStatus),
                                                                [this, notify, statusValue, cb = std::move(cb)](Async::AsyncStatus extTransport, uint32_t ev) mutable {
                                                                     const IOReturn es = MapTransportStatus(extTransport);
                                                                     const uint32_t extStatus =
@@ -1257,7 +1257,7 @@ void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
         return;
     }
 
-    io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+    (void)io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
                         OwnerValue(),
                         kOwnerNoOwner,
                         [this, callback = std::move(callback)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {
@@ -1294,7 +1294,7 @@ void DICEDuplexBringupController::DoStopDisableGlobal(
         return;
     }
 
-    io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
+    (void)io_.WriteQuadBE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kEnable),
                     0,
                     [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
                          const IOReturn status = MapTransportStatus(transportStatus);
@@ -1312,16 +1312,16 @@ void DICEDuplexBringupController::DoStopDisableTx(
         return;
     }
 
-    io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSize),
                    [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
-                        io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
                                         kDisabledIsoChannel,
                                         [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                                              const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
                                              RecordFirstError(stopSequenceError_, isoStatus);
-                                             io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
                                                              kTxSpeedS400,
                                                              [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
                                                                   const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
@@ -1347,16 +1347,16 @@ void DICEDuplexBringupController::DoStopDisableRx(
         return;
     }
 
-    io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
+    (void)io_.ReadQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSize),
                    [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
-                        io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
+                        (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
                                         kDisabledIsoChannel,
                                         [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                                              const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
                                              RecordFirstError(stopSequenceError_, isoStatus);
-                                             io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
+                                             (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
                                                              kRxSeqStartDefault,
                                                              [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
                                                                   const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
@@ -1400,7 +1400,7 @@ void DICEDuplexBringupController::DoStopReleaseOwner(VoidCallback cb) {
         return;
     }
 
-    io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
+    (void)io_.CompareSwap64BE(MakeDICEAddress(sections_.global.offset + GlobalOffset::kOwnerHi),
                         OwnerValue(),
                         kOwnerNoOwner,
                         [this, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {

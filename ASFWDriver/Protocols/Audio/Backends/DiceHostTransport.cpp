@@ -62,9 +62,10 @@ kern_return_t DiceIsochHostTransport::ReserveCaptureResources(uint64_t guid,
 kern_return_t DiceIsochHostTransport::StartReceive(
     uint8_t channel,
     Driver::HardwareInterface& hardware,
-    const OSSharedPtr<IOBufferMemoryDescriptor>& rxMem,
-    uint64_t rxBytes) noexcept {
-    return isoch_.StartReceive(channel, hardware, rxMem, rxBytes);
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+    Encoding::AudioWireFormat wireFormat,
+    uint32_t am824Slots) noexcept {
+    return isoch_.StartReceive(channel, hardware, bindingSource, wireFormat, am824Slots);
 }
 
 kern_return_t DiceIsochHostTransport::StartTransmit(
@@ -75,11 +76,7 @@ kern_return_t DiceIsochHostTransport::StartTransmit(
     uint32_t pcmChannels,
     uint32_t dataBlockSize,
     Encoding::AudioWireFormat wireFormat,
-    const OSSharedPtr<IOBufferMemoryDescriptor>& txMem,
-    uint64_t txBytes,
-    const int32_t* zeroCopyBase,
-    uint64_t zeroCopyBytes,
-    uint32_t zeroCopyFrames) noexcept {
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
     return isoch_.StartTransmit(channel,
                                 hardware,
                                 sourceId,
@@ -87,11 +84,7 @@ kern_return_t DiceIsochHostTransport::StartTransmit(
                                 pcmChannels,
                                 dataBlockSize,
                                 wireFormat,
-                                txMem,
-                                txBytes,
-                                zeroCopyBase,
-                                zeroCopyBytes,
-                                zeroCopyFrames);
+                                bindingSource);
 }
 
 kern_return_t DiceIsochHostTransport::StopDuplex(

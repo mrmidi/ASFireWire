@@ -49,8 +49,9 @@ public:
     [[nodiscard]] virtual kern_return_t StartReceive(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
-        const OSSharedPtr<IOBufferMemoryDescriptor>& rxMem,
-        uint64_t rxBytes) noexcept = 0;
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StartTransmit(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
@@ -59,11 +60,7 @@ public:
         uint32_t pcmChannels,
         uint32_t dataBlockSize,
         Encoding::AudioWireFormat wireFormat,
-        const OSSharedPtr<IOBufferMemoryDescriptor>& txMem,
-        uint64_t txBytes,
-        const int32_t* zeroCopyBase,
-        uint64_t zeroCopyBytes,
-        uint32_t zeroCopyFrames) noexcept = 0;
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept = 0;
     [[nodiscard]] virtual kern_return_t StopDuplex(
         uint64_t guid,
         ::ASFW::IRM::IRMClient* irmClient) noexcept = 0;
@@ -105,8 +102,9 @@ public:
     [[nodiscard]] kern_return_t StartReceive(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
-        const OSSharedPtr<IOBufferMemoryDescriptor>& rxMem,
-        uint64_t rxBytes) noexcept override;
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0) noexcept override;
     [[nodiscard]] kern_return_t StartTransmit(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
@@ -115,11 +113,7 @@ public:
         uint32_t pcmChannels,
         uint32_t dataBlockSize,
         Encoding::AudioWireFormat wireFormat,
-        const OSSharedPtr<IOBufferMemoryDescriptor>& txMem,
-        uint64_t txBytes,
-        const int32_t* zeroCopyBase,
-        uint64_t zeroCopyBytes,
-        uint32_t zeroCopyFrames) noexcept override;
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept override;
     [[nodiscard]] kern_return_t StopDuplex(
         uint64_t guid,
         ::ASFW::IRM::IRMClient* irmClient) noexcept override;

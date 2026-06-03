@@ -57,7 +57,7 @@ private:
     [[nodiscard]] bool TryBeginRecovery(uint64_t guid) noexcept;
     void FinishRecovery(uint64_t guid) noexcept;
     static void NotificationObserverThunk(void* context, uint32_t bits) noexcept;
-    [[nodiscard]] std::unique_ptr<IDiceQueueMemoryProvider> MakeQueueProvider(uint64_t guid) noexcept;
+
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;

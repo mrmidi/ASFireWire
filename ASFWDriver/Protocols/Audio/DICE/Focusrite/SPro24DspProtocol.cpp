@@ -142,7 +142,7 @@ void SPro24DspProtocol::ReadAppQuad(uint32_t offset,
             return;
         }
 
-        tcat_.IO().ReadQuadBE(MakeDICEAddress(appSectionBase_ + offset),
+        (void)tcat_.IO().ReadQuadBE(MakeDICEAddress(appSectionBase_ + offset),
                               [callback = std::move(callback)](Async::AsyncStatus transportStatus, uint32_t value) mutable {
                                   callback(Protocols::Ports::MapAsyncStatusToIOReturn(transportStatus), value);
                               });
@@ -156,7 +156,7 @@ void SPro24DspProtocol::WriteAppQuad(uint32_t offset, uint32_t value, VoidCallba
             return;
         }
 
-        tcat_.IO().WriteQuadBE(MakeDICEAddress(appSectionBase_ + offset),
+        (void)tcat_.IO().WriteQuadBE(MakeDICEAddress(appSectionBase_ + offset),
                                value,
                                [callback = std::move(callback)](Async::AsyncStatus transportStatus) mutable {
                                    callback(Protocols::Ports::MapAsyncStatusToIOReturn(transportStatus));
@@ -172,7 +172,7 @@ void SPro24DspProtocol::ReadAppSection(uint32_t offset, size_t size, DICEReadCal
             return;
         }
 
-        tcat_.IO().ReadBlock(MakeDICEAddress(appSectionBase_ + offset),
+        (void)tcat_.IO().ReadBlock(MakeDICEAddress(appSectionBase_ + offset),
                              static_cast<uint32_t>(size),
                              [callbackState](Async::AsyncStatus transportStatus, std::span<const uint8_t> payload) {
                                  const bool hasPayload = transportStatus == Async::AsyncStatus::kSuccess ||
@@ -196,7 +196,7 @@ void SPro24DspProtocol::WriteAppSection(uint32_t offset,
             return;
         }
 
-        tcat_.IO().WriteBlock(MakeDICEAddress(appSectionBase_ + offset),
+        (void)tcat_.IO().WriteBlock(MakeDICEAddress(appSectionBase_ + offset),
                               std::span<const uint8_t>(data, size),
                               [callbackState](Async::AsyncStatus transportStatus) {
                                   Common::InvokeSharedCallback(callbackState,
