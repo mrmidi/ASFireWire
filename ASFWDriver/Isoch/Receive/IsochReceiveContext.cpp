@@ -206,8 +206,9 @@ uint32_t IsochReceiveContext::Poll() {
             if (result.status == AudioEngine::Direct::Rx::DirectRxWriteStatus::kAvailable ||
                 result.status == AudioEngine::Direct::Rx::DirectRxWriteStatus::kInvalidBinding) {
                 
-                if (!cursorInitialized_ && result.hasValidCip && directInputView_.control) {
-                    absoluteFrameCursor_ = directInputView_.control->inputProducedEndFrame.load(std::memory_order_acquire);
+                if (!cursorInitialized_ && result.hasValidCip) {
+                    // First valid CIP packet anchors the RX device cursor (starts at 0).
+                    // We do not load or reset to inputProducedEndFrame on late binding to keep the timeline monotonic.
                     cursorInitialized_ = true;
                 }
 

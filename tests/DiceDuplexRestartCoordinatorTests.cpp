@@ -781,7 +781,6 @@ TEST_F(DiceDuplexRestartCoordinatorTests, LatestPendingClockRequestWinsDuringRes
         secondPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kRecoverAfterTimingLoss));
     });
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     std::thread thirdThread([&] {
         thirdPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kBusResetRebind));
