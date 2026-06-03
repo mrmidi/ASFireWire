@@ -52,6 +52,16 @@ struct IsochDuplexStartParams {
     const int32_t* zeroCopyBase{nullptr};
     uint64_t zeroCopyBytes{0};
     uint32_t zeroCopyFrames{0};
+
+    // Direct TX: RT-safe view of the ADK host->device output stream memory and
+    // the shared transport control block. Threaded as plain shared-memory
+    // handles (no ADK object pointers), mirroring zeroCopy* above. Disabled
+    // unless directTxEnabled is set and the compile-time hardware path is on.
+    const int32_t* directOutputBase{nullptr};
+    uint64_t directOutputBytes{0};
+    uint32_t directOutputFrames{0};
+    ASFW::Audio::Runtime::AudioTransportControlBlock* directAudioControl{nullptr};
+    bool directTxEnabled{false};
 };
 
 class IsochService {
@@ -80,7 +90,13 @@ public:
                                 uint64_t txQueueBytes,
                                 const int32_t* zeroCopyBase,
                                 uint64_t zeroCopyBytes,
-                                uint32_t zeroCopyFrames);
+                                uint32_t zeroCopyFrames,
+                                const int32_t* directOutputBase = nullptr,
+                                uint64_t directOutputBytes = 0,
+                                uint32_t directOutputFrames = 0,
+                                ASFW::Audio::Runtime::AudioTransportControlBlock* directAudioControl = nullptr,
+                                uint32_t directSampleRateHz = 0,
+                                bool directTxEnabled = false);
 
     kern_return_t StopTransmit();
 
