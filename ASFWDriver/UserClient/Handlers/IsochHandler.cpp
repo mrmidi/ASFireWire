@@ -313,32 +313,29 @@ kern_return_t IsochHandler::GetIsochRxMetrics(IOUserClientMethodArguments* args)
         return kIOReturnSuccess;
     }
 
-    // Get StreamProcessor stats
-    auto& processor = context->GetStreamProcessor();
-
-    // Build snapshot
+    // Build snapshot (currently zeroes out due to direct-only architecture)
     ASFW::Metrics::IsochRxSnapshot snapshot{};
-    snapshot.totalPackets = processor.PacketCount();
-    snapshot.dataPackets = processor.SamplePacketCount();
-    snapshot.emptyPackets = processor.EmptyPacketCount();
-    snapshot.drops = processor.DiscontinuityCount();
-    snapshot.errors = processor.ErrorCount();
+    snapshot.totalPackets = 0;
+    snapshot.dataPackets = 0;
+    snapshot.emptyPackets = 0;
+    snapshot.drops = 0;
+    snapshot.errors = 0;
 
     // Latency histogram
-    snapshot.latencyHist[0] = processor.LatencyBucket0();
-    snapshot.latencyHist[1] = processor.LatencyBucket1();
-    snapshot.latencyHist[2] = processor.LatencyBucket2();
-    snapshot.latencyHist[3] = processor.LatencyBucket3();
+    snapshot.latencyHist[0] = 0;
+    snapshot.latencyHist[1] = 0;
+    snapshot.latencyHist[2] = 0;
+    snapshot.latencyHist[3] = 0;
 
-    snapshot.lastPollLatencyUs = processor.LastPollLatencyUs();
-    snapshot.lastPollPackets = processor.LastPollPackets();
+    snapshot.lastPollLatencyUs = 0;
+    snapshot.lastPollPackets = 0;
 
-    // CIP info from processor
-    snapshot.cipSID = processor.LastCipSID();
-    snapshot.cipDBS = processor.LastCipDBS();
-    snapshot.cipFDF = processor.LastCipFDF();
-    snapshot.cipSYT = processor.LastSYT();
-    snapshot.cipDBC = processor.LastDBC();
+    // CIP info
+    snapshot.cipSID = 0;
+    snapshot.cipDBS = 0;
+    snapshot.cipFDF = 0;
+    snapshot.cipSYT = 0;
+    snapshot.cipDBC = 0;
 
     OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
     if (!data)
@@ -359,10 +356,7 @@ kern_return_t IsochHandler::ResetIsochRxMetrics(IOUserClientMethodArguments* arg
         return kIOReturnNotReady;
     }
 
-    ASFW_LOG(UserClient, "ResetIsochRxMetrics: resetting metrics");
-
-    // Get StreamProcessor and reset
-    context->GetStreamProcessor().Reset();
+    ASFW_LOG(UserClient, "ResetIsochRxMetrics: resetting metrics (no-op in direct architecture)");
 
     return kIOReturnSuccess;
 }

@@ -29,7 +29,7 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
 
     isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
 
-    const kern_return_t kr = isochReceiveContext_->Configure(channel, wireFormat, am824Slots);
+    const kern_return_t kr = isochReceiveContext_->Configure(channel, 0, wireFormat, am824Slots);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IR Configure failed: 0x%08x", kr);
         return kr;
