@@ -117,9 +117,6 @@ public:
 
 struct ASFWAudioNub_IVars {
     IOService* parentDriver;              // ASFWDriver instance (not retained, provider lifetime)
-    IOBufferMemoryDescriptor* txQueueMem; // Shared memory for TX audio queue
-    IOMemoryMap* txQueueMap;              // Local mapping of txQueueMem
-    uint64_t txQueueBytes;                // Size of shared memory
 
     // Audio channel counts (read from ASFWDriver properties; may be refined from protocol runtime caps)
     uint64_t guid{0};
@@ -127,16 +124,6 @@ struct ASFWAudioNub_IVars {
     uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
-
-    // ZERO-COPY: Shared output audio buffer for IOUserAudioStream AND IT DMA
-    IOBufferMemoryDescriptor* outputAudioMem; // Shared output audio buffer
-    IOMemoryMap* outputAudioMap;              // Local mapping for IT DMA
-    uint64_t outputAudioBytes;                // Size of buffer
-    uint32_t outputAudioFrameCapacity;        // Frame capacity (bytes / bytesPerFrame)
-
-    // ZERO-COPY SYNC: Atomic write position updated by ASFWAudioDriver
-    // IT Context reads this to know safe read zone
-    std::atomic<uint32_t> outputAudioWriteFrame{0};
 
     // Thread-safe duplex binding state
     struct IOLock* bindingLock;
@@ -153,11 +140,6 @@ struct ASFWAudioNub_IVars {
     uint32_t directSampleRateHz;
     IOUserAudioDevice* directAudioDevice;
     void* directBindingSource;
-
-    // RX shared memory queue (mirrors TX queue pattern)
-    IOBufferMemoryDescriptor* rxQueueMem{nullptr};
-    IOMemoryMap* rxQueueMap{nullptr};
-    uint64_t rxQueueBytes{0};
 };
 
 #endif /* ASFWAudioNub_h */

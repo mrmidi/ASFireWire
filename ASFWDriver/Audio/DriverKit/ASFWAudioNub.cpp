@@ -138,48 +138,6 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     iv->outputChannelCount = output;
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-static bool TryResolveRuntimeAudioChannels(ASFWAudioNub_IVars* iv,
-                                           uint32_t& outInputChannels, // NOLINT(bugprone-easily-swappable-parameters)
-                                           uint32_t& outOutputChannels)
-{
-    if (!iv) {
-        return false;
-    }
-
-    ProtocolRuntimeBinding binding{};
-    if (ResolveProtocolRuntimeBinding(iv, binding) != kIOReturnSuccess || !binding.protocol) {
-        return false;
-    }
-
-    ASFW::Audio::AudioStreamRuntimeCaps caps{};
-    if (!binding.protocol->GetRuntimeAudioStreamCaps(caps)) {
-        return false;
-    }
-
-    if (caps.hostInputPcmChannels > ASFW::Isoch::Config::kMaxPcmChannels ||
-        caps.hostOutputPcmChannels > ASFW::Isoch::Config::kMaxPcmChannels) {
-        ASFW_LOG_WARNING(Audio,
-                         "ASFWAudioNub: Clamping protocol PCM channels in=%u out=%u to max=%u",
-                         caps.hostInputPcmChannels,
-                         caps.hostOutputPcmChannels,
-                         ASFW::Isoch::Config::kMaxPcmChannels);
-    }
-
-    const uint32_t inputCh = ClampAudioChannels(caps.hostInputPcmChannels);
-    const uint32_t outputCh = ClampAudioChannels(caps.hostOutputPcmChannels);
-    if (inputCh == 0 || outputCh == 0) {
-        return false;
-    }
-
-    iv->inputChannelCount = inputCh;
-    iv->outputChannelCount = outputCh;
-    iv->channelCount = (inputCh > outputCh) ? inputCh : outputCh;
-
-    outInputChannels = inputCh;
-    outOutputChannels = outputCh;
-    return true;
-}
 
 static kern_return_t ResolveProtocolRuntimeBinding(const ASFWAudioNub_IVars* iv,
                                                    ProtocolRuntimeBinding& outBinding)
@@ -274,19 +232,10 @@ bool ASFWAudioNub::init()
     ivars->directBindingSource = nullptr;
 
     ivars->parentDriver = nullptr;
-    ivars->txQueueMem = nullptr;
-    ivars->txQueueMap = nullptr;
-    ivars->txQueueBytes = 0;
     ivars->guid = 0;
     ivars->channelCount = 2;
     ivars->inputChannelCount = 2;
     ivars->outputChannelCount = 2;
-    
-    // ZERO-COPY: Initialize output audio buffer ivars
-    ivars->outputAudioMem = nullptr;
-    ivars->outputAudioMap = nullptr;
-    ivars->outputAudioBytes = 0;
-    ivars->outputAudioFrameCapacity = 0;
     ivars->streamModeRaw = 0;
 
     ASFW_LOG(Audio, "ASFWAudioNub: init() succeeded");
@@ -302,35 +251,6 @@ void ASFWAudioNub::free()
             ivars->bindingLock = nullptr;
         }
 
-        // Release ZERO-COPY output audio buffer
-        if (ivars->outputAudioMap) {
-            ivars->outputAudioMap->release();
-            ivars->outputAudioMap = nullptr;
-        }
-        if (ivars->outputAudioMem) {
-            ivars->outputAudioMem->release();
-            ivars->outputAudioMem = nullptr;
-        }
-        
-        // Release shared RX queue memory resources
-        if (ivars->rxQueueMap) {
-            ivars->rxQueueMap->release();
-            ivars->rxQueueMap = nullptr;
-        }
-        if (ivars->rxQueueMem) {
-            ivars->rxQueueMem->release();
-            ivars->rxQueueMem = nullptr;
-        }
-
-        // Release shared TX queue memory resources
-        if (ivars->txQueueMap) {
-            ivars->txQueueMap->release();
-            ivars->txQueueMap = nullptr;
-        }
-        if (ivars->txQueueMem) {
-            ivars->txQueueMem->release();
-            ivars->txQueueMem = nullptr;
-        }
         if (ivars->directBindingSource) {
             delete static_cast<ASFW::Audio::Runtime::NubDirectAudioBindingSource*>(ivars->directBindingSource);
             ivars->directBindingSource = nullptr;
