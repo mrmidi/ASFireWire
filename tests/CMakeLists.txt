@@ -1375,6 +1375,28 @@ target_include_directories(AudioIOPathTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(AudioIOPathTests)
 
+# Direct ADK audio skeleton tests (pure runtime/direct binding behavior)
+add_executable(AudioDirectRuntimeTests
+    "${ASFW_TESTS_DIR}/AudioRuntime/AudioStreamMemoryTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioRuntime/AudioClientCursorTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioRuntime/AudioGraphBindingTests.cpp"
+    "${ASFW_TESTS_DIR}/AudioRuntime/DirectAudioEngineTests.cpp"
+)
+
+target_link_libraries(AudioDirectRuntimeTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioDirectRuntimeTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioDirectRuntimeTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioDirectRuntimeTests)
+
 # Isoch Transmit Context Tests
 add_executable(IsochTransmitContextTests
     "${ASFW_TESTS_DIR}/IsochTransmitContextTests.cpp"
