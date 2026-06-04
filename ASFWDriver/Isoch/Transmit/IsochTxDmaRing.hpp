@@ -6,6 +6,7 @@
 #include "IsochTxDescriptorSlab.hpp"
 #include "IsochTxLayout.hpp"
 
+#include "../Core/IsochEventGroup.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
@@ -90,9 +91,14 @@ public:
         uint32_t cmdPtr{0};
         uint32_t cmdAddr{0};
         uint16_t hwTimestamp{0};
+        uint32_t completedPacketIndex{0};
+        uint32_t completedPacketCount{0};
+        uint32_t firstRefillPacket{0};
+        uint32_t refillPacketCount{0};
         uint64_t packetsFilled{0};
         uint64_t dataPackets{0};
         uint64_t noDataPackets{0};
+        Core::IsochEventGroup eventGroup{};
     };
 
     IsochTxDmaRing() noexcept = default;

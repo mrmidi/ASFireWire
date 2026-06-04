@@ -244,7 +244,8 @@ void IsochTransmitContext::Stop() noexcept {
     verifier_.Shutdown();
 }
 
-void IsochTransmitContext::DoRefillOnce() noexcept {
+void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
+                                        bool publishTimingEvent) noexcept {
     if (!hardware_ || state_ != State::Running) {
         return;
     }
@@ -257,6 +258,14 @@ void IsochTransmitContext::DoRefillOnce() noexcept {
     const auto outcome = ring_.Refill(*hardware_, contextIndex_, audio_, capture, &audio_);
     if (!outcome.ok) {
         return;
+    }
+
+    if (publishTimingEvent &&
+        outcome.completedPacketCount > 0 &&
+        outcome.eventGroup.HasCompletionTimestamp()) {
+        auto event = outcome.eventGroup;
+        event.hostTicks = eventHostTicks;
+        audio_.OnIsochEventGroup(event);
     }
 
     packetsAssembled_ += outcome.packetsFilled;
@@ -304,6 +313,7 @@ void IsochTransmitContext::Poll() noexcept {
                     binding.streamModeRaw = std::to_underlying(audio_.EffectiveStreamMode());
                     binding.outputChannels = snapshot.outputChannels;
                     binding.am824Slots = audio_.Am824SlotCount();
+                    binding.audioDevice = snapshot.audioDevice;
                     SetDirectTxRuntimeBinding(binding);
                 } else {
                     // Hot-path binding transition diagnostic, disabled for audio stability.
@@ -349,7 +359,7 @@ void IsochTransmitContext::Poll() noexcept {
     if (irqStallTicks_ >= kIrqStallThresholdTicks) {
         if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
             const uint64_t wdStart = mach_absolute_time();
-            DoRefillOnce();
+            DoRefillOnce(wdStart, /*publishTimingEvent=*/false);
             const uint64_t wdEnd = mach_absolute_time();
             refillInProgress_.clear(std::memory_order_release);
 
@@ -399,7 +409,7 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
     }
 
     const uint64_t refillStart = mach_absolute_time();
-    DoRefillOnce();
+    DoRefillOnce(refillStart, /*publishTimingEvent=*/true);
     const uint64_t refillEnd = mach_absolute_time();
     refillInProgress_.clear(std::memory_order_release);
 

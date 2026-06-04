@@ -20,10 +20,43 @@ TEST(TimingUtils, TstampToOffsetsCollapsesSecondsCycleOffset) {
     EXPECT_EQ(tstampToOffsets(2, 1, 5), int64_t(3072) * (1 + 8000 * 2) + 5);
 }
 
+TEST(TimingUtils, DecodeCycleTimerFields) {
+    const uint32_t encoded =
+        (5u << kCycleTimerSecondsShift) |
+        (7998u << kCycleTimerCyclesShift) |
+        0x345u;
+
+    const CycleTimerFields fields = decodeCycleTimer(encoded);
+    EXPECT_EQ(fields.seconds, 5u);
+    EXPECT_EQ(fields.cycle, 7998u);
+    EXPECT_EQ(fields.offset, 0x345u);
+    EXPECT_EQ(encodedTstampToOffsets(encoded), tstampToOffsets(fields));
+}
+
 TEST(TimingUtils, ExtendTstampReconstructsPresentationTimestamp) {
     // SYT 0x79FE = [cycle4=7][offset=0x9FE]. Base cycle 978 -> nearest
     // cycle >= 978 with low nibble 7 is 983.
     EXPECT_EQ(extendTstamp(978, 0x79FE), int64_t(3072) * 983 + 0x9FE);
+}
+
+TEST(TimingUtils, ExtendTstampFromCycleTimerPreservesSeconds) {
+    const uint32_t base =
+        (3u << kCycleTimerSecondsShift) |
+        (978u << kCycleTimerCyclesShift) |
+        0x123u;
+
+    EXPECT_EQ(extendTstampFromCycleTimer(base, 0x79FE), tstampToOffsets(3, 983, 0x9FE));
+}
+
+TEST(TimingUtils, ExtendTstampFromCycleTimerWrapsAcrossSecond) {
+    const uint32_t base =
+        (7u << kCycleTimerSecondsShift) |
+        (7998u << kCycleTimerCyclesShift) |
+        0x000u;
+
+    // Base cycle 7998, SYT cycle nibble 2 -> nearest cycle is 8002,
+    // represented as second+1/cycle 2.
+    EXPECT_EQ(extendTstampFromCycleTimer(base, 0x2100), tstampToOffsets(8, 2, 0x100));
 }
 
 TEST(TimingUtils, ExtendTstampMatchesAcceptedAnchorPresentationLead) {

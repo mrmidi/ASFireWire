@@ -24,7 +24,8 @@ struct Layout final {
 
     // We program packets as: OUTPUT_MORE_IMMEDIATE (Isoch header) + OUTPUT_LAST.
     static constexpr uint32_t kBlocksPerPacket = 3;
-    static constexpr uint32_t kNumPackets = 200;  // ~25ms @ 8000 pkts/sec
+    static constexpr uint32_t kTimingGroupPackets = 12;  // Saffire 48 kHz blocking DCL group
+    static constexpr uint32_t kNumPackets = 192;  // 16 timing groups, ~24ms @ 8000 pkts/sec
     static constexpr uint32_t kRingBlocks = kNumPackets * kBlocksPerPacket;
 
     static constexpr uint32_t kDescriptorStride = 16;
@@ -48,7 +49,7 @@ struct Layout final {
 
     // Audio injection window (latency control) — used by audio pipeline.
     static constexpr uint32_t kAudioWriteAhead = 16;
-    static constexpr uint32_t kMaxWriteAhead = kNumPackets - kGuardBandPackets;  // 196
+    static constexpr uint32_t kMaxWriteAhead = kNumPackets - kGuardBandPackets;  // 188
 
     // Static assertions
     static_assert(kDescriptorsPerPage >= kBlocksPerPacket, "Need at least one packet per page");
@@ -56,6 +57,7 @@ struct Layout final {
     static_assert((static_cast<size_t>(kDescriptorsPerPage) * kDescriptorStride) <= kUsablePerPage,
                   "Must fit in usable space");
     static_assert(kBlocksPerPacket == 3, "Z must be 3 for OMI(2)+OL(1)");
+    static_assert((kNumPackets % kTimingGroupPackets) == 0, "IT ring must preserve timing-group cadence");
     static_assert(sizeof(Async::HW::OHCIDescriptor) == 16, "OHCI descriptor must be 16 bytes");
     static_assert(kDescriptorStride == sizeof(Async::HW::OHCIDescriptor), "Stride must match descriptor size");
 };

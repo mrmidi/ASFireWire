@@ -151,6 +151,7 @@ struct ASFWAudioNub_IVars {
     ASFW::Audio::Runtime::AudioTransportControlBlock* directControl;
     uint32_t directSampleRateHz;
     IOUserAudioDevice* directAudioDevice;
+    bool directProviderBindingPublished;
     void* directBindingSource;
 
     IOBufferMemoryDescriptor* directOutputMemory;

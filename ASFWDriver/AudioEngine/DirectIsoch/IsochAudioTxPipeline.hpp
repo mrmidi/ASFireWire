@@ -8,6 +8,7 @@
 
 #include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 #include "../../AudioWire/AMDTP/SYTGenerator.hpp"
+#include "../Direct/AudioClockPublisher.hpp"
 #include "../Direct/Tx/DirectTxTypes.hpp"
 #include "../Direct/Tx/TxAudioPacketWriter.hpp"
 #include "../Direct/Tx/OutputCursorDiscipline.hpp"
@@ -15,7 +16,8 @@
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "../../Isoch/Core/ExternalSyncBridge.hpp"
-#include "../../Isoch/Core/ExternalSyncDiscipline48k.hpp"
+#include "../../Isoch/Core/IsochEventGroup.hpp"
+#include "../../Isoch/Core/SaffirePhaseLoop.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
 #include "../../Logging/Logging.hpp"
 
@@ -23,6 +25,8 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+
+class IOUserAudioDevice;
 
 namespace ASFW::Isoch {
 
@@ -57,6 +61,7 @@ public:
         uint32_t streamModeRaw{0};
         uint32_t outputChannels{0};
         uint32_t am824Slots{0};
+        IOUserAudioDevice* audioDevice{nullptr};
     };
 
     IsochAudioTxPipeline() noexcept = default;
@@ -75,6 +80,7 @@ public:
     void ResetForStart() noexcept;
     void SetCycleTrackingValid(bool v) noexcept { cycleTrackingValid_ = v; }
     [[nodiscard]] bool PrimeSyncFromExternalBridge() noexcept;
+    void OnIsochEventGroup(const Core::IsochEventGroup& group) noexcept;
 
     // Configure audio packetization.
     [[nodiscard]] kern_return_t Configure(uint8_t sid,
@@ -149,9 +155,6 @@ private:
 
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
-    [[nodiscard]] bool MaybeSeedFromExternalSync(const ExternalSyncState& state) noexcept;
-    [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt,
-                                                        const ExternalSyncState& state) noexcept;
     [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
     [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;
     [[nodiscard]] uint32_t PacketPayloadByteCount(uint32_t packetIndex,
@@ -182,8 +185,11 @@ private:
     DirectTxRuntimeBinding directTxBinding_{};
     ASFW::Audio::Runtime::AudioGraphBinding directOutputView_{};
     ASFW::AudioEngine::Direct::DirectOutputReader directOutputReader_{};
+    ASFW::AudioEngine::Direct::AudioClockPublisher txClockPublisher_{};
     uint64_t directOutputFrameCursor_{0};
     bool directCursorInitialized_{false};
+    uint64_t txCompletedSampleFrame_{0};
+    uint64_t txEventGroupCount_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};
     Encoding::StreamMode effectiveStreamMode_{Encoding::StreamMode::kNonBlocking};
@@ -192,9 +198,8 @@ private:
     Encoding::SYTGenerator sytGenerator_{};
     bool cycleTrackingValid_{false};
     Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
-    Core::ExternalSyncDiscipline48k externalSyncDiscipline_{};
-    bool externalSyncSeeded_{false};
-    uint32_t externalSyncSeedSeq_{0};
+    Core::SaffireTxPhaseLoop txPhaseLoop_{};
+    bool txPhaseReadIndexSeeded_{false};
 
     // Audio injection cursor (packet index)
     uint32_t audioWriteIndex_{0};

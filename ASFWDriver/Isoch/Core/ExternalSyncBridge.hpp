@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../../AudioWire/AMDTP/TimingUtils.hpp"
+
+#include <array>
 #include <atomic>
 #include <cstdint>
 
@@ -8,9 +11,20 @@ namespace ASFW::Isoch::Core {
 inline constexpr uint64_t kExternalSyncLiveStaleNanos = 100'000'000ULL;
 inline constexpr uint64_t kExternalSyncStartupSeedGraceNanos = 250'000'000ULL;
 
+struct RxCadenceSnapshot final {
+    bool established{false};
+    uint32_t writeIndex{0};
+    uint32_t warmupCount{0};
+    int64_t recoveredDeviceOffsetTicks{0};
+    uint32_t seq{0};
+};
+
 struct ExternalSyncBridge {
     static constexpr uint8_t kFdf48k = 0x02;
     static constexpr uint16_t kNoInfoSyt = 0xFFFF;
+    static constexpr uint32_t kCadenceRingSize = 512;
+    static constexpr uint32_t kCadenceRingMask = kCadenceRingSize - 1;
+    static constexpr uint32_t kCadenceEstablishedUpdates = kCadenceRingSize;
 
     struct TransportTimingSnapshot {
         bool valid{false};
@@ -32,6 +46,12 @@ struct ExternalSyncBridge {
     std::atomic<uint64_t> transportAnchorSampleFrame{0};
     std::atomic<uint64_t> transportAnchorHostTicks{0};
     std::atomic<uint32_t> transportHostNanosPerSampleQ8{0};
+    std::array<std::atomic<uint16_t>, kCadenceRingSize> cadenceRing{};
+    std::atomic<uint32_t> cadenceWriteIndex{0};
+    std::atomic<uint32_t> cadenceWarmupCount{0};
+    std::atomic<bool> cadenceEstablished{false};
+    std::atomic<int64_t> recoveredDeviceOffsetTicks{0};
+    std::atomic<uint32_t> recoveredDeviceSeq{0};
 
     static constexpr uint32_t PackRxSample(uint16_t syt, uint8_t fdf, uint8_t dbs) noexcept {
         return (static_cast<uint32_t>(syt) << 16) |
@@ -84,6 +104,32 @@ struct ExternalSyncBridge {
         }
     }
 
+    void PublishCadenceDelta(uint16_t deltaTicks, int64_t recoveredOffsetTicks) noexcept {
+        const uint32_t writeIndex = cadenceWriteIndex.load(std::memory_order_relaxed) & kCadenceRingMask;
+        cadenceRing[writeIndex].store(deltaTicks, std::memory_order_release);
+        cadenceWriteIndex.store((writeIndex + 1) & kCadenceRingMask, std::memory_order_release);
+
+        uint32_t warmup = cadenceWarmupCount.load(std::memory_order_relaxed);
+        if (warmup < kCadenceRingSize) {
+            warmup += 1;
+            cadenceWarmupCount.store(warmup, std::memory_order_release);
+        }
+        if (warmup >= kCadenceEstablishedUpdates) {
+            cadenceEstablished.store(true, std::memory_order_release);
+        }
+
+        recoveredDeviceOffsetTicks.store(ASFW::Timing::normalizeOffsetDomain(recoveredOffsetTicks),
+                                         std::memory_order_release);
+        recoveredDeviceSeq.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    [[nodiscard]] uint16_t ReadCadenceDelta(uint32_t index) const noexcept {
+        const uint16_t delta = cadenceRing[index & kCadenceRingMask].load(std::memory_order_acquire);
+        return delta == 0 ? static_cast<uint16_t>(ASFW::Timing::kSytPacketStepTicks48k) : delta;
+    }
+
+    [[nodiscard]] RxCadenceSnapshot ReadCadenceSnapshot() const noexcept;
+
     void Reset() noexcept {
         active.store(false, std::memory_order_release);
         clockEstablished.store(false, std::memory_order_release);
@@ -96,8 +142,26 @@ struct ExternalSyncBridge {
         transportAnchorSampleFrame.store(0, std::memory_order_release);
         transportAnchorHostTicks.store(0, std::memory_order_release);
         transportHostNanosPerSampleQ8.store(0, std::memory_order_release);
+        for (auto& entry : cadenceRing) {
+            entry.store(0, std::memory_order_release);
+        }
+        cadenceWriteIndex.store(0, std::memory_order_release);
+        cadenceWarmupCount.store(0, std::memory_order_release);
+        cadenceEstablished.store(false, std::memory_order_release);
+        recoveredDeviceOffsetTicks.store(0, std::memory_order_release);
+        recoveredDeviceSeq.store(0, std::memory_order_release);
     }
 };
+
+inline RxCadenceSnapshot ExternalSyncBridge::ReadCadenceSnapshot() const noexcept {
+    return RxCadenceSnapshot{
+        .established = cadenceEstablished.load(std::memory_order_acquire),
+        .writeIndex = cadenceWriteIndex.load(std::memory_order_acquire),
+        .warmupCount = cadenceWarmupCount.load(std::memory_order_acquire),
+        .recoveredDeviceOffsetTicks = recoveredDeviceOffsetTicks.load(std::memory_order_acquire),
+        .seq = recoveredDeviceSeq.load(std::memory_order_acquire),
+    };
+}
 
 class ExternalSyncClockState {
 public:
@@ -116,6 +180,8 @@ public:
                        uint32_t* outSeq = nullptr) noexcept {
         if (fdf != ExternalSyncBridge::kFdf48k) {
             consecutiveValid_ = 0;
+            previousSyt_ = ExternalSyncBridge::kNoInfoSyt;
+            previousSytValid_ = false;
             if (outSeq) *outSeq = 0;
             return false;
         }
@@ -129,6 +195,24 @@ public:
                                   std::memory_order_release);
         bridge.lastUpdateHostTicks.store(nowHostTicks, std::memory_order_release);
         const uint32_t seq = bridge.updateSeq.fetch_add(1, std::memory_order_acq_rel) + 1;
+
+        if (!previousSytValid_) {
+            previousSyt_ = syt;
+            previousSytValid_ = true;
+            recoveredDeviceOffsetTicks_ = ASFW::Timing::sytToFieldTicks(syt);
+            bridge.recoveredDeviceOffsetTicks.store(recoveredDeviceOffsetTicks_,
+                                                    std::memory_order_release);
+            bridge.recoveredDeviceSeq.fetch_add(1, std::memory_order_acq_rel);
+        } else {
+            const int64_t diff = ASFW::Timing::SYTDiffInOffsets(syt, previousSyt_);
+            if (diff > 0 && diff <= 0xFFFF) {
+                recoveredDeviceOffsetTicks_ =
+                    ASFW::Timing::normalizeOffsetDomain(recoveredDeviceOffsetTicks_ + diff);
+                bridge.PublishCadenceDelta(static_cast<uint16_t>(diff),
+                                           recoveredDeviceOffsetTicks_);
+            }
+            previousSyt_ = syt;
+        }
 
         if (outSeq) {
             *outSeq = seq;
@@ -171,6 +255,9 @@ public:
 
     void Reset() noexcept {
         consecutiveValid_ = 0;
+        previousSyt_ = ExternalSyncBridge::kNoInfoSyt;
+        previousSytValid_ = false;
+        recoveredDeviceOffsetTicks_ = 0;
     }
 
     uint32_t ConsecutiveValid() const noexcept {
@@ -179,6 +266,9 @@ public:
 
 private:
     uint32_t consecutiveValid_{0};
+    uint16_t previousSyt_{ExternalSyncBridge::kNoInfoSyt};
+    bool previousSytValid_{false};
+    int64_t recoveredDeviceOffsetTicks_{0};
 };
 
 } // namespace ASFW::Isoch::Core

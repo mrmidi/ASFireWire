@@ -1524,6 +1524,25 @@ target_include_directories(ExternalSyncBridgeTests PRIVATE ${ASFW_COMMON_INCLUDE
 
 gtest_discover_tests(ExternalSyncBridgeTests)
 
+# Saffire-first timing phase loop and isoch event grouping
+add_executable(SaffirePhaseLoopTests
+    "${ASFW_TESTS_DIR}/SaffirePhaseLoopTests.cpp"
+)
+
+target_link_libraries(SaffirePhaseLoopTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(SaffirePhaseLoopTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(SaffirePhaseLoopTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(SaffirePhaseLoopTests)
+
 
 # External sync discipline (48k) tests
 add_executable(ExternalSyncDiscipline48kTests

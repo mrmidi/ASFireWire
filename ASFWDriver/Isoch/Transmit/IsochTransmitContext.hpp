@@ -122,7 +122,7 @@ public:
 
 private:
     void WakeHardware() noexcept;
-    void DoRefillOnce() noexcept;
+    void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
 
     // ==========================================================================
     // Member variables

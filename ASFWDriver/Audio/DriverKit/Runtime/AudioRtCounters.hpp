@@ -22,7 +22,6 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> ztsPublished{0};
     std::atomic<uint64_t> ztsRxPublished{0};
     std::atomic<uint64_t> ztsRxAdkPublished{0};
-    std::atomic<uint64_t> ztsTimerPublished{0};
 
     void Reset() noexcept {
         ioBeginReadCount.store(0, std::memory_order_relaxed);
@@ -41,7 +40,6 @@ struct AudioRtCounters final {
         ztsPublished.store(0, std::memory_order_relaxed);
         ztsRxPublished.store(0, std::memory_order_relaxed);
         ztsRxAdkPublished.store(0, std::memory_order_relaxed);
-        ztsTimerPublished.store(0, std::memory_order_relaxed);
     }
 
     void CountBeginRead() noexcept {
@@ -63,11 +61,6 @@ struct AudioRtCounters final {
 
     void CountRxAdkZtsPublished() noexcept {
         ztsRxAdkPublished.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    void CountTimerZtsPublished() noexcept {
-        ztsPublished.fetch_add(1, std::memory_order_relaxed);
-        ztsTimerPublished.fetch_add(1, std::memory_order_relaxed);
     }
 };
 
