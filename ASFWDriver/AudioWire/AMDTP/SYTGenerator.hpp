@@ -3,8 +3,8 @@
 // ASFWDriver
 //
 // 48 kHz TX SYT generation for blocking-mode playback.
-// Seeds from established RX SYT phase, then advances by a fixed per-DATA-packet
-// step to match the sample-domain behavior seen in Saffire.kext captures.
+// Anchors presentation phase to the actual transmit cycle, then advances by the
+// fixed 8-sample DATA-packet step seen in Saffire.kext captures.
 //
 
 #pragma once
@@ -13,12 +13,10 @@
 
 namespace ASFW::Encoding {
 
-/// Generates 48 kHz blocking-mode SYT timestamps from an RX-seeded sample timeline.
+/// Generates 48 kHz blocking-mode SYT timestamps from a transmit-cycle anchor.
 ///
-/// The current milestone intentionally keeps hardware transmit-cycle tracking out of
-/// the emitted SYT values. Local OHCI time is still used by the DMA ring for packet
-/// scheduling, but playback SYT itself is seeded from the last established RX SYT
-/// and then advanced by a fixed 4096-tick step per DATA packet.
+/// The first DATA packet after arming derives presentation phase from the OHCI
+/// transmit cycle. Later DATA packets advance in the sample domain by 4096 ticks.
 class SYTGenerator {
 public:
     explicit SYTGenerator() noexcept = default;
@@ -32,6 +30,9 @@ public:
 
     /// Seed the 48 kHz packet-step timeline from the last established RX SYT.
     void seedFromRxSyt(uint16_t rxSyt) noexcept;
+
+    /// Arm transmit-cycle anchoring for the next DATA packet.
+    void armTransmitCycleAnchor() noexcept;
 
     /// Compute SYT for a DATA packet at the given OHCI transmit cycle
     /// @param transmitCycle 13-bit OHCI cycle count (0-7999)
@@ -79,6 +80,9 @@ private:
     /// Wrap point for the 16-cycle SYT domain.
     uint32_t sytTickWrap_{16 * kTicksPerCycle};  // 49152
 
+    /// Initial forward presentation delay derived from FireBug cycle 978 -> SYT 0x79FE.
+    static constexpr uint32_t kPresentationDelayTicks = 17918;
+
     // =========================================================================
     // Running state
     // =========================================================================
@@ -86,8 +90,14 @@ private:
     /// Current SYT tick index in the 16-cycle domain [0..49151].
     uint32_t currentSytTickIndex_{0};
 
-    /// Whether the generator has been seeded from an RX SYT.
+    /// Current presentation phase in the 8-second 24.576 MHz offset domain.
+    int64_t currentSytOffsetTicks_{0};
+
+    /// Whether the generator has a valid phase source (RX SYT or transmit-cycle anchor).
     bool seeded_{false};
+
+    /// Whether the next DATA packet should derive phase from its transmit cycle.
+    bool needsAnchor_{false};
 
     /// Diagnostic counter
     uint64_t dataPacketCount_{0};

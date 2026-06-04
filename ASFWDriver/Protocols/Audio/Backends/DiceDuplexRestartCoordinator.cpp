@@ -1387,6 +1387,20 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
     }
     const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
+    const Encoding::AudioWireFormat wireFormat =
+        ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
+
+    ASFW_LOG(Audio,
+             "DICE DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u mode=blocking rxFmt=%u txFmt=%u",
+             guid,
+             channels.deviceToHostIsoChannel,
+             channels.hostToDeviceIsoChannel,
+             session.runtimeCaps.hostInputPcmChannels,
+             session.runtimeCaps.hostOutputPcmChannels,
+             session.runtimeCaps.deviceToHostAm824Slots,
+             session.runtimeCaps.hostToDeviceAm824Slots,
+             static_cast<uint32_t>(rxWireFormat),
+             static_cast<uint32_t>(wireFormat));
 
     const kern_return_t startReceiveStatus = hostTransport_.StartReceive(
         channels.deviceToHostIsoChannel,
@@ -1408,8 +1422,6 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     session.hostReceiveStarted = true;
     StoreSession(session);
 
-    const Encoding::AudioWireFormat wireFormat =
-        ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
     const kern_return_t startTransmitStatus = hostTransport_.StartTransmit(
         channels.hostToDeviceIsoChannel,
         hardware_,

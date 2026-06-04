@@ -16,6 +16,8 @@
 
 #include <DriverKit/IOService.iig>
 #include <DriverKit/IOBufferMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryMap.iig>
 #include <DriverKit/OSString.iig>
 #include <DriverKit/OSArray.iig>
 #include <atomic>
@@ -44,6 +46,15 @@ public:
     // RPC method: AudioDriver calls this to start/stop audio streaming for this GUID.
     virtual kern_return_t StartAudioStreaming();
     virtual kern_return_t StopAudioStreaming();
+    virtual kern_return_t CopyDirectAudioMemory(IOMemoryDescriptor** outOutputMemory,
+                                                IOMemoryDescriptor** outInputMemory,
+                                                IOMemoryDescriptor** outControlMemory,
+                                                uint32_t* outOutputFrames,
+                                                uint32_t* outOutputChannels,
+                                                uint32_t* outInputFrames,
+                                                uint32_t* outInputChannels,
+                                                uint32_t* outSampleRateHz,
+                                                uint64_t* outGeneration);
 
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
@@ -123,6 +134,7 @@ struct ASFWAudioNub_IVars {
     uint32_t channelCount{2};
     uint32_t inputChannelCount{2};       // Host capture channels (device->host PCM)
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
+    uint32_t currentSampleRateHz{48000};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
 
     // Thread-safe duplex binding state
@@ -140,6 +152,15 @@ struct ASFWAudioNub_IVars {
     uint32_t directSampleRateHz;
     IOUserAudioDevice* directAudioDevice;
     void* directBindingSource;
+
+    IOBufferMemoryDescriptor* directOutputMemory;
+    IOBufferMemoryDescriptor* directInputMemory;
+    IOBufferMemoryDescriptor* directControlMemory;
+    IOMemoryMap* directOutputMap;
+    IOMemoryMap* directInputMap;
+    IOMemoryMap* directControlMap;
+    uint32_t directOutputCapacityFrames;
+    uint32_t directInputCapacityFrames;
 };
 
 #endif /* ASFWAudioNub_h */

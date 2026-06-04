@@ -1467,6 +1467,25 @@ target_include_directories(SYTGeneratorTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(SYTGeneratorTests)
 
+# AMDTP timing helper tests
+add_executable(TimingUtilsTests
+    "${ASFW_TESTS_DIR}/TimingUtilsTests.cpp"
+)
+
+target_link_libraries(TimingUtilsTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(TimingUtilsTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(TimingUtilsTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(TimingUtilsTests)
+
 # External sync bridge state machine tests
 add_executable(ExternalSyncBridgeTests
     "${ASFW_TESTS_DIR}/ExternalSyncBridgeTests.cpp"
