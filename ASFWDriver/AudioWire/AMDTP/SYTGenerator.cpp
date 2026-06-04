@@ -6,6 +6,7 @@
 //
 
 #include "SYTGenerator.hpp"
+#include "TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
 namespace ASFW::Encoding {
@@ -27,6 +28,14 @@ constexpr uint32_t kGeneratorTicksPerCycle = 3072;
     const uint32_t ticks12 = ticks12_raw % kGeneratorTicksPerCycle;
     const uint32_t finalCycle4 = (cycle4 + extraCycles) & 0x0F;
     return (finalCycle4 * kGeneratorTicksPerCycle) + ticks12;
+}
+
+[[nodiscard]] int64_t NormalizeEightSecondOffset(int64_t tickOffset) noexcept {
+    tickOffset %= ASFW::Timing::kEightSecondTicks;
+    if (tickOffset < 0) {
+        tickOffset += ASFW::Timing::kEightSecondTicks;
+    }
+    return tickOffset;
 }
 
 } // namespace
@@ -53,9 +62,11 @@ void SYTGenerator::initialize(double sampleRate) noexcept {
 
 void SYTGenerator::reset() noexcept {
     currentSytTickIndex_ = 0;
+    currentSytOffsetTicks_ = 0;
     seeded_ = false;
+    needsAnchor_ = false;
     dataPacketCount_ = 0;
-    ASFW_LOG(Isoch, "SYTGenerator: Reset (RX-seeded timeline)");
+    ASFW_LOG(Isoch, "SYTGenerator: Reset");
 }
 
 void SYTGenerator::seedFromRxSyt(uint16_t rxSyt) noexcept {
@@ -64,10 +75,24 @@ void SYTGenerator::seedFromRxSyt(uint16_t rxSyt) noexcept {
     }
 
     currentSytTickIndex_ = DecodeSytToTickIndex(rxSyt);
+    currentSytOffsetTicks_ = currentSytTickIndex_;
     seeded_ = true;
+    needsAnchor_ = false;
     dataPacketCount_ = 0;
     ASFW_LOG(Isoch, "SYTGenerator: Seeded from RX SYT 0x%04x -> tick=%u",
              rxSyt, currentSytTickIndex_);
+}
+
+void SYTGenerator::armTransmitCycleAnchor() noexcept {
+    if (!initialized_) {
+        return;
+    }
+
+    seeded_ = true;
+    needsAnchor_ = true;
+    dataPacketCount_ = 0;
+    ASFW_LOG(Isoch, "SYTGenerator: Armed transmit-cycle anchor (delay=%u ticks)",
+             kPresentationDelayTicks);
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -75,36 +100,25 @@ uint16_t SYTGenerator::computeDataSYT(uint32_t transmitCycle, uint32_t samplesIn
     if (!initialized_) return kNoInfo;
     if (!seeded_ || samplesInPacket == 0 || packetStepTicks_ == 0) return kNoInfo;
 
-    const uint32_t txCycle4 = transmitCycle & 0x0F;
-    const uint32_t txTicks = txCycle4 * kGeneratorTicksPerCycle;
-
-    int32_t diffTicks = static_cast<int32_t>(currentSytTickIndex_) - static_cast<int32_t>(txTicks);
-    // Wrap to signed range [-24576, 24575] representing the 16-cycle domain
-    constexpr int32_t kHalfDomain = 24576;
-    constexpr int32_t kDomain = 49152;
-    if (diffTicks >= kHalfDomain) {
-        diffTicks -= kDomain;
-    } else if (diffTicks < -kHalfDomain) {
-        diffTicks += kDomain;
+    if (needsAnchor_) {
+        const uint32_t cycle = transmitCycle % ASFW::Timing::kCyclesPerSecond;
+        const int64_t txOffset = ASFW::Timing::tstampToOffsets(0, cycle, 0);
+        currentSytOffsetTicks_ =
+            NormalizeEightSecondOffset(txOffset + int64_t(kPresentationDelayTicks));
+        currentSytTickIndex_ =
+            static_cast<uint32_t>(currentSytOffsetTicks_ % int64_t(sytTickWrap_));
+        needsAnchor_ = false;
     }
 
-    int32_t delayCycles = diffTicks / static_cast<int32_t>(kGeneratorTicksPerCycle);
-    int32_t ticks12 = diffTicks % static_cast<int32_t>(kGeneratorTicksPerCycle);
-    if (ticks12 < 0) {
-        ticks12 += kGeneratorTicksPerCycle;
-        delayCycles -= 1;
-    }
+    const uint16_t syt = EncodeTickIndexToSyt(currentSytTickIndex_);
 
-    const uint32_t cycle4 = (txCycle4 + static_cast<uint32_t>(delayCycles)) & 0x0F;
-    const uint16_t syt = static_cast<uint16_t>((cycle4 << 12) | static_cast<uint32_t>(ticks12));
-
-    // The 48 kHz blocking milestone advances SYT strictly in the sample domain,
+    // Blocking-mode SYT advances in the sample domain (8 samples * 512 ticks),
     // independent of the number of OHCI bus cycles elapsed between DATA packets.
     (void)samplesInPacket;
-    currentSytTickIndex_ += packetStepTicks_;
-    if (currentSytTickIndex_ >= sytTickWrap_) {
-        currentSytTickIndex_ -= sytTickWrap_;
-    }
+    currentSytOffsetTicks_ =
+        NormalizeEightSecondOffset(currentSytOffsetTicks_ + int64_t(packetStepTicks_));
+    currentSytTickIndex_ =
+        static_cast<uint32_t>(currentSytOffsetTicks_ % int64_t(sytTickWrap_));
 
     dataPacketCount_++;
     return syt;
@@ -115,14 +129,10 @@ void SYTGenerator::nudgeOffsetTicks(int32_t deltaTicks) noexcept {
         return;
     }
 
-    int64_t adjusted = static_cast<int64_t>(currentSytTickIndex_) + static_cast<int64_t>(deltaTicks);
-    const int64_t wrap = static_cast<int64_t>(sytTickWrap_);
-    adjusted %= wrap;
-    if (adjusted < 0) {
-        adjusted += wrap;
-    }
-
-    currentSytTickIndex_ = static_cast<uint32_t>(adjusted);
+    currentSytOffsetTicks_ =
+        NormalizeEightSecondOffset(currentSytOffsetTicks_ + static_cast<int64_t>(deltaTicks));
+    currentSytTickIndex_ =
+        static_cast<uint32_t>(currentSytOffsetTicks_ % int64_t(sytTickWrap_));
 }
 
 } // namespace ASFW::Encoding

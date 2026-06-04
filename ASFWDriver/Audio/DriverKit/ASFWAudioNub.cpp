@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <new>
 
 // TX queue capacity: Config::kTxQueueCapacityFrames frames = ~85ms @ 48kHz.
 // ZERO-COPY: Output audio buffer size matches Config::kAudioIoPeriodFrames.
@@ -100,6 +101,7 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     uint32_t aggregate = iv->channelCount;
     uint32_t input = iv->inputChannelCount;
     uint32_t output = iv->outputChannelCount;
+    uint32_t sampleRate = iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000;
 
     if (auto* count = OSDynamicCast(OSNumber, props->getObject("ASFWChannelCount"))) {
         aggregate = ClampAudioChannels(count->unsigned32BitValue());
@@ -109,6 +111,9 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
     }
     if (auto* outputCount = OSDynamicCast(OSNumber, props->getObject("ASFWOutputChannelCount"))) {
         output = ClampAudioChannels(outputCount->unsigned32BitValue());
+    }
+    if (auto* currentRate = OSDynamicCast(OSNumber, props->getObject("ASFWCurrentSampleRate"))) {
+        sampleRate = currentRate->unsigned32BitValue();
     }
 
     if (input == 0) {
@@ -127,15 +132,245 @@ static void RefreshChannelCountsFromProperties(ASFWAudioNub* self, ASFWAudioNub_
         iv->inputChannelCount != input ||
         iv->outputChannelCount != output) {
         ASFW_LOG(Audio,
-                 "ASFWAudioNub: Refreshed channel counts from properties agg=%u in=%u out=%u",
+                 "ASFWAudioNub: Refreshed channel counts from properties agg=%u in=%u out=%u rate=%u",
                  aggregate,
                  input,
-                 output);
+                 output,
+                 sampleRate);
     }
 
     iv->channelCount = aggregate;
     iv->inputChannelCount = input;
     iv->outputChannelCount = output;
+    iv->currentSampleRateHz = sampleRate ? sampleRate : 48000;
+}
+
+static void ReleaseDirectAudioMemory(ASFWAudioNub_IVars* iv) noexcept {
+    if (!iv) {
+        return;
+    }
+    if (iv->bindingLock) {
+        IOLockLock(iv->bindingLock);
+        iv->directOutputBase = nullptr;
+        iv->directOutputBytes = 0;
+        iv->directOutputFrames = 0;
+        iv->directOutputChannels = 0;
+        iv->directInputBase = nullptr;
+        iv->directInputBytes = 0;
+        iv->directInputFrames = 0;
+        iv->directInputChannels = 0;
+        iv->directControl = nullptr;
+        iv->directSampleRateHz = 0;
+        iv->directAudioDevice = nullptr;
+        iv->directGeneration++;
+        const auto generation = iv->directGeneration;
+        IOLockUnlock(iv->bindingLock);
+        ASFW_LOG(DirectAudio, "ADK DBG MEM release clear_binding gen=%llu", generation);
+    }
+    if (iv->directOutputMap) {
+        iv->directOutputMap->release();
+        iv->directOutputMap = nullptr;
+    }
+    if (iv->directInputMap) {
+        iv->directInputMap->release();
+        iv->directInputMap = nullptr;
+    }
+    if (iv->directControlMap) {
+        iv->directControlMap->release();
+        iv->directControlMap = nullptr;
+    }
+    if (iv->directOutputMemory) {
+        iv->directOutputMemory->release();
+        iv->directOutputMemory = nullptr;
+    }
+    if (iv->directInputMemory) {
+        iv->directInputMemory->release();
+        iv->directInputMemory = nullptr;
+    }
+    if (iv->directControlMemory) {
+        iv->directControlMemory->release();
+        iv->directControlMemory = nullptr;
+    }
+    iv->directOutputCapacityFrames = 0;
+    iv->directInputCapacityFrames = 0;
+}
+
+static kern_return_t CreateMappedDirectBuffer(uint64_t bytes,
+                                              uint64_t alignment,
+                                              IOBufferMemoryDescriptor** outMemory,
+                                              IOMemoryMap** outMap) noexcept {
+    if (!outMemory || !outMap || bytes == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    *outMemory = nullptr;
+    *outMap = nullptr;
+
+    IOBufferMemoryDescriptor* memory = nullptr;
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut,
+                                                        bytes,
+                                                        alignment,
+                                                        &memory);
+    if (kr != kIOReturnSuccess || !memory) {
+        return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
+    }
+
+    IOMemoryMap* map = nullptr;
+    kr = memory->CreateMapping(0, 0, 0, 0, 0, &map);
+    if (kr != kIOReturnSuccess || !map) {
+        if (map) {
+            map->release();
+        }
+        memory->release();
+        return (kr == kIOReturnSuccess) ? kIOReturnNoMemory : kr;
+    }
+
+    *outMemory = memory;
+    *outMap = map;
+    return kIOReturnSuccess;
+}
+
+static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub_IVars* iv) noexcept {
+    if (!iv || !iv->bindingLock || !iv->directOutputMap || !iv->directInputMap ||
+        !iv->directControlMap) {
+        return;
+    }
+
+    const auto* outputBase = reinterpret_cast<const int32_t*>(
+        static_cast<uintptr_t>(iv->directOutputMap->GetAddress()));
+    auto* inputBase = reinterpret_cast<int32_t*>(
+        static_cast<uintptr_t>(iv->directInputMap->GetAddress()));
+    auto* control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(
+        static_cast<uintptr_t>(iv->directControlMap->GetAddress()));
+
+    const uint64_t outputBytes = iv->directOutputMap->GetLength();
+    const uint64_t inputBytes = iv->directInputMap->GetLength();
+
+    IOLockLock(iv->bindingLock);
+    iv->directOutputBase = outputBase;
+    iv->directOutputBytes = outputBytes;
+    iv->directOutputFrames = iv->directOutputCapacityFrames;
+    iv->directOutputChannels = iv->outputChannelCount;
+    iv->directInputBase = inputBase;
+    iv->directInputBytes = inputBytes;
+    iv->directInputFrames = iv->directInputCapacityFrames;
+    iv->directInputChannels = iv->inputChannelCount;
+    iv->directControl = control;
+    iv->directSampleRateHz = iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000;
+    iv->directAudioDevice = nullptr;
+    iv->directGeneration++;
+    const auto generation = iv->directGeneration;
+    IOLockUnlock(iv->bindingLock);
+
+    ASFW_LOG(DirectAudio,
+             "ADK DBG BIND local_publish gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
+             generation,
+             static_cast<const void*>(outputBase),
+             outputBytes,
+             iv->directOutputCapacityFrames,
+             iv->outputChannelCount,
+             static_cast<void*>(inputBase),
+             inputBytes,
+             iv->directInputCapacityFrames,
+             iv->inputChannelCount,
+             static_cast<void*>(control),
+             iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000);
+}
+
+static kern_return_t EnsureDirectAudioMemory(ASFWAudioNub* self, ASFWAudioNub_IVars* iv) noexcept {
+    if (!self || !iv || !iv->bindingLock) {
+        return kIOReturnNotReady;
+    }
+
+    RefreshChannelCountsFromProperties(self, iv);
+
+    const uint32_t outputChannels = iv->outputChannelCount ? iv->outputChannelCount : iv->channelCount;
+    const uint32_t inputChannels = iv->inputChannelCount ? iv->inputChannelCount : iv->channelCount;
+    const uint32_t outputFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+    const uint32_t inputFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+
+    if (outputChannels == 0 || inputChannels == 0) {
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG MEM ensure failed bad_channels agg=%u in=%u out=%u",
+                 iv->channelCount,
+                 inputChannels,
+                 outputChannels);
+        return kIOReturnBadArgument;
+    }
+
+    if (iv->directOutputMemory && iv->directInputMemory && iv->directControlMemory &&
+        iv->directOutputMap && iv->directInputMap && iv->directControlMap &&
+        iv->directOutputCapacityFrames == outputFrames &&
+        iv->directInputCapacityFrames == inputFrames &&
+        iv->directOutputChannels == outputChannels &&
+        iv->directInputChannels == inputChannels &&
+        iv->directSampleRateHz == (iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000)) {
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG MEM ensure reuse gen=%llu outFrames=%u outCh=%u inFrames=%u inCh=%u rate=%u",
+                 iv->directGeneration,
+                 outputFrames,
+                 outputChannels,
+                 inputFrames,
+                 inputChannels,
+                 iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000);
+        return kIOReturnSuccess;
+    }
+
+    ReleaseDirectAudioMemory(iv);
+
+    const uint64_t outputBytes = static_cast<uint64_t>(outputFrames) * outputChannels * sizeof(int32_t);
+    const uint64_t inputBytes = static_cast<uint64_t>(inputFrames) * inputChannels * sizeof(int32_t);
+    const uint64_t controlBytes = sizeof(ASFW::Audio::Runtime::AudioTransportControlBlock);
+
+    ASFW_LOG(DirectAudio,
+             "ADK DBG MEM allocate outBytes=%llu outFrames=%u outCh=%u inBytes=%llu inFrames=%u inCh=%u controlBytes=%llu rate=%u",
+             outputBytes,
+             outputFrames,
+             outputChannels,
+             inputBytes,
+             inputFrames,
+             inputChannels,
+             controlBytes,
+             iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000);
+
+    kern_return_t kr = CreateMappedDirectBuffer(outputBytes, 64, &iv->directOutputMemory, &iv->directOutputMap);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM allocate output failed kr=0x%x", kr);
+        ReleaseDirectAudioMemory(iv);
+        return kr;
+    }
+    kr = CreateMappedDirectBuffer(inputBytes, 64, &iv->directInputMemory, &iv->directInputMap);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM allocate input failed kr=0x%x", kr);
+        ReleaseDirectAudioMemory(iv);
+        return kr;
+    }
+    kr = CreateMappedDirectBuffer(controlBytes,
+                                  alignof(ASFW::Audio::Runtime::AudioTransportControlBlock),
+                                  &iv->directControlMemory,
+                                  &iv->directControlMap);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM allocate control failed kr=0x%x", kr);
+        ReleaseDirectAudioMemory(iv);
+        return kr;
+    }
+
+    iv->directOutputCapacityFrames = outputFrames;
+    iv->directInputCapacityFrames = inputFrames;
+
+    std::memset(reinterpret_cast<void*>(static_cast<uintptr_t>(iv->directOutputMap->GetAddress())),
+                0,
+                static_cast<size_t>(iv->directOutputMap->GetLength()));
+    std::memset(reinterpret_cast<void*>(static_cast<uintptr_t>(iv->directInputMap->GetAddress())),
+                0,
+                static_cast<size_t>(iv->directInputMap->GetLength()));
+    auto* control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(
+        static_cast<uintptr_t>(iv->directControlMap->GetAddress()));
+    new (control) ASFW::Audio::Runtime::AudioTransportControlBlock();
+    control->ResetForStart();
+
+    PublishDirectAudioBindingFromMappedMemory(iv);
+    return kIOReturnSuccess;
 }
 
 
@@ -230,12 +465,21 @@ bool ASFWAudioNub::init()
     ivars->directControl = nullptr;
     ivars->directSampleRateHz = 0;
     ivars->directBindingSource = nullptr;
+    ivars->directOutputMemory = nullptr;
+    ivars->directInputMemory = nullptr;
+    ivars->directControlMemory = nullptr;
+    ivars->directOutputMap = nullptr;
+    ivars->directInputMap = nullptr;
+    ivars->directControlMap = nullptr;
+    ivars->directOutputCapacityFrames = 0;
+    ivars->directInputCapacityFrames = 0;
 
     ivars->parentDriver = nullptr;
     ivars->guid = 0;
     ivars->channelCount = 2;
     ivars->inputChannelCount = 2;
     ivars->outputChannelCount = 2;
+    ivars->currentSampleRateHz = 48000;
     ivars->streamModeRaw = 0;
 
     ASFW_LOG(Audio, "ASFWAudioNub: init() succeeded");
@@ -246,6 +490,8 @@ void ASFWAudioNub::free()
 {
     ASFW_LOG(Audio, "ASFWAudioNub: free()");
     if (ivars) {
+        ReleaseDirectAudioMemory(ivars);
+
         if (ivars->bindingLock) {
             IOLockFree(ivars->bindingLock);
             ivars->bindingLock = nullptr;
@@ -373,6 +619,60 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
     return kr;
 }
 
+kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
+{
+    if (!ivars || !outOutputMemory || !outInputMemory || !outControlMemory ||
+        !outOutputFrames || !outOutputChannels || !outInputFrames || !outInputChannels ||
+        !outSampleRateHz || !outGeneration) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM copy failed bad_args");
+        return kIOReturnBadArgument;
+    }
+
+    *outOutputMemory = nullptr;
+    *outInputMemory = nullptr;
+    *outControlMemory = nullptr;
+    *outOutputFrames = 0;
+    *outOutputChannels = 0;
+    *outInputFrames = 0;
+    *outInputChannels = 0;
+    *outSampleRateHz = 0;
+    *outGeneration = 0;
+
+    const kern_return_t kr = EnsureDirectAudioMemory(this, ivars);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM copy ensure_failed kr=0x%x", kr);
+        return kr;
+    }
+
+    ivars->directOutputMemory->retain();
+    ivars->directInputMemory->retain();
+    ivars->directControlMemory->retain();
+
+    *outOutputMemory = ivars->directOutputMemory;
+    *outInputMemory = ivars->directInputMemory;
+    *outControlMemory = ivars->directControlMemory;
+    *outOutputFrames = ivars->directOutputCapacityFrames;
+    *outOutputChannels = ivars->outputChannelCount;
+    *outInputFrames = ivars->directInputCapacityFrames;
+    *outInputChannels = ivars->inputChannelCount;
+    *outSampleRateHz = ivars->directSampleRateHz;
+    *outGeneration = ivars->directGeneration;
+
+    ASFW_LOG(DirectAudio,
+             "ADK DBG MEM copy ok gen=%llu outMem=%p outFrames=%u outCh=%u inMem=%p inFrames=%u inCh=%u controlMem=%p rate=%u",
+             *outGeneration,
+             static_cast<void*>(*outOutputMemory),
+             *outOutputFrames,
+             *outOutputChannels,
+             static_cast<void*>(*outInputMemory),
+             *outInputFrames,
+             *outInputChannels,
+             static_cast<void*>(*outControlMemory),
+             *outSampleRateHz);
+
+    return kIOReturnSuccess;
+}
+
 // LOCALONLY: Get local mapping for IT DMA access (ZERO-COPY read)
 
 
@@ -418,6 +718,20 @@ void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
              static_cast<const void*>(outputBase), outputFrames, outputChannels,
              static_cast<void*>(inputBase), inputFrames, inputChannels,
              static_cast<const void*>(control), sampleRateHz, static_cast<void*>(audioDevice), ivars->directGeneration);
+    ASFW_LOG(DirectAudio,
+             "ADK DBG BIND set outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u dev=%p gen=%llu",
+             static_cast<const void*>(outputBase),
+             outputBytes,
+             outputFrames,
+             outputChannels,
+             static_cast<void*>(inputBase),
+             inputBytes,
+             inputFrames,
+             inputChannels,
+             static_cast<void*>(control),
+             sampleRateHz,
+             static_cast<void*>(audioDevice),
+             ivars->directGeneration);
 }
 
 // LOCALONLY: Clear the direct duplex audio binding (called from ASFWAudioDriver::Stop).
@@ -442,6 +756,7 @@ void ASFWAudioNub::ClearDirectAudioBinding()
     IOLockUnlock(ivars->bindingLock);
 
     ASFW_LOG(Audio, "ASFWAudioNub: ClearDirectAudioBinding gen=%llu", ivars->directGeneration);
+    ASFW_LOG(DirectAudio, "ADK DBG BIND clear gen=%llu", ivars->directGeneration);
 }
 
 // LOCALONLY: Fetch the direct duplex audio binding. Returns false if no valid control block is registered.
@@ -459,11 +774,27 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
                                          uint64_t* outGeneration) const
 {
     if (!ivars || !ivars->bindingLock) {
+        ASFW_LOG_RL(DirectAudio, "adk_bind/no_ivars", 1000, OS_LOG_TYPE_DEFAULT,
+                    "ADK DBG BIND get failed no_ivars_or_lock");
         return false;
     }
     IOLockLock(ivars->bindingLock);
     if (!ivars->directControl || ivars->directSampleRateHz == 0) {
+        const auto gen = ivars->directGeneration;
+        const auto control = ivars->directControl;
+        const auto rate = ivars->directSampleRateHz;
+        const auto outBase = ivars->directOutputBase;
+        const auto outFrames = ivars->directOutputFrames;
+        const auto outChannels = ivars->directOutputChannels;
         IOLockUnlock(ivars->bindingLock);
+        ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready", 1000, OS_LOG_TYPE_DEFAULT,
+                    "ADK DBG BIND get failed not_ready gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u",
+                    gen,
+                    static_cast<void*>(control),
+                    rate,
+                    static_cast<const void*>(outBase),
+                    outFrames,
+                    outChannels);
         return false;
     }
 
@@ -481,6 +812,17 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
     if (outGeneration) { *outGeneration = ivars->directGeneration; }
 
     IOLockUnlock(ivars->bindingLock);
+    ASFW_LOG_RL(DirectAudio, "adk_bind/get_ok", 1000, OS_LOG_TYPE_DEFAULT,
+                "ADK DBG BIND get ok gen=%llu outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p rate=%u",
+                outGeneration ? *outGeneration : 0,
+                outOutputBase ? static_cast<const void*>(*outOutputBase) : nullptr,
+                outOutputFrames ? *outOutputFrames : 0,
+                outOutputChannels ? *outOutputChannels : 0,
+                outInputBase ? static_cast<void*>(*outInputBase) : nullptr,
+                outInputFrames ? *outInputFrames : 0,
+                outInputChannels ? *outInputChannels : 0,
+                outControl ? static_cast<void*>(*outControl) : nullptr,
+                outSampleRateHz ? *outSampleRateHz : 0);
     return true;
 }
 
@@ -621,4 +963,3 @@ kern_return_t IMPL(ASFWAudioNub, SetProtocolBooleanControl)
 
 
 // LOCALONLY: Get RX queue size
-

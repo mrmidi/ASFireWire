@@ -24,26 +24,50 @@ int32_t WrapSigned(int32_t ticks) {
 }
 } // namespace
 
-TEST(SYTGenerator, FirstDataPacketUsesSeededRxSytExactly) {
+TEST(SYTGenerator, AnchorReproducesFireBugCaptureCycle978And979) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+    gen.armTransmitCycleAnchor();
+
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0x79FE);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/979, /*samplesInPacket=*/8), 0x91FE);
+}
+
+TEST(SYTGenerator, AnchorIsConsumedByFirstDataPacketOnly) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+    gen.armTransmitCycleAnchor();
+
+    const uint16_t first = gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8);
+    EXPECT_EQ(first, 0x79FE);
+
+    // Subsequent DATA packets free-run in sample time; arbitrary bus-cycle jumps do not re-anchor.
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/4321, /*samplesInPacket=*/8), 0x91FE);
+}
+
+TEST(SYTGenerator, AnchorOverridesPriorRxSeed) {
     ASFW::Encoding::SYTGenerator gen;
     gen.initialize(48000.0);
     gen.seedFromRxSyt(kSeedSyt);
+    gen.armTransmitCycleAnchor();
 
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/481, /*samplesInPacket=*/8), kSeedSyt);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0x79FE);
 }
 
-TEST(SYTGenerator, AdvancesBy4096PerDataPacketIndependentOfBusCycleGaps) {
-    ASFW::Encoding::SYTGenerator gen;
-    gen.initialize(48000.0);
-    gen.seedFromRxSyt(kSeedSyt);
+TEST(SYTGenerator, LowFourCycleBitsDetermineEncodedAnchorPhase) {
+    ASFW::Encoding::SYTGenerator a;
+    a.initialize(48000.0);
+    a.armTransmitCycleAnchor();
 
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5151, /*samplesInPacket=*/8), 0xD8B0);
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5152, /*samplesInPacket=*/8), 0xF0B0);
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5154, /*samplesInPacket=*/8), 0x04B0);
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5155, /*samplesInPacket=*/8), 0x18B0);
+    ASFW::Encoding::SYTGenerator b;
+    b.initialize(48000.0);
+    b.armTransmitCycleAnchor();
+
+    EXPECT_EQ(a.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8),
+              b.computeDataSYT(/*transmitCycle=*/978 + 16 * 50, /*samplesInPacket=*/8));
 }
 
-TEST(SYTGenerator, ReturnsNoInfoUntilSeeded) {
+TEST(SYTGenerator, ReturnsNoInfoUntilSeededOrAnchored) {
     ASFW::Encoding::SYTGenerator gen;
     gen.initialize(48000.0);
 
@@ -51,32 +75,35 @@ TEST(SYTGenerator, ReturnsNoInfoUntilSeeded) {
               ASFW::Encoding::SYTGenerator::kNoInfo);
 }
 
+TEST(SYTGenerator, RxSeedPathStillAdvancesByPacketStep) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+    gen.seedFromRxSyt(kSeedSyt);
+
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5151, /*samplesInPacket=*/8), 0xD8B0);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5152, /*samplesInPacket=*/8), 0xF0B0);
+}
+
 TEST(SYTGenerator, NudgePositiveAndNegativeTicks) {
     ASFW::Encoding::SYTGenerator gen;
     gen.initialize(48000.0);
 
     gen.reset();
-    gen.seedFromRxSyt(kSeedSyt);
-    const int32_t base = TickIndex(gen.computeDataSYT(0, 8));
+    gen.armTransmitCycleAnchor();
+    const int32_t base = TickIndex(gen.computeDataSYT(978, 8));
 
     gen.reset();
-    gen.seedFromRxSyt(kSeedSyt);
+    gen.armTransmitCycleAnchor();
+    (void)gen.computeDataSYT(978, 8);
     gen.nudgeOffsetTicks(+1);
-    const int32_t plusOne = TickIndex(gen.computeDataSYT(0, 8));
-    EXPECT_EQ(WrapSigned(plusOne - base), +1);
+    const int32_t plusOne = TickIndex(gen.computeDataSYT(979, 8));
 
     gen.reset();
-    gen.seedFromRxSyt(kSeedSyt);
+    gen.armTransmitCycleAnchor();
+    (void)gen.computeDataSYT(978, 8);
     gen.nudgeOffsetTicks(-1);
-    const int32_t minusOne = TickIndex(gen.computeDataSYT(0, 8));
-    EXPECT_EQ(WrapSigned(minusOne - base), -1);
-}
+    const int32_t minusOne = TickIndex(gen.computeDataSYT(979, 8));
 
-TEST(SYTGenerator, WrapsAcrossSixteenCycleDomainByPacketStep) {
-    ASFW::Encoding::SYTGenerator gen;
-    gen.initialize(48000.0);
-    gen.seedFromRxSyt(0xFB00);
-
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/0, /*samplesInPacket=*/8), 0xFB00);
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/7, /*samplesInPacket=*/8), 0x1300);
+    EXPECT_EQ(WrapSigned(plusOne - (base + 4096)), +1);
+    EXPECT_EQ(WrapSigned(minusOne - (base + 4096)), -1);
 }

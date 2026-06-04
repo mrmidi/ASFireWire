@@ -49,6 +49,74 @@ constexpr uint64_t kTransferDelayNanos =
     (uint64_t(kTransferDelayTicks) * kNanosPerCycle) / kTicksPerCycle;
 
 //-----------------------------------------------------------------------------
+// AMDTP SYT presentation-timestamp helpers
+//-----------------------------------------------------------------------------
+
+/// 24.576 MHz ticks per audio sample at 48 kHz.
+constexpr uint32_t kTicksPerSample48k = 512;
+
+/// IEC 61883-6 48 kHz blocking-mode SYT interval, in data blocks.
+constexpr uint32_t kSytInterval48k = 8;
+
+/// Nominal 48 kHz blocking-mode SYT step: 8 samples * 512 ticks/sample.
+constexpr uint32_t kSytPacketStepTicks48k = kTicksPerSample48k * kSytInterval48k;
+
+/// 8-second 24.576 MHz offset domain used for shortest-path phase deltas.
+constexpr int64_t kEightSecondTicks = int64_t(8) * int64_t(kTicksPerSecond);
+
+/// 16-cycle SYT field domain: [cycle4:offset12].
+constexpr int64_t kSytFieldDomainTicks = int64_t(16) * int64_t(kTicksPerCycle);
+
+/// Collapse a FireWire (seconds, cycles, offset) timestamp to 24.576 MHz ticks.
+[[nodiscard]] inline int64_t tstampToOffsets(uint32_t seconds,
+                                             uint32_t cycle,
+                                             uint32_t offset) noexcept {
+    return int64_t(kTicksPerCycle) *
+           (int64_t(cycle) + int64_t(kCyclesPerSecond) * int64_t(seconds)) +
+           int64_t(offset);
+}
+
+/// Reconstruct a full offset-domain timestamp from a base cycle and 16-bit SYT.
+[[nodiscard]] inline int64_t extendTstamp(uint32_t baseCycle, uint16_t syt) noexcept {
+    const uint32_t sytCycle4 = (uint32_t(syt) >> 12) & 0x0Fu;
+    const uint32_t sytOffset = uint32_t(syt) & 0x0FFFu;
+    uint32_t cycle = (baseCycle & ~0x0Fu) | sytCycle4;
+    if (cycle < baseCycle) {
+        cycle += 16;
+    }
+    return tstampToOffsets(0, cycle, sytOffset);
+}
+
+/// Signed shortest-path delta (a - b) in the 8-second offset domain.
+[[nodiscard]] inline int64_t extOffsetDiff(int64_t a, int64_t b) noexcept {
+    int64_t d = (a - b) % kEightSecondTicks;
+    if (d < 0) {
+        d += kEightSecondTicks;
+    }
+    if (d > (kEightSecondTicks / 2)) {
+        d -= kEightSecondTicks;
+    }
+    return d;
+}
+
+/// Signed delta between consecutive 16-bit SYT values in offset ticks.
+[[nodiscard]] inline int64_t SYTDiffInOffsets(uint16_t sytNew, uint16_t sytOld) noexcept {
+    const auto toIndex = [](uint16_t syt) noexcept -> int64_t {
+        return int64_t((uint32_t(syt) >> 12) & 0x0Fu) * int64_t(kTicksPerCycle) +
+               int64_t(uint32_t(syt) & 0x0FFFu);
+    };
+
+    int64_t d = (toIndex(sytNew) - toIndex(sytOld)) % kSytFieldDomainTicks;
+    if (d < 0) {
+        d += kSytFieldDomainTicks;
+    }
+    if (d > (kSytFieldDomainTicks / 2)) {
+        d -= kSytFieldDomainTicks;
+    }
+    return d;
+}
+
+//-----------------------------------------------------------------------------
 // Cycle timer register field extraction
 //-----------------------------------------------------------------------------
 

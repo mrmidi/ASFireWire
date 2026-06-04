@@ -128,7 +128,12 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
                                             reinterpret_cast<const uint32_t*>(payloadVirt));
     }
 
-    const auto pkt = provider.NextSilentPacket(nextTransmitCycle_);
+    const TxPacketRequest request{
+        .transmitCycle = nextTransmitCycle_,
+        .packetIndex = pktIdx,
+        .hwTimestamp = out.hwTimestamp,
+    };
+    const auto pkt = provider.NextTransmitPacket(request);
     nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
 
     if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
@@ -185,7 +190,12 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
     slab_.ValidateDescriptorLayout();
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
-        const auto pkt = provider.NextSilentPacket(nextTransmitCycle_);
+        const TxPacketRequest request{
+            .transmitCycle = nextTransmitCycle_,
+            .packetIndex = pktIdx,
+            .hwTimestamp = static_cast<uint16_t>(lastHwTimestamp_),
+        };
+        const auto pkt = provider.NextTransmitPacket(request);
         nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
 
         if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {

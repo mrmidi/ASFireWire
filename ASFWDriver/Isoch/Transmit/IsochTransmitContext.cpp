@@ -72,6 +72,7 @@ void IsochTransmitContext::SetDirectTxRuntimeBinding(
 void IsochTransmitContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept {
     directAudioBindingSource_ = source;
     lastDirectAudioGeneration_ = 0;
+    ASFW_LOG(Isoch, "IT DBG BIND source=%p generation_reset=1", source);
 }
 
 kern_return_t IsochTransmitContext::Configure(uint8_t channel,
@@ -148,6 +149,8 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ring_.ResetForStart();
     audio_.ResetForStart();
+    ASFW_LOG(Isoch, "IT DBG START bindingSource=%p lastGen=%llu", directAudioBindingSource_,
+             lastDirectAudioGeneration_);
 
     verifier_.ResetForStart(static_cast<uint8_t>(audio_.FramesPerDataPacket()));
 
@@ -268,6 +271,23 @@ void IsochTransmitContext::Poll() noexcept {
     if (directAudioBindingSource_) {
         ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
         if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
+            if (tickCount_ <= 32 || (tickCount_ % 1000) == 0 ||
+                snapshot.generation != lastDirectAudioGeneration_) {
+                ASFW_LOG(Isoch,
+                         "IT DBG BIND poll tick=%llu source=%p ready=1 gen=%llu lastGen=%llu valid=%d hasOut=%d outBase=%p outFrames=%u outCh=%u control=%p rate=%u hasIn=%d",
+                         tickCount_,
+                         directAudioBindingSource_,
+                         snapshot.generation,
+                         lastDirectAudioGeneration_,
+                         snapshot.valid,
+                         snapshot.HasOutput(),
+                         static_cast<const void*>(snapshot.outputBase),
+                         snapshot.outputFrames,
+                         snapshot.outputChannels,
+                         static_cast<void*>(snapshot.control),
+                         snapshot.sampleRateHz,
+                         snapshot.HasInput());
+            }
             if (snapshot.generation != lastDirectAudioGeneration_) {
                 if (snapshot.valid && snapshot.HasOutput()) {
                     ASFW_LOG(Isoch, "IT: direct audio binding changed (gen %llu -> %llu). Arming direct Tx.",
@@ -279,6 +299,7 @@ void IsochTransmitContext::Poll() noexcept {
                     binding.control = snapshot.control;
                     binding.enabled = true;
                     binding.sampleRateHz = snapshot.sampleRateHz;
+                    binding.streamModeRaw = std::to_underlying(audio_.EffectiveStreamMode());
                     binding.outputChannels = snapshot.outputChannels;
                     binding.am824Slots = audio_.Am824SlotCount();
                     SetDirectTxRuntimeBinding(binding);
@@ -291,6 +312,11 @@ void IsochTransmitContext::Poll() noexcept {
                 lastDirectAudioGeneration_ = snapshot.generation;
             }
         } else {
+            if (tickCount_ <= 32 || (tickCount_ % 1000) == 0) {
+                ASFW_LOG(Isoch,
+                         "IT DBG BIND poll tick=%llu source=%p ready=0 lastGen=%llu",
+                         tickCount_, directAudioBindingSource_, lastDirectAudioGeneration_);
+            }
             if (lastDirectAudioGeneration_ != 0) {
                 ASFW_LOG(Isoch, "IT: direct audio binding cleared/unavailable. Disarming.");
                 IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
@@ -298,6 +324,8 @@ void IsochTransmitContext::Poll() noexcept {
                 lastDirectAudioGeneration_ = 0;
             }
         }
+    } else if (tickCount_ <= 32 || (tickCount_ % 1000) == 0) {
+        ASFW_LOG(Isoch, "IT DBG BIND poll tick=%llu source=null", tickCount_);
     }
 
     // IRQ-stall watchdog

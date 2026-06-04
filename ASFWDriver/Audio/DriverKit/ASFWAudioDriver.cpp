@@ -18,12 +18,15 @@
 #include "../../Logging/Logging.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../AudioWire/AMDTP/PacketAssembler.hpp"
+#include "../../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
+#include "../../Common/DriverKitOwnership.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
+#include <DriverKit/IOMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
 #include <AudioDriverKit/AudioDriverKit.h>
 #include <atomic>
@@ -88,6 +91,10 @@ struct AudioDriverRuntimeState {
     OSSharedPtr<IOTimerDispatchSource> timestampTimer;
     OSSharedPtr<OSAction> timestampTimerAction;
     uint64_t hostTicksPerBuffer{0};
+    uint64_t ztsPeriodTicks{0};
+    std::atomic<uint64_t> ztsBaseHostTicks{0};
+    std::atomic<uint64_t> ztsBaseSampleFrame{0};
+    std::atomic<uint64_t> ztsTimerPublishes{0};
     std::atomic<bool> isRunning{false};
 
     uint64_t metricsLogCounter{0};
@@ -99,9 +106,45 @@ struct AudioDriverRuntimeState {
     ASFW::AudioEngine::Direct::FireWireAudioEngine directAudioEngine;
     ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
+    std::atomic<uint64_t> ioDebugCallbacks{0};
 };
 
 namespace {
+
+constexpr uint64_t kNanosPerSecond = 1'000'000'000ULL;
+constexpr uint64_t kZtsTimerLeewayTicks = 0;
+
+[[nodiscard]] uint64_t AudioPeriodNanos(uint32_t frames, uint32_t sampleRateHz) noexcept {
+    if (frames == 0 || sampleRateHz == 0) {
+        return 0;
+    }
+    return (static_cast<uint64_t>(frames) * kNanosPerSecond) / sampleRateHz;
+}
+
+[[nodiscard]] uint64_t AudioFramesForElapsedTicks(uint64_t elapsedTicks,
+                                                  uint32_t sampleRateHz) noexcept {
+    if (elapsedTicks == 0 || sampleRateHz == 0) {
+        return 0;
+    }
+    const uint64_t elapsedNanos = ASFW::Timing::hostTicksToNanos(elapsedTicks);
+    return (elapsedNanos * static_cast<uint64_t>(sampleRateHz)) / kNanosPerSecond;
+}
+
+void StopZtsTimer(AudioDriverRuntimeState& runtime) noexcept {
+    runtime.isRunning.store(false, std::memory_order_release);
+    if (runtime.timestampTimer) {
+        (void)runtime.timestampTimer->SetEnable(false);
+    }
+}
+
+void ScheduleNextZtsTimer(AudioDriverRuntimeState& runtime, uint64_t nowTicks) noexcept {
+    if (!runtime.timestampTimer || runtime.ztsPeriodTicks == 0) {
+        return;
+    }
+    (void)runtime.timestampTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
+                                             nowTicks + runtime.ztsPeriodTicks,
+                                             kZtsTimerLeewayTicks);
+}
 
 } // namespace
 
@@ -110,8 +153,12 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOUserAudioDevice> audioDevice;
     OSSharedPtr<IOUserAudioStream> inputStream;
     OSSharedPtr<IOUserAudioStream> outputStream;
-    OSSharedPtr<IOBufferMemoryDescriptor> inputBuffer;
-    OSSharedPtr<IOBufferMemoryDescriptor> outputBuffer;
+    OSSharedPtr<IOMemoryDescriptor> inputBuffer;
+    OSSharedPtr<IOMemoryDescriptor> outputBuffer;
+    OSSharedPtr<IOMemoryDescriptor> controlBuffer;
+    OSSharedPtr<IOMemoryMap> inputMap;
+    OSSharedPtr<IOMemoryMap> outputMap;
+    OSSharedPtr<IOMemoryMap> controlMap;
 
     AudioDriverDeviceState device;
     AudioDriverSharedMemoryState shared;
@@ -199,37 +246,48 @@ namespace {
 }
 
 [[nodiscard]] bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
+    if (!ivars.inputMap || !ivars.outputMap || !ivars.controlMap) {
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG BIND skeleton failed missing_maps inMap=%p outMap=%p controlMap=%p",
+                 static_cast<void*>(ivars.inputMap.get()),
+                 static_cast<void*>(ivars.outputMap.get()),
+                 static_cast<void*>(ivars.controlMap.get()));
+        return false;
+    }
+
+    auto* control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(
+        static_cast<uintptr_t>(ivars.controlMap->GetAddress()));
+    if (!control) {
+        ASFW_LOG(DirectAudio, "ADK DBG BIND skeleton failed null_control");
+        return false;
+    }
+    control->ResetForStart();
+
     IOAddressSegment inputSegment{};
+    inputSegment.address = ivars.inputMap->GetAddress();
+    inputSegment.length = ivars.inputMap->GetLength();
     IOAddressSegment outputSegment{};
+    outputSegment.address = ivars.outputMap->GetAddress();
+    outputSegment.length = ivars.outputMap->GetLength();
 
-    if (ivars.inputBuffer) {
-        const kern_return_t status = ivars.inputBuffer->GetAddressRange(&inputSegment);
-        if (status != kIOReturnSuccess) {
-            inputSegment = {};
-        }
-    }
+    const uint32_t inputFrameCapacity =
+        FrameCapacityFromSegment(inputSegment, ivars.device.inputChannelCount);
+    const uint32_t outputFrameCapacity =
+        FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount);
 
-    if (ivars.outputBuffer) {
-        const kern_return_t status = ivars.outputBuffer->GetAddressRange(&outputSegment);
-        if (status != kIOReturnSuccess) {
-            outputSegment = {};
-        }
-    }
-
-    ivars.runtime.directAudioControl.ResetForStart();
     ivars.runtime.directAudioGraph = ASFW::Audio::Runtime::AudioGraphBinding{
         .guid = ivars.device.guid,
         .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
-            .inputBase = reinterpret_cast<int32_t*>(inputSegment.address),
-            .outputBase = reinterpret_cast<const int32_t*>(outputSegment.address),
-            .inputFrameCapacity = FrameCapacityFromSegment(inputSegment, ivars.device.inputChannelCount),
-            .outputFrameCapacity = FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount),
+            .inputBase = reinterpret_cast<int32_t*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
+            .outputBase = reinterpret_cast<const int32_t*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
+            .inputFrameCapacity = inputFrameCapacity,
+            .outputFrameCapacity = outputFrameCapacity,
             .inputChannels = ivars.device.inputChannelCount,
             .outputChannels = ivars.device.outputChannelCount,
             .storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native,
         },
-        .control = &ivars.runtime.directAudioControl,
+        .control = control,
         .deviceToHostAm824Slots = ivars.device.inputChannelCount,
         .hostToDeviceAm824Slots = ivars.device.outputChannelCount,
         .streamMode = DirectStreamModeFromRaw(ivars.device.streamModeRaw),
@@ -240,6 +298,17 @@ namespace {
     const bool bound = ivars.runtime.directAudioEngine.Bind(ivars.runtime.directAudioGraph);
     ivars.runtime.directAudioDebugLog.Reset();
     ivars.runtime.directAudioSkeletonBound.store(bound, std::memory_order_release);
+    ASFW_LOG(DirectAudio,
+             "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p rate=%u",
+             bound ? "bound" : "inactive",
+             static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
+             ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
+             ivars.runtime.directAudioGraph.memory.outputChannels,
+             static_cast<void*>(ivars.runtime.directAudioGraph.memory.inputBase),
+             ivars.runtime.directAudioGraph.memory.inputFrameCapacity,
+             ivars.runtime.directAudioGraph.memory.inputChannels,
+             static_cast<void*>(ivars.runtime.directAudioGraph.control),
+             ivars.runtime.directAudioGraph.sampleRateHz);
     return bound;
 }
 
@@ -303,7 +372,7 @@ void ASFWAudioDriver::free()
     if (ivars) {
         // Clean up timer resources first
         if (ivars->runtime.timestampTimer) {
-            ivars->runtime.timestampTimer->SetEnable(false);
+            StopZtsTimer(ivars->runtime);
             ivars->runtime.timestampTimer.reset();
         }
         ivars->runtime.timestampTimerAction.reset();
@@ -329,8 +398,12 @@ void ASFWAudioDriver::free()
 
         ivars->outputStream.reset();
         ivars->inputStream.reset();
+        ivars->outputMap.reset();
+        ivars->inputMap.reset();
+        ivars->controlMap.reset();
         ivars->outputBuffer.reset();
         ivars->inputBuffer.reset();
+        ivars->controlBuffer.reset();
         ivars->audioDevice.reset();
         ivars->workQueue.reset();
         IOSafeDeleteNULL(ivars, ASFWAudioDriver_IVars, 1);
@@ -438,9 +511,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     // Bring-up note: dynamic sample-rate advertisement is intentionally deferred.
     ASFW_LOG(Audio, "ASFWAudioDriver: Forcing single advertised format: 48kHz / 24-bit");
 
-    ivars->device.inputChannelCount = ivars->device.channelCount;
-    ivars->device.outputChannelCount = ivars->device.channelCount;
-
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
              ivars->device.inputChannelCount,
@@ -462,41 +532,104 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
         return kIOReturnNoMemory;
     }
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: ADK object ids device=%u",
+             ivars->audioDevice->GetObjectID());
     
     // Set up IO operation handler -- the real-time audio callback
     // IMPORTANT: This runs in a real-time context. No allocations, no locks, minimal logging.
     // Capture ivars pointer for use in block
     auto* driverIvars = ivars;
-    ivars->audioDevice->SetIOOperationHandler(
+    error = ivars->audioDevice->SetIOOperationHandler(
         ^kern_return_t(IOUserAudioObjectID           objectID,
                        IOUserAudioIOOperation        operation,
                        uint32_t                      ioBufferFrameSize,
                        uint64_t                      sampleTime,
                        uint64_t                      hostTime)
     {
-        if (!driverIvars || !driverIvars->runtime.isRunning.load(std::memory_order_acquire)) {
+        if (!driverIvars) {
+            return kIOReturnNotReady;
+        }
+
+        const uint64_t callbackIndex =
+            driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
+        const bool running = driverIvars->runtime.isRunning.load(std::memory_order_acquire);
+        const bool skeletonBound =
+            driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
+        if (callbackIndex <= 32 || (callbackIndex % 256) == 0 ||
+            operation == IOUserAudioIOOperationWriteEnd) {
+            ASFW_LOG(DirectAudio,
+                     "ADK DBG IO cb=%llu op=%u running=%d skeleton=%d frames=%u sample=%llu host=%llu",
+                     callbackIndex,
+                     static_cast<uint32_t>(operation),
+                     running,
+                     skeletonBound,
+                     ioBufferFrameSize,
+                     sampleTime,
+                     hostTime);
+        }
+
+        if (!running) {
+            if (callbackIndex <= 32 || (callbackIndex % 256) == 0) {
+                ASFW_LOG(DirectAudio,
+                         "ADK DBG IO not_running cb=%llu op=%u frames=%u sample=%llu",
+                         callbackIndex,
+                         static_cast<uint32_t>(operation),
+                         ioBufferFrameSize,
+                         sampleTime);
+            }
             return kIOReturnNotReady;
         }
 
         // Driver IO buffers are provisioned for Config::kAudioIoPeriodFrames frames.
         if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
+            ASFW_LOG(DirectAudio,
+                     "ADK DBG IO bad_frames cb=%llu op=%u frames=%u max=%u",
+                     callbackIndex,
+                     static_cast<uint32_t>(operation),
+                     ioBufferFrameSize,
+                     ASFW::Isoch::Config::kAudioIoPeriodFrames);
             return kIOReturnBadArgument;
         }
         
-        if (driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire)) {
-            auto& control = driverIvars->runtime.directAudioControl;
+        if (skeletonBound) {
+            auto* control = driverIvars->runtime.directAudioGraph.control;
+            if (!control) {
+                ASFW_LOG(DirectAudio,
+                         "ADK DBG IO no_control cb=%llu op=%u frames=%u",
+                         callbackIndex,
+                         static_cast<uint32_t>(operation),
+                         ioBufferFrameSize);
+                return kIOReturnNotReady;
+            }
 
             if (operation == IOUserAudioIOOperationBeginRead) {
-                control.client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
-                control.counters.CountBeginRead();
+                control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
+                control->counters.CountBeginRead();
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
-                control.client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
-                control.counters.CountWriteEnd();
+                control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
+                control->counters.CountWriteEnd();
+                const uint64_t writeCount =
+                    control->counters.ioWriteEndCount.load(std::memory_order_relaxed);
+                const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
+                if (writeCount <= 32 || (writeCount % 256) == 0) {
+                    ASFW_LOG(DirectAudio,
+                             "ADK DBG IO write_end count=%llu cb=%llu frames=%u sample=%llu writtenEnd=%llu",
+                             writeCount,
+                             callbackIndex,
+                             ioBufferFrameSize,
+                             sampleTime,
+                             writtenEnd);
+                }
             }
         }
         
         return kIOReturnSuccess;
     });
+    if (error != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: SetIOOperationHandler failed: 0x%x", error);
+        return error;
+    }
     
     ASFW_LOG(Audio, "ASFWAudioDriver: IO operation handler installed");
     
@@ -544,19 +677,99 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
              ivars->device.inputChannelCount,
              ivars->device.outputChannelCount);
     
-    // Buffer sizes (still use 32-bit containers for 24-bit audio)
-    const uint32_t inputBufferBytes =
-        ASFW::Isoch::Config::kAudioIoPeriodFrames * sizeof(int32_t) * ivars->device.inputChannelCount;
-    const uint32_t outputBufferBytes =
-        ASFW::Isoch::Config::kAudioIoPeriodFrames * sizeof(int32_t) * ivars->device.outputChannelCount;
-    
-    // Create input buffer and stream
-    error = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, inputBufferBytes, 0,
-                                              ivars->inputBuffer.attach());
+    IOMemoryDescriptor* rawOutputMemory = nullptr;
+    IOMemoryDescriptor* rawInputMemory = nullptr;
+    IOMemoryDescriptor* rawControlMemory = nullptr;
+    uint32_t sharedOutputFrames = 0;
+    uint32_t sharedOutputChannels = 0;
+    uint32_t sharedInputFrames = 0;
+    uint32_t sharedInputChannels = 0;
+    uint32_t sharedSampleRateHz = 0;
+    uint64_t sharedGeneration = 0;
+
+    ASFW_LOG(DirectAudio,
+             "ADK DBG MEM request provider=%p guid=0x%016llx expectedInCh=%u expectedOutCh=%u rate=%.0f",
+             static_cast<void*>(provider),
+             ivars->device.guid,
+             ivars->device.inputChannelCount,
+             ivars->device.outputChannelCount,
+             ivars->device.currentSampleRate);
+
+    if (!ivars->device.audioNub) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM request failed no_audio_nub");
+        return kIOReturnNotReady;
+    }
+
+    error = ivars->device.audioNub->CopyDirectAudioMemory(&rawOutputMemory,
+                                                          &rawInputMemory,
+                                                          &rawControlMemory,
+                                                          &sharedOutputFrames,
+                                                          &sharedOutputChannels,
+                                                          &sharedInputFrames,
+                                                          &sharedInputChannels,
+                                                          &sharedSampleRateHz,
+                                                          &sharedGeneration);
+    if (error != kIOReturnSuccess || !rawOutputMemory || !rawInputMemory || !rawControlMemory) {
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG MEM request failed kr=0x%x outMem=%p inMem=%p controlMem=%p",
+                 error,
+                 static_cast<void*>(rawOutputMemory),
+                 static_cast<void*>(rawInputMemory),
+                 static_cast<void*>(rawControlMemory));
+        if (rawOutputMemory) { rawOutputMemory->release(); }
+        if (rawInputMemory) { rawInputMemory->release(); }
+        if (rawControlMemory) { rawControlMemory->release(); }
+        return (error == kIOReturnSuccess) ? kIOReturnNoMemory : error;
+    }
+
+    ivars->outputBuffer = ASFW::Common::AdoptRetained(rawOutputMemory);
+    ivars->inputBuffer = ASFW::Common::AdoptRetained(rawInputMemory);
+    ivars->controlBuffer = ASFW::Common::AdoptRetained(rawControlMemory);
+
+    if (sharedOutputChannels != ivars->device.outputChannelCount ||
+        sharedInputChannels != ivars->device.inputChannelCount ||
+        sharedSampleRateHz != static_cast<uint32_t>(ivars->device.currentSampleRate)) {
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG MEM metadata mismatch gen=%llu sharedOutCh=%u localOutCh=%u sharedInCh=%u localInCh=%u sharedRate=%u localRate=%u",
+                 sharedGeneration,
+                 sharedOutputChannels,
+                 ivars->device.outputChannelCount,
+                 sharedInputChannels,
+                 ivars->device.inputChannelCount,
+                 sharedSampleRateHz,
+                 static_cast<uint32_t>(ivars->device.currentSampleRate));
+    }
+
+    error = ASFW::Common::CreateSharedMapping(ivars->outputBuffer, ivars->outputMap);
     if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create input buffer: %d", error);
+        ASFW_LOG(DirectAudio, "ADK DBG MEM map output failed kr=0x%x", error);
         return error;
     }
+    error = ASFW::Common::CreateSharedMapping(ivars->inputBuffer, ivars->inputMap);
+    if (error != kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM map input failed kr=0x%x", error);
+        return error;
+    }
+    error = ASFW::Common::CreateSharedMapping(ivars->controlBuffer, ivars->controlMap);
+    if (error != kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM map control failed kr=0x%x", error);
+        return error;
+    }
+
+    ASFW_LOG(DirectAudio,
+             "ADK DBG MEM mapped gen=%llu outBase=%p outLen=%llu outFrames=%u outCh=%u inBase=%p inLen=%llu inFrames=%u inCh=%u control=%p controlLen=%llu rate=%u",
+             sharedGeneration,
+             reinterpret_cast<void*>(static_cast<uintptr_t>(ivars->outputMap->GetAddress())),
+             ivars->outputMap->GetLength(),
+             sharedOutputFrames,
+             sharedOutputChannels,
+             reinterpret_cast<void*>(static_cast<uintptr_t>(ivars->inputMap->GetAddress())),
+             ivars->inputMap->GetLength(),
+             sharedInputFrames,
+             sharedInputChannels,
+             reinterpret_cast<void*>(static_cast<uintptr_t>(ivars->controlMap->GetAddress())),
+             ivars->controlMap->GetLength(),
+             sharedSampleRateHz);
     
     ivars->inputStream = IOUserAudioStream::Create(this,
                                                     IOUserAudioStreamDirection::Input,
@@ -565,20 +778,16 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create input stream");
         return kIOReturnNoMemory;
     }
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: ADK object ids inputStream=%u owner=%u",
+             ivars->inputStream->GetObjectID(),
+             ivars->inputStream->GetOwnerObjectID());
     
     // Use plug name for stream name (e.g., "Analog In")
     auto inputName = OSSharedPtr(OSString::withCString(ivars->device.inputPlugName), OSNoRetain);
     ivars->inputStream->SetName(inputName.get());
     ivars->inputStream->SetAvailableStreamFormats(inputFormats, formatCount);
     ivars->inputStream->SetCurrentStreamFormat(&inputFormats[0]);  // Initial format
-    
-    // Create output buffer and stream
-    error = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, outputBufferBytes, 0,
-                                              ivars->outputBuffer.attach());
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output buffer: %d", error);
-        return error;
-    }
     
     // Create output stream with the appropriate buffer (shared or local)
     ivars->outputStream = IOUserAudioStream::Create(this,
@@ -588,6 +797,10 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output stream");
         return kIOReturnNoMemory;
     }
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: ADK object ids outputStream=%u owner=%u",
+             ivars->outputStream->GetObjectID(),
+             ivars->outputStream->GetOwnerObjectID());
     
     // Use plug name for stream name (e.g., "Analog Out")
     auto outputName = OSSharedPtr(OSString::withCString(ivars->device.outputPlugName), OSNoRetain);
@@ -600,30 +813,10 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
              "ASFWAudioDriver: Direct audio skeleton %{public}s",
              directAudioSkeletonBound ? "bound" : "inactive");
 
-    // Register the direct binding with the nub so the isoch TX and RX paths (same
-    // dext process) can read/write the exact buffers + cursors that
-    // CoreAudio uses. The graph's memory view already holds the local bases,
-    // frame capacities, channel strides, control block and sample rate.
-    if (directAudioSkeletonBound && ivars->device.audioNub) {
-        const auto& graph = ivars->runtime.directAudioGraph;
-        const uint64_t directBytes = static_cast<uint64_t>(graph.memory.outputFrameCapacity) *
-                                     graph.memory.outputChannels * sizeof(int32_t);
-        const uint64_t inputBytes = static_cast<uint64_t>(graph.memory.inputFrameCapacity) *
-                                    graph.memory.inputChannels * sizeof(int32_t);
-        ivars->device.audioNub->SetDirectAudioBinding(graph.memory.outputBase,
-                                                      directBytes,
-                                                      graph.memory.outputFrameCapacity,
-                                                      graph.memory.outputChannels,
-                                                      graph.memory.inputBase,
-                                                      inputBytes,
-                                                      graph.memory.inputFrameCapacity,
-                                                      graph.memory.inputChannels,
-                                                      graph.control,
-                                                      graph.sampleRateHz,
-                                                      graph.audioDevice);
-    } else if (ivars->device.audioNub) {
-        ivars->device.audioNub->ClearDirectAudioBinding();
-    }
+    ASFW_LOG(DirectAudio,
+             "ADK DBG BIND provider_publish skipped raw_local_binding=0 shared_generation=%llu skeletonBound=%d",
+             sharedGeneration,
+             directAudioSkeletonBound);
 
     // Stream-level latency (no additional latency beyond device-level)
     ivars->outputStream->SetLatency(0);
@@ -738,7 +931,6 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
             if (stopKr != kIOReturnSuccess) {
                 ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
             }
-            ivars->device.audioNub->ClearDirectAudioBinding();
         }
         ivars->device.audioNub = nullptr;
     }
@@ -765,22 +957,92 @@ kern_return_t IMPL(ASFWAudioDriver, NewUserClient)
 kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                                             IOUserAudioStartStopFlags in_flags)
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice(id=%u)", in_object_id);
-    
     if (!ivars || !ivars->audioDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - not initialized");
         return kIOReturnNotReady;
     }
 
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: StartDevice(id=%u flags=0x%llx deviceId=%u inStreamId=%u outStreamId=%u)",
+             in_object_id,
+             static_cast<uint64_t>(in_flags),
+             ivars->audioDevice->GetObjectID(),
+             ivars->inputStream ? ivars->inputStream->GetObjectID() : 0,
+             ivars->outputStream ? ivars->outputStream->GetObjectID() : 0);
+
+    ivars->runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
+    ivars->runtime.isRunning.store(true, std::memory_order_release);
+    ASFW_LOG(DirectAudio, "ADK DBG IO running=1 before StartAudioStreaming");
+
+    const kern_return_t superStartKr = super::StartDevice(in_object_id, in_flags);
+    if (superStartKr != kIOReturnSuccess) {
+        ivars->runtime.isRunning.store(false, std::memory_order_release);
+        ASFW_LOG(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x", superStartKr);
+        return superStartKr;
+    }
+    ASFW_LOG(DirectAudio, "ADK DBG IO super StartDevice ok id=%u", in_object_id);
+
     if (ivars->device.audioNub) {
         const kern_return_t startKr = ivars->device.audioNub->StartAudioStreaming();
         if (startKr != kIOReturnSuccess) {
+            ivars->runtime.isRunning.store(false, std::memory_order_release);
+            (void)super::StopDevice(in_object_id, in_flags);
             ASFW_LOG(Audio, "ASFWAudioDriver: StartAudioStreaming failed: 0x%x", startKr);
             return startKr;
         }
     }
 
-    ivars->runtime.isRunning.store(true, std::memory_order_release);
+    const uint32_t sampleRateHz = static_cast<uint32_t>(ivars->device.currentSampleRate);
+    const uint64_t periodNanos = AudioPeriodNanos(ASFW::Isoch::Config::kAudioIoPeriodFrames,
+                                                  sampleRateHz);
+    (void)ASFW::Timing::initializeHostTimebase();
+    ivars->runtime.ztsPeriodTicks = ASFW::Timing::nanosToHostTicks(periodNanos);
+    const uint64_t nowTicks = mach_absolute_time();
+    ivars->runtime.ztsBaseHostTicks.store(nowTicks, std::memory_order_release);
+    ivars->runtime.ztsBaseSampleFrame.store(0, std::memory_order_release);
+    ivars->runtime.ztsTimerPublishes.store(0, std::memory_order_release);
+
+    if (ivars->audioDevice) {
+        ivars->audioDevice->UpdateCurrentZeroTimestamp(0, nowTicks);
+    }
+    if (ivars->runtime.directAudioGraph.control) {
+        ivars->runtime.directAudioGraph.control->device.Publish(
+            0,
+            nowTicks,
+            sampleRateHz == 0 ? 0 : static_cast<uint32_t>((kNanosPerSecond << 8) / sampleRateHz));
+        ivars->runtime.directAudioGraph.control->counters.CountZtsPublished();
+    }
+    ASFW_LOG(DirectAudio,
+             "ZTS publish source=timer count=1 sample=0 host=%llu periodTicks=%llu rate=%u",
+             nowTicks,
+             ivars->runtime.ztsPeriodTicks,
+             sampleRateHz);
+    ivars->runtime.ztsTimerPublishes.store(1, std::memory_order_release);
+
+    if (ivars->runtime.timestampTimer && ivars->runtime.ztsPeriodTicks != 0) {
+        const kern_return_t enableKr = ivars->runtime.timestampTimer->SetEnable(true);
+        if (enableKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio, "ASFWAudioDriver: ZTS timer enable failed: 0x%x", enableKr);
+        } else {
+            ScheduleNextZtsTimer(ivars->runtime, nowTicks);
+        }
+    } else {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: ZTS timer unavailable timer=%p periodTicks=%llu",
+                 ivars->runtime.timestampTimer.get(),
+                 ivars->runtime.ztsPeriodTicks);
+    }
+
+    const auto* control = ivars->runtime.directAudioGraph.control;
+    ASFW_LOG(DirectAudio,
+             "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d zts=%llu writeEnd=%llu",
+             ivars->device.guid,
+             ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
+             ivars->runtime.directAudioGraph.HasInput(),
+             ivars->runtime.directAudioGraph.HasOutput(),
+             control ? control->counters.ztsPublished.load(std::memory_order_relaxed) : 0,
+             control ? control->counters.ioWriteEndCount.load(std::memory_order_relaxed) : 0);
+
     ASFW_LOG(Audio, "ASFWAudioDriver: Device started");
     
     return kIOReturnSuccess;
@@ -791,7 +1053,9 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
     
-    ivars->runtime.isRunning.store(false, std::memory_order_release);
+    if (ivars) {
+        StopZtsTimer(ivars->runtime);
+    }
 
     if (ivars && ivars->device.audioNub) {
         const kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
@@ -800,7 +1064,12 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
         }
     }
 
-    return kIOReturnSuccess;
+    const kern_return_t superStopKr = super::StopDevice(in_object_id, in_flags);
+    if (superStopKr != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x", superStopKr);
+    }
+
+    return superStopKr;
 }
 
 kern_return_t ASFWAudioDriver::ApplyProtocolBooleanControl(uint32_t classIdFourCC,
@@ -826,7 +1095,42 @@ kern_return_t ASFWAudioDriver::ReadProtocolBooleanControl(uint32_t classIdFourCC
     return ivars->device.audioNub->GetProtocolBooleanControl(classIdFourCC, element, outValue);
 }
 
-// Timer callback - no-op in direct-only mode
 void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, [[maybe_unused]] uint64_t time)
 {
+    if (!ivars || !ivars->runtime.isRunning.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const uint32_t sampleRateHz = static_cast<uint32_t>(ivars->device.currentSampleRate);
+    const uint64_t nowTicks = mach_absolute_time();
+    const uint64_t baseTicks = ivars->runtime.ztsBaseHostTicks.load(std::memory_order_acquire);
+    const uint64_t baseSample = ivars->runtime.ztsBaseSampleFrame.load(std::memory_order_acquire);
+    const uint64_t elapsedTicks = (nowTicks >= baseTicks) ? (nowTicks - baseTicks) : 0;
+    const uint64_t sampleFrame = baseSample + AudioFramesForElapsedTicks(elapsedTicks, sampleRateHz);
+    const uint32_t hostNanosPerSampleQ8 =
+        sampleRateHz == 0 ? 0 : static_cast<uint32_t>((kNanosPerSecond << 8) / sampleRateHz);
+
+    if (ivars->audioDevice) {
+        ivars->audioDevice->UpdateCurrentZeroTimestamp(sampleFrame, nowTicks);
+    }
+
+    auto* control = ivars->runtime.directAudioGraph.control;
+    if (control) {
+        control->device.Publish(sampleFrame, nowTicks, hostNanosPerSampleQ8);
+        control->counters.CountZtsPublished();
+    }
+
+    const uint64_t count =
+        ivars->runtime.ztsTimerPublishes.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (count <= 32 || (count % 100) == 0) {
+        ASFW_LOG(DirectAudio,
+                 "ZTS publish source=timer count=%llu sample=%llu host=%llu periodTicks=%llu rate=%u",
+                 count,
+                 sampleFrame,
+                 nowTicks,
+                 ivars->runtime.ztsPeriodTicks,
+                 sampleRateHz);
+    }
+
+    ScheduleNextZtsTimer(ivars->runtime, nowTicks);
 }

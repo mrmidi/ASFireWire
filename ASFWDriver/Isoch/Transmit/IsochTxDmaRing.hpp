@@ -24,10 +24,16 @@ struct IsochTxPacket final {
     uint8_t dbc{0};
 };
 
+struct TxPacketRequest final {
+    uint32_t transmitCycle{0};
+    uint32_t packetIndex{0};
+    uint16_t hwTimestamp{0};
+};
+
 class IIsochTxPacketProvider {
 public:
     virtual ~IIsochTxPacketProvider() = default;
-    [[nodiscard]] virtual IsochTxPacket NextSilentPacket(uint32_t transmitCycle) noexcept = 0;
+    [[nodiscard]] virtual IsochTxPacket NextTransmitPacket(const TxPacketRequest& request) noexcept = 0;
 };
 
 class IIsochTxAudioInjector {

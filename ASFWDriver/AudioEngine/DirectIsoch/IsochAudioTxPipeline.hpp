@@ -86,7 +86,7 @@ public:
     // -------------------------------------------------------------------------
     // Tx::IIsochTxPacketProvider
     // -------------------------------------------------------------------------
-    [[nodiscard]] Tx::IsochTxPacket NextSilentPacket(uint32_t transmitCycle) noexcept override;
+    [[nodiscard]] Tx::IsochTxPacket NextTransmitPacket(const Tx::TxPacketRequest& request) noexcept override;
 
     // -------------------------------------------------------------------------
     // Tx::IIsochTxAudioInjector
@@ -134,6 +134,17 @@ private:
         uint16_t syt{0};
     };
 
+    struct ProducedPacketMetadata {
+        bool valid{false};
+        bool isData{false};
+        uint32_t sizeBytes{0};
+        uint32_t framesPerPacket{0};
+        uint32_t pcmChannels{0};
+        uint32_t am824Slots{0};
+        Encoding::AudioWireFormat wireFormat{Encoding::AudioWireFormat::kAM824};
+        PacketCipFields cip{};
+    };
+
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
     [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
@@ -142,7 +153,6 @@ private:
     [[nodiscard]] uint32_t PacketPayloadByteCount(uint32_t packetIndex,
                                                   Tx::IsochTxDescriptorSlab& slab) noexcept;
     [[nodiscard]] bool IsDirectTxHardwarePathReady(const AudioInjectionPlan& plan) const noexcept;
-    [[nodiscard]] static PacketCipFields ReadPacketCipFields(const uint8_t* packetBytes) noexcept;
     [[nodiscard]] bool TryWriteDirectTxPacket(uint32_t packetIndex,
                                               Tx::IsochTxDescriptorSlab& slab,
                                               const AudioInjectionPlan& plan) noexcept;
@@ -152,6 +162,8 @@ private:
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
+    std::array<ProducedPacketMetadata, Tx::Layout::kNumPackets> producedPacketMetadata_{};
+    uint8_t sid_{0};
 
     DirectTxRuntimeBinding directTxBinding_{};
     ASFW::Audio::Runtime::AudioGraphBinding directOutputView_{};
@@ -185,6 +197,12 @@ private:
             discontinuityCount.store(0, std::memory_order_relaxed);
         }
     } dbcTracker_{};
+
+    // Temporary bring-up diagnostics: noisy by design, remove once TX is stable.
+    uint64_t debugProducedPackets_{0};
+    uint64_t debugInjectionAttempts_{0};
+    uint64_t debugInjectionSuccesses_{0};
+    uint64_t debugInjectionSkips_{0};
 
     Counters counters_{};
 };
