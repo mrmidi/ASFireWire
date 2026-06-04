@@ -500,6 +500,13 @@ void* ASFWDriver::GetServiceContext() const {
     return ivars->context;
 }
 
+void* ASFWDriver::GetAudioNubForGuid(uint64_t guid) const {
+    if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
+        return nullptr;
+    }
+    return ivars->context->audioCoordinator->GetNub(guid);
+}
+
 kern_return_t IMPL(ASFWDriver, NewUserClient) {
     if (type != 0) {
         return kIOReturnBadArgument;

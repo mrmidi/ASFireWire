@@ -159,7 +159,14 @@ uint32_t IsochReceiveContext::Poll() {
     if (directAudioBindingSource_) {
         ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
         if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
-            if (snapshot.generation != lastDirectAudioGeneration_) {
+            // Re-evaluate on a generation bump OR when the IOUserAudioDevice pointer
+            // itself transitions (e.g. null -> non-null when the provider finally
+            // publishes the device). The latter guards against latching a device-less
+            // binding and never re-arming the clock leg.
+            const bool bindingChanged =
+                snapshot.generation != lastDirectAudioGeneration_ ||
+                snapshot.audioDevice != directInputView_.audioDevice;
+            if (bindingChanged) {
                 if (snapshot.valid && snapshot.HasInput()) {
                     ASFW_LOG(Isoch,
                              "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx inBase=%p inFrames=%u inCh=%u outBase=%p outFrames=%u outCh=%u control=%p audioDevice=%p rate=%u",
@@ -188,8 +195,20 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
                     directInputView_.audioDevice = snapshot.audioDevice;
 
+                    // Data plane (RX -> input buffer) and the controller-side clock
+                    // publisher both arm. When AudioDriverKit owns the IOUserAudioDevice
+                    // in another process, the clock publisher writes the shared timeline;
+                    // the ADK side mirrors that timeline to UpdateCurrentZeroTimestamp.
                     directInputWriter_.Bind(&directInputView_);
                     clockPublisher_.Bind(&directInputView_);
+                    if (snapshot.audioDevice == nullptr) {
+                        ASFW_LOG(Isoch,
+                                 "IR: direct audio binding has NULL audioDevice (gen %llu); publishing clock to shared control block for ADK-side HAL mirror. control=%p inBase=%p rate=%u",
+                                 snapshot.generation,
+                                 static_cast<void*>(snapshot.control),
+                                 static_cast<void*>(snapshot.inputBase),
+                                 snapshot.sampleRateHz);
+                    }
                 } else {
                     ASFW_LOG(Isoch,
                              "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming valid=%d hasIn=%d control=%p audioDevice=%p rate=%u",

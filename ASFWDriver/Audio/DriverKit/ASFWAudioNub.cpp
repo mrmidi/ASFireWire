@@ -231,7 +231,8 @@ static kern_return_t CreateMappedDirectBuffer(uint64_t bytes,
     return kIOReturnSuccess;
 }
 
-static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub_IVars* iv) noexcept {
+static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub* self,
+                                                       ASFWAudioNub_IVars* iv) noexcept {
     if (!iv || !iv->bindingLock || !iv->directOutputMap || !iv->directInputMap ||
         !iv->directControlMap) {
         return;
@@ -256,18 +257,27 @@ static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub_IVars* iv) no
     iv->directInputBytes = inputBytes;
     iv->directInputFrames = iv->directInputCapacityFrames;
     iv->directInputChannels = iv->inputChannelCount;
-    // Memory metadata is usable by ASFWAudioDriver immediately, but the isoch
-    // binding must wait until the provider publishes the IOUserAudioDevice.
+    // Memory metadata is usable by the ASFWDriver-side isoch path immediately. The
+    // IOUserAudioDevice lives in the AudioDriverKit service process, so the hardware
+    // side must not require that process-local pointer before accepting the shared
+    // buffers/control block.
     iv->directControl = control;
     iv->directSampleRateHz = iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000;
-    iv->directAudioDevice = nullptr;
-    iv->directProviderBindingPublished = false;
+    iv->directProviderBindingPublished =
+        (iv->directControl != nullptr && iv->directSampleRateHz != 0 &&
+         iv->directOutputBase != nullptr && iv->directOutputFrames != 0 &&
+         iv->directOutputChannels != 0 && iv->directInputBase != nullptr &&
+         iv->directInputFrames != 0 && iv->directInputChannels != 0);
+    iv->directFromMemCalls++;
     iv->directGeneration++;
     const auto generation = iv->directGeneration;
+    auto* const preservedAudioDevice = iv->directAudioDevice;
+    const bool providerPublished = iv->directProviderBindingPublished;
     IOLockUnlock(iv->bindingLock);
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND local_memory_ready gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u audioDevice=null provider=0",
+             "ADK DBG BIND local_memory_ready nub=%p gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u audioDevice=%p provider=%d",
+             static_cast<void*>(self),
              generation,
              static_cast<const void*>(outputBase),
              outputBytes,
@@ -278,7 +288,9 @@ static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub_IVars* iv) no
              iv->directInputCapacityFrames,
              iv->inputChannelCount,
              static_cast<void*>(control),
-             iv->directSampleRateHz);
+             iv->directSampleRateHz,
+             static_cast<void*>(preservedAudioDevice),
+             providerPublished);
 }
 
 static kern_return_t EnsureDirectAudioMemory(ASFWAudioNub* self, ASFWAudioNub_IVars* iv) noexcept {
@@ -375,7 +387,7 @@ static kern_return_t EnsureDirectAudioMemory(ASFWAudioNub* self, ASFWAudioNub_IV
     new (control) ASFW::Audio::Runtime::AudioTransportControlBlock();
     control->ResetForStart();
 
-    PublishDirectAudioBindingFromMappedMemory(iv);
+    PublishDirectAudioBindingFromMappedMemory(self, iv);
     return kIOReturnSuccess;
 }
 
@@ -719,7 +731,11 @@ void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
     ivars->directSampleRateHz = sampleRateHz;
     ivars->directAudioDevice = audioDevice;
     ivars->directProviderBindingPublished =
-        (control != nullptr && sampleRateHz != 0 && audioDevice != nullptr);
+        (control != nullptr && sampleRateHz != 0 &&
+         outputBase != nullptr && outputFrames != 0 && outputChannels != 0 &&
+         inputBase != nullptr && inputFrames != 0 && inputChannels != 0);
+    ivars->directSetCalls++;
+    ivars->directLastSetAudioDevice = audioDevice;
     ivars->directGeneration++;
     IOLockUnlock(ivars->bindingLock);
 
@@ -729,7 +745,8 @@ void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
              static_cast<void*>(inputBase), inputFrames, inputChannels,
              static_cast<const void*>(control), sampleRateHz, static_cast<void*>(audioDevice), ivars->directGeneration);
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND set outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u dev=%p provider=%d gen=%llu",
+             "ADK DBG BIND set nub=%p outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u dev=%p provider=%d gen=%llu",
+             static_cast<void*>(this),
              static_cast<const void*>(outputBase),
              outputBytes,
              outputFrames,
@@ -764,6 +781,7 @@ void ASFWAudioNub::ClearDirectAudioBinding()
     ivars->directSampleRateHz = 0;
     ivars->directAudioDevice = nullptr;
     ivars->directProviderBindingPublished = false;
+    ivars->directClearCalls++;
     ivars->directGeneration++;
     IOLockUnlock(ivars->bindingLock);
 
@@ -793,7 +811,7 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
     }
     IOLockLock(ivars->bindingLock);
     if (!ivars->directProviderBindingPublished || !ivars->directControl ||
-        ivars->directSampleRateHz == 0 || !ivars->directAudioDevice) {
+        ivars->directSampleRateHz == 0) {
         const auto gen = ivars->directGeneration;
         const auto control = ivars->directControl;
         const auto rate = ivars->directSampleRateHz;
@@ -802,9 +820,14 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
         const auto outBase = ivars->directOutputBase;
         const auto outFrames = ivars->directOutputFrames;
         const auto outChannels = ivars->directOutputChannels;
+        const auto setCalls = ivars->directSetCalls;
+        const auto fromMemCalls = ivars->directFromMemCalls;
+        const auto clearCalls = ivars->directClearCalls;
+        const auto lastSetDev = ivars->directLastSetAudioDevice;
         IOLockUnlock(ivars->bindingLock);
-        ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready_or_null_device", 1000, OS_LOG_TYPE_DEFAULT,
-                    "ADK FATAL BIND get refused not_ready gen=%llu provider=%d control=%p rate=%u audioDevice=%p outBase=%p outFrames=%u outCh=%u",
+        ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready", 1000, OS_LOG_TYPE_DEFAULT,
+                    "ADK DBG BIND get refused not_ready nub=%p gen=%llu provider=%d control=%p rate=%u audioDevice=%p outBase=%p outFrames=%u outCh=%u setCalls=%u fromMem=%u clears=%u lastSetDev=%p",
+                    static_cast<const void*>(this),
                     gen,
                     provider,
                     static_cast<void*>(control),
@@ -812,7 +835,11 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
                     static_cast<void*>(audioDevice),
                     static_cast<const void*>(outBase),
                     outFrames,
-                    outChannels);
+                    outChannels,
+                    setCalls,
+                    fromMemCalls,
+                    clearCalls,
+                    static_cast<void*>(lastSetDev));
         return false;
     }
 
@@ -828,7 +855,33 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
     if (outSampleRateHz) { *outSampleRateHz = ivars->directSampleRateHz; }
     if (outAudioDevice) { *outAudioDevice = ivars->directAudioDevice; }
     if (outGeneration) { *outGeneration = ivars->directGeneration; }
+
+    // Triangulation + half-published guard. This is the exact binding the isoch RX/IT
+    // path consumes, so logging THIS nub's identity + sticky counters lets one capture
+    // line up against FromMappedMemory's nub=%p and SetDirectAudioBinding's nub=%p.
+    // If we hand back a "published" binding whose audioDevice is null, the clock leg is
+    // dead by construction (UpdateCurrentZeroTimestamp can never fire). Bail loudly:
+    // setCalls==0 means SetDirectAudioBinding NEVER reached this nub (identity split);
+    // setCalls>0 with a null device means it reached us then got reverted.
+    const auto gen = ivars->directGeneration;
+    const auto audioDevice = ivars->directAudioDevice;
+    const auto setCalls = ivars->directSetCalls;
+    const auto fromMemCalls = ivars->directFromMemCalls;
+    const auto lastSetDev = ivars->directLastSetAudioDevice;
     IOLockUnlock(ivars->bindingLock);
+
+    if (!audioDevice) {
+        ASFW_LOG_RL(DirectAudio, "adk_bind/published_null_device", 1000, OS_LOG_TYPE_DEFAULT,
+                    "ADK DBG BIND get published_binding_NULL_audioDevice nub=%p gen=%llu setCalls=%u fromMem=%u lastSetDev=%p -- using shared ZTS mirror; SetDirectAudioBinding %{public}s reached THIS nub",
+                    static_cast<const void*>(this), gen, setCalls, fromMemCalls,
+                    static_cast<void*>(lastSetDev),
+                    (setCalls == 0) ? "NEVER" : "DID-but-reverted");
+    } else {
+        ASFW_LOG_RL(DirectAudio, "adk_bind/ok", 5000, OS_LOG_TYPE_DEFAULT,
+                    "ADK DBG BIND get ok nub=%p gen=%llu audioDevice=%p setCalls=%u fromMem=%u lastSetDev=%p",
+                    static_cast<const void*>(this), gen, static_cast<void*>(audioDevice),
+                    setCalls, fromMemCalls, static_cast<void*>(lastSetDev));
+    }
     return true;
 }
 
