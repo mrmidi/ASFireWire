@@ -1,6 +1,7 @@
 #include "IsochReceiveContext.hpp"
 #include "../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 
+#include "../../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../../Common/DriverKitUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"
@@ -117,6 +118,9 @@ kern_return_t IsochReceiveContext::Start() {
     rxRing_.ResetForStart();
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
+    rxZtsPublishCount_ = 0;
+    (void)ASFW::Timing::initializeHostTimebase();
+    rxCycleHostTicks_ = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
 
     rxLock_.clear(std::memory_order_release);
     return kIOReturnSuccess;
@@ -157,8 +161,19 @@ uint32_t IsochReceiveContext::Poll() {
         if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
             if (snapshot.generation != lastDirectAudioGeneration_) {
                 if (snapshot.valid && snapshot.HasInput()) {
-                    ASFW_LOG(Isoch, "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx.",
-                             lastDirectAudioGeneration_, snapshot.generation);
+                    ASFW_LOG(Isoch,
+                             "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx inBase=%p inFrames=%u inCh=%u outBase=%p outFrames=%u outCh=%u control=%p audioDevice=%p rate=%u",
+                             lastDirectAudioGeneration_,
+                             snapshot.generation,
+                             static_cast<void*>(snapshot.inputBase),
+                             snapshot.inputFrames,
+                             snapshot.inputChannels,
+                             static_cast<const void*>(snapshot.outputBase),
+                             snapshot.outputFrames,
+                             snapshot.outputChannels,
+                             static_cast<void*>(snapshot.control),
+                             static_cast<void*>(snapshot.audioDevice),
+                             snapshot.sampleRateHz);
 
                     directInputView_.guid = 0;
                     directInputView_.sampleRateHz = snapshot.sampleRateHz;
@@ -176,8 +191,15 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputWriter_.Bind(&directInputView_);
                     clockPublisher_.Bind(&directInputView_);
                 } else {
-                    ASFW_LOG(Isoch, "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming.",
-                             lastDirectAudioGeneration_, snapshot.generation);
+                    ASFW_LOG(Isoch,
+                             "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming valid=%d hasIn=%d control=%p audioDevice=%p rate=%u",
+                             lastDirectAudioGeneration_,
+                             snapshot.generation,
+                             snapshot.valid,
+                             snapshot.HasInput(),
+                             static_cast<void*>(snapshot.control),
+                             static_cast<void*>(snapshot.audioDevice),
+                             snapshot.sampleRateHz);
                     directInputWriter_.Unbind();
                     clockPublisher_.Unbind();
                 }
@@ -193,7 +215,14 @@ uint32_t IsochReceiveContext::Poll() {
         }
     }
 
-    const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [this](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
+    const uint64_t drainHostTicks = mach_absolute_time();
+    uint64_t cycleHostTicks = rxCycleHostTicks_;
+    if (cycleHostTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
+        cycleHostTicks = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
+        rxCycleHostTicks_ = cycleHostTicks;
+    }
+
+    const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [this, drainHostTicks, cycleHostTicks](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         if (pkt.payload) {
             const uint32_t channels = directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
@@ -212,18 +241,17 @@ uint32_t IsochReceiveContext::Poll() {
                     cursorInitialized_ = true;
                 }
 
-                if (result.hasValidCip && result.syt != 0xFFFF && clockPublisher_.IsBound()) {
-                    const uint64_t ticks = mach_absolute_time();
-                    const uint32_t hostNanosPerSampleQ8 = static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
-                    clockPublisher_.Publish(absoluteFrameCursor_, ticks, hostNanosPerSampleQ8);
-                }
-
+                const uint8_t packetInGroup = static_cast<uint8_t>(pkt.descriptorIndex & 0x07u);
+                const uint64_t packetBackTicks =
+                    cycleHostTicks * static_cast<uint64_t>(7u - packetInGroup);
+                const uint64_t packetHostTicks =
+                    (drainHostTicks > packetBackTicks) ? (drainHostTicks - packetBackTicks) : drainHostTicks;
+                bool rxClockEstablished = false;
                 if (externalSyncBridge_ && result.hasValidCip) {
                     uint32_t updateSeq = 0;
-                    const uint64_t nowTicks = mach_absolute_time();
                     const bool establishTransition = externalSyncClockState_.ObserveSample(
                         *externalSyncBridge_,
-                        nowTicks,
+                        packetHostTicks,
                         result.syt,
                         result.fdf,
                         result.dbs,
@@ -235,9 +263,48 @@ uint32_t IsochReceiveContext::Poll() {
                         externalSyncBridge_->clockEstablished.store(true, std::memory_order_release);
                         externalSyncBridge_->startupQualified.store(true, std::memory_order_release);
                     }
+                    rxClockEstablished =
+                        externalSyncBridge_->clockEstablished.load(std::memory_order_acquire);
                 }
 
-                absoluteFrameCursor_ += result.framesDecoded;
+                const uint64_t nextFrameCursor = absoluteFrameCursor_ + result.framesDecoded;
+                if (result.hasValidCip &&
+                    result.syt != Core::ExternalSyncBridge::kNoInfoSyt &&
+                    result.framesDecoded > 0 &&
+                    directInputView_.sampleRateHz != 0 &&
+                    clockPublisher_.IsBound() &&
+                    rxClockEstablished) {
+                    constexpr uint32_t kZtsPeriodFrames = Config::kAudioIoPeriodFrames;
+                    const uint64_t currentPeriod = absoluteFrameCursor_ / kZtsPeriodFrames;
+                    const uint64_t nextPeriod = nextFrameCursor / kZtsPeriodFrames;
+                    if (nextPeriod != currentPeriod) {
+                        const uint64_t publishFrame = nextPeriod * kZtsPeriodFrames;
+                        const uint32_t hostNanosPerSampleQ8 =
+                            static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
+                        clockPublisher_.Publish(publishFrame, packetHostTicks, hostNanosPerSampleQ8);
+                        if (externalSyncBridge_) {
+                            externalSyncBridge_->PublishTransportTiming(publishFrame,
+                                                                        packetHostTicks,
+                                                                        hostNanosPerSampleQ8);
+                        }
+
+                        ++rxZtsPublishCount_;
+                        if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 1024) == 0) {
+                            ASFW_LOG(Isoch,
+                                     "ZTS publish source=rx count=%llu frame=%llu host=%llu syt=0x%04x desc=%u packetInGroup=%u clockEstablished=%d bound=%d",
+                                     rxZtsPublishCount_,
+                                     publishFrame,
+                                     packetHostTicks,
+                                     result.syt,
+                                     pkt.descriptorIndex,
+                                     packetInGroup,
+                                     rxClockEstablished,
+                                     clockPublisher_.IsBound());
+                        }
+                    }
+                }
+
+                absoluteFrameCursor_ = nextFrameCursor;
             }
         }
 

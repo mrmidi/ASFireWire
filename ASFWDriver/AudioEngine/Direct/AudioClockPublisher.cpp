@@ -13,11 +13,11 @@ void AudioClockPublisher::Publish(uint64_t sampleFrame,
     }
 
     binding_->control->device.Publish(sampleFrame, hostTicks, hostNanosPerSampleQ8);
-    binding_->control->counters.CountZtsPublished();
+    binding_->control->counters.CountRxZtsPublished();
     // Hot-path RX clock diagnostic, disabled for audio stability.
     // const uint64_t count =
-    //     binding_->control->counters.ztsPublished.load(std::memory_order_relaxed);
-    // if (count == 1 || (count % 1000) == 0) {
+    //     binding_->control->counters.ztsRxPublished.load(std::memory_order_relaxed);
+    // if (count <= 8 || (count % 1024) == 0) {
     //     ASFW_LOG(DirectAudio,
     //              "ZTS publish source=rx count=%llu sample=%llu host=%llu nsPerSampleQ8=%u",
     //              count,
@@ -26,7 +26,10 @@ void AudioClockPublisher::Publish(uint64_t sampleFrame,
     //              hostNanosPerSampleQ8);
     // }
 
-    binding_->audioDevice->UpdateCurrentZeroTimestamp(sampleFrame, hostTicks);
+    if (binding_->audioDevice) {
+        binding_->audioDevice->UpdateCurrentZeroTimestamp(sampleFrame, hostTicks);
+        binding_->control->counters.CountRxAdkZtsPublished();
+    }
 }
 
 } // namespace ASFW::AudioEngine::Direct

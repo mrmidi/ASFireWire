@@ -20,7 +20,6 @@ public:
 
     [[nodiscard]] bool IsBound() const noexcept {
         return binding_ != nullptr &&
-               binding_->audioDevice != nullptr &&
                binding_->control != nullptr;
     }
 
