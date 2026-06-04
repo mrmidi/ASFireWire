@@ -89,6 +89,8 @@ void IsochTxDmaRing::ResyncCycleTracking(const uint32_t hwPacketIndex,
     }
 
     const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
+    out.completedPacketIndex = lastProcessedPkt;
+    out.completedPacketCount = deltaConsumed;
     auto* processedOL = slab_.GetDescriptorPtr(lastProcessedPkt * Layout::kBlocksPerPacket + 2);
     const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
     out.hwTimestamp = hwTimestamp;
@@ -241,7 +243,9 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
         auto* lastDesc = slab_.GetDescriptorPtr(descBase + 2);
 
         const uint16_t lastReqCount = static_cast<uint16_t>(pkt.sizeBytes);
-        const uint8_t intBits = ((pktIdx % 8) == 7) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever;
+        const uint8_t intBits = ((pktIdx % Layout::kTimingGroupPackets) == (Layout::kTimingGroupPackets - 1))
+            ? OHCIDescriptor::kIntAlways
+            : OHCIDescriptor::kIntNever;
 
         const uint32_t lastControl =
             (0x1u << 28) |
@@ -326,6 +330,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
     // Phase 2: keep ring full with silent/cadence-correct packets
     const uint32_t toFill = (ringPacketsAhead_ < Layout::kMaxWriteAhead)
         ? (Layout::kMaxWriteAhead - ringPacketsAhead_) : 0;
+    out.firstRefillPacket = softwareFillIndex_;
+    out.refillPacketCount = toFill;
 
     if (toFill > 0) {
         counters_.refills.fetch_add(1, std::memory_order_relaxed);
@@ -339,6 +345,18 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
 
         CommitRefill(toFill);
     }
+
+    out.eventGroup = Core::IsochEventGroup{
+        .direction = Core::IsochEventDirection::kTransmit,
+        .hostTicks = 0,
+        .hwPacketIndex = hwPacketIndex,
+        .completedPacketIndex = out.completedPacketIndex,
+        .completedPacketCount = out.completedPacketCount,
+        .firstRefillPacket = out.firstRefillPacket,
+        .refillPacketCount = out.refillPacketCount,
+        .outputLastTimestamp = out.hwTimestamp,
+        .sampleFrame = 0,
+    };
 
     // Phase 3: near-HW audio injection
     if (injector) {

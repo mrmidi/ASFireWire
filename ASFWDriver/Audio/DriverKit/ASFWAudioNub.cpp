@@ -162,6 +162,7 @@ static void ReleaseDirectAudioMemory(ASFWAudioNub_IVars* iv) noexcept {
         iv->directControl = nullptr;
         iv->directSampleRateHz = 0;
         iv->directAudioDevice = nullptr;
+        iv->directProviderBindingPublished = false;
         iv->directGeneration++;
         const auto generation = iv->directGeneration;
         IOLockUnlock(iv->bindingLock);
@@ -255,15 +256,18 @@ static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub_IVars* iv) no
     iv->directInputBytes = inputBytes;
     iv->directInputFrames = iv->directInputCapacityFrames;
     iv->directInputChannels = iv->inputChannelCount;
+    // Memory metadata is usable by ASFWAudioDriver immediately, but the isoch
+    // binding must wait until the provider publishes the IOUserAudioDevice.
     iv->directControl = control;
     iv->directSampleRateHz = iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000;
     iv->directAudioDevice = nullptr;
+    iv->directProviderBindingPublished = false;
     iv->directGeneration++;
     const auto generation = iv->directGeneration;
     IOLockUnlock(iv->bindingLock);
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND local_publish gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u",
+             "ADK DBG BIND local_memory_ready gen=%llu outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u audioDevice=null provider=0",
              generation,
              static_cast<const void*>(outputBase),
              outputBytes,
@@ -274,7 +278,7 @@ static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub_IVars* iv) no
              iv->directInputCapacityFrames,
              iv->inputChannelCount,
              static_cast<void*>(control),
-             iv->currentSampleRateHz ? iv->currentSampleRateHz : 48000);
+             iv->directSampleRateHz);
 }
 
 static kern_return_t EnsureDirectAudioMemory(ASFWAudioNub* self, ASFWAudioNub_IVars* iv) noexcept {
@@ -466,6 +470,8 @@ bool ASFWAudioNub::init()
     ivars->directInputChannels = 0;
     ivars->directControl = nullptr;
     ivars->directSampleRateHz = 0;
+    ivars->directAudioDevice = nullptr;
+    ivars->directProviderBindingPublished = false;
     ivars->directBindingSource = nullptr;
     ivars->directOutputMemory = nullptr;
     ivars->directInputMemory = nullptr;
@@ -712,6 +718,8 @@ void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
     ivars->directControl = control;
     ivars->directSampleRateHz = sampleRateHz;
     ivars->directAudioDevice = audioDevice;
+    ivars->directProviderBindingPublished =
+        (control != nullptr && sampleRateHz != 0 && audioDevice != nullptr);
     ivars->directGeneration++;
     IOLockUnlock(ivars->bindingLock);
 
@@ -721,7 +729,7 @@ void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
              static_cast<void*>(inputBase), inputFrames, inputChannels,
              static_cast<const void*>(control), sampleRateHz, static_cast<void*>(audioDevice), ivars->directGeneration);
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND set outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u dev=%p gen=%llu",
+             "ADK DBG BIND set outBase=%p outBytes=%llu outFrames=%u outCh=%u inBase=%p inBytes=%llu inFrames=%u inCh=%u control=%p rate=%u dev=%p provider=%d gen=%llu",
              static_cast<const void*>(outputBase),
              outputBytes,
              outputFrames,
@@ -733,6 +741,7 @@ void ASFWAudioNub::SetDirectAudioBinding(const int32_t* outputBase,
              static_cast<void*>(control),
              sampleRateHz,
              static_cast<void*>(audioDevice),
+             ivars->directProviderBindingPublished,
              ivars->directGeneration);
 }
 
@@ -754,6 +763,7 @@ void ASFWAudioNub::ClearDirectAudioBinding()
     ivars->directControl = nullptr;
     ivars->directSampleRateHz = 0;
     ivars->directAudioDevice = nullptr;
+    ivars->directProviderBindingPublished = false;
     ivars->directGeneration++;
     IOLockUnlock(ivars->bindingLock);
 
@@ -782,23 +792,27 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
         return false;
     }
     IOLockLock(ivars->bindingLock);
-    if (!ivars->directControl || ivars->directSampleRateHz == 0) {
-        // Hot-path binding diagnostic, disabled for audio stability.
-        // const auto gen = ivars->directGeneration;
-        // const auto control = ivars->directControl;
-        // const auto rate = ivars->directSampleRateHz;
-        // const auto outBase = ivars->directOutputBase;
-        // const auto outFrames = ivars->directOutputFrames;
-        // const auto outChannels = ivars->directOutputChannels;
+    if (!ivars->directProviderBindingPublished || !ivars->directControl ||
+        ivars->directSampleRateHz == 0 || !ivars->directAudioDevice) {
+        const auto gen = ivars->directGeneration;
+        const auto control = ivars->directControl;
+        const auto rate = ivars->directSampleRateHz;
+        const auto audioDevice = ivars->directAudioDevice;
+        const auto provider = ivars->directProviderBindingPublished;
+        const auto outBase = ivars->directOutputBase;
+        const auto outFrames = ivars->directOutputFrames;
+        const auto outChannels = ivars->directOutputChannels;
         IOLockUnlock(ivars->bindingLock);
-        // ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready", 5000, OS_LOG_TYPE_DEFAULT,
-        //             "ADK DBG BIND get failed not_ready gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u",
-        //             gen,
-        //             static_cast<void*>(control),
-        //             rate,
-        //             static_cast<const void*>(outBase),
-        //             outFrames,
-        //             outChannels);
+        ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready_or_null_device", 1000, OS_LOG_TYPE_DEFAULT,
+                    "ADK FATAL BIND get refused not_ready gen=%llu provider=%d control=%p rate=%u audioDevice=%p outBase=%p outFrames=%u outCh=%u",
+                    gen,
+                    provider,
+                    static_cast<void*>(control),
+                    rate,
+                    static_cast<void*>(audioDevice),
+                    static_cast<const void*>(outBase),
+                    outFrames,
+                    outChannels);
         return false;
     }
 

@@ -241,9 +241,11 @@ uint32_t IsochReceiveContext::Poll() {
                     cursorInitialized_ = true;
                 }
 
-                const uint8_t packetInGroup = static_cast<uint8_t>(pkt.descriptorIndex & 0x07u);
+                constexpr uint32_t kRxTimingGroupPackets = 12;
+                const uint8_t packetInGroup =
+                    static_cast<uint8_t>(pkt.descriptorIndex % kRxTimingGroupPackets);
                 const uint64_t packetBackTicks =
-                    cycleHostTicks * static_cast<uint64_t>(7u - packetInGroup);
+                    cycleHostTicks * static_cast<uint64_t>((kRxTimingGroupPackets - 1u) - packetInGroup);
                 const uint64_t packetHostTicks =
                     (drainHostTicks > packetBackTicks) ? (drainHostTicks - packetBackTicks) : drainHostTicks;
                 bool rxClockEstablished = false;
@@ -274,33 +276,27 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.sampleRateHz != 0 &&
                     clockPublisher_.IsBound() &&
                     rxClockEstablished) {
-                    constexpr uint32_t kZtsPeriodFrames = Config::kAudioIoPeriodFrames;
-                    const uint64_t currentPeriod = absoluteFrameCursor_ / kZtsPeriodFrames;
-                    const uint64_t nextPeriod = nextFrameCursor / kZtsPeriodFrames;
-                    if (nextPeriod != currentPeriod) {
-                        const uint64_t publishFrame = nextPeriod * kZtsPeriodFrames;
-                        const uint32_t hostNanosPerSampleQ8 =
-                            static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
-                        clockPublisher_.Publish(publishFrame, packetHostTicks, hostNanosPerSampleQ8);
-                        if (externalSyncBridge_) {
-                            externalSyncBridge_->PublishTransportTiming(publishFrame,
-                                                                        packetHostTicks,
-                                                                        hostNanosPerSampleQ8);
-                        }
+                    const uint32_t hostNanosPerSampleQ8 =
+                        static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
+                    clockPublisher_.Publish(nextFrameCursor, packetHostTicks, hostNanosPerSampleQ8);
+                    if (externalSyncBridge_) {
+                        externalSyncBridge_->PublishTransportTiming(nextFrameCursor,
+                                                                    packetHostTicks,
+                                                                    hostNanosPerSampleQ8);
+                    }
 
-                        ++rxZtsPublishCount_;
-                        if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 1024) == 0) {
-                            ASFW_LOG(Isoch,
-                                     "ZTS publish source=rx count=%llu frame=%llu host=%llu syt=0x%04x desc=%u packetInGroup=%u clockEstablished=%d bound=%d",
-                                     rxZtsPublishCount_,
-                                     publishFrame,
-                                     packetHostTicks,
-                                     result.syt,
-                                     pkt.descriptorIndex,
-                                     packetInGroup,
-                                     rxClockEstablished,
-                                     clockPublisher_.IsBound());
-                        }
+                    ++rxZtsPublishCount_;
+                    if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 1024) == 0) {
+                        ASFW_LOG(Isoch,
+                                 "ZTS publish source=rx count=%llu frame=%llu host=%llu syt=0x%04x desc=%u packetInGroup=%u clockEstablished=%d bound=%d",
+                                 rxZtsPublishCount_,
+                                 nextFrameCursor,
+                                 packetHostTicks,
+                                 result.syt,
+                                 pkt.descriptorIndex,
+                                 packetInGroup,
+                                 rxClockEstablished,
+                                 clockPublisher_.IsBound());
                     }
                 }
 

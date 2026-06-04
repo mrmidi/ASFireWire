@@ -88,13 +88,7 @@ struct AudioDriverSharedMemoryState {
 // Runtime layout is intentionally organized around hot-path state ownership, not field packing.
 // NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
 struct AudioDriverRuntimeState {
-    OSSharedPtr<IOTimerDispatchSource> timestampTimer;
-    OSSharedPtr<OSAction> timestampTimerAction;
     uint64_t hostTicksPerBuffer{0};
-    uint64_t ztsPeriodTicks{0};
-    std::atomic<uint64_t> ztsBaseHostTicks{0};
-    std::atomic<uint64_t> ztsBaseSampleFrame{0};
-    std::atomic<uint64_t> ztsTimerPublishes{0};
     std::atomic<bool> isRunning{false};
 
     uint64_t metricsLogCounter{0};
@@ -108,45 +102,6 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
 };
-
-namespace {
-
-constexpr uint64_t kNanosPerSecond = 1'000'000'000ULL;
-constexpr uint64_t kZtsTimerLeewayTicks = 0;
-
-[[nodiscard]] uint64_t AudioPeriodNanos(uint32_t frames, uint32_t sampleRateHz) noexcept {
-    if (frames == 0 || sampleRateHz == 0) {
-        return 0;
-    }
-    return (static_cast<uint64_t>(frames) * kNanosPerSecond) / sampleRateHz;
-}
-
-[[nodiscard]] uint64_t AudioFramesForElapsedTicks(uint64_t elapsedTicks,
-                                                  uint32_t sampleRateHz) noexcept {
-    if (elapsedTicks == 0 || sampleRateHz == 0) {
-        return 0;
-    }
-    const uint64_t elapsedNanos = ASFW::Timing::hostTicksToNanos(elapsedTicks);
-    return (elapsedNanos * static_cast<uint64_t>(sampleRateHz)) / kNanosPerSecond;
-}
-
-void StopZtsTimer(AudioDriverRuntimeState& runtime) noexcept {
-    runtime.isRunning.store(false, std::memory_order_release);
-    if (runtime.timestampTimer) {
-        (void)runtime.timestampTimer->SetEnable(false);
-    }
-}
-
-void ScheduleNextZtsTimer(AudioDriverRuntimeState& runtime, uint64_t nowTicks) noexcept {
-    if (!runtime.timestampTimer || runtime.ztsPeriodTicks == 0) {
-        return;
-    }
-    (void)runtime.timestampTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
-                                             nowTicks + runtime.ztsPeriodTicks,
-                                             kZtsTimerLeewayTicks);
-}
-
-} // namespace
 
 struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> workQueue;
@@ -246,6 +201,12 @@ namespace {
 }
 
 [[nodiscard]] bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
+    if (!ivars.audioDevice) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL BIND skeleton failed null_audioDevice guid=0x%016llx",
+                 ivars.device.guid);
+        return false;
+    }
     if (!ivars.inputMap || !ivars.outputMap || !ivars.controlMap) {
         ASFW_LOG(DirectAudio,
                  "ADK DBG BIND skeleton failed missing_maps inMap=%p outMap=%p controlMap=%p",
@@ -299,7 +260,7 @@ namespace {
     ivars.runtime.directAudioDebugLog.Reset();
     ivars.runtime.directAudioSkeletonBound.store(bound, std::memory_order_release);
     ASFW_LOG(DirectAudio,
-             "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p rate=%u",
+             "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
              bound ? "bound" : "inactive",
              static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
              ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
@@ -308,6 +269,7 @@ namespace {
              ivars.runtime.directAudioGraph.memory.inputFrameCapacity,
              ivars.runtime.directAudioGraph.memory.inputChannels,
              static_cast<void*>(ivars.runtime.directAudioGraph.control),
+             static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
              ivars.runtime.directAudioGraph.sampleRateHz);
     return bound;
 }
@@ -316,13 +278,27 @@ void PublishDirectAudioBindingToNub(ASFWAudioDriver_IVars& ivars) noexcept {
     auto* nub = ivars.device.audioNub;
     const auto& graph = ivars.runtime.directAudioGraph;
     const bool validDuplex = graph.IsValid() && graph.HasInput() && graph.HasOutput();
+    if (!graph.audioDevice) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL BIND provider_publish refused null_audioDevice guid=0x%016llx skeleton=%d control=%p hasIn=%d hasOut=%d",
+                 ivars.device.guid,
+                 ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
+                 static_cast<void*>(graph.control),
+                 graph.HasInput(),
+                 graph.HasOutput());
+        return;
+    }
     if (!nub || !ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire) ||
         !validDuplex) {
         ASFW_LOG(DirectAudio,
-                 "ADK DBG BIND provider_publish skipped nub=%p skeleton=%d valid=%d",
+                 "ADK FATAL BIND provider_publish skipped nub=%p skeleton=%d valid=%d audioDevice=%p control=%p hasIn=%d hasOut=%d",
                  static_cast<void*>(nub),
                  ivars.runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
-                 validDuplex);
+                 validDuplex,
+                 static_cast<void*>(graph.audioDevice),
+                 static_cast<void*>(graph.control),
+                 graph.HasInput(),
+                 graph.HasOutput());
         return;
     }
 
@@ -375,13 +351,13 @@ bool ASFWAudioDriver::init()
         ASFW_LOG(Audio, "ASFWAudioDriver: super::init() failed");
         return false;
     }
-    
+
     ivars = IONewZero(ASFWAudioDriver_IVars, 1);
     if (!ivars) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to allocate ivars");
         return false;
     }
-    
+
     ASFW::Isoch::Audio::ParsedAudioDriverConfig defaultConfig{};
     ASFW::Isoch::Audio::InitializeAudioDriverConfigDefaults(defaultConfig);
 
@@ -424,13 +400,6 @@ void ASFWAudioDriver::free()
     ASFW_LOG(Audio, "ASFWAudioDriver: free()");
 
     if (ivars) {
-        // Clean up timer resources first
-        if (ivars->runtime.timestampTimer) {
-            StopZtsTimer(ivars->runtime);
-            ivars->runtime.timestampTimer.reset();
-        }
-        ivars->runtime.timestampTimerAction.reset();
-
         ivars->runtime.directAudioSkeletonBound.store(false, std::memory_order_release);
         ivars->runtime.directAudioEngine.Unbind();
         ivars->runtime.directAudioGraph = {};
@@ -872,7 +841,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
              "ASFWAudioDriver: Direct audio skeleton %{public}s",
              directAudioSkeletonBound ? "bound" : "inactive");
     (void)sharedGeneration;
-    PublishDirectAudioBindingToNub(*ivars);
 
     // Stream-level latency (no additional latency beyond device-level)
     ivars->outputStream->SetLatency(0);
@@ -950,6 +918,8 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to add device: %d", error);
         return error;
     }
+
+    PublishDirectAudioBindingToNub(*ivars);
     
     // Register service
     error = RegisterService();
@@ -957,25 +927,6 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         ASFW_LOG(Audio, "ASFWAudioDriver: RegisterService() failed: %d", error);
         return error;
     }
-    
-    // Create timer for timestamp generation
-    IOTimerDispatchSource* timerSource = nullptr;
-    error = IOTimerDispatchSource::Create(ivars->workQueue.get(), &timerSource);
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create timestamp timer: %d", error);
-        return error;
-    }
-    ivars->runtime.timestampTimer = OSSharedPtr(timerSource, OSNoRetain);
-    
-    // Create timer action (DriverKit generates CreateActionZtsTimerOccurred from .iig)
-    OSAction* timerAction = nullptr;
-    error = CreateActionZtsTimerOccurred(sizeof(void*), &timerAction);
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create timer action: %d", error);
-        return error;
-    }
-    ivars->runtime.timestampTimerAction = OSSharedPtr(timerAction, OSNoRetain);
-    ivars->runtime.timestampTimer->SetHandler(ivars->runtime.timestampTimerAction.get());
     
     ASFW_LOG(Audio,
              "✅ ASFWAudioDriver: Started - device '%{public}s' (in=%u out=%u aggregate=%u)",
@@ -1061,56 +1012,34 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         }
     }
 
-    const uint32_t sampleRateHz = static_cast<uint32_t>(ivars->device.currentSampleRate);
-    const uint64_t periodNanos = AudioPeriodNanos(ASFW::Isoch::Config::kAudioIoPeriodFrames,
-                                                  sampleRateHz);
-    (void)ASFW::Timing::initializeHostTimebase();
-    ivars->runtime.ztsPeriodTicks = ASFW::Timing::nanosToHostTicks(periodNanos);
-    const uint64_t nowTicks = mach_absolute_time();
-    ivars->runtime.ztsBaseHostTicks.store(nowTicks, std::memory_order_release);
-    ivars->runtime.ztsBaseSampleFrame.store(0, std::memory_order_release);
-    ivars->runtime.ztsTimerPublishes.store(0, std::memory_order_release);
-
-    if (ivars->audioDevice) {
-        ivars->audioDevice->UpdateCurrentZeroTimestamp(0, nowTicks);
-    }
-    if (ivars->runtime.directAudioGraph.control) {
-        ivars->runtime.directAudioGraph.control->device.Publish(
-            0,
-            nowTicks,
-            sampleRateHz == 0 ? 0 : static_cast<uint32_t>((kNanosPerSecond << 8) / sampleRateHz));
-        ivars->runtime.directAudioGraph.control->counters.CountTimerZtsPublished();
-    }
-    ASFW_LOG(DirectAudio,
-             "ZTS publish source=timer count=1 sample=0 host=%llu periodTicks=%llu rate=%u",
-             nowTicks,
-             ivars->runtime.ztsPeriodTicks,
-             sampleRateHz);
-    ivars->runtime.ztsTimerPublishes.store(1, std::memory_order_release);
-
-    if (ivars->runtime.timestampTimer && ivars->runtime.ztsPeriodTicks != 0) {
-        const kern_return_t enableKr = ivars->runtime.timestampTimer->SetEnable(true);
-        if (enableKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: ZTS timer enable failed: 0x%x", enableKr);
-        } else {
-            ScheduleNextZtsTimer(ivars->runtime, nowTicks);
-        }
-    } else {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDriver: ZTS timer unavailable timer=%p periodTicks=%llu",
-                 ivars->runtime.timestampTimer.get(),
-                 ivars->runtime.ztsPeriodTicks);
-    }
-
     const auto* control = ivars->runtime.directAudioGraph.control;
+    if (!ivars->runtime.directAudioGraph.audioDevice) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL DUPLEX null_audioDevice_after_start guid=0x%016llx skeleton=%d control=%p hasIn=%d hasOut=%d",
+                 ivars->device.guid,
+                 ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
+                 static_cast<void*>(ivars->runtime.directAudioGraph.control),
+                 ivars->runtime.directAudioGraph.HasInput(),
+                 ivars->runtime.directAudioGraph.HasOutput());
+    }
     ASFW_LOG(DirectAudio,
-             "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d zts=%llu writeEnd=%llu",
+             "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu",
              ivars->device.guid,
              ivars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
              ivars->runtime.directAudioGraph.HasInput(),
              ivars->runtime.directAudioGraph.HasOutput(),
+             static_cast<void*>(ivars->runtime.directAudioGraph.audioDevice),
              control ? control->counters.ztsPublished.load(std::memory_order_relaxed) : 0,
-             control ? control->counters.ioWriteEndCount.load(std::memory_order_relaxed) : 0);
+             control ? control->counters.ztsRxPublished.load(std::memory_order_relaxed) : 0,
+             control ? control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed) : 0,
+             control ? control->counters.ioBeginReadCount.load(std::memory_order_relaxed) : 0,
+             control ? control->counters.ioWriteEndCount.load(std::memory_order_relaxed) : 0,
+             control ? control->client.outputClientWriteEndFrame.load(std::memory_order_acquire) : 0);
+    if (control && control->counters.ioWriteEndCount.load(std::memory_order_relaxed) == 0) {
+        ASFW_LOG(DirectAudio,
+                 "ADK WARN OUTPUT no_write_end_yet guid=0x%016llx start completed but CoreAudio has not written playback PCM",
+                 ivars->device.guid);
+    }
 
     ASFW_LOG(Audio, "ASFWAudioDriver: Device started");
     
@@ -1121,9 +1050,20 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
                                            IOUserAudioStartStopFlags in_flags)
 {
     ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
-    
-    if (ivars) {
-        StopZtsTimer(ivars->runtime);
+    if (ivars && ivars->runtime.directAudioGraph.control) {
+        const auto* control = ivars->runtime.directAudioGraph.control;
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG DUPLEX stopping guid=0x%016llx zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu txPackets=%llu txSilence=%llu txUnderruns=%llu",
+                 ivars->device.guid,
+                 control->counters.ztsPublished.load(std::memory_order_relaxed),
+                 control->counters.ztsRxPublished.load(std::memory_order_relaxed),
+                 control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed),
+                 control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
+                 control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
+                 control->client.outputClientWriteEndFrame.load(std::memory_order_acquire),
+                 control->counters.txPackets.load(std::memory_order_relaxed),
+                 control->counters.txSilenceSubstitutions.load(std::memory_order_relaxed),
+                 control->counters.txUnderruns.load(std::memory_order_relaxed));
     }
 
     if (ivars && ivars->device.audioNub) {
@@ -1163,89 +1103,4 @@ kern_return_t ASFWAudioDriver::ReadProtocolBooleanControl(uint32_t classIdFourCC
         return kIOReturnNotReady;
     }
     return ivars->device.audioNub->GetProtocolBooleanControl(classIdFourCC, element, outValue);
-}
-
-void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, [[maybe_unused]] uint64_t time)
-{
-    if (!ivars || !ivars->runtime.isRunning.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    auto* control = ivars->runtime.directAudioGraph.control;
-    if (control) {
-        const uint64_t rxZtsCount =
-            control->counters.ztsRxPublished.load(std::memory_order_acquire);
-        if (rxZtsCount > 0) {
-            const uint64_t rxAdkCount =
-                control->counters.ztsRxAdkPublished.load(std::memory_order_acquire);
-            const uint64_t rxSample =
-                control->device.sampleFrame.load(std::memory_order_acquire);
-            const uint64_t rxHost =
-                control->device.hostTicks.load(std::memory_order_acquire);
-            if (rxAdkCount > 0) {
-                if (ivars->runtime.timestampTimer) {
-                    (void)ivars->runtime.timestampTimer->SetEnable(false);
-                }
-                ASFW_LOG(DirectAudio,
-                         "ZTS timer demoted source=rx rxCount=%llu rxAdk=%llu timerCount=%llu deviceGen=%llu sample=%llu host=%llu",
-                         rxZtsCount,
-                         rxAdkCount,
-                         control->counters.ztsTimerPublished.load(std::memory_order_relaxed),
-                         control->device.generation.load(std::memory_order_acquire),
-                         rxSample,
-                         rxHost);
-                return;
-            }
-
-            if (ivars->audioDevice && rxHost != 0) {
-                ivars->audioDevice->UpdateCurrentZeroTimestamp(rxSample, rxHost);
-            }
-            const uint64_t bridgeCount =
-                ivars->runtime.ztsTimerPublishes.fetch_add(1, std::memory_order_acq_rel) + 1;
-            if (bridgeCount <= 8 || (bridgeCount % 1024) == 0) {
-                ASFW_LOG(DirectAudio,
-                         "ZTS timer bridge source=rx rxCount=%llu rxAdk=%llu timerCount=%llu sample=%llu host=%llu",
-                         rxZtsCount,
-                         rxAdkCount,
-                         control->counters.ztsTimerPublished.load(std::memory_order_relaxed),
-                         rxSample,
-                         rxHost);
-            }
-            ScheduleNextZtsTimer(ivars->runtime, mach_absolute_time());
-            return;
-        }
-    }
-
-    const uint32_t sampleRateHz = static_cast<uint32_t>(ivars->device.currentSampleRate);
-    const uint64_t nowTicks = mach_absolute_time();
-    const uint64_t baseTicks = ivars->runtime.ztsBaseHostTicks.load(std::memory_order_acquire);
-    const uint64_t baseSample = ivars->runtime.ztsBaseSampleFrame.load(std::memory_order_acquire);
-    const uint64_t elapsedTicks = (nowTicks >= baseTicks) ? (nowTicks - baseTicks) : 0;
-    const uint64_t sampleFrame = baseSample + AudioFramesForElapsedTicks(elapsedTicks, sampleRateHz);
-    const uint32_t hostNanosPerSampleQ8 =
-        sampleRateHz == 0 ? 0 : static_cast<uint32_t>((kNanosPerSecond << 8) / sampleRateHz);
-
-    if (ivars->audioDevice) {
-        ivars->audioDevice->UpdateCurrentZeroTimestamp(sampleFrame, nowTicks);
-    }
-
-    if (control) {
-        control->device.Publish(sampleFrame, nowTicks, hostNanosPerSampleQ8);
-        control->counters.CountTimerZtsPublished();
-    }
-
-    // Hot-path timer diagnostic, disabled for audio stability.
-    // const uint64_t count =
-    //     ivars->runtime.ztsTimerPublishes.fetch_add(1, std::memory_order_acq_rel) + 1;
-    // if (count == 1 || (count % 1000) == 0) {
-    //     ASFW_LOG(DirectAudio,
-    //              "ZTS publish source=timer count=%llu sample=%llu host=%llu periodTicks=%llu rate=%u",
-    //              count,
-    //              sampleFrame,
-    //              nowTicks,
-    //              ivars->runtime.ztsPeriodTicks,
-    //              sampleRateHz);
-    // }
-
-    ScheduleNextZtsTimer(ivars->runtime, nowTicks);
 }

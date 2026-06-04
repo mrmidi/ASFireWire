@@ -67,6 +67,12 @@ constexpr int64_t kEightSecondTicks = int64_t(8) * int64_t(kTicksPerSecond);
 /// 16-cycle SYT field domain: [cycle4:offset12].
 constexpr int64_t kSytFieldDomainTicks = int64_t(16) * int64_t(kTicksPerCycle);
 
+struct CycleTimerFields {
+    uint32_t seconds{0};
+    uint32_t cycle{0};
+    uint32_t offset{0};
+};
+
 /// Collapse a FireWire (seconds, cycles, offset) timestamp to 24.576 MHz ticks.
 [[nodiscard]] inline int64_t tstampToOffsets(uint32_t seconds,
                                              uint32_t cycle,
@@ -99,14 +105,24 @@ constexpr int64_t kSytFieldDomainTicks = int64_t(16) * int64_t(kTicksPerCycle);
     return d;
 }
 
+/// Normalize a 24.576 MHz tick value to the 8-second offset domain.
+[[nodiscard]] inline int64_t normalizeOffsetDomain(int64_t ticks) noexcept {
+    ticks %= kEightSecondTicks;
+    if (ticks < 0) {
+        ticks += kEightSecondTicks;
+    }
+    return ticks;
+}
+
+/// Collapse the 16-bit SYT [cycle4:offset12] field to its 16-cycle tick index.
+[[nodiscard]] inline int64_t sytToFieldTicks(uint16_t syt) noexcept {
+    return int64_t((uint32_t(syt) >> 12) & 0x0Fu) * int64_t(kTicksPerCycle) +
+           int64_t(uint32_t(syt) & 0x0FFFu);
+}
+
 /// Signed delta between consecutive 16-bit SYT values in offset ticks.
 [[nodiscard]] inline int64_t SYTDiffInOffsets(uint16_t sytNew, uint16_t sytOld) noexcept {
-    const auto toIndex = [](uint16_t syt) noexcept -> int64_t {
-        return int64_t((uint32_t(syt) >> 12) & 0x0Fu) * int64_t(kTicksPerCycle) +
-               int64_t(uint32_t(syt) & 0x0FFFu);
-    };
-
-    int64_t d = (toIndex(sytNew) - toIndex(sytOld)) % kSytFieldDomainTicks;
+    int64_t d = (sytToFieldTicks(sytNew) - sytToFieldTicks(sytOld)) % kSytFieldDomainTicks;
     if (d < 0) {
         d += kSytFieldDomainTicks;
     }
@@ -127,20 +143,60 @@ constexpr uint32_t kCycleTimerCyclesMask = 0x01FFF000;   // bits 24:12
 constexpr uint32_t kCycleTimerCyclesShift = 12;
 constexpr uint32_t kCycleTimerOffsetMask = 0x00000FFF;   // bits 11:0
 
+[[nodiscard]] inline CycleTimerFields decodeCycleTimer(uint32_t cycleTimer) noexcept {
+    return CycleTimerFields{
+        .seconds = (cycleTimer & kCycleTimerSecondsMask) >> kCycleTimerSecondsShift,
+        .cycle = (cycleTimer & kCycleTimerCyclesMask) >> kCycleTimerCyclesShift,
+        .offset = cycleTimer & kCycleTimerOffsetMask,
+    };
+}
+
+/// Collapse an already-decoded FireWire cycle timer to the 24.576 MHz offset domain.
+[[nodiscard]] inline int64_t tstampToOffsets(CycleTimerFields timestamp) noexcept {
+    return tstampToOffsets(timestamp.seconds, timestamp.cycle, timestamp.offset);
+}
+
+/// Collapse an encoded OHCI cycle timer value to the 24.576 MHz offset domain.
+[[nodiscard]] inline int64_t encodedTstampToOffsets(uint32_t cycleTimer) noexcept {
+    return tstampToOffsets(decodeCycleTimer(cycleTimer));
+}
+
+/// Reconstruct a full offset-domain presentation timestamp from an encoded OHCI
+/// cycle timer and a 16-bit SYT. This is the full-cycle-timer counterpart to the
+/// cycle-only `extendTstamp()`: it preserves the seconds field and carries across
+/// the 8000-cycle boundary when the SYT's low cycle nibble lands in the next
+/// 16-cycle window.
+[[nodiscard]] inline int64_t extendTstampFromCycleTimer(uint32_t baseCycleTimer,
+                                                        uint16_t syt) noexcept {
+    const CycleTimerFields base = decodeCycleTimer(baseCycleTimer);
+    const uint32_t sytCycle4 = (uint32_t(syt) >> 12) & 0x0Fu;
+    const uint32_t sytOffset = uint32_t(syt) & 0x0FFFu;
+
+    uint32_t seconds = base.seconds;
+    uint32_t cycle = (base.cycle & ~0x0Fu) | sytCycle4;
+    if (cycle < base.cycle) {
+        cycle += 16;
+        if (cycle >= kCyclesPerSecond) {
+            cycle -= kCyclesPerSecond;
+            seconds = (seconds + 1) & 0x7Fu;
+        }
+    }
+
+    return tstampToOffsets(seconds, cycle, sytOffset);
+}
+
 //-----------------------------------------------------------------------------
 // Conversion functions
 //-----------------------------------------------------------------------------
 
 /// Convert 32-bit FireWire cycle timer to nanoseconds
 [[nodiscard]] inline uint64_t encodedFWTimeToNanos(uint32_t cycleTimer) noexcept {
-    uint32_t sec = (cycleTimer & kCycleTimerSecondsMask) >> kCycleTimerSecondsShift;
-    uint32_t cyc = (cycleTimer & kCycleTimerCyclesMask) >> kCycleTimerCyclesShift;
-    uint32_t off = cycleTimer & kCycleTimerOffsetMask;
+    const CycleTimerFields t = decodeCycleTimer(cycleTimer);
     
     // Total time in nanoseconds
-    uint64_t ns = uint64_t(sec) * kNanosPerSecond;
-    ns += uint64_t(cyc) * kNanosPerCycle;
-    ns += (uint64_t(off) * kNanosPerCycle) / kTicksPerCycle;
+    uint64_t ns = uint64_t(t.seconds) * kNanosPerSecond;
+    ns += uint64_t(t.cycle) * kNanosPerCycle;
+    ns += (uint64_t(t.offset) * kNanosPerCycle) / kTicksPerCycle;
     
     return ns;
 }

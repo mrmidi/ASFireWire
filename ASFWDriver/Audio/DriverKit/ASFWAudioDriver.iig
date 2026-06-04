@@ -12,7 +12,6 @@
 #include <Availability.h>
 #include <DriverKit/IOService.iig>
 #include <AudioDriverKit/IOUserAudioDriver.iig>
-#include <DriverKit/IOTimerDispatchSource.iig>
 
 using namespace AudioDriverKit;
 
@@ -41,10 +40,6 @@ public:
     kern_return_t ReadProtocolBooleanControl(uint32_t classIdFourCC,
                                              uint32_t element,
                                              bool* outValue) LOCALONLY;
-    
-    // Timer action for timestamp generation (DriverKit generates CreateActionZtsTimerOccurred)
-    virtual void ZtsTimerOccurred(OSAction* action, uint64_t time)
-        TYPE(IOTimerDispatchSource::TimerOccurred);
 };
 
 #endif /* ASFWAudioDriver_h */
