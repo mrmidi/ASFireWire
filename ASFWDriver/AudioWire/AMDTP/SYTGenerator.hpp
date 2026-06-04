@@ -80,8 +80,22 @@ private:
     /// Wrap point for the 16-cycle SYT domain.
     uint32_t sytTickWrap_{16 * kTicksPerCycle};  // 49152
 
-    /// Initial forward presentation delay derived from FireBug cycle 978 -> SYT 0x79FE.
-    static constexpr uint32_t kPresentationDelayTicks = 17918;
+    /// Forward presentation lead: how far ahead of the actual transmit cycle the
+    /// TX SYT presents, in 24.576 MHz ticks. Saffire `FillFirewireBuffers` (0xe778)
+    /// computes the lead as `extOffsetDiff(phase, projectedTransmit)` and accepts
+    /// only `< 7620` ticks (`<= 3071` is a near-underrun warning; `>= 7620` emits
+    /// SYT=0xFFFF; `> 12287` is "too far"). It seeds an invalid phase at the
+    /// `+3072` (1-cycle) edge and slews via `adjustOutputPhase`. We anchor at one
+    /// blocking packet step (~1.33 cycles) inside that window and let
+    /// `ExternalSyncDiscipline48k` track fractional drift from there.
+    /// (Previously 17918 ≈ 5.8 cycles — far past the device's 12287-tick limit,
+    /// which made the device drop packets → audible dropouts.)
+    static constexpr uint32_t kPresentationDelayTicks = 4096;
+    static constexpr uint32_t kMinPresentationLeadTicks = 3072;  // near-underrun edge
+    static constexpr uint32_t kMaxPresentationLeadTicks = 7620;  // device reject threshold
+    static_assert(kPresentationDelayTicks > kMinPresentationLeadTicks &&
+                  kPresentationDelayTicks < kMaxPresentationLeadTicks,
+                  "TX presentation lead must sit inside the device's accepted SYT window");
 
     // =========================================================================
     // Running state

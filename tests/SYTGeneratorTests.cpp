@@ -24,13 +24,13 @@ int32_t WrapSigned(int32_t ticks) {
 }
 } // namespace
 
-TEST(SYTGenerator, AnchorReproducesFireBugCaptureCycle978And979) {
+TEST(SYTGenerator, AnchorUsesAcceptedPresentationLeadCycle978And979) {
     ASFW::Encoding::SYTGenerator gen;
     gen.initialize(48000.0);
     gen.armTransmitCycleAnchor();
 
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0x79FE);
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/979, /*samplesInPacket=*/8), 0x91FE);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0x3400);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/979, /*samplesInPacket=*/8), 0x4800);
 }
 
 TEST(SYTGenerator, AnchorIsConsumedByFirstDataPacketOnly) {
@@ -39,10 +39,10 @@ TEST(SYTGenerator, AnchorIsConsumedByFirstDataPacketOnly) {
     gen.armTransmitCycleAnchor();
 
     const uint16_t first = gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8);
-    EXPECT_EQ(first, 0x79FE);
+    EXPECT_EQ(first, 0x3400);
 
     // Subsequent DATA packets free-run in sample time; arbitrary bus-cycle jumps do not re-anchor.
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/4321, /*samplesInPacket=*/8), 0x91FE);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/4321, /*samplesInPacket=*/8), 0x4800);
 }
 
 TEST(SYTGenerator, AnchorOverridesPriorRxSeed) {
@@ -51,7 +51,7 @@ TEST(SYTGenerator, AnchorOverridesPriorRxSeed) {
     gen.seedFromRxSyt(kSeedSyt);
     gen.armTransmitCycleAnchor();
 
-    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0x79FE);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0x3400);
 }
 
 TEST(SYTGenerator, LowFourCycleBitsDetermineEncodedAnchorPhase) {
@@ -82,6 +82,16 @@ TEST(SYTGenerator, RxSeedPathStillAdvancesByPacketStep) {
 
     EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5151, /*samplesInPacket=*/8), 0xD8B0);
     EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/5152, /*samplesInPacket=*/8), 0xF0B0);
+}
+
+TEST(SYTGenerator, RxSeedOverridesPriorTransmitCycleAnchor) {
+    ASFW::Encoding::SYTGenerator gen;
+    gen.initialize(48000.0);
+    gen.armTransmitCycleAnchor();
+    gen.seedFromRxSyt(kSeedSyt);
+
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/978, /*samplesInPacket=*/8), 0xD8B0);
+    EXPECT_EQ(gen.computeDataSYT(/*transmitCycle=*/979, /*samplesInPacket=*/8), 0xF0B0);
 }
 
 TEST(SYTGenerator, NudgePositiveAndNegativeTicks) {

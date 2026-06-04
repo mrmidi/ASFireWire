@@ -79,8 +79,8 @@ void SYTGenerator::seedFromRxSyt(uint16_t rxSyt) noexcept {
     seeded_ = true;
     needsAnchor_ = false;
     dataPacketCount_ = 0;
-    ASFW_LOG(Isoch, "SYTGenerator: Seeded from RX SYT 0x%04x -> tick=%u",
-             rxSyt, currentSytTickIndex_);
+    // Hot-path during SYT experiments; keep silent unless a caller logs a
+    // deliberately throttled seed/reseed event.
 }
 
 void SYTGenerator::armTransmitCycleAnchor() noexcept {

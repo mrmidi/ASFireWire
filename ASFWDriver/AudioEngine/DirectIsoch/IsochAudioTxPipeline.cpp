@@ -27,7 +27,7 @@ inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualified
 }
 
 [[maybe_unused]] [[nodiscard]] constexpr bool ShouldLogTxHotPathSample(uint64_t count) noexcept {
-    return count == 1 || (count % 8000) == 0;
+    return count <= 16 || (count % 8000) == 0;
 }
 
 } // namespace
@@ -119,6 +119,8 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     debugInjectionSuccesses_ = 0;
     debugInjectionSkips_ = 0;
     externalSyncDiscipline_.Reset();
+    externalSyncSeeded_ = false;
+    externalSyncSeedSeq_ = 0;
 }
 
 bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
@@ -135,12 +137,18 @@ bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
                  syncState.ageUsec,
                  syncState.staleThresholdUsec);
         sytGenerator_.armTransmitCycleAnchor();
+        externalSyncSeeded_ = false;
+        externalSyncSeedSeq_ = 0;
         return true;
     }
 
-    ASFW_LOG(Isoch, "IT: Arming transmit-cycle SYT anchor (rx established seq=%u syt=0x%04x fdf=0x%02x dbs=%u)",
-             syncState.updateSeq, syncState.rxSyt, syncState.rxFdf, syncState.rxDbs);
-    sytGenerator_.armTransmitCycleAnchor();
+    sytGenerator_.seedFromRxSyt(syncState.rxSyt);
+    externalSyncDiscipline_.Reset();
+    externalSyncSeeded_ = true;
+    externalSyncSeedSeq_ = syncState.updateSeq;
+    ASFW_LOG(Isoch, "IT: Seeded TX SYT from RX bridge at prime seq=%u syt=0x%04x fdf=0x%02x dbs=%u age=%llu",
+             syncState.updateSeq, syncState.rxSyt, syncState.rxFdf, syncState.rxDbs,
+             syncState.ageUsec);
     return true;
 }
 
@@ -216,8 +224,11 @@ uint16_t IsochAudioTxPipeline::ComputeDataSyt(uint32_t transmitCycle) noexcept {
         return Encoding::SYTGenerator::kNoInfo;
     }
 
+    const auto syncState = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
+    (void)MaybeSeedFromExternalSync(syncState);
+
     const uint16_t txSyt = sytGenerator_.computeDataSYT(transmitCycle, assembler_.samplesPerDataPacket());
-    const bool safetyOk = MaybeApplyExternalSyncDiscipline(txSyt);
+    const bool safetyOk = MaybeApplyExternalSyncDiscipline(txSyt, syncState);
     if (!safetyOk) {
         return Encoding::SYTGenerator::kNoInfo;
     }
@@ -281,8 +292,40 @@ IsochAudioTxPipeline::ReadExternalSyncState(const bool allowStartupQualifiedOnly
     return state;
 }
 
-bool IsochAudioTxPipeline::MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept {
-    const auto syncState = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
+bool IsochAudioTxPipeline::MaybeSeedFromExternalSync(const ExternalSyncState& state) noexcept {
+    if (state.status != ExternalSyncState::SeedStatus::Ok) {
+        if (state.status == ExternalSyncState::SeedStatus::Inactive ||
+            state.status == ExternalSyncState::SeedStatus::NotEstablished ||
+            state.status == ExternalSyncState::SeedStatus::Stale) {
+            externalSyncSeeded_ = false;
+            externalSyncSeedSeq_ = 0;
+        }
+        return false;
+    }
+
+    if (externalSyncSeeded_ && state.updateSeq == externalSyncSeedSeq_) {
+        return false;
+    }
+    if (externalSyncSeeded_) {
+        return false;
+    }
+
+    sytGenerator_.seedFromRxSyt(state.rxSyt);
+    externalSyncDiscipline_.Reset();
+    externalSyncSeeded_ = true;
+    externalSyncSeedSeq_ = state.updateSeq;
+    ASFW_LOG(Isoch,
+             "IT: Seeded TX SYT from RX bridge seq=%u syt=0x%04x fdf=0x%02x dbs=%u age=%llu",
+             state.updateSeq,
+             state.rxSyt,
+             state.rxFdf,
+             state.rxDbs,
+             state.ageUsec);
+    return true;
+}
+
+bool IsochAudioTxPipeline::MaybeApplyExternalSyncDiscipline(uint16_t txSyt,
+                                                            const ExternalSyncState& syncState) noexcept {
     if (syncState.status != ExternalSyncState::SeedStatus::Ok) {
         return true;
     }
@@ -401,11 +444,94 @@ bool IsochAudioTxPipeline::InitializeDirectOutputCursor(const AudioInjectionPlan
     return true;
 }
 
+void IsochAudioTxPipeline::LogTxCursorDiagnostic(const char* source,
+                                                 uint32_t packetIndex,
+                                                 const ProducedPacketMetadata& metadata,
+                                                 const PacketCipFields& cip,
+                                                 uint64_t readFrame,
+                                                 uint64_t consumedEndFrame,
+                                                 DirectTxReadStatus readStatus,
+                                                 uint32_t bytesWritten,
+                                                 uint32_t framesEncoded,
+                                                 bool usedSilence) noexcept {
+    if (!ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+        return;
+    }
+
+    const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
+    const uint64_t requestedEnd = readFrame + metadata.framesPerPacket;
+    int64_t leadFrames = 0;
+    if (writtenEnd >= readFrame) {
+        leadFrames = static_cast<int64_t>(writtenEnd - readFrame);
+    } else {
+        const uint64_t underrunFrames = readFrame - writtenEnd;
+        leadFrames = underrunFrames > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
+            ? std::numeric_limits<int64_t>::min()
+            : -static_cast<int64_t>(underrunFrames);
+    }
+
+    const uint32_t ringFrame = directTxBinding_.outputFrames == 0
+        ? 0
+        : static_cast<uint32_t>(readFrame % directTxBinding_.outputFrames);
+
+    uint64_t writeEndCount = 0;
+    uint64_t ztsTotal = 0;
+    uint64_t ztsRx = 0;
+    uint64_t ztsTimer = 0;
+    uint64_t deviceFrame = 0;
+    uint64_t consumedPublished = 0;
+    if (directTxBinding_.control) {
+        writeEndCount =
+            directTxBinding_.control->counters.ioWriteEndCount.load(std::memory_order_relaxed);
+        ztsTotal =
+            directTxBinding_.control->counters.ztsPublished.load(std::memory_order_relaxed);
+        ztsRx =
+            directTxBinding_.control->counters.ztsRxPublished.load(std::memory_order_relaxed);
+        ztsTimer =
+            directTxBinding_.control->counters.ztsTimerPublished.load(std::memory_order_relaxed);
+        deviceFrame =
+            directTxBinding_.control->device.sampleFrame.load(std::memory_order_acquire);
+        consumedPublished =
+            directTxBinding_.control->outputConsumedEndFrame.load(std::memory_order_acquire);
+    }
+
+    const auto sync = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
+    ASFW_LOG(Isoch,
+             "IT DBG TXCURSOR source=%{public}s attempt=%llu pktIdx=%u txSyt=0x%04x rxSyt=0x%04x rxSeq=%u rxStatus=%u rxAge=%llu dbc=0x%02x read=%llu reqEnd=%llu consumed=%llu publishedConsumed=%llu writeEnd=%llu lead=%lld ring=%u/%u writeEndCount=%llu zts(total=%llu rx=%llu timer=%llu deviceFrame=%llu) status=%u bytes=%u/%u frames=%u/%u silence=%d",
+             source,
+             debugInjectionAttempts_,
+             packetIndex,
+             cip.syt,
+             sync.rxSyt,
+             sync.updateSeq,
+             static_cast<uint32_t>(sync.status),
+             sync.ageUsec,
+             cip.dbc,
+             readFrame,
+             requestedEnd,
+             consumedEndFrame,
+             consumedPublished,
+             writtenEnd,
+             leadFrames,
+             ringFrame,
+             directTxBinding_.outputFrames,
+             writeEndCount,
+             ztsTotal,
+             ztsRx,
+             ztsTimer,
+             deviceFrame,
+             static_cast<uint32_t>(readStatus),
+             bytesWritten,
+             metadata.sizeBytes,
+             framesEncoded,
+             metadata.framesPerPacket,
+             usedSilence);
+}
+
 bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                                                   Tx::IsochTxDescriptorSlab& slab,
                                                   const AudioInjectionPlan& plan) noexcept {
-    // Hot-path diagnostic counter, disabled for audio stability.
-    // ++debugInjectionAttempts_;
+    ++debugInjectionAttempts_;
     uint8_t* payloadVirt = slab.PayloadPtr(packetIndex);
     const uint32_t payloadBytes = PacketPayloadByteCount(packetIndex, slab);
     if (!payloadVirt || payloadBytes <= Encoding::kCIPHeaderSize) {
@@ -453,16 +579,15 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
     const auto format = metadata.wireFormat;
 
     bool armed = IsDirectTxHardwarePathReady(plan);
-    // Hot-path diagnostic state, disabled for audio stability.
-    // const char* fallbackSource = "silence_not_ready";
-    // if (!armed) {
-    //     fallbackSource = (!directTxBinding_.enabled ||
-    //                       directTxBinding_.outputBase == nullptr ||
-    //                       directTxBinding_.control == nullptr ||
-    //                       !directOutputReader_.IsBound())
-    //         ? "silence_no_binding"
-    //         : "silence_not_ready";
-    // }
+    const char* fallbackSource = "silence_not_ready";
+    if (!armed) {
+        fallbackSource = (!directTxBinding_.enabled ||
+                          directTxBinding_.outputBase == nullptr ||
+                          directTxBinding_.control == nullptr ||
+                          !directOutputReader_.IsBound())
+            ? "silence_no_binding"
+            : "silence_not_ready";
+    }
     // Hot-path IT injection diagnostic, disabled for audio stability.
     // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
     //     ASFW_LOG(Isoch,
@@ -495,7 +620,7 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             //              packetIndex,
             //              directOutputReader_.OutputWrittenEndFrame());
             // }
-            // fallbackSource = "silence_no_cursor";
+            fallbackSource = "silence_no_cursor";
             armed = false;
         }
     }
@@ -503,13 +628,14 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
     if (armed && directOutputFrameCursor_ >
         (std::numeric_limits<uint64_t>::max() - static_cast<uint64_t>(metadata.framesPerPacket))) {
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-        // fallbackSource = "silence_no_pcm";
+        fallbackSource = "silence_no_pcm";
         armed = false;
     }
 
     if (armed) {
+        const uint64_t readFrame = directOutputFrameCursor_;
         const Direct::Tx::TxAudioPacketWriteRequest request{
-            .firstFrame = directOutputFrameCursor_,
+            .firstFrame = readFrame,
             .frameCount = metadata.framesPerPacket,
             .channels = metadata.pcmChannels,
             .am824Slots = am824Slots,
@@ -531,7 +657,7 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                 if (result.readStatus == DirectTxReadStatus::kUnderrun || result.usedSilence) {
                     counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
                 }
-                const uint64_t consumedEndFrame = directOutputFrameCursor_ + metadata.framesPerPacket;
+                const uint64_t consumedEndFrame = readFrame + metadata.framesPerPacket;
                 directOutputFrameCursor_ = consumedEndFrame;
                 PublishDirectTxConsumedEndFrame(consumedEndFrame);
                 counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
@@ -551,6 +677,16 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                 //              consumedEndFrame,
                 //              result.usedSilence);
                 // }
+                LogTxCursorDiagnostic(result.usedSilence ? "silence_no_pcm" : "host_pcm",
+                                      packetIndex,
+                                      metadata,
+                                      cip,
+                                      readFrame,
+                                      consumedEndFrame,
+                                      result.readStatus,
+                                      result.bytesWritten,
+                                      result.framesEncoded,
+                                      result.usedSilence);
                 return true;
             }
         }
@@ -567,7 +703,17 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
         //              metadata.framesPerPacket);
         // }
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-        // fallbackSource = "silence_no_pcm";
+        fallbackSource = "silence_no_pcm";
+        LogTxCursorDiagnostic(fallbackSource,
+                              packetIndex,
+                              metadata,
+                              cip,
+                              readFrame,
+                              directOutputFrameCursor_,
+                              result.readStatus,
+                              result.bytesWritten,
+                              result.framesEncoded,
+                              result.usedSilence);
     }
 
     // Write silence to maintain bus-visible cadence (unarmed or fallback-due-to-error).
@@ -604,6 +750,16 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             //              cip.syt,
             //              armed);
             // }
+            LogTxCursorDiagnostic(fallbackSource,
+                                  packetIndex,
+                                  metadata,
+                                  cip,
+                                  directOutputFrameCursor_,
+                                  directOutputFrameCursor_,
+                                  DirectTxReadStatus::kUnavailable,
+                                  bytesWritten,
+                                  metadata.framesPerPacket,
+                                  true);
             return true;
         }
     }

@@ -22,6 +22,7 @@
 #include "../../AudioEngine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../Core/ExternalSyncBridge.hpp"
+#include "../Config/AudioConstants.hpp"
 
 namespace ASFW {
 namespace Audio::Runtime {
@@ -131,6 +132,8 @@ private:
 
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};
+    uint64_t rxZtsPublishCount_{0};
+    uint64_t rxCycleHostTicks_{0};
 
     Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
     Core::ExternalSyncClockState externalSyncClockState_{};

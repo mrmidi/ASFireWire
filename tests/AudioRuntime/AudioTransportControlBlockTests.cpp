@@ -19,6 +19,9 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.counters.CountBeginRead();
     control.counters.CountWriteEnd();
     control.counters.CountZtsPublished();
+    control.counters.CountRxZtsPublished();
+    control.counters.CountRxAdkZtsPublished();
+    control.counters.CountTimerZtsPublished();
     control.counters.txPackets.store(9, std::memory_order_relaxed);
     control.counters.rxPackets.store(7, std::memory_order_relaxed);
     control.inputProducedEndFrame.store(111, std::memory_order_relaxed);
@@ -50,6 +53,9 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.counters.txPackets.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.rxPackets.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.ztsPublished.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.ztsRxPublished.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.ztsRxAdkPublished.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.ztsTimerPublished.load(std::memory_order_relaxed), 0U);
 
     EXPECT_EQ(control.inputProducedEndFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.outputConsumedEndFrame.load(std::memory_order_acquire), 0U);

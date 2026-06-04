@@ -15,7 +15,7 @@ TEST(TimingUtils, OffsetDomainConstants) {
 TEST(TimingUtils, TstampToOffsetsCollapsesSecondsCycleOffset) {
     EXPECT_EQ(tstampToOffsets(0, 0, 0), 0);
     EXPECT_EQ(tstampToOffsets(0, 978, 0), int64_t(3072) * 978);
-    EXPECT_EQ(tstampToOffsets(0, 978, 17918), int64_t(3072) * 978 + 17918);
+    EXPECT_EQ(tstampToOffsets(0, 978, 4096), int64_t(3072) * 978 + 4096);
     EXPECT_EQ(tstampToOffsets(1, 0, 0), int64_t(kTicksPerSecond));
     EXPECT_EQ(tstampToOffsets(2, 1, 5), int64_t(3072) * (1 + 8000 * 2) + 5);
 }
@@ -26,8 +26,8 @@ TEST(TimingUtils, ExtendTstampReconstructsPresentationTimestamp) {
     EXPECT_EQ(extendTstamp(978, 0x79FE), int64_t(3072) * 983 + 0x9FE);
 }
 
-TEST(TimingUtils, ExtendTstampMatchesAnchorPresentationDelay) {
-    EXPECT_EQ(extendTstamp(978, 0x79FE), tstampToOffsets(0, 978, 17918));
+TEST(TimingUtils, ExtendTstampMatchesAcceptedAnchorPresentationLead) {
+    EXPECT_EQ(extendTstamp(978, 0x3400), tstampToOffsets(0, 978, 4096));
 }
 
 TEST(TimingUtils, ExtOffsetDiffSignedShortestPath) {

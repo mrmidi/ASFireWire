@@ -149,7 +149,9 @@ private:
 
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
-    [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt) noexcept;
+    [[nodiscard]] bool MaybeSeedFromExternalSync(const ExternalSyncState& state) noexcept;
+    [[nodiscard]] bool MaybeApplyExternalSyncDiscipline(uint16_t txSyt,
+                                                        const ExternalSyncState& state) noexcept;
     [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
     [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;
     [[nodiscard]] uint32_t PacketPayloadByteCount(uint32_t packetIndex,
@@ -161,6 +163,16 @@ private:
 
     [[nodiscard]] bool InitializeDirectOutputCursor(const AudioInjectionPlan& plan) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
+    void LogTxCursorDiagnostic(const char* source,
+                               uint32_t packetIndex,
+                               const ProducedPacketMetadata& metadata,
+                               const PacketCipFields& cip,
+                               uint64_t readFrame,
+                               uint64_t consumedEndFrame,
+                               ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus readStatus,
+                               uint32_t bytesWritten,
+                               uint32_t framesEncoded,
+                               bool usedSilence) noexcept;
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
@@ -181,6 +193,8 @@ private:
     bool cycleTrackingValid_{false};
     Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
     Core::ExternalSyncDiscipline48k externalSyncDiscipline_{};
+    bool externalSyncSeeded_{false};
+    uint32_t externalSyncSeedSeq_{0};
 
     // Audio injection cursor (packet index)
     uint32_t audioWriteIndex_{0};
