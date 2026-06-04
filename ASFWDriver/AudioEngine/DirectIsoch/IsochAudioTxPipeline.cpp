@@ -26,6 +26,10 @@ inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualified
     return staleThresholdTicks;
 }
 
+[[maybe_unused]] [[nodiscard]] constexpr bool ShouldLogTxHotPathSample(uint64_t count) noexcept {
+    return count == 1 || (count % 8000) == 0;
+}
+
 } // namespace
 
 void IsochAudioTxPipeline::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
@@ -187,22 +191,23 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
     out.isData = pkt.isData;
     out.dbc = pkt.dbc;
 
-    ++debugProducedPackets_;
-    if (debugProducedPackets_ <= 64 || (debugProducedPackets_ % 1000) == 0) {
-        ASFW_LOG(Isoch,
-                 "IT DBG PRODUCE n=%llu pktIdx=%u txCycle=%u hwTs=0x%04x isData=%d size=%u dbc=0x%02x syt=0x%04x ch=%u slots=%u fmt=%u",
-                 debugProducedPackets_,
-                 request.packetIndex,
-                 request.transmitCycle,
-                 request.hwTimestamp,
-                 pkt.isData,
-                 pkt.size,
-                 pkt.dbc,
-                 pkt.isData ? syt : Encoding::SYTGenerator::kNoInfo,
-                 assembler_.channelCount(),
-                 assembler_.am824SlotCount(),
-                 static_cast<uint32_t>(assembler_.audioWireFormat()));
-    }
+    // Hot-path IT producer diagnostic, disabled for audio stability.
+    // ++debugProducedPackets_;
+    // if (ShouldLogTxHotPathSample(debugProducedPackets_)) {
+    //     ASFW_LOG(Isoch,
+    //              "IT DBG PRODUCE n=%llu pktIdx=%u txCycle=%u hwTs=0x%04x isData=%d size=%u dbc=0x%02x syt=0x%04x ch=%u slots=%u fmt=%u",
+    //              debugProducedPackets_,
+    //              request.packetIndex,
+    //              request.transmitCycle,
+    //              request.hwTimestamp,
+    //              pkt.isData,
+    //              pkt.size,
+    //              pkt.dbc,
+    //              pkt.isData ? syt : Encoding::SYTGenerator::kNoInfo,
+    //              assembler_.channelCount(),
+    //              assembler_.am824SlotCount(),
+    //              static_cast<uint32_t>(assembler_.audioWireFormat()));
+    // }
     return out;
 }
 
@@ -381,59 +386,64 @@ bool IsochAudioTxPipeline::InitializeDirectOutputCursor(const AudioInjectionPlan
         return false;
     }
 
-    constexpr uint64_t kMinSafetyLeadFrames = 64;
-    const uint64_t packetLead = static_cast<uint64_t>(plan.framesPerPacket) * 3u;
-    const uint64_t safetyLead = (packetLead > kMinSafetyLeadFrames) ? packetLead : kMinSafetyLeadFrames;
-
-    directOutputFrameCursor_ = (writtenEnd > safetyLead) ? (writtenEnd - safetyLead) : 0;
+    // Start the consumer a full target lead behind the HAL write cursor so it can
+    // ride out the per-WriteEnd bursts (one period each); the deadband discipline in
+    // InjectNearHw maintains it afterward. FW-26 #6/#8.
+    constexpr uint64_t kTargetLead = Config::kOutputConsumerLeadFrames;
+    directOutputFrameCursor_ = (writtenEnd > kTargetLead) ? (writtenEnd - kTargetLead) : 0;
     directCursorInitialized_ = true;
 
-    ASFW_LOG(Isoch,
-             "IT: DIRECT-TX cursor init writtenEnd=%llu safetyLead=%llu cursor=%llu ch=%u slots=%u framesPerPacket=%u",
-             writtenEnd, safetyLead, directOutputFrameCursor_,
-             plan.pcmChannels, plan.am824Slots, plan.framesPerPacket);
+    // Hot-path cursor diagnostic, disabled for audio stability.
+    // ASFW_LOG(Isoch,
+    //          "IT: DIRECT-TX cursor init writtenEnd=%llu targetLead=%llu cursor=%llu ch=%u slots=%u framesPerPacket=%u",
+    //          writtenEnd, kTargetLead, directOutputFrameCursor_,
+    //          plan.pcmChannels, plan.am824Slots, plan.framesPerPacket);
     return true;
 }
 
 bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                                                   Tx::IsochTxDescriptorSlab& slab,
                                                   const AudioInjectionPlan& plan) noexcept {
-    ++debugInjectionAttempts_;
+    // Hot-path diagnostic counter, disabled for audio stability.
+    // ++debugInjectionAttempts_;
     uint8_t* payloadVirt = slab.PayloadPtr(packetIndex);
     const uint32_t payloadBytes = PacketPayloadByteCount(packetIndex, slab);
     if (!payloadVirt || payloadBytes <= Encoding::kCIPHeaderSize) {
-        ++debugInjectionSkips_;
-        if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-            ASFW_LOG(Isoch,
-                     "IT DBG INJECT skip=no_payload attempt=%llu pktIdx=%u payload=%u ptr=%p",
-                     debugInjectionAttempts_, packetIndex, payloadBytes, payloadVirt);
-        }
+        // Hot-path IT injection diagnostic, disabled for audio stability.
+        // ++debugInjectionSkips_;
+        // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+        //     ASFW_LOG(Isoch,
+        //              "IT DBG INJECT skip=no_payload attempt=%llu pktIdx=%u payload=%u ptr=%p",
+        //              debugInjectionAttempts_, packetIndex, payloadBytes, payloadVirt);
+        // }
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
 
     if (packetIndex >= producedPacketMetadata_.size()) {
-        ++debugInjectionSkips_;
-        ASFW_LOG(Isoch,
-                 "IT DBG INJECT skip=packet_index_oob attempt=%llu pktIdx=%u payload=%u",
-                 debugInjectionAttempts_, packetIndex, payloadBytes);
+        // Hot-path IT injection diagnostic, disabled for audio stability.
+        // ++debugInjectionSkips_;
+        // ASFW_LOG(Isoch,
+        //          "IT DBG INJECT skip=packet_index_oob attempt=%llu pktIdx=%u payload=%u",
+        //          debugInjectionAttempts_, packetIndex, payloadBytes);
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     const auto& metadata = producedPacketMetadata_[packetIndex];
     if (!metadata.valid || !metadata.isData || metadata.sizeBytes != payloadBytes) {
-        ++debugInjectionSkips_;
-        if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-            ASFW_LOG(Isoch,
-                     "IT DBG INJECT skip=metadata attempt=%llu pktIdx=%u valid=%d isData=%d metaSize=%u payload=%u metaSyt=0x%04x",
-                     debugInjectionAttempts_,
-                     packetIndex,
-                     metadata.valid,
-                     metadata.isData,
-                     metadata.sizeBytes,
-                     payloadBytes,
-                     metadata.cip.syt);
-        }
+        // Hot-path IT injection diagnostic, disabled for audio stability.
+        // ++debugInjectionSkips_;
+        // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+        //     ASFW_LOG(Isoch,
+        //              "IT DBG INJECT skip=metadata attempt=%llu pktIdx=%u valid=%d isData=%d metaSize=%u payload=%u metaSyt=0x%04x",
+        //              debugInjectionAttempts_,
+        //              packetIndex,
+        //              metadata.valid,
+        //              metadata.isData,
+        //              metadata.sizeBytes,
+        //              payloadBytes,
+        //              metadata.cip.syt);
+        // }
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -443,46 +453,49 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
     const auto format = metadata.wireFormat;
 
     bool armed = IsDirectTxHardwarePathReady(plan);
-    const char* fallbackSource = "silence_not_ready";
-    if (!armed) {
-        fallbackSource = (!directTxBinding_.enabled ||
-                          directTxBinding_.outputBase == nullptr ||
-                          directTxBinding_.control == nullptr ||
-                          !directOutputReader_.IsBound())
-            ? "silence_no_binding"
-            : "silence_not_ready";
-    }
-    if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-        ASFW_LOG(Isoch,
-                 "IT DBG INJECT attempt=%llu pktIdx=%u armed0=%d payload=%u frames=%u ch=%u slots=%u sid=%u dbc=0x%02x syt=0x%04x bind(en=%d base=%p frames=%u ch=%u rate=%u control=%p bound=%d)",
-                 debugInjectionAttempts_,
-                 packetIndex,
-                 armed,
-                 payloadBytes,
-                 metadata.framesPerPacket,
-                 metadata.pcmChannels,
-                 am824Slots,
-                 cip.sid,
-                 cip.dbc,
-                 cip.syt,
-                 directTxBinding_.enabled,
-                 static_cast<const void*>(directTxBinding_.outputBase),
-                 directTxBinding_.outputFrames,
-                 directTxBinding_.outputChannels,
-                 directTxBinding_.sampleRateHz,
-                 static_cast<void*>(directTxBinding_.control),
-                 directOutputReader_.IsBound());
-    }
+    // Hot-path diagnostic state, disabled for audio stability.
+    // const char* fallbackSource = "silence_not_ready";
+    // if (!armed) {
+    //     fallbackSource = (!directTxBinding_.enabled ||
+    //                       directTxBinding_.outputBase == nullptr ||
+    //                       directTxBinding_.control == nullptr ||
+    //                       !directOutputReader_.IsBound())
+    //         ? "silence_no_binding"
+    //         : "silence_not_ready";
+    // }
+    // Hot-path IT injection diagnostic, disabled for audio stability.
+    // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+    //     ASFW_LOG(Isoch,
+    //              "IT DBG INJECT attempt=%llu pktIdx=%u armed0=%d payload=%u frames=%u ch=%u slots=%u sid=%u dbc=0x%02x syt=0x%04x bind(en=%d base=%p frames=%u ch=%u rate=%u control=%p bound=%d)",
+    //              debugInjectionAttempts_,
+    //              packetIndex,
+    //              armed,
+    //              payloadBytes,
+    //              metadata.framesPerPacket,
+    //              metadata.pcmChannels,
+    //              am824Slots,
+    //              cip.sid,
+    //              cip.dbc,
+    //              cip.syt,
+    //              directTxBinding_.enabled,
+    //              static_cast<const void*>(directTxBinding_.outputBase),
+    //              directTxBinding_.outputFrames,
+    //              directTxBinding_.outputChannels,
+    //              directTxBinding_.sampleRateHz,
+    //              static_cast<void*>(directTxBinding_.control),
+    //              directOutputReader_.IsBound());
+    // }
     if (armed) {
         if (!directCursorInitialized_ && !InitializeDirectOutputCursor(plan)) {
-            if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-                ASFW_LOG(Isoch,
-                         "IT DBG INJECT source=silence_no_cursor attempt=%llu pktIdx=%u writtenEnd=%llu",
-                         debugInjectionAttempts_,
-                         packetIndex,
-                         directOutputReader_.OutputWrittenEndFrame());
-            }
-            fallbackSource = "silence_no_cursor";
+            // Hot-path IT injection diagnostic, disabled for audio stability.
+            // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+            //     ASFW_LOG(Isoch,
+            //              "IT DBG INJECT source=silence_no_cursor attempt=%llu pktIdx=%u writtenEnd=%llu",
+            //              debugInjectionAttempts_,
+            //              packetIndex,
+            //              directOutputReader_.OutputWrittenEndFrame());
+            // }
+            // fallbackSource = "silence_no_cursor";
             armed = false;
         }
     }
@@ -490,7 +503,7 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
     if (armed && directOutputFrameCursor_ >
         (std::numeric_limits<uint64_t>::max() - static_cast<uint64_t>(metadata.framesPerPacket))) {
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-        fallbackSource = "silence_no_pcm";
+        // fallbackSource = "silence_no_pcm";
         armed = false;
     }
 
@@ -522,37 +535,39 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                 directOutputFrameCursor_ = consumedEndFrame;
                 PublishDirectTxConsumedEndFrame(consumedEndFrame);
                 counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
-                ++debugInjectionSuccesses_;
-                if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-                    const char* source = result.usedSilence ? "silence_no_pcm" : "host_pcm";
-                    ASFW_LOG(Isoch,
-                             "IT DBG INJECT source=%{public}s attempt=%llu success=%llu pktIdx=%u status=%u bytes=%u frames=%u consumedEnd=%llu usedSilence=%d",
-                             source,
-                             debugInjectionAttempts_,
-                             debugInjectionSuccesses_,
-                             packetIndex,
-                             static_cast<uint32_t>(result.readStatus),
-                             result.bytesWritten,
-                             result.framesEncoded,
-                             consumedEndFrame,
-                             result.usedSilence);
-                }
+                // Hot-path IT injection diagnostic, disabled for audio stability.
+                // ++debugInjectionSuccesses_;
+                // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+                //     const char* source = result.usedSilence ? "silence_no_pcm" : "host_pcm";
+                //     ASFW_LOG(Isoch,
+                //              "IT DBG INJECT source=%{public}s attempt=%llu success=%llu pktIdx=%u status=%u bytes=%u frames=%u consumedEnd=%llu usedSilence=%d",
+                //              source,
+                //              debugInjectionAttempts_,
+                //              debugInjectionSuccesses_,
+                //              packetIndex,
+                //              static_cast<uint32_t>(result.readStatus),
+                //              result.bytesWritten,
+                //              result.framesEncoded,
+                //              consumedEndFrame,
+                //              result.usedSilence);
+                // }
                 return true;
             }
         }
-        if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-            ASFW_LOG(Isoch,
-                     "IT DBG INJECT source=silence_no_pcm writer_failed attempt=%llu pktIdx=%u status=%u bytes=%u frames=%u payload=%u expectedFrames=%u",
-                     debugInjectionAttempts_,
-                     packetIndex,
-                     static_cast<uint32_t>(result.readStatus),
-                     result.bytesWritten,
-                     result.framesEncoded,
-                     payloadBytes,
-                     metadata.framesPerPacket);
-        }
+        // Hot-path IT injection diagnostic, disabled for audio stability.
+        // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+        //     ASFW_LOG(Isoch,
+        //              "IT DBG INJECT source=silence_no_pcm writer_failed attempt=%llu pktIdx=%u status=%u bytes=%u frames=%u payload=%u expectedFrames=%u",
+        //              debugInjectionAttempts_,
+        //              packetIndex,
+        //              static_cast<uint32_t>(result.readStatus),
+        //              result.bytesWritten,
+        //              result.framesEncoded,
+        //              payloadBytes,
+        //              metadata.framesPerPacket);
+        // }
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-        fallbackSource = "silence_no_pcm";
+        // fallbackSource = "silence_no_pcm";
     }
 
     // Write silence to maintain bus-visible cadence (unarmed or fallback-due-to-error).
@@ -574,55 +589,82 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             }
             counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
             counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
-            ++debugInjectionSuccesses_;
-            if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-                ASFW_LOG(Isoch,
-                         "IT DBG INJECT source=%{public}s attempt=%llu success=%llu pktIdx=%u bytes=%u frames=%u dbc=0x%02x syt=0x%04x armed=%d",
-                         fallbackSource,
-                         debugInjectionAttempts_,
-                         debugInjectionSuccesses_,
-                         packetIndex,
-                         payloadBytes,
-                         metadata.framesPerPacket,
-                         cip.dbc,
-                         cip.syt,
-                         armed);
-            }
+            // Hot-path IT injection diagnostic, disabled for audio stability.
+            // ++debugInjectionSuccesses_;
+            // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+            //     ASFW_LOG(Isoch,
+            //              "IT DBG INJECT source=%{public}s attempt=%llu success=%llu pktIdx=%u bytes=%u frames=%u dbc=0x%02x syt=0x%04x armed=%d",
+            //              fallbackSource,
+            //              debugInjectionAttempts_,
+            //              debugInjectionSuccesses_,
+            //              packetIndex,
+            //              payloadBytes,
+            //              metadata.framesPerPacket,
+            //              cip.dbc,
+            //              cip.syt,
+            //              armed);
+            // }
             return true;
         }
     }
 
-    ++debugInjectionSkips_;
-    if (debugInjectionAttempts_ <= 64 || (debugInjectionAttempts_ % 1000) == 0) {
-        ASFW_LOG(Isoch,
-                 "IT DBG INJECT fallback_failed attempt=%llu skips=%llu pktIdx=%u",
-                 debugInjectionAttempts_, debugInjectionSkips_, packetIndex);
-    }
+    // Hot-path IT injection diagnostic, disabled for audio stability.
+    // ++debugInjectionSkips_;
+    // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
+    //     ASFW_LOG(Isoch,
+    //              "IT DBG INJECT fallback_failed attempt=%llu skips=%llu pktIdx=%u",
+    //              debugInjectionAttempts_, debugInjectionSkips_, packetIndex);
+    // }
     return false;
 }
 
 void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescriptorSlab& slab) noexcept {
     auto plan = BuildAudioInjectionPlan(hwPacketIndex);
-    if (debugInjectionAttempts_ < 64 || ((debugInjectionAttempts_ + 1) % 1000) == 0) {
-        ASFW_LOG(Isoch,
-                 "IT DBG PLAN hwPkt=%u writeIdx=%u target=%u todo=%u frames=%u ch=%u slots=%u bind(en=%d base=%p frames=%u ch=%u rate=%u control=%p bound=%d)",
-                 hwPacketIndex,
-                 audioWriteIndex_,
-                 plan.audioTarget,
-                 plan.packetsToInject,
-                 plan.framesPerPacket,
-                 plan.pcmChannels,
-                 plan.am824Slots,
-                 directTxBinding_.enabled,
-                 static_cast<const void*>(directTxBinding_.outputBase),
-                 directTxBinding_.outputFrames,
-                 directTxBinding_.outputChannels,
-                 directTxBinding_.sampleRateHz,
-                 static_cast<void*>(directTxBinding_.control),
-                 directOutputReader_.IsBound());
-    }
+    // Hot-path IT planning diagnostic, disabled for audio stability.
+    // if (ShouldLogTxHotPathSample(debugInjectionAttempts_ + 1)) {
+    //     ASFW_LOG(Isoch,
+    //              "IT DBG PLAN hwPkt=%u writeIdx=%u target=%u todo=%u frames=%u ch=%u slots=%u bind(en=%d base=%p frames=%u ch=%u rate=%u control=%p bound=%d)",
+    //              hwPacketIndex,
+    //              audioWriteIndex_,
+    //              plan.audioTarget,
+    //              plan.packetsToInject,
+    //              plan.framesPerPacket,
+    //              plan.pcmChannels,
+    //              plan.am824Slots,
+    //              directTxBinding_.enabled,
+    //              static_cast<const void*>(directTxBinding_.outputBase),
+    //              directTxBinding_.outputFrames,
+    //              directTxBinding_.outputChannels,
+    //              directTxBinding_.sampleRateHz,
+    //              static_cast<void*>(directTxBinding_.control),
+    //              directOutputReader_.IsBound());
+    // }
     if (plan.packetsToInject == 0) {
         return;
+    }
+
+    // Keep the read cursor a stable lead behind the HAL write cursor. The producer
+    // (writtenEnd) advances on the ZTS clock while the consumer advances on the OHCI
+    // clock, so they drift; rebase only when the lead leaves the deadband. FW-26 #6/#8.
+    if (directCursorInitialized_) {
+        const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
+        const auto disc = Direct::Tx::DisciplineOutputCursor(
+            directOutputFrameCursor_,
+            writtenEnd,
+            Config::kOutputConsumerLeadFrames,
+            Config::kOutputCursorResyncDeadbandFrames);
+        if (disc.resynced) {
+            directOutputFrameCursor_ = disc.newCursor;
+            [[maybe_unused]] const uint64_t resyncs =
+                counters_.directTxCursorResyncs.fetch_add(1, std::memory_order_relaxed) + 1;
+            // Hot-path cursor diagnostic, disabled for audio stability.
+            // if (ShouldLogTxHotPathSample(resyncs)) {
+            //     ASFW_LOG(Isoch,
+            //              "IT DBG CURSOR resync n=%llu cursor=%llu writtenEnd=%llu targetLead=%u",
+            //              resyncs, directOutputFrameCursor_, writtenEnd,
+            //              Config::kOutputConsumerLeadFrames);
+            // }
+        }
     }
 
     for (uint32_t i = 0; i < plan.packetsToInject; ++i) {

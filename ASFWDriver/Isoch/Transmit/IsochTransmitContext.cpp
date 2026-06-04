@@ -271,27 +271,29 @@ void IsochTransmitContext::Poll() noexcept {
     if (directAudioBindingSource_) {
         ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
         if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
-            if (tickCount_ <= 32 || (tickCount_ % 1000) == 0 ||
-                snapshot.generation != lastDirectAudioGeneration_) {
-                ASFW_LOG(Isoch,
-                         "IT DBG BIND poll tick=%llu source=%p ready=1 gen=%llu lastGen=%llu valid=%d hasOut=%d outBase=%p outFrames=%u outCh=%u control=%p rate=%u hasIn=%d",
-                         tickCount_,
-                         directAudioBindingSource_,
-                         snapshot.generation,
-                         lastDirectAudioGeneration_,
-                         snapshot.valid,
-                         snapshot.HasOutput(),
-                         static_cast<const void*>(snapshot.outputBase),
-                         snapshot.outputFrames,
-                         snapshot.outputChannels,
-                         static_cast<void*>(snapshot.control),
-                         snapshot.sampleRateHz,
-                         snapshot.HasInput());
-            }
+            // Hot-path binding poll diagnostic, disabled for audio stability.
+            // if (tickCount_ == 1 || (tickCount_ % 5000) == 0 ||
+            //     snapshot.generation != lastDirectAudioGeneration_) {
+            //     ASFW_LOG(Isoch,
+            //              "IT DBG BIND poll tick=%llu source=%p ready=1 gen=%llu lastGen=%llu valid=%d hasOut=%d outBase=%p outFrames=%u outCh=%u control=%p rate=%u hasIn=%d",
+            //              tickCount_,
+            //              directAudioBindingSource_,
+            //              snapshot.generation,
+            //              lastDirectAudioGeneration_,
+            //              snapshot.valid,
+            //              snapshot.HasOutput(),
+            //              static_cast<const void*>(snapshot.outputBase),
+            //              snapshot.outputFrames,
+            //              snapshot.outputChannels,
+            //              static_cast<void*>(snapshot.control),
+            //              snapshot.sampleRateHz,
+            //              snapshot.HasInput());
+            // }
             if (snapshot.generation != lastDirectAudioGeneration_) {
                 if (snapshot.valid && snapshot.HasOutput()) {
-                    ASFW_LOG(Isoch, "IT: direct audio binding changed (gen %llu -> %llu). Arming direct Tx.",
-                             lastDirectAudioGeneration_, snapshot.generation);
+                    // Hot-path binding transition diagnostic, disabled for audio stability.
+                    // ASFW_LOG(Isoch, "IT: direct audio binding changed (gen %llu -> %llu). Arming direct Tx.",
+                    //          lastDirectAudioGeneration_, snapshot.generation);
                     IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
                     binding.outputBase = snapshot.outputBase;
                     binding.outputBytes = snapshot.outputBytes;
@@ -304,28 +306,34 @@ void IsochTransmitContext::Poll() noexcept {
                     binding.am824Slots = audio_.Am824SlotCount();
                     SetDirectTxRuntimeBinding(binding);
                 } else {
-                    ASFW_LOG(Isoch, "IT: direct audio binding invalid or has no output (gen %llu -> %llu). Disarming.",
-                             lastDirectAudioGeneration_, snapshot.generation);
+                    // Hot-path binding transition diagnostic, disabled for audio stability.
+                    // ASFW_LOG(Isoch, "IT: direct audio binding invalid or has no output (gen %llu -> %llu). Disarming.",
+                    //          lastDirectAudioGeneration_, snapshot.generation);
                     IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
                     SetDirectTxRuntimeBinding(binding);
                 }
                 lastDirectAudioGeneration_ = snapshot.generation;
             }
         } else {
-            if (tickCount_ <= 32 || (tickCount_ % 1000) == 0) {
-                ASFW_LOG(Isoch,
-                         "IT DBG BIND poll tick=%llu source=%p ready=0 lastGen=%llu",
-                         tickCount_, directAudioBindingSource_, lastDirectAudioGeneration_);
-            }
+            // Hot-path binding poll diagnostic, disabled for audio stability.
+            // if (tickCount_ == 1 || (tickCount_ % 5000) == 0) {
+            //     ASFW_LOG(Isoch,
+            //              "IT DBG BIND poll tick=%llu source=%p ready=0 lastGen=%llu",
+            //              tickCount_, directAudioBindingSource_, lastDirectAudioGeneration_);
+            // }
             if (lastDirectAudioGeneration_ != 0) {
-                ASFW_LOG(Isoch, "IT: direct audio binding cleared/unavailable. Disarming.");
+                // Hot-path binding transition diagnostic, disabled for audio stability.
+                // ASFW_LOG(Isoch, "IT: direct audio binding cleared/unavailable. Disarming.");
                 IsochAudioTxPipeline::DirectTxRuntimeBinding binding{};
                 SetDirectTxRuntimeBinding(binding);
                 lastDirectAudioGeneration_ = 0;
             }
         }
-    } else if (tickCount_ <= 32 || (tickCount_ % 1000) == 0) {
-        ASFW_LOG(Isoch, "IT DBG BIND poll tick=%llu source=null", tickCount_);
+    } else {
+        // Hot-path binding poll diagnostic, disabled for audio stability.
+        // if (tickCount_ == 1 || (tickCount_ % 5000) == 0) {
+        //     ASFW_LOG(Isoch, "IT DBG BIND poll tick=%llu source=null", tickCount_);
+        // }
     }
 
     // IRQ-stall watchdog
@@ -366,20 +374,20 @@ void IsochTransmitContext::Poll() noexcept {
         irqStallTicks_ = 0;
     }
 
-    // Periodic non-RT diagnostics.
-    if (tickCount_ == 1 || (tickCount_ % 1000) == 0) {
-        if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
-            const auto& ringC = ring_.RTCounters();
-            const auto& audioC = audio_.RTCounters();
-            ASFW_LOG(Isoch, "IT: Poll tick=%llu | ring(refills=%llu pkts=%llu) audio(directPackets=%llu underrunSilenced=%llu invalid=%llu)",
-                     tickCount_,
-                     ringC.refills.load(std::memory_order_relaxed),
-                     ringC.packetsRefilled.load(std::memory_order_relaxed),
-                     audioC.directTxPackets.load(std::memory_order_relaxed),
-                     audioC.directTxUnderrunSilencedPackets.load(std::memory_order_relaxed),
-                     audioC.directTxInvalidPackets.load(std::memory_order_relaxed));
-        }
-    }
+    // Hot-path poll diagnostic, disabled for audio stability.
+    // if (tickCount_ == 1 || (tickCount_ % 1000) == 0) {
+    //     if (::ASFW::LogConfig::Shared().GetIsochVerbosity() >= 3) {
+    //         const auto& ringC = ring_.RTCounters();
+    //         const auto& audioC = audio_.RTCounters();
+    //         ASFW_LOG(Isoch, "IT: Poll tick=%llu | ring(refills=%llu pkts=%llu) audio(directPackets=%llu underrunSilenced=%llu invalid=%llu)",
+    //                  tickCount_,
+    //                  ringC.refills.load(std::memory_order_relaxed),
+    //                  ringC.packetsRefilled.load(std::memory_order_relaxed),
+    //                  audioC.directTxPackets.load(std::memory_order_relaxed),
+    //                  audioC.directTxUnderrunSilencedPackets.load(std::memory_order_relaxed),
+    //                  audioC.directTxInvalidPackets.load(std::memory_order_relaxed));
+    //     }
+    // }
 }
 
 void IsochTransmitContext::HandleInterrupt() noexcept {
