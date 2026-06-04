@@ -36,6 +36,17 @@ inline constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
 inline constexpr uint32_t kAlesisVendorId        = 0x000595;
 inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
 
+// ---- Midas (DICE / TCAT family) ----
+// Observed on real Midas Venice hardware via FFADO + Config ROM probing: FFADO lists
+// vendorid=0x0010C73F, modelid=0x00000001 (its "Venice F32" entry), driver="DICE",
+// mixer="Generic_Dice_EAP". The Venice F-series (F16/F24/F32) shares this IEEE OUI and
+// 0x000001 is the only model id seen so far, so recognition matches the vendor (see
+// Vendors/MidasAudioProfiles.hpp) and presents one honest "Venice" name rather than
+// guessing the variant. Integration is deferred/fail-closed (mode kNone) until the DICE
+// EAP / current-config path lands; see the Midas EAP probing design note.
+inline constexpr uint32_t kMidasVendorId = 0x10c73f;
+inline constexpr uint32_t kVeniceModelId = 0x000001;
+
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
@@ -49,5 +60,7 @@ inline constexpr const char* kApogeeVendorName        = "Apogee";
 inline constexpr const char* kApogeeDuetModelName     = "Duet";
 inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
+inline constexpr const char* kMidasVendorName         = "Midas";
+inline constexpr const char* kVeniceModelName         = "Venice";
 
 } // namespace ASFW::DeviceProfiles::Audio

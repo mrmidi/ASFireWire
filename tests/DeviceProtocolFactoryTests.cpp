@@ -59,6 +59,12 @@ TEST(DeviceProtocolFactoryTests, SelectsIntegrationModeForKnownDevices) {
                   DeviceProtocolFactory::kAlesisVendorId,
                   DeviceProtocolFactory::kAlesisMultiMixModelId),
               DeviceIntegrationMode::kHardcodedNub);
+
+    // Midas Venice: recognized DICE device, deferred multistream bring-up (fail-closed).
+    EXPECT_EQ(DeviceProtocolFactory::LookupIntegrationMode(
+                  DeviceProtocolFactory::kMidasVendorId,
+                  DeviceProtocolFactory::kVeniceModelId),
+              DeviceIntegrationMode::kNone);
 }
 
 TEST(DeviceProtocolFactoryTests, RejectsUnknownDevices) {
@@ -103,6 +109,13 @@ TEST(DeviceProtocolFactoryTests, RecognizesKnownVendorModelPairs) {
     EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
         DeviceProtocolFactory::kAlesisVendorId,
         DeviceProtocolFactory::kAlesisMultiMixModelId));
+
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kMidasVendorId,
+        DeviceProtocolFactory::kVeniceModelId));
+    // Any model under the Midas OUI is recognized as Venice (the F-series shares the vendor).
+    EXPECT_TRUE(DeviceProtocolFactory::IsKnownDevice(
+        DeviceProtocolFactory::kMidasVendorId, 0x000024));
 }
 
 TEST(DeviceProtocolFactoryTests, InfersFocusriteIdentityFromGuid) {
@@ -155,6 +168,24 @@ TEST(DeviceProtocolFactoryTests, RecognizesAlesisMultiMixDiceProfile) {
     EXPECT_EQ(multiMix->integrationMode, DeviceIntegrationMode::kHardcodedNub);
     EXPECT_STREQ(multiMix->vendorName, DeviceProtocolFactory::kAlesisVendorName);
     EXPECT_STREQ(multiMix->modelName, DeviceProtocolFactory::kAlesisMultiMixModelName);
+}
+
+TEST(DeviceProtocolFactoryTests, RecognizesMidasVeniceAsDeferredDiceProfile) {
+    // Recognized for identity, but fail-closed: integration mode kNone means the driver
+    // never publishes a CoreAudio endpoint until the DICE EAP / current-config path lands.
+    const auto venice = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kMidasVendorId, DeviceProtocolFactory::kVeniceModelId);
+    ASSERT_TRUE(venice.has_value());
+    EXPECT_EQ(venice->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(venice->vendorName, DeviceProtocolFactory::kMidasVendorName);
+    EXPECT_STREQ(venice->modelName, DeviceProtocolFactory::kVeniceModelName);
+
+    // Vendor-broad match: an unseen Venice model id is still recognized (still fail-closed).
+    const auto otherVenice = DeviceProtocolFactory::LookupKnownIdentity(
+        DeviceProtocolFactory::kMidasVendorId, 0x000024);
+    ASSERT_TRUE(otherVenice.has_value());
+    EXPECT_EQ(otherVenice->integrationMode, DeviceIntegrationMode::kNone);
+    EXPECT_STREQ(otherVenice->modelName, DeviceProtocolFactory::kVeniceModelName);
 }
 
 } // namespace
