@@ -151,8 +151,18 @@ struct ASFWAudioNub_IVars {
     ASFW::Audio::Runtime::AudioTransportControlBlock* directControl;
     uint32_t directSampleRateHz;
     IOUserAudioDevice* directAudioDevice;
+    // True once shared direct-audio memory/control metadata is usable by ASFWDriver.
+    // directAudioDevice is process-local to ASFWAudioDriver and may be null here.
     bool directProviderBindingPublished;
     void* directBindingSource;
+
+    // Sticky lifecycle diagnostics (zero-initialized, never reset by a wipe) so a
+    // mid-session capture is self-explaining: did the provider ever publish the
+    // IOUserAudioDevice to THIS nub, and what cleared it afterwards.
+    uint32_t directSetCalls;                       // SetDirectAudioBinding invocations
+    uint32_t directFromMemCalls;                   // PublishDirectAudioBindingFromMappedMemory invocations
+    uint32_t directClearCalls;                     // ClearDirectAudioBinding invocations
+    IOUserAudioDevice* directLastSetAudioDevice;   // last process-local device handed to SetDirectAudioBinding
 
     IOBufferMemoryDescriptor* directOutputMemory;
     IOBufferMemoryDescriptor* directInputMemory;

@@ -18,6 +18,9 @@ public:
         binding_ = nullptr;
     }
 
+    // The controller-side clock leg publishes into the shared transport control
+    // block even when the IOUserAudioDevice lives in the AudioDriverKit process.
+    // The ADK side mirrors this shared timeline to UpdateCurrentZeroTimestamp.
     [[nodiscard]] bool IsBound() const noexcept {
         return binding_ != nullptr &&
                binding_->control != nullptr;
