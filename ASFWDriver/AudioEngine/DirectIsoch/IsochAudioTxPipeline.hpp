@@ -10,6 +10,7 @@
 #include "../../AudioWire/AMDTP/SYTGenerator.hpp"
 #include "../Direct/Tx/DirectTxTypes.hpp"
 #include "../Direct/Tx/TxAudioPacketWriter.hpp"
+#include "../Direct/Tx/OutputCursorDiscipline.hpp"
 #include "../Direct/DirectOutputReader.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
@@ -40,6 +41,7 @@ public:
         std::atomic<uint64_t> directTxPackets{0};
         std::atomic<uint64_t> directTxUnderrunSilencedPackets{0};
         std::atomic<uint64_t> directTxInvalidPackets{0};
+        std::atomic<uint64_t> directTxCursorResyncs{0};
     };
 
     /// Plain, RT-safe view of the ADK output stream memory + shared transport

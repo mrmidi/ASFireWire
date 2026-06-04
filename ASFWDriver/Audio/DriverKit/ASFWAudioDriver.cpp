@@ -551,55 +551,59 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             return kIOReturnNotReady;
         }
 
-        const uint64_t callbackIndex =
-            driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
+        // Hot-path diagnostic counter, disabled for audio stability.
+        // const uint64_t callbackIndex =
+        //     driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
         const bool running = driverIvars->runtime.isRunning.load(std::memory_order_acquire);
         const bool skeletonBound =
             driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
-        if (callbackIndex <= 32 || (callbackIndex % 256) == 0 ||
-            operation == IOUserAudioIOOperationWriteEnd) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG IO cb=%llu op=%u running=%d skeleton=%d frames=%u sample=%llu host=%llu",
-                     callbackIndex,
-                     static_cast<uint32_t>(operation),
-                     running,
-                     skeletonBound,
-                     ioBufferFrameSize,
-                     sampleTime,
-                     hostTime);
-        }
+        // Hot-path diagnostic, disabled for audio stability.
+        // if (callbackIndex == 1 || (callbackIndex % 1024) == 0) {
+        //     ASFW_LOG(DirectAudio,
+        //              "ADK DBG IO cb=%llu op=%u running=%d skeleton=%d frames=%u sample=%llu host=%llu",
+        //              callbackIndex,
+        //              static_cast<uint32_t>(operation),
+        //              running,
+        //              skeletonBound,
+        //              ioBufferFrameSize,
+        //              sampleTime,
+        //              hostTime);
+        // }
 
         if (!running) {
-            if (callbackIndex <= 32 || (callbackIndex % 256) == 0) {
-                ASFW_LOG(DirectAudio,
-                         "ADK DBG IO not_running cb=%llu op=%u frames=%u sample=%llu",
-                         callbackIndex,
-                         static_cast<uint32_t>(operation),
-                         ioBufferFrameSize,
-                         sampleTime);
-            }
+            // Hot-path diagnostic, disabled for audio stability.
+            // if (callbackIndex == 1 || (callbackIndex % 1024) == 0) {
+            //     ASFW_LOG(DirectAudio,
+            //              "ADK DBG IO not_running cb=%llu op=%u frames=%u sample=%llu",
+            //              callbackIndex,
+            //              static_cast<uint32_t>(operation),
+            //              ioBufferFrameSize,
+            //              sampleTime);
+            // }
             return kIOReturnNotReady;
         }
 
         // Driver IO buffers are provisioned for Config::kAudioIoPeriodFrames frames.
         if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG IO bad_frames cb=%llu op=%u frames=%u max=%u",
-                     callbackIndex,
-                     static_cast<uint32_t>(operation),
-                     ioBufferFrameSize,
-                     ASFW::Isoch::Config::kAudioIoPeriodFrames);
+            // Hot-path diagnostic, disabled for audio stability.
+            // ASFW_LOG(DirectAudio,
+            //          "ADK DBG IO bad_frames cb=%llu op=%u frames=%u max=%u",
+            //          callbackIndex,
+            //          static_cast<uint32_t>(operation),
+            //          ioBufferFrameSize,
+            //          ASFW::Isoch::Config::kAudioIoPeriodFrames);
             return kIOReturnBadArgument;
         }
         
         if (skeletonBound) {
             auto* control = driverIvars->runtime.directAudioGraph.control;
             if (!control) {
-                ASFW_LOG(DirectAudio,
-                         "ADK DBG IO no_control cb=%llu op=%u frames=%u",
-                         callbackIndex,
-                         static_cast<uint32_t>(operation),
-                         ioBufferFrameSize);
+                // Hot-path diagnostic, disabled for audio stability.
+                // ASFW_LOG(DirectAudio,
+                //          "ADK DBG IO no_control cb=%llu op=%u frames=%u",
+                //          callbackIndex,
+                //          static_cast<uint32_t>(operation),
+                //          ioBufferFrameSize);
                 return kIOReturnNotReady;
             }
 
@@ -609,18 +613,19 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 control->counters.CountWriteEnd();
-                const uint64_t writeCount =
-                    control->counters.ioWriteEndCount.load(std::memory_order_relaxed);
-                const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
-                if (writeCount <= 32 || (writeCount % 256) == 0) {
-                    ASFW_LOG(DirectAudio,
-                             "ADK DBG IO write_end count=%llu cb=%llu frames=%u sample=%llu writtenEnd=%llu",
-                             writeCount,
-                             callbackIndex,
-                             ioBufferFrameSize,
-                             sampleTime,
-                             writtenEnd);
-                }
+                // Hot-path diagnostic, disabled for audio stability.
+                // const uint64_t writeCount =
+                //     control->counters.ioWriteEndCount.load(std::memory_order_relaxed);
+                // const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
+                // if (writeCount == 1 || (writeCount % 1024) == 0) {
+                //     ASFW_LOG(DirectAudio,
+                //              "ADK DBG IO write_end count=%llu cb=%llu frames=%u sample=%llu writtenEnd=%llu",
+                //              writeCount,
+                //              callbackIndex,
+                //              ioBufferFrameSize,
+                //              sampleTime,
+                //              writtenEnd);
+                // }
             }
         }
         
@@ -876,6 +881,18 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out/in=%u, safety out/in=%u frames",
              kReportedDeviceLatencyFrames, kReportedSafetyOffsetFrames);
 
+    // The shared output ring is now several IO periods deep (kAudioOutputRingFrames),
+    // so the buffer size no longer implies the timestamp cadence. Tell the HAL the
+    // zero-timestamp period explicitly (= one IO period) so its sample<->ring mapping
+    // stays unambiguous. Set here during initial device configuration, before IO
+    // starts. (ADK: SetZeroTimeStampPeriod expects a config-change context.)
+    {
+        const kern_return_t ztsKr =
+            ivars->audioDevice->SetZeroTimeStampPeriod(ASFW::Isoch::Config::kAudioIoPeriodFrames);
+        ASFW_LOG(Audio, "ASFWAudioDriver: SetZeroTimeStampPeriod(%u) kr=0x%x",
+                 ASFW::Isoch::Config::kAudioIoPeriodFrames, ztsKr);
+    }
+
     // Add device to driver
     error = AddObject(ivars->audioDevice.get());
     if (error != kIOReturnSuccess) {
@@ -1120,17 +1137,18 @@ void ASFWAudioDriver::ZtsTimerOccurred_Impl([[maybe_unused]] OSAction* action, [
         control->counters.CountZtsPublished();
     }
 
-    const uint64_t count =
-        ivars->runtime.ztsTimerPublishes.fetch_add(1, std::memory_order_acq_rel) + 1;
-    if (count <= 32 || (count % 100) == 0) {
-        ASFW_LOG(DirectAudio,
-                 "ZTS publish source=timer count=%llu sample=%llu host=%llu periodTicks=%llu rate=%u",
-                 count,
-                 sampleFrame,
-                 nowTicks,
-                 ivars->runtime.ztsPeriodTicks,
-                 sampleRateHz);
-    }
+    // Hot-path timer diagnostic, disabled for audio stability.
+    // const uint64_t count =
+    //     ivars->runtime.ztsTimerPublishes.fetch_add(1, std::memory_order_acq_rel) + 1;
+    // if (count == 1 || (count % 1000) == 0) {
+    //     ASFW_LOG(DirectAudio,
+    //              "ZTS publish source=timer count=%llu sample=%llu host=%llu periodTicks=%llu rate=%u",
+    //              count,
+    //              sampleFrame,
+    //              nowTicks,
+    //              ivars->runtime.ztsPeriodTicks,
+    //              sampleRateHz);
+    // }
 
     ScheduleNextZtsTimer(ivars->runtime, nowTicks);
 }

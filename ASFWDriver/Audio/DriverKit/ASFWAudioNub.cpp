@@ -286,7 +286,9 @@ static kern_return_t EnsureDirectAudioMemory(ASFWAudioNub* self, ASFWAudioNub_IV
 
     const uint32_t outputChannels = iv->outputChannelCount ? iv->outputChannelCount : iv->channelCount;
     const uint32_t inputChannels = iv->inputChannelCount ? iv->inputChannelCount : iv->channelCount;
-    const uint32_t outputFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+    // Output ring is several IO periods deep so the isoch consumer can trail the
+    // HAL by a stable lead without starving (FW-26 #6/#8). Input stays one period.
+    const uint32_t outputFrames = ASFW::Isoch::Config::kAudioOutputRingFrames;
     const uint32_t inputFrames = ASFW::Isoch::Config::kAudioIoPeriodFrames;
 
     if (outputChannels == 0 || inputChannels == 0) {
@@ -774,27 +776,29 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
                                          uint64_t* outGeneration) const
 {
     if (!ivars || !ivars->bindingLock) {
-        ASFW_LOG_RL(DirectAudio, "adk_bind/no_ivars", 1000, OS_LOG_TYPE_DEFAULT,
-                    "ADK DBG BIND get failed no_ivars_or_lock");
+        // Hot-path binding diagnostic, disabled for audio stability.
+        // ASFW_LOG_RL(DirectAudio, "adk_bind/no_ivars", 5000, OS_LOG_TYPE_DEFAULT,
+        //             "ADK DBG BIND get failed no_ivars_or_lock");
         return false;
     }
     IOLockLock(ivars->bindingLock);
     if (!ivars->directControl || ivars->directSampleRateHz == 0) {
-        const auto gen = ivars->directGeneration;
-        const auto control = ivars->directControl;
-        const auto rate = ivars->directSampleRateHz;
-        const auto outBase = ivars->directOutputBase;
-        const auto outFrames = ivars->directOutputFrames;
-        const auto outChannels = ivars->directOutputChannels;
+        // Hot-path binding diagnostic, disabled for audio stability.
+        // const auto gen = ivars->directGeneration;
+        // const auto control = ivars->directControl;
+        // const auto rate = ivars->directSampleRateHz;
+        // const auto outBase = ivars->directOutputBase;
+        // const auto outFrames = ivars->directOutputFrames;
+        // const auto outChannels = ivars->directOutputChannels;
         IOLockUnlock(ivars->bindingLock);
-        ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready", 1000, OS_LOG_TYPE_DEFAULT,
-                    "ADK DBG BIND get failed not_ready gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u",
-                    gen,
-                    static_cast<void*>(control),
-                    rate,
-                    static_cast<const void*>(outBase),
-                    outFrames,
-                    outChannels);
+        // ASFW_LOG_RL(DirectAudio, "adk_bind/not_ready", 5000, OS_LOG_TYPE_DEFAULT,
+        //             "ADK DBG BIND get failed not_ready gen=%llu control=%p rate=%u outBase=%p outFrames=%u outCh=%u",
+        //             gen,
+        //             static_cast<void*>(control),
+        //             rate,
+        //             static_cast<const void*>(outBase),
+        //             outFrames,
+        //             outChannels);
         return false;
     }
 
@@ -810,19 +814,7 @@ bool ASFWAudioNub::GetDirectAudioBinding(const int32_t** outOutputBase,
     if (outSampleRateHz) { *outSampleRateHz = ivars->directSampleRateHz; }
     if (outAudioDevice) { *outAudioDevice = ivars->directAudioDevice; }
     if (outGeneration) { *outGeneration = ivars->directGeneration; }
-
     IOLockUnlock(ivars->bindingLock);
-    ASFW_LOG_RL(DirectAudio, "adk_bind/get_ok", 1000, OS_LOG_TYPE_DEFAULT,
-                "ADK DBG BIND get ok gen=%llu outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p rate=%u",
-                outGeneration ? *outGeneration : 0,
-                outOutputBase ? static_cast<const void*>(*outOutputBase) : nullptr,
-                outOutputFrames ? *outOutputFrames : 0,
-                outOutputChannels ? *outOutputChannels : 0,
-                outInputBase ? static_cast<void*>(*outInputBase) : nullptr,
-                outInputFrames ? *outInputFrames : 0,
-                outInputChannels ? *outInputChannels : 0,
-                outControl ? static_cast<void*>(*outControl) : nullptr,
-                outSampleRateHz ? *outSampleRateHz : 0);
     return true;
 }
 

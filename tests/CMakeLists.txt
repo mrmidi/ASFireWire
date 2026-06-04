@@ -1486,6 +1486,25 @@ target_include_directories(TimingUtilsTests PRIVATE ${ASFW_COMMON_INCLUDES})
 
 gtest_discover_tests(TimingUtilsTests)
 
+# Direct-TX output cursor discipline (pure helper)
+add_executable(OutputCursorDisciplineTests
+    "${ASFW_TESTS_DIR}/OutputCursorDisciplineTests.cpp"
+)
+
+target_link_libraries(OutputCursorDisciplineTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(OutputCursorDisciplineTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(OutputCursorDisciplineTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(OutputCursorDisciplineTests)
+
 # External sync bridge state machine tests
 add_executable(ExternalSyncBridgeTests
     "${ASFW_TESTS_DIR}/ExternalSyncBridgeTests.cpp"
