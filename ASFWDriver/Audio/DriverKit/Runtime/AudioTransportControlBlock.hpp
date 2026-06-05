@@ -8,14 +8,14 @@
 #include <atomic>
 #include <cstdint>
 
+namespace ASFW::Audio::Runtime {
+
 enum class FatalStreamReason : uint32_t {
     None = 0,
     RxAuthorityLost,
     InvalidGeometry,
     MirrorPumpFailed,
 };
-
-namespace ASFW::Audio::Runtime {
 
 struct AudioTransportControlBlock final {
     std::atomic<uint64_t> generation{0};
@@ -82,6 +82,9 @@ struct AudioTransportControlBlock final {
         device.Reset();
         counters.Reset();
         ztsState.Reset();
+
+        fatalReason.store(FatalStreamReason::None, std::memory_order_release);
+        fatalGeneration.store(0, std::memory_order_release);
 
         inputProducedEndFrame.store(0, std::memory_order_release);
         outputConsumedEndFrame.store(0, std::memory_order_release);

@@ -73,6 +73,51 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txInvalidGeometryPackets);
 }
 
+void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
+    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
+                       runtime.directAudioEngine.IsBound();
+    const auto snapshot = ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot(
+        runtime.directAudioGraph,
+        bound,
+        0,
+        ASFW::Isoch::Config::kAudioIoPeriodFrames,
+        0,
+        0,
+        0,
+        true);
+
+    ASFW_LOG(DirectAudio,
+             "ADK FORCED SNAPSHOT (%{public}s) bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
+             context ? context : "unknown",
+             snapshot.bound,
+             snapshot.inputBufferAddress,
+             snapshot.outputBufferAddress,
+             snapshot.inputFrameCapacity,
+             snapshot.outputFrameCapacity,
+             snapshot.inputChannels,
+             snapshot.outputChannels,
+             snapshot.ioBeginReadCount,
+             snapshot.ioWriteEndCount,
+             snapshot.inputBeginReadSampleFrame,
+             snapshot.inputClientReadEndFrame,
+             snapshot.outputWriteEndSampleFrame,
+             snapshot.outputClientWriteEndFrame,
+             snapshot.inputBeginReadFrameCount,
+             snapshot.outputWriteEndFrameCount,
+             snapshot.ioBufferFrameSize,
+             snapshot.expectedIoBufferFrameSize,
+             snapshot.outputReaderAvailableAtWriteEnd,
+             snapshot.directTxPackets,
+             snapshot.directTxUnderruns,
+             snapshot.directTxSilenceSubstitutions,
+             snapshot.txValidPhasePcmPackets,
+             snapshot.txValidPhaseSilencePackets,
+             snapshot.txNoPhaseSilencePackets,
+             snapshot.txUnderrunSilencePackets,
+             snapshot.txStaleSyncPackets,
+             snapshot.txInvalidGeometryPackets);
+}
+
 } // namespace ASFW::Audio::DriverKit::DirectDiagnostics
 
 namespace ASFW::Audio::DriverKit {

@@ -18,7 +18,7 @@ void AudioClockPublisher::Publish(uint64_t sampleFrame,
     }
 
     const auto mode = binding_->control->ztsState.selectedMode.load(std::memory_order_relaxed);
-    if (mode == ASFW::Audio::Runtime::ZtsPublicationMode::DirectToHAL && binding_->audioDevice) {
+    if (updated && mode == ASFW::Audio::Runtime::ZtsPublicationMode::DirectToHAL && binding_->audioDevice) {
         binding_->audioDevice->UpdateCurrentZeroTimestamp(sampleFrame, hostTicks);
         binding_->control->ztsState.directPublications.fetch_add(1, std::memory_order_relaxed);
         binding_->control->counters.CountRxAdkZtsPublished();

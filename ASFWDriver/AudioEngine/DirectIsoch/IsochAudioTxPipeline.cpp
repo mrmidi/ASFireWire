@@ -667,6 +667,8 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             if (directTxBinding_.control) {
                 directTxBinding_.control->ztsState.selectedSource.store(ASFW::Audio::Runtime::ZtsAuthoritySource::None, std::memory_order_relaxed);
                 directTxBinding_.control->counters.txStaleSyncPackets.fetch_add(1, std::memory_order_relaxed);
+                directTxBinding_.control->fatalReason.store(ASFW::Audio::Runtime::FatalStreamReason::RxAuthorityLost, std::memory_order_release);
+                directTxBinding_.control->fatalGeneration.fetch_add(1, std::memory_order_release);
             }
             ASFW_LOG(Audio, "ADK FATAL: RX clock authority lost! status=%u ageUsec=%llu threshold=%llu. Stopping stream.",
                      static_cast<uint32_t>(sync.status), sync.ageUsec, sync.staleThresholdUsec);
@@ -695,6 +697,8 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
             if (directTxBinding_.control) {
                 directTxBinding_.control->counters.txInvalidGeometryPackets.fetch_add(1, std::memory_order_relaxed);
+                directTxBinding_.control->fatalReason.store(ASFW::Audio::Runtime::FatalStreamReason::InvalidGeometry, std::memory_order_release);
+                directTxBinding_.control->fatalGeneration.fetch_add(1, std::memory_order_release);
             }
             return false;
         }
@@ -711,6 +715,12 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             // Increment specific atomic counter based on packet state
             if (directTxBinding_.control) {
                 auto& counters = directTxBinding_.control->counters;
+                if (result.syt == 0xffff) {
+                    counters.txSytFfffPackets.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    counters.txValidSytPackets.fetch_add(1, std::memory_order_relaxed);
+                }
+
                 switch (result.state) {
                     case ASFW::Audio::Runtime::TxPacketState::ValidPhasePcm:
                         counters.txValidPhasePcmPackets.fetch_add(1, std::memory_order_relaxed);

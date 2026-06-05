@@ -69,23 +69,17 @@ public:
         return 8; // publication period matches frames per packet
     }
 
-    [[nodiscard]] constexpr uint64_t HardwareOutputFrameToReportedFrame(uint64_t hardwareFrame,
-                                                                        uint32_t ringFrames) const noexcept {
-        if (ringFrames == 0) return 0;
+    [[nodiscard]] constexpr uint64_t HardwareOutputFrameToReportedFrame(uint64_t hardwareFrame) const noexcept {
         const uint64_t offset = CursorOffsetFrames(AudioDirection::Output);
         return (hardwareFrame >= offset) ? (hardwareFrame - offset) : 0;
     }
 
-    [[nodiscard]] constexpr uint64_t HostOutputFrameToPlaybackFrame(uint64_t hostFrame,
-                                                                    uint32_t ringFrames) const noexcept {
-        if (ringFrames == 0) return 0;
+    [[nodiscard]] constexpr uint64_t HostOutputFrameToPlaybackFrame(uint64_t hostFrame) const noexcept {
         const uint64_t offset = CursorOffsetFrames(AudioDirection::Output);
         return hostFrame + offset; // map host write cursor to playback timeline frame
     }
 
-    [[nodiscard]] constexpr uint64_t HardwareInputFrameToCaptureFrame(uint64_t hardwareFrame,
-                                                                      uint32_t ringFrames) const noexcept {
-        if (ringFrames == 0) return 0;
+    [[nodiscard]] constexpr uint64_t HardwareInputFrameToCaptureFrame(uint64_t hardwareFrame) const noexcept {
         const uint64_t offset = CursorOffsetFrames(AudioDirection::Input);
         return (hardwareFrame >= offset) ? (hardwareFrame - offset) : 0;
     }

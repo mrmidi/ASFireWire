@@ -104,6 +104,7 @@ void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept;
 
 namespace DirectDiagnostics {
 void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept;
+void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept;
 } // namespace DirectDiagnostics
 
 [[nodiscard]] kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
@@ -118,9 +119,9 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
                         AudioGraphStartState* state) noexcept;
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 
-[[nodiscard]] bool PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
-                                                   const char* reason,
-                                                   bool logSuccess) noexcept;
+[[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
+                                                                                           const char* reason,
+                                                                                           bool logSuccess) noexcept;
 [[nodiscard]] bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept;
 void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
 void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
