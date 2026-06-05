@@ -105,16 +105,10 @@ void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
         return;
     }
 
-    const uint32_t cycleTime = hw.ReadCycleTime();
-    const uint32_t baseCycle = (cycleTime >> 12) & 0x1FFFu;
-
-    // hwTimestamp is [cycle4:4][offset12:12] from the status word of completed packet (past).
-    const uint32_t sytCycle4 = (hwTimestamp >> 12) & 0x0Fu;
-    int32_t diff = static_cast<int32_t>(sytCycle4) - static_cast<int32_t>(baseCycle & 0x0Fu);
-    if (diff > 0) {
-        diff -= 16;
-    }
-    const uint32_t hwCycle = (baseCycle + 8000 + diff) % 8000;
+    // OHCI 1.1 (§9.1.4, Table 9-3): The completion timestamp in the statusWord is stored in
+    // cycleTimer format: [cycleSeconds:3][cycleCount:13].
+    // The 13-bit cycleCount field directly contains the transmitted cycle index (0-7999).
+    const uint32_t hwCycle = (hwTimestamp & 0x1FFFu) % 8000u;
 
     out.hwTimestamp = static_cast<uint16_t>(0x8000u | hwCycle);
     lastHwTimestamp_ = hwTimestamp;

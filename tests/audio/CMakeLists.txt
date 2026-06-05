@@ -159,3 +159,16 @@ add_audio_test(AudioProfileRegistryTests
 add_audio_test(ITDescriptorLayoutTests
     ITDescriptorLayoutTests.cpp
 )
+
+# Isoch Transmit DMA Ring Tests
+add_audio_test(IsochTxDmaRingTests
+    IsochTxDmaRingTests.cpp
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
