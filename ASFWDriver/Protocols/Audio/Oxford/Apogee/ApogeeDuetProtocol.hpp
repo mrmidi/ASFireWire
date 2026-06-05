@@ -13,6 +13,7 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <span>
 
 namespace ASFW::Protocols::AVC {
     class FCPTransport;
@@ -22,6 +23,72 @@ namespace ASFW::Audio::Oxford::Apogee {
 
 class ApogeeDuetProtocol : public IDeviceProtocol {
 public:
+    struct VendorCommand {
+        enum class Code : uint8_t {
+            MicPolarity = 0x00,
+            XlrIsMicLevel = 0x01,
+            XlrIsConsumerLevel = 0x02,
+            MicPhantom = 0x03,
+            OutIsConsumerLevel = 0x04,
+            InGain = 0x05,
+            HwState = 0x07,
+            OutMute = 0x09,
+            InputSourceIsPhone = 0x0C,
+            MixerSrc = 0x10,
+            OutSourceIsMixer = 0x11,
+            DisplayOverholdTwoSec = 0x13,
+            DisplayClear = 0x14,
+            OutVolume = 0x15,
+            MuteForLineOut = 0x16,
+            MuteForHpOut = 0x17,
+            UnmuteForLineOut = 0x18,
+            UnmuteForHpOut = 0x19,
+            DisplayIsInput = 0x1B,
+            InClickless = 0x1E,
+            DisplayFollowToKnob = 0x22,
+        };
+
+        Code code{};
+        uint8_t index{0};
+        uint8_t index2{0};
+        bool boolValue{false};
+        uint8_t u8Value{0};
+        uint16_t u16Value{0};
+        std::array<uint8_t, 11> hwState{};
+
+        static VendorCommand Bool(Code code, bool value);
+        static VendorCommand IndexedBool(Code code, uint8_t index, bool value);
+        static VendorCommand InGain(uint8_t index, uint8_t value);
+        static VendorCommand OutVolume(uint8_t value);
+        static VendorCommand MixerSrc(uint8_t source, uint8_t destination, uint16_t gain);
+        static VendorCommand HwState(const std::array<uint8_t, 11>& raw);
+        static VendorCommand Make(Code code);
+
+        [[nodiscard]] std::vector<uint8_t> BuildOperandBase() const;
+        void AppendControlValue(std::vector<uint8_t>& operands) const;
+        [[nodiscard]] bool ParseStatusPayload(std::span<const uint8_t> payload);
+    };
+
+    static std::vector<VendorCommand> BuildKnobStateQuery();
+    static VendorCommand BuildKnobStateControl(const KnobState& state);
+    static KnobState ParseKnobState(const VendorCommand& command);
+
+    static std::vector<VendorCommand> BuildOutputParamsQuery();
+    static std::vector<VendorCommand> BuildOutputParamsControl(const OutputParams& params);
+    static OutputParams ParseOutputParams(const std::vector<VendorCommand>& commands);
+
+    static std::vector<VendorCommand> BuildInputParamsQuery();
+    static std::vector<VendorCommand> BuildInputParamsControl(const InputParams& params);
+    static InputParams ParseInputParams(const std::vector<VendorCommand>& commands);
+
+    static std::vector<VendorCommand> BuildMixerParamsQuery();
+    static std::vector<VendorCommand> BuildMixerParamsControl(const MixerParams& params);
+    static MixerParams ParseMixerParams(const std::vector<VendorCommand>& commands);
+
+    static std::vector<VendorCommand> BuildDisplayParamsQuery();
+    static std::vector<VendorCommand> BuildDisplayParamsControl(const DisplayParams& params);
+    static DisplayParams ParseDisplayParams(const std::vector<VendorCommand>& commands);
+
     using VoidCallback = std::function<void(IOReturn)>;
     template<typename T> using ResultCallback = std::function<void(IOReturn, T)>;
 
@@ -121,8 +188,6 @@ public:
     }
 
 private:
-    struct VendorCommand;
-
     Protocols::Ports::FireWireBusOps& busOps_;
     Protocols::Ports::FireWireBusInfo& busInfo_;
     uint16_t nodeId_;
@@ -139,26 +204,6 @@ private:
     void ExecuteVendorSequence(const std::vector<VendorCommand>& commands,
                                bool isStatus,
                                VendorSequenceCallback callback);
-
-    static std::vector<VendorCommand> BuildKnobStateQuery();
-    static VendorCommand BuildKnobStateControl(const KnobState& state);
-    static KnobState ParseKnobState(const VendorCommand& command);
-
-    static std::vector<VendorCommand> BuildOutputParamsQuery();
-    static std::vector<VendorCommand> BuildOutputParamsControl(const OutputParams& params);
-    static OutputParams ParseOutputParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildInputParamsQuery();
-    static std::vector<VendorCommand> BuildInputParamsControl(const InputParams& params);
-    static InputParams ParseInputParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildMixerParamsQuery();
-    static std::vector<VendorCommand> BuildMixerParamsControl(const MixerParams& params);
-    static MixerParams ParseMixerParams(const std::vector<VendorCommand>& commands);
-
-    static std::vector<VendorCommand> BuildDisplayParamsQuery();
-    static std::vector<VendorCommand> BuildDisplayParamsControl(const DisplayParams& params);
-    static DisplayParams ParseDisplayParams(const std::vector<VendorCommand>& commands);
 
     static uint32_t ReadQuadletBE(const uint8_t* data) noexcept;
 

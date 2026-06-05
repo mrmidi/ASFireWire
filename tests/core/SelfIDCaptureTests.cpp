@@ -1,3 +1,8 @@
+// Portions of these tests (Self-ID register and buffer decoding) are derived/ported
+// from the Linux FireWire subsystem KUnit tests (ohci-serdes-test.c),
+// Copyright (c) 2024 Takashi Sakamoto.
+// Preserving authorship for the Linux KUnit-derived test assertions.
+
 #include <gtest/gtest.h>
 
 #include "ASFWDriver/Bus/SelfIDCapture.hpp"
@@ -11,7 +16,11 @@ class SelfIDCaptureTestPeer {
     static uint32_t* MutableQuadlets(SelfIDCapture& capture) {
         return reinterpret_cast<uint32_t*>(capture.map_->GetAddress());
     }
+    static void SetQuadCapacity(SelfIDCapture& capture, size_t capacity) {
+        capture.quadCapacity_ = capacity;
+    }
 };
+
 
 } // namespace ASFW::Driver
 
@@ -111,3 +120,78 @@ TEST(SelfIDCaptureTests, GenerationMismatchIsRejected) {
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error().code, SelfIDCapture::DecodeErrorCode::GenerationMismatch);
 }
+
+TEST(SelfIDCaptureTests, EmptyCaptureIsRejected) {
+    HardwareInterface hardware;
+    SelfIDCapture capture;
+
+    ASSERT_EQ(capture.PrepareBuffers(8, hardware), kIOReturnSuccess);
+    ASSERT_EQ(capture.Arm(hardware), kIOReturnSuccess);
+
+    const uint32_t countRegister = MakeSelfIDCountRegister(0x2AU, 0U);
+    hardware.SetTestRegister(Register32::kSelfIDCount, countRegister);
+
+    auto result = capture.Decode(countRegister, hardware);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, SelfIDCapture::DecodeErrorCode::EmptyCapture);
+}
+
+TEST(SelfIDCaptureTests, ControllerErrorBitIsRejected) {
+    HardwareInterface hardware;
+    SelfIDCapture capture;
+
+    ASSERT_EQ(capture.PrepareBuffers(8, hardware), kIOReturnSuccess);
+    ASSERT_EQ(capture.Arm(hardware), kIOReturnSuccess);
+
+    const uint32_t countRegister = MakeSelfIDCountRegister(0x2AU, 4U) | SelfIDCountBits::kError;
+    hardware.SetTestRegister(Register32::kSelfIDCount, countRegister);
+
+    auto result = capture.Decode(countRegister, hardware);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, SelfIDCapture::DecodeErrorCode::ControllerErrorBit);
+}
+
+TEST(SelfIDCaptureTests, CountOverflowIsRejected) {
+    HardwareInterface hardware;
+    SelfIDCapture capture;
+
+    ASSERT_EQ(capture.PrepareBuffers(8, hardware), kIOReturnSuccess);
+    ASSERT_EQ(capture.Arm(hardware), kIOReturnSuccess);
+
+    SelfIDCaptureTestPeer::SetQuadCapacity(capture, 4);
+
+    const uint32_t countRegister = MakeSelfIDCountRegister(0x2AU, 5U);
+    hardware.SetTestRegister(Register32::kSelfIDCount, countRegister);
+
+    auto result = capture.Decode(countRegister, hardware);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, SelfIDCapture::DecodeErrorCode::CountOverflow);
+}
+
+TEST(SelfIDCaptureTests, DoubleReadGenerationMismatchIsRejected) {
+    HardwareInterface hardware;
+    SelfIDCapture capture;
+
+    ASSERT_EQ(capture.PrepareBuffers(8, hardware), kIOReturnSuccess);
+    ASSERT_EQ(capture.Arm(hardware), kIOReturnSuccess);
+
+    auto* quadlets = SelfIDCaptureTestPeer::MutableQuadlets(capture);
+    const uint32_t node0 = MakeBaseSelfID(0U, 63U);
+    quadlets[0] = 0x002A0000U;
+    quadlets[1] = node0;
+    quadlets[2] = ~node0;
+
+    const uint32_t countRegister1 = MakeSelfIDCountRegister(0x2AU, 3U);
+    const uint32_t countRegister2 = MakeSelfIDCountRegister(0x2BU, 3U);
+
+    hardware.SetTestRegister(Register32::kSelfIDCount, countRegister2);
+
+    auto result = capture.Decode(countRegister1, hardware);
+
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code, SelfIDCapture::DecodeErrorCode::GenerationMismatch);
+}
+

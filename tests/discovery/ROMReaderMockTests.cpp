@@ -7,6 +7,7 @@ using namespace ASFW::Discovery;
 using namespace ASFW::Async;
 using namespace ASFW::Async::Mocks;
 using namespace ASFW::Async::Fakes;
+using NodeId = ASFW::FW::NodeId;
 using ::testing::_;
 using ::testing::Return;
 using ::testing::Invoke;
@@ -28,7 +29,7 @@ protected:
         // Set up default topology state
         mockBus.SetDefaultTopology(
             Generation{1},
-            NodeId{0xFFC0},  // Bus 0, Node 0
+            NodeId{0},  // Bus 0, Node 0
             FwSpeed::S400
         );
     }
@@ -49,17 +50,57 @@ TEST_F(ROMReaderMockTest, ReadBIB_Success) {
         0x44, 0x55, 0x66, 0x77   // GUID low (20 bytes total)
     };
 
-    EXPECT_CALL(mockBus, ReadBlock(
-        Generation{1},
-        NodeId{0},
-        testing::Field(&FWAddress::addressLo, 0xF0000400),  // Config ROM base
-        20,  // BIB size
-        FwSpeed::S100,  // Always S100 per Apple behavior
-        testing::_
-    )).WillOnce(Invoke([validBIB](auto, auto, auto, auto, auto, auto callback) {
-        callback(AsyncStatus::kSuccess, std::span{validBIB});
-        return AsyncHandle{1};
-    }));
+    {
+        testing::InSequence seq;
+
+        EXPECT_CALL(mockBus, ReadBlock(
+            Generation{1},
+            NodeId{0},
+            testing::Field(&FWAddress::addressLo, 0xF0000400),  // Config ROM base (q0)
+            4,
+            FwSpeed::S400,
+            testing::_
+        )).WillOnce(Invoke([validBIB](auto, auto, auto, auto, auto, auto callback) {
+            callback(AsyncStatus::kSuccess, std::span{validBIB.data(), 4});
+            return AsyncHandle{1};
+        }));
+
+        EXPECT_CALL(mockBus, ReadBlock(
+            Generation{1},
+            NodeId{0},
+            testing::Field(&FWAddress::addressLo, 0xF0000408),  // Offset 8 (q2)
+            4,
+            FwSpeed::S400,
+            testing::_
+        )).WillOnce(Invoke([validBIB](auto, auto, auto, auto, auto, auto callback) {
+            callback(AsyncStatus::kSuccess, std::span{validBIB.data() + 8, 4});
+            return AsyncHandle{2};
+        }));
+
+        EXPECT_CALL(mockBus, ReadBlock(
+            Generation{1},
+            NodeId{0},
+            testing::Field(&FWAddress::addressLo, 0xF000040C),  // Offset 12 (q3)
+            4,
+            FwSpeed::S400,
+            testing::_
+        )).WillOnce(Invoke([validBIB](auto, auto, auto, auto, auto, auto callback) {
+            callback(AsyncStatus::kSuccess, std::span{validBIB.data() + 12, 4});
+            return AsyncHandle{3};
+        }));
+
+        EXPECT_CALL(mockBus, ReadBlock(
+            Generation{1},
+            NodeId{0},
+            testing::Field(&FWAddress::addressLo, 0xF0000410),  // Offset 16 (q4)
+            4,
+            FwSpeed::S400,
+            testing::_
+        )).WillOnce(Invoke([validBIB](auto, auto, auto, auto, auto, auto callback) {
+            callback(AsyncStatus::kSuccess, std::span{validBIB.data() + 16, 4});
+            return AsyncHandle{4};
+        }));
+    }
 
     // Act: Read BIB
     ROMReader reader(mockBus);
@@ -70,11 +111,11 @@ TEST_F(ROMReaderMockTest, ReadBIB_Success) {
         EXPECT_TRUE(result.success);
         EXPECT_EQ(result.nodeId, 0);
         EXPECT_EQ(result.generation.value, 1u);
-        EXPECT_EQ(result.dataLength, 20u);
-        EXPECT_NE(result.data, nullptr);
+        EXPECT_EQ(result.DataLengthBytes(), 20u);
+        EXPECT_FALSE(result.quadletsBE.empty());
 
         // Verify BIB header
-        uint32_t header = result.data[0];
+        uint32_t header = OSSwapBigToHostInt32(result.quadletsBE[0]);
         uint8_t bus_info_length = (header >> 24) & 0xFF;
         EXPECT_EQ(bus_info_length, 0x04);
     });
@@ -113,7 +154,7 @@ TEST_F(ROMReaderMockTest, ReadBIB_BusReset) {
     // Arrange: Mock returns bus reset status
     EXPECT_CALL(mockBus, ReadBlock(_, _, _, _, _, _))
         .WillOnce(Invoke([](auto, auto, auto, auto, auto, auto callback) {
-            callback(AsyncStatus::kBusReset, std::span<const uint8_t>{});
+            callback(AsyncStatus::kAborted, std::span<const uint8_t>{});
             return AsyncHandle{1};
         }));
 
@@ -166,21 +207,21 @@ protected:
 /**
  * Test: ReadBIB returns programmed fake data.
  */
-TEST_F(ROMReaderFakeTest, ReadBIB_ReturnsF akeData) {
+TEST_F(ROMReaderFakeTest, ReadBIB_ReturnsFakeData) {
     ROMReader reader(fakeBus);
     bool callbackInvoked = false;
 
     reader.ReadBIB(0, Generation{1}, FwSpeed::S400, [&](const ROMReader::ReadResult& result) {
         callbackInvoked = true;
         ASSERT_TRUE(result.success);
-        ASSERT_EQ(result.dataLength, 20u);
-        ASSERT_NE(result.data, nullptr);
+        ASSERT_EQ(result.DataLengthBytes(), 20u);
+        ASSERT_FALSE(result.quadletsBE.empty());
 
         // Verify BIB header matches fake data
-        EXPECT_EQ(result.data[0], 0x04040000u);  // Big-endian header
-        EXPECT_EQ(result.data[1], 0x31333934u);  // "1394"
-        EXPECT_EQ(result.data[3], 0x00112233u);  // GUID high
-        EXPECT_EQ(result.data[4], 0x44556677u);  // GUID low
+        EXPECT_EQ(OSSwapBigToHostInt32(result.quadletsBE[0]), 0x04040000u);  // Big-endian header
+        EXPECT_EQ(OSSwapBigToHostInt32(result.quadletsBE[1]), 0x31333934u);  // "1394"
+        EXPECT_EQ(OSSwapBigToHostInt32(result.quadletsBE[3]), 0x00112233u);  // GUID high
+        EXPECT_EQ(OSSwapBigToHostInt32(result.quadletsBE[4]), 0x44556677u);  // GUID low
     });
 
     EXPECT_TRUE(callbackInvoked);

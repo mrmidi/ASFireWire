@@ -99,8 +99,8 @@ TEST(TopologyManager, ExtractGapCounts_SkipsNonPacket0) {
     // Verify we skip packets 1, 2, 3
 
     uint32_t packet0 = 0x803fc464;  // Packet 0, gap=63
-    uint32_t packet1 = 0x844000ff;  // Packet 1 (bits 23:22 = 01)
-    uint32_t packet2 = 0x888000ff;  // Packet 2 (bits 23:22 = 10)
+    uint32_t packet1 = 0x80800000;  // Packet 1 (extended, seq = 0)
+    uint32_t packet2 = 0x80900000;  // Packet 2 (extended, seq = 1)
 
     std::vector<uint32_t> selfIDs = {packet0, packet1, packet2};
     auto gaps = TopologyManager::ExtractGapCounts(selfIDs);

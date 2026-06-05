@@ -15,7 +15,7 @@ using ASFW::Driver::SelfIDSequenceEnumerator;
 namespace {
 
 constexpr std::string_view kSelfIDReferencePath =
-    "FirWireDriver/firewire/self-id-sequence-helper-test.c";
+    "firewire/self-id-sequence-helper-test.c";
 
 bool LoadSequenceArray(std::string_view arrayName, std::vector<uint32_t>& words) {
     if (!ASFW::Tests::RepoReferenceFileExists(kSelfIDReferencePath)) {

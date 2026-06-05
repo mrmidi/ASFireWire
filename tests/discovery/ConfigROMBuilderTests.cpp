@@ -275,7 +275,7 @@ TEST_P(ConfigROMReferenceCrcTests, ReferenceDataHasValidCrcs) {
     SCOPED_TRACE(testCase.description);
 
     constexpr std::string_view kDeviceAttributeReferencePath =
-        "FirWireDriver/firewire/device-attribute-test.c";
+        "firewire/device-attribute-test.c";
     if (!ASFW::Tests::RepoReferenceFileExists(kDeviceAttributeReferencePath)) {
         GTEST_SKIP() << "Missing external Linux reference data: "
                      << kDeviceAttributeReferencePath;

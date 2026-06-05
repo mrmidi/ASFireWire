@@ -289,7 +289,7 @@ void Test6_FullFlow() {
                            (kern_return_t kr, span<const uint8_t> data) {
         std::cout << "🔍 [Wrapper Lambda] callback valid=" << (callback ? "YES" : "NO") << std::endl;
         if (callback) {
-            callback(AsyncHandle{label + 1}, AsyncStatus::kSuccess, data);
+            callback(AsyncHandle{static_cast<uint32_t>(label + 1)}, AsyncStatus::kSuccess, data);
         }
     });
 
