@@ -21,7 +21,7 @@
 #include "../../AudioEngine/Direct/AudioClockPublisher.hpp"
 #include "../../AudioEngine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
-#include "../Core/ExternalSyncBridge.hpp"
+#include "../../AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 #include "../Config/AudioConstants.hpp"
 
 namespace ASFW {

@@ -139,6 +139,7 @@ struct ASFWAudioNub_IVars {
 
     // Thread-safe duplex binding state
     struct IOLock* bindingLock;
+    struct IOLock* directMemoryLock;
     uint64_t directGeneration;
     const int32_t* directOutputBase;
     uint64_t directOutputBytes;

@@ -62,12 +62,28 @@ void AVCAudioBackend::OnAudioConfigurationReady(uint64_t guid, const Model::ASFW
 void AVCAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
     if (guid == 0) return;
 
-    (void)StopStreaming(guid);
+    bool shouldStop = false;
+    if (lock_) {
+        IOLockLock(lock_);
+        shouldStop = (activeGuid_ == guid);
+        IOLockUnlock(lock_);
+    }
+
+    if (shouldStop) {
+        (void)StopStreaming(guid);
+    } else {
+        ASFW_LOG(Audio,
+                 "AVCAudioBackend: OnDeviceRemoved skipping stop for inactive GUID=0x%016llx",
+                 guid);
+    }
     publisher_.TerminateNub(guid, "AVC-Removed");
 
     if (lock_) {
         IOLockLock(lock_);
         configByGuid_.erase(guid);
+        if (activeGuid_ == guid) {
+            activeGuid_ = 0;
+        }
         IOLockUnlock(lock_);
     }
 }
@@ -88,9 +104,40 @@ bool AVCAudioBackend::WaitForCMP(std::atomic<bool>& done,
 IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
 
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ != 0 && activeGuid_ != guid) {
+            const uint64_t active = activeGuid_;
+            IOLockUnlock(lock_);
+            ASFW_LOG_WARNING(Audio,
+                             "AVCAudioBackend: StartStreaming busy requested=0x%016llx active=0x%016llx",
+                             guid,
+                             active);
+            return kIOReturnBusy;
+        }
+        activeGuid_ = guid;
+        IOLockUnlock(lock_);
+    }
+
+    auto failStart = [&](IOReturn status, const char* stage) -> IOReturn {
+        if (lock_) {
+            IOLockLock(lock_);
+            if (activeGuid_ == guid) {
+                activeGuid_ = 0;
+            }
+            IOLockUnlock(lock_);
+        }
+        ASFW_LOG_ERROR(Audio,
+                       "AVCAudioBackend: StartStreaming failed stage=%{public}s GUID=0x%016llx kr=0x%x",
+                       stage ? stage : "unknown",
+                       guid,
+                       status);
+        return status;
+    };
+
     if (!cmpClient_) {
         ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (CMPClient missing)");
-        return kIOReturnNotReady;
+        return failStart(kIOReturnNotReady, "CMPClient");
     }
 
     Model::ASFWAudioDevice config{};
@@ -106,13 +153,13 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
     }
     if (!hasConfig) {
         ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no config) GUID=0x%016llx", guid);
-        return kIOReturnNotReady;
+        return failStart(kIOReturnNotReady, "config");
     }
 
     const auto* record = registry_.FindByGuid(guid);
     if (!record) {
         ASFW_LOG(Audio, "AVCAudioBackend: StartStreaming not ready (no device record) GUID=0x%016llx", guid);
-        return kIOReturnNotReady;
+        return failStart(kIOReturnNotReady, "device record");
     }
 
     // CMP targets PCR space on the remote device (AV/C family policy).
@@ -123,12 +170,12 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
     if (!nub) {
         (void)publisher_.EnsureNub(guid, config, "AVC-Start");
         nub = publisher_.GetNub(guid);
-        if (!nub) return kIOReturnNotReady;
+        if (!nub) return failStart(kIOReturnNotReady, "nub");
     }
 
     auto* bindingSource = static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource());
     if (!bindingSource) {
-        return kIOReturnNotReady;
+        return failStart(kIOReturnNotReady, "direct binding source");
     }
 
     // Start IR first so capture packets don't get dropped.
@@ -138,7 +185,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                                                        bindingSource);
         if (krRx != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartReceive failed GUID=0x%016llx kr=0x%x", guid, krRx);
-            return krRx;
+            return failStart(krRx, "StartReceive");
         }
     }
 
@@ -159,7 +206,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
                            ASFW::IRM::ToString(s),
                            static_cast<int>(s));
             (void)isoch_.StopReceive();
-            return kIOReturnError;
+            return failStart(kIOReturnError, "ConnectOPCR");
         }
     }
 
@@ -184,7 +231,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
             (void)isoch_.StopReceive();
             // Best-effort: disconnect oPCR.
             cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
-            return krTx;
+            return failStart(krTx, "StartTransmit");
         }
 
         std::atomic<bool> done{false};
@@ -204,7 +251,7 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
             (void)isoch_.StopTransmit();
             (void)isoch_.StopReceive();
             cmpClient_->DisconnectOPCR(0, [](ASFW::CMP::CMPStatus) { /* best-effort, result ignored */ });
-            return kIOReturnError;
+            return failStart(kIOReturnError, "ConnectIPCR");
         }
     }
 
@@ -221,10 +268,38 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
 IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
     if (guid == 0) return kIOReturnBadArgument;
 
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ != 0 && activeGuid_ != guid) {
+            const uint64_t active = activeGuid_;
+            IOLockUnlock(lock_);
+            ASFW_LOG_WARNING(Audio,
+                             "AVCAudioBackend: StopStreaming refused requested=0x%016llx active=0x%016llx",
+                             guid,
+                             active);
+            return kIOReturnBusy;
+        }
+        if (activeGuid_ == 0) {
+            IOLockUnlock(lock_);
+            ASFW_LOG(Audio,
+                     "AVCAudioBackend: StopStreaming idempotent inactive GUID=0x%016llx",
+                     guid);
+            return kIOReturnSuccess;
+        }
+        IOLockUnlock(lock_);
+    }
+
     // Stop transport regardless of CMP availability (best-effort).
     if (!cmpClient_) {
         (void)isoch_.StopTransmit();
         (void)isoch_.StopReceive();
+        if (lock_) {
+            IOLockLock(lock_);
+            if (activeGuid_ == guid) {
+                activeGuid_ = 0;
+            }
+            IOLockUnlock(lock_);
+        }
         return kIOReturnSuccess;
     }
 
@@ -259,6 +334,14 @@ IOReturn AVCAudioBackend::StopStreaming(uint64_t guid) noexcept {
     }
 
     (void)isoch_.StopReceive();
+
+    if (lock_) {
+        IOLockLock(lock_);
+        if (activeGuid_ == guid) {
+            activeGuid_ = 0;
+        }
+        IOLockUnlock(lock_);
+    }
 
     ASFW_LOG(Audio, "AVCAudioBackend: Streaming stopped GUID=0x%016llx", guid);
     return kIOReturnSuccess;

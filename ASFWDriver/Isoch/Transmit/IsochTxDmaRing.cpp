@@ -81,7 +81,8 @@ void IsochTxDmaRing::UpdateGapCounters(const uint32_t gap) noexcept {
     }
 }
 
-void IsochTxDmaRing::ResyncCycleTracking(const uint32_t hwPacketIndex,
+void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
+                                         const uint32_t hwPacketIndex,
                                          const uint32_t deltaConsumed,
                                          RefillOutcome& out) noexcept {
     if (deltaConsumed == 0 || !cycleTrackingValid_) {
@@ -92,6 +93,11 @@ void IsochTxDmaRing::ResyncCycleTracking(const uint32_t hwPacketIndex,
     out.completedPacketIndex = lastProcessedPkt;
     out.completedPacketCount = deltaConsumed;
     auto* processedOL = slab_.GetDescriptorPtr(lastProcessedPkt * Layout::kBlocksPerPacket + 2);
+
+    if (dmaMemory_) {
+        dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(processedOL), sizeof(*processedOL));
+    }
+
     const uint16_t hwTimestamp = static_cast<uint16_t>(processedOL->statusWord & 0xFFFF);
     out.hwTimestamp = hwTimestamp;
 
@@ -99,7 +105,18 @@ void IsochTxDmaRing::ResyncCycleTracking(const uint32_t hwPacketIndex,
         return;
     }
 
-    const uint32_t hwCycle = hwTimestamp & 0x1FFF;
+    const uint32_t cycleTime = hw.ReadCycleTime();
+    const uint32_t baseCycle = (cycleTime >> 12) & 0x1FFFu;
+
+    // hwTimestamp is [cycle4:4][offset12:12] from the status word of completed packet (past).
+    const uint32_t sytCycle4 = (hwTimestamp >> 12) & 0x0Fu;
+    int32_t diff = static_cast<int32_t>(sytCycle4) - static_cast<int32_t>(baseCycle & 0x0Fu);
+    if (diff > 0) {
+        diff -= 16;
+    }
+    const uint32_t hwCycle = (baseCycle + 8000 + diff) % 8000;
+
+    out.hwTimestamp = static_cast<uint16_t>(0x8000u | hwCycle);
     lastHwTimestamp_ = hwTimestamp;
 
     const uint32_t aheadCount =
@@ -161,6 +178,19 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
     auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(slab_.GetDescriptorPtr(descBase));
     const uint32_t isochHeaderQ1 = (static_cast<uint32_t>(pkt.sizeBytes) & 0xFFFFu) << 16;
     immDesc->immediateData[1] = isochHeaderQ1;
+
+    if (dmaMemory_) {
+        dmaMemory_->PublishToDevice(
+            reinterpret_cast<const std::byte*>(slab_.GetDescriptorPtr(descBase)),
+            Layout::kBlocksPerPacket * sizeof(OHCIDescriptor)
+        );
+        if (pkt.sizeBytes > 0) {
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(payloadVirt),
+                pkt.sizeBytes
+            );
+        }
+    }
 
     out.packetsFilled++;
     if (pkt.isData) {
@@ -260,6 +290,19 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
         lastDesc->branchWord = (nextBlockIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket;
         lastDesc->statusWord = 0;
 
+        if (dmaMemory_) {
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(slab_.GetDescriptorPtr(descBase)),
+                Layout::kBlocksPerPacket * sizeof(OHCIDescriptor)
+            );
+            if (pkt.sizeBytes > 0) {
+                dmaMemory_->PublishToDevice(
+                    reinterpret_cast<const std::byte*>(payloadVirt),
+                    pkt.sizeBytes
+                );
+            }
+        }
+
         stats.packetsAssembled++;
         if (pkt.isData) {
             stats.dataPackets++;
@@ -325,7 +368,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
     // Gap monitoring
     const uint32_t gap = ringPacketsAhead_;
     UpdateGapCounters(gap);
-    ResyncCycleTracking(hwPacketIndex, deltaConsumed, out);
+    ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
 
     // Phase 2: keep ring full with silent/cadence-correct packets
     const uint32_t toFill = (ringPacketsAhead_ < Layout::kMaxWriteAhead)

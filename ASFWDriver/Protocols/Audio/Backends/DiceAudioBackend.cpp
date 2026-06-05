@@ -3,6 +3,7 @@
 
 #include "DiceAudioBackend.hpp"
 
+#include "../../../Audio/Core/AudioEndpointRuntime.hpp"
 #include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Logging/Logging.hpp"
 #include "../DICE/Core/DICENotificationMailbox.hpp"
@@ -352,6 +353,10 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
 
     // DICE family policy: 48k uses blocking cadence (NDDD).
     dev.streamMode = Model::StreamMode::kBlocking;
+
+    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+        endpoint->UpdateConfig(dev);
+    }
 
     (void)publisher_.EnsureNub(guid, dev, "DICE");
 

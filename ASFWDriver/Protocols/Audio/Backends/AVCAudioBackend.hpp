@@ -55,6 +55,7 @@ private:
 
     IOLock* lock_{nullptr};
     std::unordered_map<uint64_t, Model::ASFWAudioDevice> configByGuid_{};
+    uint64_t activeGuid_{0};
 };
 
 } // namespace ASFW::Audio

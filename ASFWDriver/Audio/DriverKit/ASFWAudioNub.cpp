@@ -231,6 +231,23 @@ static kern_return_t CreateMappedDirectBuffer(uint64_t bytes,
     return kIOReturnSuccess;
 }
 
+[[nodiscard]] static bool HasCompleteDirectAudioMemory(const ASFWAudioNub_IVars* iv) noexcept {
+    return iv &&
+           iv->directOutputMemory &&
+           iv->directInputMemory &&
+           iv->directControlMemory &&
+           iv->directOutputMap &&
+           iv->directInputMap &&
+           iv->directControlMap &&
+           iv->directOutputCapacityFrames != 0 &&
+           iv->directInputCapacityFrames != 0 &&
+           iv->outputChannelCount != 0 &&
+           iv->inputChannelCount != 0 &&
+           iv->directSampleRateHz != 0 &&
+           iv->directControl != nullptr &&
+           iv->directProviderBindingPublished;
+}
+
 static void PublishDirectAudioBindingFromMappedMemory(ASFWAudioNub* self,
                                                        ASFWAudioNub_IVars* iv) noexcept {
     if (!iv || !iv->bindingLock || !iv->directOutputMap || !iv->directInputMap ||
@@ -471,6 +488,14 @@ bool ASFWAudioNub::init()
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
         return false;
     }
+    ivars->directMemoryLock = IOLockAlloc();
+    if (!ivars->directMemoryLock) {
+        ASFW_LOG(Audio, "ASFWAudioNub: Failed to allocate direct memory lock");
+        IOLockFree(ivars->bindingLock);
+        ivars->bindingLock = nullptr;
+        IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
+        return false;
+    }
     ivars->directGeneration = 0;
     ivars->directOutputBase = nullptr;
     ivars->directOutputBytes = 0;
@@ -510,7 +535,15 @@ void ASFWAudioNub::free()
 {
     ASFW_LOG(Audio, "ASFWAudioNub: free()");
     if (ivars) {
+        if (ivars->directMemoryLock) {
+            IOLockLock(ivars->directMemoryLock);
+        }
         ReleaseDirectAudioMemory(ivars);
+        if (ivars->directMemoryLock) {
+            IOLockUnlock(ivars->directMemoryLock);
+            IOLockFree(ivars->directMemoryLock);
+            ivars->directMemoryLock = nullptr;
+        }
 
         if (ivars->bindingLock) {
             IOLockFree(ivars->bindingLock);
@@ -598,6 +631,33 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnNotReady;
     }
 
+    if (!ivars->directMemoryLock) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: StartAudioStreaming failed missing direct memory lock GUID=0x%016llx",
+                 ivars->guid);
+        return kIOReturnNotReady;
+    }
+
+    IOLockLock(ivars->directMemoryLock);
+    const bool directReady = HasCompleteDirectAudioMemory(ivars);
+    const uint64_t generation = ivars->directGeneration;
+    const auto* control = ivars->directControl;
+    const bool providerPublished = ivars->directProviderBindingPublished;
+    IOLockUnlock(ivars->directMemoryLock);
+
+    if (!directReady) {
+        ASFW_LOG(DirectAudio,
+                 "ADK FATAL StartAudioStreaming direct memory not ready guid=0x%016llx gen=%llu provider=%d control=%p outMem=%p inMem=%p ctlMem=%p",
+                 ivars->guid,
+                 generation,
+                 providerPublished,
+                 static_cast<const void*>(control),
+                 static_cast<void*>(ivars->directOutputMemory),
+                 static_cast<void*>(ivars->directInputMemory),
+                 static_cast<void*>(ivars->directControlMemory));
+        return kIOReturnNotReady;
+    }
+
     // Auto-start gating (Info.plist + runtime), useful for debugging discovery without streams.
     if (!ASFW::LogConfig::Shared().IsAudioAutoStartEnabled()) {
         ASFW_LOG(Audio,
@@ -641,6 +701,16 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
 
 kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
 {
+    if (outOutputMemory) { *outOutputMemory = nullptr; }
+    if (outInputMemory) { *outInputMemory = nullptr; }
+    if (outControlMemory) { *outControlMemory = nullptr; }
+    if (outOutputFrames) { *outOutputFrames = 0; }
+    if (outOutputChannels) { *outOutputChannels = 0; }
+    if (outInputFrames) { *outInputFrames = 0; }
+    if (outInputChannels) { *outInputChannels = 0; }
+    if (outSampleRateHz) { *outSampleRateHz = 0; }
+    if (outGeneration) { *outGeneration = 0; }
+
     if (!ivars || !outOutputMemory || !outInputMemory || !outControlMemory ||
         !outOutputFrames || !outOutputChannels || !outInputFrames || !outInputChannels ||
         !outSampleRateHz || !outGeneration) {
@@ -648,20 +718,34 @@ kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
         return kIOReturnBadArgument;
     }
 
-    *outOutputMemory = nullptr;
-    *outInputMemory = nullptr;
-    *outControlMemory = nullptr;
-    *outOutputFrames = 0;
-    *outOutputChannels = 0;
-    *outInputFrames = 0;
-    *outInputChannels = 0;
-    *outSampleRateHz = 0;
-    *outGeneration = 0;
+    if (!ivars->directMemoryLock) {
+        ASFW_LOG(DirectAudio, "ADK DBG MEM copy failed no_memory_lock");
+        return kIOReturnNotReady;
+    }
 
+    IOLockLock(ivars->directMemoryLock);
     const kern_return_t kr = EnsureDirectAudioMemory(this, ivars);
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(DirectAudio, "ADK DBG MEM copy ensure_failed kr=0x%x", kr);
+        IOLockUnlock(ivars->directMemoryLock);
         return kr;
+    }
+
+    if (!HasCompleteDirectAudioMemory(ivars)) {
+        ASFW_LOG(DirectAudio,
+                 "ADK DBG MEM copy failed incomplete gen=%llu provider=%d outMem=%p inMem=%p ctlMem=%p outMap=%p inMap=%p ctlMap=%p control=%p rate=%u",
+                 ivars->directGeneration,
+                 ivars->directProviderBindingPublished,
+                 static_cast<void*>(ivars->directOutputMemory),
+                 static_cast<void*>(ivars->directInputMemory),
+                 static_cast<void*>(ivars->directControlMemory),
+                 static_cast<void*>(ivars->directOutputMap),
+                 static_cast<void*>(ivars->directInputMap),
+                 static_cast<void*>(ivars->directControlMap),
+                 static_cast<void*>(ivars->directControl),
+                 ivars->directSampleRateHz);
+        IOLockUnlock(ivars->directMemoryLock);
+        return kIOReturnNotReady;
     }
 
     ivars->directOutputMemory->retain();
@@ -690,6 +774,7 @@ kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
              static_cast<void*>(*outControlMemory),
              *outSampleRateHz);
 
+    IOLockUnlock(ivars->directMemoryLock);
     return kIOReturnSuccess;
 }
 

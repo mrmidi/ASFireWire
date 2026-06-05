@@ -69,9 +69,9 @@ TEST(ExternalSyncDiscipline48k, FullErrorCorrectionBeyondDeadband) {
     ExternalSyncDiscipline48k discipline;
 
     // First pass with zero error
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(0));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(0));
 
     // Drift beyond deadband: 700 ticks > 512 deadband
     auto result = discipline.Update(/*enabled=*/true,
@@ -86,9 +86,9 @@ TEST(ExternalSyncDiscipline48k, NoCooldownBetweenCorrections) {
     ExternalSyncDiscipline48k discipline;
 
     // First pass
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(0));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(0));
 
     // Two consecutive corrections beyond deadband — no cooldown
     auto r1 = discipline.Update(/*enabled=*/true,
@@ -119,9 +119,9 @@ TEST(ExternalSyncDiscipline48k, SteadyStateIgnoresWholePacketIntervalJitter) {
     ExternalSyncDiscipline48k discipline;
 
     // First pass: snap to zero
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(0));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(0));
 
     // Steady-state: a whole-packet-interval offset (4096) due to bridge sampling
     // latency should wrap to 0 in the packet-interval domain — no correction.
@@ -143,9 +143,9 @@ TEST(ExternalSyncDiscipline48k, DisableResetsFirstPass) {
     ExternalSyncDiscipline48k discipline;
 
     // Enable and complete first pass
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(0));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(0));
     EXPECT_TRUE(discipline.locked());
 
     // Disable
@@ -168,18 +168,18 @@ TEST(ExternalSyncDiscipline48k, DiagnosticsTrackMinMax) {
     ExternalSyncDiscipline48k discipline;
 
     // First pass
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(200));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(200));
 
     // Various phase errors
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(-300));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(-300));
 
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(800));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(800));
 
     EXPECT_LE(discipline.minPhaseError(), -300);
     EXPECT_GE(discipline.maxPhaseError(), 800);
@@ -199,9 +199,9 @@ TEST(ExternalSyncDiscipline48k, ResetRestoresFirstPassMode) {
     ExternalSyncDiscipline48k discipline;
 
     // Complete first pass
-    discipline.Update(/*enabled=*/true,
-                      EncodeSytFromTick(0),
-                      EncodeSytFromTick(0));
+    (void)discipline.Update(/*enabled=*/true,
+                            EncodeSytFromTick(0),
+                            EncodeSytFromTick(0));
     EXPECT_TRUE(discipline.locked());
 
     // Reset

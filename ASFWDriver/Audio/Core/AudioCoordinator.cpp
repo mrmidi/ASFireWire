@@ -3,6 +3,7 @@
 
 #include "AudioCoordinator.hpp"
 
+#include "AudioEndpointRuntime.hpp"
 #include "AudioRuntimeRegistry.hpp"
 #include "../../Discovery/FWDevice.hpp"
 
@@ -94,9 +95,16 @@ void AudioCoordinator::OnDeviceSuspended(std::shared_ptr<Discovery::FWDevice> de
 void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     if (guid == 0) return;
 
-    // Ensure isoch transport is stopped (best-effort) and nubs are terminated.
-    dice_.OnDeviceRemoved(guid);
-    avc_.OnDeviceRemoved(guid);
+    auto* backend = BackendForGuid(guid);
+    if (backend == &dice_) {
+        dice_.OnDeviceRemoved(guid);
+    } else if (backend == &avc_) {
+        avc_.OnDeviceRemoved(guid);
+    } else {
+        ASFW_LOG_WARNING(Audio,
+                         "AudioCoordinator: OnDeviceRemoved no backend GUID=0x%016llx",
+                         guid);
+    }
 
     // Drop the device-specific protocol instance now the device is gone. The runtime
     // registry hands callers shared_ptr copies, so any in-flight control operation
@@ -114,6 +122,9 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
 
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
                                                    const Model::ASFWAudioDevice& config) noexcept {
+    if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
+        endpoint->UpdateConfig(config);
+    }
     avc_.OnAudioConfigurationReady(guid, config);
 }
 
@@ -185,9 +196,10 @@ IOReturn AudioCoordinator::StartStreaming(uint64_t guid) noexcept {
                              guid,
                              active);
             // TODO(ASFW-MULTIDEVICE): Multi-device streaming is not implemented.
-            // We currently have a single global IR/IT transport and single external SYT clock bridge.
-            // Supporting multiple devices requires per-GUID IR/IT contexts, per-device queue wiring,
-            // and a GUID-keyed clock discipline pipeline.
+            // This is the explicit v1 multi-device boundary: multiple GUIDs may
+            // publish nubs/runtimes, but only one GUID may own isoch transport.
+            // Simultaneous streaming starts here and requires per-GUID IR/IT
+            // contexts, timing bridge, IRM/channel allocation, and backend sessions.
             return kIOReturnBusy;
         }
         IOLockUnlock(lock_);
