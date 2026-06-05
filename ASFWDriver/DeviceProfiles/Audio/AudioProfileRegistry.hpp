@@ -17,6 +17,7 @@
 #include "Vendors/AlesisAudioProfiles.hpp"
 #include "Vendors/ApogeeAudioProfiles.hpp"
 #include "Vendors/FocusriteAudioProfiles.hpp"
+#include "Vendors/MidasAudioProfiles.hpp"
 
 #include <optional>
 
@@ -31,6 +32,7 @@ public:
         if (auto hint = Focusrite::LookupIdentity(query)) { return hint; }
         if (auto hint = Apogee::LookupIdentity(query)) { return hint; }
         if (auto hint = Alesis::LookupIdentity(query)) { return hint; }
+        if (auto hint = Midas::LookupIdentity(query)) { return hint; }
         if (auto hint = Focusrite::LookupIdentityByGuid(query)) { return hint; }
         return std::nullopt;
     }
@@ -43,6 +45,7 @@ public:
         if (auto hint = Focusrite::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Apogee::LookupAudioProfile(query)) { return hint; }
         if (auto hint = Alesis::LookupAudioProfile(query)) { return hint; }
+        if (auto hint = Midas::LookupAudioProfile(query)) { return hint; }
         return std::nullopt;
     }
 };

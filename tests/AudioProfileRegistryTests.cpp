@@ -49,6 +49,7 @@ TEST(AudioProfileRegistryTests, SelectsIntegrationModeForKnownDevices) {
               AudioIntegrationMode::kAVCDriven);
     EXPECT_EQ(ModeFor(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId),
               AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(ModeFor(ids::kMidasVendorId, ids::kVeniceModelId), AudioIntegrationMode::kNone);
 }
 
 TEST(AudioProfileRegistryTests, RejectsUnknownDevices) {
@@ -86,6 +87,9 @@ TEST(AudioProfileRegistryTests, RecognizesKnownVendorModelPairs) {
                     .has_value());
     EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
                     ByVendorModel(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId))
+                    .has_value());
+    EXPECT_TRUE(AudioProfileRegistry::LookupIdentity(
+                    ByVendorModel(ids::kMidasVendorId, ids::kVeniceModelId))
                     .has_value());
 }
 
@@ -129,6 +133,20 @@ TEST(AudioProfileRegistryTests, RecognizesAlesisMultiMixDiceProfile) {
         ByVendorModel(ids::kAlesisVendorId, ids::kAlesisMultiMixModelId));
     ASSERT_TRUE(profile.has_value());
     EXPECT_EQ(profile->mode, AudioIntegrationMode::kHardcodedNub);
+    EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
+}
+
+TEST(AudioProfileRegistryTests, RecognizesMidasVeniceAsDeferredDiceProfile) {
+    const auto identity = AudioProfileRegistry::LookupIdentity(
+        ByVendorModel(ids::kMidasVendorId, ids::kVeniceModelId));
+    ASSERT_TRUE(identity.has_value());
+    EXPECT_STREQ(identity->vendorName, ids::kMidasVendorName);
+    EXPECT_STREQ(identity->modelName, ids::kVeniceModelName);
+
+    const auto profile = AudioProfileRegistry::LookupBestAudioProfile(
+        ByVendorModel(ids::kMidasVendorId, ids::kVeniceModelId));
+    ASSERT_TRUE(profile.has_value());
+    EXPECT_EQ(profile->mode, AudioIntegrationMode::kNone);
     EXPECT_EQ(profile->family, AudioProtocolFamily::DICE);
 }
 
