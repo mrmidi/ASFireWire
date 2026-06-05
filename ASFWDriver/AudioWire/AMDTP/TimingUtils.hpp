@@ -105,6 +105,20 @@ struct CycleTimerFields {
     return d;
 }
 
+/// Signed shortest-path delta (a - b) in the 1-second (8000 cycle) offset domain.
+[[nodiscard]] inline int64_t extOffsetDiff1s(int64_t a, int64_t b) noexcept {
+    constexpr int64_t kOneSecondTicks = int64_t(kTicksPerSecond);
+    int64_t d = (a - b) % kOneSecondTicks;
+    if (d < 0) {
+        d += kOneSecondTicks;
+    }
+    if (d > (kOneSecondTicks / 2)) {
+        d -= kOneSecondTicks;
+    }
+    return d;
+}
+
+
 /// Normalize a 24.576 MHz tick value to the 8-second offset domain.
 [[nodiscard]] inline int64_t normalizeOffsetDomain(int64_t ticks) noexcept {
     ticks %= kEightSecondTicks;

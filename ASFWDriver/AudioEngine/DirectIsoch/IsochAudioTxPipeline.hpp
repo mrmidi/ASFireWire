@@ -191,6 +191,7 @@ private:
 
     // Temporary bring-up diagnostics: noisy by design, remove once TX is stable.
     uint64_t debugProducedPackets_{0};
+    uint64_t debugTryBuildCount_{0};
 
     Counters counters_{};
     ASFW::Audio::TimingCursorPolicy timingPolicy_{ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking()};

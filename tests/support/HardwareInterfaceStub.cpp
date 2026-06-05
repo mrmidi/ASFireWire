@@ -281,7 +281,7 @@ std::optional<HardwareInterface::DMABuffer> HardwareInterface::AllocateDMA(size_
     uint32_t cursor = sMockIOVA.load(std::memory_order_relaxed);
     for (;;) {
         const uint32_t base = alignUp32(cursor, aligned);
-        const uint32_t next = base + static_cast<uint32_t>(length) + 4096U;
+        const uint32_t next = alignUp32(base + static_cast<uint32_t>(length) + 4096U, 4096U);
         if (next < base) {
             return std::nullopt;
         }
