@@ -6,9 +6,8 @@
 // ASFWAudioDriver (IOUserAudioDriver) matches on this nub.
 //
 // Cross-process communication:
-//   ASFWAudioNub allocates shared memory (IOBufferMemoryDescriptor) for both
-//   TX and RX audio queues. Both ASFWAudioDriver and Isoch contexts map this
-//   memory and communicate via lock-free SPSC queues.
+//   ASFWAudioNub forwards RPCs to the GUID-keyed AudioEndpointRuntime. The
+//   endpoint runtime owns shared direct audio memory/control state.
 //
 
 #ifndef ASFWAudioNub_h
@@ -24,10 +23,6 @@
 #include <cstdint>
 
 class ASFWDriver;
-class IOUserAudioDevice;
-
-namespace ASFW { namespace Audio { namespace Runtime { struct AudioTransportControlBlock; } } }
-
 // Audio nub that bridges ASFWDriver (hardware) to ASFWAudioDriver (CoreAudio)
 // Properties set by ASFWDriver:
 //   - ASFWDeviceName (OSString): Device name from config ROM
@@ -59,11 +54,6 @@ public:
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 
-    // Get the local mapping of the TX queue for IT context to consume
-
-    // ZERO-COPY: Get the local mapping of output audio buffer for IT DMA
-    // This is the same memory that IOUserAudioStream writes to
-    
     // Set channel count directly (called by AVCDiscovery after Create())
     void SetChannelCount(uint32_t channels) LOCALONLY;
     uint32_t GetChannelCount() const LOCALONLY;
@@ -74,41 +64,6 @@ public:
     //   0 = non-blocking, 1 = blocking
     void SetStreamMode(uint32_t modeRaw) LOCALONLY;
     uint32_t GetStreamMode() const LOCALONLY;
-
-    // ZERO-COPY SYNC: Write position tracking
-    // Called by ASFWAudioDriver after each CoreAudio write completes
-
-    // Direct duplex audio binding: same-process raw view of the ADK output/input buffers +
-    // the shared transport control block. Registered by ASFWAudioDriver on direct-skeleton bind,
-    // cleared on Stop. Thread-safe via bindingLock.
-    void SetDirectAudioBinding(const int32_t* outputBase,
-                               uint64_t outputBytes,
-                               uint32_t outputFrames,
-                               uint32_t outputChannels,
-                               int32_t* inputBase,
-                               uint64_t inputBytes,
-                               uint32_t inputFrames,
-                               uint32_t inputChannels,
-                               ASFW::Audio::Runtime::AudioTransportControlBlock* control,
-                               uint32_t sampleRateHz,
-                               IOUserAudioDevice* audioDevice) LOCALONLY;
-    void ClearDirectAudioBinding() LOCALONLY;
-    bool GetDirectAudioBinding(const int32_t** outOutputBase,
-                               uint64_t* outOutputBytes,
-                               uint32_t* outOutputFrames,
-                               uint32_t* outOutputChannels,
-                               int32_t** outInputBase,
-                               uint64_t* outInputBytes,
-                               uint32_t* outInputFrames,
-                               uint32_t* outInputChannels,
-                               ASFW::Audio::Runtime::AudioTransportControlBlock** outControl,
-                               uint32_t* outSampleRateHz,
-                               IOUserAudioDevice** outAudioDevice,
-                               uint64_t* outGeneration) const LOCALONLY;
-
-    void* GetDirectAudioBindingSource() LOCALONLY;
-
-    // LOCALONLY methods for controller-side RX queue access (same process)
 
     // Device identity for protocol bridge routing
     void SetGuid(uint64_t guid) LOCALONLY;
@@ -136,43 +91,6 @@ struct ASFWAudioNub_IVars {
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t currentSampleRateHz{48000};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
-
-    // Thread-safe duplex binding state
-    struct IOLock* bindingLock;
-    struct IOLock* directMemoryLock;
-    uint64_t directGeneration;
-    const int32_t* directOutputBase;
-    uint64_t directOutputBytes;
-    uint32_t directOutputFrames;
-    uint32_t directOutputChannels;
-    int32_t* directInputBase;
-    uint64_t directInputBytes;
-    uint32_t directInputFrames;
-    uint32_t directInputChannels;
-    ASFW::Audio::Runtime::AudioTransportControlBlock* directControl;
-    uint32_t directSampleRateHz;
-    IOUserAudioDevice* directAudioDevice;
-    // True once shared direct-audio memory/control metadata is usable by ASFWDriver.
-    // directAudioDevice is process-local to ASFWAudioDriver and may be null here.
-    bool directProviderBindingPublished;
-    void* directBindingSource;
-
-    // Sticky lifecycle diagnostics (zero-initialized, never reset by a wipe) so a
-    // mid-session capture is self-explaining: did the provider ever publish the
-    // IOUserAudioDevice to THIS nub, and what cleared it afterwards.
-    uint32_t directSetCalls;                       // SetDirectAudioBinding invocations
-    uint32_t directFromMemCalls;                   // PublishDirectAudioBindingFromMappedMemory invocations
-    uint32_t directClearCalls;                     // ClearDirectAudioBinding invocations
-    IOUserAudioDevice* directLastSetAudioDevice;   // last process-local device handed to SetDirectAudioBinding
-
-    IOBufferMemoryDescriptor* directOutputMemory;
-    IOBufferMemoryDescriptor* directInputMemory;
-    IOBufferMemoryDescriptor* directControlMemory;
-    IOMemoryMap* directOutputMap;
-    IOMemoryMap* directInputMap;
-    IOMemoryMap* directControlMap;
-    uint32_t directOutputCapacityFrames;
-    uint32_t directInputCapacityFrames;
 };
 
 #endif /* ASFWAudioNub_h */

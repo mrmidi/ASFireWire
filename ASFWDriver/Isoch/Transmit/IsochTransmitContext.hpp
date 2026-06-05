@@ -105,7 +105,7 @@ public:
 
     State GetState() const noexcept { return state_; }
 
-    void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
+    void SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept;
     
     void SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept;
     void SetDirectTxRuntimeBinding(const IsochAudioTxPipeline::DirectTxRuntimeBinding& binding) noexcept;

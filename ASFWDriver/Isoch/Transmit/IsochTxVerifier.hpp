@@ -33,9 +33,7 @@ public:
         uint32_t pcmChannels{0};
         uint32_t am824Slots{0};
         Encoding::AudioWireFormat audioWireFormat{Encoding::AudioWireFormat::kAM824};
-        bool zeroCopyEnabled{false};
-        bool sharedTxQueueValid{false};
-        uint32_t sharedTxQueueFillFrames{0};
+        bool directOutputReady{false};
 
         uint64_t audioInjectCursorResets{0};
         uint64_t audioInjectMissedPackets{0};

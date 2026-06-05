@@ -21,9 +21,6 @@ struct TxBufferProfile {
     const char* name;
     uint32_t startWaitTargetFrames;
     uint32_t startupPrimeLimitFrames;    // 0 = unbounded pre-prime
-    uint32_t legacyRbTargetFrames;
-    uint32_t legacyRbMaxFrames;
-    uint32_t legacyMaxChunksPerRefill;
     uint32_t safetyOffsetFrames;         // 2A: HAL safety offset (frames)
     uint32_t minPrimeDataPackets;        // 2B: Minimum DATA packets after PrimeRing
 };
@@ -34,9 +31,6 @@ inline constexpr TxBufferProfile kTxProfileA{
     "A",
     256,   // startWaitTargetFrames
     512,   // startupPrimeLimitFrames
-    512,   // legacyRbTargetFrames
-    768,   // legacyRbMaxFrames
-    6,     // legacyMaxChunksPerRefill
     64,    // safetyOffsetFrames (2A)
     48     // minPrimeDataPackets (2B)
 };
@@ -45,9 +39,6 @@ inline constexpr TxBufferProfile kTxProfileB{
     "B",
     512,   // startWaitTargetFrames
     0,     // startupPrimeLimitFrames (unbounded)
-    1024,  // legacyRbTargetFrames
-    1536,  // legacyRbMaxFrames
-    8,     // legacyMaxChunksPerRefill
     96,    // safetyOffsetFrames (2A)
     48     // minPrimeDataPackets (2B)
 };
@@ -56,18 +47,12 @@ inline constexpr TxBufferProfile kTxProfileC{
     "C",
     128,   // startWaitTargetFrames
     256,   // startupPrimeLimitFrames
-    256,   // legacyRbTargetFrames
-    384,   // legacyRbMaxFrames
-    4,     // legacyMaxChunksPerRefill
     32,    // safetyOffsetFrames (2A)
     48     // minPrimeDataPackets (2B)
 };
 
 constexpr bool IsValidProfile(const TxBufferProfile& profile) noexcept {
     return profile.startWaitTargetFrames > 0 &&
-           profile.legacyRbTargetFrames > 0 &&
-           profile.legacyRbTargetFrames <= profile.legacyRbMaxFrames &&
-           profile.legacyMaxChunksPerRefill > 0 &&
            profile.safetyOffsetFrames > 0;
 }
 
@@ -76,11 +61,11 @@ static_assert(IsValidProfile(kTxProfileB), "Profile B is invalid");
 static_assert(IsValidProfile(kTxProfileC), "Profile C is invalid");
 
 static_assert(kTxProfileA.startWaitTargetFrames <= kTxQueueCapacityFrames,
-              "Profile A startWait exceeds shared queue capacity");
+              "Profile A startWait exceeds output ring capacity");
 static_assert(kTxProfileB.startWaitTargetFrames <= kTxQueueCapacityFrames,
-              "Profile B startWait exceeds shared queue capacity");
+              "Profile B startWait exceeds output ring capacity");
 static_assert(kTxProfileC.startWaitTargetFrames <= kTxQueueCapacityFrames,
-              "Profile C startWait exceeds shared queue capacity");
+              "Profile C startWait exceeds output ring capacity");
 
 constexpr TxBufferProfile SelectTxProfile(TxProfileId id) noexcept {
     switch (id) {

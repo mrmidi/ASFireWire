@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
-#include "../ASFWDriver/Isoch/Core/ExternalSyncBridge.hpp"
+#include "../ASFWDriver/AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 
-using ASFW::Isoch::Core::ExternalSyncBridge;
-using ASFW::Isoch::Core::ExternalSyncClockState;
+using ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge;
+using ASFW::AudioEngine::DirectIsoch::ExternalSyncClockState;
 
 TEST(ExternalSyncBridge, EstablishesAfterSixteenValidUpdates) {
     ExternalSyncBridge bridge;

@@ -493,14 +493,11 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
         return;
     }
 
-    const bool shouldHaveAudio =
-        (!inputs_.zeroCopyEnabled && inputs_.sharedTxQueueValid &&
-         inputs_.sharedTxQueueFillFrames >= inputs_.framesPerPacket) &&
-        (deltaMissed == 0);
+    const bool shouldHaveAudio = inputs_.directOutputReady && (deltaMissed == 0);
     if (shouldHaveAudio) {
         ASFW_LOG_RL(Isoch, "txverify/silence_run", 10000, OS_LOG_TYPE_DEFAULT,
-                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u qFill=%u framesPerPkt=%u",
-                    state_.silentDataRun, entry.packetIndex, inputs_.sharedTxQueueFillFrames,
+                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u directReady=%u framesPerPkt=%u",
+                    state_.silentDataRun, entry.packetIndex, inputs_.directOutputReady ? 1u : 0u,
                     inputs_.framesPerPacket);
     }
 }

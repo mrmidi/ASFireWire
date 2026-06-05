@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "../ASFWDriver/Isoch/Core/ExternalSyncDiscipline48k.hpp"
+#include "../ASFWDriver/AudioEngine/DirectIsoch/Sync/ExternalSyncDiscipline48k.hpp"
 
-using ASFW::Isoch::Core::ExternalSyncDiscipline48k;
+using ASFW::AudioEngine::DirectIsoch::ExternalSyncDiscipline48k;
 
 namespace {
 uint16_t EncodeSytFromTick(int32_t tick) {

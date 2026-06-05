@@ -39,6 +39,7 @@
 #include "Async/PacketHelpers.hpp"
 #include "Async/ResponseCode.hpp"
 #include "Audio/Core/AudioCoordinator.hpp"
+#include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
 #include "Protocols/Audio/DeviceProtocolFactory.hpp"
@@ -500,13 +501,6 @@ void* ASFWDriver::GetServiceContext() const {
     return ivars->context;
 }
 
-void* ASFWDriver::GetAudioNubForGuid(uint64_t guid) const {
-    if (!ivars || !ivars->context || !ivars->context->audioCoordinator) {
-        return nullptr;
-    }
-    return ivars->context->audioCoordinator->GetNub(guid);
-}
-
 kern_return_t IMPL(ASFWDriver, NewUserClient) {
     if (type != 0) {
         return kIOReturnBadArgument;
@@ -765,8 +759,14 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    auto* bindingSource = static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource());
+    auto endpoint = ctx.deps.audioRuntimeRegistry
+        ? ctx.deps.audioRuntimeRegistry->FindEndpointRuntime(*guid)
+        : nullptr;
+    auto* bindingSource = endpoint.get();
     if (!bindingSource) {
+        ASFW_LOG(Controller,
+                 "[Isoch] ❌ StartIsochReceive: no endpoint runtime binding source GUID=0x%016llx",
+                 *guid);
         return kIOReturnNotReady;
     }
 
@@ -838,8 +838,14 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    auto* bindingSource = static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource());
+    auto endpoint = ctx.deps.audioRuntimeRegistry
+        ? ctx.deps.audioRuntimeRegistry->FindEndpointRuntime(*guid)
+        : nullptr;
+    auto* bindingSource = endpoint.get();
     if (!bindingSource) {
+        ASFW_LOG(Controller,
+                 "[Isoch] ❌ StartIsochTransmit: no endpoint runtime binding source GUID=0x%016llx",
+                 *guid);
         return kIOReturnNotReady;
     }
 

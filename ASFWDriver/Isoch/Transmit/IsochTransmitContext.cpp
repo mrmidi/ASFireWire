@@ -56,7 +56,7 @@ IsochTransmitContext::~IsochTransmitContext() noexcept {
     verifier_.Shutdown();
 }
 
-void IsochTransmitContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
+void IsochTransmitContext::SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept {
     audio_.SetExternalSyncBridge(bridge);
 }
 
@@ -314,7 +314,6 @@ void IsochTransmitContext::Poll() noexcept {
                     binding.streamModeRaw = std::to_underlying(audio_.EffectiveStreamMode());
                     binding.outputChannels = snapshot.outputChannels;
                     binding.am824Slots = audio_.Am824SlotCount();
-                    binding.audioDevice = snapshot.audioDevice;
                     SetDirectTxRuntimeBinding(binding);
                 } else {
                     // Hot-path binding transition diagnostic, disabled for audio stability.
@@ -446,9 +445,7 @@ void IsochTransmitContext::KickTxVerifier() noexcept {
     in.pcmChannels = audio_.ChannelCount();
     in.am824Slots = audio_.Am824SlotCount();
     in.audioWireFormat = audio_.WireFormat();
-    in.zeroCopyEnabled = true;
-    in.sharedTxQueueValid = false;
-    in.sharedTxQueueFillFrames = 0;
+    in.directOutputReady = (directAudioBindingSource_ != nullptr);
 
     const auto& audioC = audio_.RTCounters();
     const auto& ringC = ring_.RTCounters();

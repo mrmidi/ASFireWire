@@ -35,7 +35,6 @@ public:
     void* GetControllerCore() const LOCALONLY;
     void* GetAsyncSubsystem() const LOCALONLY;
     void* GetServiceContext() const LOCALONLY;
-    void* GetAudioNubForGuid(uint64_t guid) const LOCALONLY;
 
     virtual kern_return_t
     NewUserClient(uint32_t type,

@@ -14,7 +14,7 @@
 
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
 #include "../ASFWDriver/AudioWire/AMDTP/TimingUtils.hpp"
-#include "../ASFWDriver/Isoch/Core/ExternalSyncBridge.hpp"
+#include "../ASFWDriver/AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 #include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
 
 using namespace ASFW::Isoch;
@@ -270,11 +270,11 @@ TEST(IsochTransmitContext, TxPipelineMatchesFocusritePlaybackSytSequence) {
                                  AudioWireFormat::kAM824),
               kIOReturnSuccess);
 
-    Core::ExternalSyncBridge bridge;
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge bridge;
     bridge.active.store(true, std::memory_order_release);
     bridge.clockEstablished.store(true, std::memory_order_release);
-    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
-                                                                     Core::ExternalSyncBridge::kFdf48k,
+    bridge.lastPackedRx.store(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kFdf48k,
                                                                      static_cast<uint8_t>(kAm824Slots)),
                               std::memory_order_release);
     bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
@@ -352,11 +352,11 @@ TEST(IsochTransmitContext, PrimeSyncSucceedsWithNominalPhaseWhenRxSeedIsStale) {
                                  AudioWireFormat::kAM824),
               kIOReturnSuccess);
 
-    Core::ExternalSyncBridge bridge;
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge bridge;
     bridge.active.store(true, std::memory_order_release);
     bridge.clockEstablished.store(true, std::memory_order_release);
-    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
-                                                                     Core::ExternalSyncBridge::kFdf48k,
+    bridge.lastPackedRx.store(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kFdf48k,
                                                                      static_cast<uint8_t>(kAm824Slots)),
                               std::memory_order_release);
     bridge.lastUpdateHostTicks.store(1, std::memory_order_release);
@@ -394,12 +394,12 @@ TEST(IsochTransmitContext, PrimeSyncSucceedsWithFreshQualifiedSeedAfterLiveClock
                                  AudioWireFormat::kAM824),
               kIOReturnSuccess);
 
-    Core::ExternalSyncBridge bridge;
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge bridge;
     bridge.active.store(true, std::memory_order_release);
     bridge.clockEstablished.store(false, std::memory_order_release);
     bridge.startupQualified.store(true, std::memory_order_release);
-    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
-                                                                     Core::ExternalSyncBridge::kFdf48k,
+    bridge.lastPackedRx.store(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kFdf48k,
                                                                      static_cast<uint8_t>(kAm824Slots)),
                               std::memory_order_release);
     bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
@@ -435,15 +435,15 @@ TEST(IsochTransmitContext, PrimeSyncAllowsQualifiedStartupSeedWithinStartupGrace
     ASSERT_TRUE(ASFW::Timing::initializeHostTimebase());
     const uint64_t nowTicks = mach_absolute_time();
     const uint64_t graceTicks =
-        ASFW::Timing::nanosToHostTicks(ASFW::Isoch::Core::kExternalSyncStartupSeedGraceNanos);
+        ASFW::Timing::nanosToHostTicks(ASFW::AudioEngine::DirectIsoch::kExternalSyncStartupSeedGraceNanos);
     ASSERT_GT(graceTicks, 0u);
 
-    Core::ExternalSyncBridge bridge;
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge bridge;
     bridge.active.store(true, std::memory_order_release);
     bridge.clockEstablished.store(false, std::memory_order_release);
     bridge.startupQualified.store(true, std::memory_order_release);
-    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
-                                                                     Core::ExternalSyncBridge::kFdf48k,
+    bridge.lastPackedRx.store(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::PackRxSample(/*syt=*/0xD8B0,
+                                                                     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kFdf48k,
                                                                      static_cast<uint8_t>(kAm824Slots)),
                               std::memory_order_release);
     bridge.lastUpdateHostTicks.store(nowTicks - (graceTicks / 2), std::memory_order_release);
@@ -476,11 +476,11 @@ TEST(IsochTransmitContext, FirstDataPacketKeepsSeededSytWhenBridgeAdvancesByWhol
                                  AudioWireFormat::kAM824),
               kIOReturnSuccess);
 
-    Core::ExternalSyncBridge bridge;
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge bridge;
     bridge.active.store(true, std::memory_order_release);
     bridge.clockEstablished.store(true, std::memory_order_release);
-    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0x54B0,
-                                                                     Core::ExternalSyncBridge::kFdf48k,
+    bridge.lastPackedRx.store(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::PackRxSample(/*syt=*/0x54B0,
+                                                                     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kFdf48k,
                                                                      static_cast<uint8_t>(kAm824Slots)),
                               std::memory_order_release);
     bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);
@@ -491,8 +491,8 @@ TEST(IsochTransmitContext, FirstDataPacketKeepsSeededSytWhenBridgeAdvancesByWhol
     ASSERT_TRUE(pipeline.PrimeSyncFromExternalBridge());
 
     // Simulate RX advancing by two DATA packets before TX emits its first DATA packet.
-    bridge.lastPackedRx.store(Core::ExternalSyncBridge::PackRxSample(/*syt=*/0xD4B0,
-                                                                     Core::ExternalSyncBridge::kFdf48k,
+    bridge.lastPackedRx.store(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::PackRxSample(/*syt=*/0xD4B0,
+                                                                     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kFdf48k,
                                                                      static_cast<uint8_t>(kAm824Slots)),
                               std::memory_order_release);
     bridge.lastUpdateHostTicks.store(mach_absolute_time(), std::memory_order_release);

@@ -1049,15 +1049,3 @@ void AVCDiscovery::RebuildNodeIDMap() {
 
     IOLockUnlock(lock_);
 }
-
-void AVCDiscovery::SetTransmitRingBufferOnNubs(uint8_t* ringBuffer) {
-    // This method is deprecated - shared TX queue is now in ASFWAudioNub
-    // Kept for backwards compatibility logging
-    (void)ringBuffer;
-    IOLockLock(lock_);
-
-    os_log_info(log_,
-                "AVCDiscovery: SetTransmitRingBufferOnNubs called (deprecated - using shared queue now)");
-
-    IOLockUnlock(lock_);
-}

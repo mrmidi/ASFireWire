@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ASFW::Isoch::Core {
+namespace ASFW::AudioEngine::DirectIsoch {
 
 /// Per-packet TX-RX phase discipline modelled on Saffire.kext's adjustOutputPhase.
 ///
@@ -171,4 +171,4 @@ private:
     uint64_t staleOrUnlockCount_{0};
 };
 
-} // namespace ASFW::Isoch::Core
+} // namespace ASFW::AudioEngine::DirectIsoch
