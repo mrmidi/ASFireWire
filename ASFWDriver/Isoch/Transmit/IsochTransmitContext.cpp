@@ -256,7 +256,7 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         capture = &verifier_;
     }
 
-    const auto outcome = ring_.Refill(*hardware_, contextIndex_, audio_, capture, &audio_);
+    const auto outcome = ring_.Refill(*hardware_, contextIndex_, audio_, capture, nullptr);
     if (!outcome.ok) {
         return;
     }
@@ -449,8 +449,6 @@ void IsochTransmitContext::KickTxVerifier() noexcept {
 
     const auto& audioC = audio_.RTCounters();
     const auto& ringC = ring_.RTCounters();
-    in.audioInjectCursorResets = audioC.audioInjectCursorResets.load(std::memory_order_relaxed);
-    in.audioInjectMissedPackets = audioC.audioInjectMissedPackets.load(std::memory_order_relaxed);
     in.underrunSilencedPackets = audioC.directTxUnderrunSilencedPackets.load(std::memory_order_relaxed);
     in.criticalGapEvents = ringC.criticalGapEvents.load(std::memory_order_relaxed);
     in.dbcDiscontinuities = 0; // DBC continuity check is producer-side only now
@@ -471,13 +469,12 @@ void IsochTransmitContext::ServiceTxRecovery() noexcept {
 
     const uint64_t restartIndex = recovery_.RestartCount() + 1;
     ASFW_LOG_V0(Isoch,
-                "IT TX RECOVER: restarting IT (idx=%llu reasons=0x%08x invalid_label=%d cip=%d dbc=%d uncomplete=%d inject_miss=%d)",
+                "IT TX RECOVER: restarting IT (idx=%llu reasons=0x%08x invalid_label=%d cip=%d dbc=%d uncomplete=%d)",
                 restartIndex, reasons,
                 (reasons & IsochTxRecoveryController::kReasonInvalidLabel) != 0,
                 (reasons & IsochTxRecoveryController::kReasonCipAnomaly) != 0,
                 (reasons & IsochTxRecoveryController::kReasonDbcDiscontinuity) != 0,
-                (reasons & IsochTxRecoveryController::kReasonUncompletedOverwrite) != 0,
-                (reasons & IsochTxRecoveryController::kReasonInjectMiss) != 0);
+                (reasons & IsochTxRecoveryController::kReasonUncompletedOverwrite) != 0);
 
     if (recoveryCallback_) {
         if (recoveryCallback_(reasons)) {

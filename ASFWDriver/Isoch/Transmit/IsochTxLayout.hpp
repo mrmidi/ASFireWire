@@ -48,7 +48,7 @@ struct Layout final {
     // Guard band in packets used by verifier mismatch checks.
     static constexpr uint32_t kGuardBandPackets = 4;
 
-    // Audio injection window (latency control) — used by audio pipeline.
+    // Audio verification window for inspecting recently refilled packet payloads.
     static constexpr uint32_t kAudioWriteAhead = 16;
     static constexpr uint32_t kMaxWriteAhead = kNumPackets - kGuardBandPackets;  // 188
 

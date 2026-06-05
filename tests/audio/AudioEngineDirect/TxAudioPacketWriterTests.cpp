@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 
@@ -67,6 +68,15 @@ bool PacketIsFilledWith(const std::array<uint8_t, 128>& packet, uint8_t value) {
     return true;
 }
 
+static void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
+                                    uint64_t sampleFrame,
+                                    uint64_t hostTime,
+                                    uint32_t frameCount) {
+    control.client.PublishWriteEnd(sampleFrame, hostTime, frameCount);
+    control.playbackRingWriteFrame.store(control.client.OutputWrittenEndFrame(),
+                                         std::memory_order_release);
+}
+
 TEST(TxAudioPacketWriterTests, DataAvailableWritesRealPcm) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
@@ -81,7 +91,7 @@ TEST(TxAudioPacketWriterTests, DataAvailableWritesRealPcm) {
     TxAudioPacketWriter writer(reader);
     std::array<uint8_t, 128> packet{};
 
-    control.client.PublishWriteEnd(2, 0, 2);
+    PublishPlaybackWriteEnd(control, 2, 0, 2);
 
     const auto result = writer.WritePacket(TxAudioPacketWriteRequest{
         .firstFrame = 2,
@@ -192,7 +202,7 @@ TEST(TxAudioPacketWriterTests, CapacityTooSmallFailsWithoutTouchingPacket) {
     std::array<uint8_t, 128> packet{};
     packet.fill(0xA5);
 
-    control.client.PublishWriteEnd(0, 0, 2);
+    PublishPlaybackWriteEnd(control, 0, 0, 2);
 
     const auto result = writer.WritePacket(TxAudioPacketWriteRequest{
         .firstFrame = 0,
@@ -225,7 +235,7 @@ TEST(TxAudioPacketWriterTests, FrameWrapUsesModuloMemoryFrames) {
     TxAudioPacketWriter writer(reader);
     std::array<uint8_t, 128> packet{};
 
-    control.client.PublishWriteEnd(3, 0, 2);
+    PublishPlaybackWriteEnd(control, 3, 0, 2);
 
     const auto result = writer.WritePacket(TxAudioPacketWriteRequest{
         .firstFrame = 3,
@@ -257,7 +267,7 @@ TEST(TxAudioPacketWriterTests, ExtraAm824SlotsUseMidiPlaceholders) {
     TxAudioPacketWriter writer(reader);
     std::array<uint8_t, 128> packet{};
 
-    control.client.PublishWriteEnd(0, 0, 1);
+    PublishPlaybackWriteEnd(control, 0, 0, 1);
 
     const auto result = writer.WritePacket(TxAudioPacketWriteRequest{
         .firstFrame = 0,

@@ -216,15 +216,11 @@ void IsochTxVerifier::DrainTrace() noexcept {
 
 IsochTxVerifier::CounterDeltaSnapshot IsochTxVerifier::CaptureCounterDeltas() const noexcept {
     CounterDeltaSnapshot deltas{};
-    deltas.curInjectResets = inputs_.audioInjectCursorResets;
-    deltas.curInjectMissed = inputs_.audioInjectMissedPackets;
     deltas.curUnderrunSilenced = inputs_.underrunSilencedPackets;
     deltas.curCriticalGap = inputs_.criticalGapEvents;
     deltas.curDbcDisc = inputs_.dbcDiscontinuities;
     deltas.curDroppedTrace = trace_.dropped.load(std::memory_order_relaxed);
 
-    deltas.deltaResets = deltas.curInjectResets - state_.lastInjectCursorResets;
-    deltas.deltaMissed = deltas.curInjectMissed - state_.lastInjectMissedPackets;
     deltas.deltaUnderrunSilenced =
         deltas.curUnderrunSilenced - state_.lastUnderrunSilencedPackets;
     deltas.deltaCriticalGap = deltas.curCriticalGap - state_.lastCriticalGapEvents;
@@ -234,16 +230,6 @@ IsochTxVerifier::CounterDeltaSnapshot IsochTxVerifier::CaptureCounterDeltas() co
 }
 
 void IsochTxVerifier::LogCounterDeltas(const CounterDeltaSnapshot& deltas) const noexcept {
-    if (deltas.deltaResets) {
-        ASFW_LOG_RL(Isoch, "txverify/inject_resets", 1000, OS_LOG_TYPE_DEFAULT,
-                    "IT TX VERIFY: audioInjectCursorResets +=%llu (total=%llu)",
-                    deltas.deltaResets, deltas.curInjectResets);
-    }
-    if (deltas.deltaMissed) {
-        ASFW_LOG_RL(Isoch, "txverify/inject_miss", 1000, OS_LOG_TYPE_DEFAULT,
-                    "IT TX VERIFY: audioInjectMissedPackets +=%llu (total=%llu)",
-                    deltas.deltaMissed, deltas.curInjectMissed);
-    }
     if (deltas.deltaUnderrunSilenced) {
         ASFW_LOG_RL(Isoch, "txverify/underrun_silenced", 1000, OS_LOG_TYPE_DEFAULT,
                     "IT TX VERIFY: underrunSilencedPackets +=%llu (total=%llu)",
@@ -269,22 +255,10 @@ void IsochTxVerifier::LogCounterDeltas(const CounterDeltaSnapshot& deltas) const
 uint32_t IsochTxVerifier::UpdateCounterState(const CounterDeltaSnapshot& deltas) noexcept {
     uint32_t restartReasons = 0;
 
-    if (deltas.deltaMissed != 0) {
-        if (state_.injectMissConsecutiveTicks < 0xFFFFFFFFu) {
-            ++state_.injectMissConsecutiveTicks;
-        }
-    } else {
-        state_.injectMissConsecutiveTicks = 0;
-    }
-    if (deltas.deltaMissed >= 8 || state_.injectMissConsecutiveTicks >= 2) {
-        restartReasons |= IsochTxRecoveryController::kReasonInjectMiss;
-    }
     if (deltas.deltaDbcDisc != 0) {
         restartReasons |= IsochTxRecoveryController::kReasonDbcDiscontinuity;
     }
 
-    state_.lastInjectCursorResets = deltas.curInjectResets;
-    state_.lastInjectMissedPackets = deltas.curInjectMissed;
     state_.lastUnderrunSilencedPackets = deltas.curUnderrunSilenced;
     state_.lastCriticalGapEvents = deltas.curCriticalGap;
     state_.lastDbcDiscontinuities = deltas.curDbcDisc;
@@ -312,19 +286,19 @@ IsochTxVerifier::PacketExpectations IsochTxVerifier::BuildPacketExpectations() c
 }
 
 void IsochTxVerifier::ProcessTraceEntries(const PacketExpectations& expectations,
-                                          uint64_t deltaMissed,
+                                          uint64_t deltaUnderrunSilenced,
                                           uint32_t& restartReasons) noexcept {
     uint32_t processed = 0;
     TraceEntry entry{};
     while (processed < kMaxPacketsPerRun && Pop(entry)) {
         ++processed;
-        ProcessTraceEntry(entry, expectations, deltaMissed, restartReasons);
+        ProcessTraceEntry(entry, expectations, deltaUnderrunSilenced, restartReasons);
     }
 }
 
 void IsochTxVerifier::ProcessTraceEntry(const TraceEntry& entry,
                                         const PacketExpectations& expectations,
-                                        uint64_t deltaMissed,
+                                        uint64_t deltaUnderrunSilenced,
                                         uint32_t& restartReasons) noexcept {
     const bool isNoDataByReq = (entry.reqCount == expectations.expectedNoDataReq);
     const bool isDataByReq = (entry.reqCount > expectations.expectedNoDataReq);
@@ -344,7 +318,7 @@ void IsochTxVerifier::ProcessTraceEntry(const TraceEntry& entry,
 
     CheckDbcContinuity(entry, cip, isData, restartReasons);
     if (isData && entry.audioQuadletCount > 0) {
-        CheckAudioPayload(entry, expectations, deltaMissed, restartReasons);
+        CheckAudioPayload(entry, expectations, deltaUnderrunSilenced, restartReasons);
     }
 }
 
@@ -449,7 +423,7 @@ void IsochTxVerifier::CheckDbcContinuity(const TraceEntry& entry,
 
 void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
                                         const PacketExpectations& expectations,
-                                        uint64_t deltaMissed,
+                                        uint64_t deltaUnderrunSilenced,
                                         uint32_t& restartReasons) noexcept {
     const AudioPayloadScan scan = ScanAudioPayload(entry, expectations);
 
@@ -493,7 +467,7 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
         return;
     }
 
-    const bool shouldHaveAudio = inputs_.directOutputReady && (deltaMissed == 0);
+    const bool shouldHaveAudio = inputs_.directOutputReady && (deltaUnderrunSilenced == 0);
     if (shouldHaveAudio) {
         ASFW_LOG_RL(Isoch, "txverify/silence_run", 10000, OS_LOG_TYPE_DEFAULT,
                     "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u directReady=%u framesPerPkt=%u",
@@ -524,7 +498,7 @@ void IsochTxVerifier::RunWork() noexcept {
 
     uint32_t restartReasons = UpdateCounterState(deltas);
     const PacketExpectations expectations = BuildPacketExpectations();
-    ProcessTraceEntries(expectations, deltas.deltaMissed, restartReasons);
+    ProcessTraceEntries(expectations, deltas.deltaUnderrunSilenced, restartReasons);
 
     if (restartReasons && recovery_) {
         recovery_->Request(restartReasons);

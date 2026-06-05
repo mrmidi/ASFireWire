@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 
@@ -40,6 +41,15 @@ AudioGraphBinding MakeDuplexBinding(AudioTransportControlBlock& control,
         .hostToDeviceWireFormat = AudioWireFormat::kAM824,
         .audioDevice = &audioDevice,
     };
+}
+
+void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
+                             uint64_t sampleFrame,
+                             uint64_t hostTime,
+                             uint32_t frameCount) {
+    control.client.PublishWriteEnd(sampleFrame, hostTime, frameCount);
+    control.playbackRingWriteFrame.store(control.client.OutputWrittenEndFrame(),
+                                         std::memory_order_release);
 }
 
 TEST(DirectAudioEngineTests, BindValidGraphBindsSubcomponents) {
@@ -95,7 +105,7 @@ TEST(DirectAudioEngineTests, UnbindClearsState) {
     EXPECT_FALSE(engine.OutputReader().IsBound());
 }
 
-TEST(DirectAudioEngineTests, OutputReaderUsesClientCursorAvailability) {
+TEST(DirectAudioEngineTests, OutputReaderUsesPlaybackRingCursorAvailability) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
@@ -107,7 +117,7 @@ TEST(DirectAudioEngineTests, OutputReaderUsesClientCursorAvailability) {
 
     EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(1000, 128));
 
-    control.client.PublishWriteEnd(1000, 55, 128);
+    PublishPlaybackWriteEnd(control, 1000, 55, 128);
 
     EXPECT_TRUE(engine.OutputReader().IsFrameRangeAvailable(1000, 128));
     EXPECT_FALSE(engine.OutputReader().IsFrameRangeAvailable(1100, 64));

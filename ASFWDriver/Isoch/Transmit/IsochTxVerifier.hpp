@@ -35,8 +35,6 @@ public:
         Encoding::AudioWireFormat audioWireFormat{Encoding::AudioWireFormat::kAM824};
         bool directOutputReady{false};
 
-        uint64_t audioInjectCursorResets{0};
-        uint64_t audioInjectMissedPackets{0};
         uint64_t underrunSilencedPackets{0};
         uint64_t criticalGapEvents{0};
         uint64_t dbcDiscontinuities{0};
@@ -93,10 +91,7 @@ private:
         uint8_t lastDataDbc{0};
         uint8_t blocksPerData{0};
         uint32_t silentDataRun{0};
-        uint32_t injectMissConsecutiveTicks{0};
 
-        uint64_t lastInjectCursorResets{0};
-        uint64_t lastInjectMissedPackets{0};
         uint64_t lastUnderrunSilencedPackets{0};
         uint64_t lastCriticalGapEvents{0};
         uint64_t lastDbcDiscontinuities{0};
@@ -104,15 +99,11 @@ private:
     };
 
     struct CounterDeltaSnapshot {
-        uint64_t curInjectResets{0};
-        uint64_t curInjectMissed{0};
         uint64_t curUnderrunSilenced{0};
         uint64_t curCriticalGap{0};
         uint64_t curDbcDisc{0};
         uint64_t curDroppedTrace{0};
 
-        uint64_t deltaResets{0};
-        uint64_t deltaMissed{0};
         uint64_t deltaUnderrunSilenced{0};
         uint64_t deltaCriticalGap{0};
         uint64_t deltaDbcDisc{0};
@@ -150,10 +141,10 @@ private:
     [[nodiscard]] static AudioPayloadScan ScanAudioPayload(
         const TraceEntry& entry,
         const PacketExpectations& expectations) noexcept;
-    void ProcessTraceEntries(const PacketExpectations& expectations, uint64_t deltaMissed,
+    void ProcessTraceEntries(const PacketExpectations& expectations, uint64_t deltaUnderrunSilenced,
                              uint32_t& restartReasons) noexcept;
     void ProcessTraceEntry(const TraceEntry& entry, const PacketExpectations& expectations,
-                           uint64_t deltaMissed, uint32_t& restartReasons) noexcept;
+                           uint64_t deltaUnderrunSilenced, uint32_t& restartReasons) noexcept;
     void CheckCompletionAndPacketShape(const TraceEntry& entry,
                                        const PacketExpectations& expectations,
                                        const ParsedCIP& cip,
@@ -166,7 +157,7 @@ private:
                             uint32_t& restartReasons) noexcept;
     void CheckAudioPayload(const TraceEntry& entry,
                            const PacketExpectations& expectations,
-                           uint64_t deltaMissed,
+                           uint64_t deltaUnderrunSilenced,
                            uint32_t& restartReasons) noexcept;
     void RunWork() noexcept;
 

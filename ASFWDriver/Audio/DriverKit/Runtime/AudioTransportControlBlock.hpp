@@ -36,6 +36,16 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> outputUnderruns{0};
     std::atomic<uint64_t> discontinuities{0};
 
+    std::atomic<uint64_t> playbackRingWriteFrame{0};
+    std::atomic<uint64_t> playbackRingReadFrame{0};
+    std::atomic<uint64_t> playbackRingUnderruns{0};
+    std::atomic<uint64_t> playbackRingOverruns{0};
+
+    std::atomic<uint64_t> captureRingWriteFrame{0};
+    std::atomic<uint64_t> captureRingReadFrame{0};
+    std::atomic<uint64_t> captureRingOverruns{0};
+    std::atomic<uint64_t> captureRingStarvations{0};
+
     bool UpdateAuthoritativeZtsFromRx(uint64_t sampleFrame,
                                       uint64_t hostTicks,
                                       uint32_t hostNanosPerSampleQ8) noexcept {
@@ -107,6 +117,16 @@ struct AudioTransportControlBlock final {
         inputOverruns.store(0, std::memory_order_release);
         outputUnderruns.store(0, std::memory_order_release);
         discontinuities.store(0, std::memory_order_release);
+
+        playbackRingWriteFrame.store(0, std::memory_order_release);
+        playbackRingReadFrame.store(0, std::memory_order_release);
+        playbackRingUnderruns.store(0, std::memory_order_release);
+        playbackRingOverruns.store(0, std::memory_order_release);
+
+        captureRingWriteFrame.store(0, std::memory_order_release);
+        captureRingReadFrame.store(0, std::memory_order_release);
+        captureRingOverruns.store(0, std::memory_order_release);
+        captureRingStarvations.store(0, std::memory_order_release);
 
         generation.fetch_add(1, std::memory_order_acq_rel);
     }
