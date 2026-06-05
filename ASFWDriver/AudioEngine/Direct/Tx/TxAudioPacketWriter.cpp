@@ -86,10 +86,17 @@ TxPacketProductionResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         .channels = request.channels,
     });
 
-    if (read.status != DirectTxReadStatus::kAvailable &&
-        read.status != DirectTxReadStatus::kUnderrun) {
+    if (read.status == DirectTxReadStatus::kInvalidBinding ||
+        read.status == DirectTxReadStatus::kInvalidRange) {
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
+        result.blockingResult = TxBlockingResult::NoData;
+        return result;
+    }
+
+    if (read.status == DirectTxReadStatus::kUnavailable) {
         result.state = (request.syt == 0xFFFF) ? TxPacketState::NoPhaseSilence : TxPacketState::ValidPhaseSilence;
-        result.blockingResult = TxBlockingResult::Data;
+        result.blockingResult = TxBlockingResult::NoData;
         return result;
     }
 

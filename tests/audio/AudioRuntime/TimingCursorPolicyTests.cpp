@@ -28,20 +28,20 @@ TEST(TimingCursorPolicyTests, FrameConversions) {
     const auto policy = TimingCursorPolicy::MakeDice48kBlocking();
 
     // HardwareOutputFrameToReportedFrame
-    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(0, 512), 0U);
-    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(47, 512), 0U);
-    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(48, 512), 0U);
-    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(100, 512), 52U);
+    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(0), 0U);
+    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(47), 0U);
+    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(48), 0U);
+    EXPECT_EQ(policy.HardwareOutputFrameToReportedFrame(100), 52U);
 
     // HostOutputFrameToPlaybackFrame
-    EXPECT_EQ(policy.HostOutputFrameToPlaybackFrame(0, 512), 48U);
-    EXPECT_EQ(policy.HostOutputFrameToPlaybackFrame(100, 512), 148U);
+    EXPECT_EQ(policy.HostOutputFrameToPlaybackFrame(0), 48U);
+    EXPECT_EQ(policy.HostOutputFrameToPlaybackFrame(100), 148U);
 
     // HardwareInputFrameToCaptureFrame
-    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(0, 512), 0U);
-    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(127, 512), 0U);
-    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(128, 512), 0U);
-    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(200, 512), 72U);
+    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(0), 0U);
+    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(127), 0U);
+    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(128), 0U);
+    EXPECT_EQ(policy.HardwareInputFrameToCaptureFrame(200), 72U);
 }
 
 } // namespace ASFW::Tests::AudioRuntime

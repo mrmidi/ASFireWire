@@ -308,7 +308,7 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
     }
 
     // 4. Emit final diagnostic snapshot
-    DirectDiagnostics::MaybeLogDirectAudioDebugSnapshot(ivars.runtime);
+    DirectDiagnostics::ForceLogDirectAudioDebugSnapshot(ivars.runtime, reason);
 }
 
 } // namespace ASFW::Audio::DriverKit
