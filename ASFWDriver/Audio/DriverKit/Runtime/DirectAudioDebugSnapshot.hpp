@@ -41,6 +41,14 @@ struct DirectAudioDebugSnapshot final {
     uint64_t directTxUnderruns{0};
     uint64_t directTxSilenceSubstitutions{0};
     bool outputReaderAvailableAtWriteEnd{false};
+
+    // Phase A counters
+    uint64_t txValidPhasePcmPackets{0};
+    uint64_t txValidPhaseSilencePackets{0};
+    uint64_t txNoPhaseSilencePackets{0};
+    uint64_t txUnderrunSilencePackets{0};
+    uint64_t txStaleSyncPackets{0};
+    uint64_t txInvalidGeometryPackets{0};
 };
 
 struct DirectAudioDebugLogState final {
@@ -109,6 +117,13 @@ struct DirectAudioDebugLogState final {
     snapshot.directTxUnderruns = control.counters.txUnderruns.load(std::memory_order_relaxed);
     snapshot.directTxSilenceSubstitutions =
         control.counters.txSilenceSubstitutions.load(std::memory_order_relaxed);
+
+    snapshot.txValidPhasePcmPackets = control.counters.txValidPhasePcmPackets.load(std::memory_order_relaxed);
+    snapshot.txValidPhaseSilencePackets = control.counters.txValidPhaseSilencePackets.load(std::memory_order_relaxed);
+    snapshot.txNoPhaseSilencePackets = control.counters.txNoPhaseSilencePackets.load(std::memory_order_relaxed);
+    snapshot.txUnderrunSilencePackets = control.counters.txUnderrunSilencePackets.load(std::memory_order_relaxed);
+    snapshot.txStaleSyncPackets = control.counters.txStaleSyncPackets.load(std::memory_order_relaxed);
+    snapshot.txInvalidGeometryPackets = control.counters.txInvalidGeometryPackets.load(std::memory_order_relaxed);
 
     return snapshot;
 }

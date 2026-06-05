@@ -124,6 +124,7 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 [[nodiscard]] bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept;
 void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
 void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
+void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;
 [[nodiscard]] bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver,
                                         ASFWAudioDriver_IVars& ivars) noexcept;
 

@@ -7,6 +7,7 @@
 
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
+#include "Audio/Runtime/TimingCursorPolicy.hpp"
 
 #include <DriverKit/DriverKit.h>
 
@@ -167,6 +168,27 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     }
     streamingStarted = true;
 
+    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
+    const auto policySnap = policy.Snapshot();
+    ASFW_LOG(Audio,
+             "TimingCursorPolicy rate=%u mode=blocking framesPerPacket=%u outCursorOffset=%u inCursorOffset=%u reportedOutLatency=%u reportedInLatency=%u outSafety=%u inSafety=%u outLead=%u inLead=%u ztsPeriod=%u",
+             policySnap.sampleRateHz,
+             policySnap.framesPerPacketMax,
+             policySnap.outputCursorOffsetFrames,
+             policySnap.inputCursorOffsetFrames,
+             policySnap.reportedOutputLatencyFrames,
+             policySnap.reportedInputLatencyFrames,
+             policySnap.outputSafetyOffsetFrames,
+             policySnap.inputSafetyOffsetFrames,
+             policySnap.outputPacketLeadFrames,
+             policySnap.inputPacketLeadFrames,
+             policySnap.ztsPeriodFrames);
+
+    auto* control = ivars->runtime.directAudioGraph.control;
+    if (control) {
+        control->ztsState.selectedSource.store(ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock, std::memory_order_relaxed);
+    }
+
     if (EnsureZtsMirrorTimer(*this, *ivars)) {
         ASFW_LOG(DirectAudio,
                  "ADK DBG ZTS mirror pump armed guid=0x%016llx periodUsec=%llu",
@@ -176,7 +198,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(kIOReturnNoResources, "EnsureZtsMirrorTimer");
     }
 
-    const auto* control = ivars->runtime.directAudioGraph.control;
     if (!PrimeSharedZeroTimestampToHAL(*ivars)) {
         ASFW_LOG(DirectAudio,
                  "ADK WARN ZTS mirror prime_timeout guid=0x%016llx rxZts=%llu rxAdk=%llu",
@@ -265,3 +286,30 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
 
     return superStopKr;
 }
+
+namespace ASFW::Audio::DriverKit {
+
+void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept {
+    // 1. Immediately clear isRunning to stop pump and block further IO
+    ivars.runtime.isRunning.store(false, std::memory_order_release);
+    ivars.runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
+    
+    // 2. Stop ZTS mirror timer
+    StopZtsMirrorTimer(ivars);
+
+    ASFW_LOG(Audio, "ADK FATAL: TEARDOWN DUPLEX STREAM DUE TO: %{public}s", reason);
+
+    // 3. Stop hardware isochronous streaming
+    if (ivars.device.audioNub) {
+        const kern_return_t stopKr = ivars.device.audioNub->StopAudioStreaming();
+        if (stopKr != kIOReturnSuccess) {
+            ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in loud teardown: 0x%x", stopKr);
+        }
+    }
+
+    // 4. Emit final diagnostic snapshot
+    DirectDiagnostics::MaybeLogDirectAudioDebugSnapshot(ivars.runtime);
+}
+
+} // namespace ASFW::Audio::DriverKit
+

@@ -25,6 +25,8 @@ using ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus;
 using ASFW::AudioEngine::Direct::Tx::kDirectTxCipHeaderBytes;
 using ASFW::AudioEngine::Direct::Tx::TxAudioPacketWriteRequest;
 using ASFW::AudioEngine::Direct::Tx::TxAudioPacketWriter;
+using ASFW::Audio::Runtime::TxPacketState;
+using ASFW::Audio::Runtime::TxBlockingResult;
 using ASFW::Isoch::TxVerify::ParseCIPFromHostWords;
 
 AudioGraphBinding MakeWriterOutputBinding(AudioTransportControlBlock& control,
@@ -91,10 +93,11 @@ TEST(TxAudioPacketWriterTests, DataAvailableWritesRealPcm) {
         .dataPacket = true,
     }, packet.data(), static_cast<uint32_t>(packet.size()));
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
-    EXPECT_EQ(result.bytesWritten, kDirectTxCipHeaderBytes + (2U * 2U * 4U));
-    EXPECT_EQ(result.framesEncoded, 2U);
-    EXPECT_FALSE(result.usedSilence);
+    EXPECT_EQ(result.state, TxPacketState::ValidPhasePcm);
+    EXPECT_EQ(result.blockingResult, TxBlockingResult::Data);
+    EXPECT_EQ(result.quadlets * 4U, kDirectTxCipHeaderBytes + (2U * 2U * 4U));
+    EXPECT_EQ(result.frames, 2U);
+    EXPECT_FALSE(result.fatal);
 
     const auto cip = ParseCIPFromHostWords(PacketWordAt(packet, 0), PacketWordAt(packet, 4));
     EXPECT_EQ(cip.sid, 0x02);
@@ -130,10 +133,11 @@ TEST(TxAudioPacketWriterTests, DataUnavailableWritesSilenceDataPacket) {
         .dataPacket = true,
     }, packet.data(), static_cast<uint32_t>(packet.size()));
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kUnderrun);
-    EXPECT_EQ(result.bytesWritten, kDirectTxCipHeaderBytes + (2U * 2U * 4U));
-    EXPECT_EQ(result.framesEncoded, 2U);
-    EXPECT_TRUE(result.usedSilence);
+    EXPECT_EQ(result.state, TxPacketState::UnderrunSilence);
+    EXPECT_EQ(result.blockingResult, TxBlockingResult::Data);
+    EXPECT_EQ(result.quadlets * 4U, kDirectTxCipHeaderBytes + (2U * 2U * 4U));
+    EXPECT_EQ(result.frames, 2U);
+    EXPECT_FALSE(result.fatal);
 
     const auto cip = ParseCIPFromHostWords(PacketWordAt(packet, 0), PacketWordAt(packet, 4));
     EXPECT_EQ(cip.syt, 0x79FE);
@@ -164,10 +168,11 @@ TEST(TxAudioPacketWriterTests, NoDataWritesOnlyCipHeader) {
         .dataPacket = false,
     }, packet.data(), static_cast<uint32_t>(packet.size()));
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
-    EXPECT_EQ(result.bytesWritten, kDirectTxCipHeaderBytes);
-    EXPECT_EQ(result.framesEncoded, 0U);
-    EXPECT_FALSE(result.usedSilence);
+    EXPECT_EQ(result.state, TxPacketState::ValidPhaseSilence);
+    EXPECT_EQ(result.blockingResult, TxBlockingResult::NoData);
+    EXPECT_EQ(result.quadlets * 4U, kDirectTxCipHeaderBytes);
+    EXPECT_EQ(result.frames, 0U);
+    EXPECT_FALSE(result.fatal);
 
     const auto cip = ParseCIPFromHostWords(PacketWordAt(packet, 0), PacketWordAt(packet, 4));
     EXPECT_EQ(cip.sid, 0x02);
@@ -199,9 +204,10 @@ TEST(TxAudioPacketWriterTests, CapacityTooSmallFailsWithoutTouchingPacket) {
         .dataPacket = true,
     }, packet.data(), 12);
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kInvalidRange);
-    EXPECT_EQ(result.bytesWritten, 0U);
-    EXPECT_EQ(result.framesEncoded, 0U);
+    EXPECT_EQ(result.state, TxPacketState::InvalidGeometry);
+    EXPECT_TRUE(result.fatal);
+    EXPECT_EQ(result.quadlets * 4U, 0U);
+    EXPECT_EQ(result.frames, 0U);
     EXPECT_TRUE(PacketIsFilledWith(packet, 0xA5));
 }
 
@@ -231,7 +237,8 @@ TEST(TxAudioPacketWriterTests, FrameWrapUsesModuloMemoryFrames) {
         .dataPacket = true,
     }, packet.data(), static_cast<uint32_t>(packet.size()));
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
+    EXPECT_EQ(result.state, TxPacketState::ValidPhasePcm);
+    EXPECT_FALSE(result.fatal);
     EXPECT_EQ(PacketWordAt(packet, 8), ASFW::Encoding::AM824Encoder::encode(output[6]));
     EXPECT_EQ(PacketWordAt(packet, 12), ASFW::Encoding::AM824Encoder::encode(output[7]));
     EXPECT_EQ(PacketWordAt(packet, 16), ASFW::Encoding::AM824Encoder::encode(output[0]));
@@ -263,8 +270,9 @@ TEST(TxAudioPacketWriterTests, ExtraAm824SlotsUseMidiPlaceholders) {
         .dataPacket = true,
     }, packet.data(), static_cast<uint32_t>(packet.size()));
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kAvailable);
-    EXPECT_EQ(result.bytesWritten, kDirectTxCipHeaderBytes + (1U * 3U * 4U));
+    EXPECT_EQ(result.state, TxPacketState::ValidPhasePcm);
+    EXPECT_EQ(result.quadlets * 4U, kDirectTxCipHeaderBytes + (1U * 3U * 4U));
+    EXPECT_FALSE(result.fatal);
 
     const auto cip = ParseCIPFromHostWords(PacketWordAt(packet, 0), PacketWordAt(packet, 4));
     EXPECT_EQ(cip.dbs, 3);
@@ -289,10 +297,10 @@ TEST(TxAudioPacketWriterTests, InvalidBindingFailsWithoutTouchingPacket) {
         .dataPacket = true,
     }, packet.data(), static_cast<uint32_t>(packet.size()));
 
-    EXPECT_EQ(result.readStatus, DirectTxReadStatus::kInvalidBinding);
-    EXPECT_EQ(result.bytesWritten, 0U);
-    EXPECT_EQ(result.framesEncoded, 0U);
-    EXPECT_FALSE(result.usedSilence);
+    EXPECT_EQ(result.state, TxPacketState::InvalidGeometry);
+    EXPECT_TRUE(result.fatal);
+    EXPECT_EQ(result.quadlets * 4U, 0U);
+    EXPECT_EQ(result.frames, 0U);
     EXPECT_TRUE(PacketIsFilledWith(packet, 0x5A));
 }
 

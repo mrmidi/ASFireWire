@@ -555,6 +555,12 @@ void IsochAudioTxPipeline::LogTxCursorDiagnostic(const char* source,
 bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
                                                   Tx::IsochTxDescriptorSlab& slab,
                                                   const AudioInjectionPlan& plan) noexcept {
+    if (directTxBinding_.control &&
+        directTxBinding_.control->ztsState.selectedSource.load(std::memory_order_relaxed) == ASFW::Audio::Runtime::ZtsAuthoritySource::None) {
+        counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
     ++debugInjectionAttempts_;
     uint8_t* payloadVirt = slab.PayloadPtr(packetIndex);
     const uint32_t payloadBytes = PacketPayloadByteCount(packetIndex, slab);
@@ -646,6 +652,28 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
     }
 
     if (armed) {
+        // 1. Check if RX Clock authority was once established and is now lost/stale
+        bool rxAuthorityEstablished = false;
+        if (directTxBinding_.control) {
+            const auto source = directTxBinding_.control->ztsState.selectedSource.load(std::memory_order_relaxed);
+            const auto gen = directTxBinding_.control->ztsState.sourceGeneration.load(std::memory_order_relaxed);
+            if (source == ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock && gen > 0) {
+                rxAuthorityEstablished = true;
+            }
+        }
+
+        const auto sync = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
+        if (rxAuthorityEstablished && sync.status != ExternalSyncState::SeedStatus::Ok) {
+            if (directTxBinding_.control) {
+                directTxBinding_.control->ztsState.selectedSource.store(ASFW::Audio::Runtime::ZtsAuthoritySource::None, std::memory_order_relaxed);
+                directTxBinding_.control->counters.txStaleSyncPackets.fetch_add(1, std::memory_order_relaxed);
+            }
+            ASFW_LOG(Audio, "ADK FATAL: RX clock authority lost! status=%u ageUsec=%llu threshold=%llu. Stopping stream.",
+                     static_cast<uint32_t>(sync.status), sync.ageUsec, sync.staleThresholdUsec);
+            counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+
         const uint64_t readFrame = directOutputFrameCursor_;
         const Direct::Tx::TxAudioPacketWriteRequest request{
             .firstFrame = readFrame,
@@ -660,92 +688,73 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
         };
 
         Direct::Tx::TxAudioPacketWriter writer(directOutputReader_);
-        const Direct::Tx::TxAudioPacketWriteResult result =
+        const ASFW::Audio::Runtime::TxPacketProductionResult result =
             writer.WritePacket(request, payloadVirt, payloadBytes);
         
-        if (result.readStatus == DirectTxReadStatus::kAvailable ||
-            result.readStatus == DirectTxReadStatus::kUnderrun) {
-            
-            if (result.bytesWritten == payloadBytes && result.framesEncoded == metadata.framesPerPacket) {
-                if (dmaMemory_ && result.bytesWritten > 0) {
-                    dmaMemory_->PublishToDevice(
-                        reinterpret_cast<const std::byte*>(payloadVirt),
-                        result.bytesWritten
-                    );
-                }
-                if (result.readStatus == DirectTxReadStatus::kUnderrun || result.usedSilence) {
-                    counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
-                    if (directTxBinding_.control) {
-                        directTxBinding_.control->counters.txSilenceSubstitutions.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                }
-                if (result.readStatus == DirectTxReadStatus::kUnderrun && directTxBinding_.control) {
-                    directTxBinding_.control->counters.txUnderruns.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                const uint64_t consumedEndFrame = readFrame + metadata.framesPerPacket;
-                directOutputFrameCursor_ = consumedEndFrame;
-                PublishDirectTxConsumedEndFrame(consumedEndFrame);
-                counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
-                if (directTxBinding_.control) {
-                    directTxBinding_.control->counters.txPackets.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                // Hot-path IT injection diagnostic, disabled for audio stability.
-                // ++debugInjectionSuccesses_;
-                // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
-                //     const char* source = result.usedSilence ? "silence_no_pcm" : "host_pcm";
-                //     ASFW_LOG(Isoch,
-                //              "IT DBG INJECT source=%{public}s attempt=%llu success=%llu pktIdx=%u status=%u bytes=%u frames=%u consumedEnd=%llu usedSilence=%d",
-                //              source,
-                //              debugInjectionAttempts_,
-                //              debugInjectionSuccesses_,
-                //              packetIndex,
-                //              static_cast<uint32_t>(result.readStatus),
-                //              result.bytesWritten,
-                //              result.framesEncoded,
-                //              consumedEndFrame,
-                //              result.usedSilence);
-                // }
-                // Hot-path cursor diagnostic, disabled for audio stability.
-                // LogTxCursorDiagnostic(result.usedSilence ? "silence_no_pcm" : "host_pcm",
-                //                       packetIndex,
-                //                       metadata,
-                //                       cip,
-                //                       readFrame,
-                //                       consumedEndFrame,
-                //                       result.readStatus,
-                //                       result.bytesWritten,
-                //                       result.framesEncoded,
-                //                       result.usedSilence);
-                return true;
+        if (result.fatal) {
+            counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
+            if (directTxBinding_.control) {
+                directTxBinding_.control->counters.txInvalidGeometryPackets.fetch_add(1, std::memory_order_relaxed);
             }
+            return false;
         }
-        // Hot-path IT injection diagnostic, disabled for audio stability.
-        // if (ShouldLogTxHotPathSample(debugInjectionAttempts_)) {
-        //     ASFW_LOG(Isoch,
-        //              "IT DBG INJECT source=silence_no_pcm writer_failed attempt=%llu pktIdx=%u status=%u bytes=%u frames=%u payload=%u expectedFrames=%u",
-        //              debugInjectionAttempts_,
-        //              packetIndex,
-        //              static_cast<uint32_t>(result.readStatus),
-        //              result.bytesWritten,
-        //              result.framesEncoded,
-        //              payloadBytes,
-        //              metadata.framesPerPacket);
-        // }
+
+        const uint32_t bytesWritten = result.quadlets * sizeof(uint32_t);
+        if (bytesWritten == payloadBytes && result.frames == metadata.framesPerPacket) {
+            if (dmaMemory_ && bytesWritten > 0) {
+                dmaMemory_->PublishToDevice(
+                    reinterpret_cast<const std::byte*>(payloadVirt),
+                    bytesWritten
+                );
+            }
+
+            // Increment specific atomic counter based on packet state
+            if (directTxBinding_.control) {
+                auto& counters = directTxBinding_.control->counters;
+                switch (result.state) {
+                    case ASFW::Audio::Runtime::TxPacketState::ValidPhasePcm:
+                        counters.txValidPhasePcmPackets.fetch_add(1, std::memory_order_relaxed);
+                        counters.txPcmFramesEncoded.fetch_add(result.frames, std::memory_order_relaxed);
+                        break;
+                    case ASFW::Audio::Runtime::TxPacketState::ValidPhaseSilence:
+                        counters.txValidPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
+                        counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case ASFW::Audio::Runtime::TxPacketState::NoPhaseSilence:
+                        counters.txNoPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
+                        counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case ASFW::Audio::Runtime::TxPacketState::UnderrunSilence:
+                        counters.txUnderrunSilencePackets.fetch_add(1, std::memory_order_relaxed);
+                        counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
+                        counters.txUnderruns.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case ASFW::Audio::Runtime::TxPacketState::StaleSync:
+                        counters.txStaleSyncPackets.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    case ASFW::Audio::Runtime::TxPacketState::InvalidGeometry:
+                        counters.txInvalidGeometryPackets.fetch_add(1, std::memory_order_relaxed);
+                        break;
+                    default:
+                        break;
+                }
+
+                // Increment baseline counters
+                counters.txPackets.fetch_add(1, std::memory_order_relaxed);
+                if (result.blockingResult == ASFW::Audio::Runtime::TxBlockingResult::Data) {
+                    counters.txDataPackets.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    counters.txNoDataPackets.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+
+            const uint64_t consumedEndFrame = readFrame + result.frames;
+            directOutputFrameCursor_ = consumedEndFrame;
+            PublishDirectTxConsumedEndFrame(consumedEndFrame);
+            counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
         counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-        // Hot-path cursor diagnostic, disabled for audio stability.
-        // LogTxCursorDiagnostic("silence_no_pcm",
-        //                       packetIndex,
-        //                       metadata,
-        //                       cip,
-        //                       readFrame,
-        //                       directOutputFrameCursor_,
-        //                       result.readStatus,
-        //                       result.bytesWritten,
-        //                       result.framesEncoded,
-        //                       result.usedSilence);
     }
 
     // Write silence to maintain bus-visible cadence (unarmed or fallback-due-to-error).
@@ -774,11 +783,26 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
             counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
             if (directTxBinding_.control) {
+                bool rxAuthorityEstablished = false;
+                const auto source = directTxBinding_.control->ztsState.selectedSource.load(std::memory_order_relaxed);
+                const auto gen = directTxBinding_.control->ztsState.sourceGeneration.load(std::memory_order_relaxed);
+                if (source == ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock && gen > 0) {
+                    rxAuthorityEstablished = true;
+                }
+
+                if (rxAuthorityEstablished) {
+                    directTxBinding_.control->counters.txValidPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    directTxBinding_.control->counters.txNoPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
+                }
+
                 directTxBinding_.control->counters.txPackets.fetch_add(
                     1, std::memory_order_relaxed);
                 directTxBinding_.control->counters.txSilenceSubstitutions.fetch_add(
                     1, std::memory_order_relaxed);
                 directTxBinding_.control->counters.txUnderruns.fetch_add(
+                    1, std::memory_order_relaxed);
+                directTxBinding_.control->counters.txNoDataPackets.fetch_add(
                     1, std::memory_order_relaxed);
             }
             // Hot-path IT injection diagnostic, disabled for audio stability.

@@ -21,6 +21,7 @@
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
 #include "../../Isoch/Memory/IIsochDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
+#include "Audio/Runtime/TimingCursorPolicy.hpp"
 
 #include <array>
 #include <atomic>
@@ -226,6 +227,7 @@ private:
     uint64_t debugInjectionSkips_{0};
 
     Counters counters_{};
+    ASFW::Audio::TimingCursorPolicy timingPolicy_{ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking()};
 };
 
 } // namespace ASFW::Isoch

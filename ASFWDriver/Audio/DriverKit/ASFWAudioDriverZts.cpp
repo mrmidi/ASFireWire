@@ -48,16 +48,24 @@ bool PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
         return false;
     }
 
-    const uint64_t generation = control->device.generation.load(std::memory_order_acquire);
+    const uint64_t generation = control->ztsState.sourceGeneration.load(std::memory_order_acquire);
     if (generation == 0 ||
         generation == ivars.runtime.lastHalZeroTimestampGeneration.load(std::memory_order_acquire)) {
         return false;
     }
 
-    const uint64_t eventSampleFrame = control->device.sampleFrame.load(std::memory_order_relaxed);
-    const uint64_t eventHostTicks = control->device.hostTicks.load(std::memory_order_relaxed);
-    const uint32_t eventHostNanosPerSampleQ8 = control->device.hostNanosPerSampleQ8.load(std::memory_order_relaxed);
+    const auto source = control->ztsState.selectedSource.load(std::memory_order_relaxed);
+    if (source == ASFW::Audio::Runtime::ZtsAuthoritySource::None) {
+        ASFW_LOG(DirectAudio, "ADK FATAL ZTS mirror pump failed: selectedSource is None!");
+        return false;
+    }
+
+    const uint64_t eventSampleFrame = control->ztsState.authoritativeSampleFrame.load(std::memory_order_relaxed);
+    const uint64_t eventHostTicks = control->ztsState.authoritativeHostTicks.load(std::memory_order_relaxed);
+    const uint32_t eventHostNanosPerSampleQ8 = control->ztsState.hostNanosPerSampleQ8.load(std::memory_order_relaxed);
     if (eventHostTicks == 0 || eventHostNanosPerSampleQ8 == 0) {
+        ASFW_LOG(DirectAudio, "ADK FATAL ZTS mirror pump failed: invalid ticks (%llu) or nanosPerSample (%u) for source %{public}s",
+                 eventHostTicks, eventHostNanosPerSampleQ8, ToString(source));
         return false;
     }
 
@@ -91,16 +99,18 @@ bool PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                 const uint64_t rxZts = control->counters.ztsRxPublished.load(std::memory_order_relaxed);
                 const uint64_t rxAdk = control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed);
                 ASFW_LOG(DirectAudio,
-                         "ADK DBG ZTS publish reason=%{public}s sample=%llu deltaSample=%lld deltaHost=%lld period=%u source=mirror rxZts=%llu rxAdk=%llu",
+                         "ADK DBG ZTS publish reason=%{public}s sample=%llu deltaSample=%lld deltaHost=%lld period=%u source=%{public}s rxZts=%llu rxAdk=%llu",
                          reason ? reason : "unknown",
                          nextFrame,
                          deltaSamples,
                          deltaTicks,
                          P,
+                         ToString(source),
                          rxZts,
                          rxAdk);
             }
 
+            control->ztsState.mirrorPublications.fetch_add(1, std::memory_order_relaxed);
             control->counters.CountRxAdkZtsPublished();
             nextFrame += P;
         } else {
@@ -198,14 +208,15 @@ bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver,
 
 void ASFWAudioDriver::ZtsMirrorTimerFired_Impl(ASFWAudioDriver_ZtsMirrorTimerFired_Args)
 {
-    (void)action;
-    (void)time;
-
     if (!ivars || !ivars->runtime.isRunning.load(std::memory_order_acquire)) {
         return;
     }
 
     const bool published = ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(*ivars, "pump", false);
+    if (!published) {
+        ASFW::Audio::DriverKit::PerformLoudTeardown(*ivars, "ZTS mirror pump failed/authority lost");
+        return;
+    }
     const uint64_t tick = ivars->ztsMirrorTimerTicks.fetch_add(1, std::memory_order_relaxed) + 1;
     const auto* control = ivars->runtime.directAudioGraph.control;
     const uint64_t beginReadCount =

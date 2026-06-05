@@ -15,6 +15,17 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txSilenceSubstitutions{0};
     std::atomic<uint64_t> txUnderruns{0};
 
+    // Refined Phase A counters
+    std::atomic<uint64_t> txValidPhasePcmPackets{0};
+    std::atomic<uint64_t> txValidPhaseSilencePackets{0};
+    std::atomic<uint64_t> txNoPhaseSilencePackets{0};
+    std::atomic<uint64_t> txUnderrunSilencePackets{0};
+    std::atomic<uint64_t> txStaleSyncPackets{0};
+    std::atomic<uint64_t> txInvalidGeometryPackets{0};
+    std::atomic<uint64_t> txSytFfffPackets{0};
+    std::atomic<uint64_t> txValidSytPackets{0};
+    std::atomic<uint64_t> txPcmFramesEncoded{0};
+
     std::atomic<uint64_t> rxPackets{0};
     std::atomic<uint64_t> rxDecodedFrames{0};
     std::atomic<uint64_t> rxDiscontinuities{0};
@@ -32,6 +43,16 @@ struct AudioRtCounters final {
         txNoDataPackets.store(0, std::memory_order_relaxed);
         txSilenceSubstitutions.store(0, std::memory_order_relaxed);
         txUnderruns.store(0, std::memory_order_relaxed);
+
+        txValidPhasePcmPackets.store(0, std::memory_order_relaxed);
+        txValidPhaseSilencePackets.store(0, std::memory_order_relaxed);
+        txNoPhaseSilencePackets.store(0, std::memory_order_relaxed);
+        txUnderrunSilencePackets.store(0, std::memory_order_relaxed);
+        txStaleSyncPackets.store(0, std::memory_order_relaxed);
+        txInvalidGeometryPackets.store(0, std::memory_order_relaxed);
+        txSytFfffPackets.store(0, std::memory_order_relaxed);
+        txValidSytPackets.store(0, std::memory_order_relaxed);
+        txPcmFramesEncoded.store(0, std::memory_order_relaxed);
 
         rxPackets.store(0, std::memory_order_relaxed);
         rxDecodedFrames.store(0, std::memory_order_relaxed);

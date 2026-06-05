@@ -43,7 +43,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK snapshot bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d txPackets=%llu txUnderruns=%llu txSilence=%llu",
+             "ADK snapshot bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
              snapshot.bound,
              snapshot.inputBufferAddress,
              snapshot.outputBufferAddress,
@@ -64,7 +64,13 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.outputReaderAvailableAtWriteEnd,
              snapshot.directTxPackets,
              snapshot.directTxUnderruns,
-             snapshot.directTxSilenceSubstitutions);
+             snapshot.directTxSilenceSubstitutions,
+             snapshot.txValidPhasePcmPackets,
+             snapshot.txValidPhaseSilencePackets,
+             snapshot.txNoPhaseSilencePackets,
+             snapshot.txUnderrunSilencePackets,
+             snapshot.txStaleSyncPackets,
+             snapshot.txInvalidGeometryPackets);
 }
 
 } // namespace ASFW::Audio::DriverKit::DirectDiagnostics
