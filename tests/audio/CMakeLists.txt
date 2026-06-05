@@ -97,6 +97,8 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/AudioGraphBindingTests.cpp
     AudioRuntime/DirectAudioEngineTests.cpp
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
+    AudioRuntime/TimingCursorPolicyTests.cpp
+    AudioRuntime/ZtsAuthorityTests.cpp
 )
 
 # Direct TX sidecar tests (AudioEngineDirect files)

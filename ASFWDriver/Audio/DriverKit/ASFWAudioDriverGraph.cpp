@@ -6,6 +6,7 @@
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
+#include "Audio/Runtime/TimingCursorPolicy.hpp"
 #include "../../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Isoch/Config/AudioConstants.hpp"
@@ -409,17 +410,21 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::TwelvePtMovingWindowAverage);
     ivars.audioDevice->SetClockIsStable(true);
     ivars.audioDevice->SetClockDomain(1);
-    ivars.audioDevice->SetOutputLatency(kReportedDeviceLatencyFrames);
-    ivars.audioDevice->SetInputLatency(kReportedDeviceLatencyFrames);
-    ivars.audioDevice->SetOutputSafetyOffset(kReportedSafetyOffsetFrames);
-    ivars.audioDevice->SetInputSafetyOffset(kReportedSafetyOffsetFrames);
-    ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out/in=%u, safety out/in=%u frames",
-             kReportedDeviceLatencyFrames, kReportedSafetyOffsetFrames);
+    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
+    ivars.audioDevice->SetOutputLatency(policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output));
+    ivars.audioDevice->SetInputLatency(policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input));
+    ivars.audioDevice->SetOutputSafetyOffset(policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output));
+    ivars.audioDevice->SetInputSafetyOffset(policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input));
+    ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out=%u/in=%u, safety out=%u/in=%u frames",
+             policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output),
+             policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input),
+             policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output),
+             policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input));
 
     const kern_return_t ztsKr =
-        ivars.audioDevice->SetZeroTimeStampPeriod(ASFW::Isoch::Config::kAudioIoPeriodFrames);
+        ivars.audioDevice->SetZeroTimeStampPeriod(policy.ZtsPeriodFrames());
     ASFW_LOG(Audio, "ASFWAudioDriver: SetZeroTimeStampPeriod(%u) kr=0x%x",
-             ASFW::Isoch::Config::kAudioIoPeriodFrames, ztsKr);
+             policy.ZtsPeriodFrames(), ztsKr);
 
     error = driver.AddObject(ivars.audioDevice.get());
     if (error != kIOReturnSuccess) {

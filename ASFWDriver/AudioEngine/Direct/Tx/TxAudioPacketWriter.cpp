@@ -11,13 +11,20 @@ uint32_t TxAudioPacketWriter::EffectiveAm824Slots(const TxAudioPacketWriteReques
     return request.am824Slots == 0 ? request.channels : request.am824Slots;
 }
 
-TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWriteRequest& request,
+TxPacketProductionResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWriteRequest& request,
                                                           uint8_t* packetBytes,
                                                           uint32_t packetCapacityBytes) noexcept {
-    TxAudioPacketWriteResult result{};
+    TxPacketProductionResult result{};
+    result.syt = request.syt;
+    result.dbc = request.dbc;
+    result.frames = 0;
+    result.quadlets = 0;
+    result.hasValidPhase = (request.syt != 0xFFFF);
+    result.fatal = false;
 
     if (!reader_.IsBound()) {
-        result.readStatus = DirectTxReadStatus::kInvalidBinding;
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
         return result;
     }
 
@@ -25,13 +32,15 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
     if (request.channels == 0 ||
         am824Slots < request.channels ||
         am824Slots > ASFW::Isoch::Config::kMaxAmdtpDbs) {
-        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
         return result;
     }
 
     if (!request.dataPacket) {
         if (!packetBytes || packetCapacityBytes < kDirectTxCipHeaderBytes) {
-            result.readStatus = DirectTxReadStatus::kInvalidRange;
+            result.state = TxPacketState::InvalidGeometry;
+            result.fatal = true;
             return result;
         }
 
@@ -44,23 +53,29 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
             .isNoData = true,
         };
         if (!BeginDirectTxPacket(header, packetBytes, packetCapacityBytes, bytesWritten)) {
-            result.readStatus = DirectTxReadStatus::kInvalidRange;
+            result.state = TxPacketState::InvalidGeometry;
+            result.fatal = true;
             return result;
         }
 
-        result.readStatus = DirectTxReadStatus::kAvailable;
-        result.bytesWritten = bytesWritten;
+        result.state = (request.syt == 0xFFFF) ? TxPacketState::NoPhaseSilence : TxPacketState::ValidPhaseSilence;
+        result.blockingResult = TxBlockingResult::NoData;
+        result.hasPayloadFrames = false;
+        result.frames = 0;
+        result.quadlets = 2;
         return result;
     }
 
     if (!IsValidDirectTxGeometry(request.frameCount, request.channels, am824Slots)) {
-        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
         return result;
     }
 
     const uint32_t packetBytesNeeded = DirectTxPacketByteCount(request.frameCount, am824Slots);
     if (!packetBytes || packetCapacityBytes < packetBytesNeeded) {
-        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
         return result;
     }
 
@@ -70,10 +85,11 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         .frameCount = request.frameCount,
         .channels = request.channels,
     });
-    result.readStatus = read.status;
 
     if (read.status != DirectTxReadStatus::kAvailable &&
         read.status != DirectTxReadStatus::kUnderrun) {
+        result.state = (request.syt == 0xFFFF) ? TxPacketState::NoPhaseSilence : TxPacketState::ValidPhaseSilence;
+        result.blockingResult = TxBlockingResult::Data;
         return result;
     }
 
@@ -83,7 +99,8 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         for (uint32_t frame = 0; frame < request.frameCount; ++frame) {
             const int32_t* frameIn = reader_.Frame(request.firstFrame + frame);
             if (!frameIn) {
-                result.readStatus = DirectTxReadStatus::kInvalidBinding;
+                result.state = TxPacketState::InvalidGeometry;
+                result.fatal = true;
                 return result;
             }
             inputFrames[frame] = frameIn;
@@ -99,13 +116,15 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         .isNoData = false,
     };
     if (!BeginDirectTxPacket(header, packetBytes, packetCapacityBytes, bytesWritten)) {
-        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
         return result;
     }
 
     auto* payload = DirectTxPacketPayloadQuadlets(packetBytes);
     if (!payload) {
-        result.readStatus = DirectTxReadStatus::kInvalidRange;
+        result.state = TxPacketState::InvalidGeometry;
+        result.fatal = true;
         return result;
     }
 
@@ -119,9 +138,15 @@ TxAudioPacketWriteResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         EncodeDirectTxPcmFrame(inputFrames[frame], request.channels, am824Slots, request.wireFormat, frameOut);
     }
 
-    result.bytesWritten = packetBytesNeeded;
-    result.framesEncoded = request.frameCount;
-    result.usedSilence = useSilence;
+    if (useSilence) {
+        result.state = TxPacketState::UnderrunSilence;
+    } else {
+        result.state = (request.syt == 0xFFFF) ? TxPacketState::NoPhaseSilence : TxPacketState::ValidPhasePcm;
+    }
+    result.blockingResult = TxBlockingResult::Data;
+    result.hasPayloadFrames = true;
+    result.frames = request.frameCount;
+    result.quadlets = packetBytesNeeded / sizeof(uint32_t);
     return result;
 }
 
