@@ -24,6 +24,7 @@ struct Layout final {
 
     // We program packets as: OUTPUT_MORE_IMMEDIATE (Isoch header) + OUTPUT_LAST.
     static constexpr uint32_t kBlocksPerPacket = 3;
+    // TODO(DICE): Unify kTimingGroupPackets (currently 8) with Core::TimingGroupPacketCount48k() in a single place
     static constexpr uint32_t kTimingGroupPackets = 8;  // Saffire 48 kHz blocking DCL group
     static constexpr uint32_t kNumPackets = 192;  // 16 timing groups, ~24ms @ 8000 pkts/sec
     static constexpr uint32_t kRingBlocks = kNumPackets * kBlocksPerPacket;

@@ -25,6 +25,7 @@ struct IsochEventGroup final {
     }
 };
 
+// TODO(DICE): Unify timing group packet count (currently 8) with Transmit Layout (kTimingGroupPackets) in a single place
 [[nodiscard]] constexpr uint32_t TimingGroupPacketCount48k() noexcept {
     return 8;
 }
