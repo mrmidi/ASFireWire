@@ -28,6 +28,26 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
 
         const uint64_t callbackIndex =
             driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
+
+        if (callbackIndex <= 64 || (callbackIndex % 1024) == 0) {
+            ASFW_LOG(DirectAudio,
+                     "ADK IO cb entry index=%llu op=%u object=%u sampleTime=%llu hostTime=%llu frameCount=%u running=%d skeleton=%d control=%p hasIn=%d hasOut=%d deviceId=%u inStreamId=%u outStreamId=%u",
+                     callbackIndex,
+                     static_cast<uint32_t>(operation),
+                     objectID,
+                     sampleTime,
+                     hostTime,
+                     ioBufferFrameSize,
+                     driverIvars->runtime.isRunning.load(std::memory_order_acquire),
+                     driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
+                     static_cast<void*>(driverIvars->runtime.directAudioGraph.control),
+                     driverIvars->runtime.directAudioGraph.HasInput(),
+                     driverIvars->runtime.directAudioGraph.HasOutput(),
+                     driverIvars->audioDevice ? driverIvars->audioDevice->GetObjectID() : 0,
+                     driverIvars->inputStream ? driverIvars->inputStream->GetObjectID() : 0,
+                     driverIvars->outputStream ? driverIvars->outputStream->GetObjectID() : 0);
+        }
+
         const bool running = driverIvars->runtime.isRunning.load(std::memory_order_acquire);
         const bool skeletonBound =
             driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
@@ -145,7 +165,13 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
         return kIOReturnSuccess;
     });
 
-    if (error != kIOReturnSuccess) {
+    if (error == kIOReturnSuccess) {
+        ASFW_LOG(DirectAudio,
+                 "ADK IO handler installed deviceId=%u inputStream=%u outputStream=%u",
+                 audioDevice.GetObjectID(),
+                 ivars.inputStream ? ivars.inputStream->GetObjectID() : 0,
+                 ivars.outputStream ? ivars.outputStream->GetObjectID() : 0);
+    } else {
         ASFW_LOG(Audio, "ASFWAudioDriver: SetIOOperationHandler failed: 0x%x", error);
     }
     return error;

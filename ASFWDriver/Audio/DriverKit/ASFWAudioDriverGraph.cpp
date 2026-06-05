@@ -360,6 +360,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     ivars.outputStream->SetAvailableStreamFormats(outputFormats, formatCount);
     ivars.outputStream->SetCurrentStreamFormat(&outputFormats[0]);
 
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: ADK streams fully created. deviceId=%u inputStream=%u outputStream=%u",
+             ivars.audioDevice ? ivars.audioDevice->GetObjectID() : 0,
+             ivars.inputStream ? ivars.inputStream->GetObjectID() : 0,
+             ivars.outputStream ? ivars.outputStream->GetObjectID() : 0);
+
     const bool directAudioSkeletonBound = BindDirectAudioSkeleton(ivars);
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Direct audio skeleton %{public}s",
