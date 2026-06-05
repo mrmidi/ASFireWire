@@ -15,7 +15,6 @@ public:
     static constexpr uint32_t kReasonCipAnomaly = 1u << 2;
     static constexpr uint32_t kReasonDbcDiscontinuity = 1u << 3;
     static constexpr uint32_t kReasonUncompletedOverwrite = 1u << 4;
-    static constexpr uint32_t kReasonInjectMiss = 1u << 5;
 
     static constexpr uint32_t kFatalMask =
         kReasonInvalidLabel |
@@ -43,4 +42,3 @@ private:
 };
 
 } // namespace ASFW::Isoch
-

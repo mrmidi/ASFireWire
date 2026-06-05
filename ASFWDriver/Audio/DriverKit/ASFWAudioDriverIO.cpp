@@ -10,7 +10,78 @@
 
 #include <DriverKit/DriverKit.h>
 
+#include <cstring>
+
 namespace ASFW::Audio::DriverKit {
+namespace {
+
+void PublishPlaybackRingWriteEnd(ASFW::Audio::Runtime::AudioGraphBinding& graph,
+                                 ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    const uint64_t writeEnd = control.client.OutputWrittenEndFrame();
+    const uint64_t previous =
+        control.playbackRingWriteFrame.load(std::memory_order_acquire);
+    if (writeEnd <= previous) {
+        return;
+    }
+
+    control.playbackRingWriteFrame.store(writeEnd, std::memory_order_release);
+    const uint64_t read =
+        control.playbackRingReadFrame.load(std::memory_order_acquire);
+    const uint32_t capacity = graph.memory.outputFrameCapacity;
+    if (capacity != 0 && writeEnd > read && (writeEnd - read) > capacity) {
+        control.playbackRingReadFrame.store(writeEnd - capacity, std::memory_order_release);
+        control.playbackRingOverruns.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
+                             uint64_t absoluteFrame) noexcept {
+    auto* frame = graph.memory.InputFrame(absoluteFrame);
+    if (!frame || graph.memory.inputChannels == 0) {
+        return;
+    }
+    std::memset(frame,
+                0,
+                static_cast<size_t>(graph.memory.inputChannels) * sizeof(int32_t));
+}
+
+bool PrepareCaptureRingForBeginRead(ASFW::Audio::Runtime::AudioGraphBinding& graph,
+                                    ASFW::Audio::Runtime::AudioTransportControlBlock& control,
+                                    uint64_t sampleTime,
+                                    uint32_t frameCount) noexcept {
+    if (frameCount == 0) {
+        return true;
+    }
+    if (!graph.HasInput()) {
+        return false;
+    }
+
+    const uint64_t write =
+        control.captureRingWriteFrame.load(std::memory_order_acquire);
+    const uint32_t capacity = graph.memory.inputFrameCapacity;
+    const uint64_t oldest = (capacity != 0 && write > capacity) ? (write - capacity) : 0;
+    bool starved = false;
+    for (uint32_t i = 0; i < frameCount; ++i) {
+        const uint64_t frame = sampleTime + i;
+        if (frame < oldest || frame >= write) {
+            ZeroInputFrameIfMissing(graph, frame);
+            starved = true;
+        }
+    }
+
+    const uint64_t readEnd = sampleTime + frameCount;
+    const uint64_t previousRead =
+        control.captureRingReadFrame.load(std::memory_order_acquire);
+    if (readEnd > previousRead) {
+        control.captureRingReadFrame.store(readEnd, std::memory_order_release);
+    }
+    if (starved) {
+        control.captureRingStarvations.fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
+}
+
+} // namespace
 
 kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                         ASFWAudioDriver_IVars& ivars) noexcept {
@@ -110,21 +181,31 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
 
             if (operation == IOUserAudioIOOperationBeginRead) {
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
+                const bool capturePrepared =
+                    PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
+                                                   *control,
+                                                   sampleTime,
+                                                   ioBufferFrameSize);
                 control->counters.CountBeginRead();
                 (void)PublishSharedZeroTimestampToHAL(*driverIvars, "io", false);
                 const uint64_t beginCount =
                     control->counters.ioBeginReadCount.load(std::memory_order_relaxed);
                 if (beginCount <= 8 || (beginCount % 1024) == 0) {
                     ASFW_LOG(DirectAudio,
-                             "ADK DBG IO begin_read count=%llu cb=%llu frames=%u sample=%llu host=%llu",
+                             "ADK DBG IO begin_read count=%llu cb=%llu frames=%u sample=%llu host=%llu capturePrepared=%d capWr=%llu capRd=%llu starve=%llu",
                              beginCount,
                              callbackIndex,
                              ioBufferFrameSize,
                              sampleTime,
-                             hostTime);
+                             hostTime,
+                             capturePrepared,
+                             control->captureRingWriteFrame.load(std::memory_order_acquire),
+                             control->captureRingReadFrame.load(std::memory_order_acquire),
+                             control->captureRingStarvations.load(std::memory_order_relaxed));
                 }
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
+                PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
                 control->counters.CountWriteEnd();
                 (void)PublishSharedZeroTimestampToHAL(*driverIvars, "io", false);
                 const uint64_t writeCount =
@@ -132,13 +213,16 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
                 if (writeCount <= 8 || (writeCount % 1024) == 0) {
                     ASFW_LOG(DirectAudio,
-                             "ADK DBG IO write_end count=%llu cb=%llu frames=%u sample=%llu host=%llu writtenEnd=%llu",
+                             "ADK DBG IO write_end count=%llu cb=%llu frames=%u sample=%llu host=%llu writtenEnd=%llu playWr=%llu playRd=%llu overrun=%llu",
                              writeCount,
                              callbackIndex,
                              ioBufferFrameSize,
                              sampleTime,
                              hostTime,
-                             writtenEnd);
+                             writtenEnd,
+                             control->playbackRingWriteFrame.load(std::memory_order_acquire),
+                             control->playbackRingReadFrame.load(std::memory_order_acquire),
+                             control->playbackRingOverruns.load(std::memory_order_relaxed));
                 }
             } else if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
                 ASFW_LOG(DirectAudio,

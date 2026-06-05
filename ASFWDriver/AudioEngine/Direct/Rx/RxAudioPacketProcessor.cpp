@@ -81,7 +81,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     }
 
     const uint64_t producedEnd = absoluteFrame + eventCount;
-    writer_.PublishProducedEnd(producedEnd);
+    writer_.PublishProducedEnd(producedEnd, static_cast<uint32_t>(eventCount));
     
     result.status = DirectRxWriteStatus::kAvailable;
     return result;

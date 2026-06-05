@@ -97,6 +97,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/AudioGraphBindingTests.cpp
     AudioRuntime/DirectAudioEngineTests.cpp
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
+    AudioRuntime/AudioSampleRingTests.cpp
     AudioRuntime/TimingCursorPolicyTests.cpp
     AudioRuntime/ZtsAuthorityTests.cpp
     AudioRuntime/ZtsTimelineCalculatorTests.cpp
@@ -158,4 +159,3 @@ add_audio_test(AudioProfileRegistryTests
 add_audio_test(ITDescriptorLayoutTests
     ITDescriptorLayoutTests.cpp
 )
-

@@ -31,13 +31,30 @@ public:
         return binding_->memory.InputFrame(absoluteFrame);
     }
 
-    void PublishProducedEnd(uint64_t producedEndFrame) noexcept {
+    void PublishProducedEnd(uint64_t producedEndFrame, uint32_t decodedFrames = 0) noexcept {
         if (!binding_ || !binding_->control) {
             return;
         }
 
-        binding_->control->inputProducedEndFrame.store(producedEndFrame,
-                                                       std::memory_order_release);
+        auto* control = binding_->control;
+        control->inputProducedEndFrame.store(producedEndFrame,
+                                             std::memory_order_release);
+        control->captureRingWriteFrame.store(producedEndFrame,
+                                             std::memory_order_release);
+        if (decodedFrames != 0) {
+            control->counters.rxDecodedFrames.fetch_add(decodedFrames,
+                                                        std::memory_order_relaxed);
+        }
+
+        const uint64_t read =
+            control->captureRingReadFrame.load(std::memory_order_acquire);
+        const uint32_t capacity = binding_->memory.inputFrameCapacity;
+        if (capacity != 0 && producedEndFrame > read &&
+            (producedEndFrame - read) > capacity) {
+            control->captureRingReadFrame.store(producedEndFrame - capacity,
+                                                std::memory_order_release);
+            control->captureRingOverruns.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
 private:

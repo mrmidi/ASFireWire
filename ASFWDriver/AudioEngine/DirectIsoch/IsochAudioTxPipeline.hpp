@@ -30,17 +30,15 @@
 
 namespace ASFW::Isoch {
 
-/// Owns all "audio semantics" (PacketAssembler/CIP/AM824) and direct mapping policy.
-/// Provides silent packets to the low-level DMA engine and injects real audio
-/// into near-HW slots by reading directly from ADK stream memory.
-class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider, public Tx::IIsochTxAudioInjector {
+/// Owns all "audio semantics" (PacketAssembler/CIP/AM824) and playback-ring
+/// consumption. Packets returned to the DMA engine already contain PCM or an
+/// explicit silence/underrun state; there is no late packet overwrite path.
+class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider {
 public:
     static constexpr bool kEnableDirectTxHardwarePath = true;
 
     struct Counters {
         std::atomic<uint64_t> resyncApplied{0};
-        std::atomic<uint64_t> audioInjectCursorResets{0};
-        std::atomic<uint64_t> audioInjectMissedPackets{0};
 
         std::atomic<uint64_t> directTxPackets{0};
         std::atomic<uint64_t> directTxUnderrunSilencedPackets{0};
@@ -96,11 +94,6 @@ public:
     // -------------------------------------------------------------------------
     [[nodiscard]] Tx::IsochTxPacket NextTransmitPacket(const Tx::TxPacketRequest& request) noexcept override;
 
-    // -------------------------------------------------------------------------
-    // Tx::IIsochTxAudioInjector
-    // -------------------------------------------------------------------------
-    void InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescriptorSlab& slab) noexcept override;
-
 private:
     struct ExternalSyncState {
         enum class SeedStatus : uint8_t {
@@ -128,14 +121,6 @@ private:
         SeedStatus status{SeedStatus::NoBridge};
     };
 
-    struct AudioInjectionPlan {
-        uint32_t audioTarget{0};
-        uint32_t packetsToInject{0};
-        uint32_t framesPerPacket{0};
-        uint32_t pcmChannels{0};
-        uint32_t am824Slots{0};
-    };
-
     struct PacketCipFields {
         uint8_t sid{0};
         uint8_t dbc{0};
@@ -155,27 +140,13 @@ private:
 
     [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
-    [[nodiscard]] AudioInjectionPlan BuildAudioInjectionPlan(uint32_t hwPacketIndex) noexcept;
-    [[nodiscard]] bool PacketCarriesAudio(uint32_t packetIndex, Tx::IsochTxDescriptorSlab& slab) noexcept;
-    [[nodiscard]] uint32_t PacketPayloadByteCount(uint32_t packetIndex,
-                                                  Tx::IsochTxDescriptorSlab& slab) noexcept;
-    [[nodiscard]] bool IsDirectTxHardwarePathReady(const AudioInjectionPlan& plan) const noexcept;
-    [[nodiscard]] bool TryWriteDirectTxPacket(uint32_t packetIndex,
-                                              Tx::IsochTxDescriptorSlab& slab,
-                                              const AudioInjectionPlan& plan) noexcept;
+    [[nodiscard]] bool IsPlaybackRingPathReady(const ProducedPacketMetadata& metadata) const noexcept;
+    [[nodiscard]] bool TryBuildPlaybackRingPacket(const ProducedPacketMetadata& metadata,
+                                                  uint8_t* packetBytes,
+                                                  uint32_t packetCapacityBytes) noexcept;
 
-    [[nodiscard]] bool InitializeDirectOutputCursor(const AudioInjectionPlan& plan) noexcept;
+    [[nodiscard]] bool InitializeDirectOutputCursor(const ProducedPacketMetadata& metadata) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
-    void LogTxCursorDiagnostic(const char* source,
-                               uint32_t packetIndex,
-                               const ProducedPacketMetadata& metadata,
-                               const PacketCipFields& cip,
-                               uint64_t readFrame,
-                               uint64_t consumedEndFrame,
-                               ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus readStatus,
-                               uint32_t bytesWritten,
-                               uint32_t framesEncoded,
-                               bool usedSilence) noexcept;
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
@@ -201,8 +172,6 @@ private:
     ASFW::AudioEngine::DirectIsoch::SaffireTxPhaseLoop txPhaseLoop_{};
     bool txPhaseReadIndexSeeded_{false};
 
-    // Audio injection cursor (packet index)
-    uint32_t audioWriteIndex_{0};
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 
     // DBC continuity validation for produced packets (ignore NO-DATA).
@@ -222,9 +191,6 @@ private:
 
     // Temporary bring-up diagnostics: noisy by design, remove once TX is stable.
     uint64_t debugProducedPackets_{0};
-    uint64_t debugInjectionAttempts_{0};
-    uint64_t debugInjectionSuccesses_{0};
-    uint64_t debugInjectionSkips_{0};
 
     Counters counters_{};
     ASFW::Audio::TimingCursorPolicy timingPolicy_{ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking()};

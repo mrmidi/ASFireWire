@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <limits>
 
@@ -41,6 +42,15 @@ AudioGraphBinding MakeOutputBinding(AudioTransportControlBlock& control,
         .hostToDeviceWireFormat = AudioWireFormat::kAM824,
         .audioDevice = &audioDevice,
     };
+}
+
+static void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
+                                    uint64_t sampleFrame,
+                                    uint64_t hostTime,
+                                    uint32_t frameCount) {
+    control.client.PublishWriteEnd(sampleFrame, hostTime, frameCount);
+    control.playbackRingWriteFrame.store(control.client.OutputWrittenEndFrame(),
+                                         std::memory_order_release);
 }
 
 TEST(DirectTxProbeTests, InvalidReaderReturnsInvalidBinding) {
@@ -119,7 +129,7 @@ TEST(DirectTxProbeTests, UnwrittenRangeReturnsUnderrun) {
     reader.Bind(&binding);
     DirectTxProbe probe(reader);
 
-    control.client.PublishWriteEnd(100, 0, 7);
+    PublishPlaybackWriteEnd(control, 100, 0, 7);
 
     const auto result = probe.Probe(DirectTxReadRequest{
         .firstFrame = 100,
@@ -142,7 +152,7 @@ TEST(DirectTxProbeTests, ExactWrittenEndIsAvailable) {
     reader.Bind(&binding);
     DirectTxProbe probe(reader);
 
-    control.client.PublishWriteEnd(100, 0, 8);
+    PublishPlaybackWriteEnd(control, 100, 0, 8);
 
     const auto result = probe.Probe(DirectTxReadRequest{
         .firstFrame = 100,
@@ -165,7 +175,7 @@ TEST(DirectTxProbeTests, WrittenBeyondRequestedEndIsAvailable) {
     reader.Bind(&binding);
     DirectTxProbe probe(reader);
 
-    control.client.PublishWriteEnd(100, 0, 16);
+    PublishPlaybackWriteEnd(control, 100, 0, 16);
 
     const auto result = probe.Probe(DirectTxReadRequest{
         .firstFrame = 100,

@@ -2,6 +2,7 @@
 
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <limits>
 
@@ -44,7 +45,7 @@ public:
             return 0;
         }
 
-        return binding_->control->client.OutputWrittenEndFrame();
+        return binding_->control->playbackRingWriteFrame.load(std::memory_order_acquire);
     }
 
     [[nodiscard]] bool IsFrameRangeAvailable(uint64_t firstFrame,

@@ -42,6 +42,19 @@ struct DirectAudioDebugSnapshot final {
     uint64_t directTxSilenceSubstitutions{0};
     bool outputReaderAvailableAtWriteEnd{false};
 
+    uint64_t playbackRingWriteFrame{0};
+    uint64_t playbackRingReadFrame{0};
+    uint64_t playbackRingAvailableFrames{0};
+    uint64_t playbackRingUnderruns{0};
+    uint64_t playbackRingOverruns{0};
+
+    uint64_t captureRingWriteFrame{0};
+    uint64_t captureRingReadFrame{0};
+    uint64_t captureRingAvailableFrames{0};
+    uint64_t captureRingOverruns{0};
+    uint64_t captureRingStarvations{0};
+    uint64_t rxDecodedFrames{0};
+
     // Phase A counters
     uint64_t txValidPhasePcmPackets{0};
     uint64_t txValidPhaseSilencePackets{0};
@@ -117,6 +130,34 @@ struct DirectAudioDebugLogState final {
     snapshot.directTxUnderruns = control.counters.txUnderruns.load(std::memory_order_relaxed);
     snapshot.directTxSilenceSubstitutions =
         control.counters.txSilenceSubstitutions.load(std::memory_order_relaxed);
+
+    snapshot.playbackRingWriteFrame =
+        control.playbackRingWriteFrame.load(std::memory_order_acquire);
+    snapshot.playbackRingReadFrame =
+        control.playbackRingReadFrame.load(std::memory_order_acquire);
+    snapshot.playbackRingAvailableFrames =
+        (snapshot.playbackRingWriteFrame >= snapshot.playbackRingReadFrame)
+            ? (snapshot.playbackRingWriteFrame - snapshot.playbackRingReadFrame)
+            : 0;
+    snapshot.playbackRingUnderruns =
+        control.playbackRingUnderruns.load(std::memory_order_relaxed);
+    snapshot.playbackRingOverruns =
+        control.playbackRingOverruns.load(std::memory_order_relaxed);
+
+    snapshot.captureRingWriteFrame =
+        control.captureRingWriteFrame.load(std::memory_order_acquire);
+    snapshot.captureRingReadFrame =
+        control.captureRingReadFrame.load(std::memory_order_acquire);
+    snapshot.captureRingAvailableFrames =
+        (snapshot.captureRingWriteFrame >= snapshot.captureRingReadFrame)
+            ? (snapshot.captureRingWriteFrame - snapshot.captureRingReadFrame)
+            : 0;
+    snapshot.captureRingOverruns =
+        control.captureRingOverruns.load(std::memory_order_relaxed);
+    snapshot.captureRingStarvations =
+        control.captureRingStarvations.load(std::memory_order_relaxed);
+    snapshot.rxDecodedFrames =
+        control.counters.rxDecodedFrames.load(std::memory_order_relaxed);
 
     snapshot.txValidPhasePcmPackets = control.counters.txValidPhasePcmPackets.load(std::memory_order_relaxed);
     snapshot.txValidPhaseSilencePackets = control.counters.txValidPhaseSilencePackets.load(std::memory_order_relaxed);

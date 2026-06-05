@@ -89,7 +89,7 @@ TEST(AudioEndpointRuntime, CopyDirectAudioMemoryAllocatesCompleteDuplexBinding) 
     ASSERT_NE(inputMemory, nullptr);
     ASSERT_NE(controlMemory, nullptr);
     EXPECT_EQ(outputFrames, ASFW::Isoch::Config::kAudioOutputRingFrames);
-    EXPECT_EQ(inputFrames, ASFW::Isoch::Config::kAudioIoPeriodFrames);
+    EXPECT_EQ(inputFrames, ASFW::Isoch::Config::kAudioRingBufferFrames);
     EXPECT_EQ(outputChannels, 4u);
     EXPECT_EQ(inputChannels, 6u);
     EXPECT_EQ(sampleRateHz, 48000u);

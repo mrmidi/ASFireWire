@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 
@@ -57,6 +58,15 @@ uint32_t ScratchWordAt(const DirectTxPacketScratch& scratch, uint32_t byteOffset
     return word;
 }
 
+static void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
+                                    uint64_t sampleFrame,
+                                    uint64_t hostTime,
+                                    uint32_t frameCount) {
+    control.client.PublishWriteEnd(sampleFrame, hostTime, frameCount);
+    control.playbackRingWriteFrame.store(control.client.OutputWrittenEndFrame(),
+                                         std::memory_order_release);
+}
+
 TEST(TxAudioPacketProcessorTests, DataAvailableUsesRealPcm) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
@@ -71,7 +81,7 @@ TEST(TxAudioPacketProcessorTests, DataAvailableUsesRealPcm) {
     TxAudioPacketProcessor processor(reader);
     DirectTxPacketScratch scratch{};
 
-    control.client.PublishWriteEnd(2, 0, 2);
+    PublishPlaybackWriteEnd(control, 2, 0, 2);
 
     const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
         .firstFrame = 2,
@@ -208,7 +218,7 @@ TEST(TxAudioPacketProcessorTests, FrameWrapUsesModuloMemoryFrames) {
     TxAudioPacketProcessor processor(reader);
     DirectTxPacketScratch scratch{};
 
-    control.client.PublishWriteEnd(3, 0, 2);
+    PublishPlaybackWriteEnd(control, 3, 0, 2);
 
     const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
         .firstFrame = 3,
@@ -239,7 +249,7 @@ TEST(TxAudioPacketProcessorTests, ExtraAm824SlotsUseMidiPlaceholders) {
     TxAudioPacketProcessor processor(reader);
     DirectTxPacketScratch scratch{};
 
-    control.client.PublishWriteEnd(0, 0, 1);
+    PublishPlaybackWriteEnd(control, 0, 0, 1);
 
     const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
         .firstFrame = 0,
@@ -272,7 +282,7 @@ TEST(TxAudioPacketProcessorTests, OversizedScratchRequestReturnsInvalidRange) {
     TxAudioPacketProcessor processor(reader);
     DirectTxPacketScratch scratch{};
 
-    control.client.PublishWriteEnd(0, 0, 9);
+    PublishPlaybackWriteEnd(control, 0, 0, 9);
 
     const auto result = processor.BuildScratchPacket(TxAudioPacketRequest{
         .firstFrame = 0,
