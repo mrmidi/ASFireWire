@@ -14,12 +14,14 @@ using namespace ASFW::Async;
 TEST(CompletionStrategy, EnumValues) {
     // Verify enum values are as expected (for serialization/deserialization)
     EXPECT_EQ(static_cast<uint8_t>(CompletionStrategy::CompleteOnAT), 0);
-    EXPECT_EQ(static_cast<uint8_t>(CompletionStrategy::CompleteOnAR), 1);
-    EXPECT_EQ(static_cast<uint8_t>(CompletionStrategy::RequireBoth), 2);
+    EXPECT_EQ(static_cast<uint8_t>(CompletionStrategy::CompleteOnPHY), 1);
+    EXPECT_EQ(static_cast<uint8_t>(CompletionStrategy::CompleteOnAR), 2);
+    EXPECT_EQ(static_cast<uint8_t>(CompletionStrategy::RequireBoth), 3);
 }
 
 TEST(CompletionStrategy, ToString) {
     EXPECT_STREQ(ToString(CompletionStrategy::CompleteOnAT), "CompleteOnAT");
+    EXPECT_STREQ(ToString(CompletionStrategy::CompleteOnPHY), "CompleteOnPHY");
     EXPECT_STREQ(ToString(CompletionStrategy::CompleteOnAR), "CompleteOnAR");
     EXPECT_STREQ(ToString(CompletionStrategy::RequireBoth), "RequireBoth");
 }

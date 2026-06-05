@@ -1,13 +1,95 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Copyright (c) 2024 ASFireWire Project
+// Copyright (c) 2026 ASFireWire Project
 //
 // ApogeeDuetVendorCmdTests.cpp - Unit tests for Apogee Duet vendor command encoding/decoding
 
 #include <gtest/gtest.h>
-#include "Protocols/Audio/OXFW/Apogee/ApogeeDuetVendorCmd.hpp"
-#include "Protocols/Audio/OXFW/Apogee/ApogeeDuetTypes.hpp"
+#include <span>
+#include "Protocols/Audio/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "Protocols/Audio/Oxford/Apogee/ApogeeTypes.hpp"
+#include "Protocols/AVC/FCPTransport.hpp"
 
-using namespace ASFW::Audio::OXFW::Apogee;
+using namespace ASFW::Audio::Oxford::Apogee;
+using VendorCmd = ApogeeDuetProtocol::VendorCommand;
+using VendorCmdCode = ApogeeDuetProtocol::VendorCommand::Code;
+using DuetKnobState = KnobState;
+using DuetKnobTarget = KnobTarget;
+using DuetOutputMuteMode = OutputMuteMode;
+
+// Constants from ApogeeDuetProtocol
+constexpr uint8_t kBoolOn = 0x70;
+constexpr uint8_t kBoolOff = 0x60;
+
+// Helper to match old BuildOperands API
+inline std::vector<uint8_t> BuildOperands(const VendorCmd& cmd) {
+    auto operands = cmd.BuildOperandBase();
+    cmd.AppendControlValue(operands);
+    return operands;
+}
+
+// Helper to match old AppendVariable API
+inline void AppendVariable(const VendorCmd& cmd, std::vector<uint8_t>& data) {
+    cmd.AppendControlValue(data);
+}
+
+// Helper to match old ParseVariable API
+inline bool ParseVariable(VendorCmd& cmd, const uint8_t* data, size_t size) {
+    return cmd.ParseStatusPayload(std::span<const uint8_t>{data, size});
+}
+
+// Anonymous namespace functions from ApogeeDuetProtocol
+inline OutputMuteMode ParseMuteMode(bool mute, bool unmute) noexcept {
+    if (mute && unmute) {
+        return OutputMuteMode::Never;
+    }
+    if (mute && !unmute) {
+        return OutputMuteMode::Swapped;
+    }
+    if (!mute && unmute) {
+        return OutputMuteMode::Normal;
+    }
+    return OutputMuteMode::Never;
+}
+
+inline void BuildMuteMode(OutputMuteMode mode, bool& mute, bool& unmute) noexcept {
+    switch (mode) {
+        case OutputMuteMode::Never:
+            mute = true;
+            unmute = true;
+            break;
+        case OutputMuteMode::Normal:
+            mute = false;
+            unmute = true;
+            break;
+        case OutputMuteMode::Swapped:
+            mute = true;
+            unmute = false;
+            break;
+    }
+}
+
+// Static member function aliases
+inline VendorCmd BuildKnobStateControl(const KnobState& state) {
+    return ApogeeDuetProtocol::BuildKnobStateControl(state);
+}
+inline KnobState ParseKnobState(const VendorCmd& cmd) {
+    return ApogeeDuetProtocol::ParseKnobState(cmd);
+}
+inline std::vector<VendorCmd> BuildKnobStateQuery() {
+    return ApogeeDuetProtocol::BuildKnobStateQuery();
+}
+inline std::vector<VendorCmd> BuildOutputParamsQuery() {
+    return ApogeeDuetProtocol::BuildOutputParamsQuery();
+}
+inline std::vector<VendorCmd> BuildInputParamsQuery() {
+    return ApogeeDuetProtocol::BuildInputParamsQuery();
+}
+inline std::vector<VendorCmd> BuildMixerParamsQuery() {
+    return ApogeeDuetProtocol::BuildMixerParamsQuery();
+}
+inline std::vector<VendorCmd> BuildDisplayParamsQuery() {
+    return ApogeeDuetProtocol::BuildDisplayParamsQuery();
+}
 
 // ============================================================================
 // VendorCmd Operand Building Tests
@@ -15,44 +97,42 @@ using namespace ASFW::Audio::OXFW::Apogee;
 
 TEST(ApogeeDuetVendorCmd, BuildOperands_OutSourceIsMixer) {
     VendorCmd cmd{.code = VendorCmdCode::OutSourceIsMixer, .boolValue = true};
-    auto operands = cmd.BuildOperands();
+    auto operands = BuildOperands(cmd);
     
-    // Expected: PCM(3) + code + padding(2)
-    ASSERT_EQ(operands.size(), 6u);
-    EXPECT_EQ(operands[0], 'P');
-    EXPECT_EQ(operands[1], 'C');
-    EXPECT_EQ(operands[2], 'M');
-    EXPECT_EQ(operands[3], static_cast<uint8_t>(VendorCmdCode::OutSourceIsMixer));
+    // Expected: OUI(3) + Prefix(3) + code + Arg1 + Arg2 + value
+    ASSERT_EQ(operands.size(), 10u);
+    EXPECT_EQ(operands[3], 'P');
+    EXPECT_EQ(operands[4], 'C');
+    EXPECT_EQ(operands[5], 'M');
+    EXPECT_EQ(operands[6], static_cast<uint8_t>(VendorCmdCode::OutSourceIsMixer));
 }
 
 TEST(ApogeeDuetVendorCmd, BuildOperands_XlrIsConsumerLevel_WithIndex) {
     VendorCmd cmd{.code = VendorCmdCode::XlrIsConsumerLevel, .index = 1, .boolValue = true};
-    auto operands = cmd.BuildOperands();
+    auto operands = BuildOperands(cmd);
     
-    ASSERT_EQ(operands.size(), 6u);
-    EXPECT_EQ(operands[3], static_cast<uint8_t>(VendorCmdCode::XlrIsConsumerLevel));
-    EXPECT_EQ(operands[4], 0x80);  // Channel specifier marker
-    EXPECT_EQ(operands[5], 1);     // Channel index
+    ASSERT_EQ(operands.size(), 10u);
+    EXPECT_EQ(operands[6], static_cast<uint8_t>(VendorCmdCode::XlrIsConsumerLevel));
+    EXPECT_EQ(operands[7], 0x80);  // Channel specifier marker
+    EXPECT_EQ(operands[8], 1);     // Channel index
 }
 
 TEST(ApogeeDuetVendorCmd, BuildOperands_MixerSrc_SourceEncoding) {
-    // Source index encoding: ((src / 2) << 4) | (src % 2)
     VendorCmd cmd{.code = VendorCmdCode::MixerSrc, .index = 2, .index2 = 1, .u16Value = 0x1234};
-    auto operands = cmd.BuildOperands();
+    auto operands = BuildOperands(cmd);
     
-    ASSERT_EQ(operands.size(), 6u);
-    EXPECT_EQ(operands[3], static_cast<uint8_t>(VendorCmdCode::MixerSrc));
+    ASSERT_EQ(operands.size(), 11u);
+    EXPECT_EQ(operands[6], static_cast<uint8_t>(VendorCmdCode::MixerSrc));
     // Source 2: ((2/2) << 4) | (2%2) = (1 << 4) | 0 = 0x10
-    EXPECT_EQ(operands[4], 0x10);
-    EXPECT_EQ(operands[5], 1);  // Destination
+    EXPECT_EQ(operands[7], 0x10);
+    EXPECT_EQ(operands[8], 1);  // Destination
 }
 
 TEST(ApogeeDuetVendorCmd, BuildOperands_MixerSrc_Source3) {
-    // Source 3: ((3/2) << 4) | (3%2) = (1 << 4) | 1 = 0x11
     VendorCmd cmd{.code = VendorCmdCode::MixerSrc, .index = 3, .index2 = 0};
-    auto operands = cmd.BuildOperands();
+    auto operands = BuildOperands(cmd);
     
-    EXPECT_EQ(operands[4], 0x11);
+    EXPECT_EQ(operands[7], 0x11);
 }
 
 // ============================================================================
@@ -62,7 +142,7 @@ TEST(ApogeeDuetVendorCmd, BuildOperands_MixerSrc_Source3) {
 TEST(ApogeeDuetVendorCmd, AppendVariable_Bool_On) {
     VendorCmd cmd{.code = VendorCmdCode::OutMute, .boolValue = true};
     std::vector<uint8_t> data;
-    cmd.AppendVariable(data);
+    AppendVariable(cmd, data);
     
     ASSERT_EQ(data.size(), 1u);
     EXPECT_EQ(data[0], kBoolOn);
@@ -71,7 +151,7 @@ TEST(ApogeeDuetVendorCmd, AppendVariable_Bool_On) {
 TEST(ApogeeDuetVendorCmd, AppendVariable_Bool_Off) {
     VendorCmd cmd{.code = VendorCmdCode::OutMute, .boolValue = false};
     std::vector<uint8_t> data;
-    cmd.AppendVariable(data);
+    AppendVariable(cmd, data);
     
     ASSERT_EQ(data.size(), 1u);
     EXPECT_EQ(data[0], kBoolOff);
@@ -80,7 +160,7 @@ TEST(ApogeeDuetVendorCmd, AppendVariable_Bool_Off) {
 TEST(ApogeeDuetVendorCmd, AppendVariable_U8_InGain) {
     VendorCmd cmd{.code = VendorCmdCode::InGain, .index = 0, .u8Value = 45};
     std::vector<uint8_t> data;
-    cmd.AppendVariable(data);
+    AppendVariable(cmd, data);
     
     ASSERT_EQ(data.size(), 1u);
     EXPECT_EQ(data[0], 45);
@@ -89,7 +169,7 @@ TEST(ApogeeDuetVendorCmd, AppendVariable_U8_InGain) {
 TEST(ApogeeDuetVendorCmd, AppendVariable_U16_MixerSrc) {
     VendorCmd cmd{.code = VendorCmdCode::MixerSrc, .u16Value = 0xABCD};
     std::vector<uint8_t> data;
-    cmd.AppendVariable(data);
+    AppendVariable(cmd, data);
     
     ASSERT_EQ(data.size(), 2u);
     EXPECT_EQ(data[0], 0xAB);  // High byte (big-endian)
@@ -98,10 +178,10 @@ TEST(ApogeeDuetVendorCmd, AppendVariable_U16_MixerSrc) {
 
 TEST(ApogeeDuetVendorCmd, AppendVariable_HwState) {
     VendorCmd cmd{.code = VendorCmdCode::HwState};
-    cmd.hwStateValue = {0x01, 0x02, 0x00, 0x3F, 0x4E, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00};
+    cmd.hwState = {0x01, 0x02, 0x00, 0x3F, 0x4E, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00};
     
     std::vector<uint8_t> data;
-    cmd.AppendVariable(data);
+    AppendVariable(cmd, data);
     
     ASSERT_EQ(data.size(), 11u);
     EXPECT_EQ(data[0], 0x01);
@@ -115,52 +195,52 @@ TEST(ApogeeDuetVendorCmd, AppendVariable_HwState) {
 // ============================================================================
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_OutSourceIsMixer_On) {
-    // Response: PCM + code + padding + value
-    uint8_t response[] = {'P', 'C', 'M', 0x11, 0xff, 0xff, 0x70};
+    // Response: OUI + PCM + code + Arg1 + Arg2 + value
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x11, 0xff, 0xff, 0x70};
     
     VendorCmd cmd{.code = VendorCmdCode::OutSourceIsMixer};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_TRUE(result);
     EXPECT_TRUE(cmd.boolValue);
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_OutSourceIsMixer_Off) {
-    uint8_t response[] = {'P', 'C', 'M', 0x11, 0xff, 0xff, 0x60};
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x11, 0xff, 0xff, 0x60};
     
     VendorCmd cmd{.code = VendorCmdCode::OutSourceIsMixer};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_TRUE(result);
     EXPECT_FALSE(cmd.boolValue);
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_XlrIsConsumerLevel_IndexMatch) {
-    uint8_t response[] = {'P', 'C', 'M', 0x02, 0x80, 0x01, 0x70};
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x02, 0x80, 0x01, 0x70};
     
     VendorCmd cmd{.code = VendorCmdCode::XlrIsConsumerLevel, .index = 1};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_TRUE(result);
     EXPECT_TRUE(cmd.boolValue);
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_XlrIsConsumerLevel_IndexMismatch) {
-    uint8_t response[] = {'P', 'C', 'M', 0x02, 0x80, 0x00, 0x70};
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x02, 0x80, 0x00, 0x70};
     
     // Expecting index 1, but response has index 0
     VendorCmd cmd{.code = VendorCmdCode::XlrIsConsumerLevel, .index = 1};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_FALSE(result);  // Should fail on index mismatch
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_MixerSrc) {
     // Response with gain value 0xDE00
-    uint8_t response[] = {'P', 'C', 'M', 0x10, 0x01, 0x00, 0xDE, 0x00};
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x10, 0x10, 0x01, 0xDE, 0x00};
     
-    VendorCmd cmd{.code = VendorCmdCode::MixerSrc, .index = 1, .index2 = 0};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    VendorCmd cmd{.code = VendorCmdCode::MixerSrc, .index = 2, .index2 = 1};
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_TRUE(result);
     EXPECT_EQ(cmd.u16Value, 0xDE00);
@@ -168,44 +248,44 @@ TEST(ApogeeDuetVendorCmd, ParseVariable_MixerSrc) {
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_HwState) {
     uint8_t response[] = {
-        'P', 'C', 'M', 0x07, 0xff, 0xff,
+        0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x07, 0xff, 0xff,
         0x01, 0x01, 0x00, 0x25, 0x4E, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00
     };
     
     VendorCmd cmd{.code = VendorCmdCode::HwState};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_TRUE(result);
-    EXPECT_EQ(cmd.hwStateValue[0], 0x01);  // outputMute = true
-    EXPECT_EQ(cmd.hwStateValue[1], 0x01);  // target = InputPair0
-    EXPECT_EQ(cmd.hwStateValue[3], 0x25);  // volume (inverted)
-    EXPECT_EQ(cmd.hwStateValue[4], 0x4E);  // input gain L
-    EXPECT_EQ(cmd.hwStateValue[5], 0x1C);  // input gain R
+    EXPECT_EQ(cmd.hwState[0], 0x01);  // outputMute = true
+    EXPECT_EQ(cmd.hwState[1], 0x01);  // target = InputPair0
+    EXPECT_EQ(cmd.hwState[3], 0x25);  // volume (inverted)
+    EXPECT_EQ(cmd.hwState[4], 0x4E);  // input gain L
+    EXPECT_EQ(cmd.hwState[5], 0x1C);  // input gain R
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_InvalidPrefix) {
-    uint8_t response[] = {'X', 'Y', 'Z', 0x11, 0xff, 0xff, 0x70};
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'X', 'Y', 'Z', 0x11, 0xff, 0xff, 0x70};
     
     VendorCmd cmd{.code = VendorCmdCode::OutSourceIsMixer};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_FALSE(result);
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_WrongCode) {
-    uint8_t response[] = {'P', 'C', 'M', 0x09, 0xff, 0xff, 0x70};
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x09, 0xff, 0xff, 0x70};
     
     VendorCmd cmd{.code = VendorCmdCode::OutSourceIsMixer};  // Expecting 0x11, got 0x09
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_FALSE(result);
 }
 
 TEST(ApogeeDuetVendorCmd, ParseVariable_TooShort) {
-    uint8_t response[] = {'P', 'C', 'M', 0x11, 0xff};  // Only 5 bytes, need 7
+    uint8_t response[] = {0x00, 0x03, 0xDB, 'P', 'C', 'M', 0x11, 0xff};  // Only 8 bytes, need 10
     
     VendorCmd cmd{.code = VendorCmdCode::OutSourceIsMixer};
-    bool result = cmd.ParseVariable(response, sizeof(response));
+    bool result = ParseVariable(cmd, response, sizeof(response));
     
     EXPECT_FALSE(result);
 }
@@ -226,7 +306,7 @@ TEST(ApogeeDuetVendorCmd, KnobState_RoundTrip) {
     
     // Simulate response parsing
     VendorCmd response{.code = VendorCmdCode::HwState};
-    response.hwStateValue = cmd.hwStateValue;
+    response.hwState = cmd.hwState;
     
     DuetKnobState parsed = ParseKnobState(response);
     
@@ -243,7 +323,7 @@ TEST(ApogeeDuetVendorCmd, KnobState_VolumeInversion) {
     VendorCmd cmd = BuildKnobStateControl(state);
     
     // Expected stored value: 64 - 10 = 54 at index 3
-    EXPECT_EQ(cmd.hwStateValue[3], 54);
+    EXPECT_EQ(cmd.hwState[3], 54);
 }
 
 // ============================================================================
@@ -299,4 +379,13 @@ TEST(ApogeeDuetVendorCmd, BuildMixerParamsQuery) {
 TEST(ApogeeDuetVendorCmd, BuildDisplayParamsQuery) {
     auto cmds = BuildDisplayParamsQuery();
     EXPECT_EQ(cmds.size(), 3u);  // isInput, followKnob, overhold
+}
+
+// Linker stub for FCPTransport::SubmitCommand (not invoked by tests)
+namespace ASFW::Protocols::AVC {
+FCPHandle FCPTransport::SubmitCommand(const FCPFrame& command, FCPCompletion completion) {
+    (void)command;
+    (void)completion;
+    return FCPHandle{};
+}
 }
