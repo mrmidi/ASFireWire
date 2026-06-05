@@ -5,6 +5,7 @@
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/OHCIDescriptors.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../Core/IsochEventGroup.hpp"
 
 #include <span>
 
@@ -49,7 +50,7 @@ kern_return_t IsochRxDmaRing::SetupRings(Memory::IIsochDMAMemory& dma,
             }
 
             const uint8_t interruptBits =
-                (i % 12 == 11) ? Async::HW::OHCIDescriptor::kIntAlways : Async::HW::OHCIDescriptor::kIntNever;
+                ASFW::Isoch::Core::IsTimingGroupBoundary(i) ? Async::HW::OHCIDescriptor::kIntAlways : Async::HW::OHCIDescriptor::kIntNever;
 
             uint32_t control = Async::HW::OHCIDescriptor::BuildControl({
                 .reqCount = reqCount,
@@ -122,7 +123,7 @@ kern_return_t IsochRxDmaRing::SetupRings(Memory::IIsochDMAMemory& dma,
         }
 
         const uint8_t interruptBits =
-            (i % 12 == 11) ? Async::HW::OHCIDescriptor::kIntAlways : Async::HW::OHCIDescriptor::kIntNever;
+            ASFW::Isoch::Core::IsTimingGroupBoundary(i) ? Async::HW::OHCIDescriptor::kIntAlways : Async::HW::OHCIDescriptor::kIntNever;
 
         uint32_t control = Async::HW::OHCIDescriptor::BuildControl({
             .reqCount = reqCount,

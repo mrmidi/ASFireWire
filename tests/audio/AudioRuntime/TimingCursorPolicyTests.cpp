@@ -24,6 +24,17 @@ TEST(TimingCursorPolicyTests, DICE48kBlockingValues) {
     EXPECT_EQ(policy.ZtsPeriodFrames(), 8U);
 }
 
+TEST(TimingCursorPolicyTests, TimingCursorPolicy_Dice48kBlocking_SeparatesPacketAndHalZtsPeriods) {
+    const auto policy = TimingCursorPolicy::MakeDice48kBlocking();
+
+    EXPECT_EQ(policy.FramesPerPacketMax(), 8U);
+    EXPECT_EQ(policy.RxAuthorityUpdatePeriodFrames(), 8U);
+    EXPECT_EQ(policy.HalZeroTimestampPeriodFrames(), 512U);
+    EXPECT_EQ(policy.HalIoPeriodFrames(), 512U);
+
+    EXPECT_NE(policy.FramesPerPacketMax(), policy.HalZeroTimestampPeriodFrames());
+}
+
 TEST(TimingCursorPolicyTests, FrameConversions) {
     const auto policy = TimingCursorPolicy::MakeDice48kBlocking();
 

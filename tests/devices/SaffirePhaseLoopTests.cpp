@@ -82,11 +82,11 @@ TEST(SaffirePhaseLoop, OutOfWindowLeadEmitsNoInfoButKeepsAdvancing) {
     EXPECT_NE(loop.OutputPhaseTicks(), packet.phaseTicks);
 }
 
-TEST(IsochEventGroup, SaffireTimingGroupIsTwelvePackets) {
-    EXPECT_EQ(TimingGroupPacketCount48k(), 12u);
-    EXPECT_FALSE(IsTimingGroupBoundary(10));
-    EXPECT_TRUE(IsTimingGroupBoundary(11));
-    EXPECT_TRUE(IsTimingGroupBoundary(23));
+TEST(IsochEventGroup, SaffireTimingGroupIsEightPackets) {
+    EXPECT_EQ(TimingGroupPacketCount48k(), 8u);
+    EXPECT_FALSE(IsTimingGroupBoundary(6));
+    EXPECT_TRUE(IsTimingGroupBoundary(7));
+    EXPECT_TRUE(IsTimingGroupBoundary(15));
 }
 
 TEST(IsochEventGroup, PreviousPacketIndexWrapsInRing) {

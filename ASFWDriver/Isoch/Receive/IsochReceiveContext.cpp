@@ -1,4 +1,5 @@
 #include "IsochReceiveContext.hpp"
+#include "../Core/IsochEventGroup.hpp"
 #include "../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 
 #include "../../AudioWire/AMDTP/TimingUtils.hpp"
@@ -242,7 +243,7 @@ uint32_t IsochReceiveContext::Poll() {
                     cursorInitialized_ = true;
                 }
 
-                constexpr uint32_t kRxTimingGroupPackets = 12;
+                const uint32_t kRxTimingGroupPackets = Core::TimingGroupPacketCount48k();
                 const uint8_t packetInGroup =
                     static_cast<uint8_t>(pkt.descriptorIndex % kRxTimingGroupPackets);
                 const uint64_t packetBackTicks =

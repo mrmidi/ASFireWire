@@ -49,6 +49,13 @@ struct AudioTransportControlBlock final {
             return false;
         }
 
+        const uint64_t prevSample = ztsState.authoritativeSampleFrame.load(std::memory_order_relaxed);
+        const uint64_t prevHost = ztsState.authoritativeHostTicks.load(std::memory_order_relaxed);
+        if (sampleFrame >= prevSample && hostTicks < prevHost) {
+            ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+
         ztsState.authoritativeSampleFrame.store(sampleFrame, std::memory_order_relaxed);
         ztsState.authoritativeHostTicks.store(hostTicks, std::memory_order_relaxed);
         ztsState.hostNanosPerSampleQ8.store(hostNanosPerSampleQ8, std::memory_order_relaxed);
@@ -66,6 +73,13 @@ struct AudioTransportControlBlock final {
         }
 
         if (hostTicks == 0 || hostNanosPerSampleQ8 == 0) {
+            ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+
+        const uint64_t prevSample = ztsState.authoritativeSampleFrame.load(std::memory_order_relaxed);
+        const uint64_t prevHost = ztsState.authoritativeHostTicks.load(std::memory_order_relaxed);
+        if (sampleFrame >= prevSample && hostTicks < prevHost) {
             ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
             return false;
         }

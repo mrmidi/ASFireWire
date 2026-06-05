@@ -83,4 +83,24 @@ TEST(ZtsAuthorityTests, UpdateAuthoritativeZtsTx) {
     EXPECT_EQ(control.ztsState.txSourceUpdates.load(), 1U);
 }
 
+TEST(ZtsAuthorityTests, ZtsAuthority_RejectsForwardSampleBackwardHost) {
+    AudioTransportControlBlock control{};
+    control.ResetForStart();
+
+    control.ztsState.selectedSource.store(ZtsAuthoritySource::RxClock);
+
+    // First update should succeed
+    EXPECT_TRUE(control.UpdateAuthoritativeZtsFromRx(144, 5528585432680U, 256));
+    EXPECT_EQ(control.ztsState.authoritativeSampleFrame.load(), 144U);
+    EXPECT_EQ(control.ztsState.authoritativeHostTicks.load(), 5528585432680U);
+    EXPECT_EQ(control.ztsState.sourceGeneration.load(), 1U);
+
+    // Second update goes forward in sample frame but backward in host time. Must be rejected.
+    EXPECT_FALSE(control.UpdateAuthoritativeZtsFromRx(152, 5528585408482U, 256));
+    EXPECT_EQ(control.ztsState.authoritativeSampleFrame.load(), 144U); // Keeps previous
+    EXPECT_EQ(control.ztsState.authoritativeHostTicks.load(), 5528585432680U); // Keeps previous
+    EXPECT_EQ(control.ztsState.sourceGeneration.load(), 1U); // Generation doesn't increment
+    EXPECT_EQ(control.ztsState.staleSourceUpdates.load(), 1U); // Registered as stale/rejected
+}
+
 } // namespace ASFW::Tests::AudioRuntime
