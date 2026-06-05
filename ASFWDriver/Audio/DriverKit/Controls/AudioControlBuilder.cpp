@@ -67,7 +67,7 @@ void AddBooleanControlsToDevice(ASFWAudioDriver& driver,
             controlValue = hardwareValue;
         } else {
             ASFW_LOG(Audio,
-                     "ASFWAudioDriver: bool control read fallback class=0x%08x element=%u status=0x%x",
+                     "ASFWAudioDriver: bool control using descriptor initial value class=0x%08x element=%u status=0x%x",
                      slot.descriptor.classIdFourCC,
                      slot.descriptor.element,
                      readStatus);
