@@ -218,8 +218,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(kIOReturnNotReady, "direct graph audioDevice");
     }
     ivars->runtime.isRunning.store(true, std::memory_order_release);
-    ScheduleZtsMirrorTimer(*ivars);
     ASFW_LOG(DirectAudio, "ADK DBG IO running=1 after transport ready");
+    ScheduleZtsMirrorTimer(*ivars);
     ASFW_LOG(DirectAudio,
              "ADK DBG ZTS mirror pump started guid=0x%016llx periodUsec=%llu",
              ivars->device.guid,
