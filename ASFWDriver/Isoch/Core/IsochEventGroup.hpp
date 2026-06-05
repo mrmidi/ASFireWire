@@ -26,7 +26,7 @@ struct IsochEventGroup final {
 };
 
 [[nodiscard]] constexpr uint32_t TimingGroupPacketCount48k() noexcept {
-    return 12;
+    return 8;
 }
 
 [[nodiscard]] constexpr bool IsTimingGroupBoundary(uint32_t packetIndex) noexcept {

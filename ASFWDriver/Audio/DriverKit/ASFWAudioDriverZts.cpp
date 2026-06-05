@@ -9,6 +9,9 @@
 #include "../../AudioWire/AMDTP/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
+#include "../Runtime/ZtsTimelineCalculator.hpp"
+#include "../Runtime/TimingCursorPolicy.hpp"
+
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
 
@@ -17,11 +20,6 @@
 
 namespace ASFW::Audio::DriverKit {
 namespace {
-
-[[nodiscard]] int64_t NanosecondsToMachTicksSigned(int64_t nanos) noexcept {
-    const uint64_t ticks = ASFW::Timing::nanosToHostTicks(static_cast<uint64_t>(std::abs(nanos)));
-    return (nanos < 0) ? -static_cast<int64_t>(ticks) : static_cast<int64_t>(ticks);
-}
 
 [[nodiscard]] uint64_t MicrosecondsToMachTicks(uint64_t usec) noexcept {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -67,20 +65,21 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
     const uint32_t eventHostNanosPerSampleQ8 = control->ztsState.hostNanosPerSampleQ8.load(std::memory_order_relaxed);
     if (eventHostTicks == 0 || eventHostNanosPerSampleQ8 == 0) {
         ASFW_LOG(DirectAudio, "ADK FATAL ZTS mirror pump failed: invalid ticks (%llu) or nanosPerSample (%u) for source %{public}s",
-                 eventHostTicks, eventHostNanosPerSampleQ8, ToString(source));
+             eventHostTicks, eventHostNanosPerSampleQ8, ToString(source));
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidTimeline;
     }
 
     ivars.runtime.lastHalZeroTimestampGeneration.store(generation, std::memory_order_release);
 
-    const uint32_t P = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
+    const uint32_t P = policy.HalZeroTimestampPeriodFrames();
     if (P == 0) {
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidTimeline;
     }
 
     uint64_t nextFrame = ivars.runtime.nextExpectedZtsFrame.load(std::memory_order_acquire);
     if (!ivars.runtime.ztsTimelineInitialized.load(std::memory_order_acquire)) {
-        const uint64_t alignedStart = (eventSampleFrame / P) * P;
+        const uint64_t alignedStart = ASFW::Audio::Runtime::ZtsTimelineCalculator::AlignZtsStart(eventSampleFrame, P);
         ivars.runtime.nextExpectedZtsFrame.store(alignedStart, std::memory_order_release);
         ivars.runtime.ztsTimelineInitialized.store(true, std::memory_order_release);
         nextFrame = alignedStart;
@@ -90,9 +89,10 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
     while (eventSampleFrame >= nextFrame) {
         if (ivars.runtime.nextExpectedZtsFrame.compare_exchange_strong(nextFrame, nextFrame + P, std::memory_order_acq_rel)) {
             const int64_t deltaSamples = static_cast<int64_t>(nextFrame) - static_cast<int64_t>(eventSampleFrame);
-            const int64_t deltaNanos = (deltaSamples * static_cast<int64_t>(eventHostNanosPerSampleQ8)) >> 8;
-            const int64_t deltaTicks = NanosecondsToMachTicksSigned(deltaNanos);
-            const uint64_t targetHostTicks = eventHostTicks + deltaTicks;
+            const uint64_t targetHostTicks = ASFW::Audio::Runtime::ZtsTimelineCalculator::CalculateTargetHostTicks(
+                nextFrame, eventSampleFrame, eventHostTicks, eventHostNanosPerSampleQ8
+            );
+            const int64_t deltaTicks = static_cast<int64_t>(targetHostTicks) - static_cast<int64_t>(eventHostTicks);
 
             audioDevice->UpdateCurrentZeroTimestamp(nextFrame, targetHostTicks);
             publishedAny = true;

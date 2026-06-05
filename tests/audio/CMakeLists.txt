@@ -99,6 +99,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
     AudioRuntime/TimingCursorPolicyTests.cpp
     AudioRuntime/ZtsAuthorityTests.cpp
+    AudioRuntime/ZtsTimelineCalculatorTests.cpp
 )
 
 # Direct TX sidecar tests (AudioEngineDirect files)

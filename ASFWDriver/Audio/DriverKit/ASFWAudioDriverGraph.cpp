@@ -427,9 +427,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input));
 
     const kern_return_t ztsKr =
-        ivars.audioDevice->SetZeroTimeStampPeriod(policy.ZtsPeriodFrames());
+        ivars.audioDevice->SetZeroTimeStampPeriod(policy.HalZeroTimestampPeriodFrames());
     ASFW_LOG(Audio, "ASFWAudioDriver: SetZeroTimeStampPeriod(%u) kr=0x%x",
-             policy.ZtsPeriodFrames(), ztsKr);
+             policy.HalZeroTimestampPeriodFrames(), ztsKr);
 
     error = driver.AddObject(ivars.audioDevice.get());
     if (error != kIOReturnSuccess) {

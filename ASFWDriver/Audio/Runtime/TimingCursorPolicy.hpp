@@ -45,6 +45,18 @@ public:
         return 8;
     }
 
+    [[nodiscard]] constexpr uint32_t RxAuthorityUpdatePeriodFrames() const noexcept {
+        return 8;
+    }
+
+    [[nodiscard]] constexpr uint32_t HalIoPeriodFrames() const noexcept {
+        return 512;
+    }
+
+    [[nodiscard]] constexpr uint32_t HalZeroTimestampPeriodFrames() const noexcept {
+        return 512;
+    }
+
     [[nodiscard]] constexpr uint32_t CursorOffsetFrames(AudioDirection direction) const noexcept {
         return (direction == AudioDirection::Output) ? 48 : 128; // 6 packets * 8 vs 16 packets * 8
     }
