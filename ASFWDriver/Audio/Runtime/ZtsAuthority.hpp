@@ -35,6 +35,27 @@ inline const char* ToString(ZtsPublicationMode mode) noexcept {
     }
 }
 
+enum class ZtsMirrorPublishResult : uint8_t {
+    Published = 0,
+    NoNewGeneration,
+    AlreadyPublished,
+    NotReady,
+    InvalidAuthority,
+    InvalidTimeline,
+};
+
+inline const char* ToString(ZtsMirrorPublishResult result) noexcept {
+    switch (result) {
+        case ZtsMirrorPublishResult::Published:        return "Published";
+        case ZtsMirrorPublishResult::NoNewGeneration:   return "NoNewGeneration";
+        case ZtsMirrorPublishResult::AlreadyPublished: return "AlreadyPublished";
+        case ZtsMirrorPublishResult::NotReady:         return "NotReady";
+        case ZtsMirrorPublishResult::InvalidAuthority: return "InvalidAuthority";
+        case ZtsMirrorPublishResult::InvalidTimeline:  return "InvalidTimeline";
+        default:                                       return "Unknown";
+    }
+}
+
 struct ZtsAuthorityState {
     std::atomic<ZtsAuthoritySource> selectedSource{ZtsAuthoritySource::None};
     std::atomic<ZtsPublicationMode> selectedMode{ZtsPublicationMode::MirrorPump};

@@ -8,6 +8,13 @@
 #include <atomic>
 #include <cstdint>
 
+enum class FatalStreamReason : uint32_t {
+    None = 0,
+    RxAuthorityLost,
+    InvalidGeometry,
+    MirrorPumpFailed,
+};
+
 namespace ASFW::Audio::Runtime {
 
 struct AudioTransportControlBlock final {
@@ -17,6 +24,9 @@ struct AudioTransportControlBlock final {
     DeviceTimeline device{};
     AudioRtCounters counters{};
     ZtsAuthorityState ztsState{};
+
+    std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
+    std::atomic<uint64_t> fatalGeneration{0};
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
     std::atomic<uint64_t> outputConsumedEndFrame{0};
