@@ -2,7 +2,7 @@
 
 #include "../DirectOutputReader.hpp"
 #include "DirectTxTypes.hpp"
-#include "Audio/Runtime/TxPacketState.hpp"
+#include "../../../Audio/Runtime/TxPacketState.hpp"
 #include "../../../AudioWire/AMDTP/PacketAssembler.hpp"
 
 #include <cstdint>
