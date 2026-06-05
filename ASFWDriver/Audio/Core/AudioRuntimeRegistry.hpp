@@ -35,6 +35,7 @@ struct DeviceRecord;
 namespace ASFW::Audio {
 
 class IDeviceProtocol;
+class AudioEndpointRuntime;
 
 class AudioRuntimeRegistry final {
 public:
@@ -48,6 +49,8 @@ public:
     // protocol alive for the duration of its use even if Remove() runs
     // concurrently. Returns nullptr when no protocol is registered for `guid`.
     [[nodiscard]] std::shared_ptr<IDeviceProtocol> FindShared(uint64_t guid) noexcept;
+    [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> FindEndpointRuntime(uint64_t guid) noexcept;
+    [[nodiscard]] std::shared_ptr<AudioEndpointRuntime> EnsureEndpointRuntime(uint64_t guid) noexcept;
 
     // Create-on-demand for a known device. Idempotent: an existing instance is
     // returned without re-creating (covers re-scan on device resume). Mirrors the
@@ -71,6 +74,7 @@ public:
 private:
     IOLock* lock_{nullptr};
     std::unordered_map<uint64_t, std::shared_ptr<IDeviceProtocol>> protocolsByGuid_;
+    std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> endpointsByGuid_;
 };
 
 } // namespace ASFW::Audio

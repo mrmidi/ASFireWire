@@ -13,7 +13,7 @@
 #endif
 
 #include "IsochReceiveContext.hpp"
-#include "Core/ExternalSyncBridge.hpp"
+#include "../AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "../Audio/Model/ASFWAudioDevice.hpp"
 #include "../Common/DriverKitOwnership.hpp"

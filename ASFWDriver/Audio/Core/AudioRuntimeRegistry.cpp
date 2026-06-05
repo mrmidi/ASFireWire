@@ -3,6 +3,7 @@
 
 #include "AudioRuntimeRegistry.hpp"
 
+#include "AudioEndpointRuntime.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/Audio/IDeviceProtocol.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
@@ -39,6 +40,38 @@ std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::FindShared(uint64_t guid)
         IOLockUnlock(lock_);
     }
     return result;
+}
+
+std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::FindEndpointRuntime(uint64_t guid) noexcept {
+    std::shared_ptr<AudioEndpointRuntime> result;
+    if (lock_) {
+        IOLockLock(lock_);
+        auto it = endpointsByGuid_.find(guid);
+        if (it != endpointsByGuid_.end()) {
+            result = it->second;
+        }
+        IOLockUnlock(lock_);
+    }
+    return result;
+}
+
+std::shared_ptr<AudioEndpointRuntime> AudioRuntimeRegistry::EnsureEndpointRuntime(uint64_t guid) noexcept {
+    if (guid == 0 || !lock_) {
+        return nullptr;
+    }
+
+    IOLockLock(lock_);
+    auto it = endpointsByGuid_.find(guid);
+    if (it != endpointsByGuid_.end()) {
+        auto existing = it->second;
+        IOLockUnlock(lock_);
+        return existing;
+    }
+
+    auto created = std::make_shared<AudioEndpointRuntime>(guid);
+    endpointsByGuid_.emplace(guid, created);
+    IOLockUnlock(lock_);
+    return created;
 }
 
 std::shared_ptr<IDeviceProtocol> AudioRuntimeRegistry::EnsureForDevice(
@@ -117,6 +150,7 @@ void AudioRuntimeRegistry::Insert(uint64_t guid,
 
 void AudioRuntimeRegistry::Remove(uint64_t guid) noexcept {
     std::shared_ptr<IDeviceProtocol> removed; // destruct outside the lock
+    std::shared_ptr<AudioEndpointRuntime> removedEndpoint;
     if (lock_) {
         IOLockLock(lock_);
         auto it = protocolsByGuid_.find(guid);
@@ -124,15 +158,22 @@ void AudioRuntimeRegistry::Remove(uint64_t guid) noexcept {
             removed = std::move(it->second);
             protocolsByGuid_.erase(it);
         }
+        auto endpointIt = endpointsByGuid_.find(guid);
+        if (endpointIt != endpointsByGuid_.end()) {
+            removedEndpoint = std::move(endpointIt->second);
+            endpointsByGuid_.erase(endpointIt);
+        }
         IOLockUnlock(lock_);
     }
 }
 
 void AudioRuntimeRegistry::Clear() noexcept {
     std::unordered_map<uint64_t, std::shared_ptr<IDeviceProtocol>> drained;
+    std::unordered_map<uint64_t, std::shared_ptr<AudioEndpointRuntime>> drainedEndpoints;
     if (lock_) {
         IOLockLock(lock_);
         drained.swap(protocolsByGuid_);
+        drainedEndpoints.swap(endpointsByGuid_);
         IOLockUnlock(lock_);
     }
     // drained destructs here, outside the lock, releasing each protocol.

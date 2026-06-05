@@ -672,6 +672,12 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             result.readStatus == DirectTxReadStatus::kUnderrun) {
             
             if (result.bytesWritten == payloadBytes && result.framesEncoded == metadata.framesPerPacket) {
+                if (dmaMemory_ && result.bytesWritten > 0) {
+                    dmaMemory_->PublishToDevice(
+                        reinterpret_cast<const std::byte*>(payloadVirt),
+                        result.bytesWritten
+                    );
+                }
                 if (result.readStatus == DirectTxReadStatus::kUnderrun || result.usedSilence) {
                     counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
                     if (directTxBinding_.control) {
@@ -763,6 +769,12 @@ bool IsochAudioTxPipeline::TryWriteDirectTxPacket(uint32_t packetIndex,
             for (uint32_t frame = 0; frame < metadata.framesPerPacket; ++frame) {
                 auto* frameOut = payload + (static_cast<size_t>(frame) * am824Slots);
                 Direct::Tx::EncodeDirectTxSilenceFrame(metadata.pcmChannels, am824Slots, format, frameOut);
+            }
+            if (dmaMemory_ && payloadBytes > 0) {
+                dmaMemory_->PublishToDevice(
+                    reinterpret_cast<const std::byte*>(payloadVirt),
+                    payloadBytes
+                );
             }
             counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
             counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);

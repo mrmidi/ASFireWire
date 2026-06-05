@@ -620,8 +620,20 @@ IOReturn DiceDuplexRestartCoordinator::StartStreaming(uint64_t guid) noexcept {
                 session.phase,
                 session.reason);
 
-    while (!TryAcquireGuid(guid)) {
+    bool acquired = false;
+    for (uint32_t waited = 0; waited < kSyncBridgeTimeoutMs; waited += kSyncBridgePollMs) {
+        if (TryAcquireGuid(guid)) {
+            acquired = true;
+            break;
+        }
         IOSleep(kSyncBridgePollMs);
+    }
+    if (!acquired) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceDuplexRestartCoordinator: StartStreaming timed out waiting for GUID claim GUID=%llx timeoutMs=%u",
+                       guid,
+                       kSyncBridgeTimeoutMs);
+        return kIOReturnTimeout;
     }
 
     const IOReturn status = RunStartStreaming(guid);
@@ -646,8 +658,21 @@ IOReturn DiceDuplexRestartCoordinator::StopStreaming(uint64_t guid) noexcept {
     RequestStopIntent(guid);
     FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
 
-    while (!TryAcquireGuid(guid)) {
+    bool acquired = false;
+    for (uint32_t waited = 0; waited < kSyncBridgeTimeoutMs; waited += kSyncBridgePollMs) {
+        if (TryAcquireGuid(guid)) {
+            acquired = true;
+            break;
+        }
         IOSleep(kSyncBridgePollMs);
+    }
+    if (!acquired) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceDuplexRestartCoordinator: StopStreaming timed out waiting for GUID claim GUID=%llx timeoutMs=%u",
+                       guid,
+                       kSyncBridgeTimeoutMs);
+        ClearStopIntent(guid);
+        return kIOReturnTimeout;
     }
 
     const IOReturn status = RunStopStreaming(guid);
@@ -764,8 +789,20 @@ IOReturn DiceDuplexRestartCoordinator::RecoverStreaming(uint64_t guid,
 
     FailPendingClockRequest(guid, DiceClockRequestOutcome::kAbortedByStop, kIOReturnAborted);
 
-    while (!TryAcquireGuid(guid)) {
+    bool acquired = false;
+    for (uint32_t waited = 0; waited < kSyncBridgeTimeoutMs; waited += kSyncBridgePollMs) {
+        if (TryAcquireGuid(guid)) {
+            acquired = true;
+            break;
+        }
         IOSleep(kSyncBridgePollMs);
+    }
+    if (!acquired) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceDuplexRestartCoordinator: RecoverStreaming timed out waiting for GUID claim GUID=%llx timeoutMs=%u",
+                       guid,
+                       kSyncBridgeTimeoutMs);
+        return kIOReturnTimeout;
     }
 
     const IOReturn status = RunRecoveryStreaming(guid, reason);

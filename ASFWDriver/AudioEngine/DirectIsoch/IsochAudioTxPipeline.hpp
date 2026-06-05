@@ -15,10 +15,11 @@
 #include "../Direct/DirectOutputReader.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
-#include "../../Isoch/Core/ExternalSyncBridge.hpp"
+#include "Sync/ExternalSyncBridge.hpp"
 #include "../../Isoch/Core/IsochEventGroup.hpp"
-#include "../../Isoch/Core/SaffirePhaseLoop.hpp"
+#include "Timing/SaffirePhaseLoop.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
+#include "../../Isoch/Memory/IIsochDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <array>
@@ -68,6 +69,7 @@ public:
 
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
     void SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept;
+    void SetDMAMemory(Memory::IIsochDMAMemory* dma) noexcept { dmaMemory_ = dma; }
 
     [[nodiscard]] Encoding::StreamMode RequestedStreamMode() const noexcept { return requestedStreamMode_; }
     [[nodiscard]] Encoding::StreamMode EffectiveStreamMode() const noexcept { return effectiveStreamMode_; }
@@ -203,6 +205,7 @@ private:
 
     // Audio injection cursor (packet index)
     uint32_t audioWriteIndex_{0};
+    Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 
     // DBC continuity validation for produced packets (ignore NO-DATA).
     struct DbcTracker {

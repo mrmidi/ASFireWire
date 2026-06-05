@@ -98,6 +98,7 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
     }
 
     if (dmaMemory_) {
+        audio_.SetDMAMemory(dmaMemory_.get());
         // Allocate-once policy: IsochService keeps the IT context (and its DMA slabs) alive
         // across start/stop. Re-allocating on every Configure() exhausts the bump allocator.
         if (!ring_.HasRings()) {

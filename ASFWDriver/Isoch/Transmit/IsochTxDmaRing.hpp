@@ -108,6 +108,7 @@ public:
     [[nodiscard]] bool HasRings() const noexcept { return slab_.IsValid(); }
 
     [[nodiscard]] kern_return_t SetupRings(Memory::IIsochDMAMemory& dmaMemory) noexcept {
+        dmaMemory_ = &dmaMemory;
         return slab_.AllocateAndInitialize(dmaMemory);
     }
 
@@ -144,7 +145,8 @@ private:
     static void CopyPacketPayload(uint8_t* payloadVirt, const IsochTxPacket& pkt) noexcept;
     [[nodiscard]] uint32_t ComputeDeltaConsumed(uint32_t hwPacketIndex) noexcept;
     void UpdateGapCounters(uint32_t gap) noexcept;
-    void ResyncCycleTracking(uint32_t hwPacketIndex,
+    void ResyncCycleTracking(Driver::HardwareInterface& hw,
+                             uint32_t hwPacketIndex,
                              uint32_t deltaConsumed,
                              RefillOutcome& out) noexcept;
     [[nodiscard]] bool RefillPacket(uint32_t pktIdx,
@@ -157,6 +159,7 @@ private:
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};
+    Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 
     // Fill-ahead tracking
     uint32_t softwareFillIndex_{0};

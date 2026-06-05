@@ -44,9 +44,15 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
     {
         auto it = nubsByGuid_.find(guid);
         if (it != nubsByGuid_.end()) {
-            // Already present (or reserved/in-progress).
+            const bool ready = (it->second != nullptr);
             IOLockUnlock(lock_);
-            return true;
+            if (!ready) {
+                ASFW_LOG_WARNING(Audio,
+                                 "AudioNubPublisher[%{public}s]: GUID=%llx is reserved but nub is not ready",
+                                 sourceTag ? sourceTag : "unknown",
+                                 guid);
+            }
+            return ready;
         }
 
         if (!ReserveGuidLocked(guid)) {
@@ -84,6 +90,11 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
                            "AudioNubPublisher[%{public}s]: Failed to populate properties (GUID=%llx)",
                            sourceTag ? sourceTag : "unknown",
                            guid);
+            IOLockLock(lock_);
+            nubsByGuid_.erase(guid);
+            IOLockUnlock(lock_);
+            nubService->release();
+            return false;
         } else {
             nubService->SetProperties(properties.get());
             ASFW_LOG(Audio,
@@ -95,6 +106,17 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
                      config.inputChannelCount,
                      config.outputChannelCount);
         }
+    } else {
+        ASFW_LOG_ERROR(Audio,
+                       "AudioNubPublisher[%{public}s]: Failed to copy properties for ASFWAudioNub (GUID=%llx kr=0x%x)",
+                       sourceTag ? sourceTag : "unknown",
+                       guid,
+                       kr);
+        IOLockLock(lock_);
+        nubsByGuid_.erase(guid);
+        IOLockUnlock(lock_);
+        nubService->release();
+        return false;
     }
 
     ASFWAudioNub* audioNub = OSDynamicCast(ASFWAudioNub, nubService);

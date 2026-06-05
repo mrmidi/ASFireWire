@@ -47,9 +47,12 @@ public:
 
 } // namespace ASFW::Audio::Runtime
 
-#ifndef ASFW_HOST_TEST
+#if !defined(ASFW_HOST_TEST) && __has_include(<net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>)
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
+#define ASFW_HAS_GENERATED_AUDIO_NUB_HEADER 1
+#endif
 
+#if defined(ASFW_HAS_GENERATED_AUDIO_NUB_HEADER)
 namespace ASFW::Audio::Runtime {
 
 class NubDirectAudioBindingSource final : public IDirectAudioBindingSource {
