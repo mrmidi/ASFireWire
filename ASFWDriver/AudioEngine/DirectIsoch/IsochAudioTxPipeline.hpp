@@ -21,7 +21,7 @@
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
 #include "../../Isoch/Memory/IIsochDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
-#include "Audio/Runtime/TimingCursorPolicy.hpp"
+#include "../../Audio/Runtime/TimingCursorPolicy.hpp"
 
 #include <array>
 #include <atomic>

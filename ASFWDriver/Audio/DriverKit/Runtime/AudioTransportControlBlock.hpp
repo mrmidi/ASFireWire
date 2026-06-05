@@ -3,7 +3,8 @@
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
-#include "Audio/Runtime/ZtsAuthority.hpp"
+#include "../../Runtime/ZtsAuthority.hpp"
+
 
 #include <atomic>
 #include <cstdint>

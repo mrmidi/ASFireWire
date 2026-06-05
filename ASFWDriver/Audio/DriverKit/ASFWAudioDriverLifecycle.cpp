@@ -3,12 +3,9 @@
 // ASFWDriver
 //
 // DriverKit lifecycle and ADK start/stop sequencing for ASFWAudioDriver.
-//
-
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
-#include "Audio/Runtime/TimingCursorPolicy.hpp"
-
+#include "../Runtime/TimingCursorPolicy.hpp"
 #include <DriverKit/DriverKit.h>
 
 using ASFW::Audio::DriverKit::BuildAudioGraph;
