@@ -27,8 +27,6 @@
 #include <cstdint>
 #include <cstring>
 
-class IOUserAudioDevice;
-
 namespace ASFW::Isoch {
 
 /// Owns all "audio semantics" (PacketAssembler/CIP/AM824) and direct mapping policy.
@@ -62,12 +60,11 @@ public:
         uint32_t streamModeRaw{0};
         uint32_t outputChannels{0};
         uint32_t am824Slots{0};
-        IOUserAudioDevice* audioDevice{nullptr};
     };
 
     IsochAudioTxPipeline() noexcept = default;
 
-    void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
+    void SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept;
     void SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept;
     void SetDMAMemory(Memory::IIsochDMAMemory* dma) noexcept { dmaMemory_ = dma; }
 
@@ -117,7 +114,7 @@ private:
         };
 
         bool enabled{false};
-        uint16_t rxSyt{Core::ExternalSyncBridge::kNoInfoSyt};
+        uint16_t rxSyt{ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kNoInfoSyt};
         uint8_t rxFdf{0};
         uint8_t rxDbs{0};
         uint32_t updateSeq{0};
@@ -199,8 +196,8 @@ private:
     // SYT generation + external sync discipline
     Encoding::SYTGenerator sytGenerator_{};
     bool cycleTrackingValid_{false};
-    Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
-    Core::SaffireTxPhaseLoop txPhaseLoop_{};
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* externalSyncBridge_{nullptr};
+    ASFW::AudioEngine::DirectIsoch::SaffireTxPhaseLoop txPhaseLoop_{};
     bool txPhaseReadIndexSeeded_{false};
 
     // Audio injection cursor (packet index)

@@ -159,17 +159,11 @@ uint32_t IsochReceiveContext::Poll() {
     if (directAudioBindingSource_) {
         ASFW::Audio::Runtime::DirectAudioBindingSnapshot snapshot{};
         if (directAudioBindingSource_->CopyDirectAudioBinding(snapshot)) {
-            // Re-evaluate on a generation bump OR when the IOUserAudioDevice pointer
-            // itself transitions (e.g. null -> non-null when the provider finally
-            // publishes the device). The latter guards against latching a device-less
-            // binding and never re-arming the clock leg.
-            const bool bindingChanged =
-                snapshot.generation != lastDirectAudioGeneration_ ||
-                snapshot.audioDevice != directInputView_.audioDevice;
+            const bool bindingChanged = snapshot.generation != lastDirectAudioGeneration_;
             if (bindingChanged) {
                 if (snapshot.valid && snapshot.HasInput()) {
                     ASFW_LOG(Isoch,
-                             "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx inBase=%p inFrames=%u inCh=%u outBase=%p outFrames=%u outCh=%u control=%p audioDevice=%p rate=%u",
+                             "IR: direct audio binding changed (gen %llu -> %llu). Arming direct Rx inBase=%p inFrames=%u inCh=%u outBase=%p outFrames=%u outCh=%u control=%p rate=%u",
                              lastDirectAudioGeneration_,
                              snapshot.generation,
                              static_cast<void*>(snapshot.inputBase),
@@ -179,7 +173,6 @@ uint32_t IsochReceiveContext::Poll() {
                              snapshot.outputFrames,
                              snapshot.outputChannels,
                              static_cast<void*>(snapshot.control),
-                             static_cast<void*>(snapshot.audioDevice),
                              snapshot.sampleRateHz);
 
                     directInputView_.guid = 0;
@@ -193,31 +186,20 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.hostToDeviceAm824Slots = snapshot.outputChannels;
                     directInputView_.streamMode = ASFW::Audio::Runtime::AudioStreamMode::kUnknown;
                     directInputView_.hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
-                    directInputView_.audioDevice = snapshot.audioDevice;
 
                     // Data plane (RX -> input buffer) and the controller-side clock
-                    // publisher both arm. When AudioDriverKit owns the IOUserAudioDevice
-                    // in another process, the clock publisher writes the shared timeline;
-                    // the ADK side mirrors that timeline to UpdateCurrentZeroTimestamp.
+                    // publisher both arm. The clock publisher writes the shared
+                    // timeline; the ADK side mirrors that timeline to HAL.
                     directInputWriter_.Bind(&directInputView_);
                     clockPublisher_.Bind(&directInputView_);
-                    if (snapshot.audioDevice == nullptr) {
-                        ASFW_LOG(Isoch,
-                                 "IR: direct audio binding has NULL audioDevice (gen %llu); publishing clock to shared control block for ADK-side HAL mirror. control=%p inBase=%p rate=%u",
-                                 snapshot.generation,
-                                 static_cast<void*>(snapshot.control),
-                                 static_cast<void*>(snapshot.inputBase),
-                                 snapshot.sampleRateHz);
-                    }
                 } else {
                     ASFW_LOG(Isoch,
-                             "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming valid=%d hasIn=%d control=%p audioDevice=%p rate=%u",
+                             "IR: direct audio binding invalid or has no input (gen %llu -> %llu). Disarming valid=%d hasIn=%d control=%p rate=%u",
                              lastDirectAudioGeneration_,
                              snapshot.generation,
                              snapshot.valid,
                              snapshot.HasInput(),
                              static_cast<void*>(snapshot.control),
-                             static_cast<void*>(snapshot.audioDevice),
                              snapshot.sampleRateHz);
                     directInputWriter_.Unbind();
                     clockPublisher_.Unbind();
@@ -290,7 +272,7 @@ uint32_t IsochReceiveContext::Poll() {
 
                 const uint64_t nextFrameCursor = absoluteFrameCursor_ + result.framesDecoded;
                 if (result.hasValidCip &&
-                    result.syt != Core::ExternalSyncBridge::kNoInfoSyt &&
+                    result.syt != ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kNoInfoSyt &&
                     result.framesDecoded > 0 &&
                     directInputView_.sampleRateHz != 0 &&
                     clockPublisher_.IsBound() &&
@@ -338,7 +320,7 @@ void IsochReceiveContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDir
     lastDirectAudioGeneration_ = 0;
 }
 
-void IsochReceiveContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
+void IsochReceiveContext::SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept {
     externalSyncBridge_ = bridge;
 }
 

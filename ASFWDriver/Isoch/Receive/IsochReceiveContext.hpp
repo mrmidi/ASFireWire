@@ -90,7 +90,7 @@ public:
     void SetCallback(IsochReceiveCallback callback);
 
     void SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept;
-    void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
+    void SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept;
     
     using TimingLossCallback = std::function<void()>;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
@@ -135,8 +135,8 @@ private:
     uint64_t rxZtsPublishCount_{0};
     uint64_t rxCycleHostTicks_{0};
 
-    Core::ExternalSyncBridge* externalSyncBridge_{nullptr};
-    Core::ExternalSyncClockState externalSyncClockState_{};
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* externalSyncBridge_{nullptr};
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncClockState externalSyncClockState_{};
     TimingLossCallback timingLossCallback_{nullptr};
 
     Registers GetRegisters(uint8_t index) const;

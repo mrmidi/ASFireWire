@@ -6,7 +6,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace ASFW::Isoch::Core {
+namespace ASFW::AudioEngine::DirectIsoch {
 
 inline constexpr uint64_t kExternalSyncLiveStaleNanos = 100'000'000ULL;
 inline constexpr uint64_t kExternalSyncStartupSeedGraceNanos = 250'000'000ULL;
@@ -271,4 +271,4 @@ private:
     int64_t recoveredDeviceOffsetTicks_{0};
 };
 
-} // namespace ASFW::Isoch::Core
+} // namespace ASFW::AudioEngine::DirectIsoch

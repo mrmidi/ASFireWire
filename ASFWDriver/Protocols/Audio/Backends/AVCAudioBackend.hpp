@@ -20,10 +20,13 @@
 
 namespace ASFW::Audio {
 
+class AudioRuntimeRegistry;
+
 class AVCAudioBackend final : public IAudioBackend {
 public:
     AVCAudioBackend(AudioNubPublisher& publisher,
                     Discovery::DeviceRegistry& registry,
+                    AudioRuntimeRegistry& runtime,
                     Driver::IsochService& isoch,
                     Driver::HardwareInterface& hardware) noexcept;
     ~AVCAudioBackend() noexcept override;
@@ -48,6 +51,7 @@ private:
 
     AudioNubPublisher& publisher_;
     Discovery::DeviceRegistry& registry_;
+    AudioRuntimeRegistry& runtime_;
     Driver::IsochService& isoch_;
     Driver::HardwareInterface& hardware_;
 

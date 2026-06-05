@@ -15,7 +15,6 @@
 #include <atomic>
 #include <memory>
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
-#include "../../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include <string>
 #include <vector>
 
@@ -36,8 +35,8 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                           hostTransport_,
                           hardware,
                           [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
-                              auto* nub = publisher_.GetNub(guid);
-                              return nub ? static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource()) : nullptr;
+                              auto endpoint = runtime_.FindEndpointRuntime(guid);
+                              return endpoint ? endpoint.get() : nullptr;
                           }) {
     lock_ = IOLockAlloc();
     if (!lock_) {
@@ -382,6 +381,15 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
         if (!nub) {
             return kIOReturnNotReady;
         }
+    }
+
+    auto endpoint = runtime_.FindEndpointRuntime(guid);
+    if (!endpoint || !endpoint->HasCompleteDirectAudioMemory()) {
+        ASFW_LOG_ERROR(Audio,
+                       "DiceAudioBackend: StartStreaming refused missing direct runtime/memory GUID=0x%016llx endpoint=%p",
+                       guid,
+                       endpoint.get());
+        return kIOReturnNotReady;
     }
 
     const IOReturn status = restartCoordinator_.StartStreaming(guid);

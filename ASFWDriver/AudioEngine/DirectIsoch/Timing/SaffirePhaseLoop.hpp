@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace ASFW::Isoch::Core {
+namespace ASFW::AudioEngine::DirectIsoch {
 
 struct TxPhaseGroupUpdate final {
     int64_t projectedOffsetTicks{0};
@@ -130,4 +130,4 @@ private:
     int64_t maxError_{std::numeric_limits<int64_t>::min()};
 };
 
-} // namespace ASFW::Isoch::Core
+} // namespace ASFW::AudioEngine::DirectIsoch

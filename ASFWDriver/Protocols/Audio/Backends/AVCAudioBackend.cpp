@@ -3,6 +3,8 @@
 
 #include "AVCAudioBackend.hpp"
 
+#include "../../../Audio/Core/AudioEndpointRuntime.hpp"
+#include "../../../Audio/Core/AudioRuntimeRegistry.hpp"
 #include "../../../Common/DriverKitOwnership.hpp"
 #include "../../../Logging/Logging.hpp"
 
@@ -10,7 +12,6 @@
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/OSSharedPtr.h>
 #include <net.mrmidi.ASFW.ASFWDriver/ASFWAudioNub.h>
-#include "../../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 
 namespace ASFW::Audio {
 
@@ -28,10 +29,12 @@ inline uint8_t ReadLocalSid(Driver::HardwareInterface& hw) noexcept {
 
 AVCAudioBackend::AVCAudioBackend(AudioNubPublisher& publisher,
                                  Discovery::DeviceRegistry& registry,
+                                 AudioRuntimeRegistry& runtime,
                                  Driver::IsochService& isoch,
                                  Driver::HardwareInterface& hardware) noexcept
     : publisher_(publisher)
     , registry_(registry)
+    , runtime_(runtime)
     , isoch_(isoch)
     , hardware_(hardware) {
     lock_ = IOLockAlloc();
@@ -173,9 +176,13 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
         if (!nub) return failStart(kIOReturnNotReady, "nub");
     }
 
-    auto* bindingSource = static_cast<ASFW::Audio::Runtime::IDirectAudioBindingSource*>(nub->GetDirectAudioBindingSource());
+    auto endpoint = runtime_.FindEndpointRuntime(guid);
+    auto* bindingSource = endpoint.get();
     if (!bindingSource) {
         return failStart(kIOReturnNotReady, "direct binding source");
+    }
+    if (!endpoint->HasCompleteDirectAudioMemory()) {
+        return failStart(kIOReturnNotReady, "direct memory");
     }
 
     // Start IR first so capture packets don't get dropped.

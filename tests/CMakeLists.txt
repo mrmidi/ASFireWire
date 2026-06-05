@@ -1505,6 +1505,25 @@ target_include_directories(OutputCursorDisciplineTests PRIVATE ${ASFW_COMMON_INC
 
 gtest_discover_tests(OutputCursorDisciplineTests)
 
+# Endpoint runtime direct-memory ownership tests
+add_executable(AudioEndpointRuntimeTests
+    "${ASFW_TESTS_DIR}/AudioEndpointRuntimeTests.cpp"
+)
+
+target_link_libraries(AudioEndpointRuntimeTests
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(AudioEndpointRuntimeTests
+    PRIVATE
+        ASFW_HOST_TEST
+)
+
+target_include_directories(AudioEndpointRuntimeTests PRIVATE ${ASFW_COMMON_INCLUDES})
+
+gtest_discover_tests(AudioEndpointRuntimeTests)
+
 # External sync bridge state machine tests
 add_executable(ExternalSyncBridgeTests
     "${ASFW_TESTS_DIR}/ExternalSyncBridgeTests.cpp"

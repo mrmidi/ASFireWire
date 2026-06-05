@@ -108,7 +108,7 @@ private:
     void OnReceiveTimingLossDetected() noexcept;
     [[nodiscard]] bool OnTransmitRecoveryRequested(uint32_t reasonBits) noexcept;
 
-    ASFW::Isoch::Core::ExternalSyncBridge externalSyncBridge_{};
+    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
 

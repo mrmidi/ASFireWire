@@ -17,7 +17,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
                                    Driver::HardwareInterface& hardware) noexcept
     : publisher_(driver)
     , dice_(publisher_, registry, runtime, isoch, hardware)
-    , avc_(publisher_, registry, isoch, hardware)
+    , avc_(publisher_, registry, runtime, isoch, hardware)
     , deviceManager_(deviceManager)
     , registry_(registry)
     , runtime_(runtime) {

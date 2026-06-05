@@ -72,8 +72,6 @@ public:
 
     void OnBusReset(uint32_t newGeneration);
 
-    void SetTransmitRingBufferOnNubs(uint8_t* ringBuffer);
-
 private:
     struct DuetPrefetchState {
         std::optional<Audio::Oxford::Apogee::InputParams> inputParams;

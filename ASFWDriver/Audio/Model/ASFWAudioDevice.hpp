@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "AudioPropertyKeys.hpp"
+
 #include <DriverKit/OSArray.h>
 #include <DriverKit/OSBoolean.h>
 #include <DriverKit/OSDictionary.h>
@@ -108,30 +110,30 @@ struct ASFWAudioDevice {
             if (!dict || !classIdNum || !scopeNum || !elementNum || !settableNum || !initialNum) {
                 continue;
             }
-            dict->setObject("ClassID", classIdNum.get());
-            dict->setObject("Scope", scopeNum.get());
-            dict->setObject("Element", elementNum.get());
-            dict->setObject("Settable", settableNum.get());
-            dict->setObject("Initial", initialNum.get());
+            dict->setObject(PropertyKeys::kBoolClassId, classIdNum.get());
+            dict->setObject(PropertyKeys::kBoolScope, scopeNum.get());
+            dict->setObject(PropertyKeys::kBoolElement, elementNum.get());
+            dict->setObject(PropertyKeys::kBoolSettable, settableNum.get());
+            dict->setObject(PropertyKeys::kBoolInitial, initialNum.get());
             boolControlOverridesArray->setObject(dict.get());
         }
 
-        properties->setObject("ASFWDeviceName", deviceNameStr.get());
-        properties->setObject("ASFWChannelCount", channelCountNum.get());
-        properties->setObject("ASFWSampleRates", sampleRatesArray.get());
-        properties->setObject("ASFWGUID", guidNum.get());
-        properties->setObject("ASFWVendorID", vendorIdNum.get());
-        properties->setObject("ASFWModelID", modelIdNum.get());
-        properties->setObject("ASFWInputChannelCount", inputChannelCountNum.get());
-        properties->setObject("ASFWOutputChannelCount", outputChannelCountNum.get());
-        properties->setObject("ASFWInputPlugName", inputPlugNameStr.get());
-        properties->setObject("ASFWOutputPlugName", outputPlugNameStr.get());
-        properties->setObject("ASFWCurrentSampleRate", currentRateNum.get());
-        properties->setObject("ASFWStreamMode", streamModeNum.get());
-        properties->setObject("ASFWHasPhantomOverride", hasPhantomOverrideBool.get());
-        properties->setObject("ASFWPhantomSupportedMask", phantomSupportedMaskNum.get());
-        properties->setObject("ASFWPhantomInitialMask", phantomInitialMaskNum.get());
-        properties->setObject("ASFWBoolControlOverrides", boolControlOverridesArray.get());
+        properties->setObject(PropertyKeys::kDeviceName, deviceNameStr.get());
+        properties->setObject(PropertyKeys::kChannelCount, channelCountNum.get());
+        properties->setObject(PropertyKeys::kSampleRates, sampleRatesArray.get());
+        properties->setObject(PropertyKeys::kGuid, guidNum.get());
+        properties->setObject(PropertyKeys::kVendorId, vendorIdNum.get());
+        properties->setObject(PropertyKeys::kModelId, modelIdNum.get());
+        properties->setObject(PropertyKeys::kInputChannelCount, inputChannelCountNum.get());
+        properties->setObject(PropertyKeys::kOutputChannelCount, outputChannelCountNum.get());
+        properties->setObject(PropertyKeys::kInputPlugName, inputPlugNameStr.get());
+        properties->setObject(PropertyKeys::kOutputPlugName, outputPlugNameStr.get());
+        properties->setObject(PropertyKeys::kCurrentSampleRate, currentRateNum.get());
+        properties->setObject(PropertyKeys::kStreamMode, streamModeNum.get());
+        properties->setObject(PropertyKeys::kHasPhantomOverride, hasPhantomOverrideBool.get());
+        properties->setObject(PropertyKeys::kPhantomSupportedMask, phantomSupportedMaskNum.get());
+        properties->setObject(PropertyKeys::kPhantomInitialMask, phantomInitialMaskNum.get());
+        properties->setObject(PropertyKeys::kBoolControlOverrides, boolControlOverridesArray.get());
 
         return true;
     }

@@ -2,13 +2,13 @@
 
 #include "AudioWire/AMDTP/TimingUtils.hpp"
 #include "Isoch/Core/IsochEventGroup.hpp"
-#include "Isoch/Core/SaffirePhaseLoop.hpp"
+#include "AudioEngine/DirectIsoch/Timing/SaffirePhaseLoop.hpp"
 
 using ASFW::Isoch::Core::IsTimingGroupBoundary;
 using ASFW::Isoch::Core::PreviousPacketIndex;
-using ASFW::Isoch::Core::SaffireTxPhaseLoop;
+using ASFW::AudioEngine::DirectIsoch::SaffireTxPhaseLoop;
+using ASFW::AudioEngine::DirectIsoch::TxPhaseGroupUpdate;
 using ASFW::Isoch::Core::TimingGroupPacketCount48k;
-using ASFW::Isoch::Core::TxPhaseGroupUpdate;
 
 TEST(SaffirePhaseLoop, EmitsNoInfoBeforeFirstHardwareGroup) {
     SaffireTxPhaseLoop loop;

@@ -18,8 +18,8 @@ namespace {
 
 inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualifiedOnly) noexcept {
     const uint64_t staleThresholdNanos = allowStartupQualifiedOnly
-        ? ASFW::Isoch::Core::kExternalSyncStartupSeedGraceNanos
-        : ASFW::Isoch::Core::kExternalSyncLiveStaleNanos;
+        ? ASFW::AudioEngine::DirectIsoch::kExternalSyncStartupSeedGraceNanos
+        : ASFW::AudioEngine::DirectIsoch::kExternalSyncLiveStaleNanos;
     uint64_t staleThresholdTicks = ASFW::Timing::nanosToHostTicks(staleThresholdNanos);
     if (staleThresholdTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
         staleThresholdTicks = ASFW::Timing::nanosToHostTicks(staleThresholdNanos);
@@ -33,7 +33,7 @@ inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualified
 
 } // namespace
 
-void IsochAudioTxPipeline::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept {
+void IsochAudioTxPipeline::SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept {
     externalSyncBridge_ = bridge;
     txPhaseLoop_.Reset();
     txPhaseReadIndexSeeded_ = false;
@@ -53,7 +53,6 @@ void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBindin
     directOutputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native;
     directOutputView_.hostToDeviceAm824Slots = binding.am824Slots;
     directOutputView_.control = binding.control;
-    directOutputView_.audioDevice = binding.audioDevice;
     directOutputReader_.Bind(&directOutputView_);
     if (binding.enabled && binding.control != nullptr) {
         txClockPublisher_.Bind(&directOutputView_);
@@ -260,13 +259,9 @@ void IsochAudioTxPipeline::OnIsochEventGroup(const Core::IsochEventGroup& group)
                                                   group.hostTicks,
                                                   hostNanosPerSampleQ8);
         directOutputView_.control->counters.CountZtsPublished();
-        if (directOutputView_.audioDevice) {
-            directOutputView_.audioDevice->UpdateCurrentZeroTimestamp(txCompletedSampleFrame_,
-                                                                      group.hostTicks);
-        }
     }
 
-    Core::RxCadenceSnapshot cadence{};
+    ASFW::AudioEngine::DirectIsoch::RxCadenceSnapshot cadence{};
     if (externalSyncBridge_) {
         cadence = externalSyncBridge_->ReadCadenceSnapshot();
         if (cadence.established && !txPhaseReadIndexSeeded_) {
@@ -282,7 +277,7 @@ void IsochAudioTxPipeline::OnIsochEventGroup(const Core::IsochEventGroup& group)
     const uint32_t projectedCycle =
         (completedCycle + packetsAhead) % ASFW::Timing::kCyclesPerSecond;
     const int64_t projectedOffsetTicks = ASFW::Timing::tstampToOffsets(0, projectedCycle, 0);
-    txPhaseLoop_.BeginGroup(Core::TxPhaseGroupUpdate{
+    txPhaseLoop_.BeginGroup(ASFW::AudioEngine::DirectIsoch::TxPhaseGroupUpdate{
         .projectedOffsetTicks = projectedOffsetTicks,
         .recoveredDeviceOffsetTicks = cadence.recoveredDeviceOffsetTicks,
         .recoveredValid = cadence.established,
@@ -320,9 +315,9 @@ IsochAudioTxPipeline::ReadExternalSyncState(const bool allowStartupQualifiedOnly
     }
 
     const uint32_t packed = externalSyncBridge_->lastPackedRx.load(std::memory_order_acquire);
-    state.rxSyt = Core::ExternalSyncBridge::UnpackSYT(packed);
-    state.rxFdf = Core::ExternalSyncBridge::UnpackFDF(packed);
-    state.rxDbs = Core::ExternalSyncBridge::UnpackDBS(packed);
+    state.rxSyt = ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::UnpackSYT(packed);
+    state.rxFdf = ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::UnpackFDF(packed);
+    state.rxDbs = ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::UnpackDBS(packed);
     state.updateSeq = externalSyncBridge_->updateSeq.load(std::memory_order_acquire);
     state.active = externalSyncBridge_->active.load(std::memory_order_acquire);
     state.clockEstablished =

@@ -8,7 +8,7 @@
 namespace {
 
 using ASFW::Driver::HardwareInterface;
-using ASFW::Isoch::Core::ExternalSyncBridge;
+using ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge;
 using ASFW::Isoch::Rx::IsochAudioRxPipeline;
 
 class IsochAudioRxPipelineTests : public ::testing::Test {
