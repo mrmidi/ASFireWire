@@ -49,6 +49,8 @@ static void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
                                     uint64_t hostTime,
                                     uint32_t frameCount) {
     control.client.PublishWriteEnd(sampleFrame, hostTime, frameCount);
+    control.playbackRingOldestValidFrame.store(sampleFrame,
+                                               std::memory_order_relaxed);
     control.playbackRingWriteFrame.store(control.client.OutputWrittenEndFrame(),
                                          std::memory_order_release);
 }
@@ -185,6 +187,52 @@ TEST(DirectTxProbeTests, WrittenBeyondRequestedEndIsAvailable) {
 
     EXPECT_EQ(result.status, DirectTxReadStatus::kAvailable);
     EXPECT_EQ(result.firstFramePtr, output.data() + ((100U % 8U) * 2U));
+}
+
+TEST(DirectTxProbeTests, ExactOldestBoundaryIsAvailable) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 16> output{};
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 8, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    DirectTxProbe probe(reader);
+
+    PublishPlaybackWriteEnd(control, 100, 0, 16);
+    control.playbackRingOldestValidFrame.store(108, std::memory_order_release);
+
+    const auto result = probe.Probe(DirectTxReadRequest{
+        .firstFrame = 108,
+        .frameCount = 8,
+        .channels = 2,
+    });
+
+    EXPECT_EQ(result.status, DirectTxReadStatus::kAvailable);
+    EXPECT_EQ(result.oldestValidFrame, 108U);
+    EXPECT_EQ(result.requestedEndFrame, 116U);
+}
+
+TEST(DirectTxProbeTests, FrameBeforeOldestBoundaryIsStaleOverwritten) {
+    AudioTransportControlBlock control{};
+    IOUserAudioDevice audioDevice{};
+    std::array<int32_t, 16> output{};
+    auto binding = MakeOutputBinding(control, audioDevice, output.data(), 8, 2);
+    DirectOutputReader reader{};
+    reader.Bind(&binding);
+    DirectTxProbe probe(reader);
+
+    PublishPlaybackWriteEnd(control, 100, 0, 16);
+    control.playbackRingOldestValidFrame.store(108, std::memory_order_release);
+
+    const auto result = probe.Probe(DirectTxReadRequest{
+        .firstFrame = 107,
+        .frameCount = 1,
+        .channels = 2,
+    });
+
+    EXPECT_EQ(result.status, DirectTxReadStatus::kStaleOverwritten);
+    EXPECT_EQ(result.oldestValidFrame, 108U);
+    EXPECT_EQ(result.firstFramePtr, nullptr);
 }
 
 TEST(DirectTxProbeTests, OverflowingRangeReturnsInvalidRange) {

@@ -101,6 +101,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/TimingCursorPolicyTests.cpp
     AudioRuntime/ZtsAuthorityTests.cpp
     AudioRuntime/ZtsTimelineCalculatorTests.cpp
+    AudioRuntime/PlaybackRingRangeTests.cpp
 )
 
 # Direct TX sidecar tests (AudioEngineDirect files)
@@ -128,6 +129,10 @@ add_audio_test(SYTGeneratorTests
 # Output Cursor Discipline Tests
 add_audio_test(OutputCursorDisciplineTests
     OutputCursorDisciplineTests.cpp
+)
+
+add_audio_test(AmdtpRateGeometryTests
+    AmdtpRateGeometryTests.cpp
 )
 
 # Endpoint runtime tests
@@ -172,3 +177,11 @@ add_audio_test(IsochTxDmaRingTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
+add_audio_test(IsochAudioTxPipelineTimelineTests
+    IsochAudioTxPipelineTimelineTests.cpp
+    "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/IsochAudioTxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/AudioClockPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
+    "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
+)

@@ -10,6 +10,7 @@ enum class DirectTxReadStatus : uint32_t {
     kUnderrun = 2,
     kInvalidBinding = 3,
     kInvalidRange = 4,
+    kStaleOverwritten = 5,
 };
 
 struct DirectTxReadRequest final {
@@ -22,6 +23,7 @@ struct DirectTxReadResult final {
     DirectTxReadStatus status{DirectTxReadStatus::kUnavailable};
     const int32_t* firstFramePtr{nullptr};
     uint64_t writtenEndFrame{0};
+    uint64_t oldestValidFrame{0};
     uint64_t requestedEndFrame{0};
 };
 

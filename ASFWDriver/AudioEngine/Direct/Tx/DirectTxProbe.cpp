@@ -13,6 +13,7 @@ DirectTxReadResult DirectTxProbe::Probe(const DirectTxReadRequest& request) noex
     }
 
     result.writtenEndFrame = reader_.OutputWrittenEndFrame();
+    result.oldestValidFrame = reader_.OutputOldestValidFrame();
 
     if (request.frameCount == 0 ||
         request.channels == 0 ||
@@ -28,6 +29,10 @@ DirectTxReadResult DirectTxProbe::Probe(const DirectTxReadRequest& request) noex
     }
 
     result.requestedEndFrame = request.firstFrame + request.frameCount;
+    if (request.firstFrame < result.oldestValidFrame) {
+        result.status = DirectTxReadStatus::kStaleOverwritten;
+        return result;
+    }
     if (result.writtenEndFrame < result.requestedEndFrame) {
         result.status = DirectTxReadStatus::kUnderrun;
         return result;

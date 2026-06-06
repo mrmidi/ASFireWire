@@ -1,7 +1,9 @@
 
 #pragma once
 
+#include <atomic>
 #include <optional>
+#include "../../Common/BarrierUtils.hpp"
 #include "../../Shared/Memory/IDMAMemory.hpp"
 
 namespace ASFW::Isoch::Memory {
@@ -17,6 +19,13 @@ public:
 
     // Explicitly allocate a payload buffer region (from payload slab)
     virtual std::optional<Shared::DMARegion> AllocatePayloadBuffer(size_t size) = 0;
+
+    /// Orders payload publication before descriptor publication. Kept virtual
+    /// so host tests can record the exact DMA visibility sequence.
+    virtual void PublishBarrier() const noexcept {
+        std::atomic_thread_fence(std::memory_order_release);
+        ASFW::Driver::IoBarrier();
+    }
 };
 
 } // namespace ASFW::Isoch::Memory

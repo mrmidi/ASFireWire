@@ -48,6 +48,17 @@ public:
         return binding_->control->playbackRingWriteFrame.load(std::memory_order_acquire);
     }
 
+    [[nodiscard]] uint64_t OutputOldestValidFrame() const noexcept {
+        if (!binding_ || !binding_->control) {
+            return 0;
+        }
+        return binding_->control->playbackRingOldestValidFrame.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] uint32_t OutputFrameCapacity() const noexcept {
+        return IsBound() ? binding_->memory.outputFrameCapacity : 0;
+    }
+
     [[nodiscard]] bool IsFrameRangeAvailable(uint64_t firstFrame,
                                              uint32_t frameCount) const noexcept {
         if (!IsBound() || frameCount == 0) {

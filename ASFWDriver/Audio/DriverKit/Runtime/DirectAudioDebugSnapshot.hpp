@@ -44,9 +44,21 @@ struct DirectAudioDebugSnapshot final {
 
     uint64_t playbackRingWriteFrame{0};
     uint64_t playbackRingReadFrame{0};
+    uint64_t playbackRingOldestValidFrame{0};
     uint64_t playbackRingAvailableFrames{0};
     uint64_t playbackRingUnderruns{0};
     uint64_t playbackRingOverruns{0};
+    uint64_t txScheduledSampleFrame{0};
+    uint64_t txCompletedSampleFrame{0};
+    uint64_t txLastSourceFrame{0};
+    uint64_t txForwardCursorCorrections{0};
+    uint64_t txPreventedBackwardCorrections{0};
+    uint64_t txStaleOverwrittenReads{0};
+    uint64_t txProducerAheadUnderruns{0};
+    uint64_t txTimelineDiscontinuities{0};
+    uint64_t txPcmNonzeroPackets{0};
+    uint64_t txPcmAllZeroPackets{0};
+    uint64_t txTimelineInvariantFailures{0};
 
     uint64_t captureRingWriteFrame{0};
     uint64_t captureRingReadFrame{0};
@@ -135,6 +147,8 @@ struct DirectAudioDebugLogState final {
         control.playbackRingWriteFrame.load(std::memory_order_acquire);
     snapshot.playbackRingReadFrame =
         control.playbackRingReadFrame.load(std::memory_order_acquire);
+    snapshot.playbackRingOldestValidFrame =
+        control.playbackRingOldestValidFrame.load(std::memory_order_acquire);
     snapshot.playbackRingAvailableFrames =
         (snapshot.playbackRingWriteFrame >= snapshot.playbackRingReadFrame)
             ? (snapshot.playbackRingWriteFrame - snapshot.playbackRingReadFrame)
@@ -143,6 +157,28 @@ struct DirectAudioDebugLogState final {
         control.playbackRingUnderruns.load(std::memory_order_relaxed);
     snapshot.playbackRingOverruns =
         control.playbackRingOverruns.load(std::memory_order_relaxed);
+    snapshot.txScheduledSampleFrame =
+        control.txScheduledSampleFrame.load(std::memory_order_acquire);
+    snapshot.txCompletedSampleFrame =
+        control.txCompletedSampleFrame.load(std::memory_order_acquire);
+    snapshot.txLastSourceFrame =
+        control.txLastSourceFrame.load(std::memory_order_acquire);
+    snapshot.txForwardCursorCorrections =
+        control.counters.txForwardCursorCorrections.load(std::memory_order_relaxed);
+    snapshot.txPreventedBackwardCorrections =
+        control.counters.txPreventedBackwardCorrections.load(std::memory_order_relaxed);
+    snapshot.txStaleOverwrittenReads =
+        control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed);
+    snapshot.txProducerAheadUnderruns =
+        control.counters.txProducerAheadUnderruns.load(std::memory_order_relaxed);
+    snapshot.txTimelineDiscontinuities =
+        control.counters.txTimelineDiscontinuities.load(std::memory_order_relaxed);
+    snapshot.txPcmNonzeroPackets =
+        control.counters.txPcmNonzeroPackets.load(std::memory_order_relaxed);
+    snapshot.txPcmAllZeroPackets =
+        control.counters.txPcmAllZeroPackets.load(std::memory_order_relaxed);
+    snapshot.txTimelineInvariantFailures =
+        control.counters.txTimelineInvariantFailures.load(std::memory_order_relaxed);
 
     snapshot.captureRingWriteFrame =
         control.captureRingWriteFrame.load(std::memory_order_acquire);

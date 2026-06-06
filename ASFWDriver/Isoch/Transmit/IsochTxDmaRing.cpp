@@ -174,16 +174,17 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
     immDesc->immediateData[1] = isochHeaderQ1;
 
     if (dmaMemory_) {
-        dmaMemory_->PublishToDevice(
-            reinterpret_cast<const std::byte*>(slab_.GetDescriptorPtr(descBase)),
-            Layout::kBlocksPerPacket * sizeof(OHCIDescriptor)
-        );
         if (pkt.sizeBytes > 0) {
             dmaMemory_->PublishToDevice(
                 reinterpret_cast<const std::byte*>(payloadVirt),
                 pkt.sizeBytes
             );
         }
+        dmaMemory_->PublishBarrier();
+        dmaMemory_->PublishToDevice(
+            reinterpret_cast<const std::byte*>(slab_.GetDescriptorPtr(descBase)),
+            Layout::kBlocksPerPacket * sizeof(OHCIDescriptor)
+        );
     }
 
     out.packetsFilled++;
@@ -285,16 +286,17 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
         lastDesc->statusWord = 0;
 
         if (dmaMemory_) {
-            dmaMemory_->PublishToDevice(
-                reinterpret_cast<const std::byte*>(slab_.GetDescriptorPtr(descBase)),
-                Layout::kBlocksPerPacket * sizeof(OHCIDescriptor)
-            );
             if (pkt.sizeBytes > 0) {
                 dmaMemory_->PublishToDevice(
                     reinterpret_cast<const std::byte*>(payloadVirt),
                     pkt.sizeBytes
                 );
             }
+            dmaMemory_->PublishBarrier();
+            dmaMemory_->PublishToDevice(
+                reinterpret_cast<const std::byte*>(slab_.GetDescriptorPtr(descBase)),
+                Layout::kBlocksPerPacket * sizeof(OHCIDescriptor)
+            );
         }
 
         stats.packetsAssembled++;

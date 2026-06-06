@@ -54,6 +54,20 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.counters.txPackets.store(7, std::memory_order_relaxed);
     control.counters.txUnderruns.store(3, std::memory_order_relaxed);
     control.counters.txSilenceSubstitutions.store(2, std::memory_order_relaxed);
+    control.playbackRingOldestValidFrame.store(168, std::memory_order_relaxed);
+    control.playbackRingWriteFrame.store(232, std::memory_order_relaxed);
+    control.playbackRingReadFrame.store(184, std::memory_order_relaxed);
+    control.txScheduledSampleFrame.store(4096, std::memory_order_relaxed);
+    control.txCompletedSampleFrame.store(4000, std::memory_order_relaxed);
+    control.txLastSourceFrame.store(4040, std::memory_order_relaxed);
+    control.counters.txForwardCursorCorrections.store(4, std::memory_order_relaxed);
+    control.counters.txPreventedBackwardCorrections.store(5, std::memory_order_relaxed);
+    control.counters.txStaleOverwrittenReads.store(6, std::memory_order_relaxed);
+    control.counters.txProducerAheadUnderruns.store(7, std::memory_order_relaxed);
+    control.counters.txTimelineDiscontinuities.store(8, std::memory_order_relaxed);
+    control.counters.txPcmNonzeroPackets.store(9, std::memory_order_relaxed);
+    control.counters.txPcmAllZeroPackets.store(10, std::memory_order_relaxed);
+    control.counters.txTimelineInvariantFailures.store(11, std::memory_order_relaxed);
 
     const auto snapshot = CaptureDirectAudioDebugSnapshot(
         binding,
@@ -90,6 +104,19 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.directTxPackets, 7U);
     EXPECT_EQ(snapshot.directTxUnderruns, 3U);
     EXPECT_EQ(snapshot.directTxSilenceSubstitutions, 2U);
+    EXPECT_EQ(snapshot.playbackRingOldestValidFrame, 168U);
+    EXPECT_EQ(snapshot.playbackRingAvailableFrames, 48U);
+    EXPECT_EQ(snapshot.txScheduledSampleFrame, 4096U);
+    EXPECT_EQ(snapshot.txCompletedSampleFrame, 4000U);
+    EXPECT_EQ(snapshot.txLastSourceFrame, 4040U);
+    EXPECT_EQ(snapshot.txForwardCursorCorrections, 4U);
+    EXPECT_EQ(snapshot.txPreventedBackwardCorrections, 5U);
+    EXPECT_EQ(snapshot.txStaleOverwrittenReads, 6U);
+    EXPECT_EQ(snapshot.txProducerAheadUnderruns, 7U);
+    EXPECT_EQ(snapshot.txTimelineDiscontinuities, 8U);
+    EXPECT_EQ(snapshot.txPcmNonzeroPackets, 9U);
+    EXPECT_EQ(snapshot.txPcmAllZeroPackets, 10U);
+    EXPECT_EQ(snapshot.txTimelineInvariantFailures, 11U);
     EXPECT_TRUE(snapshot.outputReaderAvailableAtWriteEnd);
 }
 
