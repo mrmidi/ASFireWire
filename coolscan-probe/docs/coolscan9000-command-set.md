@@ -183,3 +183,29 @@ testing når go/no-go er bestått).
 - Innhold i Nikon-kapabilitetsside `0xC1` på 9000 (maks oppløsning, grenser, fokusområde).
 - Statusbit-tolkning fra REQUEST SENSE på 9000.
 - Om 9000 trenger ekstra init utover 8000 (f.eks. medium-holder/adapter-deteksjon).
+
+## EVPD 0xC1 — Nikon capability page (hardware capture, LS-9000 ED rev 1.02)
+
+Captured 2026-06-06 from a real CoolScan 9000 ED via ASFireWire. Header-first read:
+`12 01 c1 00 05 00` returns 5-byte header; byte 3 = page_len = 0x57 (87) → total 91 bytes.
+
+```
+off  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+00   06 c1 00 57 01 00 3b 00 0f 00 00 01 00 01 01 10
+10   42 12 0f a0 0f a0 02 9a 00 00 27 0f 00 00 00 00
+20   00 00 00 00 00 00 27 10 0f a0 0f a0 01 4d 00 00
+30   36 23 00 00 00 00 00 00 00 00 00 00 36 24 00 00
+40   00 00 00 00 00 00 00 53 00 53 00 00 00 00 01 c2
+50   00 00 10 27 10 0c 03 00 53 00 1b
+```
+
+Header: byte0=0x06 PDT(scanner), byte1=0xC1 page, byte3=0x57 page_len(87).
+Recognizable values (big-endian), to be mapped field-by-field against SANE
+coolscan3 `cs3_get_capabilities`:
+- `0x0fa0` = 4000 appears 4× → optical resolution 4000 dpi (X/Y), max-res pairs.
+- `0x270f` = 9999, `0x2710` = 10000 → scale/effective-resolution limits.
+- `0x3623`=13859 / `0x3624`=13860 → frame boundary extents (device units).
+- `0x014d`=333, `0x029a`=666, `0x01c2`=450 → likely offsets/margins.
+
+TODO: align these against coolscan3's capability struct to drive SET WINDOW
+geometry (max res, boundaries, focus range) instead of hardcoding.
