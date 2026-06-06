@@ -14,6 +14,7 @@
 #include "../../Common/BarrierUtils.hpp"
 
 #include <atomic>
+#include <array>
 #include <cstdint>
 
 namespace ASFW::Isoch::Tx {
@@ -23,12 +24,16 @@ struct IsochTxPacket final {
     uint32_t sizeBytes{0};
     bool isData{false};
     uint8_t dbc{0};
+    uint16_t syt{0xFFFF};
+    uint32_t framesPerPacket{0};
+    uint64_t timelineFirstFrame{0};
 };
 
 struct TxPacketRequest final {
     uint32_t transmitCycle{0};
     uint32_t packetIndex{0};
     uint16_t hwTimestamp{0};
+    uint64_t slotGeneration{0};
 };
 
 class IIsochTxPacketProvider {
@@ -42,6 +47,62 @@ public:
     virtual ~IIsochTxAudioInjector() = default;
     virtual void InjectNearHw(uint32_t hwPacketIndex,
                               IsochTxDescriptorSlab& slab) noexcept = 0;
+};
+
+enum class PreparedTxSlotState : uint8_t {
+    InitialSilence = 0,
+    PendingSource,
+    PcmPrepared,
+    RetiredEpochSilence,
+    Completed,
+};
+
+enum class PreparedTxAction : uint8_t {
+    NoChange = 0,
+    Pending,
+    Prepared,
+    RetiredSilence,
+    Fatal,
+};
+
+struct PreparedTxSlotMetadata final {
+    uint64_t generation{0};
+    uint64_t timelineFirstFrame{0};
+    uint64_t sourceFirstFrame{0};
+    uint64_t sourceEndFrame{0};
+    uint64_t epoch{0};
+    uint32_t sizeBytes{0};
+    uint32_t framesPerPacket{0};
+    uint8_t dbc{0};
+    uint16_t syt{0xFFFF};
+    bool valid{false};
+    bool isData{false};
+    PreparedTxSlotState state{PreparedTxSlotState::InitialSilence};
+};
+
+struct PreparedTxPayloadRequest final {
+    uint32_t packetIndex{0};
+    uint32_t hwPacketIndex{0};
+    uint32_t distanceToHardware{0};
+    bool writable{false};
+    bool deadline{false};
+    PreparedTxSlotMetadata metadata{};
+    uint8_t* payloadBytes{nullptr};
+    uint32_t payloadCapacityBytes{0};
+};
+
+struct PreparedTxPayloadResult final {
+    PreparedTxAction action{PreparedTxAction::NoChange};
+    uint64_t sourceFirstFrame{0};
+    uint64_t sourceEndFrame{0};
+    uint64_t epoch{0};
+};
+
+class IIsochTxPayloadPreparer {
+public:
+    virtual ~IIsochTxPayloadPreparer() = default;
+    [[nodiscard]] virtual PreparedTxPayloadResult PreparePayload(
+        const PreparedTxPayloadRequest& request) noexcept = 0;
 };
 
 class IsochTxCaptureHook {
@@ -69,6 +130,11 @@ public:
         std::atomic<uint64_t> packetsRefilled{0};
         std::atomic<uint64_t> fatalPacketSize{0};
         std::atomic<uint64_t> fatalDescriptorBounds{0};
+        std::atomic<uint64_t> preparedPayloads{0};
+        std::atomic<uint64_t> pendingPayloads{0};
+        std::atomic<uint64_t> retiredSilencePayloads{0};
+        std::atomic<uint64_t> preparationFaults{0};
+        std::atomic<uint64_t> ownershipFaults{0};
 
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
@@ -101,6 +167,21 @@ public:
         Core::IsochEventGroup eventGroup{};
     };
 
+    struct PreparationOutcome {
+        bool ok{false};
+        bool fatal{false};
+        bool decodeFailed{false};
+        bool hwOOB{false};
+        uint32_t hwPacketIndex{0};
+        uint32_t preparedCount{0};
+        uint32_t pendingCount{0};
+        uint32_t startupSilenceCount{0};
+        uint32_t retiredSilenceCount{0};
+        uint32_t faultPacketIndex{0};
+        uint32_t faultDistance{0};
+        PreparedTxSlotMetadata faultMetadata{};
+    };
+
     IsochTxDmaRing() noexcept = default;
 
     void SetChannel(uint8_t channel) noexcept { channel_ = channel; }
@@ -126,6 +207,11 @@ public:
                                        IsochTxCaptureHook* captureHook,
                                        IIsochTxAudioInjector* injector) noexcept;
 
+    [[nodiscard]] PreparationOutcome PreparePayloads(
+        Driver::HardwareInterface& hw,
+        uint8_t contextIndex,
+        IIsochTxPayloadPreparer& preparer) noexcept;
+
     void WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept;
 
     // Debug helpers (delegated by IsochTransmitContext)
@@ -135,6 +221,9 @@ public:
 
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
     [[nodiscard]] uint32_t LastHwTimestamp() const noexcept { return lastHwTimestamp_; }
+    [[nodiscard]] const PreparedTxSlotMetadata& SlotMetadata(uint32_t packetIndex) const noexcept {
+        return slotMetadata_[packetIndex % Layout::kNumPackets];
+    }
 
     // Expose slab for audio injection.
     [[nodiscard]] IsochTxDescriptorSlab& Slab() noexcept { return slab_; }
@@ -156,6 +245,13 @@ private:
                                     IsochTxCaptureHook* captureHook,
                                     RefillOutcome& out) noexcept;
     void CommitRefill(uint32_t toFill) noexcept;
+    [[nodiscard]] bool DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
+                                                 uint8_t contextIndex,
+                                                 uint32_t& outPacketIndex,
+                                                 uint32_t& outCmdPtr) noexcept;
+    void InitializeSlotMetadata(uint32_t packetIndex,
+                                uint64_t generation,
+                                const IsochTxPacket& packet) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};
@@ -170,6 +266,9 @@ private:
     uint32_t nextTransmitCycle_{0};
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};
+
+    std::array<PreparedTxSlotMetadata, Layout::kNumPackets> slotMetadata_{};
+    std::array<uint64_t, Layout::kNumPackets> slotGenerations_{};
 
     Counters counters_{};
 };

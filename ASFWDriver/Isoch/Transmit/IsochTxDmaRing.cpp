@@ -2,6 +2,8 @@
 
 #include "IsochTxDmaRing.hpp"
 
+#include <algorithm>
+
 namespace ASFW::Isoch::Tx {
 
 using namespace ASFW::Async::HW;
@@ -15,9 +17,33 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     nextTransmitCycle_ = 0;
     cycleTrackingValid_ = false;
     lastHwTimestamp_ = 0;
+    slotMetadata_ = {};
+    slotGenerations_ = {};
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
+}
+
+void IsochTxDmaRing::InitializeSlotMetadata(const uint32_t packetIndex,
+                                            const uint64_t generation,
+                                            const IsochTxPacket& packet) noexcept {
+    if (packetIndex >= slotMetadata_.size()) {
+        return;
+    }
+    slotMetadata_[packetIndex] = PreparedTxSlotMetadata{
+        .generation = generation,
+        .timelineFirstFrame = packet.timelineFirstFrame,
+        .sourceFirstFrame = 0,
+        .sourceEndFrame = 0,
+        .epoch = 0,
+        .sizeBytes = packet.sizeBytes,
+        .framesPerPacket = packet.framesPerPacket,
+        .dbc = packet.dbc,
+        .syt = packet.syt,
+        .valid = true,
+        .isData = packet.isData,
+        .state = PreparedTxSlotState::InitialSilence,
+    };
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
@@ -141,13 +167,17 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
                                             reinterpret_cast<const uint32_t*>(payloadVirt));
     }
 
+    slotMetadata_[pktIdx].state = PreparedTxSlotState::Completed;
+    const uint64_t generation = ++slotGenerations_[pktIdx];
     const TxPacketRequest request{
         .transmitCycle = nextTransmitCycle_,
         .packetIndex = pktIdx,
         .hwTimestamp = out.hwTimestamp,
+        .slotGeneration = generation,
     };
     const auto pkt = provider.NextTransmitPacket(request);
     nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
+    InitializeSlotMetadata(pktIdx, generation, pkt);
 
     if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
         counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
@@ -217,13 +247,16 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
     slab_.ValidateDescriptorLayout();
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
+        const uint64_t generation = ++slotGenerations_[pktIdx];
         const TxPacketRequest request{
             .transmitCycle = nextTransmitCycle_,
             .packetIndex = pktIdx,
             .hwTimestamp = static_cast<uint16_t>(lastHwTimestamp_),
+            .slotGeneration = generation,
         };
         const auto pkt = provider.NextTransmitPacket(request);
         nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
+        InitializeSlotMetadata(pktIdx, generation, pkt);
 
         if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
             ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u > max=%u pktIdx=%u",
@@ -315,6 +348,117 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
     ASFW::Driver::WriteBarrier();
 
     return stats;
+}
+
+bool IsochTxDmaRing::DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
+                                               const uint8_t contextIndex,
+                                               uint32_t& outPacketIndex,
+                                               uint32_t& outCmdPtr) noexcept {
+    const Register32 cmdPtrReg =
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
+    outCmdPtr = hw.Read(cmdPtrReg);
+    const uint32_t cmdAddr = outCmdPtr & 0xFFFFFFF0u;
+
+    uint32_t hwLogicalIndex = 0;
+    if (!slab_.DecodeCmdAddrToLogicalIndex(cmdAddr, hwLogicalIndex)) {
+        return false;
+    }
+
+    outPacketIndex = hwLogicalIndex / Layout::kBlocksPerPacket;
+    return outPacketIndex < Layout::kNumPackets;
+}
+
+IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
+    Driver::HardwareInterface& hw,
+    const uint8_t contextIndex,
+    IIsochTxPayloadPreparer& preparer) noexcept {
+    PreparationOutcome out{};
+    uint32_t cmdPtr = 0;
+    if (!DecodeHardwarePacketIndex(hw, contextIndex, out.hwPacketIndex, cmdPtr)) {
+        out.decodeFailed = true;
+        return out;
+    }
+    if (out.hwPacketIndex >= Layout::kNumPackets) {
+        out.hwOOB = true;
+        return out;
+    }
+
+    const uint32_t scheduledCount =
+        std::min(ringPacketsAhead_, Layout::kNumPackets);
+    for (uint32_t distance = 0; distance < scheduledCount; ++distance) {
+        const uint32_t packetIndex =
+            (out.hwPacketIndex + distance) % Layout::kNumPackets;
+        auto& metadata = slotMetadata_[packetIndex];
+        if (!metadata.valid || !metadata.isData ||
+            metadata.state == PreparedTxSlotState::PcmPrepared ||
+            metadata.state == PreparedTxSlotState::RetiredEpochSilence ||
+            metadata.state == PreparedTxSlotState::Completed) {
+            continue;
+        }
+
+        const bool deadline = distance <= Layout::kGuardBandPackets;
+        const bool writable = !deadline;
+        PreparedTxPayloadRequest request{
+            .packetIndex = packetIndex,
+            .hwPacketIndex = out.hwPacketIndex,
+            .distanceToHardware = distance,
+            .writable = writable,
+            .deadline = deadline,
+            .metadata = metadata,
+            .payloadBytes = writable ? slab_.PayloadPtr(packetIndex) : nullptr,
+            .payloadCapacityBytes = writable ? Layout::kMaxPacketSize : 0,
+        };
+        const PreparedTxPayloadResult result = preparer.PreparePayload(request);
+        metadata.sourceFirstFrame = result.sourceFirstFrame;
+        metadata.sourceEndFrame = result.sourceEndFrame;
+        metadata.epoch = result.epoch;
+
+        switch (result.action) {
+        case PreparedTxAction::NoChange:
+            ++out.startupSilenceCount;
+            break;
+        case PreparedTxAction::Pending:
+            metadata.state = PreparedTxSlotState::PendingSource;
+            ++out.pendingCount;
+            counters_.pendingPayloads.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case PreparedTxAction::Prepared:
+            if (!writable || !request.payloadBytes) {
+                counters_.ownershipFaults.fetch_add(1, std::memory_order_relaxed);
+                counters_.preparationFaults.fetch_add(1, std::memory_order_relaxed);
+                out.fatal = true;
+                out.faultPacketIndex = packetIndex;
+                out.faultDistance = distance;
+                out.faultMetadata = metadata;
+                return out;
+            }
+            if (dmaMemory_ && metadata.sizeBytes > 0) {
+                dmaMemory_->PublishToDevice(
+                    reinterpret_cast<const std::byte*>(request.payloadBytes),
+                    metadata.sizeBytes);
+                dmaMemory_->PublishBarrier();
+            }
+            metadata.state = PreparedTxSlotState::PcmPrepared;
+            ++out.preparedCount;
+            counters_.preparedPayloads.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case PreparedTxAction::RetiredSilence:
+            metadata.state = PreparedTxSlotState::RetiredEpochSilence;
+            ++out.retiredSilenceCount;
+            counters_.retiredSilencePayloads.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case PreparedTxAction::Fatal:
+            counters_.preparationFaults.fetch_add(1, std::memory_order_relaxed);
+            out.fatal = true;
+            out.faultPacketIndex = packetIndex;
+            out.faultDistance = distance;
+            out.faultMetadata = metadata;
+            return out;
+        }
+    }
+
+    out.ok = true;
+    return out;
 }
 
 IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& hw,

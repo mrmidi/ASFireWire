@@ -123,6 +123,8 @@ public:
 private:
     void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
+    [[nodiscard]] bool DoPrepareOnce() noexcept;
+    void StopImmediatelyForTxFault(const Tx::IsochTxDmaRing::PreparationOutcome& outcome) noexcept;
 
     // ==========================================================================
     // Member variables

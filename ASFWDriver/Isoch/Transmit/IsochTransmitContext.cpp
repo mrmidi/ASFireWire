@@ -199,6 +199,10 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     hardware_->Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
     ASFW_LOG(Isoch, "IT: Enabled IT interrupt for context %u", contextIndex_);
 
+    if (!DoPrepareOnce()) {
+        return kIOReturnAborted;
+    }
+
     hardware_->Write(ctrlSetReg, Driver::ContextControl::kRun);
 
     const uint32_t readCmd = hardware_->Read(cmdPtrReg);
@@ -261,17 +265,56 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         return;
     }
 
-    if (publishTimingEvent &&
-        outcome.completedPacketCount > 0 &&
+    if (!DoPrepareOnce()) {
+        return;
+    }
+
+    if (outcome.completedPacketCount > 0 &&
         outcome.eventGroup.HasCompletionTimestamp()) {
         auto event = outcome.eventGroup;
-        event.hostTicks = eventHostTicks;
+        event.hostTicks = publishTimingEvent ? eventHostTicks : 0;
         audio_.OnIsochEventGroup(event);
     }
 
     packetsAssembled_ += outcome.packetsFilled;
     dataPackets_ += outcome.dataPackets;
     noDataPackets_ += outcome.noDataPackets;
+}
+
+bool IsochTransmitContext::DoPrepareOnce() noexcept {
+    if (!hardware_ || !ring_.HasRings()) {
+        return false;
+    }
+    const auto outcome = ring_.PreparePayloads(*hardware_, contextIndex_, audio_);
+    if (outcome.fatal || audio_.HasFatalFault()) {
+        StopImmediatelyForTxFault(outcome);
+        return false;
+    }
+    return outcome.ok;
+}
+
+void IsochTransmitContext::StopImmediatelyForTxFault(
+    const Tx::IsochTxDmaRing::PreparationOutcome& outcome) noexcept {
+    if (hardware_) {
+        const Register32 ctrlClrReg =
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+        hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+    }
+    state_ = State::Stopped;
+    refillInProgress_.clear(std::memory_order_release);
+    ASFW_LOG(
+        Isoch,
+        "IT FATAL STOP: prepared-payload fault pkt=%u distance=%u hwPkt=%u gen=%llu state=%u timeline=%llu source=[%llu,%llu)",
+        outcome.faultPacketIndex,
+        outcome.faultDistance,
+        outcome.hwPacketIndex,
+        outcome.faultMetadata.generation,
+        static_cast<uint32_t>(outcome.faultMetadata.state),
+        outcome.faultMetadata.timelineFirstFrame,
+        outcome.faultMetadata.sourceFirstFrame,
+        outcome.faultMetadata.sourceEndFrame);
 }
 
 void IsochTransmitContext::Poll() noexcept {
@@ -344,6 +387,14 @@ void IsochTransmitContext::Poll() noexcept {
         // if (tickCount_ == 1 || (tickCount_ % 5000) == 0) {
         //     ASFW_LOG(Isoch, "IT DBG BIND poll tick=%llu source=null", tickCount_);
         // }
+    }
+
+    if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        (void)DoPrepareOnce();
+        refillInProgress_.clear(std::memory_order_release);
+        if (state_ != State::Running) {
+            return;
+        }
     }
 
     // IRQ-stall watchdog
