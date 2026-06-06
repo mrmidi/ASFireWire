@@ -23,8 +23,26 @@ final class SBP2Session {
     }
 
     /// Create a session and log in, polling state until LoggedIn / Failed / timeout.
+    /// Retries once: a target that still holds a prior exclusive login often
+    /// accepts the second attempt after the first nudges it to drop/reconnect.
     static func login(_ conn: ASFWConnection, device: FWDevice, unit: FWUnit,
-                      timeout: TimeInterval = 8.0) throws -> SBP2Session {
+                      timeout: TimeInterval = 8.0, attempts: Int = 2) throws -> SBP2Session {
+        var lastError: Error = ProbeError("login: ingen forsøk")
+        for attempt in 1...max(1, attempts) {
+            do { return try loginOnce(conn, device: device, unit: unit, timeout: timeout) }
+            catch {
+                lastError = error
+                if attempt < attempts {
+                    print("   ↻ login-forsøk \(attempt) feilet (\(error)); prøver igjen…")
+                    usleep(1_500_000) // 1.5 s — la target rydde forrige login
+                }
+            }
+        }
+        throw lastError
+    }
+
+    private static func loginOnce(_ conn: ASFWConnection, device: FWDevice, unit: FWUnit,
+                                  timeout: TimeInterval) throws -> SBP2Session {
         let guidHi = UInt64(device.guid >> 32)
         let guidLo = UInt64(device.guid & 0xFFFF_FFFF)
         let (out, _) = try conn.call(.createSBP2Session,
@@ -42,13 +60,15 @@ final class SBP2Session {
             case .loggedIn:
                 return session
             case .failed:
+                session.release() // free host-side session before bubbling up
                 throw ProbeError("Login feilet (lastError=0x\(String(format: "%08x", state.lastError)))")
             default:
                 usleep(100_000) // 100 ms
             }
         }
-        let s = try session.state()
-        throw ProbeError("Login timeout — siste state=\(s.login.label)")
+        let lastLabel = (try? session.state())?.login.label ?? "ukjent"
+        session.release() // don't leak a half-open session on timeout
+        throw ProbeError("Login timeout — siste state=\(lastLabel)")
     }
 
     struct State { let login: ASFW.LoginState; let loginID: UInt64; let generation: UInt64; let lastError: UInt32; let reconnectPending: Bool }
@@ -118,8 +138,15 @@ final class SBP2Session {
                           payload: payload, sense: sense)
     }
 
+    /// Tear down the session. The dext issues an async LOGOUT ORB and retains the
+    /// session until it completes/times out — but if our process exits the instant
+    /// release() returns, the connection is torn down before the logout ORB is
+    /// acked on the wire, leaving the target holding the exclusive login (which
+    /// then forces a power-cycle before the next login). Hold the connection open
+    /// briefly so the logout can land.
     func release() {
         _ = try? conn.call(.releaseSBP2Session, scalarIn: [handle])
+        usleep(1_500_000) // 1.5 s — let the LOGOUT ORB complete before we exit
     }
 }
 
