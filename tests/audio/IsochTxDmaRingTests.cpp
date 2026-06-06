@@ -1,0 +1,108 @@
+// IsochTxDmaRingTests.cpp
+// ASFW - Host-safe unit tests for IT DMA ring engine and timing synchronization
+
+#include <gtest/gtest.h>
+
+#include "Isoch/Transmit/IsochTxDmaRing.hpp"
+#include "Isoch/Memory/IsochDMAMemoryManager.hpp"
+#include "Hardware/HardwareInterface.hpp"
+#include "Hardware/OHCIDescriptors.hpp"
+
+using namespace ASFW::Isoch;
+using namespace ASFW::Isoch::Tx;
+using namespace ASFW::Isoch::Memory;
+
+namespace {
+
+std::shared_ptr<IIsochDMAMemory> MakeTestIsochMemory(::ASFW::Driver::HardwareInterface& hw,
+                                                     size_t numPackets,
+                                                     size_t maxPacketSizeBytes) {
+    IsochMemoryConfig config;
+    // IT uses 3 descriptors per packet (OMI, OMI, OL).
+    config.numDescriptors = numPackets * 3;
+    config.packetSizeBytes = maxPacketSizeBytes;
+    config.descriptorAlignment = 4096;
+    config.payloadPageAlignment = 4096;
+
+    auto concreteMgr = IsochDMAMemoryManager::Create(config);
+    EXPECT_TRUE(concreteMgr);
+    EXPECT_TRUE(concreteMgr->Initialize(hw));
+    return concreteMgr;
+}
+
+class DummyPacketProvider : public IIsochTxPacketProvider {
+public:
+    IsochTxPacket NextTransmitPacket(const TxPacketRequest& request) noexcept override {
+        static uint32_t dummyWords[4] = {0};
+        IsochTxPacket pkt{};
+        pkt.words = dummyWords;
+        pkt.sizeBytes = 16;
+        pkt.isData = true;
+        pkt.dbc = 0;
+        return pkt;
+    }
+};
+
+} // namespace
+
+TEST(IsochTxDmaRingTests, ResyncCycleTracking_BugDemonstration) {
+    ::ASFW::Driver::HardwareInterface hw;
+    // Set current hardware cycle timer to:
+    // cycleSeconds = 2, cycleCount = 1000, cycleOffset = 0
+    // cycleSeconds is bits 31:25, cycleCount is bits 24:12, cycleOffset is bits 11:0
+    const uint32_t cycleTimeReg = (2u << 25) | (1000u << 12) | 0u;
+    hw.SetTestRegister(ASFW::Driver::Register32::kCycleTimer, cycleTimeReg);
+
+    // IsochTxDmaRing has 192 packets.
+    auto mem = MakeTestIsochMemory(hw, 192, 4096);
+    ASSERT_TRUE(mem);
+
+    IsochTxDmaRing ring;
+    ring.SetChannel(0);
+    const auto setupKr = ring.SetupRings(*mem);
+    ASSERT_EQ(setupKr, kIOReturnSuccess);
+
+    // Seed cycle tracking: nextTransmitCycle_ will be initialized to (1000 + 4) = 1004.
+    ring.SeedCycleTracking(hw);
+
+    // We simulate a packet completion.
+    // The packet was actually sent at cycle count 978 (seconds = 2).
+    // The OHCI controller writes back the completion status to statusWord.
+    // In OHCI 1.1, the timestamp format is [cycleSeconds:3][cycleCount:13].
+    // So the lower 16 bits of statusWord will contain:
+    // (cycleSeconds << 13) | cycleCount = (2 << 13) | 978 = 16384 + 978 = 17362.
+    // If the completion code is 0 (success), statusWord is exactly 17362.
+    const uint16_t statusWordTimestamp = (2u << 13) | 978u;
+    
+    // Set this statusWord in the completed descriptor of packet index 0.
+    // The completed descriptor is the last one in the packet (OMI, OMI, OL) -> index 2.
+    auto* lastDesc = ring.Slab().GetDescriptorPtr(2);
+    ASSERT_NE(lastDesc, nullptr);
+    lastDesc->statusWord = statusWordTimestamp;
+    mem->PublishToDevice(reinterpret_cast<const std::byte*>(lastDesc), sizeof(*lastDesc));
+
+    // Invoke Refill with hwPacketIndex = 1.
+    // In Refill(), ComputeDeltaConsumed(1) is called:
+    // Since lastHwPacketIndex_ starts at 0, deltaConsumed = (1 - 0) = 1.
+    // Thus lastProcessedPkt = 0.
+    // It reads the statusWord of packet index 0 (which has our statusWordTimestamp).
+    // Set the command pointer (cmdPtr) for DMA context 0.
+    // hwPacketIndex = 1 corresponds to logical descriptor index 3 (packetIndex * 3).
+    // The lower 4 bits are Z-count (which is 3 for our layout blocks per packet).
+    const uint32_t cmdPtrRegOffset = ::DMAContextHelpers::IsoXmitCommandPtr(0);
+    const uint32_t cmdPtrVal = ring.Slab().GetDescriptorIOVA(3) | 3;
+    hw.SetTestRegister(static_cast<::ASFW::Driver::Register32>(cmdPtrRegOffset), cmdPtrVal);
+
+    DummyPacketProvider provider;
+    
+    // Call Refill.
+    const auto outcome = ring.Refill(hw, /*contextIndex=*/0, provider, nullptr, nullptr);
+    ASSERT_TRUE(outcome.ok);
+
+    // Inspect the outcome's hwTimestamp (which is outputLastTimestamp & 0x1FFF).
+    // The outcome.eventGroup.outputLastTimestamp contains 0x8000 | hwCycle.
+    const uint32_t decodedHwCycle = outcome.eventGroup.outputLastTimestamp & 0x1FFFu;
+    
+    // With the bug fixed, we expect the correctly decoded cycle count 978.
+    EXPECT_EQ(decodedHwCycle, 978u);
+}
