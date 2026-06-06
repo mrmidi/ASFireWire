@@ -200,12 +200,47 @@ off  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
 ```
 
 Header: byte0=0x06 PDT(scanner), byte1=0xC1 page, byte3=0x57 page_len(87).
-Recognizable values (big-endian), to be mapped field-by-field against SANE
-coolscan3 `cs3_get_capabilities`:
-- `0x0fa0` = 4000 appears 4× → optical resolution 4000 dpi (X/Y), max-res pairs.
-- `0x270f` = 9999, `0x2710` = 10000 → scale/effective-resolution limits.
-- `0x3623`=13859 / `0x3624`=13860 → frame boundary extents (device units).
-- `0x014d`=333, `0x029a`=666, `0x01c2`=450 → likely offsets/margins.
 
-TODO: align these against coolscan3's capability struct to drive SET WINDOW
-geometry (max res, boundaries, focus range) instead of hardcoding.
+### Field map (verified against coolscan3 `cs3_full_inquiry`)
+
+coolscan3 reads the capability page with **absolute offsets into the full INQUIRY
+response** (byte 0 = PDT). All values big-endian. Mapping each offset against the
+captured 9000 dump above:
+
+| Offset(s) | coolscan3 field | Formula | Captured bytes | Value | Meaning |
+|-----------|-----------------|---------|----------------|-------|---------|
+| 18–19 | `resx_optical` | `256·b18+b19` | `0f a0` | **4000** | Optical X resolution (dpi) |
+| 20–21 | `resx_max` | `256·b20+b21` | `0f a0` | **4000** | Max X resolution (dpi) |
+| 22–23 | `resx_min` | `256·b22+b23` | `02 9a` | **666** | Min X resolution (dpi) † |
+| 36–39 | `boundaryx` | `(b36b37)≪16 \| b38b39` | `00 00 27 10` | **10000** | Max scan width (device px @ optical) |
+| 40–41 | `resy_optical` | `256·b40+b41` | `0f a0` | **4000** | Optical Y resolution (dpi) |
+| 42–43 | `resy_max` | `256·b42+b43` | `0f a0` | **4000** | Max Y resolution (dpi) |
+| 44–45 | `resy_min` | `256·b44+b45` | `01 4d` | **333** | Min Y resolution (dpi) † |
+| 58–61 | `boundaryy` | `(b58b59)≪16 \| b60b61` | `00 00 36 24` | **13860** | Max scan height (device px @ optical) |
+| 75 | `n_frames` | `b75` | `00` | **0** | Frame count (0 = no holder inserted; dynamic) |
+| 76–77 | `focus_min` | `256·b76+b77` | `00 00` | **0** | Min focus value |
+| 78–79 | `focus_max` | `256·b78+b79` | `01 c2` | **450** | Max focus value |
+| 82 | `maxbits` | `b82` | `10` | **16** | Max bit depth per channel |
+
+† **resx_min=666 / resy_min=333 are surprising** for a "minimum" (CoolScans preview
+far lower). The asymmetry (666 vs 333) and high value suggest the field may carry a
+different semantic on the 9000, or be a minimum *full-quality* step. Non-critical for
+SET WINDOW geometry — flagged, not relied on.
+
+**Unparsed-but-present values** (not read by coolscan3, noted for completeness):
+`b26–27 = 0x270f = 9999`; `b48–49 = 0x3623 = 13859` (one less than boundaryy);
+`b71 = b73 = 0x53 = 83`; trailing `b83.. = 27 10 0c 03 00 53 00 1b`. The `0x2710`/
+`0x3624` boundary values reappear here, consistent with a secondary copy or a
+related limit. Left unmodelled until a need surfaces.
+
+### Derived capability summary (CoolScan 9000 ED)
+
+- **Optical resolution:** 4000 dpi (X and Y).
+- **Max resolution:** 4000 dpi (no interpolation reported in-page).
+- **Max scan area:** 10000 × 13860 device px @ 4000 dpi = **2.50″ × 3.465″ ≈ 63.5 × 88 mm**
+  (consistent with the 6×9 cm medium-format bed).
+- **Focus range:** 0 … 450.
+- **Max bit depth:** 16 bits/channel.
+
+These are now encoded in `CoolScan.Capabilities` and used to build a default
+full-frame `Window` instead of hardcoded geometry. See `CoolScan.swift`.

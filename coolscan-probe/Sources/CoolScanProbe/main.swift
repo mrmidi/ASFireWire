@@ -139,6 +139,19 @@ func run() -> Int32 {
                                      direction: .fromTarget, transferLength: UInt32(total), timeoutMs: 3000)
         print("EVPD 0xC1 (Nikon-kapabiliteter): \(r.payload.count) byte")
         print("   raw: \(hexDump(r.payload, max: 256))")
+        if let caps = CoolScan.parseCapabilities(r.payload) {
+            print("""
+               → optisk: \(caps.resXOptical)×\(caps.resYOptical) dpi  \
+            maks: \(caps.resXMax)×\(caps.resYMax)  min: \(caps.resXMin)×\(caps.resYMin)
+               → maks skanneareal: \(caps.boundaryX)×\(caps.boundaryY) px @ optisk  \
+            (\(String(format: "%.2f", Double(caps.boundaryX)/Double(caps.resXOptical)))″×\
+            \(String(format: "%.2f", Double(caps.boundaryY)/Double(caps.resYOptical)))″)
+               → fokus: \(caps.focusMin)…\(caps.focusMax)  bit-dybde: \(caps.maxBits)  \
+            rammer: \(caps.nFrames)
+            """)
+        } else {
+            print("   ⚠️  for kort til å parse kapabilitetsfeltene.")
+        }
     } catch {
         print("⚠️  EVPD 0xC1 feilet: \(error)")
     }

@@ -81,6 +81,63 @@ enum CoolScan {
                        direction: .fromTarget, transferLength: UInt32(length))
     }
 
+    // MARK: - Capabilities (EVPD page 0xC1)
+
+    /// Device capabilities decoded from the Nikon EVPD page 0xC1.
+    ///
+    /// Offsets are absolute into the full INQUIRY response (byte 0 = PDT), matching
+    /// coolscan3's `cs3_full_inquiry`. All multi-byte fields are big-endian. The
+    /// field map was verified byte-for-byte against a real CoolScan 9000 ED capture
+    /// — see docs/coolscan9000-command-set.md.
+    struct Capabilities {
+        var resXOptical: UInt16   // [18..19]  — optical X res (dpi)
+        var resXMax: UInt16       // [20..21]
+        var resXMin: UInt16       // [22..23]
+        var boundaryX: UInt32     // [36..39]  — max scan width  (device px @ optical)
+        var resYOptical: UInt16   // [40..41]  — optical Y res (dpi)
+        var resYMax: UInt16       // [42..43]
+        var resYMin: UInt16       // [44..45]
+        var boundaryY: UInt32     // [58..61]  — max scan height (device px @ optical)
+        var nFrames: UInt8        // [75]      — 0 when no holder is inserted
+        var focusMin: UInt16      // [76..77]
+        var focusMax: UInt16      // [78..79]
+        var maxBits: UInt8        // [82]      — max bit depth per channel
+
+        /// Values reported by the CoolScan 9000 ED (rev 1.02) — the fallback used
+        /// when the page can't be read, so geometry is never left undefined.
+        static let coolScan9000 = Capabilities(
+            resXOptical: 4000, resXMax: 4000, resXMin: 666,
+            boundaryX: 10000, resYOptical: 4000, resYMax: 4000, resYMin: 333,
+            boundaryY: 13860, nFrames: 0, focusMin: 0, focusMax: 450, maxBits: 16)
+    }
+
+    /// Parse the raw bytes returned by INQUIRY EVPD page 0xC1.
+    /// Returns nil if the buffer is too short to hold every field.
+    static func parseCapabilities(_ raw: Data) -> Capabilities? {
+        let b = [UInt8](raw)
+        guard b.count >= 83 else { return nil }
+        func u16(_ i: Int) -> UInt16 { (UInt16(b[i]) << 8) | UInt16(b[i + 1]) }
+        func u32(_ i: Int) -> UInt32 {
+            (UInt32(b[i]) << 24) | (UInt32(b[i + 1]) << 16)
+            | (UInt32(b[i + 2]) << 8) | UInt32(b[i + 3])
+        }
+        return Capabilities(
+            resXOptical: u16(18), resXMax: u16(20), resXMin: u16(22),
+            boundaryX: u32(36), resYOptical: u16(40), resYMax: u16(42),
+            resYMin: u16(44), boundaryY: u32(58), nFrames: b[75],
+            focusMin: u16(76), focusMax: u16(78), maxBits: b[82])
+    }
+
+    /// Read + parse the 0xC1 capability page in one call (header-first for length).
+    static func capabilities(_ s: SBP2Session) throws -> Capabilities {
+        let hdr = try pageInquiry(s, page: 0xC1, length: 5)
+        let hb = [UInt8](hdr.payload)
+        guard hdr.ok, hb.count >= 4 else { return .coolScan9000 }
+        let total = UInt8(min(4 + Int(hb[3]), 255))
+        let r = try pageInquiry(s, page: 0xC1, length: total)
+        return parseCapabilities(r.payload) ?? .coolScan9000
+    }
+
     // MARK: - Focus
 
     static func setFocus(_ s: SBP2Session, focus: UInt32) throws -> SCSIResult {
@@ -122,6 +179,30 @@ enum CoolScan {
         var exposure: UInt32        // ×10 ns; ignored for IR
         /// LS40/LS4000/LS50/LS5000 set CDB byte9 = 0x80. 8000/9000 use 0x00.
         var ls40Family: Bool = false
+    }
+
+    /// Build a full-frame `Window` driven by the device's reported capabilities
+    /// instead of hardcoded geometry. `res` is clamped to the optical maximum and,
+    /// when it divides the optical resolution evenly, the boundaries scale down by
+    /// the same factor (boundaryX/Y are in device px at optical resolution).
+    static func fullFrameWindow(_ caps: Capabilities, color: Color = .red,
+                                res: UInt16? = nil, depth: UInt8? = nil,
+                                negative: Bool = false) -> Window {
+        let r = min(res ?? caps.resXOptical, caps.resXMax)
+        // Scale the optical-resolution boundaries to the requested resolution.
+        let scaleNum = UInt32(max(r, 1))
+        let widthPx  = caps.boundaryX * scaleNum / UInt32(max(caps.resXOptical, 1))
+        let heightPx = caps.boundaryY * scaleNum / UInt32(max(caps.resYOptical, 1))
+        return Window(
+            color: color,
+            resX: r, resY: r,
+            xOffset: 0, yOffset: 0,
+            width: widthPx, height: heightPx,
+            depth: depth ?? caps.maxBits,
+            samplesPerScan: 1,
+            negative: negative,
+            kind: .normal,
+            exposure: 0)
     }
 
     /// Build the 58-byte SET WINDOW descriptor (see doc table for offsets).
