@@ -44,6 +44,7 @@ public:
         std::atomic<uint64_t> directTxUnderrunSilencedPackets{0};
         std::atomic<uint64_t> directTxInvalidPackets{0};
         std::atomic<uint64_t> directTxCursorResyncs{0};
+        std::atomic<uint64_t> directTxTimelineInvariantFailures{0};
     };
 
     /// Plain, RT-safe view of the ADK output stream memory + shared transport
@@ -134,7 +135,9 @@ private:
         uint32_t framesPerPacket{0};
         uint32_t pcmChannels{0};
         uint32_t am824Slots{0};
+        uint32_t packetIndex{0};
         Encoding::AudioWireFormat wireFormat{Encoding::AudioWireFormat::kAM824};
+        uint64_t timelineFirstFrame{0};
         PacketCipFields cip{};
     };
 
@@ -151,6 +154,7 @@ private:
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
     std::array<ProducedPacketMetadata, Tx::Layout::kNumPackets> producedPacketMetadata_{};
+    std::array<ProducedPacketMetadata, Tx::Layout::kNumPackets> previousPacketMetadata_{};
     uint8_t sid_{0};
 
     DirectTxRuntimeBinding directTxBinding_{};
@@ -159,7 +163,12 @@ private:
     ASFW::AudioEngine::Direct::AudioClockPublisher txClockPublisher_{};
     uint64_t directOutputFrameCursor_{0};
     bool directCursorInitialized_{false};
+    uint64_t txScheduledSampleFrame_{0};
     uint64_t txCompletedSampleFrame_{0};
+    uint64_t sourceTimelineOffsetFrames_{0};
+    uint64_t lastSourceFrame_{0};
+    uint64_t lastDiscontinuityGeneration_{0};
+    bool sourceTimelineAnchored_{false};
     uint64_t txEventGroupCount_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};

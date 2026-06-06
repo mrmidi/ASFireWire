@@ -51,6 +51,7 @@ struct TxPacketProductionResult {
     uint32_t quadlets{0};
     uint64_t syncAgeTicks{0};
     uint64_t underrunDistanceFrames{0};
+    uint32_t sourceReadStatus{0};
 };
 
 } // namespace ASFW::Audio::Runtime

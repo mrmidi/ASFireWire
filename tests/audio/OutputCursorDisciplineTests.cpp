@@ -29,13 +29,13 @@ TEST(OutputCursorDiscipline, WithinDeadbandDoesNotResync) {
     EXPECT_FALSE(DisciplineOutputCursor(nearOver, writtenEnd, kLead, kDeadband).resynced);
 }
 
-// Lead too small (cursor too close to writtenEnd -> underrun risk): rebase back.
-TEST(OutputCursorDiscipline, UnderrunSideRebasesToTarget) {
+// A producer-ahead underrun must not rewind the consumer.
+TEST(OutputCursorDiscipline, UnderrunSideNeverMovesBackward) {
     const uint64_t writtenEnd = 100000;
     const uint64_t cursor = writtenEnd - 100;  // lead 100 << target
     const auto r = DisciplineOutputCursor(cursor, writtenEnd, kLead, kDeadband);
-    EXPECT_TRUE(r.resynced);
-    EXPECT_EQ(r.newCursor, writtenEnd - kLead);
+    EXPECT_FALSE(r.resynced);
+    EXPECT_EQ(r.newCursor, cursor);
 }
 
 // Lead too large (cursor lagging too far): rebase forward to target.
@@ -47,13 +47,13 @@ TEST(OutputCursorDiscipline, OverLeadRebasesToTarget) {
     EXPECT_EQ(r.newCursor, writtenEnd - kLead);
 }
 
-// Cursor has overtaken writtenEnd entirely (severe underrun): always rebase.
-TEST(OutputCursorDiscipline, CursorPastWrittenEndRebases) {
+// Cursor past writtenEnd is an underrun, not permission to replay old data.
+TEST(OutputCursorDiscipline, CursorPastWrittenEndNeverMovesBackward) {
     const uint64_t writtenEnd = 100000;
     const uint64_t cursor = writtenEnd + 50;
     const auto r = DisciplineOutputCursor(cursor, writtenEnd, kLead, kDeadband);
-    EXPECT_TRUE(r.resynced);
-    EXPECT_EQ(r.newCursor, writtenEnd - kLead);
+    EXPECT_FALSE(r.resynced);
+    EXPECT_EQ(r.newCursor, cursor);
 }
 
 // Early startup: writtenEnd below the target lead clamps target to 0.
@@ -61,8 +61,7 @@ TEST(OutputCursorDiscipline, WrittenEndBelowTargetClampsToZero) {
     const uint64_t writtenEnd = 200;  // < kLead
     const uint64_t cursor = 0;
     const auto r = DisciplineOutputCursor(cursor, writtenEnd, kLead, kDeadband);
-    // lead = 200, target = 768 -> |200-768| = 568 > deadband -> resync to clamped 0
-    EXPECT_TRUE(r.resynced);
+    EXPECT_FALSE(r.resynced);
     EXPECT_EQ(r.newCursor, 0u);
 }
 
@@ -73,10 +72,30 @@ TEST(OutputCursorDiscipline, IsConstexpr) {
     static_assert(!rInBand.resynced, "232 < 256 deadband should not resync");
     static_assert(rInBand.newCursor == 99000, "cursor unchanged within deadband");
 
-    // lead = 100, target = 768, |diff| = 668 > deadband -> resync to writtenEnd-target.
+    // A cursor ahead of the target is retained even if the producer lead is small.
     constexpr auto rOut = DisciplineOutputCursor(99900, 100000, kLead, kDeadband);
-    static_assert(rOut.resynced, "668 > 256 deadband should resync");
-    static_assert(rOut.newCursor == 100000 - kLead, "rebase to target lead");
+    static_assert(!rOut.resynced, "forward-only discipline must not rewind");
+    static_assert(rOut.newCursor == 99900, "cursor remains monotonic");
     (void)rInBand;
     (void)rOut;
+}
+
+TEST(OutputCursorDiscipline, RepeatedWriteBurstsAndPacketConsumptionStayMonotonic) {
+    uint64_t cursor = 0;
+    uint64_t writtenEnd = 768;
+    uint64_t corrections = 0;
+
+    for (uint32_t burst = 0; burst < 64; ++burst) {
+        writtenEnd += 128;
+        for (uint32_t packet = 0; packet < 16; ++packet) {
+            const uint64_t before = cursor;
+            const auto r = DisciplineOutputCursor(cursor, writtenEnd, kLead, kDeadband);
+            EXPECT_GE(r.newCursor, before);
+            corrections += r.resynced ? 1U : 0U;
+            cursor = r.newCursor + 8;
+        }
+    }
+
+    EXPECT_EQ(corrections, 0U);
+    EXPECT_EQ(cursor, 64U * 128U);
 }

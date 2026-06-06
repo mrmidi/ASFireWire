@@ -25,6 +25,14 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txSytFfffPackets{0};
     std::atomic<uint64_t> txValidSytPackets{0};
     std::atomic<uint64_t> txPcmFramesEncoded{0};
+    std::atomic<uint64_t> txForwardCursorCorrections{0};
+    std::atomic<uint64_t> txPreventedBackwardCorrections{0};
+    std::atomic<uint64_t> txStaleOverwrittenReads{0};
+    std::atomic<uint64_t> txProducerAheadUnderruns{0};
+    std::atomic<uint64_t> txTimelineDiscontinuities{0};
+    std::atomic<uint64_t> txPcmNonzeroPackets{0};
+    std::atomic<uint64_t> txPcmAllZeroPackets{0};
+    std::atomic<uint64_t> txTimelineInvariantFailures{0};
 
     std::atomic<uint64_t> rxPackets{0};
     std::atomic<uint64_t> rxDecodedFrames{0};
@@ -53,6 +61,14 @@ struct AudioRtCounters final {
         txSytFfffPackets.store(0, std::memory_order_relaxed);
         txValidSytPackets.store(0, std::memory_order_relaxed);
         txPcmFramesEncoded.store(0, std::memory_order_relaxed);
+        txForwardCursorCorrections.store(0, std::memory_order_relaxed);
+        txPreventedBackwardCorrections.store(0, std::memory_order_relaxed);
+        txStaleOverwrittenReads.store(0, std::memory_order_relaxed);
+        txProducerAheadUnderruns.store(0, std::memory_order_relaxed);
+        txTimelineDiscontinuities.store(0, std::memory_order_relaxed);
+        txPcmNonzeroPackets.store(0, std::memory_order_relaxed);
+        txPcmAllZeroPackets.store(0, std::memory_order_relaxed);
+        txTimelineInvariantFailures.store(0, std::memory_order_relaxed);
 
         rxPackets.store(0, std::memory_order_relaxed);
         rxDecodedFrames.store(0, std::memory_order_relaxed);

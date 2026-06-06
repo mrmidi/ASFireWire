@@ -61,11 +61,14 @@ TxAudioPacketResult TxAudioPacketProcessor::BuildScratchPacket(const TxAudioPack
     result.readStatus = read.status;
 
     if (read.status != DirectTxReadStatus::kAvailable &&
-        read.status != DirectTxReadStatus::kUnderrun) {
+        read.status != DirectTxReadStatus::kUnderrun &&
+        read.status != DirectTxReadStatus::kStaleOverwritten) {
         return result;
     }
 
-    const bool useSilence = read.status == DirectTxReadStatus::kUnderrun;
+    const bool useSilence =
+        read.status == DirectTxReadStatus::kUnderrun ||
+        read.status == DirectTxReadStatus::kStaleOverwritten;
     const DirectTxPacketHeaderRequest header{
         .sid = request.sid,
         .am824Slots = am824Slots,

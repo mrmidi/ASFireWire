@@ -38,8 +38,13 @@ struct AudioTransportControlBlock final {
 
     std::atomic<uint64_t> playbackRingWriteFrame{0};
     std::atomic<uint64_t> playbackRingReadFrame{0};
+    std::atomic<uint64_t> playbackRingOldestValidFrame{0};
+    std::atomic<uint64_t> playbackRingDiscontinuityGeneration{0};
     std::atomic<uint64_t> playbackRingUnderruns{0};
     std::atomic<uint64_t> playbackRingOverruns{0};
+    std::atomic<uint64_t> txScheduledSampleFrame{0};
+    std::atomic<uint64_t> txCompletedSampleFrame{0};
+    std::atomic<uint64_t> txLastSourceFrame{0};
 
     std::atomic<uint64_t> captureRingWriteFrame{0};
     std::atomic<uint64_t> captureRingReadFrame{0};
@@ -120,8 +125,13 @@ struct AudioTransportControlBlock final {
 
         playbackRingWriteFrame.store(0, std::memory_order_release);
         playbackRingReadFrame.store(0, std::memory_order_release);
+        playbackRingOldestValidFrame.store(0, std::memory_order_release);
+        playbackRingDiscontinuityGeneration.store(0, std::memory_order_release);
         playbackRingUnderruns.store(0, std::memory_order_release);
         playbackRingOverruns.store(0, std::memory_order_release);
+        txScheduledSampleFrame.store(0, std::memory_order_release);
+        txCompletedSampleFrame.store(0, std::memory_order_release);
+        txLastSourceFrame.store(0, std::memory_order_release);
 
         captureRingWriteFrame.store(0, std::memory_order_release);
         captureRingReadFrame.store(0, std::memory_order_release);

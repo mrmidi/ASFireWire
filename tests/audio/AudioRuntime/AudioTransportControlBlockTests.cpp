@@ -28,6 +28,19 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.inputOverruns.store(3, std::memory_order_relaxed);
     control.outputUnderruns.store(4, std::memory_order_relaxed);
     control.discontinuities.store(5, std::memory_order_relaxed);
+    control.playbackRingOldestValidFrame.store(123, std::memory_order_relaxed);
+    control.playbackRingDiscontinuityGeneration.store(6, std::memory_order_relaxed);
+    control.txScheduledSampleFrame.store(456, std::memory_order_relaxed);
+    control.txCompletedSampleFrame.store(400, std::memory_order_relaxed);
+    control.txLastSourceFrame.store(408, std::memory_order_relaxed);
+    control.counters.txForwardCursorCorrections.store(1, std::memory_order_relaxed);
+    control.counters.txPreventedBackwardCorrections.store(2, std::memory_order_relaxed);
+    control.counters.txStaleOverwrittenReads.store(3, std::memory_order_relaxed);
+    control.counters.txProducerAheadUnderruns.store(4, std::memory_order_relaxed);
+    control.counters.txTimelineDiscontinuities.store(5, std::memory_order_relaxed);
+    control.counters.txPcmNonzeroPackets.store(6, std::memory_order_relaxed);
+    control.counters.txPcmAllZeroPackets.store(7, std::memory_order_relaxed);
+    control.counters.txTimelineInvariantFailures.store(8, std::memory_order_relaxed);
 
     control.ResetForStart();
 
@@ -60,6 +73,19 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.inputOverruns.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.outputUnderruns.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.discontinuities.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.playbackRingOldestValidFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.playbackRingDiscontinuityGeneration.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txScheduledSampleFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txLastSourceFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.counters.txForwardCursorCorrections.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txPreventedBackwardCorrections.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txProducerAheadUnderruns.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txTimelineDiscontinuities.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txPcmNonzeroPackets.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txPcmAllZeroPackets.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txTimelineInvariantFailures.load(std::memory_order_relaxed), 0U);
 }
 
 } // namespace

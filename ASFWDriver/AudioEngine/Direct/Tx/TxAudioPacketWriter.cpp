@@ -85,6 +85,7 @@ TxPacketProductionResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         .frameCount = request.frameCount,
         .channels = request.channels,
     });
+    result.sourceReadStatus = static_cast<uint32_t>(read.status);
 
     if (read.status == DirectTxReadStatus::kInvalidBinding ||
         read.status == DirectTxReadStatus::kInvalidRange) {
@@ -100,7 +101,9 @@ TxPacketProductionResult TxAudioPacketWriter::WritePacket(const TxAudioPacketWri
         return result;
     }
 
-    const bool useSilence = read.status == DirectTxReadStatus::kUnderrun;
+    const bool useSilence =
+        read.status == DirectTxReadStatus::kUnderrun ||
+        read.status == DirectTxReadStatus::kStaleOverwritten;
     const int32_t* inputFrames[kMaxDirectTxScratchFrames]{};
     if (!useSilence) {
         for (uint32_t frame = 0; frame < request.frameCount; ++frame) {

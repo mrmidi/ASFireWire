@@ -8,6 +8,11 @@
 #include "Hardware/HardwareInterface.hpp"
 #include "Hardware/OHCIDescriptors.hpp"
 
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <vector>
+
 using namespace ASFW::Isoch;
 using namespace ASFW::Isoch::Tx;
 using namespace ASFW::Isoch::Memory;
@@ -42,6 +47,76 @@ public:
         return pkt;
     }
 };
+
+class RecordingIsochMemory final : public IIsochDMAMemory {
+public:
+    enum class EventKind {
+        Publish,
+        Barrier,
+    };
+
+    struct Event {
+        EventKind kind;
+        const std::byte* address;
+        size_t length;
+    };
+
+    explicit RecordingIsochMemory(std::shared_ptr<IIsochDMAMemory> inner)
+        : inner_(std::move(inner)) {}
+
+    std::optional<ASFW::Shared::DMARegion> AllocateDescriptor(size_t size) override {
+        return inner_->AllocateDescriptor(size);
+    }
+
+    std::optional<ASFW::Shared::DMARegion> AllocatePayloadBuffer(size_t size) override {
+        return inner_->AllocatePayloadBuffer(size);
+    }
+
+    std::optional<ASFW::Shared::DMARegion> AllocateRegion(size_t size,
+                                                          size_t alignment) override {
+        return inner_->AllocateRegion(size, alignment);
+    }
+
+    uint64_t VirtToIOVA(const std::byte* virt) const noexcept override {
+        return inner_->VirtToIOVA(virt);
+    }
+
+    std::byte* IOVAToVirt(uint64_t iova) const noexcept override {
+        return inner_->IOVAToVirt(iova);
+    }
+
+    void PublishToDevice(const std::byte* address, size_t length) const noexcept override {
+        events.push_back(Event{EventKind::Publish, address, length});
+        inner_->PublishToDevice(address, length);
+    }
+
+    void PublishBarrier() const noexcept override {
+        events.push_back(Event{EventKind::Barrier, nullptr, 0});
+        inner_->PublishBarrier();
+    }
+
+    void FetchFromDevice(const std::byte* address, size_t length) const noexcept override {
+        inner_->FetchFromDevice(address, length);
+    }
+
+    size_t TotalSize() const noexcept override {
+        return inner_->TotalSize();
+    }
+
+    size_t AvailableSize() const noexcept override {
+        return inner_->AvailableSize();
+    }
+
+    mutable std::vector<Event> events;
+
+private:
+    std::shared_ptr<IIsochDMAMemory> inner_;
+};
+
+bool AddressInRegion(const std::byte* address, const ASFW::Shared::DMARegion& region) {
+    const auto* begin = reinterpret_cast<const std::byte*>(region.virtualBase);
+    return address >= begin && address < (begin + region.size);
+}
 
 } // namespace
 
@@ -105,4 +180,51 @@ TEST(IsochTxDmaRingTests, ResyncCycleTracking_BugDemonstration) {
     
     // With the bug fixed, we expect the correctly decoded cycle count 978.
     EXPECT_EQ(decodedHwCycle, 978u);
+}
+
+TEST(IsochTxDmaRingTests, PrimeAndRefillPublishPayloadThenBarrierThenDescriptor) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto concrete = MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
+    ASSERT_TRUE(concrete);
+    RecordingIsochMemory memory(concrete);
+
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(memory), kIOReturnSuccess);
+    const auto descriptorRegion = ring.Slab().DescriptorRegion();
+    const auto payloadRegion = ring.Slab().PayloadRegion();
+    DummyPacketProvider provider;
+
+    memory.events.clear();
+    const auto prime = ring.Prime(provider);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+    ASSERT_EQ(memory.events.size(), Layout::kNumPackets * 3U);
+    for (size_t i = 0; i < memory.events.size(); i += 3) {
+        EXPECT_EQ(memory.events[i].kind, RecordingIsochMemory::EventKind::Publish);
+        EXPECT_TRUE(AddressInRegion(memory.events[i].address, payloadRegion));
+        EXPECT_EQ(memory.events[i + 1].kind, RecordingIsochMemory::EventKind::Barrier);
+        EXPECT_EQ(memory.events[i + 2].kind, RecordingIsochMemory::EventKind::Publish);
+        EXPECT_TRUE(AddressInRegion(memory.events[i + 2].address, descriptorRegion));
+    }
+
+    memory.events.clear();
+    constexpr uint32_t kHwPacketIndex = 8;
+    const uint32_t commandPointer =
+        ring.Slab().GetDescriptorIOVA(kHwPacketIndex * Layout::kBlocksPerPacket) |
+        Layout::kBlocksPerPacket;
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        commandPointer);
+
+    const auto refill = ring.Refill(hw, 0, provider, nullptr, nullptr);
+    ASSERT_TRUE(refill.ok);
+    ASSERT_EQ(refill.refillPacketCount, 4U);
+    ASSERT_EQ(memory.events.size(), refill.refillPacketCount * 3U);
+    for (size_t i = 0; i < memory.events.size(); i += 3) {
+        EXPECT_EQ(memory.events[i].kind, RecordingIsochMemory::EventKind::Publish);
+        EXPECT_TRUE(AddressInRegion(memory.events[i].address, payloadRegion));
+        EXPECT_EQ(memory.events[i + 1].kind, RecordingIsochMemory::EventKind::Barrier);
+        EXPECT_EQ(memory.events[i + 2].kind, RecordingIsochMemory::EventKind::Publish);
+        EXPECT_TRUE(AddressInRegion(memory.events[i + 2].address, descriptorRegion));
+    }
 }

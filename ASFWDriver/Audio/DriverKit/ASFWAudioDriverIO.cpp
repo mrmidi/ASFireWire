@@ -6,6 +6,7 @@
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
+#include "../Runtime/PlaybackRingRange.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/DriverKit.h>
@@ -17,21 +18,33 @@ namespace {
 
 void PublishPlaybackRingWriteEnd(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                                  ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    const uint64_t writeStart =
+        control.client.outputWriteEndSampleFrame.load(std::memory_order_relaxed);
     const uint64_t writeEnd = control.client.OutputWrittenEndFrame();
     const uint64_t previous =
         control.playbackRingWriteFrame.load(std::memory_order_acquire);
-    if (writeEnd <= previous) {
+    const uint64_t previousOldest =
+        control.playbackRingOldestValidFrame.load(std::memory_order_acquire);
+    const uint64_t consumed =
+        control.playbackRingReadFrame.load(std::memory_order_acquire);
+    const uint32_t capacity = graph.memory.outputFrameCapacity;
+    const auto update = ASFW::Audio::Runtime::UpdatePlaybackRingRange(
+        previous, previousOldest, writeStart, writeEnd, consumed, capacity);
+    if (update.writtenEndFrame == previous) {
         return;
     }
 
-    control.playbackRingWriteFrame.store(writeEnd, std::memory_order_release);
-    const uint64_t read =
-        control.playbackRingReadFrame.load(std::memory_order_acquire);
-    const uint32_t capacity = graph.memory.outputFrameCapacity;
-    if (capacity != 0 && writeEnd > read && (writeEnd - read) > capacity) {
-        control.playbackRingReadFrame.store(writeEnd - capacity, std::memory_order_release);
+    control.playbackRingOldestValidFrame.store(update.oldestValidFrame,
+                                               std::memory_order_relaxed);
+    if (update.discontinuity) {
+        control.playbackRingDiscontinuityGeneration.fetch_add(1, std::memory_order_relaxed);
+        control.discontinuities.fetch_add(1, std::memory_order_relaxed);
+        control.counters.txTimelineDiscontinuities.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (update.overrun) {
         control.playbackRingOverruns.fetch_add(1, std::memory_order_relaxed);
     }
+    control.playbackRingWriteFrame.store(update.writtenEndFrame, std::memory_order_release);
 }
 
 void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
