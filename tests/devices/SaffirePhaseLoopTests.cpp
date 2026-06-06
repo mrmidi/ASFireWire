@@ -6,12 +6,28 @@
 #include "AudioWire/AMDTP/TimingUtils.hpp"
 #include "Isoch/Core/IsochEventGroup.hpp"
 #include "AudioEngine/DirectIsoch/Timing/SaffirePhaseLoop.hpp"
+#include "AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 
 using ASFW::Isoch::Core::IsTimingGroupBoundary;
 using ASFW::Isoch::Core::PreviousPacketIndex;
 using ASFW::AudioEngine::DirectIsoch::SaffireTxPhaseLoop;
 using ASFW::AudioEngine::DirectIsoch::TxPhaseGroupUpdate;
+using ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge;
+using ASFW::AudioEngine::DirectIsoch::ExternalSyncClockState;
 using ASFW::Isoch::Core::TimingGroupPacketCount48k;
+
+namespace {
+// A device presentation phase carrying the device's fixed sub-cycle offset (the
+// constant 0x0b0 the Saffire holds on the wire), at an arbitrary cycle.
+constexpr int64_t kDeviceSubCycleOffset = 0x0b0;
+int64_t DevicePhaseAt(uint32_t cycle) noexcept {
+    return ASFW::Timing::tstampToOffsets(0, cycle, kDeviceSubCycleOffset);
+}
+}  // namespace
+
+// ===========================================================================
+// Pre-lock (no device clock yet): free-run a transfer-delay ahead of transmit.
+// ===========================================================================
 
 TEST(SaffirePhaseLoop, EmitsNoInfoBeforeFirstHardwareGroup) {
     SaffireTxPhaseLoop loop;
@@ -24,19 +40,17 @@ TEST(SaffirePhaseLoop, EmitsNoInfoBeforeFirstHardwareGroup) {
     EXPECT_EQ(packet.syt, 0xFFFFu);
 }
 
-// Seed comes from the FIRST EmitPacket's per-packet cycle, not the coarse group
-// cycle BeginGroup is handed. Here BeginGroup is given a wildly different cycle; the
-// phase still lands kInitialLeadTicks ahead of the per-packet cycle.
-TEST(SaffirePhaseLoop, FirstEmitSeedsLeadFromPacketCycleNotGroupCycle) {
+// Before the device clock is recovered the SYT seeds a transfer-delay ahead of the
+// per-packet transmit cycle, so the device has a coherent ramp to start locking onto.
+TEST(SaffirePhaseLoop, PreLockSeedsTransferDelayAheadOfTransmit) {
     SaffireTxPhaseLoop loop;
     const int64_t projected = ASFW::Timing::tstampToOffsets(0, 978, 0);
 
-    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = projected - 99999});
+    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = projected, .recoveredValid = false});
     const auto packet = loop.EmitPacket(projected, ASFW::Timing::kSytPacketStepTicks48k);
 
     EXPECT_TRUE(packet.phaseValid);
     EXPECT_TRUE(packet.leadAccepted);
-    EXPECT_EQ(packet.leadTicks, SaffireTxPhaseLoop::kInitialLeadTicks);
     EXPECT_EQ(packet.phaseTicks,
               ASFW::Timing::normalizeOffsetDomain(projected + SaffireTxPhaseLoop::kInitialLeadTicks));
     EXPECT_EQ(packet.syt, SaffireTxPhaseLoop::EncodeOffsetTicksToSyt(
@@ -46,7 +60,7 @@ TEST(SaffirePhaseLoop, FirstEmitSeedsLeadFromPacketCycleNotGroupCycle) {
 TEST(SaffirePhaseLoop, PacketEmitAdvancesByCadenceRingDelta) {
     SaffireTxPhaseLoop loop;
     const int64_t projected = ASFW::Timing::tstampToOffsets(0, 100, 0);
-    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = projected});
+    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = projected, .recoveredValid = false});
 
     const auto first = loop.EmitPacket(projected, /*cadenceDeltaTicks=*/4096);
     const auto second = loop.EmitPacket(projected + 4096, /*cadenceDeltaTicks=*/4096);
@@ -56,126 +70,152 @@ TEST(SaffirePhaseLoop, PacketEmitAdvancesByCadenceRingDelta) {
     EXPECT_EQ(second.phaseTicks, ASFW::Timing::normalizeOffsetDomain(first.phaseTicks + 4096));
 }
 
-// The recovered device offset lives in a foreign (device-clock) origin and must NOT
-// move the presentation phase, even with recoveredValid=true.
-TEST(SaffirePhaseLoop, RecoveredDeviceOffsetDoesNotAffectPhase) {
+// ===========================================================================
+// Device-slaved sub-cycle: cycle nibble from OUR transmit cycle, sub-cycle offset
+// grafted from the recovered device clock.
+// ===========================================================================
+
+// The emitted SYT takes its CYCLE nibble from our own transmit cycle (+lead) and its
+// sub-cycle OFFSET from the device's recovered phase — never the device's arbitrary
+// absolute cycle.
+TEST(SaffirePhaseLoop, GraftsDeviceSubCycleOntoBusCycle) {
     SaffireTxPhaseLoop loop;
     const int64_t projected = ASFW::Timing::tstampToOffsets(0, 100, 0);
+    const int64_t devTarget = DevicePhaseAt(900);  // arbitrary device origin, sub-cycle 0x0b0
+
     loop.BeginGroup(TxPhaseGroupUpdate{
         .projectedOffsetTicks = projected,
-        .recoveredDeviceOffsetTicks = ASFW::Timing::tstampToOffsets(0, 5000, 1234),
+        .recoveredDeviceOffsetTicks = devTarget,
         .recoveredValid = true,
     });
     const auto packet = loop.EmitPacket(projected, ASFW::Timing::kSytPacketStepTicks48k);
 
-    EXPECT_EQ(packet.phaseTicks,
-              ASFW::Timing::normalizeOffsetDomain(projected + SaffireTxPhaseLoop::kInitialLeadTicks));
+    EXPECT_TRUE(packet.leadAccepted);
+    // Sub-cycle offset comes from the device.
+    const int64_t cyc = ASFW::Timing::kTicksPerCycle;
+    EXPECT_EQ(packet.syt & 0x0FFFu, static_cast<uint16_t>(devTarget % cyc));
+    // Cycle nibble comes from our transmit cycle + lead, NOT the device's origin.
+    const uint16_t busSyt = SaffireTxPhaseLoop::EncodeOffsetTicksToSyt(
+        projected + SaffireTxPhaseLoop::kInitialLeadTicks);
+    EXPECT_EQ((packet.syt >> 12) & 0x0Fu, (busSyt >> 12) & 0x0Fu);
+}
+
+// THE regression for the field bug: across the device's cycle-quantized blocking
+// cadence the emitted SYT must hold the device's CONSTANT sub-cycle offset (0x0b0) —
+// the original bug emitted offset 0x000 (cycle-quantized, no device sub-cycle) and the
+// device's clock recovery turned the drift into garbage.
+TEST(SaffirePhaseLoop, SlavedSytHoldsDeviceConstantSubCycleOffset) {
+    SaffireTxPhaseLoop loop;
+    const int64_t projected = ASFW::Timing::tstampToOffsets(0, 50, 0);
+    loop.BeginGroup(TxPhaseGroupUpdate{
+        .projectedOffsetTicks = projected,
+        .recoveredDeviceOffsetTicks = DevicePhaseAt(900),
+        .recoveredValid = true,
+    });
+
+    // Drive the real blocking cadence on the transmit cycle: 3 data packets stepping one
+    // cycle, then +2 cycles across the nodata gap.
+    constexpr int64_t kCadence[] = {ASFW::Timing::kTicksPerCycle,
+                                    ASFW::Timing::kTicksPerCycle,
+                                    2 * ASFW::Timing::kTicksPerCycle};
+
+    int64_t transmit = projected;
+    for (int i = 0; i < 60; ++i) {
+        const auto pkt = loop.EmitPacket(ASFW::Timing::normalizeOffsetDomain(transmit), kCadence[i % 3]);
+        ASSERT_TRUE(pkt.leadAccepted) << "packet " << i;
+        ASSERT_NE(pkt.syt, 0xFFFFu) << "packet " << i;
+        EXPECT_EQ(pkt.syt & 0x0FFFu, kDeviceSubCycleOffset)
+            << "sub-cycle offset must hold the device constant, not 0x000 (packet " << i << ")";
+        transmit += kCadence[i % 3];
+    }
 }
 
 // ===========================================================================
-// THE regression test for the field bug: the emitted SYT must advance SMOOTHLY by
-// the sample cadence (4096 ticks/packet), carrying sub-cycle offsets — NOT snap to
-// whole-cycle boundaries (offset always 0, stepping 3072/6144). The latter is what
-// the device's clock recovery saw on the wire and turned into garbage audio.
-//
-// This drives the loop the way the pipeline does: `projected` is the CYCLE-QUANTIZED
-// transmit cycle (offset always 0), stepping 1 or 2 cycles to average the 4/3 data-
-// packet cadence. The previous per-packet "servo" snapped onto that quantized cycle
-// every packet; this test fails hard on that code and passes on the free-run loop.
+// Integration: the FULL RX→TX path through the production recovery code.
+// Feed a synthetic Saffire device SYT stream into ExternalSyncClockState /
+// ExternalSyncBridge (the real cadence-ring + recovered-offset recovery), then run
+// SaffireTxPhaseLoop off the recovered clock exactly as IsochAudioTxPipeline does, and
+// assert the host SYT reproduces the device's constant sub-cycle offset. This is the
+// test that would have caught the smooth-4096 misdiagnosis: it exercises the real
+// wiring, not hand-fed phase inputs.
 // ===========================================================================
-TEST(SaffirePhaseLoop, SytAdvancesSmoothlyByCadenceDespiteCycleQuantizedProjected) {
-    SaffireTxPhaseLoop loop;
-    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = 0});
 
-    constexpr int64_t kCadence = int64_t(ASFW::Timing::kSytPacketStepTicks48k); // 4096
-    uint16_t prevSyt = 0;
-    bool havePrev = false;
-    bool sawNonZeroOffset = false;
-
-    for (int i = 0; i < 256; ++i) {
-        // Cycle-quantized transmit cycle: 1.333 cycles/packet on average, integer
-        // cycles only (sub-cycle offset always 0), exactly like request.transmitCycle.
-        const uint32_t cycle =
-            static_cast<uint32_t>((static_cast<int64_t>(i) * 4) / 3) % ASFW::Timing::kCyclesPerSecond;
-        const int64_t projected = ASFW::Timing::tstampToOffsets(0, cycle, 0);
-
-        const auto pkt = loop.EmitPacket(projected, kCadence);
-        ASSERT_TRUE(pkt.leadAccepted);
-        ASSERT_NE(pkt.syt, 0xFFFFu);
-
-        if ((pkt.syt & 0x0FFFu) != 0u) {
-            sawNonZeroOffset = true;
-        }
-        if (havePrev) {
-            EXPECT_EQ(ASFW::Timing::SYTDiffInOffsets(pkt.syt, prevSyt), kCadence)
-                << "SYT must step by the smooth cadence, not snap to whole cycles (packet " << i << ")";
-        }
-        prevSyt = pkt.syt;
-        havePrev = true;
+namespace {
+// One blocking-mode device packet: NODATA on every 4th bus cycle, otherwise a data
+// packet presenting at a CONSTANT sub-cycle offset (0x0b0) at cycle = bus + lead.
+uint16_t DevicePacketSyt(uint32_t busCycle) noexcept {
+    constexpr uint32_t kDeviceLeadCycles = 4;
+    if ((busCycle % 4u) == 3u) {
+        return 0xFFFFu;  // NODATA
     }
-
-    // The bug pinned every SYT offset to 0x000; the fix progresses through offsets.
-    EXPECT_TRUE(sawNonZeroOffset);
+    return SaffireTxPhaseLoop::EncodeOffsetTicksToSyt(
+        ASFW::Timing::tstampToOffsets(0, busCycle + kDeviceLeadCycles, kDeviceSubCycleOffset));
 }
+}  // namespace
 
-// The free-run must NOT re-sync on the per-packet quantization swing, but MUST
-// re-sync on real multi-cycle desync.
-TEST(SaffirePhaseLoop, ResyncsOnlyOnGrossDesyncNotPerPacketSwing) {
-    SaffireTxPhaseLoop loop;
-    const int64_t projected = 100000;
-    const int64_t seed = projected + SaffireTxPhaseLoop::kInitialLeadTicks;
-    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = projected});
-    loop.EmitPacket(projected, ASFW::Timing::kSytPacketStepTicks48k); // seed, then advance by one step
+TEST(TxSyncRecoveryIntegration, HostSytReproducesDeviceConstantOffsetThroughRecovery) {
+    ExternalSyncBridge bridge;
+    ExternalSyncClockState rx;
+    bridge.active.store(true, std::memory_order_release);
 
-    // A within-a-cycle swing must NOT snap: emit one cycle ahead, err well under the
-    // re-sync band → phase keeps free-running, unchanged (seed advanced by one step).
-    const auto small = loop.EmitPacket(projected + ASFW::Timing::kTicksPerCycle,
-                                       ASFW::Timing::kSytPacketStepTicks48k);
-    EXPECT_EQ(small.phaseTicks,
-              ASFW::Timing::normalizeOffsetDomain(seed + ASFW::Timing::kSytPacketStepTicks48k));
+    uint32_t deviceBusCycle = 200;
+    uint64_t hostTicks = 100'000;
+    auto feedDevicePacket = [&]() {
+        rx.ObserveSample(bridge, hostTicks, DevicePacketSyt(deviceBusCycle),
+                         ExternalSyncBridge::kFdf48k, /*dbs=*/17);
+        ++deviceBusCycle;
+        hostTicks += ASFW::Timing::kTicksPerCycle;
+    };
 
-    // A gross multi-cycle desync re-syncs back to the target lead.
-    const auto gross = loop.EmitPacket(projected + 100000, ASFW::Timing::kSytPacketStepTicks48k);
-    EXPECT_EQ(gross.leadTicks, SaffireTxPhaseLoop::kInitialLeadTicks);
-    EXPECT_EQ(gross.phaseTicks,
-              ASFW::Timing::normalizeOffsetDomain((projected + 100000) +
-                                                  SaffireTxPhaseLoop::kInitialLeadTicks));
-}
-
-// Under ppm cadence drift the phase keeps emitting a valid SYT every packet, the SYT
-// stays smooth (steps by the cadence) except for the rare gross-desync re-sync, and
-// the lead stays bounded.
-TEST(SaffirePhaseLoop, SytStaysSmoothAndBoundedUnderPpmDrift) {
-    SaffireTxPhaseLoop loop;
-
-    constexpr int64_t kStep = int64_t(ASFW::Timing::kSytPacketStepTicks48k);
-    const int64_t cadenceFast = kStep + 2; // device phase advances faster than bus cycle
-
-    int64_t projected = 1'000'000;
-    loop.BeginGroup(TxPhaseGroupUpdate{.projectedOffsetTicks = projected});
-
-    int64_t maxAbsLeadErr = 0;
-    int resyncGlitches = 0;
-    uint16_t prevSyt = 0;
-    bool havePrev = false;
-    for (int i = 0; i < 5000; ++i) {
-        const auto pkt = loop.EmitPacket(projected, cadenceFast);
-        ASSERT_NE(pkt.syt, 0xFFFFu);
-        const int64_t err = pkt.leadTicks - SaffireTxPhaseLoop::kInitialLeadTicks;
-        maxAbsLeadErr = std::max(maxAbsLeadErr, err < 0 ? -err : err);
-        if (havePrev && ASFW::Timing::SYTDiffInOffsets(pkt.syt, prevSyt) != cadenceFast) {
-            ++resyncGlitches; // the rare gross-desync correction
-        }
-        prevSyt = pkt.syt;
-        havePrev = true;
-        projected = ASFW::Timing::normalizeOffsetDomain(projected + kStep);
+    // Warm the recovery up to establishment (cadence ring needs 512 deltas).
+    int fed = 0;
+    while (!bridge.ReadCadenceSnapshot().established && fed < 5000) {
+        feedDevicePacket();
+        ++fed;
     }
+    auto snap = bridge.ReadCadenceSnapshot();
+    ASSERT_TRUE(snap.established) << "RX recovery never established (fed " << fed << ")";
 
-    // Lead never wanders past the re-sync band, and re-syncs are rare (a handful over
-    // 5000 packets), so the SYT is overwhelmingly smooth.
-    EXPECT_LE(maxAbsLeadErr, SaffireTxPhaseLoop::kResyncBandTicks);
-    EXPECT_LT(resyncGlitches, 10);
+    // The recovered device phase itself carries the constant sub-cycle offset.
+    EXPECT_EQ(SaffireTxPhaseLoop::EncodeOffsetTicksToSyt(snap.recoveredDeviceOffsetTicks) & 0x0FFFu,
+              static_cast<uint16_t>(kDeviceSubCycleOffset));
+
+    // Run the TX phase loop off the recovered clock, advancing the device clock in
+    // lockstep (interleaved RX feed) the way the live pipeline does.
+    SaffireTxPhaseLoop loop;
+    loop.SeedCadenceReadIndex(snap.writeIndex);
+
+    int64_t projTicks = ASFW::Timing::tstampToOffsets(0, 300, 0);
+    bool sawLockedPacket = false;
+    for (int grp = 0; grp < 32; ++grp) {
+        for (int k = 0; k < 8; ++k) {  // advance the device clock ~one group
+            feedDevicePacket();
+        }
+        snap = bridge.ReadCadenceSnapshot();
+        loop.BeginGroup(TxPhaseGroupUpdate{
+            .projectedOffsetTicks = ASFW::Timing::normalizeOffsetDomain(projTicks),
+            .recoveredDeviceOffsetTicks = snap.recoveredDeviceOffsetTicks,
+            .recoveredValid = snap.established,
+        });
+        for (int p = 0; p < 6; ++p) {  // ~6 data packets per group at 48k blocking
+            const uint16_t delta = bridge.ReadCadenceDelta(loop.CadenceReadIndex());
+            const auto pkt = loop.EmitPacket(ASFW::Timing::normalizeOffsetDomain(projTicks), delta);
+            projTicks += delta;  // transmit cycle tracks device rate → lead stays in window
+            if (!pkt.leadAccepted) {
+                continue;
+            }
+            sawLockedPacket = true;
+            EXPECT_EQ(pkt.syt & 0x0FFFu, static_cast<uint16_t>(kDeviceSubCycleOffset))
+                << "host SYT must reproduce the device constant sub-cycle offset (grp "
+                << grp << " pkt " << p << ")";
+        }
+    }
+    EXPECT_TRUE(sawLockedPacket);
 }
+
+// ===========================================================================
+// Timing-group helpers (unchanged).
+// ===========================================================================
 
 TEST(IsochEventGroup, SaffireTimingGroupIsEightPackets) {
     EXPECT_EQ(TimingGroupPacketCount48k(), 8u);
