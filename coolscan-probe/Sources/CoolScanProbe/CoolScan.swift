@@ -47,6 +47,18 @@ enum CoolScan {
         return false
     }
 
+    /// MODE SELECT(6) — set the base resolution unit (1/unitDpi inch) that all
+    /// SET WINDOW offsets/extents are then expressed in. coolscan3 sets
+    /// `unit_dpi = resx_max` (the optical max, 4000 on the 9000).
+    static func modeSelect(_ s: SBP2Session, unitDpi: UInt16) throws -> SCSIResult {
+        // 20-byte parameter list; the unit dpi is a BE word at offset 18.
+        var p: [UInt8] = [0, 0, 0, 0, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x03, 0x06, 0, 0]
+        p += be16(unitDpi)
+        p += [0, 0]
+        return try s.sendSCSI(cdb: [0x15, 0x10, 0x00, 0x00, UInt8(p.count), 0x00],
+                              direction: .toTarget, transferLength: UInt32(p.count), outgoing: p)
+    }
+
     static func reserve(_ s: SBP2Session) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0x16, 0, 0, 0, 0, 0], direction: .none)
     }
@@ -181,28 +193,57 @@ enum CoolScan {
         var ls40Family: Bool = false
     }
 
-    /// Build a full-frame `Window` driven by the device's reported capabilities
-    /// instead of hardcoded geometry. `res` is clamped to the optical maximum and,
-    /// when it divides the optical resolution evenly, the boundaries scale down by
-    /// the same factor (boundaryX/Y are in device px at optical resolution).
-    static func fullFrameWindow(_ caps: Capabilities, color: Color = .red,
-                                res: UInt16? = nil, depth: UInt8? = nil,
-                                negative: Bool = false) -> Window {
-        let r = min(res ?? caps.resXOptical, caps.resXMax)
-        // Scale the optical-resolution boundaries to the requested resolution.
-        let scaleNum = UInt32(max(r, 1))
-        let widthPx  = caps.boundaryX * scaleNum / UInt32(max(caps.resXOptical, 1))
-        let heightPx = caps.boundaryY * scaleNum / UInt32(max(caps.resYOptical, 1))
-        return Window(
-            color: color,
-            resX: r, resY: r,
-            xOffset: 0, yOffset: 0,
-            width: widthPx, height: heightPx,
-            depth: depth ?? caps.maxBits,
-            samplesPerScan: 1,
-            negative: negative,
-            kind: .normal,
-            exposure: 0)
+    /// Resolved scan geometry, following coolscan3's `cs3_convert_options`.
+    /// SET WINDOW expresses offsets/extents in **device units** (1/`resXMax`″) and
+    /// resolution as **absolute dpi** (which snaps to `resXMax / integer pitch`).
+    struct ScanGeometry {
+        var realResX: UInt16, realResY: UInt16   // snapped dpi sent in SET WINDOW
+        var pitchX: UInt32, pitchY: UInt32        // resMax / realRes
+        var xOffsetDU: UInt32, yOffsetDU: UInt32   // device units
+        var widthDU: UInt32, heightDU: UInt32      // device units (window field)
+        var logicalWidth: UInt32, logicalHeight: UInt32  // output pixels
+        var depth: UInt8
+        var nColors: Int
+
+        var bytesPerPixel: Int { depth > 8 ? 2 : 1 }
+        /// Each scanline carries all colour planes back-to-back (line-sequential),
+        /// each padded to an even byte count.
+        var oddPadding: Int { (Int(logicalWidth) * bytesPerPixel) % 2 == 1 ? 1 : 0 }
+        var bytesPerLine: Int { nColors * (Int(logicalWidth) * bytesPerPixel + oddPadding) }
+        var totalBytes: Int { bytesPerLine * Int(logicalHeight) }
+    }
+
+    /// Resolve a scan area (in device units, 1/`resXMax`″) at a requested resolution
+    /// into a `ScanGeometry`. Defaults to the full reported boundary.
+    static func geometry(_ caps: Capabilities, resolution: UInt16,
+                         depth: UInt8? = nil, infrared: Bool = false,
+                         xOffsetDU: UInt32 = 0, yOffsetDU: UInt32 = 0,
+                         widthDU: UInt32? = nil, heightDU: UInt32? = nil) -> ScanGeometry {
+        let resMaxX = UInt32(max(caps.resXMax, 1)), resMaxY = UInt32(max(caps.resYMax, 1))
+        let pitchX = max(1, resMaxX / UInt32(max(resolution, 1)))
+        let pitchY = max(1, resMaxY / UInt32(max(resolution, 1)))
+        let realResX = UInt16(resMaxX / pitchX)        // snapped to a divisor of resMax
+        let realResY = UInt16(resMaxY / pitchY)
+        let extentX = widthDU ?? caps.boundaryX
+        let extentY = heightDU ?? caps.boundaryY
+        let logW = max(1, extentX / pitchX)
+        let logH = max(1, extentY / pitchY)
+        return ScanGeometry(
+            realResX: realResX, realResY: realResY,
+            pitchX: pitchX, pitchY: pitchY,
+            xOffsetDU: xOffsetDU, yOffsetDU: yOffsetDU,
+            widthDU: logW * pitchX, heightDU: logH * pitchY,
+            logicalWidth: logW, logicalHeight: logH,
+            depth: depth ?? caps.maxBits, nColors: infrared ? 4 : 3)
+    }
+
+    /// Build the per-colour `Window` for a resolved geometry.
+    static func window(_ g: ScanGeometry, color: Color, negative: Bool = false) -> Window {
+        Window(color: color, resX: g.realResX, resY: g.realResY,
+               xOffset: g.xOffsetDU, yOffset: g.yOffsetDU,
+               width: g.widthDU, height: g.heightDU,
+               depth: g.depth, samplesPerScan: 1,
+               negative: negative, kind: .normal, exposure: 0)
     }
 
     /// Build the 58-byte SET WINDOW descriptor (see doc table for offsets).
@@ -264,6 +305,73 @@ enum CoolScan {
                               transferLength: length, timeoutMs: 30_000)
     }
 
-    // TODO: sendLUT (0x2a 00 03 …), setBoundary (0x2a 00 88 …), modeSelect (0x15 …)
-    //       — needed for full scans; deferred until the read path is proven.
+    // TODO: sendLUT (0x2a 00 03 …), setBoundary (0x2a 00 88 …)
+    //       — sendLUT may be required for "normal" (non-raw) scans; setBoundary is
+    //       for medium-format multi-frame holders. Both deferred: FH-835S 35 mm is
+    //       a single frame, and we want the raw read path proven first.
+
+    // MARK: - Scan orchestration (cs3_scan, minimal proof-of-read path)
+
+    /// Raw result of a scan: the geometry used plus the unprocessed byte stream
+    /// exactly as the scanner delivered it (line-sequential colour planes).
+    struct ScanResult {
+        let geometry: ScanGeometry
+        let raw: Data
+        var expectedBytes: Int { geometry.totalBytes }
+        var complete: Bool { raw.count >= expectedBytes }
+    }
+
+    /// Run the minimal proven scan path: wait-ready → MODE SELECT → SET WINDOW per
+    /// colour → SCAN → READ(10) loop. Returns the raw byte stream for offline
+    /// inspection (we do NOT yet assume the pixel/byte layout — see ScanGeometry).
+    ///
+    /// `progress` is called as bytes arrive so the caller can show a bar.
+    /// NOTE (unvalidated on hardware): SEND LUT and SET FOCUS are intentionally
+    /// skipped — if the scanner refuses to produce data without a LUT, that's the
+    /// first thing to add.
+    static func scanFrame(_ s: SBP2Session, caps: Capabilities,
+                          resolution: UInt16, depth: UInt8? = nil,
+                          infrared: Bool = false, negative: Bool = false,
+                          maxChunkBytes: Int = 0x40000,
+                          readTimeoutMs: UInt32 = 30_000,
+                          progress: ((Int, Int) -> Void)? = nil) throws -> ScanResult {
+        let g = geometry(caps, resolution: resolution, depth: depth, infrared: infrared)
+
+        // 1) Wait until the scanner reports ready (film loaded, lamp warm).
+        guard try waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (TUR-timeout)") }
+
+        // 2) Set the measurement unit, then a window per colour channel.
+        _ = try modeSelect(s, unitDpi: caps.resXMax)
+        let colors: [Color] = infrared ? [.red, .green, .blue, .infrared] : [.red, .green, .blue]
+        for c in colors {
+            let r = try setWindow(s, window(g, color: c, negative: negative))
+            guard r.ok else {
+                throw ProbeError("SET WINDOW (\(c)) avvist: transport=\(r.transportStatus) sbp=\(r.sbpStatus)")
+            }
+        }
+
+        // 3) Trigger the scan.
+        let scanR = try scan(s, infrared: infrared)
+        guard scanR.ok else {
+            throw ProbeError("SCAN avvist: transport=\(scanR.transportStatus) sbp=\(scanR.sbpStatus)")
+        }
+
+        // 4) Pull the image as a byte stream, in whole-line chunks.
+        let linesPerChunk = max(1, maxChunkBytes / max(g.bytesPerLine, 1))
+        let chunkBytes = UInt32(linesPerChunk * g.bytesPerLine)
+        var raw = Data(capacity: g.totalBytes)
+        while raw.count < g.totalBytes {
+            let remaining = g.totalBytes - raw.count
+            let want = UInt32(min(Int(chunkBytes), remaining))
+            let r = try readData(s, length: want)
+            guard r.ok else {
+                throw ProbeError("READ(10) avvist ved \(raw.count)/\(g.totalBytes) byte: "
+                    + "transport=\(r.transportStatus) sbp=\(r.sbpStatus)")
+            }
+            if r.payload.isEmpty { break } // short read — scanner says done
+            raw.append(r.payload)
+            progress?(raw.count, g.totalBytes)
+        }
+        return ScanResult(geometry: g, raw: raw)
+    }
 }

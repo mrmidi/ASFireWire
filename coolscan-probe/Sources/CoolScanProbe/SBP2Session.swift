@@ -114,6 +114,18 @@ final class SBP2Session {
                 return parseResult(data)
             } catch let e as ProbeError where e.description.contains("Not Found") {
                 usleep(50_000) // 50 ms — not ready yet
+            } catch {
+                // Non-NotFound failure. Probe whether the dext is still alive so we
+                // can tell a clean synchronous error apart from a crash artifact.
+                let alive: String
+                do {
+                    let (out, _) = try conn.call(.getSBP2SessionState, scalarIn: [handle],
+                                                 scalarOutCount: 5)
+                    alive = "dext SVARER (state=\(out.first.map { ASFW.LoginState(raw: $0).label } ?? "?"))"
+                } catch let live {
+                    alive = "dext SVARER IKKE (\(live)) → krasjet/respawn"
+                }
+                throw ProbeError("getResult feilet: \(error) — likviditetssjekk: \(alive)")
             }
         }
         throw ProbeError("SCSI-kommando timeout (ingen resultat)")

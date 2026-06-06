@@ -97,6 +97,32 @@ func run() -> Int32 {
         print("⚠️  TEST UNIT READY feilet: \(error)")
     }
 
+    // SCAN mode: «CoolScanProbe scan [dpi]» runs the minimal scan path and dumps
+    // the raw byte stream for offline inspection. Default 500 dpi (fast, ~13 MB).
+    if CommandLine.arguments.contains("scan") {
+        let dpi = scanDpiArg() ?? 500
+        do {
+            let caps = try CoolScan.capabilities(session)
+            print("\nKapabiliteter: optisk \(caps.resXOptical) dpi, areal "
+                + "\(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
+            let g = CoolScan.geometry(caps, resolution: dpi)
+            print("Skann @ \(g.realResX)×\(g.realResY) dpi → \(g.logicalWidth)×\(g.logicalHeight) px, "
+                + "\(g.nColors) kanaler, \(g.bytesPerPixel)B/px → \(g.totalBytes) byte forventet.")
+            var lastPct = -1
+            let result = try CoolScan.scanFrame(session, caps: caps, resolution: dpi) { got, total in
+                let pct = total > 0 ? got * 100 / total : 0
+                if pct != lastPct { lastPct = pct; FileHandle.standardError.write(Data("\r  les \(pct)% (\(got)/\(total) byte)".utf8)) }
+            }
+            FileHandle.standardError.write(Data("\n".utf8))
+            try saveScan(result)
+            print(result.complete ? "✅ Skann komplett." : "⚠️  Kort skann (\(result.raw.count)/\(result.expectedBytes) byte).")
+        } catch {
+            print("❌ Skann feilet: \(error)")
+            return 8
+        }
+        return 0
+    }
+
     // Diagnostics (REQUEST SENSE + EVPD 0xC1) are opt-in: they can wedge the
     // command pipeline on some firmware, which then blocks a clean LOGOUT. Run
     // `CoolScanProbe diag` to enable. Default stays a clean login→inquiry→logout.
@@ -185,6 +211,41 @@ func run() -> Int32 {
 
     print("\nFerdig. Hvis INQUIRY viser «Nikon … LS-9000» er transportlaget bevist — neste steg er CoolScan-kommandosettet.")
     return 0
+}
+
+/// Parse an optional dpi argument following «scan» (e.g. «scan 1000»).
+func scanDpiArg() -> UInt16? {
+    let args = CommandLine.arguments
+    guard let i = args.firstIndex(of: "scan"), i + 1 < args.count,
+          let v = UInt16(args[i + 1]) else { return nil }
+    return v
+}
+
+/// Save the raw scan stream + a sidecar describing the geometry, so the byte/colour
+/// layout can be confirmed offline before we commit to a TIFF writer.
+func saveScan(_ r: CoolScan.ScanResult) throws {
+    let g = r.geometry
+    let base = "coolscan-\(g.realResX)dpi-\(g.logicalWidth)x\(g.logicalHeight)-\(g.nColors)ch-\(g.depth)bit"
+    let binURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent(base + ".raw")
+    try r.raw.write(to: binURL)
+    let sidecar = """
+    CoolScan 9000 raw scan
+    resolution    : \(g.realResX) x \(g.realResY) dpi (pitch \(g.pitchX)/\(g.pitchY))
+    logical pixels: \(g.logicalWidth) x \(g.logicalHeight)
+    channels      : \(g.nColors)  (line-sequential planes, order R,G,B[,IR])
+    bytes/pixel   : \(g.bytesPerPixel)  (depth \(g.depth) bit)
+    bytes/line    : \(g.bytesPerLine)  (incl. \(g.oddPadding)B odd-padding per plane)
+    expected bytes: \(g.totalBytes)
+    received bytes: \(r.raw.count)\(r.complete ? "" : "  ⚠️ SHORT")
+
+    Layout is UNCONFIRMED on hardware. To view: interpret as \(g.nColors) planes of
+    \(g.logicalWidth)x\(g.logicalHeight), \(g.bytesPerPixel == 2 ? "16-bit big-endian" : "8-bit"). If it looks
+    wrong, the colour interleave or byte order differs — adjust before writing TIFF.
+    """
+    try sidecar.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent(base + ".txt"), atomically: true, encoding: .utf8)
+    print("💾 Lagret \(binURL.lastPathComponent) (\(r.raw.count) byte) + sidecar \(base).txt")
 }
 
 /// Minimal SCSI sense key/ASC decode for the messages we expect from the 9000.

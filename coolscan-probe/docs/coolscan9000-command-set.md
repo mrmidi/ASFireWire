@@ -178,10 +178,47 @@ LUT, og (senere) ICE-støvfjerning fra IR-kanalen → skriv TIFF.
 Se `Sources/CoolScanProbe/CoolScan.swift` for kommandobyggerne (skjelett, klart for
 testing når go/no-go er bestått).
 
+## Geometri-modell (fra `cs3_convert_options`, brukt i proben)
+
+SET WINDOW uttrykker **offset/bredde/høyde i device-units (1/`resx_max`″ = 1/4000″)** og
+**oppløsning som absolutt dpi**. coolscan3 setter måleenheten med MODE SELECT
+(`unit_dpi = resx_max`) *før* SET WINDOW. Beregningen:
+
+```
+pitchX        = resx_max / real_resx          (heltall → res snapper til divisor av 4000)
+real_resx     = resx_max / pitchX             (f.eks. 500→pitch 8→500; 1500→pitch 2→2000)
+logical_width = (xmax - xmin + 1) / pitchX    (= antall utdata-piksler)
+real_width    = logical_width * pitchX        (= bredde i device-units, sendt i SET WINDOW)
+real_xoffset  = xmin                          (device-units)
+```
+
+READ(10) leverer en **byte-strøm**; per linje ligger alle fargeplan etter hverandre
+(linje-sekvensiell planar, rekkefølge R,G,B[,IR]):
+
+```
+bytes_per_line = n_colors * (logical_width * bytes_per_pixel + odd_padding)
+total          = bytes_per_line * logical_height
+bytes_per_pixel = (depth > 8) ? 2 : 1     // 14-bit pakkes i 16-bit container
+```
+
+Implementert i `CoolScan.geometry(...)` / `CoolScan.scanFrame(...)`. Probe-modus:
+`CoolScanProbe scan [dpi]` (default 500 dpi) kjører
+**waitReady → MODE SELECT → SET WINDOW×farge → SCAN → READ(10)-løkke** og lagrer rå
+strøm + sidecar (`coolscan-…​.raw` / `.txt`) for offline-inspeksjon før vi binder oss
+til en TIFF-writer.
+
 ## Åpne spørsmål (krever maskinvare å avklare)
-- Eksakt produktstreng 9000 rapporterer (→ modellmatching).
-- Innhold i Nikon-kapabilitetsside `0xC1` på 9000 (maks oppløsning, grenser, fokusområde).
-- Statusbit-tolkning fra REQUEST SENSE på 9000.
+- ~~Eksakt produktstreng 9000 rapporterer~~ → bekreftet (LS-9000 ED, go/no-go bestått).
+- ~~Innhold i `0xC1` på 9000~~ → kartlagt (se felt-tabell over).
+- Statusbit-tolkning fra REQUEST SENSE på 9000 (når den er «ikke klar»).
+- **Trengs SEND LUT (`2a 00 03`) før READ?** Proben hopper over LUT — hvis skanneren
+  nekter å levere data uten, er det første som må legges til.
+- **Ramme-offset for FH-835S:** proben skanner hele `boundary`-arealet (hele apertur-
+  vinduet) — vi henter ennå ikke ut per-ramme-posisjon. Greit for første proof; en
+  stripe-skann viser rutene og lar oss kalibrere offset.
+- **Faktisk byte/farge-layout** i READ-strømmen (interleave + byte-rekkefølge) —
+  antatt linje-sekvensiell 16-bit BE; bekreftes mot første ekte `.raw` før TIFF.
+- SET FOCUS / autofokus hoppes over i v1 (bildet kan bli mykt, men piksler kommer).
 - Om 9000 trenger ekstra init utover 8000 (f.eks. medium-holder/adapter-deteksjon).
 
 ## EVPD 0xC1 — Nikon capability page (hardware capture, LS-9000 ED rev 1.02)
