@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Permits IOServiceOpen against the ASFWDriver user client. Must list the
+       dext bundle ID (and the :UserClass variant). Honored ad-hoc when SIP is off.
+       Without this, IOServiceOpen returns 0xe00002e2 (kIOReturnNotPermitted). -->
+  <key>com.apple.developer.driverkit.userclient-access</key>
+  <array>
+    <string>net.mrmidi.ASFW.ASFWDriver</string>
+    <string>net.mrmidi.ASFW.ASFWDriver:ASFWDriverUserClient</string>
+  </array>
+</dict>
+</plist>
