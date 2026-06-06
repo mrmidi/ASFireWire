@@ -19,6 +19,7 @@ using ASFW::Audio::Runtime::AudioWireFormat;
 using ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot;
 using ASFW::Audio::Runtime::DirectAudioDebugLogState;
 using ASFW::Audio::Runtime::DirectAudioDebugSnapshot;
+using ASFW::Audio::Runtime::FatalStreamReason;
 using ASFW::Audio::Runtime::kDirectAudioDebugLogIntervalNs;
 using ASFW::Audio::Runtime::ShouldLogDirectAudioDebugSnapshot;
 
@@ -60,6 +61,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.txScheduledSampleFrame.store(4096, std::memory_order_relaxed);
     control.txCompletedSampleFrame.store(4000, std::memory_order_relaxed);
     control.txLastSourceFrame.store(4040, std::memory_order_relaxed);
+    control.txPreparedSourceEndFrame.store(4048, std::memory_order_relaxed);
     control.counters.txForwardCursorCorrections.store(4, std::memory_order_relaxed);
     control.counters.txPreventedBackwardCorrections.store(5, std::memory_order_relaxed);
     control.counters.txStaleOverwrittenReads.store(6, std::memory_order_relaxed);
@@ -68,6 +70,23 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.counters.txPcmNonzeroPackets.store(9, std::memory_order_relaxed);
     control.counters.txPcmAllZeroPackets.store(10, std::memory_order_relaxed);
     control.counters.txTimelineInvariantFailures.store(11, std::memory_order_relaxed);
+    control.counters.txPreparedPcmSlots.store(12, std::memory_order_relaxed);
+    control.counters.txPendingSourceSlots.store(13, std::memory_order_relaxed);
+    control.counters.txStartupSilenceSlots.store(14, std::memory_order_relaxed);
+    control.counters.txRetiredEpochSilenceSlots.store(15, std::memory_order_relaxed);
+    control.counters.txReadAheadFaults.store(16, std::memory_order_relaxed);
+    control.counters.txSourceOverwrittenFaults.store(17, std::memory_order_relaxed);
+    control.counters.txPreparationDeadlineFaults.store(18, std::memory_order_relaxed);
+    control.counters.txSlotOwnershipFaults.store(19, std::memory_order_relaxed);
+    control.counters.txImmediateStops.store(20, std::memory_order_relaxed);
+    control.txFatalSnapshot.packetIndex.store(21, std::memory_order_relaxed);
+    control.txFatalSnapshot.distanceToHardware.store(4, std::memory_order_relaxed);
+    control.txFatalSnapshot.sourceFirstFrame.store(500, std::memory_order_relaxed);
+    control.txFatalSnapshot.sourceEndFrame.store(508, std::memory_order_relaxed);
+    control.txFatalSnapshot.oldestValidFrame.store(480, std::memory_order_relaxed);
+    control.txFatalSnapshot.writtenEndFrame.store(504, std::memory_order_relaxed);
+    control.fatalGeneration.store(22, std::memory_order_relaxed);
+    control.fatalReason.store(FatalStreamReason::TxReadAhead, std::memory_order_release);
 
     const auto snapshot = CaptureDirectAudioDebugSnapshot(
         binding,
@@ -109,6 +128,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.txScheduledSampleFrame, 4096U);
     EXPECT_EQ(snapshot.txCompletedSampleFrame, 4000U);
     EXPECT_EQ(snapshot.txLastSourceFrame, 4040U);
+    EXPECT_EQ(snapshot.txPreparedSourceEndFrame, 4048U);
     EXPECT_EQ(snapshot.txForwardCursorCorrections, 4U);
     EXPECT_EQ(snapshot.txPreventedBackwardCorrections, 5U);
     EXPECT_EQ(snapshot.txStaleOverwrittenReads, 6U);
@@ -117,6 +137,23 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.txPcmNonzeroPackets, 9U);
     EXPECT_EQ(snapshot.txPcmAllZeroPackets, 10U);
     EXPECT_EQ(snapshot.txTimelineInvariantFailures, 11U);
+    EXPECT_EQ(snapshot.txPreparedPcmSlots, 12U);
+    EXPECT_EQ(snapshot.txPendingSourceSlots, 13U);
+    EXPECT_EQ(snapshot.txStartupSilenceSlots, 14U);
+    EXPECT_EQ(snapshot.txRetiredEpochSilenceSlots, 15U);
+    EXPECT_EQ(snapshot.txReadAheadFaults, 16U);
+    EXPECT_EQ(snapshot.txSourceOverwrittenFaults, 17U);
+    EXPECT_EQ(snapshot.txPreparationDeadlineFaults, 18U);
+    EXPECT_EQ(snapshot.txSlotOwnershipFaults, 19U);
+    EXPECT_EQ(snapshot.txImmediateStops, 20U);
+    EXPECT_EQ(snapshot.fatalReason, FatalStreamReason::TxReadAhead);
+    EXPECT_EQ(snapshot.fatalGeneration, 22U);
+    EXPECT_EQ(snapshot.fatalPacketIndex, 21U);
+    EXPECT_EQ(snapshot.fatalDistanceToHardware, 4U);
+    EXPECT_EQ(snapshot.fatalSourceFirstFrame, 500U);
+    EXPECT_EQ(snapshot.fatalSourceEndFrame, 508U);
+    EXPECT_EQ(snapshot.fatalOldestValidFrame, 480U);
+    EXPECT_EQ(snapshot.fatalWrittenEndFrame, 504U);
     EXPECT_TRUE(snapshot.outputReaderAvailableAtWriteEnd);
 }
 

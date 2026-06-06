@@ -9,6 +9,7 @@
 #include "Hardware/OHCIDescriptors.hpp"
 
 #include <cstddef>
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -45,6 +46,64 @@ public:
         pkt.isData = true;
         pkt.dbc = 0;
         return pkt;
+    }
+};
+
+class TimedSilentPacketProvider final : public IIsochTxPacketProvider {
+public:
+    IsochTxPacket NextTransmitPacket(const TxPacketRequest&) noexcept override {
+        packet_[0] = 0x01020304;
+        packet_[1] = 0x05061234;
+        packet_[2] = 0;
+        packet_[3] = 0;
+        const uint64_t firstFrame = nextFrame_;
+        nextFrame_ += 8;
+        return IsochTxPacket{
+            .words = packet_.data(),
+            .sizeBytes = static_cast<uint32_t>(packet_.size() * sizeof(uint32_t)),
+            .isData = true,
+            .dbc = static_cast<uint8_t>(firstFrame),
+            .syt = 0x1234,
+            .framesPerPacket = 8,
+            .timelineFirstFrame = firstFrame,
+        };
+    }
+
+private:
+    std::array<uint32_t, 4> packet_{};
+    uint64_t nextFrame_{0};
+};
+
+class MarkerPayloadPreparer final : public IIsochTxPayloadPreparer {
+public:
+    PreparedTxPayloadResult PreparePayload(
+        const PreparedTxPayloadRequest& request) noexcept override {
+        if (!request.writable) {
+            return {};
+        }
+        auto* words = reinterpret_cast<uint32_t*>(request.payloadBytes);
+        words[2] = 0xA5000000u | request.packetIndex;
+        return PreparedTxPayloadResult{
+            .action = PreparedTxAction::Prepared,
+            .sourceFirstFrame = request.metadata.timelineFirstFrame + 1000,
+            .sourceEndFrame = request.metadata.timelineFirstFrame + 1008,
+            .epoch = 1,
+        };
+    }
+};
+
+class FatalDeadlinePreparer final : public IIsochTxPayloadPreparer {
+public:
+    PreparedTxPayloadResult PreparePayload(
+        const PreparedTxPayloadRequest& request) noexcept override {
+        return PreparedTxPayloadResult{
+            .action = request.deadline ? PreparedTxAction::Fatal
+                                       : PreparedTxAction::Pending,
+            .sourceFirstFrame = request.metadata.timelineFirstFrame,
+            .sourceEndFrame =
+                request.metadata.timelineFirstFrame + request.metadata.framesPerPacket,
+            .epoch = 1,
+        };
     }
 };
 
@@ -226,5 +285,156 @@ TEST(IsochTxDmaRingTests, PrimeAndRefillPublishPayloadThenBarrierThenDescriptor)
         EXPECT_EQ(memory.events[i + 1].kind, RecordingIsochMemory::EventKind::Barrier);
         EXPECT_EQ(memory.events[i + 2].kind, RecordingIsochMemory::EventKind::Publish);
         EXPECT_TRUE(AddressInRegion(memory.events[i + 2].address, descriptorRegion));
+    }
+}
+
+TEST(IsochTxDmaRingTests,
+     PreparationWritesOnlyBeyondGuardAndPublishesPayloadThenBarrierWithoutDescriptor) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto concrete = MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
+    ASSERT_TRUE(concrete);
+    RecordingIsochMemory memory(concrete);
+
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(memory), kIOReturnSuccess);
+    ring.ResetForStart();
+    TimedSilentPacketProvider provider;
+    ASSERT_EQ(ring.Prime(provider).packetsAssembled, Layout::kNumPackets);
+
+    const uint32_t commandPointer =
+        ring.Slab().GetDescriptorIOVA(0) | Layout::kBlocksPerPacket;
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        commandPointer);
+
+    memory.events.clear();
+    MarkerPayloadPreparer preparer;
+    const auto outcome = ring.PreparePayloads(hw, 0, preparer);
+    ASSERT_TRUE(outcome.ok);
+    EXPECT_EQ(outcome.preparedCount,
+              Layout::kNumPackets - Layout::kGuardBandPackets - 1);
+    EXPECT_EQ(outcome.startupSilenceCount, Layout::kGuardBandPackets + 1);
+
+    for (uint32_t packet = 0; packet <= Layout::kGuardBandPackets; ++packet) {
+        const auto* words =
+            reinterpret_cast<const uint32_t*>(ring.Slab().PayloadPtr(packet));
+        EXPECT_EQ(words[2], 0U);
+        EXPECT_EQ(ring.SlotMetadata(packet).state,
+                  PreparedTxSlotState::InitialSilence);
+    }
+    for (uint32_t packet = Layout::kGuardBandPackets + 1;
+         packet < Layout::kNumPackets;
+         ++packet) {
+        const auto* words =
+            reinterpret_cast<const uint32_t*>(ring.Slab().PayloadPtr(packet));
+        EXPECT_EQ(words[2], 0xA5000000u | packet);
+        EXPECT_EQ(ring.SlotMetadata(packet).state,
+                  PreparedTxSlotState::PcmPrepared);
+    }
+
+    const auto descriptorRegion = ring.Slab().DescriptorRegion();
+    const auto payloadRegion = ring.Slab().PayloadRegion();
+    ASSERT_EQ(memory.events.size(), outcome.preparedCount * 2U);
+    for (size_t i = 0; i < memory.events.size(); i += 2) {
+        EXPECT_EQ(memory.events[i].kind, RecordingIsochMemory::EventKind::Publish);
+        EXPECT_TRUE(AddressInRegion(memory.events[i].address, payloadRegion));
+        EXPECT_FALSE(AddressInRegion(memory.events[i].address, descriptorRegion));
+        EXPECT_EQ(memory.events[i + 1].kind,
+                  RecordingIsochMemory::EventKind::Barrier);
+    }
+}
+
+TEST(IsochTxDmaRingTests, DeadlineFatalDoesNotModifyOrPublishPayload) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto concrete = MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
+    ASSERT_TRUE(concrete);
+    RecordingIsochMemory memory(concrete);
+
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(memory), kIOReturnSuccess);
+    ring.ResetForStart();
+    TimedSilentPacketProvider provider;
+    ASSERT_EQ(ring.Prime(provider).packetsAssembled, Layout::kNumPackets);
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring.Slab().GetDescriptorIOVA(0) | Layout::kBlocksPerPacket);
+
+    memory.events.clear();
+    FatalDeadlinePreparer preparer;
+    const auto outcome = ring.PreparePayloads(hw, 0, preparer);
+    EXPECT_TRUE(outcome.fatal);
+    EXPECT_EQ(outcome.faultPacketIndex, 0U);
+    EXPECT_EQ(outcome.faultDistance, 0U);
+    EXPECT_TRUE(memory.events.empty());
+    const auto* words =
+        reinterpret_cast<const uint32_t*>(ring.Slab().PayloadPtr(0));
+    EXPECT_EQ(words[2], 0U);
+}
+
+TEST(IsochTxDmaRingTests, PreparationGuardOwnershipWrapsAtRingEnd) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto memory =
+        MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
+    ASSERT_TRUE(memory);
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(*memory), kIOReturnSuccess);
+    ring.ResetForStart();
+    TimedSilentPacketProvider provider;
+    ASSERT_EQ(ring.Prime(provider).packetsAssembled, Layout::kNumPackets);
+
+    constexpr uint32_t kHwPacket = Layout::kNumPackets - 2;
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring.Slab().GetDescriptorIOVA(kHwPacket * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    MarkerPayloadPreparer preparer;
+    const auto outcome = ring.PreparePayloads(hw, 0, preparer);
+    ASSERT_TRUE(outcome.ok);
+
+    const std::array<uint32_t, Layout::kGuardBandPackets + 1> protectedSlots{
+        Layout::kNumPackets - 2, Layout::kNumPackets - 1, 0, 1, 2};
+    for (const uint32_t packet : protectedSlots) {
+        const auto* words =
+            reinterpret_cast<const uint32_t*>(ring.Slab().PayloadPtr(packet));
+        EXPECT_EQ(words[2], 0U);
+        EXPECT_EQ(ring.SlotMetadata(packet).state,
+                  PreparedTxSlotState::InitialSilence);
+    }
+    const auto* firstWritable =
+        reinterpret_cast<const uint32_t*>(ring.Slab().PayloadPtr(3));
+    EXPECT_EQ(firstWritable[2], 0xA5000003U);
+    EXPECT_EQ(ring.SlotMetadata(3).state,
+              PreparedTxSlotState::PcmPrepared);
+}
+
+TEST(IsochTxDmaRingTests, RefillIncrementsRecycledSlotGeneration) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto memory =
+        MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
+    ASSERT_TRUE(memory);
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(*memory), kIOReturnSuccess);
+    ring.ResetForStart();
+    TimedSilentPacketProvider provider;
+    ASSERT_EQ(ring.Prime(provider).packetsAssembled, Layout::kNumPackets);
+    EXPECT_EQ(ring.SlotMetadata(0).generation, 1U);
+
+    constexpr uint32_t kHwPacketIndex = 8;
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring.Slab().GetDescriptorIOVA(
+            kHwPacketIndex * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    const auto refill = ring.Refill(hw, 0, provider, nullptr, nullptr);
+    ASSERT_TRUE(refill.ok);
+    ASSERT_EQ(refill.refillPacketCount, 4U);
+    for (uint32_t packet = 0; packet < refill.refillPacketCount; ++packet) {
+        EXPECT_EQ(ring.SlotMetadata(packet).generation, 2U);
+        EXPECT_EQ(ring.SlotMetadata(packet).state,
+                  PreparedTxSlotState::InitialSilence);
     }
 }

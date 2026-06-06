@@ -33,6 +33,15 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txPcmNonzeroPackets{0};
     std::atomic<uint64_t> txPcmAllZeroPackets{0};
     std::atomic<uint64_t> txTimelineInvariantFailures{0};
+    std::atomic<uint64_t> txPreparedPcmSlots{0};
+    std::atomic<uint64_t> txPendingSourceSlots{0};
+    std::atomic<uint64_t> txStartupSilenceSlots{0};
+    std::atomic<uint64_t> txRetiredEpochSilenceSlots{0};
+    std::atomic<uint64_t> txReadAheadFaults{0};
+    std::atomic<uint64_t> txSourceOverwrittenFaults{0};
+    std::atomic<uint64_t> txPreparationDeadlineFaults{0};
+    std::atomic<uint64_t> txSlotOwnershipFaults{0};
+    std::atomic<uint64_t> txImmediateStops{0};
 
     std::atomic<uint64_t> rxPackets{0};
     std::atomic<uint64_t> rxDecodedFrames{0};
@@ -69,6 +78,15 @@ struct AudioRtCounters final {
         txPcmNonzeroPackets.store(0, std::memory_order_relaxed);
         txPcmAllZeroPackets.store(0, std::memory_order_relaxed);
         txTimelineInvariantFailures.store(0, std::memory_order_relaxed);
+        txPreparedPcmSlots.store(0, std::memory_order_relaxed);
+        txPendingSourceSlots.store(0, std::memory_order_relaxed);
+        txStartupSilenceSlots.store(0, std::memory_order_relaxed);
+        txRetiredEpochSilenceSlots.store(0, std::memory_order_relaxed);
+        txReadAheadFaults.store(0, std::memory_order_relaxed);
+        txSourceOverwrittenFaults.store(0, std::memory_order_relaxed);
+        txPreparationDeadlineFaults.store(0, std::memory_order_relaxed);
+        txSlotOwnershipFaults.store(0, std::memory_order_relaxed);
+        txImmediateStops.store(0, std::memory_order_relaxed);
 
         rxPackets.store(0, std::memory_order_relaxed);
         rxDecodedFrames.store(0, std::memory_order_relaxed);

@@ -8,6 +8,7 @@
 namespace {
 
 using ASFW::Audio::Runtime::AudioTransportControlBlock;
+using ASFW::Audio::Runtime::FatalStreamReason;
 
 TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrementsGeneration) {
     AudioTransportControlBlock control{};
@@ -33,6 +34,7 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.txScheduledSampleFrame.store(456, std::memory_order_relaxed);
     control.txCompletedSampleFrame.store(400, std::memory_order_relaxed);
     control.txLastSourceFrame.store(408, std::memory_order_relaxed);
+    control.txPreparedSourceEndFrame.store(416, std::memory_order_relaxed);
     control.counters.txForwardCursorCorrections.store(1, std::memory_order_relaxed);
     control.counters.txPreventedBackwardCorrections.store(2, std::memory_order_relaxed);
     control.counters.txStaleOverwrittenReads.store(3, std::memory_order_relaxed);
@@ -41,6 +43,12 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.counters.txPcmNonzeroPackets.store(6, std::memory_order_relaxed);
     control.counters.txPcmAllZeroPackets.store(7, std::memory_order_relaxed);
     control.counters.txTimelineInvariantFailures.store(8, std::memory_order_relaxed);
+    control.counters.txPreparedPcmSlots.store(9, std::memory_order_relaxed);
+    control.counters.txPendingSourceSlots.store(10, std::memory_order_relaxed);
+    control.counters.txReadAheadFaults.store(11, std::memory_order_relaxed);
+    control.txFatalSnapshot.packetIndex.store(12, std::memory_order_relaxed);
+    control.fatalGeneration.store(13, std::memory_order_relaxed);
+    control.fatalReason.store(FatalStreamReason::TxReadAhead, std::memory_order_relaxed);
 
     control.ResetForStart();
 
@@ -78,6 +86,7 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.txScheduledSampleFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txLastSourceFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txPreparedSourceEndFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.counters.txForwardCursorCorrections.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txPreventedBackwardCorrections.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed), 0U);
@@ -86,6 +95,13 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.counters.txPcmNonzeroPackets.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txPcmAllZeroPackets.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txTimelineInvariantFailures.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txPreparedPcmSlots.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txPendingSourceSlots.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.counters.txReadAheadFaults.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.txFatalSnapshot.packetIndex.load(std::memory_order_relaxed), 0U);
+    EXPECT_EQ(control.fatalGeneration.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.fatalReason.load(std::memory_order_acquire),
+              FatalStreamReason::None);
 }
 
 } // namespace

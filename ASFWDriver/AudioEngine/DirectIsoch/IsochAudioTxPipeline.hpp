@@ -30,10 +30,10 @@
 
 namespace ASFW::Isoch {
 
-/// Owns all "audio semantics" (PacketAssembler/CIP/AM824) and playback-ring
-/// consumption. Packets returned to the DMA engine already contain PCM or an
-/// explicit silence/underrun state; there is no late packet overwrite path.
-class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider {
+/// Owns audio packet timing and maps CoreAudio ranges into writable future
+/// payload slots owned by IsochTxDmaRing.
+class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider,
+                                   public Tx::IIsochTxPayloadPreparer {
 public:
     static constexpr bool kEnableDirectTxHardwarePath = true;
 
@@ -94,6 +94,9 @@ public:
     // Tx::IIsochTxPacketProvider
     // -------------------------------------------------------------------------
     [[nodiscard]] Tx::IsochTxPacket NextTransmitPacket(const Tx::TxPacketRequest& request) noexcept override;
+    [[nodiscard]] Tx::PreparedTxPayloadResult PreparePayload(
+        const Tx::PreparedTxPayloadRequest& request) noexcept override;
+    [[nodiscard]] bool HasFatalFault() const noexcept;
 
 private:
     struct ExternalSyncState {
@@ -136,8 +139,13 @@ private:
         uint32_t pcmChannels{0};
         uint32_t am824Slots{0};
         uint32_t packetIndex{0};
+        uint64_t generation{0};
         Encoding::AudioWireFormat wireFormat{Encoding::AudioWireFormat::kAM824};
         uint64_t timelineFirstFrame{0};
+        uint64_t sourceFirstFrame{0};
+        uint64_t sourceEndFrame{0};
+        uint64_t epoch{0};
+        Tx::PreparedTxSlotState preparationState{Tx::PreparedTxSlotState::InitialSilence};
         PacketCipFields cip{};
     };
 
@@ -147,9 +155,14 @@ private:
     [[nodiscard]] bool TryBuildPlaybackRingPacket(const ProducedPacketMetadata& metadata,
                                                   uint8_t* packetBytes,
                                                   uint32_t packetCapacityBytes) noexcept;
-
     [[nodiscard]] bool InitializeDirectOutputCursor(const ProducedPacketMetadata& metadata) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
+    void PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason reason,
+                           const Tx::PreparedTxPayloadRequest& request,
+                           uint64_t sourceFirstFrame,
+                           uint64_t sourceEndFrame,
+                           uint64_t oldestValidFrame,
+                           uint64_t writtenEndFrame) noexcept;
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
@@ -161,14 +174,22 @@ private:
     ASFW::Audio::Runtime::AudioGraphBinding directOutputView_{};
     ASFW::AudioEngine::Direct::DirectOutputReader directOutputReader_{};
     ASFW::AudioEngine::Direct::AudioClockPublisher txClockPublisher_{};
+    // Retained temporarily for the legacy packet-builder helper. The live path
+    // prepares DMA payload slots through PreparePayload().
     uint64_t directOutputFrameCursor_{0};
     bool directCursorInitialized_{false};
-    uint64_t txScheduledSampleFrame_{0};
-    uint64_t txCompletedSampleFrame_{0};
     uint64_t sourceTimelineOffsetFrames_{0};
     uint64_t lastSourceFrame_{0};
-    uint64_t lastDiscontinuityGeneration_{0};
     bool sourceTimelineAnchored_{false};
+    uint64_t txScheduledSampleFrame_{0};
+    uint64_t txCompletedSampleFrame_{0};
+    uint64_t txPreparedSourceEndFrame_{0};
+    uint64_t txConsumedSourceEndFrame_{0};
+    uint64_t epochAnchorTimelineFrame_{0};
+    uint64_t epochAnchorSourceFrame_{0};
+    uint64_t currentEpoch_{0};
+    uint64_t lastDiscontinuityGeneration_{0};
+    bool epochAnchored_{false};
     uint64_t txEventGroupCount_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};

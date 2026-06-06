@@ -184,4 +184,11 @@ add_audio_test(IsochAudioTxPipelineTimelineTests
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
     "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )

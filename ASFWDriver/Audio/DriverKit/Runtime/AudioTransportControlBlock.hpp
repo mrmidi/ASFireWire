@@ -16,6 +16,38 @@ enum class FatalStreamReason : uint32_t {
     RxAuthorityLost,
     InvalidGeometry,
     MirrorPumpFailed,
+    TxReadAhead,
+    TxSourceOverwritten,
+    TxPreparationMissedDeadline,
+    TxSlotInvariant,
+};
+
+struct TxFatalSnapshot final {
+    std::atomic<uint64_t> packetGeneration{0};
+    std::atomic<uint64_t> timelineFirstFrame{0};
+    std::atomic<uint64_t> sourceFirstFrame{0};
+    std::atomic<uint64_t> sourceEndFrame{0};
+    std::atomic<uint64_t> oldestValidFrame{0};
+    std::atomic<uint64_t> writtenEndFrame{0};
+    std::atomic<uint32_t> packetIndex{0};
+    std::atomic<uint32_t> distanceToHardware{0};
+    std::atomic<uint32_t> slotState{0};
+    std::atomic<uint32_t> dbc{0};
+    std::atomic<uint32_t> syt{0};
+
+    void Reset() noexcept {
+        packetGeneration.store(0, std::memory_order_relaxed);
+        timelineFirstFrame.store(0, std::memory_order_relaxed);
+        sourceFirstFrame.store(0, std::memory_order_relaxed);
+        sourceEndFrame.store(0, std::memory_order_relaxed);
+        oldestValidFrame.store(0, std::memory_order_relaxed);
+        writtenEndFrame.store(0, std::memory_order_relaxed);
+        packetIndex.store(0, std::memory_order_relaxed);
+        distanceToHardware.store(0, std::memory_order_relaxed);
+        slotState.store(0, std::memory_order_relaxed);
+        dbc.store(0, std::memory_order_relaxed);
+        syt.store(0, std::memory_order_relaxed);
+    }
 };
 
 struct AudioTransportControlBlock final {
@@ -28,6 +60,7 @@ struct AudioTransportControlBlock final {
 
     std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
     std::atomic<uint64_t> fatalGeneration{0};
+    TxFatalSnapshot txFatalSnapshot{};
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
     std::atomic<uint64_t> outputConsumedEndFrame{0};
@@ -45,6 +78,7 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
     std::atomic<uint64_t> txLastSourceFrame{0};
+    std::atomic<uint64_t> txPreparedSourceEndFrame{0};
 
     std::atomic<uint64_t> captureRingWriteFrame{0};
     std::atomic<uint64_t> captureRingReadFrame{0};
@@ -115,6 +149,7 @@ struct AudioTransportControlBlock final {
 
         fatalReason.store(FatalStreamReason::None, std::memory_order_release);
         fatalGeneration.store(0, std::memory_order_release);
+        txFatalSnapshot.Reset();
 
         inputProducedEndFrame.store(0, std::memory_order_release);
         outputConsumedEndFrame.store(0, std::memory_order_release);
@@ -132,6 +167,7 @@ struct AudioTransportControlBlock final {
         txScheduledSampleFrame.store(0, std::memory_order_release);
         txCompletedSampleFrame.store(0, std::memory_order_release);
         txLastSourceFrame.store(0, std::memory_order_release);
+        txPreparedSourceEndFrame.store(0, std::memory_order_release);
 
         captureRingWriteFrame.store(0, std::memory_order_release);
         captureRingReadFrame.store(0, std::memory_order_release);
