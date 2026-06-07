@@ -33,7 +33,8 @@ namespace ASFW::Isoch {
 /// Owns audio packet timing and maps CoreAudio ranges into writable future
 /// payload slots owned by IsochTxDmaRing.
 class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider,
-                                   public Tx::IIsochTxPayloadPreparer {
+                                   public Tx::IIsochTxPayloadPreparer,
+                                   public Tx::IIsochTxCompletionObserver {
 public:
     static constexpr bool kEnableDirectTxHardwarePath = true;
 
@@ -96,7 +97,14 @@ public:
     [[nodiscard]] Tx::IsochTxPacket NextTransmitPacket(const Tx::TxPacketRequest& request) noexcept override;
     [[nodiscard]] Tx::PreparedTxPayloadResult PreparePayload(
         const Tx::PreparedTxPayloadRequest& request) noexcept override;
+    [[nodiscard]] bool OnTransmitSlotCompleted(
+        const Tx::CompletedTxSlot& completed) noexcept override;
     [[nodiscard]] bool HasFatalFault() const noexcept;
+    void RecordImmediateStop() noexcept;
+    [[nodiscard]] uint64_t PreparationRequestGeneration() const noexcept;
+    [[nodiscard]] uint64_t PreparationHandledGeneration() const noexcept;
+    void MarkPreparationRequestHandled(uint64_t generation,
+                                       uint64_t hostTicks) noexcept;
 
 private:
     struct ExternalSyncState {
@@ -162,7 +170,9 @@ private:
                            uint64_t sourceFirstFrame,
                            uint64_t sourceEndFrame,
                            uint64_t oldestValidFrame,
-                           uint64_t writtenEndFrame) noexcept;
+                           uint64_t writtenEndFrame,
+                           uint64_t preparedPayloadHash = 0,
+                           uint64_t completedPayloadHash = 0) noexcept;
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
@@ -189,6 +199,7 @@ private:
     uint64_t epochAnchorSourceFrame_{0};
     uint64_t currentEpoch_{0};
     uint64_t lastDiscontinuityGeneration_{0};
+    uint64_t lastDeferredWrittenEnd_{0};
     bool epochAnchored_{false};
     uint64_t txEventGroupCount_{0};
 

@@ -3,6 +3,7 @@
 #include "IsochTxDmaRing.hpp"
 
 #include <algorithm>
+#include <DriverKit/IOLib.h>
 
 namespace ASFW::Isoch::Tx {
 
@@ -36,8 +37,11 @@ void IsochTxDmaRing::InitializeSlotMetadata(const uint32_t packetIndex,
         .sourceFirstFrame = 0,
         .sourceEndFrame = 0,
         .epoch = 0,
+        .preparationHostTicks = 0,
+        .preparedPayloadHash = 0,
         .sizeBytes = packet.sizeBytes,
         .framesPerPacket = packet.framesPerPacket,
+        .preparationDistance = 0,
         .dbc = packet.dbc,
         .syt = packet.syt,
         .valid = true,
@@ -164,7 +168,8 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
                                             hwPacketIndex,
                                             cmdPtr,
                                             existingLastDesc,
-                                            reinterpret_cast<const uint32_t*>(payloadVirt));
+                                            reinterpret_cast<const uint32_t*>(payloadVirt),
+                                            slotMetadata_[pktIdx]);
     }
 
     slotMetadata_[pktIdx].state = PreparedTxSlotState::Completed;
@@ -368,6 +373,55 @@ bool IsochTxDmaRing::DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
     return outPacketIndex < Layout::kNumPackets;
 }
 
+bool IsochTxDmaRing::ReportCompletedSlots(
+    const uint32_t hwPacketIndex,
+    const uint32_t completedPacketCount,
+    IIsochTxCompletionObserver* observer,
+    RefillOutcome& out) noexcept {
+    if (!observer || completedPacketCount == 0) {
+        return true;
+    }
+
+    for (uint32_t offset = 0; offset < completedPacketCount; ++offset) {
+        const uint32_t packetIndex =
+            (hwPacketIndex + Layout::kNumPackets - completedPacketCount + offset) %
+            Layout::kNumPackets;
+        const auto& metadata = slotMetadata_[packetIndex];
+        const uint8_t* payload = slab_.PayloadPtr(packetIndex);
+        const uint64_t completedHash =
+            metadata.valid && metadata.sizeBytes != 0 && payload
+                ? HashTxPayload(payload, metadata.sizeBytes)
+                : 0;
+        const bool comparePayload =
+            metadata.state == PreparedTxSlotState::PcmPrepared;
+        const bool hashMatches =
+            !comparePayload || completedHash == metadata.preparedPayloadHash;
+
+        if (comparePayload) {
+            if (hashMatches) {
+                counters_.completedPayloadHashMatches.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                counters_.completedPayloadHashMismatches.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+
+        const CompletedTxSlot completed{
+            .metadata = metadata,
+            .completedPayloadHash = completedHash,
+            .packetIndex = packetIndex,
+            .hwPacketIndex = hwPacketIndex,
+            .payloadHashMatches = hashMatches,
+        };
+        if (!observer->OnTransmitSlotCompleted(completed)) {
+            out.ok = false;
+            return false;
+        }
+    }
+    return true;
+}
+
 IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
     Driver::HardwareInterface& hw,
     const uint8_t contextIndex,
@@ -396,7 +450,10 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
             continue;
         }
 
-        const bool deadline = distance <= Layout::kGuardBandPackets;
+        const bool hardwareOwned =
+            distance <= Layout::kHardwareOwnedGuardPackets;
+        const bool deadline =
+            distance <= Layout::kPreparationDeadlinePackets;
         const bool writable = !deadline;
         PreparedTxPayloadRequest request{
             .packetIndex = packetIndex,
@@ -404,6 +461,7 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
             .distanceToHardware = distance,
             .writable = writable,
             .deadline = deadline,
+            .hardwareOwned = hardwareOwned,
             .metadata = metadata,
             .payloadBytes = writable ? slab_.PayloadPtr(packetIndex) : nullptr,
             .payloadCapacityBytes = writable ? Layout::kMaxPacketSize : 0,
@@ -438,6 +496,14 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
                     metadata.sizeBytes);
                 dmaMemory_->PublishBarrier();
             }
+            metadata.preparationHostTicks = mach_absolute_time();
+            metadata.preparationDistance = distance;
+            metadata.preparedPayloadHash =
+                HashTxPayload(request.payloadBytes, metadata.sizeBytes);
+            metadata.firstSourceSamples[0] = result.firstSourceSamples[0];
+            metadata.firstSourceSamples[1] = result.firstSourceSamples[1];
+            metadata.firstEncodedWords[0] = result.firstEncodedWords[0];
+            metadata.firstEncodedWords[1] = result.firstEncodedWords[1];
             metadata.state = PreparedTxSlotState::PcmPrepared;
             ++out.preparedCount;
             counters_.preparedPayloads.fetch_add(1, std::memory_order_relaxed);
@@ -465,7 +531,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
                                                      uint8_t contextIndex,
                                                      IIsochTxPacketProvider& provider,
                                                      IsochTxCaptureHook* captureHook,
-                                                     IIsochTxAudioInjector* injector) noexcept {
+                                                     IIsochTxAudioInjector* injector,
+                                                     IIsochTxCompletionObserver* completionObserver) noexcept {
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
 
     RefillOutcome out{};
@@ -509,6 +576,10 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
     const uint32_t gap = ringPacketsAhead_;
     UpdateGapCounters(gap);
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
+    if (!ReportCompletedSlots(
+            hwPacketIndex, out.completedPacketCount, completionObserver, out)) {
+        return out;
+    }
 
     // Phase 2: keep ring full with silent/cadence-correct packets
     const uint32_t toFill = (ringPacketsAhead_ < Layout::kMaxWriteAhead)

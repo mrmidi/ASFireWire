@@ -13,6 +13,7 @@
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/LogConfig.hpp"
 
+#include <algorithm>
 #include <cstring>
 
 namespace ASFW::Isoch {
@@ -140,6 +141,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     lastInterruptCountSeen_ = 0;
     irqStallTicks_ = 0;
     refillInProgress_.clear(std::memory_order_release);
+    requestedPreparationGeneration_.store(0, std::memory_order_relaxed);
 
     latencyBucket0_.store(0, std::memory_order_relaxed);
     latencyBucket1_.store(0, std::memory_order_relaxed);
@@ -199,7 +201,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     hardware_->Write(Register32::kIntMaskSet, IntEventBits::kIsochTx);
     ASFW_LOG(Isoch, "IT: Enabled IT interrupt for context %u", contextIndex_);
 
-    if (!DoPrepareOnce()) {
+    if (!DrainPreparationRequests()) {
         return kIOReturnAborted;
     }
 
@@ -260,12 +262,17 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         capture = &verifier_;
     }
 
-    const auto outcome = ring_.Refill(*hardware_, contextIndex_, audio_, capture, nullptr);
+    const auto outcome =
+        ring_.Refill(*hardware_, contextIndex_, audio_, capture, nullptr, &audio_);
+    if (audio_.HasFatalFault()) {
+        StopImmediatelyForTxFault();
+        return;
+    }
     if (!outcome.ok) {
         return;
     }
 
-    if (!DoPrepareOnce()) {
+    if (!DrainPreparationRequests()) {
         return;
     }
 
@@ -293,17 +300,71 @@ bool IsochTransmitContext::DoPrepareOnce() noexcept {
     return outcome.ok;
 }
 
+bool IsochTransmitContext::DrainPreparationRequests() noexcept {
+    for (;;) {
+        const uint64_t requested = std::max(
+            requestedPreparationGeneration_.load(std::memory_order_acquire),
+            audio_.PreparationRequestGeneration());
+
+        if (!DoPrepareOnce()) {
+            return false;
+        }
+        audio_.MarkPreparationRequestHandled(requested, mach_absolute_time());
+
+        const uint64_t after = std::max(
+            requestedPreparationGeneration_.load(std::memory_order_acquire),
+            audio_.PreparationRequestGeneration());
+        if (after == requested) {
+            return true;
+        }
+    }
+}
+
+void IsochTransmitContext::ReleasePreparationGate() noexcept {
+    for (;;) {
+        refillInProgress_.clear(std::memory_order_release);
+        if (state_ != State::Running) {
+            return;
+        }
+
+        const uint64_t requested = std::max(
+            requestedPreparationGeneration_.load(std::memory_order_acquire),
+            audio_.PreparationRequestGeneration());
+        if (requested <= audio_.PreparationHandledGeneration()) {
+            return;
+        }
+        if (refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+            return;
+        }
+        if (!DrainPreparationRequests()) {
+            refillInProgress_.clear(std::memory_order_release);
+            return;
+        }
+    }
+}
+
+void IsochTransmitContext::RequestPayloadPreparation(
+    const uint64_t requestGeneration) noexcept {
+    uint64_t current =
+        requestedPreparationGeneration_.load(std::memory_order_relaxed);
+    while (requestGeneration > current &&
+           !requestedPreparationGeneration_.compare_exchange_weak(
+               current,
+               requestGeneration,
+               std::memory_order_release,
+               std::memory_order_relaxed)) {
+    }
+
+    if (state_ != State::Running ||
+        refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
+        return;
+    }
+    (void)DrainPreparationRequests();
+    ReleasePreparationGate();
+}
+
 void IsochTransmitContext::StopImmediatelyForTxFault(
     const Tx::IsochTxDmaRing::PreparationOutcome& outcome) noexcept {
-    if (hardware_) {
-        const Register32 ctrlClrReg =
-            static_cast<Register32>(
-                DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
-        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
-        hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
-    }
-    state_ = State::Stopped;
-    refillInProgress_.clear(std::memory_order_release);
     ASFW_LOG(
         Isoch,
         "IT FATAL STOP: prepared-payload fault pkt=%u distance=%u hwPkt=%u gen=%llu state=%u timeline=%llu source=[%llu,%llu)",
@@ -315,6 +376,23 @@ void IsochTransmitContext::StopImmediatelyForTxFault(
         outcome.faultMetadata.timelineFirstFrame,
         outcome.faultMetadata.sourceFirstFrame,
         outcome.faultMetadata.sourceEndFrame);
+    StopImmediatelyForTxFault();
+}
+
+void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
+    if (state_ == State::Stopped) {
+        return;
+    }
+    if (hardware_) {
+        const Register32 ctrlClrReg =
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitContextControlClear(contextIndex_));
+        hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
+        hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
+    }
+    audio_.RecordImmediateStop();
+    state_ = State::Stopped;
+    ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked");
 }
 
 void IsochTransmitContext::Poll() noexcept {
@@ -390,8 +468,8 @@ void IsochTransmitContext::Poll() noexcept {
     }
 
     if (!refillInProgress_.test_and_set(std::memory_order_acq_rel)) {
-        (void)DoPrepareOnce();
-        refillInProgress_.clear(std::memory_order_release);
+        (void)DrainPreparationRequests();
+        ReleasePreparationGate();
         if (state_ != State::Running) {
             return;
         }
@@ -412,7 +490,7 @@ void IsochTransmitContext::Poll() noexcept {
             const uint64_t wdStart = mach_absolute_time();
             DoRefillOnce(wdStart, /*publishTimingEvent=*/false);
             const uint64_t wdEnd = mach_absolute_time();
-            refillInProgress_.clear(std::memory_order_release);
+            ReleasePreparationGate();
 
             const uint64_t wdNs = ASFW::Timing::hostTicksToNanos(wdEnd - wdStart);
             const uint32_t wdUs = static_cast<uint32_t>(wdNs / 1000);
@@ -462,7 +540,7 @@ void IsochTransmitContext::HandleInterrupt() noexcept {
     const uint64_t refillStart = mach_absolute_time();
     DoRefillOnce(refillStart, /*publishTimingEvent=*/true);
     const uint64_t refillEnd = mach_absolute_time();
-    refillInProgress_.clear(std::memory_order_release);
+    ReleasePreparationGate();
 
     const uint64_t deltaNs = ASFW::Timing::hostTicksToNanos(refillEnd - refillStart);
     const uint32_t deltaUs = static_cast<uint32_t>(deltaNs / 1000);

@@ -60,6 +60,8 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
 
     if (ivars) {
         ivars->runtime.isRunning.store(false, std::memory_order_release);
+        ivars->runtime.txPreparationNotificationScheduled.store(
+            false, std::memory_order_release);
         ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
         StopZtsMirrorTimer(*ivars);
 
@@ -127,6 +129,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     ivars->ztsMirrorTimerTicks.store(0, std::memory_order_relaxed);
     ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
     ivars->runtime.isRunning.store(false, std::memory_order_release);
+    ivars->runtime.txPreparationNotificationScheduled.store(
+        false, std::memory_order_release);
     ASFW_LOG(DirectAudio, "ADK DBG IO running=0 while arming transport");
 
     const kern_return_t superStartKr = super::StartDevice(in_object_id, in_flags);
@@ -140,6 +144,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     const auto failStartDevice = [&](kern_return_t status, const char* stage) -> kern_return_t {
         const kern_return_t result = (status == kIOReturnSuccess) ? kIOReturnError : status;
         ivars->runtime.isRunning.store(false, std::memory_order_release);
+        ivars->runtime.txPreparationNotificationScheduled.store(
+            false, std::memory_order_release);
         ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
         StopZtsMirrorTimer(*ivars);
         if (streamingStarted && ivars->device.audioNub) {
@@ -215,6 +221,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(kIOReturnNotReady, "direct graph audioDevice");
     }
     ivars->runtime.isRunning.store(true, std::memory_order_release);
+    ivars->runtime.txPreparationNotificationScheduled.store(
+        false, std::memory_order_release);
     ASFW_LOG(DirectAudio, "ADK DBG IO running=1 after transport ready");
     ScheduleZtsMirrorTimer(*ivars);
     ASFW_LOG(DirectAudio,
@@ -250,6 +258,8 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
     ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
     if (ivars) {
         ivars->runtime.isRunning.store(false, std::memory_order_release);
+        ivars->runtime.txPreparationNotificationScheduled.store(
+            false, std::memory_order_release);
         ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
         StopZtsMirrorTimer(*ivars);
     }
@@ -289,6 +299,8 @@ namespace ASFW::Audio::DriverKit {
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept {
     // 1. Immediately clear isRunning to stop pump and block further IO
     ivars.runtime.isRunning.store(false, std::memory_order_release);
+    ivars.runtime.txPreparationNotificationScheduled.store(
+        false, std::memory_order_release);
     ivars.runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
     
     // 2. Stop ZTS mirror timer
@@ -309,4 +321,3 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
 }
 
 } // namespace ASFW::Audio::DriverKit
-

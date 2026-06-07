@@ -87,17 +87,20 @@ PreparedTxPayloadRequest WritableRequest(uint32_t packetIndex,
                                          uint64_t generation,
                                          const IsochTxPacket& packet,
                                          std::array<uint8_t, 4096>& payload,
-                                         uint32_t distance = 5) {
+                                         uint32_t distance = 65) {
     std::memcpy(payload.data(), packet.words, packet.sizeBytes);
+    const bool deadline = distance <= Layout::kPreparationDeadlinePackets;
     return PreparedTxPayloadRequest{
         .packetIndex = packetIndex,
         .hwPacketIndex = 0,
         .distanceToHardware = distance,
-        .writable = true,
-        .deadline = false,
+        .writable = !deadline,
+        .deadline = deadline,
+        .hardwareOwned = distance <= Layout::kHardwareOwnedGuardPackets,
         .metadata = SlotMetadata(packet, generation),
-        .payloadBytes = payload.data(),
-        .payloadCapacityBytes = payload.size(),
+        .payloadBytes = deadline ? nullptr : payload.data(),
+        .payloadCapacityBytes =
+            deadline ? 0U : static_cast<uint32_t>(payload.size()),
     };
 }
 
@@ -170,7 +173,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         output[frame * kChannels] = static_cast<int32_t>((frame + 1) << 8);
         output[frame * kChannels + 1] = -static_cast<int32_t>((frame + 1) << 8);
     }
-    PublishRange(control, 100, 108);
+    PublishRange(control, 100, 868);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -201,16 +204,27 @@ TEST(IsochAudioTxPipelineTimelineTests,
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
-    (void)pipeline.NextTransmitPacket(TxPacketRequest{
+    const auto noData = pipeline.NextTransmitPacket(TxPacketRequest{
         .transmitCycle = 1000, .packetIndex = 0, .slotGeneration = 1});
     const auto data = pipeline.NextTransmitPacket(TxPacketRequest{
         .transmitCycle = 1001, .packetIndex = 1, .slotGeneration = 1});
+    EXPECT_TRUE(pipeline.OnTransmitSlotCompleted(
+        ASFW::Isoch::Tx::CompletedTxSlot{
+            .metadata = SlotMetadata(noData, 1),
+            .packetIndex = 0,
+            .hwPacketIndex = 1,
+        }));
+    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.counters.txCompletedStartupSilenceSlots.load(
+                  std::memory_order_relaxed),
+              0U);
+
     std::array<uint8_t, 4096> payload{};
     auto request = WritableRequest(1, 1, data, payload);
     EXPECT_EQ(pipeline.PreparePayload(request).action,
               PreparedTxAction::NoChange);
 
-    PublishRange(control, 200, 208);
+    PublishRange(control, 200, 968);
     const auto prepared = pipeline.PreparePayload(request);
     EXPECT_EQ(prepared.action, PreparedTxAction::Prepared);
     EXPECT_EQ(prepared.sourceFirstFrame, 200U);
@@ -218,10 +232,40 @@ TEST(IsochAudioTxPipelineTimelineTests,
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
+     Four192FrameWritesAreRequiredBeforeStartupAnchor) {
+    AudioTransportControlBlock control{};
+    std::array<int32_t, kFrames * kChannels> output{};
+    IsochAudioTxPipeline pipeline;
+    ConfigurePipeline(pipeline, control, output);
+
+    (void)pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1000, .packetIndex = 0, .slotGeneration = 1});
+    const auto data = pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1001, .packetIndex = 1, .slotGeneration = 1});
+    std::array<uint8_t, 4096> payload{};
+    auto request = WritableRequest(1, 1, data, payload);
+
+    for (uint64_t writtenEnd : {192ULL, 384ULL, 576ULL}) {
+        PublishRange(control, 0, writtenEnd);
+        EXPECT_EQ(pipeline.PreparePayload(request).action,
+                  PreparedTxAction::NoChange);
+    }
+
+    PublishRange(control, 0, 768);
+    const auto prepared = pipeline.PreparePayload(request);
+    ASSERT_EQ(prepared.action, PreparedTxAction::Prepared);
+    EXPECT_EQ(prepared.sourceFirstFrame, 0U);
+    EXPECT_EQ(control.txAnchorDistance.load(std::memory_order_acquire), 65U);
+    EXPECT_EQ(control.counters.txDeferredStartupWrites.load(
+                  std::memory_order_relaxed),
+              3U);
+}
+
+TEST(IsochAudioTxPipelineTimelineTests,
      RepeatedWriteBurstsProduceSequentialSourceRangesAcrossBlockingCadence) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
-    PublishRange(control, 0, 512);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -238,7 +282,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         }
         std::array<uint8_t, 4096> payload{};
         const auto result = pipeline.PreparePayload(
-            WritableRequest(packetIndex, 1, packet, payload, 8));
+            WritableRequest(packetIndex, 1, packet, payload, 65));
         ASSERT_EQ(result.action, PreparedTxAction::Prepared);
         EXPECT_EQ(result.sourceFirstFrame, expectedSource);
         EXPECT_EQ(result.sourceEndFrame, expectedSource + 8);
@@ -258,7 +302,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
      PendingFutureRangeBecomesFatalReadAheadAtDeadline) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
-    PublishRange(control, 0, 8);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -271,18 +315,33 @@ TEST(IsochAudioTxPipelineTimelineTests,
                   WritableRequest(1, 1, first, firstPayload)).action,
               PreparedTxAction::Prepared);
 
-    const auto second = pipeline.NextTransmitPacket(TxPacketRequest{
-        .transmitCycle = 1002, .packetIndex = 2, .slotGeneration = 1});
+    IsochTxPacket second{};
+    uint32_t secondPacketIndex = 0;
+    for (uint32_t packetIndex = 2; packetIndex < 140; ++packetIndex) {
+        const auto candidate = pipeline.NextTransmitPacket(TxPacketRequest{
+            .transmitCycle = 1000 + packetIndex,
+            .packetIndex = packetIndex,
+            .slotGeneration = 1,
+        });
+        if (candidate.isData && candidate.timelineFirstFrame == 768) {
+            second = candidate;
+            secondPacketIndex = packetIndex;
+            break;
+        }
+    }
+    ASSERT_NE(secondPacketIndex, 0U);
     std::array<uint8_t, 4096> secondPayload{};
-    auto pendingRequest = WritableRequest(2, 1, second, secondPayload, 6);
+    auto pendingRequest =
+        WritableRequest(secondPacketIndex, 1, second, secondPayload, 65);
     const auto pending = pipeline.PreparePayload(pendingRequest);
     ASSERT_EQ(pending.action, PreparedTxAction::Pending);
-    EXPECT_EQ(pending.sourceFirstFrame, 8U);
-    EXPECT_EQ(pending.sourceEndFrame, 16U);
+    EXPECT_EQ(pending.sourceFirstFrame, 768U);
+    EXPECT_EQ(pending.sourceEndFrame, 776U);
 
     pendingRequest.writable = false;
     pendingRequest.deadline = true;
-    pendingRequest.distanceToHardware = 4;
+    pendingRequest.distanceToHardware = 64;
+    pendingRequest.hardwareOwned = false;
     pendingRequest.payloadBytes = nullptr;
     pendingRequest.payloadCapacityBytes = 0;
     pendingRequest.metadata.state = PreparedTxSlotState::PendingSource;
@@ -298,8 +357,9 @@ TEST(IsochAudioTxPipelineTimelineTests,
               FatalStreamReason::TxReadAhead);
     EXPECT_EQ(control.fatalGeneration.load(std::memory_order_acquire), 1U);
     EXPECT_EQ(control.counters.txReadAheadFaults.load(std::memory_order_relaxed), 1U);
-    EXPECT_EQ(control.txFatalSnapshot.packetIndex.load(std::memory_order_relaxed), 2U);
-    EXPECT_EQ(control.txFatalSnapshot.sourceEndFrame.load(std::memory_order_relaxed), 16U);
+    EXPECT_EQ(control.txFatalSnapshot.packetIndex.load(std::memory_order_relaxed),
+              secondPacketIndex);
+    EXPECT_EQ(control.txFatalSnapshot.sourceEndFrame.load(std::memory_order_relaxed), 776U);
     EXPECT_EQ(control.fatalGeneration.load(std::memory_order_acquire), 1U);
     EXPECT_EQ(control.counters.txReadAheadFaults.load(std::memory_order_relaxed), 1U);
 }
@@ -308,7 +368,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
      WatchdogCompletionWithoutHostTimeAdvancesOnlyPreparedPcm) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
-    PublishRange(control, 40, 48);
+    PublishRange(control, 40, 808);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -321,16 +381,19 @@ TEST(IsochAudioTxPipelineTimelineTests,
                   WritableRequest(1, 1, data, payload)).action,
               PreparedTxAction::Prepared);
 
-    pipeline.OnIsochEventGroup(IsochEventGroup{
-        .direction = IsochEventDirection::kTransmit,
-        .hostTicks = 0,
+    auto completedMetadata = SlotMetadata(data, 1);
+    completedMetadata.state = PreparedTxSlotState::PcmPrepared;
+    completedMetadata.sourceFirstFrame = 40;
+    completedMetadata.sourceEndFrame = 48;
+    completedMetadata.preparedPayloadHash =
+        ASFW::Isoch::Tx::HashTxPayload(payload.data(), data.sizeBytes);
+    EXPECT_TRUE(pipeline.OnTransmitSlotCompleted(ASFW::Isoch::Tx::CompletedTxSlot{
+        .metadata = completedMetadata,
+        .completedPayloadHash = completedMetadata.preparedPayloadHash,
+        .packetIndex = 1,
         .hwPacketIndex = 2,
-        .completedPacketIndex = 1,
-        .completedPacketCount = 2,
-        .firstRefillPacket = 2,
-        .refillPacketCount = 0,
-        .outputLastTimestamp = 1001,
-    });
+        .payloadHashMatches = true,
+    }));
 
     EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 8U);
     EXPECT_EQ(control.playbackRingReadFrame.load(std::memory_order_acquire), 48U);
@@ -341,7 +404,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
      DiscontinuityRetiresOldPendingEpochAndReanchorsNewSlots) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
-    PublishRange(control, 0, 8);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -354,17 +417,31 @@ TEST(IsochAudioTxPipelineTimelineTests,
                   WritableRequest(1, 1, first, firstPayload)).action,
               PreparedTxAction::Prepared);
 
-    const auto pendingPacket = pipeline.NextTransmitPacket(TxPacketRequest{
-        .transmitCycle = 1002, .packetIndex = 2, .slotGeneration = 1});
+    IsochTxPacket pendingPacket{};
+    uint32_t pendingPacketIndex = 0;
+    for (uint32_t packetIndex = 2; packetIndex < 140; ++packetIndex) {
+        const auto candidate = pipeline.NextTransmitPacket(TxPacketRequest{
+            .transmitCycle = 1000 + packetIndex,
+            .packetIndex = packetIndex,
+            .slotGeneration = 1,
+        });
+        if (candidate.isData && candidate.timelineFirstFrame == 768) {
+            pendingPacket = candidate;
+            pendingPacketIndex = packetIndex;
+            break;
+        }
+    }
+    ASSERT_NE(pendingPacketIndex, 0U);
     std::array<uint8_t, 4096> pendingPayload{};
-    auto pendingRequest = WritableRequest(2, 1, pendingPacket, pendingPayload, 6);
+    auto pendingRequest =
+        WritableRequest(pendingPacketIndex, 1, pendingPacket, pendingPayload, 65);
     const auto pending = pipeline.PreparePayload(pendingRequest);
     ASSERT_EQ(pending.action, PreparedTxAction::Pending);
     pendingRequest.metadata.epoch = pending.epoch;
     pendingRequest.metadata.sourceFirstFrame = pending.sourceFirstFrame;
     pendingRequest.metadata.sourceEndFrame = pending.sourceEndFrame;
 
-    PublishRange(control, 500, 508);
+    PublishRange(control, 500, 1268);
     control.playbackRingDiscontinuityGeneration.fetch_add(1, std::memory_order_release);
     const auto retired = pipeline.PreparePayload(pendingRequest);
     EXPECT_EQ(retired.action, PreparedTxAction::RetiredSilence);
@@ -373,7 +450,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         .transmitCycle = 1003, .packetIndex = 3, .slotGeneration = 1});
     std::array<uint8_t, 4096> newPayload{};
     const auto reanchored =
-        pipeline.PreparePayload(WritableRequest(3, 1, newPacket, newPayload, 7));
+        pipeline.PreparePayload(WritableRequest(3, 1, newPacket, newPayload, 65));
     EXPECT_EQ(reanchored.action, PreparedTxAction::Prepared);
     EXPECT_EQ(reanchored.sourceFirstFrame, 500U);
     EXPECT_EQ(reanchored.sourceEndFrame, 508U);
@@ -383,7 +460,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
 TEST(IsochAudioTxPipelineTimelineTests, OverwrittenMappedSourceIsImmediatelyFatal) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
-    PublishRange(control, 0, 8);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -398,10 +475,10 @@ TEST(IsochAudioTxPipelineTimelineTests, OverwrittenMappedSourceIsImmediatelyFata
 
     const auto second = pipeline.NextTransmitPacket(TxPacketRequest{
         .transmitCycle = 1002, .packetIndex = 2, .slotGeneration = 1});
-    PublishRange(control, 9, 16);
+    PublishRange(control, 9, 777);
     std::array<uint8_t, 4096> secondPayload{};
     const auto fatal =
-        pipeline.PreparePayload(WritableRequest(2, 1, second, secondPayload, 6));
+        pipeline.PreparePayload(WritableRequest(2, 1, second, secondPayload, 65));
 
     EXPECT_EQ(fatal.action, PreparedTxAction::Fatal);
     EXPECT_EQ(control.fatalReason.load(std::memory_order_acquire),
@@ -415,7 +492,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
      AvailableButUnpreparedDeadlineIsFatal) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
-    PublishRange(control, 0, 16);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -436,6 +513,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         .distanceToHardware = 0,
         .writable = false,
         .deadline = true,
+        .hardwareOwned = true,
         .metadata = SlotMetadata(second, 1),
     };
     const auto fatal = pipeline.PreparePayload(deadline);
@@ -472,17 +550,44 @@ TEST(IsochAudioTxPipelineTimelineTests,
         AudioTransportControlBlock control{};
         std::array<int32_t, kFrames * kChannels> output{};
         PublishRange(control,
-                     std::numeric_limits<uint64_t>::max() - 4,
+                     std::numeric_limits<uint64_t>::max() - 768,
                      std::numeric_limits<uint64_t>::max());
         IsochAudioTxPipeline pipeline;
         ConfigurePipeline(pipeline, control, output);
         (void)pipeline.NextTransmitPacket(TxPacketRequest{
             .transmitCycle = 1000, .packetIndex = 0, .slotGeneration = 1});
-        const auto data = pipeline.NextTransmitPacket(TxPacketRequest{
-            .transmitCycle = 1001, .packetIndex = 1, .slotGeneration = 1});
+        IsochTxPacket firstData{};
+        uint32_t firstDataPacketIndex = 0;
+        IsochTxPacket data{};
+        uint32_t dataPacketIndex = 0;
+        for (uint32_t packetIndex = 1; packetIndex < 150; ++packetIndex) {
+            const auto candidate = pipeline.NextTransmitPacket(TxPacketRequest{
+                .transmitCycle = 1000 + packetIndex,
+                .packetIndex = packetIndex,
+                .slotGeneration = 1,
+            });
+            if (candidate.isData && firstDataPacketIndex == 0) {
+                firstData = candidate;
+                firstDataPacketIndex = packetIndex;
+            }
+            if (candidate.isData && candidate.timelineFirstFrame == 776) {
+                data = candidate;
+                dataPacketIndex = packetIndex;
+                break;
+            }
+        }
+        ASSERT_NE(firstDataPacketIndex, 0U);
+        ASSERT_NE(dataPacketIndex, 0U);
+        std::array<uint8_t, 4096> firstPayload{};
+        ASSERT_EQ(
+            pipeline.PreparePayload(
+                WritableRequest(firstDataPacketIndex, 1, firstData, firstPayload))
+                .action,
+            PreparedTxAction::Prepared);
         std::array<uint8_t, 4096> payload{};
         const auto fatal =
-            pipeline.PreparePayload(WritableRequest(1, 1, data, payload));
+            pipeline.PreparePayload(
+                WritableRequest(dataPacketIndex, 1, data, payload));
         EXPECT_EQ(fatal.action, PreparedTxAction::Fatal);
         EXPECT_EQ(control.fatalReason.load(std::memory_order_acquire),
                   FatalStreamReason::TxSlotInvariant);
@@ -494,7 +599,7 @@ TEST(IsochAudioTxPipelineTimelineTests, PreparedAm824PayloadMatchesSourceMarkers
     std::array<int32_t, kFrames * kChannels> output{};
     output[0] = 0x00123456;
     output[1] = static_cast<int32_t>(0x00FEDCBA);
-    PublishRange(control, 0, 8);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output, AudioWireFormat::kAM824);
 
@@ -513,6 +618,49 @@ TEST(IsochAudioTxPipelineTimelineTests, PreparedAm824PayloadMatchesSourceMarkers
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
+     CompletedPayloadMismatchIsFatalAndDoesNotAdvanceConsumption) {
+    AudioTransportControlBlock control{};
+    std::array<int32_t, kFrames * kChannels> output{};
+    PublishRange(control, 0, 768);
+    IsochAudioTxPipeline pipeline;
+    ConfigurePipeline(pipeline, control, output);
+
+    (void)pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1000, .packetIndex = 0, .slotGeneration = 1});
+    const auto data = pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1001, .packetIndex = 1, .slotGeneration = 1});
+    std::array<uint8_t, 4096> payload{};
+    const auto prepared =
+        pipeline.PreparePayload(WritableRequest(1, 1, data, payload));
+    ASSERT_EQ(prepared.action, PreparedTxAction::Prepared);
+
+    auto metadata = SlotMetadata(data, 1);
+    metadata.state = PreparedTxSlotState::PcmPrepared;
+    metadata.sourceFirstFrame = prepared.sourceFirstFrame;
+    metadata.sourceEndFrame = prepared.sourceEndFrame;
+    metadata.preparedPayloadHash =
+        ASFW::Isoch::Tx::HashTxPayload(payload.data(), data.sizeBytes);
+
+    EXPECT_FALSE(pipeline.OnTransmitSlotCompleted(
+        ASFW::Isoch::Tx::CompletedTxSlot{
+            .metadata = metadata,
+            .completedPayloadHash = metadata.preparedPayloadHash ^ 1U,
+            .packetIndex = 1,
+            .hwPacketIndex = 2,
+            .payloadHashMatches = false,
+        }));
+    EXPECT_EQ(control.fatalReason.load(std::memory_order_acquire),
+              FatalStreamReason::TxPayloadMismatch);
+    EXPECT_EQ(control.playbackRingReadFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.counters.txCompletedPayloadHashMismatches.load(
+                  std::memory_order_relaxed),
+              1U);
+    pipeline.RecordImmediateStop();
+    EXPECT_EQ(control.counters.txImmediateStops.load(std::memory_order_relaxed),
+              1U);
+}
+
+TEST(IsochAudioTxPipelineTimelineTests,
      PrimedDmaRingPatchesEarliestWritableDataSlotWithCoreAudioPcm) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
@@ -520,7 +668,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         output[frame * kChannels] = static_cast<int32_t>((frame + 1) << 8);
         output[frame * kChannels + 1] = -static_cast<int32_t>((frame + 1) << 8);
     }
-    PublishRange(control, 0, 128);
+    PublishRange(control, 0, 768);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -543,13 +691,15 @@ TEST(IsochAudioTxPipelineTimelineTests,
     ASSERT_TRUE(prepared.ok);
     ASSERT_GT(prepared.preparedCount, 0U);
 
-    for (uint32_t packet = 0; packet <= Layout::kGuardBandPackets; ++packet) {
+    for (uint32_t packet = 0;
+         packet <= Layout::kPreparationDeadlinePackets;
+         ++packet) {
         const auto* payload =
             reinterpret_cast<const uint32_t*>(ring.Slab().PayloadPtr(packet));
         EXPECT_EQ(payload[2], 0U);
     }
 
-    constexpr uint32_t kFirstWritableDataPacket = 5;
+    constexpr uint32_t kFirstWritableDataPacket = 65;
     ASSERT_EQ(ring.SlotMetadata(kFirstWritableDataPacket).state,
               PreparedTxSlotState::PcmPrepared);
     EXPECT_EQ(ring.SlotMetadata(kFirstWritableDataPacket).sourceFirstFrame, 0U);
@@ -560,6 +710,71 @@ TEST(IsochAudioTxPipelineTimelineTests,
     EXPECT_EQ(payload[3],
               ASFW::Encoding::RawPcm24In32::Encode(output[1]));
     EXPECT_EQ(control.playbackRingReadFrame.load(std::memory_order_acquire), 0U);
+}
+
+TEST(IsochAudioTxPipelineTimelineTests,
+     Repeated192FrameWritesSurviveMultipleDmaRingRotations) {
+    AudioTransportControlBlock control{};
+    std::array<int32_t, kFrames * kChannels> output{};
+    PublishRange(control, 0, 768);
+    IsochAudioTxPipeline pipeline;
+    ConfigurePipeline(pipeline, control, output);
+
+    ASFW::Driver::HardwareInterface hardware;
+    hardware.SetTestRegister(ASFW::Driver::Register32::kCycleTimer,
+                             1000u << 12);
+    auto memory = MakeIsochMemory(hardware);
+    ASSERT_TRUE(memory);
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(*memory), kIOReturnSuccess);
+    ring.ResetForStart();
+    ring.SeedCycleTracking(hardware);
+    ASSERT_EQ(ring.Prime(pipeline).packetsAssembled, Layout::kNumPackets);
+
+    uint32_t hwPacket = 0;
+    hardware.SetTestRegister(
+        static_cast<ASFW::Driver::Register32>(
+            DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring.Slab().GetDescriptorIOVA(0) | Layout::kBlocksPerPacket);
+    ASSERT_TRUE(ring.PreparePayloads(hardware, 0, pipeline).ok);
+
+    uint64_t writtenEnd = 768;
+    for (uint32_t callback = 0; callback < 18; ++callback) {
+        writtenEnd += 192;
+        const uint64_t oldest =
+            writtenEnd > kFrames ? writtenEnd - kFrames : 0;
+        PublishRange(control, oldest, writtenEnd);
+        hwPacket = (hwPacket + 32) % Layout::kNumPackets;
+        hardware.SetTestRegister(
+            static_cast<ASFW::Driver::Register32>(
+                DMAContextHelpers::IsoXmitCommandPtr(0)),
+            ring.Slab().GetDescriptorIOVA(
+                hwPacket * Layout::kBlocksPerPacket) |
+                Layout::kBlocksPerPacket);
+        const auto refill =
+            ring.Refill(hardware, 0, pipeline, nullptr, nullptr, &pipeline);
+        ASSERT_TRUE(refill.ok);
+        ASSERT_TRUE(ring.PreparePayloads(hardware, 0, pipeline).ok);
+        ASSERT_FALSE(pipeline.HasFatalFault());
+    }
+
+    EXPECT_EQ(control.counters.txPreparationDeadlineFaults.load(
+                  std::memory_order_relaxed),
+              0U);
+    EXPECT_EQ(control.counters.txReadAheadFaults.load(std::memory_order_relaxed),
+              0U);
+    EXPECT_GE(control.counters.txCompletedPcmSlots.load(
+                  std::memory_order_relaxed),
+              200U);
+    EXPECT_EQ(control.counters.txCompletedPayloadHashMismatches.load(
+                  std::memory_order_relaxed),
+              0U);
+    EXPECT_GT(control.counters.txCompletedPayloadHashMatches.load(
+                  std::memory_order_relaxed),
+              0U);
+    EXPECT_GT(control.txMinimumPreparationDistance.load(
+                  std::memory_order_relaxed),
+              Layout::kPreparationDeadlinePackets);
 }
 
 } // namespace

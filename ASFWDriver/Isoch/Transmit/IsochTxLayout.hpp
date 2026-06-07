@@ -45,12 +45,20 @@ struct Layout final {
     static constexpr size_t kPayloadBufferSize =
         static_cast<size_t>(kNumPackets) * static_cast<size_t>(kMaxPacketSize);
 
-    // Guard band in packets used by verifier mismatch checks.
-    static constexpr uint32_t kGuardBandPackets = 4;
+    // The command-pointer slot and the next four packets are treated as
+    // hardware-owned. Payload preparation uses a much earlier deadline so the
+    // controller cannot observe a packet while it is being patched.
+    static constexpr uint32_t kHardwareOwnedGuardPackets = 4;
+    static constexpr uint32_t kPreparationDeadlinePackets = 64;
+    static constexpr uint32_t kGuardBandPackets = kHardwareOwnedGuardPackets;
 
     // Audio verification window for inspecting recently refilled packet payloads.
     static constexpr uint32_t kAudioWriteAhead = 16;
-    static constexpr uint32_t kMaxWriteAhead = kNumPackets - kGuardBandPackets;  // 188
+    static constexpr uint32_t kMaxWriteAhead =
+        kNumPackets - kHardwareOwnedGuardPackets;  // 188
+
+    static_assert(kPreparationDeadlinePackets > kHardwareOwnedGuardPackets);
+    static_assert(kPreparationDeadlinePackets < kMaxWriteAhead);
 
     // Static assertions
     static_assert(kDescriptorsPerPage >= kBlocksPerPacket, "Need at least one packet per page");

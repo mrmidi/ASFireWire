@@ -14,6 +14,7 @@ TEST(PlaybackRingRangeTests, FirstWriteEstablishesActualValidStart) {
     EXPECT_EQ(update.oldestValidFrame, 1000U);
     EXPECT_EQ(update.writtenEndFrame, 1192U);
     EXPECT_FALSE(update.discontinuity);
+    EXPECT_FALSE(update.overrun);
 }
 
 TEST(PlaybackRingRangeTests, ContiguousWritesRetainOldestUntilCapacityWrap) {

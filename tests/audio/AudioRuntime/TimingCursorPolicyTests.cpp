@@ -19,6 +19,8 @@ TEST(TimingCursorPolicyTests, DICE48kBlockingValues) {
     EXPECT_EQ(policy.SafetyOffsetFrames(AudioDirection::Output), 8U);
     EXPECT_EQ(policy.SafetyOffsetFrames(AudioDirection::Input), 8U);
     EXPECT_EQ(policy.PacketLeadFrames(AudioDirection::Output), 768U);
+    EXPECT_EQ(policy.StartupLeadFrames(AudioDirection::Output), 768U);
+    EXPECT_EQ(policy.PreparationDeadlineFrames(AudioDirection::Output), 384U);
     EXPECT_EQ(policy.PacketLeadFrames(AudioDirection::Input), 0U);
     EXPECT_EQ(policy.CursorResyncDeadbandFrames(), 256U);
     EXPECT_EQ(policy.ZtsPeriodFrames(), 8U);

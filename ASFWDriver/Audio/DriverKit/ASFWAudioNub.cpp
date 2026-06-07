@@ -353,6 +353,31 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
     return kr;
 }
 
+kern_return_t IMPL(ASFWAudioNub, RequestTxPayloadPreparation)
+{
+    if (!ivars || requestGeneration == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent
+        ? static_cast<ServiceContext*>(parent->GetServiceContext())
+        : nullptr;
+    if (!ctx || !ctx->workQueue || ctx->stopping.load(std::memory_order_acquire)) {
+        return kIOReturnNotReady;
+    }
+
+    ctx->workQueue->DispatchAsync(^{
+        if (ctx->stopping.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (auto* transmit = ctx->isoch.TransmitContext()) {
+            transmit->RequestPayloadPreparation(requestGeneration);
+        }
+    });
+    return kIOReturnSuccess;
+}
+
 kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
 {
     if (outOutputMemory) { *outOutputMemory = nullptr; }

@@ -42,8 +42,13 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         return;
     }
 
+    // NOTE: this snapshot is split across three os_log lines on purpose. os_log
+    // truncates a single composed message (~1KB / limited arg count); the
+    // previous one-line form was cut off at "writeFrames=", dropping every
+    // decisive TX counter (pcmNZ/pcmZero/disc/pending/retired/...). Keep each
+    // line well under the limit. All three share the "ADK snapshot" prefix.
     ASFW_LOG(DirectAudio,
-             "ADK snapshot bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu src=%llu prepEnd=%llu fwd=%llu backPrevent=%llu stale=%llu ahead=%llu disc=%llu pcmNZ=%llu pcmZero=%llu inv=%llu prep=%llu pending=%llu startup=%llu retired=%llu faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu stops=%llu fatal=%u/%llu pkt=%u dist=%u src=[%llu,%llu) valid=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
+             "ADK snapshot/io bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d",
              snapshot.bound,
              snapshot.inputBufferAddress,
              snapshot.outputBufferAddress,
@@ -61,7 +66,9 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.outputWriteEndFrameCount,
              snapshot.ioBufferFrameSize,
              snapshot.expectedIoBufferFrameSize,
-             snapshot.outputReaderAvailableAtWriteEnd,
+             snapshot.outputReaderAvailableAtWriteEnd);
+    ASFW_LOG(DirectAudio,
+             "ADK snapshot/ring playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu src=%llu prepEnd=%llu fwd=%llu backPrevent=%llu stale=%llu ahead=%llu disc=%llu pcmNZ=%llu pcmZero=%llu inv=%llu prep=%llu pending=%llu startup=%llu retired=%llu)",
              snapshot.playbackRingWriteFrame,
              snapshot.playbackRingReadFrame,
              snapshot.playbackRingOldestValidFrame,
@@ -83,7 +90,9 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txPreparedPcmSlots,
              snapshot.txPendingSourceSlots,
              snapshot.txStartupSilenceSlots,
-             snapshot.txRetiredEpochSilenceSlots,
+             snapshot.txRetiredEpochSilenceSlots);
+    ASFW_LOG(DirectAudio,
+             "ADK snapshot/tx faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu stops=%llu fatal=%u/%llu pkt=%u dist=%u src=[%llu,%llu) valid=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
              snapshot.txReadAheadFaults,
              snapshot.txSourceOverwrittenFaults,
              snapshot.txPreparationDeadlineFaults,
@@ -112,6 +121,21 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txUnderrunSilencePackets,
              snapshot.txStaleSyncPackets,
              snapshot.txInvalidGeometryPackets);
+    ASFW_LOG(DirectAudio,
+             "ADK TX PREP WAKE requested=%llu handled=%llu pending=%llu requestTicks=%llu handledTicks=%llu requests=%llu dispatches=%llu coalesced=%llu drainPasses=%llu",
+             snapshot.txPreparationRequestedGeneration,
+             snapshot.txPreparationHandledGeneration,
+             snapshot.txPreparationRequestedGeneration >=
+                     snapshot.txPreparationHandledGeneration
+                 ? snapshot.txPreparationRequestedGeneration -
+                       snapshot.txPreparationHandledGeneration
+                 : 0,
+             snapshot.txPreparationRequestHostTicks,
+             snapshot.txPreparationHandledHostTicks,
+             snapshot.txPreparationWakeRequests,
+             snapshot.txPreparationWakeDispatches,
+             snapshot.txPreparationWakeCoalesced,
+             snapshot.txPreparationDrainPasses);
 }
 
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
@@ -127,77 +151,78 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
         0,
         true);
 
+    ASFW_LOG(
+        DirectAudio,
+        "ADK FORCED CORE (%{public}s) bound=%d writeEnd=%llu playback=[%llu,%llu) oldest=%llu avail=%llu sched=%llu completed=%llu source=%llu preparedEnd=%llu",
+        context ? context : "unknown",
+        snapshot.bound,
+        snapshot.outputClientWriteEndFrame,
+        snapshot.playbackRingReadFrame,
+        snapshot.playbackRingWriteFrame,
+        snapshot.playbackRingOldestValidFrame,
+        snapshot.playbackRingAvailableFrames,
+        snapshot.txScheduledSampleFrame,
+        snapshot.txCompletedSampleFrame,
+        snapshot.txLastSourceFrame,
+        snapshot.txPreparedSourceEndFrame);
+    ASFW_LOG(
+        DirectAudio,
+        "ADK FORCED ANCHOR available=%llu deferred=%llu anchor(pkt=%u dist=%u source=%llu timeline=%llu) minPrepDistance=%u prepared=%llu pending=%llu startup=%llu retired=%llu",
+        snapshot.txStartupAvailableFrames,
+        snapshot.txDeferredStartupWrites,
+        snapshot.txAnchorPacketIndex,
+        snapshot.txAnchorDistance,
+        snapshot.txAnchorSourceFrame,
+        snapshot.txAnchorTimelineFrame,
+        snapshot.txMinimumPreparationDistance,
+        snapshot.txPreparedPcmSlots,
+        snapshot.txPendingSourceSlots,
+        snapshot.txStartupSilenceSlots,
+        snapshot.txRetiredEpochSilenceSlots);
+    ASFW_LOG(
+        DirectAudio,
+        "ADK FORCED COMPLETE pcm=%llu startupSilence=%llu retiredSilence=%llu hash(match=%llu mismatch=%llu) faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu payload=%llu stops=%llu)",
+        snapshot.txCompletedPcmSlots,
+        snapshot.txCompletedStartupSilenceSlots,
+        snapshot.txCompletedRetiredSilenceSlots,
+        snapshot.txCompletedPayloadHashMatches,
+        snapshot.txCompletedPayloadHashMismatches,
+        snapshot.txReadAheadFaults,
+        snapshot.txSourceOverwrittenFaults,
+        snapshot.txPreparationDeadlineFaults,
+        snapshot.txSlotOwnershipFaults,
+        snapshot.txPayloadMismatchFaults,
+        snapshot.txImmediateStops);
+    ASFW_LOG(
+        DirectAudio,
+        "ADK FORCED FATAL reason=%u generation=%llu pkt=%u distance=%u source=[%llu,%llu) valid=[%llu,%llu) hash=0x%016llx/0x%016llx",
+        static_cast<uint32_t>(snapshot.fatalReason),
+        snapshot.fatalGeneration,
+        snapshot.fatalPacketIndex,
+        snapshot.fatalDistanceToHardware,
+        snapshot.fatalSourceFirstFrame,
+        snapshot.fatalSourceEndFrame,
+        snapshot.fatalOldestValidFrame,
+        snapshot.fatalWrittenEndFrame,
+        snapshot.fatalPreparedPayloadHash,
+        snapshot.fatalCompletedPayloadHash);
     ASFW_LOG(DirectAudio,
-             "ADK FORCED SNAPSHOT (%{public}s) bound=%d inBase=0x%llx outBase=0x%llx inCap=%u outCap=%u inCh=%u outCh=%u beginRead=%llu writeEnd=%llu beginSample=%llu readEndFrame=%llu writeSample=%llu writeEndFrame=%llu beginFrames=%u writeFrames=%u ioFrames=%u expectedIoFrames=%u outputAvailable=%d playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu src=%llu prepEnd=%llu fwd=%llu backPrevent=%llu stale=%llu ahead=%llu disc=%llu pcmNZ=%llu pcmZero=%llu inv=%llu prep=%llu pending=%llu startup=%llu retired=%llu faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu stops=%llu fatal=%u/%llu pkt=%u dist=%u src=[%llu,%llu) valid=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
-             context ? context : "unknown",
-             snapshot.bound,
-             snapshot.inputBufferAddress,
-             snapshot.outputBufferAddress,
-             snapshot.inputFrameCapacity,
-             snapshot.outputFrameCapacity,
-             snapshot.inputChannels,
-             snapshot.outputChannels,
-             snapshot.ioBeginReadCount,
-             snapshot.ioWriteEndCount,
-             snapshot.inputBeginReadSampleFrame,
-             snapshot.inputClientReadEndFrame,
-             snapshot.outputWriteEndSampleFrame,
-             snapshot.outputClientWriteEndFrame,
-             snapshot.inputBeginReadFrameCount,
-             snapshot.outputWriteEndFrameCount,
-             snapshot.ioBufferFrameSize,
-             snapshot.expectedIoBufferFrameSize,
-             snapshot.outputReaderAvailableAtWriteEnd,
-             snapshot.playbackRingWriteFrame,
-             snapshot.playbackRingReadFrame,
-             snapshot.playbackRingOldestValidFrame,
-             snapshot.playbackRingAvailableFrames,
-             snapshot.playbackRingUnderruns,
-             snapshot.playbackRingOverruns,
-             snapshot.txScheduledSampleFrame,
-             snapshot.txCompletedSampleFrame,
-             snapshot.txLastSourceFrame,
-             snapshot.txPreparedSourceEndFrame,
-             snapshot.txForwardCursorCorrections,
-             snapshot.txPreventedBackwardCorrections,
-             snapshot.txStaleOverwrittenReads,
-             snapshot.txProducerAheadUnderruns,
-             snapshot.txTimelineDiscontinuities,
-             snapshot.txPcmNonzeroPackets,
-             snapshot.txPcmAllZeroPackets,
-             snapshot.txTimelineInvariantFailures,
-             snapshot.txPreparedPcmSlots,
-             snapshot.txPendingSourceSlots,
-             snapshot.txStartupSilenceSlots,
-             snapshot.txRetiredEpochSilenceSlots,
-             snapshot.txReadAheadFaults,
-             snapshot.txSourceOverwrittenFaults,
-             snapshot.txPreparationDeadlineFaults,
-             snapshot.txSlotOwnershipFaults,
-             snapshot.txImmediateStops,
-             static_cast<uint32_t>(snapshot.fatalReason),
-             snapshot.fatalGeneration,
-             snapshot.fatalPacketIndex,
-             snapshot.fatalDistanceToHardware,
-             snapshot.fatalSourceFirstFrame,
-             snapshot.fatalSourceEndFrame,
-             snapshot.fatalOldestValidFrame,
-             snapshot.fatalWrittenEndFrame,
-             snapshot.captureRingWriteFrame,
-             snapshot.captureRingReadFrame,
-             snapshot.captureRingAvailableFrames,
-             snapshot.captureRingOverruns,
-             snapshot.captureRingStarvations,
-             snapshot.rxDecodedFrames,
-             snapshot.directTxPackets,
-             snapshot.directTxUnderruns,
-             snapshot.directTxSilenceSubstitutions,
-             snapshot.txValidPhasePcmPackets,
-             snapshot.txValidPhaseSilencePackets,
-             snapshot.txNoPhaseSilencePackets,
-             snapshot.txUnderrunSilencePackets,
-             snapshot.txStaleSyncPackets,
-             snapshot.txInvalidGeometryPackets);
+             "ADK FORCED TX PREP WAKE requested=%llu handled=%llu pending=%llu requestTicks=%llu handledTicks=%llu latency(last=%llu max=%llu) requests=%llu dispatches=%llu coalesced=%llu drainPasses=%llu",
+             snapshot.txPreparationRequestedGeneration,
+             snapshot.txPreparationHandledGeneration,
+             snapshot.txPreparationRequestedGeneration >=
+                     snapshot.txPreparationHandledGeneration
+                 ? snapshot.txPreparationRequestedGeneration -
+                       snapshot.txPreparationHandledGeneration
+                 : 0,
+             snapshot.txPreparationRequestHostTicks,
+             snapshot.txPreparationHandledHostTicks,
+             snapshot.txLastPreparationLatencyTicks,
+             snapshot.txMaxPreparationLatencyTicks,
+             snapshot.txPreparationWakeRequests,
+             snapshot.txPreparationWakeDispatches,
+             snapshot.txPreparationWakeCoalesced,
+             snapshot.txPreparationDrainPasses);
 }
 
 } // namespace ASFW::Audio::DriverKit::DirectDiagnostics

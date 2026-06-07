@@ -42,6 +42,17 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txPreparationDeadlineFaults{0};
     std::atomic<uint64_t> txSlotOwnershipFaults{0};
     std::atomic<uint64_t> txImmediateStops{0};
+    std::atomic<uint64_t> txPreparationWakeRequests{0};
+    std::atomic<uint64_t> txPreparationWakeDispatches{0};
+    std::atomic<uint64_t> txPreparationWakeCoalesced{0};
+    std::atomic<uint64_t> txPreparationDrainPasses{0};
+    std::atomic<uint64_t> txDeferredStartupWrites{0};
+    std::atomic<uint64_t> txCompletedPayloadHashMatches{0};
+    std::atomic<uint64_t> txCompletedPayloadHashMismatches{0};
+    std::atomic<uint64_t> txCompletedPcmSlots{0};
+    std::atomic<uint64_t> txCompletedStartupSilenceSlots{0};
+    std::atomic<uint64_t> txCompletedRetiredSilenceSlots{0};
+    std::atomic<uint64_t> txPayloadMismatchFaults{0};
 
     std::atomic<uint64_t> rxPackets{0};
     std::atomic<uint64_t> rxDecodedFrames{0};
@@ -87,6 +98,17 @@ struct AudioRtCounters final {
         txPreparationDeadlineFaults.store(0, std::memory_order_relaxed);
         txSlotOwnershipFaults.store(0, std::memory_order_relaxed);
         txImmediateStops.store(0, std::memory_order_relaxed);
+        txPreparationWakeRequests.store(0, std::memory_order_relaxed);
+        txPreparationWakeDispatches.store(0, std::memory_order_relaxed);
+        txPreparationWakeCoalesced.store(0, std::memory_order_relaxed);
+        txPreparationDrainPasses.store(0, std::memory_order_relaxed);
+        txDeferredStartupWrites.store(0, std::memory_order_relaxed);
+        txCompletedPayloadHashMatches.store(0, std::memory_order_relaxed);
+        txCompletedPayloadHashMismatches.store(0, std::memory_order_relaxed);
+        txCompletedPcmSlots.store(0, std::memory_order_relaxed);
+        txCompletedStartupSilenceSlots.store(0, std::memory_order_relaxed);
+        txCompletedRetiredSilenceSlots.store(0, std::memory_order_relaxed);
+        txPayloadMismatchFaults.store(0, std::memory_order_relaxed);
 
         rxPackets.store(0, std::memory_order_relaxed);
         rxDecodedFrames.store(0, std::memory_order_relaxed);

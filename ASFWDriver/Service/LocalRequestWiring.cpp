@@ -22,6 +22,7 @@
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
 #include "../Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
+#include "../Protocols/Audio/DICE/Core/DICETypes.hpp"
 #include "../Protocols/Ports/FireWireRxPort.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 
@@ -121,8 +122,10 @@ public:
         }
         const uint32_t bits =
             ASFW::Audio::DICE::NotificationMailbox::PublishWireQuadlet(ctx.writePayload.data());
-        ASFW_LOG(DICE, "DICE notification quadlet: dest=0x%010llx bits=0x%08x",
-                 static_cast<unsigned long long>(ctx.destOffset), bits);
+        char notifyStr[96];
+        ASFW_LOG(DICE, "DICE notification quadlet: dest=0x%010llx bits=0x%08x meaning=%{public}s",
+                 static_cast<unsigned long long>(ctx.destOffset), bits,
+                 ASFW::Audio::DICE::FormatNotification(bits, notifyStr, sizeof(notifyStr)));
         return LocalRequestResult::Write(ResponseCode::Complete);
     }
 };
