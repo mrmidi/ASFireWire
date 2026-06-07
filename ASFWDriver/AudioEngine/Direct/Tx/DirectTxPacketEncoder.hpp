@@ -96,8 +96,9 @@ inline void EncodeDirectTxSilenceFrame(uint32_t pcmChannels,
         ? builder.buildNoData(request.dbc)
         : builder.build(request.dbc, request.syt, false);
 
-    std::memcpy(packetBytes, &cip.q0, sizeof(cip.q0));
-    std::memcpy(packetBytes + sizeof(cip.q0), &cip.q1, sizeof(cip.q1));
+    auto* q = reinterpret_cast<volatile uint32_t*>(packetBytes);
+    q[0] = cip.q0;
+    q[1] = cip.q1;
     bytesWritten = kDirectTxCipHeaderBytes;
     return true;
 }
