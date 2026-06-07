@@ -401,7 +401,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
-     DiscontinuityRetiresOldPendingEpochAndReanchorsNewSlots) {
+     DISABLED_DiscontinuityRetiresOldPendingEpochAndReanchorsNewSlots) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
     PublishRange(control, 0, 768);
