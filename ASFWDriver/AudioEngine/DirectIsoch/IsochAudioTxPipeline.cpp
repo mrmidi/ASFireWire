@@ -211,6 +211,9 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
             txPcmPacketRing_.baseFrame = base;
             lastPopulatedWriteEnd_ = oldestValid;
             
+            // ResetForStart(), inside clip mode after baseFrame/lastPopulatedWriteEnd_ setup:
+            std::memset(txPcmPacketRing_.words, 0, sizeof(txPcmPacketRing_.words));
+            
             if (directTxBinding_.control) {
                 directTxBinding_.control->txScheduledSampleFrame.store(base, std::memory_order_release);
                 directTxBinding_.control->txCompletedSampleFrame.store(base, std::memory_order_release);
@@ -1739,22 +1742,50 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayloadClipStyle(
     // P1: Check if the payload was actually populated
     const bool payloadPopulated = (sourceFirst >= oldestValid) && (sourceEnd <= writtenEnd);
 
-    // P2: Diagnostics for frameMask and channelMask of original audio
-    uint32_t frameMask = 0;
-    uint32_t channelMask = 0;
-    int32_t firstNonzeroFrame = -1;
-    int32_t firstNonzeroChannel = -1;
+    // Compute payload/wire masks from srcPayload (the actual copied payload going to wire)
+    uint32_t payloadFrameMask = 0;
+    uint32_t payloadChannelMask = 0;
+    int32_t payloadFirstNonzeroFrame = -1;
+    int32_t payloadFirstNonzeroChannel = -1;
+    const auto wireFormat = assembler_.audioWireFormat();
+
+    for (uint32_t f = 0; f < metadata.framesPerPacket; ++f) {
+        for (uint32_t ch = 0; ch < metadata.pcmChannels; ++ch) {
+            const uint32_t word = srcPayload[f * am824Slots + ch];
+            bool wordIsNonzero = false;
+            if (wireFormat == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+                wordIsNonzero = (word != 0);
+            } else {
+                wordIsNonzero = ((OSSwapBigToHostInt32(word) & 0x00ffffffu) != 0);
+            }
+
+            if (wordIsNonzero) {
+                payloadFrameMask |= (1u << f);
+                payloadChannelMask |= (1u << ch);
+                if (payloadFirstNonzeroFrame == -1) {
+                    payloadFirstNonzeroFrame = static_cast<int32_t>(f);
+                    payloadFirstNonzeroChannel = static_cast<int32_t>(ch);
+                }
+            }
+        }
+    }
+
+    // Diagnostics for frameMask and channelMask of original audio (source)
+    uint32_t sourceFrameMask = 0;
+    uint32_t sourceChannelMask = 0;
+    int32_t sourceFirstNonzeroFrame = -1;
+    int32_t sourceFirstNonzeroChannel = -1;
 
     for (uint32_t f = 0; f < metadata.framesPerPacket; ++f) {
         const int32_t* src = directOutputReader_.Frame(sourceFirst + f);
         if (src) {
             for (uint32_t ch = 0; ch < metadata.pcmChannels; ++ch) {
                 if (src[ch] != 0) {
-                    frameMask |= (1u << f);
-                    channelMask |= (1u << ch);
-                    if (firstNonzeroFrame == -1) {
-                        firstNonzeroFrame = static_cast<int32_t>(f);
-                        firstNonzeroChannel = static_cast<int32_t>(ch);
+                    sourceFrameMask |= (1u << f);
+                    sourceChannelMask |= (1u << ch);
+                    if (sourceFirstNonzeroFrame == -1) {
+                        sourceFirstNonzeroFrame = static_cast<int32_t>(f);
+                        sourceFirstNonzeroChannel = static_cast<int32_t>(ch);
                     }
                 }
             }
@@ -1762,7 +1793,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayloadClipStyle(
     }
 
     if (directTxBinding_.control) {
-        if (frameMask != 0) {
+        if (payloadFrameMask != 0) {
             directTxBinding_.control->counters.txPcmNonzeroPackets.fetch_add(
                 1, std::memory_order_relaxed);
         } else {
@@ -1817,7 +1848,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayloadClipStyle(
     if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
         ASFW_LOG_RL(
             Isoch, "tx/prepared_clip_payload", 1000, OS_LOG_TYPE_DEFAULT,
-            "IT TX PACKET PAYLOAD: pkt=%u gen=%llu distance=%u dbc=0x%02x syt=0x%04x timeline=%llu wire=[%08x %08x] nonzero=%d fMask=0x%x chMask=0x%x (first f=%d ch=%d) pop=%d oldest=%llu written=%llu",
+            "IT TX PACKET PAYLOAD: pkt=%u gen=%llu distance=%u dbc=0x%02x syt=0x%04x timeline=%llu wire=[%08x %08x] nonzero=%d fMask=0x%x chMask=0x%x srcFMask=0x%x srcChMask=0x%x (first f=%d ch=%d) pop=%d oldest=%llu written=%llu",
             request.packetIndex,
             request.metadata.generation,
             request.distanceToHardware,
@@ -1826,11 +1857,13 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayloadClipStyle(
             metadata.timelineFirstFrame,
             out.firstEncodedWords[0],
             out.firstEncodedWords[1],
-            (frameMask != 0) ? 1 : 0,
-            frameMask,
-            channelMask,
-            firstNonzeroFrame,
-            firstNonzeroChannel,
+            (payloadFrameMask != 0) ? 1 : 0,
+            payloadFrameMask,
+            payloadChannelMask,
+            sourceFrameMask,
+            sourceChannelMask,
+            payloadFirstNonzeroFrame,
+            payloadFirstNonzeroChannel,
             payloadPopulated ? 1 : 0,
             oldestValid,
             writtenEnd);
