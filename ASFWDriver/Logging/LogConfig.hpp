@@ -130,6 +130,11 @@ public:
      */
     bool IsAudioAutoStartEnabled() const;
 
+    /**
+     * @brief Check if Saffire-style TX packet population is enabled
+     */
+    bool IsUseClipStyleTxPopulationEnabled() const;
+
     // ========================================================================
     // Runtime Setters (thread-safe, for user client control)
     // ========================================================================
@@ -208,6 +213,11 @@ public:
      */
     void SetStatistics(bool enable);
 
+    /**
+     * @brief Enable or disable Saffire-style TX packet population at runtime
+     */
+    void SetUseClipStyleTxPopulationEnabled(bool enable);
+
 private:
     LogConfig();
     ~LogConfig();
@@ -250,6 +260,7 @@ private:
     std::atomic<bool> isochTxVerifierEnabled_;
     std::atomic<bool> audioAutoStartEnabled_;
     std::atomic<bool> logStatistics_;
+    std::atomic<bool> useClipStyleTxPopulation_;
     std::atomic<bool> initialized_;
 };
 

@@ -174,6 +174,11 @@ private:
                            uint64_t preparedPayloadHash = 0,
                            uint64_t completedPayloadHash = 0) noexcept;
 
+    void PopulateClipStyleTxRingFromWrittenRange(uint64_t begin, uint64_t end) noexcept;
+    [[nodiscard]] Tx::PreparedTxPayloadResult PreparePayloadClipStyle(
+        const Tx::PreparedTxPayloadRequest& request) noexcept;
+
+
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
     std::array<ProducedPacketMetadata, Tx::Layout::kNumPackets> producedPacketMetadata_{};
@@ -236,6 +241,49 @@ private:
 
     Counters counters_{};
     ASFW::Audio::TimingCursorPolicy timingPolicy_{ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking()};
+
+    struct TxPcmPacketRing {
+        static constexpr uint32_t kMaxOutputFrames = 4096;
+        static constexpr uint32_t kMaxChannels = 16;
+
+        uint32_t words[kMaxOutputFrames * kMaxChannels]{0};
+
+        uint64_t baseFrame{0};
+        uint32_t outputFrameCapacity{0};
+        uint32_t framesPerPacket{0};
+        uint32_t packetSlots{0};
+        uint32_t packetBase{0};
+        uint32_t am824Slots{0};
+
+        uint64_t RelativeFrame(uint64_t absoluteFrame) const noexcept {
+            if (outputFrameCapacity == 0) return 0;
+            const uint64_t diff = (absoluteFrame >= baseFrame) ? (absoluteFrame - baseFrame) : 0;
+            return diff % outputFrameCapacity;
+        }
+
+        uint32_t SlotForFrame(uint64_t absoluteFrame) const noexcept {
+            if (framesPerPacket == 0 || packetSlots == 0) return 0;
+            return (packetBase + static_cast<uint32_t>(RelativeFrame(absoluteFrame) / framesPerPacket)) % packetSlots;
+        }
+
+        uint32_t FrameInsidePacket(uint64_t absoluteFrame) const noexcept {
+            if (framesPerPacket == 0) return 0;
+            return static_cast<uint32_t>(RelativeFrame(absoluteFrame) % framesPerPacket);
+        }
+
+        uint32_t* PayloadForAudioFrame(uint64_t absoluteFrame) noexcept {
+            if (am824Slots == 0) return nullptr;
+            return words + ((static_cast<size_t>(SlotForFrame(absoluteFrame)) * framesPerPacket + FrameInsidePacket(absoluteFrame)) * am824Slots);
+        }
+
+        const uint32_t* PacketPayloadForTimeline(uint64_t timelineFirstFrame) const noexcept {
+            if (am824Slots == 0) return nullptr;
+            return words + (static_cast<size_t>(SlotForFrame(timelineFirstFrame)) * framesPerPacket * am824Slots);
+        }
+    };
+
+    TxPcmPacketRing txPcmPacketRing_{};
+    uint64_t lastPopulatedWriteEnd_{0};
 };
 
 } // namespace ASFW::Isoch

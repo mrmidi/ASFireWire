@@ -50,6 +50,7 @@ LogConfig::LogConfig()
     isochTxVerifierEnabled_.store(false); // Default: disabled (dev-only, expensive)
     audioAutoStartEnabled_.store(true); // Default: enabled
     logStatistics_.store(true);         // Default: Show statistics
+    useClipStyleTxPopulation_.store(false); // Default: disabled
     initialized_.store(false);
 }
 
@@ -92,12 +93,13 @@ void LogConfig::Initialize(IOService* service) {
     isochTxVerifierEnabled_.store(ReadBoolProperty(service, "ASFWEnableIsochTxVerifier", false));
     audioAutoStartEnabled_.store(ReadBoolProperty(service, "ASFWAutoStartAudioStreams", true));
     logStatistics_.store(ReadBoolProperty(service, "ASFWLogStatistics", true));
+    useClipStyleTxPopulation_.store(ReadBoolProperty(service, "ASFWUseClipStyleTxPopulation", false));
 
     initialized_.store(true);
 
     // Log configuration (always visible at INFO level)
     ASFW_LOG_INFO(Controller,
-                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u DICE=%u Isoch=%u DirectAudio=%u HexDumps=%d TxVerify=%d AutoStart=%d Stats=%d",
+                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u DICE=%u Isoch=%u DirectAudio=%u HexDumps=%d TxVerify=%d AutoStart=%d Stats=%d ClipStyleTx=%d",
                   asyncVerbosity_.load(), controllerVerbosity_.load(), hardwareVerbosity_.load(),
                   discoveryVerbosity_.load(), configROMVerbosity_.load(), userClientVerbosity_.load(),
                   musicSubunitVerbosity_.load(), fcpVerbosity_.load(), cmpVerbosity_.load(), irmVerbosity_.load(), avcVerbosity_.load(),
@@ -106,7 +108,8 @@ void LogConfig::Initialize(IOService* service) {
                   directAudioVerbosity_.load(),
                   enableHexDumps_.load(), isochTxVerifierEnabled_.load(),
                   audioAutoStartEnabled_.load(),
-                  logStatistics_.load());
+                  logStatistics_.load(),
+                  useClipStyleTxPopulation_.load());
 }
 
 // ============================================================================
@@ -184,6 +187,11 @@ bool LogConfig::IsIsochTxVerifierEnabled() const {
 bool LogConfig::IsAudioAutoStartEnabled() const {
     return audioAutoStartEnabled_.load(std::memory_order_relaxed);
 }
+
+bool LogConfig::IsUseClipStyleTxPopulationEnabled() const {
+    return useClipStyleTxPopulation_.load(std::memory_order_relaxed);
+}
+
 
 // ============================================================================
 // Runtime Setters (Thread-Safe)
@@ -291,6 +299,11 @@ void LogConfig::SetAudioAutoStartEnabled(bool enable) {
 void LogConfig::SetStatistics(bool enable) {
     logStatistics_.store(enable, std::memory_order_relaxed);
     ASFW_LOG_INFO(Controller, "Statistics logging %{public}s", enable ? "enabled" : "disabled");
+}
+
+void LogConfig::SetUseClipStyleTxPopulationEnabled(bool enable) {
+    useClipStyleTxPopulation_.store(enable, std::memory_order_relaxed);
+    ASFW_LOG_INFO(Controller, "ClipStyle TX population %{public}s", enable ? "enabled" : "disabled");
 }
 
 // ============================================================================
