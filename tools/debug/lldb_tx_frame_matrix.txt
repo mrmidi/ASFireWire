@@ -8,18 +8,18 @@ breakpoint set -n ASFWDebugTxFrameMatrixBreakpoint
 breakpoint modify --ignore-count 1 1
 
 breakpoint command add 1
-echo ============================================================
-echo TX frame matrix snapshot #2
-echo src: native int32 samples written by CoreAudio
-echo dst: encoded host-order words copied toward FireWire DMA
-echo Matrices use a fixed 16-word stride for each of up to 8 frames.
-echo ============================================================
+script print("============================================================")
+script print("TX frame matrix snapshot #2")
+script print("src: native int32 samples written by CoreAudio")
+script print("dst: encoded host-order words copied toward FireWire DMA")
+script print("Matrices use a fixed 16-word stride for each of up to 8 frames.")
+script print("============================================================")
 frame variable packetFirstFrame frames sourceChannels destinationSlots
 frame variable sourceMatrix encodedDestinationMatrix
-echo --- sourceMatrix: 8 frames x 16 native int32 channels ---
-memory read --size 4 --format x --count 128 sourceMatrix
-echo --- encodedDestinationMatrix: 8 frames x 16 encoded slots ---
-memory read --size 4 --format x --count 128 encodedDestinationMatrix
-echo ============================================================
-echo Process is paused. Inspect memory, then use 'continue'.
+script print("--- sourceMatrix: 8 frames x 16 native int32 channels ---")
+expression -f x -- *(const int32_t (*)[8][16])sourceMatrix
+script print("--- encodedDestinationMatrix: 8 frames x 16 encoded slots ---")
+expression -f x -- *(const uint32_t (*)[8][16])encodedDestinationMatrix
+script print("============================================================")
+script print("Process is paused. Inspect memory, then use 'continue'.")
 DONE

@@ -1326,6 +1326,22 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     const uint64_t oldestValid = directOutputReader_.OutputOldestValidFrame();
     const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
 
+    // A binding can appear after the DMA ring was primed. Those existing slots
+    // use the old zero-based timeline and must drain as startup silence.
+    if (metadata.timelineFirstFrame < txOutputOffsetFrames_) {
+        directTxBinding_.control->counters.txStartupSilenceSlots.fetch_add(
+            1, std::memory_order_relaxed);
+        ASFW_LOG_RL(
+            Isoch, "tx/prebinding_slot", 1000, OS_LOG_TYPE_DEFAULT,
+            "IT TX PRE-BINDING SLOT: pkt=%u timeline=%llu offset=%u state=%u; keeping startup silence",
+            request.packetIndex,
+            metadata.timelineFirstFrame,
+            txOutputOffsetFrames_,
+            static_cast<uint32_t>(metadata.preparationState));
+        out.action = Tx::PreparedTxAction::NoChange;
+        return out;
+    }
+
     // Discontinuity diagnostics
     const uint64_t discontinuityGeneration =
         directTxBinding_.control->playbackRingDiscontinuityGeneration.load(
@@ -1346,26 +1362,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
             oldestValid);
     }
 
-    // CIP header + Audio payload size verification
-    uint32_t bytesWritten = 0;
-    const uint32_t am824Slots = metadata.am824Slots == 0 ? metadata.pcmChannels : metadata.am824Slots;
-    const Direct::Tx::DirectTxPacketHeaderRequest header{
-        .sid = metadata.cip.sid,
-        .am824Slots = am824Slots,
-        .dbc = metadata.cip.dbc,
-        .syt = metadata.cip.syt,
-        .isNoData = false,
-    };
-
-    if (!Direct::Tx::BeginDirectTxPacket(header, request.payloadBytes, request.payloadCapacityBytes, bytesWritten)) {
-        PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, oldestValid, writtenEnd);
-        out.action = Tx::PreparedTxAction::Fatal;
-        return out;
-    }
-
-    if (metadata.timelineFirstFrame < txOutputOffsetFrames_ ||
-        metadata.timelineFirstFrame >
+    if (metadata.timelineFirstFrame >
             std::numeric_limits<uint64_t>::max() - metadata.framesPerPacket) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
                           request, 0, 0, oldestValid, writtenEnd);
@@ -1389,12 +1386,36 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
                     "TX PAYLOAD UNCOVERED slot=%u expected=[%llu,%llu) gen=%u stamp=[%llu,%llu) stampGen=%u",
                     slot, audioFirst, audioEnd, expectedGeneration,
                     stamp.begin, stamp.end, stamp.generation);
+        if (audioFirst >= oldestValid) {
+            out.action = Tx::PreparedTxAction::NoChange;
+            out.sourceFirstFrame = audioFirst;
+            out.sourceEndFrame = audioEnd;
+            return out;
+        }
     }
 
     const uint32_t* srcPayload = covered
         ? txPcmPacketRing_.PacketPayloadForTimeline(audioFirst)
         : txPcmPacketRing_.SilencePayload();
     if (!srcPayload) {
+        PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
+                          request, 0, 0, oldestValid, writtenEnd);
+        out.action = Tx::PreparedTxAction::Fatal;
+        return out;
+    }
+
+    // CIP header + Audio payload size verification
+    uint32_t bytesWritten = 0;
+    const uint32_t am824Slots = metadata.am824Slots == 0 ? metadata.pcmChannels : metadata.am824Slots;
+    const Direct::Tx::DirectTxPacketHeaderRequest header{
+        .sid = metadata.cip.sid,
+        .am824Slots = am824Slots,
+        .dbc = metadata.cip.dbc,
+        .syt = metadata.cip.syt,
+        .isNoData = false,
+    };
+
+    if (!Direct::Tx::BeginDirectTxPacket(header, request.payloadBytes, request.payloadCapacityBytes, bytesWritten)) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
                           request, 0, 0, oldestValid, writtenEnd);
         out.action = Tx::PreparedTxAction::Fatal;

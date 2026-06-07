@@ -172,6 +172,63 @@ TEST(IsochAudioTxPipelineTimelineTests,
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
+     SlotPrimedBeforeLateBindingDrainsAsStartupSilence) {
+    AudioTransportControlBlock control{};
+    std::array<int32_t, kFrames * kChannels> output{};
+    PublishRange(control, 0, 128);
+
+    IsochAudioTxPipeline pipeline;
+    ASSERT_EQ(pipeline.Configure(
+                  0,
+                  static_cast<uint32_t>(ASFW::Encoding::StreamMode::kBlocking),
+                  kChannels,
+                  kChannels,
+                  AudioWireFormat::kRawPcm24In32),
+              kIOReturnSuccess);
+    pipeline.ResetForStart();
+
+    (void)pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1000, .packetIndex = 0, .slotGeneration = 1});
+    const auto primedBeforeBinding = pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1001, .packetIndex = 1, .slotGeneration = 1});
+    ASSERT_TRUE(primedBeforeBinding.isData);
+    ASSERT_LT(primedBeforeBinding.timelineFirstFrame, 768U);
+
+    pipeline.SetDirectTxRuntimeBinding(
+        IsochAudioTxPipeline::DirectTxRuntimeBinding{
+            .outputBase = output.data(),
+            .outputBytes = output.size() * sizeof(int32_t),
+            .outputFrames = kFrames,
+            .control = &control,
+            .enabled = true,
+            .sampleRateHz = 48000,
+            .streamModeRaw = static_cast<uint32_t>(
+                ASFW::Encoding::StreamMode::kBlocking),
+            .outputChannels = kChannels,
+            .am824Slots = kChannels,
+        });
+
+    std::array<uint8_t, 4096> oldPayload{};
+    const auto oldResult = PreparePopulated(
+        pipeline,
+        WritableRequest(1, 1, primedBeforeBinding, oldPayload));
+    EXPECT_EQ(oldResult.action, PreparedTxAction::NoChange);
+    EXPECT_FALSE(pipeline.HasFatalFault());
+
+    const auto packetAfterBinding = pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1002, .packetIndex = 2, .slotGeneration = 1});
+    ASSERT_TRUE(packetAfterBinding.isData);
+    EXPECT_EQ(packetAfterBinding.timelineFirstFrame, 768U);
+
+    std::array<uint8_t, 4096> newPayload{};
+    const auto newResult = PreparePopulated(
+        pipeline,
+        WritableRequest(2, 1, packetAfterBinding, newPayload));
+    EXPECT_EQ(newResult.action, PreparedTxAction::Prepared);
+    EXPECT_EQ(newResult.sourceFirstFrame, 0U);
+}
+
+TEST(IsochAudioTxPipelineTimelineTests,
      PartialLeadingPacketUsesEncodedSilenceAtPacketAlignedOffset) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
@@ -226,7 +283,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
     std::array<uint8_t, 4096> payload{};
     auto request = WritableRequest(1, 1, data, payload);
     auto initial = PreparePopulated(pipeline, request);
-    ASSERT_EQ(initial.action, PreparedTxAction::Prepared);
+    ASSERT_EQ(initial.action, PreparedTxAction::NoChange);
     EXPECT_EQ(initial.sourceFirstFrame, 0U);
 
     PublishRange(control, 200, 968);
@@ -294,7 +351,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
-     UncoveredFutureRangeUsesSilenceAndDeadlineLeavesSlotUnchanged) {
+     UncoveredFutureRangeDefersUntilWrittenAndDeadlineLeavesSlotUnchanged) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
     PublishRange(control, 0, 768);
@@ -329,13 +386,9 @@ TEST(IsochAudioTxPipelineTimelineTests,
     auto pendingRequest =
         WritableRequest(secondPacketIndex, 1, second, secondPayload, 65);
     const auto uncovered = PreparePopulated(pipeline, pendingRequest);
-    ASSERT_EQ(uncovered.action, PreparedTxAction::Prepared);
+    ASSERT_EQ(uncovered.action, PreparedTxAction::NoChange);
     EXPECT_EQ(uncovered.sourceFirstFrame, 768U);
     EXPECT_EQ(uncovered.sourceEndFrame, 776U);
-    const auto* encoded =
-        reinterpret_cast<const uint32_t*>(secondPayload.data()) + 2;
-    EXPECT_EQ(encoded[0], 0U);
-    EXPECT_EQ(encoded[1], 0U);
 
     pendingRequest.writable = false;
     pendingRequest.deadline = true;
@@ -346,6 +399,29 @@ TEST(IsochAudioTxPipelineTimelineTests,
     const auto deadline = PreparePopulated(pipeline, pendingRequest);
     EXPECT_EQ(deadline.action, PreparedTxAction::NoChange);
     EXPECT_FALSE(pipeline.HasFatalFault());
+
+    output[(768 % kFrames) * kChannels] = 0x123400;
+    output[(768 % kFrames) * kChannels + 1] = -0x123400;
+    PublishRange(control, 0, 776);
+    pendingRequest.writable = true;
+    pendingRequest.deadline = false;
+    pendingRequest.distanceToHardware = 65;
+    pendingRequest.hardwareOwned = false;
+    pendingRequest.payloadBytes = secondPayload.data();
+    pendingRequest.payloadCapacityBytes =
+        static_cast<uint32_t>(secondPayload.size());
+    const auto populated = PreparePopulated(pipeline, pendingRequest);
+    ASSERT_EQ(populated.action, PreparedTxAction::Prepared);
+    EXPECT_EQ(populated.sourceFirstFrame, 768U);
+    EXPECT_EQ(populated.sourceEndFrame, 776U);
+    const auto* encoded =
+        reinterpret_cast<const uint32_t*>(secondPayload.data()) + 2;
+    EXPECT_EQ(encoded[0],
+              ASFW::Encoding::RawPcm24In32::Encode(
+                  output[(768 % kFrames) * kChannels]));
+    EXPECT_EQ(encoded[1],
+              ASFW::Encoding::RawPcm24In32::Encode(
+                  output[(768 % kFrames) * kChannels + 1]));
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
