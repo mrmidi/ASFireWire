@@ -1711,7 +1711,8 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayloadClipStyle(
         return out;
     }
 
-    const uint32_t payloadSizeBytes = metadata.framesPerPacket * am824Slots * sizeof(uint32_t);
+    const uint32_t payloadQuadlets = metadata.framesPerPacket * am824Slots;
+    const uint32_t payloadSizeBytes = payloadQuadlets * sizeof(uint32_t);
     if (bytesWritten + payloadSizeBytes > request.payloadCapacityBytes) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
                           request, 0, 0, 0, 0);
@@ -1719,7 +1720,10 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayloadClipStyle(
         return out;
     }
 
-    std::memcpy(request.payloadBytes + bytesWritten, srcPayload, payloadSizeBytes);
+    auto* dstPayload = reinterpret_cast<volatile uint32_t*>(request.payloadBytes + bytesWritten);
+    for (uint32_t i = 0; i < payloadQuadlets; ++i) {
+        dstPayload[i] = srcPayload[i];
+    }
 
     // Update isoch pipeline state & counters
     metadata.preparationState = Tx::PreparedTxSlotState::PcmPrepared;
