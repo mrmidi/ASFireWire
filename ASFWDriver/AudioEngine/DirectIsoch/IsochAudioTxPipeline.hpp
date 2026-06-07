@@ -254,11 +254,13 @@ private:
         uint32_t packetSlots{0};
         uint32_t packetBase{0};
         uint32_t am824Slots{0};
+        bool valid{false};
 
         uint64_t RelativeFrame(uint64_t absoluteFrame) const noexcept {
             if (outputFrameCapacity == 0) return 0;
-            const uint64_t diff = (absoluteFrame >= baseFrame) ? (absoluteFrame - baseFrame) : 0;
-            return diff % outputFrameCapacity;
+            const uint64_t a = absoluteFrame % outputFrameCapacity;
+            const uint64_t b = baseFrame % outputFrameCapacity;
+            return (a + outputFrameCapacity - b) % outputFrameCapacity;
         }
 
         uint32_t SlotForFrame(uint64_t absoluteFrame) const noexcept {
