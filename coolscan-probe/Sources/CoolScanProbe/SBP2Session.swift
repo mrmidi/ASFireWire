@@ -108,25 +108,36 @@ final class SBP2Session {
         let cap = Int(transferLength) + 256 // payload + result header + sense headroom
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0 + 2.0)
         while Date() < deadline {
-            do {
-                let (_, data) = try conn.call(.getSBP2CommandResult, scalarIn: [handle],
-                                              structOutCap: max(cap, 512))
+            // Raw single call (no auto-retry) so we can see the exact kern_return
+            // and the struct-output size the dext reports — needed to tell a
+            // genuine BadArgument apart from a NoSpace→out-of-line marshalling issue.
+            let (kr, reportedSize, data) = conn.callOnceStructOut(
+                .getSBP2CommandResult, scalarIn: [handle], structOutCap: max(cap, 512))
+            if kr == KERN_SUCCESS {
                 return parseResult(data)
-            } catch let e as ProbeError where e.description.contains("Not Found") {
-                usleep(50_000) // 50 ms — not ready yet
-            } catch {
-                // Non-NotFound failure. Probe whether the dext is still alive so we
-                // can tell a clean synchronous error apart from a crash artifact.
-                let alive: String
-                do {
-                    let (out, _) = try conn.call(.getSBP2SessionState, scalarIn: [handle],
-                                                 scalarOutCount: 5)
-                    alive = "dext SVARER (state=\(out.first.map { ASFW.LoginState(raw: $0).label } ?? "?"))"
-                } catch let live {
-                    alive = "dext SVARER IKKE (\(live)) → krasjet/respawn"
-                }
-                throw ProbeError("getResult feilet: \(error) — likviditetssjekk: \(alive)")
             }
+            if kr == kIOReturnNotFound {
+                usleep(50_000) // 50 ms — not ready yet
+                continue
+            }
+            if kr == kIOReturnNoSpace {
+                // Result bigger than our buffer — retry once with the reported size.
+                let (kr2, size2, data2) = conn.callOnceStructOut(
+                    .getSBP2CommandResult, scalarIn: [handle], structOutCap: max(reportedSize, cap))
+                if kr2 == KERN_SUCCESS { return parseResult(data2) }
+                throw ProbeError("getResult NoSpace→retry feilet: kr=0x\(String(format: "%08x", UInt32(bitPattern: kr2))) "
+                    + "førsteReportedSize=\(reportedSize) retryReportedSize=\(size2) (struct for stor / out-of-line?)")
+            }
+            // Other error. Probe whether the dext is still alive.
+            let alive: String
+            do {
+                let (out, _) = try conn.call(.getSBP2SessionState, scalarIn: [handle], scalarOutCount: 5)
+                alive = "dext SVARER (state=\(out.first.map { ASFW.LoginState(raw: $0).label } ?? "?"))"
+            } catch let live {
+                alive = "dext SVARER IKKE (\(live))"
+            }
+            throw ProbeError("getResult kr=0x\(String(format: "%08x", UInt32(bitPattern: kr))) "
+                + "reportedSize=\(reportedSize) (rått enkelt-kall, ingen retry) — \(alive)")
         }
         throw ProbeError("SCSI-kommando timeout (ingen resultat)")
     }

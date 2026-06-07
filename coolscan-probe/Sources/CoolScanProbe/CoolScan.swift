@@ -301,8 +301,12 @@ enum CoolScan {
     /// must pre-multiply length by samplesPerScan (coolscan3 does this).
     static func readData(_ s: SBP2Session, length: UInt32) throws -> SCSIResult {
         let cdb: [UInt8] = [0x28, 0, 0, 0, 0, 0] + be24(length) + [0x00]
+        // captureSense:false — the dext duplicates payload into senseData when
+        // captureSenseData is set, doubling the result size (and it isn't real
+        // SCSI sense, just a copy). For image reads that only inflates the
+        // user-client struct-output past the inline limit.
         return try s.sendSCSI(cdb: cdb, direction: .fromTarget,
-                              transferLength: length, timeoutMs: 30_000)
+                              transferLength: length, timeoutMs: 30_000, captureSense: false)
     }
 
     // TODO: sendLUT (0x2a 00 03 …), setBoundary (0x2a 00 88 …)
@@ -332,7 +336,14 @@ enum CoolScan {
     static func scanFrame(_ s: SBP2Session, caps: Capabilities,
                           resolution: UInt16, depth: UInt8? = nil,
                           infrared: Bool = false, negative: Bool = false,
-                          maxChunkBytes: Int = 0x40000,
+                          // READ(10) results come back via the user client's INLINE
+                          // struct-output, which DriverKit caps (~4 KB). With
+                          // captureSense off the result is 16 + chunk; 2048 keeps it
+                          // (2064) well under any reasonable limit. Conservative on
+                          // purpose — each hardware test costs a scanner power-cycle.
+                          // A dext-side structureOutputDescriptor path would lift this
+                          // for full-res speed (TODO).
+                          maxChunkBytes: Int = 2048,
                           readTimeoutMs: UInt32 = 30_000,
                           progress: ((Int, Int) -> Void)? = nil) throws -> ScanResult {
         let g = geometry(caps, resolution: resolution, depth: depth, infrared: infrared)
@@ -356,16 +367,28 @@ enum CoolScan {
             throw ProbeError("SCAN avvist: transport=\(scanR.transportStatus) sbp=\(scanR.sbpStatus)")
         }
 
-        // 4) Pull the image as a byte stream, in whole-line chunks.
-        let linesPerChunk = max(1, maxChunkBytes / max(g.bytesPerLine, 1))
-        let chunkBytes = UInt32(linesPerChunk * g.bytesPerLine)
+        // 4) Pull the image as a byte stream. READ(10) is a plain byte stream, so
+        //    chunks need not be line-aligned — keep each result under the user
+        //    client's inline struct-output limit (~4 KB). Layout is reconstructed
+        //    offline from the total byte count.
+        let chunkBytes = UInt32(max(1, maxChunkBytes))
         var raw = Data(capacity: g.totalBytes)
         while raw.count < g.totalBytes {
             let remaining = g.totalBytes - raw.count
             let want = UInt32(min(Int(chunkBytes), remaining))
-            let r = try readData(s, length: want)
+            // Each non-first ORB resets the fetch agent before ORB_POINTER; under
+            // back-to-back reads the resubmit can transiently fail
+            // (transport=-1 / sbp=0xFF). Retry with a short settle delay before
+            // giving up — recovers a flaky agent reset without aborting the scan.
+            var r = try readData(s, length: want)
+            var attempt = 0
+            while !r.ok && attempt < 8 {
+                attempt += 1
+                usleep(UInt32(50_000 * attempt)) // 50ms, 100ms, … let the agent settle
+                r = try readData(s, length: want)
+            }
             guard r.ok else {
-                throw ProbeError("READ(10) avvist ved \(raw.count)/\(g.totalBytes) byte: "
+                throw ProbeError("READ(10) avvist ved \(raw.count)/\(g.totalBytes) byte etter \(attempt) forsøk: "
                     + "transport=\(r.transportStatus) sbp=\(r.sbpStatus)")
             }
             if r.payload.isEmpty { break } // short read — scanner says done

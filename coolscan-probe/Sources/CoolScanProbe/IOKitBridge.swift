@@ -138,6 +138,28 @@ final class ASFWConnection {
         return (Array(scalarOut.prefix(Int(scalarOutCnt))), out)
     }
 
+    /// Single IOConnectCallMethod with NO NoSpace-retry. Returns the raw
+    /// kern_return, the struct-output size the dext reported, and the data.
+    /// Used to diagnose struct-output marshalling (e.g. NoSpace → out-of-line).
+    func callOnceStructOut(_ sel: ASFW.Selector, scalarIn: [UInt64],
+                           structOutCap: Int) -> (kr: kern_return_t, reportedSize: Int, data: Data) {
+        var scalarOutCnt: UInt32 = 0
+        var structOut = Data(count: structOutCap)
+        var structOutSize = structOutCap
+        let kr: kern_return_t = scalarIn.withUnsafeBufferPointer { sin in
+            structOut.withUnsafeMutableBytes { sout in
+                IOConnectCallMethod(
+                    connection, sel.rawValue,
+                    scalarIn.isEmpty ? nil : sin.baseAddress, UInt32(scalarIn.count),
+                    nil, 0,
+                    nil, &scalarOutCnt,
+                    structOutCap == 0 ? nil : sout.baseAddress, &structOutSize)
+            }
+        }
+        let n = min(structOutSize, structOutCap)
+        return (kr, structOutSize, n > 0 ? structOut.prefix(n) : Data())
+    }
+
     private func withStructIn<R>(_ data: Data?, _ body: (UnsafeRawPointer?, Int) -> R) -> R {
         guard let data, !data.isEmpty else { return body(nil, 0) }
         return data.withUnsafeBytes { body($0.baseAddress, data.count) }
