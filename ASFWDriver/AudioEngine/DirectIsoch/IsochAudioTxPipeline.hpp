@@ -105,6 +105,7 @@ public:
     [[nodiscard]] uint64_t PreparationHandledGeneration() const noexcept;
     void MarkPreparationRequestHandled(uint64_t generation,
                                        uint64_t hostTicks) noexcept;
+    void PopulateClipStyleTxRingFromWrittenRange() noexcept;
 
 private:
     struct ExternalSyncState {
@@ -152,7 +153,6 @@ private:
         uint64_t timelineFirstFrame{0};
         uint64_t sourceFirstFrame{0};
         uint64_t sourceEndFrame{0};
-        uint64_t epoch{0};
         Tx::PreparedTxSlotState preparationState{Tx::PreparedTxSlotState::InitialSilence};
         PacketCipFields cip{};
     };
@@ -173,11 +173,8 @@ private:
                            uint64_t writtenEndFrame,
                            uint64_t preparedPayloadHash = 0,
                            uint64_t completedPayloadHash = 0) noexcept;
-
-    void PopulateClipStyleTxRingFromWrittenRange(uint64_t begin, uint64_t end) noexcept;
-    [[nodiscard]] Tx::PreparedTxPayloadResult PreparePayloadClipStyle(
-        const Tx::PreparedTxPayloadRequest& request) noexcept;
-
+    void MaybeLogTxFrameMatrix(uint64_t populatedBegin,
+                               uint64_t populatedEnd) noexcept;
 
     Encoding::PacketAssembler assembler_{};
     alignas(std::uint32_t) std::array<std::uint8_t, Encoding::kMaxAssembledPacketSize> silentPacketStorage_{};
@@ -198,14 +195,8 @@ private:
     bool sourceTimelineAnchored_{false};
     uint64_t txScheduledSampleFrame_{0};
     uint64_t txCompletedSampleFrame_{0};
-    uint64_t txPreparedSourceEndFrame_{0};
-    uint64_t txConsumedSourceEndFrame_{0};
-    uint64_t epochAnchorTimelineFrame_{0};
-    uint64_t epochAnchorSourceFrame_{0};
-    uint64_t currentEpoch_{0};
     uint64_t lastDiscontinuityGeneration_{0};
-    uint64_t lastDeferredWrittenEnd_{0};
-    bool epochAnchored_{false};
+    uint32_t txOutputOffsetFrames_{768};
     uint64_t txEventGroupCount_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};
@@ -246,7 +237,15 @@ private:
         static constexpr uint32_t kMaxOutputFrames = 4096;
         static constexpr uint32_t kMaxChannels = 16;
 
+        struct SlotStamp {
+            uint64_t begin{0};
+            uint64_t end{0};
+            uint32_t generation{0};
+        };
+
         uint32_t words[kMaxOutputFrames * kMaxChannels]{0};
+        uint32_t silenceWords[Encoding::kSamplesPerPacket48k * kMaxChannels]{0};
+        SlotStamp slotStamps[kMaxOutputFrames / Encoding::kSamplesPerPacket48k]{};
 
         uint64_t baseFrame{0};
         uint32_t outputFrameCapacity{0};
@@ -273,6 +272,16 @@ private:
             return static_cast<uint32_t>(RelativeFrame(absoluteFrame) % framesPerPacket);
         }
 
+        uint64_t PacketFirstFrame(uint64_t absoluteFrame) const noexcept {
+            return absoluteFrame - FrameInsidePacket(absoluteFrame);
+        }
+
+        uint32_t GenerationForFrame(uint64_t absoluteFrame) const noexcept {
+            if (outputFrameCapacity == 0 || absoluteFrame < baseFrame) return 0;
+            return static_cast<uint32_t>(
+                ((absoluteFrame - baseFrame) / outputFrameCapacity) + 1);
+        }
+
         uint32_t* PayloadForAudioFrame(uint64_t absoluteFrame) noexcept {
             if (am824Slots == 0) return nullptr;
             return words + ((static_cast<size_t>(SlotForFrame(absoluteFrame)) * framesPerPacket + FrameInsidePacket(absoluteFrame)) * am824Slots);
@@ -282,10 +291,15 @@ private:
             if (am824Slots == 0) return nullptr;
             return words + (static_cast<size_t>(SlotForFrame(timelineFirstFrame)) * framesPerPacket * am824Slots);
         }
+
+        const uint32_t* SilencePayload() const noexcept {
+            return am824Slots == 0 ? nullptr : silenceWords;
+        }
     };
 
     TxPcmPacketRing txPcmPacketRing_{};
     uint64_t lastPopulatedWriteEnd_{0};
+    uint64_t lastTxFrameMatrixLogNs_{0};
 };
 
 } // namespace ASFW::Isoch

@@ -52,17 +52,13 @@ public:
 
 enum class PreparedTxSlotState : uint8_t {
     InitialSilence = 0,
-    PendingSource,
     PcmPrepared,
-    RetiredEpochSilence,
     Completed,
 };
 
 enum class PreparedTxAction : uint8_t {
     NoChange = 0,
-    Pending,
     Prepared,
-    RetiredSilence,
     Fatal,
 };
 
@@ -71,7 +67,6 @@ struct PreparedTxSlotMetadata final {
     uint64_t timelineFirstFrame{0};
     uint64_t sourceFirstFrame{0};
     uint64_t sourceEndFrame{0};
-    uint64_t epoch{0};
     uint64_t preparationHostTicks{0};
     uint64_t preparedPayloadHash{0};
     uint32_t sizeBytes{0};
@@ -102,7 +97,6 @@ struct PreparedTxPayloadResult final {
     PreparedTxAction action{PreparedTxAction::NoChange};
     uint64_t sourceFirstFrame{0};
     uint64_t sourceEndFrame{0};
-    uint64_t epoch{0};
     int32_t firstSourceSamples[2]{};
     uint32_t firstEncodedWords[2]{};
 };
@@ -156,8 +150,6 @@ public:
         std::atomic<uint64_t> fatalPacketSize{0};
         std::atomic<uint64_t> fatalDescriptorBounds{0};
         std::atomic<uint64_t> preparedPayloads{0};
-        std::atomic<uint64_t> pendingPayloads{0};
-        std::atomic<uint64_t> retiredSilencePayloads{0};
         std::atomic<uint64_t> preparationFaults{0};
         std::atomic<uint64_t> ownershipFaults{0};
         std::atomic<uint64_t> completedPayloadHashMatches{0};
@@ -201,9 +193,7 @@ public:
         bool hwOOB{false};
         uint32_t hwPacketIndex{0};
         uint32_t preparedCount{0};
-        uint32_t pendingCount{0};
         uint32_t startupSilenceCount{0};
-        uint32_t retiredSilenceCount{0};
         uint32_t faultPacketIndex{0};
         uint32_t faultDistance{0};
         PreparedTxSlotMetadata faultMetadata{};

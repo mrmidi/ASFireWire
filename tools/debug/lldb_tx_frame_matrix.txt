@@ -1,0 +1,25 @@
+# Stop on the second rate-limited TX frame-matrix snapshot.
+# The hook is called once per snapshot, only when ASFWEnableIsochTxVerifier is on.
+
+settings set stop-line-count-before 2
+settings set stop-line-count-after 3
+
+breakpoint set -n ASFWDebugTxFrameMatrixBreakpoint
+breakpoint modify --ignore-count 1 1
+
+breakpoint command add 1
+echo ============================================================
+echo TX frame matrix snapshot #2
+echo src: native int32 samples written by CoreAudio
+echo dst: encoded host-order words copied toward FireWire DMA
+echo Matrices use a fixed 16-word stride for each of up to 8 frames.
+echo ============================================================
+frame variable packetFirstFrame frames sourceChannels destinationSlots
+frame variable sourceMatrix encodedDestinationMatrix
+echo --- sourceMatrix: 8 frames x 16 native int32 channels ---
+memory read --size 4 --format x --count 128 sourceMatrix
+echo --- encodedDestinationMatrix: 8 frames x 16 encoded slots ---
+memory read --size 4 --format x --count 128 encodedDestinationMatrix
+echo ============================================================
+echo Process is paused. Inspect memory, then use 'continue'.
+DONE

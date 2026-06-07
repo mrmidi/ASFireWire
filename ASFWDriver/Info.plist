@@ -46,8 +46,6 @@
 			<true/>
 			<key>ASFWLogStatistics</key>
 			<true/>
-			<key>ASFWUseClipStyleTxPopulation</key>
-			<true/>
 			<key>CFBundleIdentifier</key>
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 			<key>IOClass</key>

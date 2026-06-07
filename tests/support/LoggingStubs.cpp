@@ -144,7 +144,6 @@ bool LogConfig::IsHexDumpsEnabled() const { return false; }
 bool LogConfig::IsIsochTxVerifierEnabled() const { return false; }
 bool LogConfig::IsStatisticsEnabled() const { return false; }
 bool LogConfig::IsAudioAutoStartEnabled() const { return false; }
-bool LogConfig::IsUseClipStyleTxPopulationEnabled() const { return false; }
 
 void LogConfig::SetAsyncVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetControllerVerbosity(uint8_t) { /* no-op stub */ }
@@ -163,7 +162,6 @@ void LogConfig::SetHexDumps(bool) { /* no-op stub */ }
 void LogConfig::SetIsochTxVerifierEnabled(bool) { /* no-op stub */ }
 void LogConfig::SetStatistics(bool) { /* no-op stub */ }
 void LogConfig::SetAudioAutoStartEnabled(bool) { /* no-op stub */ }
-void LogConfig::SetUseClipStyleTxPopulationEnabled(bool) { /* no-op stub */ }
 
 uint8_t LogConfig::ReadUInt8Property(IOService*, const char*, uint8_t defaultValue) { return defaultValue; }
 bool LogConfig::ReadBoolProperty(IOService*, const char*, bool defaultValue) { return defaultValue; }

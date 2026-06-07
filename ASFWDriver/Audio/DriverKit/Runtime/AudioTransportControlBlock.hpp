@@ -116,13 +116,6 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> playbackRingOverruns{0};
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
-    std::atomic<uint64_t> txLastSourceFrame{0};
-    std::atomic<uint64_t> txPreparedSourceEndFrame{0};
-    std::atomic<uint64_t> txStartupAvailableFrames{0};
-    std::atomic<uint64_t> txAnchorSourceFrame{0};
-    std::atomic<uint64_t> txAnchorTimelineFrame{0};
-    std::atomic<uint32_t> txAnchorPacketIndex{0};
-    std::atomic<uint32_t> txAnchorDistance{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint64_t> txLastPreparationLatencyTicks{0};
     std::atomic<uint64_t> txMaxPreparationLatencyTicks{0};
@@ -214,13 +207,6 @@ struct AudioTransportControlBlock final {
         playbackRingOverruns.store(0, std::memory_order_release);
         txScheduledSampleFrame.store(0, std::memory_order_release);
         txCompletedSampleFrame.store(0, std::memory_order_release);
-        txLastSourceFrame.store(0, std::memory_order_release);
-        txPreparedSourceEndFrame.store(0, std::memory_order_release);
-        txStartupAvailableFrames.store(0, std::memory_order_release);
-        txAnchorSourceFrame.store(0, std::memory_order_release);
-        txAnchorTimelineFrame.store(0, std::memory_order_release);
-        txAnchorPacketIndex.store(0, std::memory_order_release);
-        txAnchorDistance.store(0, std::memory_order_release);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_release);
         txLastPreparationLatencyTicks.store(0, std::memory_order_release);
         txMaxPreparationLatencyTicks.store(0, std::memory_order_release);

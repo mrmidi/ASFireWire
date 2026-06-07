@@ -68,7 +68,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.expectedIoBufferFrameSize,
              snapshot.outputReaderAvailableAtWriteEnd);
     ASFW_LOG(DirectAudio,
-             "ADK snapshot/ring playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu src=%llu prepEnd=%llu fwd=%llu backPrevent=%llu stale=%llu ahead=%llu disc=%llu pcmNZ=%llu pcmZero=%llu inv=%llu prep=%llu pending=%llu startup=%llu retired=%llu)",
+             "ADK snapshot/ring playback(wr=%llu rd=%llu oldest=%llu avail=%llu underrun=%llu overrun=%llu) timeline(sched=%llu done=%llu fwd=%llu backPrevent=%llu stale=%llu ahead=%llu disc=%llu pcmNZ=%llu pcmZero=%llu inv=%llu prep=%llu startup=%llu)",
              snapshot.playbackRingWriteFrame,
              snapshot.playbackRingReadFrame,
              snapshot.playbackRingOldestValidFrame,
@@ -77,8 +77,6 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.playbackRingOverruns,
              snapshot.txScheduledSampleFrame,
              snapshot.txCompletedSampleFrame,
-             snapshot.txLastSourceFrame,
-             snapshot.txPreparedSourceEndFrame,
              snapshot.txForwardCursorCorrections,
              snapshot.txPreventedBackwardCorrections,
              snapshot.txStaleOverwrittenReads,
@@ -88,9 +86,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txPcmAllZeroPackets,
              snapshot.txTimelineInvariantFailures,
              snapshot.txPreparedPcmSlots,
-             snapshot.txPendingSourceSlots,
-             snapshot.txStartupSilenceSlots,
-             snapshot.txRetiredEpochSilenceSlots);
+             snapshot.txStartupSilenceSlots);
     ASFW_LOG(DirectAudio,
              "ADK snapshot/tx faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu stops=%llu fatal=%u/%llu pkt=%u dist=%u src=[%llu,%llu) valid=[%llu,%llu)) capture(wr=%llu rd=%llu avail=%llu overrun=%llu starve=%llu rxFrames=%llu) txPackets=%llu txUnderruns=%llu txSilence=%llu txValidPcm=%llu txValidSilence=%llu txNoPhaseSilence=%llu txUnderrunSilence=%llu txStaleSync=%llu txInvalidGeom=%llu",
              snapshot.txReadAheadFaults,
@@ -153,7 +149,7 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
 
     ASFW_LOG(
         DirectAudio,
-        "ADK FORCED CORE (%{public}s) bound=%d writeEnd=%llu playback=[%llu,%llu) oldest=%llu avail=%llu sched=%llu completed=%llu source=%llu preparedEnd=%llu",
+        "ADK FORCED CORE (%{public}s) bound=%d writeEnd=%llu playback=[%llu,%llu) oldest=%llu avail=%llu sched=%llu completed=%llu",
         context ? context : "unknown",
         snapshot.bound,
         snapshot.outputClientWriteEndFrame,
@@ -162,29 +158,18 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
         snapshot.playbackRingOldestValidFrame,
         snapshot.playbackRingAvailableFrames,
         snapshot.txScheduledSampleFrame,
-        snapshot.txCompletedSampleFrame,
-        snapshot.txLastSourceFrame,
-        snapshot.txPreparedSourceEndFrame);
+        snapshot.txCompletedSampleFrame);
     ASFW_LOG(
         DirectAudio,
-        "ADK FORCED ANCHOR available=%llu deferred=%llu anchor(pkt=%u dist=%u source=%llu timeline=%llu) minPrepDistance=%u prepared=%llu pending=%llu startup=%llu retired=%llu",
-        snapshot.txStartupAvailableFrames,
-        snapshot.txDeferredStartupWrites,
-        snapshot.txAnchorPacketIndex,
-        snapshot.txAnchorDistance,
-        snapshot.txAnchorSourceFrame,
-        snapshot.txAnchorTimelineFrame,
+        "ADK FORCED PREP minDistance=%u prepared=%llu startup=%llu",
         snapshot.txMinimumPreparationDistance,
         snapshot.txPreparedPcmSlots,
-        snapshot.txPendingSourceSlots,
-        snapshot.txStartupSilenceSlots,
-        snapshot.txRetiredEpochSilenceSlots);
+        snapshot.txStartupSilenceSlots);
     ASFW_LOG(
         DirectAudio,
-        "ADK FORCED COMPLETE pcm=%llu startupSilence=%llu retiredSilence=%llu hash(match=%llu mismatch=%llu) faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu payload=%llu stops=%llu)",
+        "ADK FORCED COMPLETE pcm=%llu startupSilence=%llu hash(match=%llu mismatch=%llu) faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu payload=%llu stops=%llu)",
         snapshot.txCompletedPcmSlots,
         snapshot.txCompletedStartupSilenceSlots,
-        snapshot.txCompletedRetiredSilenceSlots,
         snapshot.txCompletedPayloadHashMatches,
         snapshot.txCompletedPayloadHashMismatches,
         snapshot.txReadAheadFaults,

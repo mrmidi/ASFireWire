@@ -60,13 +60,6 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.playbackRingReadFrame.store(184, std::memory_order_relaxed);
     control.txScheduledSampleFrame.store(4096, std::memory_order_relaxed);
     control.txCompletedSampleFrame.store(4000, std::memory_order_relaxed);
-    control.txLastSourceFrame.store(4040, std::memory_order_relaxed);
-    control.txPreparedSourceEndFrame.store(4048, std::memory_order_relaxed);
-    control.txStartupAvailableFrames.store(768, std::memory_order_relaxed);
-    control.txAnchorSourceFrame.store(1000, std::memory_order_relaxed);
-    control.txAnchorTimelineFrame.store(2000, std::memory_order_relaxed);
-    control.txAnchorPacketIndex.store(65, std::memory_order_relaxed);
-    control.txAnchorDistance.store(66, std::memory_order_relaxed);
     control.txMinimumPreparationDistance.store(67, std::memory_order_relaxed);
     control.txLastPreparationLatencyTicks.store(12, std::memory_order_relaxed);
     control.txMaxPreparationLatencyTicks.store(34, std::memory_order_relaxed);
@@ -79,9 +72,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.counters.txPcmAllZeroPackets.store(10, std::memory_order_relaxed);
     control.counters.txTimelineInvariantFailures.store(11, std::memory_order_relaxed);
     control.counters.txPreparedPcmSlots.store(12, std::memory_order_relaxed);
-    control.counters.txPendingSourceSlots.store(13, std::memory_order_relaxed);
     control.counters.txStartupSilenceSlots.store(14, std::memory_order_relaxed);
-    control.counters.txRetiredEpochSilenceSlots.store(15, std::memory_order_relaxed);
     control.counters.txReadAheadFaults.store(16, std::memory_order_relaxed);
     control.counters.txSourceOverwrittenFaults.store(17, std::memory_order_relaxed);
     control.counters.txPreparationDeadlineFaults.store(18, std::memory_order_relaxed);
@@ -96,12 +87,10 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.txPreparationRequests.handledHostTicks.store(
         1100, std::memory_order_relaxed);
     control.counters.txPreparationWakeRequests.store(24, std::memory_order_relaxed);
-    control.counters.txDeferredStartupWrites.store(25, std::memory_order_relaxed);
     control.counters.txCompletedPayloadHashMatches.store(26, std::memory_order_relaxed);
     control.counters.txCompletedPayloadHashMismatches.store(27, std::memory_order_relaxed);
     control.counters.txCompletedPcmSlots.store(28, std::memory_order_relaxed);
     control.counters.txCompletedStartupSilenceSlots.store(29, std::memory_order_relaxed);
-    control.counters.txCompletedRetiredSilenceSlots.store(30, std::memory_order_relaxed);
     control.counters.txPayloadMismatchFaults.store(31, std::memory_order_relaxed);
     control.counters.txPreparationWakeDispatches.store(25, std::memory_order_relaxed);
     control.counters.txPreparationWakeCoalesced.store(26, std::memory_order_relaxed);
@@ -156,13 +145,6 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.playbackRingAvailableFrames, 48U);
     EXPECT_EQ(snapshot.txScheduledSampleFrame, 4096U);
     EXPECT_EQ(snapshot.txCompletedSampleFrame, 4000U);
-    EXPECT_EQ(snapshot.txLastSourceFrame, 4040U);
-    EXPECT_EQ(snapshot.txPreparedSourceEndFrame, 4048U);
-    EXPECT_EQ(snapshot.txStartupAvailableFrames, 768U);
-    EXPECT_EQ(snapshot.txAnchorSourceFrame, 1000U);
-    EXPECT_EQ(snapshot.txAnchorTimelineFrame, 2000U);
-    EXPECT_EQ(snapshot.txAnchorPacketIndex, 65U);
-    EXPECT_EQ(snapshot.txAnchorDistance, 66U);
     EXPECT_EQ(snapshot.txMinimumPreparationDistance, 67U);
     EXPECT_EQ(snapshot.txLastPreparationLatencyTicks, 12U);
     EXPECT_EQ(snapshot.txMaxPreparationLatencyTicks, 34U);
@@ -175,9 +157,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.txPcmAllZeroPackets, 10U);
     EXPECT_EQ(snapshot.txTimelineInvariantFailures, 11U);
     EXPECT_EQ(snapshot.txPreparedPcmSlots, 12U);
-    EXPECT_EQ(snapshot.txPendingSourceSlots, 13U);
     EXPECT_EQ(snapshot.txStartupSilenceSlots, 14U);
-    EXPECT_EQ(snapshot.txRetiredEpochSilenceSlots, 15U);
     EXPECT_EQ(snapshot.txReadAheadFaults, 16U);
     EXPECT_EQ(snapshot.txSourceOverwrittenFaults, 17U);
     EXPECT_EQ(snapshot.txPreparationDeadlineFaults, 18U);
@@ -188,12 +168,10 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.txPreparationRequestHostTicks, 1000U);
     EXPECT_EQ(snapshot.txPreparationHandledHostTicks, 1100U);
     EXPECT_EQ(snapshot.txPreparationWakeRequests, 24U);
-    EXPECT_EQ(snapshot.txDeferredStartupWrites, 25U);
     EXPECT_EQ(snapshot.txCompletedPayloadHashMatches, 26U);
     EXPECT_EQ(snapshot.txCompletedPayloadHashMismatches, 27U);
     EXPECT_EQ(snapshot.txCompletedPcmSlots, 28U);
     EXPECT_EQ(snapshot.txCompletedStartupSilenceSlots, 29U);
-    EXPECT_EQ(snapshot.txCompletedRetiredSilenceSlots, 30U);
     EXPECT_EQ(snapshot.txPayloadMismatchFaults, 31U);
     EXPECT_EQ(snapshot.txPreparationWakeDispatches, 25U);
     EXPECT_EQ(snapshot.txPreparationWakeCoalesced, 26U);
