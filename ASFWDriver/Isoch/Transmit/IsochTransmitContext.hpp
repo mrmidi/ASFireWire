@@ -123,6 +123,7 @@ public:
 
 private:
     void WakeHardware() noexcept;
+    void RefreshDirectAudioBinding(bool force) noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
     [[nodiscard]] bool DoPrepareOnce() noexcept;
     [[nodiscard]] bool DrainPreparationRequests() noexcept;
