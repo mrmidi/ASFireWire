@@ -38,6 +38,27 @@ class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider,
 public:
     static constexpr bool kEnableDirectTxHardwarePath = true;
 
+    // Seed distance (in output frames) from the audio base to the TX timeline head.
+    //
+    // The TX timeline head (txScheduledSampleFrame_) is seeded at
+    // audioBase + kTxOutputOffsetFrames, then advances on the IT-DMA / wire clock
+    // while CoreAudio's write pointer advances on the HAL clock. PreparePayload()
+    // reads audioFirst = timelineFirstFrame - kTxOutputOffsetFrames, which must land
+    // inside the populated, written-audio window [oldestValid, writtenEnd).
+    //
+    // Empirically the wire clock leads the HAL write pointer by ~4840 frames once
+    // rate-locked (sched - wr measured at 4824..4856 across captures). With a 4096-frame
+    // output ring, any offset below ~4992 makes audioFirst point one ring generation
+    // ahead of the populated slot, so coverage checks fail and the slot still holds
+    // the previous lap's data (TX PAYLOAD UNCOVERED, lap delta = ring capacity = 4096).
+    //
+    // 5120 (packet-aligned, = 4096 + 1024) clears the ~4992 floor with margin and places
+    // audioFirst ~256..288 frames behind writtenEnd. Because sched leads wr, the effective
+    // output latency is offset - (sched - wr) ~= 6 ms, not the full 5120 frames. This is a
+    // phase compensation for the two-clock relationship; if clock anchoring drifts, this
+    // fixed seed needs revisiting (see ZTS/anchoring path).
+    static constexpr uint32_t kTxOutputOffsetFrames = 5120;
+
     struct Counters {
         std::atomic<uint64_t> resyncApplied{0};
 
@@ -164,6 +185,11 @@ private:
                                                   uint8_t* packetBytes,
                                                   uint32_t packetCapacityBytes) noexcept;
     [[nodiscard]] bool InitializeDirectOutputCursor(const ProducedPacketMetadata& metadata) noexcept;
+    // Single source of the TX timeline seed: seeds the schedule/completion cursors at
+    // audioBase + txOutputOffsetFrames_, clears slot stamps, fills the ring with silence,
+    // and publishes to the control block. Requires txPcmPacketRing_ geometry to be valid.
+    // Returns the seeded timeline base; the audio base is left in txPcmPacketRing_.baseFrame.
+    uint64_t SeedTxTimeline(uint64_t oldestValid) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
     void PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason reason,
                            const Tx::PreparedTxPayloadRequest& request,
@@ -196,7 +222,7 @@ private:
     uint64_t txScheduledSampleFrame_{0};
     uint64_t txCompletedSampleFrame_{0};
     uint64_t lastDiscontinuityGeneration_{0};
-    uint32_t txOutputOffsetFrames_{768};
+    uint32_t txOutputOffsetFrames_{kTxOutputOffsetFrames};
     uint64_t txEventGroupCount_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};
