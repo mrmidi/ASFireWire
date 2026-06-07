@@ -54,7 +54,8 @@ public:
                                uint32_t hwPacketIndexCmdPtr,
                                uint32_t cmdPtr,
                                const Async::HW::OHCIDescriptor* lastDesc,
-                               const uint32_t* payload32) noexcept override;
+                               const uint32_t* payload32,
+                               const Tx::PreparedTxSlotMetadata& metadata) noexcept override;
 
     [[nodiscard]] uint64_t DroppedTrace() const noexcept { return trace_.dropped.load(std::memory_order_relaxed); }
 
@@ -71,6 +72,14 @@ private:
         uint32_t cipQ1Host{0};
         uint16_t reqCount{0};
         uint16_t audioQuadletCount{0};
+        uint64_t generation{0};
+        uint64_t epoch{0};
+        uint64_t sourceFirstFrame{0};
+        uint64_t sourceEndFrame{0};
+        uint64_t preparedPayloadHash{0};
+        uint32_t preparationDistance{0};
+        Tx::PreparedTxSlotState preparationState{
+            Tx::PreparedTxSlotState::InitialSilence};
         std::array<uint32_t,
                    static_cast<size_t>(Tx::Layout::kAudioWriteAhead) * Config::kMaxAmdtpDbs>
             audioHost{};

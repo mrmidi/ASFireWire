@@ -194,8 +194,16 @@ void DICETransaction::ReadGlobalStateSized(const GeneralSections& sections,
             state.clockCaps = ReadBE32(data + GlobalOffset::kClockCaps);
         }
         
-        ASFW_LOG(DICE, "Global: rate=%uHz caps=0x%08x version=0x%08x nickname='%{public}s'",
-                 state.sampleRate, state.clockCaps, state.version, state.nickname);
+        char clockStr[40];
+        char extStr[128];
+        char notifyStr[96];
+        ASFW_LOG(DICE,
+                 "Global: clock=%{public}s rate=%uHz ext=%{public}s notify=%{public}s caps=0x%08x version=0x%08x nickname='%{public}s'",
+                 FormatGlobalStatus(state.status, clockStr, sizeof(clockStr)),
+                 state.sampleRate,
+                 FormatExtStatus(state.extStatus, extStr, sizeof(extStr)),
+                 FormatNotification(state.notification, notifyStr, sizeof(notifyStr)),
+                 state.clockCaps, state.version, state.nickname);
         
         Common::InvokeSharedCallback(callbackState, kIOReturnSuccess, state);
     });

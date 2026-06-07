@@ -73,6 +73,15 @@ public:
         return (direction == AudioDirection::Output) ? 768 : 0; // matching Config::kOutputConsumerLeadFrames
     }
 
+    [[nodiscard]] constexpr uint32_t StartupLeadFrames(AudioDirection direction) const noexcept {
+        return PacketLeadFrames(direction);
+    }
+
+    [[nodiscard]] constexpr uint32_t PreparationDeadlineFrames(
+        AudioDirection direction) const noexcept {
+        return (direction == AudioDirection::Output) ? 384 : 0;
+    }
+
     [[nodiscard]] constexpr uint32_t CursorResyncDeadbandFrames() const noexcept {
         return 256; // matching Config::kOutputCursorResyncDeadbandFrames
     }

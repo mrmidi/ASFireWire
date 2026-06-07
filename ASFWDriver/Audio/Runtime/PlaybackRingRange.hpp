@@ -38,7 +38,7 @@ UpdatePlaybackRingRange(uint64_t previousWrittenEnd,
         result.oldestValidFrame =
             std::max(result.oldestValidFrame, writeEnd - capacityFrames);
     }
-    result.overrun = consumedEnd < result.oldestValidFrame;
+    result.overrun = consumedEnd != 0 && consumedEnd < result.oldestValidFrame;
     return result;
 }
 

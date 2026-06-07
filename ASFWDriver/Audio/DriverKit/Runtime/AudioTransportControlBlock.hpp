@@ -20,6 +20,7 @@ enum class FatalStreamReason : uint32_t {
     TxSourceOverwritten,
     TxPreparationMissedDeadline,
     TxSlotInvariant,
+    TxPayloadMismatch,
 };
 
 struct TxFatalSnapshot final {
@@ -34,6 +35,8 @@ struct TxFatalSnapshot final {
     std::atomic<uint32_t> slotState{0};
     std::atomic<uint32_t> dbc{0};
     std::atomic<uint32_t> syt{0};
+    std::atomic<uint64_t> preparedPayloadHash{0};
+    std::atomic<uint64_t> completedPayloadHash{0};
 
     void Reset() noexcept {
         packetGeneration.store(0, std::memory_order_relaxed);
@@ -47,6 +50,41 @@ struct TxFatalSnapshot final {
         slotState.store(0, std::memory_order_relaxed);
         dbc.store(0, std::memory_order_relaxed);
         syt.store(0, std::memory_order_relaxed);
+        preparedPayloadHash.store(0, std::memory_order_relaxed);
+        completedPayloadHash.store(0, std::memory_order_relaxed);
+    }
+};
+
+struct TxPreparationRequestState final {
+    std::atomic<uint64_t> requestedGeneration{0};
+    std::atomic<uint64_t> handledGeneration{0};
+    std::atomic<uint64_t> requestHostTicks{0};
+    std::atomic<uint64_t> handledHostTicks{0};
+
+    [[nodiscard]] uint64_t PublishRequest(uint64_t hostTicks) noexcept {
+        requestHostTicks.store(hostTicks, std::memory_order_relaxed);
+        return requestedGeneration.fetch_add(1, std::memory_order_release) + 1;
+    }
+
+    [[nodiscard]] uint64_t RequestedGeneration() const noexcept {
+        return requestedGeneration.load(std::memory_order_acquire);
+    }
+
+    [[nodiscard]] bool NeedsHandling() const noexcept {
+        return handledGeneration.load(std::memory_order_acquire) <
+               requestedGeneration.load(std::memory_order_acquire);
+    }
+
+    void MarkHandled(uint64_t generation, uint64_t hostTicks) noexcept {
+        handledHostTicks.store(hostTicks, std::memory_order_relaxed);
+        handledGeneration.store(generation, std::memory_order_release);
+    }
+
+    void Reset() noexcept {
+        requestedGeneration.store(0, std::memory_order_relaxed);
+        handledGeneration.store(0, std::memory_order_relaxed);
+        requestHostTicks.store(0, std::memory_order_relaxed);
+        handledHostTicks.store(0, std::memory_order_relaxed);
     }
 };
 
@@ -61,6 +99,7 @@ struct AudioTransportControlBlock final {
     std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
     std::atomic<uint64_t> fatalGeneration{0};
     TxFatalSnapshot txFatalSnapshot{};
+    TxPreparationRequestState txPreparationRequests{};
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
     std::atomic<uint64_t> outputConsumedEndFrame{0};
@@ -79,6 +118,14 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txCompletedSampleFrame{0};
     std::atomic<uint64_t> txLastSourceFrame{0};
     std::atomic<uint64_t> txPreparedSourceEndFrame{0};
+    std::atomic<uint64_t> txStartupAvailableFrames{0};
+    std::atomic<uint64_t> txAnchorSourceFrame{0};
+    std::atomic<uint64_t> txAnchorTimelineFrame{0};
+    std::atomic<uint32_t> txAnchorPacketIndex{0};
+    std::atomic<uint32_t> txAnchorDistance{0};
+    std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
+    std::atomic<uint64_t> txLastPreparationLatencyTicks{0};
+    std::atomic<uint64_t> txMaxPreparationLatencyTicks{0};
 
     std::atomic<uint64_t> captureRingWriteFrame{0};
     std::atomic<uint64_t> captureRingReadFrame{0};
@@ -150,6 +197,7 @@ struct AudioTransportControlBlock final {
         fatalReason.store(FatalStreamReason::None, std::memory_order_release);
         fatalGeneration.store(0, std::memory_order_release);
         txFatalSnapshot.Reset();
+        txPreparationRequests.Reset();
 
         inputProducedEndFrame.store(0, std::memory_order_release);
         outputConsumedEndFrame.store(0, std::memory_order_release);
@@ -168,6 +216,14 @@ struct AudioTransportControlBlock final {
         txCompletedSampleFrame.store(0, std::memory_order_release);
         txLastSourceFrame.store(0, std::memory_order_release);
         txPreparedSourceEndFrame.store(0, std::memory_order_release);
+        txStartupAvailableFrames.store(0, std::memory_order_release);
+        txAnchorSourceFrame.store(0, std::memory_order_release);
+        txAnchorTimelineFrame.store(0, std::memory_order_release);
+        txAnchorPacketIndex.store(0, std::memory_order_release);
+        txAnchorDistance.store(0, std::memory_order_release);
+        txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_release);
+        txLastPreparationLatencyTicks.store(0, std::memory_order_release);
+        txMaxPreparationLatencyTicks.store(0, std::memory_order_release);
 
         captureRingWriteFrame.store(0, std::memory_order_release);
         captureRingReadFrame.store(0, std::memory_order_release);

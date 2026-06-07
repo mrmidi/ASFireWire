@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 namespace ASFW::Audio::DICE {
 
@@ -214,15 +215,35 @@ namespace StatusBits {
     constexpr uint32_t kNominalRateShift = 8;
 }
 
+// GLOBAL_EXTENDED_STATUS (0x58) bit layout. Per-source clock LOCK flags live in
+// the low half; the matching SLIP flags live in the high half. Bit positions
+// follow the TCAT DICE reference (cf. FFADO dice_defines.h DICE_EXT_STATUS_*).
+// ARX1..ARX4 are the device's *audio receive* streams, i.e. the isoch streams it
+// receives from us — ARX1 is our host->device transmit stream.
 namespace ExtStatusBits {
+    constexpr uint32_t kAes0Locked = 0x00000001;
+    constexpr uint32_t kAes1Locked = 0x00000002;
+    constexpr uint32_t kAes2Locked = 0x00000004;
+    constexpr uint32_t kAes3Locked = 0x00000008;
+    constexpr uint32_t kAdatLocked = 0x00000010;
+    constexpr uint32_t kTdifLocked = 0x00000020;
     constexpr uint32_t kArx1Locked = 0x00000040;
     constexpr uint32_t kArx2Locked = 0x00000080;
     constexpr uint32_t kArx3Locked = 0x00000100;
     constexpr uint32_t kArx4Locked = 0x00000200;
+    constexpr uint32_t kWordClockLocked = 0x00000400;
+
+    constexpr uint32_t kAes0Slip   = 0x00010000;
+    constexpr uint32_t kAes1Slip   = 0x00020000;
+    constexpr uint32_t kAes2Slip   = 0x00040000;
+    constexpr uint32_t kAes3Slip   = 0x00080000;
+    constexpr uint32_t kAdatSlip   = 0x00100000;
+    constexpr uint32_t kTdifSlip   = 0x00200000;
     constexpr uint32_t kArx1Slip   = 0x00400000;
     constexpr uint32_t kArx2Slip   = 0x00800000;
     constexpr uint32_t kArx3Slip   = 0x01000000;
     constexpr uint32_t kArx4Slip   = 0x02000000;
+    constexpr uint32_t kWordClockSlip = 0x04000000;
 }
 
 [[nodiscard]] constexpr bool IsSourceLocked(uint32_t status) noexcept {
@@ -264,6 +285,166 @@ namespace ExtStatusBits {
 
 [[nodiscard]] constexpr bool HasArx1Slip(uint32_t extStatus) noexcept {
     return (extStatus & ExtStatusBits::kArx1Slip) != 0;
+}
+
+// ============================================================================
+// Notification Flags
+// ============================================================================
+
+/// Notification flags from DICE device (GLOBAL_NOTIFICATION, 0x08)
+namespace Notify {
+    constexpr uint32_t kRxConfigChange   = 0x00000001;
+    constexpr uint32_t kTxConfigChange   = 0x00000002;
+    constexpr uint32_t kLockChange       = 0x00000010;
+    constexpr uint32_t kClockAccepted    = 0x00000020;
+    constexpr uint32_t kExtStatus        = 0x00000040;
+}
+
+// ============================================================================
+// Human-readable register decoders (diagnostics)
+// ----------------------------------------------------------------------------
+// These turn raw DICE register words into log-friendly strings so a log line
+// reflects what the hardware is actually reporting instead of a hex blob. Each
+// writes into a caller-provided buffer and returns it for direct use in
+// ASFW_LOG(... "%{public}s" ...). Pure/host-testable; no DriverKit dependency.
+// ============================================================================
+
+namespace Detail {
+
+struct BitName final {
+    uint32_t bit;
+    const char* name;
+};
+
+/// Append a NUL-terminated token at `len`, advancing `len`. Bounds-checked.
+inline void AppendStr(char* buf, size_t cap, size_t& len, const char* str) noexcept {
+    if (len + 1 >= cap) {
+        return;
+    }
+    const int written = std::snprintf(buf + len, cap - len, "%s", str);
+    if (written > 0) {
+        len += static_cast<size_t>(written);
+        if (len >= cap) {
+            len = cap - 1;
+        }
+    }
+}
+
+/// Append the names of every set bit, '|'-separated, or "none" if none set.
+inline void AppendBitList(char* buf, size_t cap, size_t& len, uint32_t value,
+                          const BitName* flags, size_t count) noexcept {
+    bool first = true;
+    for (size_t i = 0; i < count; ++i) {
+        if ((value & flags[i].bit) == 0) {
+            continue;
+        }
+        if (!first) {
+            AppendStr(buf, cap, len, "|");
+        }
+        AppendStr(buf, cap, len, flags[i].name);
+        first = false;
+    }
+    if (first) {
+        AppendStr(buf, cap, len, "none");
+    }
+}
+
+} // namespace Detail
+
+/// Decode GLOBAL_STATUS (0x54): clock-domain lock state + nominal rate.
+inline const char* FormatGlobalStatus(uint32_t status, char* buf,
+                                                    size_t cap) noexcept {
+    if (!buf || cap == 0) {
+        return "";
+    }
+    const char* lock = IsSourceLocked(status) ? "LOCKED" : "UNLOCKED";
+    const uint32_t rate = NominalRateHz(status);
+    if (rate != 0) {
+        std::snprintf(buf, cap, "%s %uHz", lock, rate);
+    } else {
+        std::snprintf(buf, cap, "%s rate?(idx=%u)", lock, NominalRateIndex(status));
+    }
+    return buf;
+}
+
+/// Decode GLOBAL_EXTENDED_STATUS (0x58): which clock sources are locked, and
+/// which are slipping. ARX1 is our host->device transmit stream.
+inline const char* FormatExtStatus(uint32_t ext, char* buf,
+                                                 size_t cap) noexcept {
+    if (!buf || cap == 0) {
+        return "";
+    }
+    static constexpr Detail::BitName kLock[] = {
+        {ExtStatusBits::kAes0Locked, "AES0"}, {ExtStatusBits::kAes1Locked, "AES1"},
+        {ExtStatusBits::kAes2Locked, "AES2"}, {ExtStatusBits::kAes3Locked, "AES3"},
+        {ExtStatusBits::kAdatLocked, "ADAT"}, {ExtStatusBits::kTdifLocked, "TDIF"},
+        {ExtStatusBits::kArx1Locked, "ARX1"}, {ExtStatusBits::kArx2Locked, "ARX2"},
+        {ExtStatusBits::kArx3Locked, "ARX3"}, {ExtStatusBits::kArx4Locked, "ARX4"},
+        {ExtStatusBits::kWordClockLocked, "WC"},
+    };
+    static constexpr Detail::BitName kSlip[] = {
+        {ExtStatusBits::kAes0Slip, "AES0"}, {ExtStatusBits::kAes1Slip, "AES1"},
+        {ExtStatusBits::kAes2Slip, "AES2"}, {ExtStatusBits::kAes3Slip, "AES3"},
+        {ExtStatusBits::kAdatSlip, "ADAT"}, {ExtStatusBits::kTdifSlip, "TDIF"},
+        {ExtStatusBits::kArx1Slip, "ARX1"}, {ExtStatusBits::kArx2Slip, "ARX2"},
+        {ExtStatusBits::kArx3Slip, "ARX3"}, {ExtStatusBits::kArx4Slip, "ARX4"},
+        {ExtStatusBits::kWordClockSlip, "WC"},
+    };
+    size_t len = 0;
+    Detail::AppendStr(buf, cap, len, "lock[");
+    Detail::AppendBitList(buf, cap, len, ext, kLock,
+                          sizeof(kLock) / sizeof(kLock[0]));
+    Detail::AppendStr(buf, cap, len, "] slip[");
+    Detail::AppendBitList(buf, cap, len, ext, kSlip,
+                          sizeof(kSlip) / sizeof(kSlip[0]));
+    Detail::AppendStr(buf, cap, len, "]");
+    return buf;
+}
+
+/// Decode GLOBAL_NOTIFICATION (0x08) bits the device raises. Any bit we do not
+/// have a name for is appended as hex so nothing is silently dropped.
+inline const char* FormatNotification(uint32_t bits, char* buf,
+                                                    size_t cap) noexcept {
+    if (!buf || cap == 0) {
+        return "";
+    }
+    static constexpr Detail::BitName kFlags[] = {
+        {Notify::kRxConfigChange, "RxCfgChg"},
+        {Notify::kTxConfigChange, "TxCfgChg"},
+        {Notify::kLockChange, "LockChg"},
+        {Notify::kClockAccepted, "ClockAccepted"},
+        {Notify::kExtStatus, "ExtStatus"},
+    };
+    uint32_t known = 0;
+    for (const auto& f : kFlags) {
+        known |= f.bit;
+    }
+    size_t len = 0;
+    bool any = false;
+    for (const auto& f : kFlags) {
+        if ((bits & f.bit) == 0) {
+            continue;
+        }
+        if (any) {
+            Detail::AppendStr(buf, cap, len, "|");
+        }
+        Detail::AppendStr(buf, cap, len, f.name);
+        any = true;
+    }
+    const uint32_t unknown = bits & ~known;
+    if (unknown != 0) {
+        char hex[16];
+        std::snprintf(hex, sizeof(hex), "0x%x", unknown);
+        if (any) {
+            Detail::AppendStr(buf, cap, len, "|");
+        }
+        Detail::AppendStr(buf, cap, len, hex);
+        any = true;
+    }
+    if (!any) {
+        Detail::AppendStr(buf, cap, len, "none");
+    }
+    return buf;
 }
 
 constexpr uint64_t kOwnerNoOwner = 0xFFFF000000000000ULL;
@@ -448,19 +629,6 @@ struct DICECapabilities {
     StreamConfig rxStreams;
     bool valid{false};
 };
-
-// ============================================================================
-// Notification Flags
-// ============================================================================
-
-/// Notification flags from DICE device
-namespace Notify {
-    constexpr uint32_t kRxConfigChange   = 0x00000001;
-    constexpr uint32_t kTxConfigChange   = 0x00000002;
-    constexpr uint32_t kLockChange       = 0x00000010;
-    constexpr uint32_t kClockAccepted    = 0x00000020;
-    constexpr uint32_t kExtStatus        = 0x00000040;
-}
 
 namespace ExtensionCommandOffset {
     constexpr uint32_t kOpcode = 0x0000;

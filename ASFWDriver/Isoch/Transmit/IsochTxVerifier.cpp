@@ -157,7 +157,8 @@ void IsochTxVerifier::CaptureBeforeOverwrite(uint32_t packetIndex,
                                              uint32_t hwPacketIndexCmdPtr,
                                              uint32_t cmdPtr,
                                              const OHCIDescriptor* lastDesc,
-                                             const uint32_t* payload32) noexcept {
+                                             const uint32_t* payload32,
+                                             const Tx::PreparedTxSlotMetadata& metadata) noexcept {
     if (!lastDesc || !payload32) {
         return;
     }
@@ -169,6 +170,13 @@ void IsochTxVerifier::CaptureBeforeOverwrite(uint32_t packetIndex,
     entry.lastDescControl = lastDesc->control;
     entry.lastDescStatus = lastDesc->statusWord;
     entry.reqCount = static_cast<uint16_t>(lastDesc->control & 0xFFFFu);
+    entry.generation = metadata.generation;
+    entry.epoch = metadata.epoch;
+    entry.sourceFirstFrame = metadata.sourceFirstFrame;
+    entry.sourceEndFrame = metadata.sourceEndFrame;
+    entry.preparedPayloadHash = metadata.preparedPayloadHash;
+    entry.preparationDistance = metadata.preparationDistance;
+    entry.preparationState = metadata.state;
 
     entry.cipQ0Host = payload32[0];
     entry.cipQ1Host = payload32[1];
@@ -470,8 +478,17 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
     const bool shouldHaveAudio = inputs_.directOutputReady && (deltaUnderrunSilenced == 0);
     if (shouldHaveAudio) {
         ASFW_LOG_RL(Isoch, "txverify/silence_run", 10000, OS_LOG_TYPE_DEFAULT,
-                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u directReady=%u framesPerPkt=%u",
-                    state_.silentDataRun, entry.packetIndex, inputs_.directOutputReady ? 1u : 0u,
+                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u gen=%llu epoch=%llu state=%u prepDistance=%u source=[%llu,%llu) hash=0x%016llx directReady=%u framesPerPkt=%u",
+                    state_.silentDataRun,
+                    entry.packetIndex,
+                    entry.generation,
+                    entry.epoch,
+                    static_cast<uint32_t>(entry.preparationState),
+                    entry.preparationDistance,
+                    entry.sourceFirstFrame,
+                    entry.sourceEndFrame,
+                    entry.preparedPayloadHash,
+                    inputs_.directOutputReady ? 1u : 0u,
                     inputs_.framesPerPacket);
     }
 }

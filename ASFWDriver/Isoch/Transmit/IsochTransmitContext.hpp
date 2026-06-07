@@ -99,6 +99,7 @@ public:
     
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
+    void RequestPayloadPreparation(uint64_t requestGeneration) noexcept;
     void KickTxVerifier() noexcept;
     void ServiceTxRecovery() noexcept;
     void SetRecoveryCallback(RecoveryCallback callback) noexcept;
@@ -124,6 +125,9 @@ private:
     void WakeHardware() noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
     [[nodiscard]] bool DoPrepareOnce() noexcept;
+    [[nodiscard]] bool DrainPreparationRequests() noexcept;
+    void ReleasePreparationGate() noexcept;
+    void StopImmediatelyForTxFault() noexcept;
     void StopImmediatelyForTxFault(const Tx::IsochTxDmaRing::PreparationOutcome& outcome) noexcept;
 
     // ==========================================================================
@@ -152,6 +156,7 @@ private:
     
     // Refill coordination / IRQ-stall recovery
     std::atomic_flag refillInProgress_ = ATOMIC_FLAG_INIT;
+    std::atomic<uint64_t> requestedPreparationGeneration_{0};
     uint64_t lastInterruptCountSeen_{0};
     uint32_t irqStallTicks_{0};
 

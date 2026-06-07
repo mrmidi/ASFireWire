@@ -47,6 +47,61 @@ void PublishPlaybackRingWriteEnd(ASFW::Audio::Runtime::AudioGraphBinding& graph,
     control.playbackRingWriteFrame.store(update.writtenEndFrame, std::memory_order_release);
 }
 
+void ScheduleTxPayloadPreparation(ASFWAudioDriver_IVars& ivars,
+                                  ASFW::Audio::Runtime::AudioTransportControlBlock& control) noexcept {
+    (void)control.txPreparationRequests.PublishRequest(mach_absolute_time());
+    control.counters.txPreparationWakeRequests.fetch_add(1, std::memory_order_relaxed);
+
+    if (!ivars.workQueue || !ivars.device.audioNub) {
+        return;
+    }
+    if (ivars.runtime.txPreparationNotificationScheduled.exchange(
+            true, std::memory_order_acq_rel)) {
+        control.counters.txPreparationWakeCoalesced.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+
+    control.counters.txPreparationWakeDispatches.fetch_add(
+        1, std::memory_order_relaxed);
+    auto* driverIvars = &ivars;
+    ivars.workQueue->DispatchAsync(^{
+        for (;;) {
+            auto* currentControl = driverIvars->runtime.directAudioGraph.control;
+            if (!currentControl ||
+                !driverIvars->runtime.isRunning.load(std::memory_order_acquire) ||
+                !driverIvars->device.audioNub) {
+                driverIvars->runtime.txPreparationNotificationScheduled.store(
+                    false, std::memory_order_release);
+                return;
+            }
+
+            const uint64_t requested =
+                currentControl->txPreparationRequests.RequestedGeneration();
+            (void)driverIvars->device.audioNub->RequestTxPayloadPreparation(requested);
+
+            driverIvars->runtime.txPreparationNotificationScheduled.store(
+                false, std::memory_order_release);
+            if (currentControl->txPreparationRequests.RequestedGeneration() ==
+                requested) {
+                return;
+            }
+
+            bool expected = false;
+            if (!driverIvars->runtime.txPreparationNotificationScheduled
+                     .compare_exchange_strong(
+                         expected,
+                         true,
+                         std::memory_order_acq_rel,
+                         std::memory_order_acquire)) {
+                return;
+            }
+            currentControl->counters.txPreparationWakeDispatches.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    });
+}
+
 void ZeroInputFrameIfMissing(ASFW::Audio::Runtime::AudioGraphBinding& graph,
                              uint64_t absoluteFrame) noexcept {
     auto* frame = graph.memory.InputFrame(absoluteFrame);
@@ -219,6 +274,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
+                ScheduleTxPayloadPreparation(*driverIvars, *control);
                 control->counters.CountWriteEnd();
                 (void)PublishSharedZeroTimestampToHAL(*driverIvars, "io", false);
                 const uint64_t writeCount =
@@ -236,6 +292,13 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                              control->playbackRingWriteFrame.load(std::memory_order_acquire),
                              control->playbackRingReadFrame.load(std::memory_order_acquire),
                              control->playbackRingOverruns.load(std::memory_order_relaxed));
+                }
+                // Resurrected periodic TX/playback snapshot (pcmNZ/pcmZero,
+                // prepared/startup/retired, anchor, faults). Self-gated by
+                // statistics+verbosity and a 5 s throttle; the modulo only
+                // bounds capture cost on the real-time IO thread.
+                if ((writeCount % 256) == 0) {
+                    DirectDiagnostics::MaybeLogDirectAudioDebugSnapshot(driverIvars->runtime);
                 }
             } else if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
                 ASFW_LOG(DirectAudio,

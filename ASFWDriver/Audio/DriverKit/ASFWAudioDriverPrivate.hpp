@@ -68,6 +68,7 @@ struct AudioDriverRuntimeState {
     std::atomic<uint64_t> ioDebugCallbacks{0};
     std::atomic<bool> ztsTimelineInitialized{false};
     std::atomic<uint64_t> nextExpectedZtsFrame{0};
+    std::atomic<bool> txPreparationNotificationScheduled{false};
 };
 
 struct ASFWAudioDriver_IVars {

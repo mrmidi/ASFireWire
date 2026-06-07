@@ -213,16 +213,28 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
             !DICE::HasArx1Slip(waitState->result.extStatus);
     }
 
+    char notifyStr[96];
+    char clockStr[40];
+    char extStr[128];
+    DICE::FormatNotification(notificationBits, notifyStr, sizeof(notifyStr));
+    DICE::FormatGlobalStatus(waitState->result.status, clockStr, sizeof(clockStr));
+    DICE::FormatExtStatus(waitState->result.extStatus, extStr, sizeof(extStr));
+
     if (sourceLocked && extClockHealthy) {
+        // Healthy: the device is just narrating its clock/ext status. Surface
+        // what it actually reports (rate-limited) instead of staying silent.
+        ASFW_LOG_RL(Audio, "dice/notify-confirm", 1000, OS_LOG_TYPE_DEFAULT,
+                    "DiceAudioBackend: notify confirm GUID=%llx notify=%{public}s clock=%{public}s ext=%{public}s healthy",
+                    guid, notifyStr, clockStr, extStr);
         return;
     }
 
     ASFW_LOG_WARNING(Audio,
-                     "DiceAudioBackend: lock health degraded GUID=%llx bits=0x%08x status=0x%08x ext=0x%08x sourceLocked=%u extHealthy=%u",
+                     "DiceAudioBackend: lock health DEGRADED GUID=%llx notify=%{public}s clock=%{public}s ext=%{public}s sourceLocked=%u extHealthy=%u -> recover",
                      guid,
-                     notificationBits,
-                     waitState->result.status,
-                     waitState->result.extStatus,
+                     notifyStr,
+                     clockStr,
+                     extStr,
                      sourceLocked ? 1U : 0U,
                      extClockHealthy ? 1U : 0U);
     HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterLockLoss);

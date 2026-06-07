@@ -5,6 +5,7 @@
 
 #include "IsochTxDescriptorSlab.hpp"
 #include "IsochTxLayout.hpp"
+#include "TxPayloadHash.hpp"
 
 #include "../Core/IsochEventGroup.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
@@ -71,8 +72,13 @@ struct PreparedTxSlotMetadata final {
     uint64_t sourceFirstFrame{0};
     uint64_t sourceEndFrame{0};
     uint64_t epoch{0};
+    uint64_t preparationHostTicks{0};
+    uint64_t preparedPayloadHash{0};
     uint32_t sizeBytes{0};
     uint32_t framesPerPacket{0};
+    uint32_t preparationDistance{0};
+    int32_t firstSourceSamples[2]{};
+    uint32_t firstEncodedWords[2]{};
     uint8_t dbc{0};
     uint16_t syt{0xFFFF};
     bool valid{false};
@@ -86,6 +92,7 @@ struct PreparedTxPayloadRequest final {
     uint32_t distanceToHardware{0};
     bool writable{false};
     bool deadline{false};
+    bool hardwareOwned{false};
     PreparedTxSlotMetadata metadata{};
     uint8_t* payloadBytes{nullptr};
     uint32_t payloadCapacityBytes{0};
@@ -96,6 +103,23 @@ struct PreparedTxPayloadResult final {
     uint64_t sourceFirstFrame{0};
     uint64_t sourceEndFrame{0};
     uint64_t epoch{0};
+    int32_t firstSourceSamples[2]{};
+    uint32_t firstEncodedWords[2]{};
+};
+
+struct CompletedTxSlot final {
+    PreparedTxSlotMetadata metadata{};
+    uint64_t completedPayloadHash{0};
+    uint32_t packetIndex{0};
+    uint32_t hwPacketIndex{0};
+    bool payloadHashMatches{true};
+};
+
+class IIsochTxCompletionObserver {
+public:
+    virtual ~IIsochTxCompletionObserver() = default;
+    [[nodiscard]] virtual bool OnTransmitSlotCompleted(
+        const CompletedTxSlot& completed) noexcept = 0;
 };
 
 class IIsochTxPayloadPreparer {
@@ -112,7 +136,8 @@ public:
                                         uint32_t hwPacketIndexCmdPtr,
                                         uint32_t cmdPtr,
                                         const Async::HW::OHCIDescriptor* lastDesc,
-                                        const uint32_t* payload32) noexcept = 0;
+                                        const uint32_t* payload32,
+                                        const PreparedTxSlotMetadata& metadata) noexcept = 0;
 };
 
 class IsochTxDmaRing final {
@@ -135,6 +160,8 @@ public:
         std::atomic<uint64_t> retiredSilencePayloads{0};
         std::atomic<uint64_t> preparationFaults{0};
         std::atomic<uint64_t> ownershipFaults{0};
+        std::atomic<uint64_t> completedPayloadHashMatches{0};
+        std::atomic<uint64_t> completedPayloadHashMismatches{0};
 
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
@@ -205,7 +232,8 @@ public:
                                        uint8_t contextIndex,
                                        IIsochTxPacketProvider& provider,
                                        IsochTxCaptureHook* captureHook,
-                                       IIsochTxAudioInjector* injector) noexcept;
+                                       IIsochTxAudioInjector* injector,
+                                       IIsochTxCompletionObserver* completionObserver = nullptr) noexcept;
 
     [[nodiscard]] PreparationOutcome PreparePayloads(
         Driver::HardwareInterface& hw,
@@ -238,6 +266,10 @@ private:
                              uint32_t hwPacketIndex,
                              uint32_t deltaConsumed,
                              RefillOutcome& out) noexcept;
+    [[nodiscard]] bool ReportCompletedSlots(uint32_t hwPacketIndex,
+                                            uint32_t completedPacketCount,
+                                            IIsochTxCompletionObserver* observer,
+                                            RefillOutcome& out) noexcept;
     [[nodiscard]] bool RefillPacket(uint32_t pktIdx,
                                     uint32_t hwPacketIndex,
                                     uint32_t cmdPtr,
