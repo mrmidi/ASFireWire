@@ -34,6 +34,11 @@ using ASFW::Isoch::Tx::Layout;
 constexpr uint32_t kChannels = 2;
 constexpr uint32_t kFrames = 1024;
 
+// TX timeline seed distance, sourced from production so these expectations track the
+// driver constant instead of re-hardcoding it. With base 0 the first data packet's
+// timelineFirstFrame equals this value.
+constexpr uint64_t kTxOffset = IsochAudioTxPipeline::kTxOutputOffsetFrames;
+
 void PublishRange(AudioTransportControlBlock& control,
                   uint64_t oldest,
                   uint64_t writtenEnd) {
@@ -140,9 +145,9 @@ TEST(IsochAudioTxPipelineTimelineTests, PacketProductionIsTimedSilenceOnly) {
     ASSERT_FALSE(noData.isData);
     ASSERT_TRUE(data.isData);
     EXPECT_EQ(data.framesPerPacket, 8U);
-    EXPECT_EQ(data.timelineFirstFrame, 768U);
+    EXPECT_EQ(data.timelineFirstFrame, kTxOffset);
     EXPECT_EQ(data.words[2], 0U);
-    EXPECT_EQ(control.txScheduledSampleFrame.load(std::memory_order_acquire), 776U);
+    EXPECT_EQ(control.txScheduledSampleFrame.load(std::memory_order_acquire), kTxOffset + 8U);
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
@@ -192,7 +197,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
     const auto primedBeforeBinding = pipeline.NextTransmitPacket(TxPacketRequest{
         .transmitCycle = 1001, .packetIndex = 1, .slotGeneration = 1});
     ASSERT_TRUE(primedBeforeBinding.isData);
-    ASSERT_LT(primedBeforeBinding.timelineFirstFrame, 768U);
+    ASSERT_LT(primedBeforeBinding.timelineFirstFrame, kTxOffset);
 
     pipeline.SetDirectTxRuntimeBinding(
         IsochAudioTxPipeline::DirectTxRuntimeBinding{
@@ -218,7 +223,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
     const auto packetAfterBinding = pipeline.NextTransmitPacket(TxPacketRequest{
         .transmitCycle = 1002, .packetIndex = 2, .slotGeneration = 1});
     ASSERT_TRUE(packetAfterBinding.isData);
-    EXPECT_EQ(packetAfterBinding.timelineFirstFrame, 768U);
+    EXPECT_EQ(packetAfterBinding.timelineFirstFrame, kTxOffset);
 
     std::array<uint8_t, 4096> newPayload{};
     const auto newResult = PreparePopulated(
@@ -275,7 +280,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
             .packetIndex = 0,
             .hwPacketIndex = 1,
         }));
-    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 768U);
+    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), kTxOffset);
     EXPECT_EQ(control.counters.txCompletedStartupSilenceSlots.load(
                   std::memory_order_relaxed),
               0U);
@@ -375,7 +380,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
             .packetIndex = packetIndex,
             .slotGeneration = 1,
         });
-        if (candidate.isData && candidate.timelineFirstFrame == 1536) {
+        if (candidate.isData && candidate.timelineFirstFrame == kTxOffset + 768) {
             second = candidate;
             secondPacketIndex = packetIndex;
             break;
@@ -455,7 +460,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         .payloadHashMatches = true,
     }));
 
-    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 816U);
+    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), kTxOffset + 48U);
     EXPECT_EQ(control.playbackRingReadFrame.load(std::memory_order_acquire), 48U);
     EXPECT_EQ(control.outputConsumedEndFrame.load(std::memory_order_acquire), 48U);
 }
