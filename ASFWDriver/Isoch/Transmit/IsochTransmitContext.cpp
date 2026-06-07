@@ -292,6 +292,7 @@ bool IsochTransmitContext::DoPrepareOnce() noexcept {
     if (!hardware_ || !ring_.HasRings()) {
         return false;
     }
+    audio_.PopulateClipStyleTxRingFromWrittenRange();
     const auto outcome = ring_.PreparePayloads(*hardware_, contextIndex_, audio_);
     if (outcome.fatal || audio_.HasFatalFault()) {
         StopImmediatelyForTxFault(outcome);

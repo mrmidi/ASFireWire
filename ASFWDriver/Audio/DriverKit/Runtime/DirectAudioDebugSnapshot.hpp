@@ -50,13 +50,6 @@ struct DirectAudioDebugSnapshot final {
     uint64_t playbackRingOverruns{0};
     uint64_t txScheduledSampleFrame{0};
     uint64_t txCompletedSampleFrame{0};
-    uint64_t txLastSourceFrame{0};
-    uint64_t txPreparedSourceEndFrame{0};
-    uint64_t txStartupAvailableFrames{0};
-    uint64_t txAnchorSourceFrame{0};
-    uint64_t txAnchorTimelineFrame{0};
-    uint32_t txAnchorPacketIndex{0};
-    uint32_t txAnchorDistance{0};
     uint32_t txMinimumPreparationDistance{UINT32_MAX};
     uint64_t txLastPreparationLatencyTicks{0};
     uint64_t txMaxPreparationLatencyTicks{0};
@@ -69,9 +62,7 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txPcmAllZeroPackets{0};
     uint64_t txTimelineInvariantFailures{0};
     uint64_t txPreparedPcmSlots{0};
-    uint64_t txPendingSourceSlots{0};
     uint64_t txStartupSilenceSlots{0};
-    uint64_t txRetiredEpochSilenceSlots{0};
     uint64_t txReadAheadFaults{0};
     uint64_t txSourceOverwrittenFaults{0};
     uint64_t txPreparationDeadlineFaults{0};
@@ -85,12 +76,10 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txPreparationWakeDispatches{0};
     uint64_t txPreparationWakeCoalesced{0};
     uint64_t txPreparationDrainPasses{0};
-    uint64_t txDeferredStartupWrites{0};
     uint64_t txCompletedPayloadHashMatches{0};
     uint64_t txCompletedPayloadHashMismatches{0};
     uint64_t txCompletedPcmSlots{0};
     uint64_t txCompletedStartupSilenceSlots{0};
-    uint64_t txCompletedRetiredSilenceSlots{0};
     uint64_t txPayloadMismatchFaults{0};
     FatalStreamReason fatalReason{FatalStreamReason::None};
     uint64_t fatalGeneration{0};
@@ -204,20 +193,6 @@ struct DirectAudioDebugLogState final {
         control.txScheduledSampleFrame.load(std::memory_order_acquire);
     snapshot.txCompletedSampleFrame =
         control.txCompletedSampleFrame.load(std::memory_order_acquire);
-    snapshot.txLastSourceFrame =
-        control.txLastSourceFrame.load(std::memory_order_acquire);
-    snapshot.txPreparedSourceEndFrame =
-        control.txPreparedSourceEndFrame.load(std::memory_order_acquire);
-    snapshot.txStartupAvailableFrames =
-        control.txStartupAvailableFrames.load(std::memory_order_acquire);
-    snapshot.txAnchorSourceFrame =
-        control.txAnchorSourceFrame.load(std::memory_order_acquire);
-    snapshot.txAnchorTimelineFrame =
-        control.txAnchorTimelineFrame.load(std::memory_order_acquire);
-    snapshot.txAnchorPacketIndex =
-        control.txAnchorPacketIndex.load(std::memory_order_acquire);
-    snapshot.txAnchorDistance =
-        control.txAnchorDistance.load(std::memory_order_acquire);
     snapshot.txMinimumPreparationDistance =
         control.txMinimumPreparationDistance.load(std::memory_order_acquire);
     snapshot.txLastPreparationLatencyTicks =
@@ -242,12 +217,8 @@ struct DirectAudioDebugLogState final {
         control.counters.txTimelineInvariantFailures.load(std::memory_order_relaxed);
     snapshot.txPreparedPcmSlots =
         control.counters.txPreparedPcmSlots.load(std::memory_order_relaxed);
-    snapshot.txPendingSourceSlots =
-        control.counters.txPendingSourceSlots.load(std::memory_order_relaxed);
     snapshot.txStartupSilenceSlots =
         control.counters.txStartupSilenceSlots.load(std::memory_order_relaxed);
-    snapshot.txRetiredEpochSilenceSlots =
-        control.counters.txRetiredEpochSilenceSlots.load(std::memory_order_relaxed);
     snapshot.txReadAheadFaults =
         control.counters.txReadAheadFaults.load(std::memory_order_relaxed);
     snapshot.txSourceOverwrittenFaults =
@@ -274,8 +245,6 @@ struct DirectAudioDebugLogState final {
         control.counters.txPreparationWakeCoalesced.load(std::memory_order_relaxed);
     snapshot.txPreparationDrainPasses =
         control.counters.txPreparationDrainPasses.load(std::memory_order_relaxed);
-    snapshot.txDeferredStartupWrites =
-        control.counters.txDeferredStartupWrites.load(std::memory_order_relaxed);
     snapshot.txCompletedPayloadHashMatches =
         control.counters.txCompletedPayloadHashMatches.load(std::memory_order_relaxed);
     snapshot.txCompletedPayloadHashMismatches =
@@ -284,8 +253,6 @@ struct DirectAudioDebugLogState final {
         control.counters.txCompletedPcmSlots.load(std::memory_order_relaxed);
     snapshot.txCompletedStartupSilenceSlots =
         control.counters.txCompletedStartupSilenceSlots.load(std::memory_order_relaxed);
-    snapshot.txCompletedRetiredSilenceSlots =
-        control.counters.txCompletedRetiredSilenceSlots.load(std::memory_order_relaxed);
     snapshot.txPayloadMismatchFaults =
         control.counters.txPayloadMismatchFaults.load(std::memory_order_relaxed);
     snapshot.fatalReason = control.fatalReason.load(std::memory_order_acquire);

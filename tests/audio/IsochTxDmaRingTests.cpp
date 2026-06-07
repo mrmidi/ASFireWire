@@ -88,7 +88,6 @@ public:
             .action = PreparedTxAction::Prepared,
             .sourceFirstFrame = request.metadata.timelineFirstFrame + 1000,
             .sourceEndFrame = request.metadata.timelineFirstFrame + 1008,
-            .epoch = 1,
         };
     }
 };
@@ -99,11 +98,10 @@ public:
         const PreparedTxPayloadRequest& request) noexcept override {
         return PreparedTxPayloadResult{
             .action = request.deadline ? PreparedTxAction::Fatal
-                                       : PreparedTxAction::Pending,
+                                       : PreparedTxAction::NoChange,
             .sourceFirstFrame = request.metadata.timelineFirstFrame,
             .sourceEndFrame =
                 request.metadata.timelineFirstFrame + request.metadata.framesPerPacket,
-            .epoch = 1,
         };
     }
 };

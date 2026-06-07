@@ -73,7 +73,6 @@ private:
         uint16_t reqCount{0};
         uint16_t audioQuadletCount{0};
         uint64_t generation{0};
-        uint64_t epoch{0};
         uint64_t sourceFirstFrame{0};
         uint64_t sourceEndFrame{0};
         uint64_t preparedPayloadHash{0};
@@ -105,6 +104,7 @@ private:
         uint64_t lastCriticalGapEvents{0};
         uint64_t lastDbcDiscontinuities{0};
         uint64_t lastDroppedTrace{0};
+        uint64_t lastDmaFrameMatrixLogNs{0};
     };
 
     struct CounterDeltaSnapshot {
@@ -168,6 +168,8 @@ private:
                            const PacketExpectations& expectations,
                            uint64_t deltaUnderrunSilenced,
                            uint32_t& restartReasons) noexcept;
+    void MaybeLogDmaFrameMatrix(const TraceEntry& entry,
+                                const PacketExpectations& expectations) noexcept;
     void RunWork() noexcept;
 
     Inputs inputs_{};

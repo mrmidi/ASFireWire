@@ -36,7 +36,6 @@ void IsochTxDmaRing::InitializeSlotMetadata(const uint32_t packetIndex,
         .timelineFirstFrame = packet.timelineFirstFrame,
         .sourceFirstFrame = 0,
         .sourceEndFrame = 0,
-        .epoch = 0,
         .preparationHostTicks = 0,
         .preparedPayloadHash = 0,
         .sizeBytes = packet.sizeBytes,
@@ -445,7 +444,6 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
         auto& metadata = slotMetadata_[packetIndex];
         if (!metadata.valid || !metadata.isData ||
             metadata.state == PreparedTxSlotState::PcmPrepared ||
-            metadata.state == PreparedTxSlotState::RetiredEpochSilence ||
             metadata.state == PreparedTxSlotState::Completed) {
             continue;
         }
@@ -469,16 +467,10 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
         const PreparedTxPayloadResult result = preparer.PreparePayload(request);
         metadata.sourceFirstFrame = result.sourceFirstFrame;
         metadata.sourceEndFrame = result.sourceEndFrame;
-        metadata.epoch = result.epoch;
 
         switch (result.action) {
         case PreparedTxAction::NoChange:
             ++out.startupSilenceCount;
-            break;
-        case PreparedTxAction::Pending:
-            metadata.state = PreparedTxSlotState::PendingSource;
-            ++out.pendingCount;
-            counters_.pendingPayloads.fetch_add(1, std::memory_order_relaxed);
             break;
         case PreparedTxAction::Prepared:
             if (!writable || !request.payloadBytes) {
@@ -507,11 +499,6 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
             metadata.state = PreparedTxSlotState::PcmPrepared;
             ++out.preparedCount;
             counters_.preparedPayloads.fetch_add(1, std::memory_order_relaxed);
-            break;
-        case PreparedTxAction::RetiredSilence:
-            metadata.state = PreparedTxSlotState::RetiredEpochSilence;
-            ++out.retiredSilenceCount;
-            counters_.retiredSilencePayloads.fetch_add(1, std::memory_order_relaxed);
             break;
         case PreparedTxAction::Fatal:
             counters_.preparationFaults.fetch_add(1, std::memory_order_relaxed);

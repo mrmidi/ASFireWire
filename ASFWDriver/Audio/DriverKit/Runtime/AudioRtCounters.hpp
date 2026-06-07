@@ -34,9 +34,7 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txPcmAllZeroPackets{0};
     std::atomic<uint64_t> txTimelineInvariantFailures{0};
     std::atomic<uint64_t> txPreparedPcmSlots{0};
-    std::atomic<uint64_t> txPendingSourceSlots{0};
     std::atomic<uint64_t> txStartupSilenceSlots{0};
-    std::atomic<uint64_t> txRetiredEpochSilenceSlots{0};
     std::atomic<uint64_t> txReadAheadFaults{0};
     std::atomic<uint64_t> txSourceOverwrittenFaults{0};
     std::atomic<uint64_t> txPreparationDeadlineFaults{0};
@@ -46,12 +44,10 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txPreparationWakeDispatches{0};
     std::atomic<uint64_t> txPreparationWakeCoalesced{0};
     std::atomic<uint64_t> txPreparationDrainPasses{0};
-    std::atomic<uint64_t> txDeferredStartupWrites{0};
     std::atomic<uint64_t> txCompletedPayloadHashMatches{0};
     std::atomic<uint64_t> txCompletedPayloadHashMismatches{0};
     std::atomic<uint64_t> txCompletedPcmSlots{0};
     std::atomic<uint64_t> txCompletedStartupSilenceSlots{0};
-    std::atomic<uint64_t> txCompletedRetiredSilenceSlots{0};
     std::atomic<uint64_t> txPayloadMismatchFaults{0};
 
     std::atomic<uint64_t> rxPackets{0};
@@ -90,9 +86,7 @@ struct AudioRtCounters final {
         txPcmAllZeroPackets.store(0, std::memory_order_relaxed);
         txTimelineInvariantFailures.store(0, std::memory_order_relaxed);
         txPreparedPcmSlots.store(0, std::memory_order_relaxed);
-        txPendingSourceSlots.store(0, std::memory_order_relaxed);
         txStartupSilenceSlots.store(0, std::memory_order_relaxed);
-        txRetiredEpochSilenceSlots.store(0, std::memory_order_relaxed);
         txReadAheadFaults.store(0, std::memory_order_relaxed);
         txSourceOverwrittenFaults.store(0, std::memory_order_relaxed);
         txPreparationDeadlineFaults.store(0, std::memory_order_relaxed);
@@ -102,12 +96,10 @@ struct AudioRtCounters final {
         txPreparationWakeDispatches.store(0, std::memory_order_relaxed);
         txPreparationWakeCoalesced.store(0, std::memory_order_relaxed);
         txPreparationDrainPasses.store(0, std::memory_order_relaxed);
-        txDeferredStartupWrites.store(0, std::memory_order_relaxed);
         txCompletedPayloadHashMatches.store(0, std::memory_order_relaxed);
         txCompletedPayloadHashMismatches.store(0, std::memory_order_relaxed);
         txCompletedPcmSlots.store(0, std::memory_order_relaxed);
         txCompletedStartupSilenceSlots.store(0, std::memory_order_relaxed);
-        txCompletedRetiredSilenceSlots.store(0, std::memory_order_relaxed);
         txPayloadMismatchFaults.store(0, std::memory_order_relaxed);
 
         rxPackets.store(0, std::memory_order_relaxed);

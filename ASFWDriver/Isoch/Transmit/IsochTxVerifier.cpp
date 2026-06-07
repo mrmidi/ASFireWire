@@ -2,6 +2,8 @@
 
 #include "IsochTxVerifier.hpp"
 
+#include <algorithm>
+
 namespace ASFW::Isoch {
 
 using namespace ASFW::Async::HW;
@@ -10,6 +12,8 @@ namespace {
 constexpr uint32_t kMaxAudioQuadlets =
     Encoding::kSamplesPerDataPacket * Config::kMaxAmdtpDbs;
 constexpr uint32_t kMaxPacketsPerRun = 64;
+constexpr uint64_t kDmaFrameMatrixLogIntervalNs = 1'000'000'000ULL;
+constexpr uint32_t kDmaFrameMatrixChunkSlots = 8;
 static_assert(kMaxAudioQuadlets <= (Tx::Layout::kAudioWriteAhead * Config::kMaxAmdtpDbs),
               "TraceEntry audioHost buffer must be large enough");
 
@@ -171,7 +175,6 @@ void IsochTxVerifier::CaptureBeforeOverwrite(uint32_t packetIndex,
     entry.lastDescStatus = lastDesc->statusWord;
     entry.reqCount = static_cast<uint16_t>(lastDesc->control & 0xFFFFu);
     entry.generation = metadata.generation;
-    entry.epoch = metadata.epoch;
     entry.sourceFirstFrame = metadata.sourceFirstFrame;
     entry.sourceEndFrame = metadata.sourceEndFrame;
     entry.preparedPayloadHash = metadata.preparedPayloadHash;
@@ -434,6 +437,7 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
                                         uint64_t deltaUnderrunSilenced,
                                         uint32_t& restartReasons) noexcept {
     const AudioPayloadScan scan = ScanAudioPayload(entry, expectations);
+    MaybeLogDmaFrameMatrix(entry, expectations);
 
     const auto audWire = [&](uint32_t index) noexcept -> uint32_t {
         if (index >= entry.audioQuadletCount) {
@@ -478,11 +482,10 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
     const bool shouldHaveAudio = inputs_.directOutputReady && (deltaUnderrunSilenced == 0);
     if (shouldHaveAudio) {
         ASFW_LOG_RL(Isoch, "txverify/silence_run", 10000, OS_LOG_TYPE_DEFAULT,
-                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u gen=%llu epoch=%llu state=%u prepDistance=%u source=[%llu,%llu) hash=0x%016llx directReady=%u framesPerPkt=%u",
+                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u gen=%llu state=%u prepDistance=%u source=[%llu,%llu) hash=0x%016llx directReady=%u framesPerPkt=%u",
                     state_.silentDataRun,
                     entry.packetIndex,
                     entry.generation,
-                    entry.epoch,
                     static_cast<uint32_t>(entry.preparationState),
                     entry.preparationDistance,
                     entry.sourceFirstFrame,
@@ -491,6 +494,70 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
                     inputs_.directOutputReady ? 1u : 0u,
                     inputs_.framesPerPacket);
     }
+}
+
+void IsochTxVerifier::MaybeLogDmaFrameMatrix(
+    const TraceEntry& entry,
+    const PacketExpectations& expectations) noexcept {
+    const uint32_t slots = expectations.slotsPerFrame;
+    if (slots == 0 || entry.audioQuadletCount < slots) {
+        return;
+    }
+
+    const uint64_t now = ASFW::LogDetail::NowNs();
+    if (state_.lastDmaFrameMatrixLogNs != 0 &&
+        now - state_.lastDmaFrameMatrixLogNs <
+            kDmaFrameMatrixLogIntervalNs) {
+        return;
+    }
+    state_.lastDmaFrameMatrixLogNs = now;
+
+    const uint32_t capturedFrames = entry.audioQuadletCount / slots;
+    const uint32_t frames =
+        std::min(inputs_.framesPerPacket, capturedFrames);
+    ASFW_LOG(
+        Isoch,
+        "IT TX DMA MATRIX BEGIN pkt=%u generation=%llu source=[%llu,%llu) frames=%u slots=%u req=%u hash=0x%016llx",
+        entry.packetIndex,
+        entry.generation,
+        entry.sourceFirstFrame,
+        entry.sourceEndFrame,
+        frames,
+        slots,
+        entry.reqCount,
+        entry.preparedPayloadHash);
+
+    for (uint32_t frame = 0; frame < frames; ++frame) {
+        for (uint32_t slotBase = 0; slotBase < slots;
+             slotBase += kDmaFrameMatrixChunkSlots) {
+            const uint32_t slotCount =
+                std::min(kDmaFrameMatrixChunkSlots, slots - slotBase);
+            const uint32_t index = frame * slots + slotBase;
+            const auto dstAt = [&](uint32_t offset) noexcept -> uint32_t {
+                return offset < slotCount
+                    ? entry.audioHost[index + offset]
+                    : 0;
+            };
+
+            ASFW_LOG(
+                Isoch,
+                "IT TX DMA FRAME pkt=%u sourceFrame=%llu row=%u slots=[%u,%u) dstDmaHost=[%08x %08x %08x %08x %08x %08x %08x %08x]",
+                entry.packetIndex,
+                entry.sourceFirstFrame + frame,
+                frame,
+                slotBase,
+                slotBase + slotCount,
+                dstAt(0), dstAt(1), dstAt(2), dstAt(3),
+                dstAt(4), dstAt(5), dstAt(6), dstAt(7));
+        }
+    }
+
+    ASFW_LOG(
+        Isoch,
+        "IT TX DMA MATRIX END pkt=%u source=[%llu,%llu)",
+        entry.packetIndex,
+        entry.sourceFirstFrame,
+        entry.sourceEndFrame);
 }
 
 void IsochTxVerifier::RunWork() noexcept {
