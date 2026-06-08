@@ -1004,15 +1004,13 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     out.action = Tx::PreparedTxAction::Prepared;
     if (covered) {
         metadata.preparationState = Tx::PreparedTxSlotState::PcmPrepared;
+        out.preparedState = Tx::PreparedTxSlotState::PcmPrepared;
     } else {
         // Coverage miss: ring slot was not populated for this audio frame.
         // Silence from the ring was substituted above. Mark distinctly so
         // OnTransmitSlotCompleted can account for it separately from real PCM.
         metadata.preparationState = Tx::PreparedTxSlotState::SilenceFallback;
-        if (directTxBinding_.control) {
-            directTxBinding_.control->counters.txSilenceFallback.fetch_add(
-                1, std::memory_order_relaxed);
-        }
+        out.preparedState = Tx::PreparedTxSlotState::SilenceFallback;
     }
 
     return out;

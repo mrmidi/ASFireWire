@@ -473,6 +473,15 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
                 out.faultMetadata = metadata;
                 return out;
             }
+            if (result.preparedState != PreparedTxSlotState::PcmPrepared &&
+                result.preparedState != PreparedTxSlotState::SilenceFallback) {
+                counters_.preparationFaults.fetch_add(1, std::memory_order_relaxed);
+                out.fatal = true;
+                out.faultPacketIndex = packetIndex;
+                out.faultDistance = distance;
+                out.faultMetadata = metadata;
+                return out;
+            }
             if (dmaMemory_ && metadata.sizeBytes > 0) {
                 dmaMemory_->PublishToDevice(
                     reinterpret_cast<const std::byte*>(request.payloadBytes),
@@ -487,7 +496,7 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
             metadata.firstSourceSamples[1] = result.firstSourceSamples[1];
             metadata.firstEncodedWords[0] = result.firstEncodedWords[0];
             metadata.firstEncodedWords[1] = result.firstEncodedWords[1];
-            metadata.state = PreparedTxSlotState::PcmPrepared;
+            metadata.state = result.preparedState;
             ++out.preparedCount;
             counters_.preparedPayloads.fetch_add(1, std::memory_order_relaxed);
             break;

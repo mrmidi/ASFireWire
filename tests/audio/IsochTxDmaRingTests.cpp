@@ -86,6 +86,23 @@ public:
         words[2] = 0xA5000000u | request.packetIndex;
         return PreparedTxPayloadResult{
             .action = PreparedTxAction::Prepared,
+            .preparedState = PreparedTxSlotState::PcmPrepared,
+        };
+    }
+};
+
+class SilenceFallbackPreparer final : public IIsochTxPayloadPreparer {
+public:
+    PreparedTxPayloadResult PreparePayload(
+        const PreparedTxPayloadRequest& request) noexcept override {
+        if (!request.writable) {
+            return {};
+        }
+        auto* words = reinterpret_cast<uint32_t*>(request.payloadBytes);
+        words[2] = 0;
+        return PreparedTxPayloadResult{
+            .action = PreparedTxAction::Prepared,
+            .preparedState = PreparedTxSlotState::SilenceFallback,
         };
     }
 };
@@ -416,6 +433,67 @@ TEST(IsochTxDmaRingTests,
     EXPECT_EQ(ring.RTCounters().completedPayloadHashMismatches.load(
                   std::memory_order_relaxed),
               1U);
+}
+
+TEST(IsochTxDmaRingTests,
+     SilenceFallbackStateSurvivesPreparationAndSkipsCompletionHashComparison) {
+    ::ASFW::Driver::HardwareInterface hw;
+    auto memory =
+        MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
+    ASSERT_TRUE(memory);
+    IsochTxDmaRing ring;
+    ASSERT_EQ(ring.SetupRings(*memory), kIOReturnSuccess);
+    ring.ResetForStart();
+    hw.SetTestRegister(::ASFW::Driver::Register32::kCycleTimer, 1000u << 12);
+    ring.SeedCycleTracking(hw);
+    TimedSilentPacketProvider provider;
+    ASSERT_EQ(ring.Prime(provider).packetsAssembled, Layout::kNumPackets);
+
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring.Slab().GetDescriptorIOVA(0) | Layout::kBlocksPerPacket);
+    SilenceFallbackPreparer preparer;
+    ASSERT_TRUE(ring.PreparePayloads(hw, 0, preparer).ok);
+
+    constexpr uint32_t kMutatedPacket =
+        Layout::kPreparationDeadlinePackets + 1;
+    ASSERT_EQ(ring.SlotMetadata(kMutatedPacket).state,
+              PreparedTxSlotState::SilenceFallback);
+    auto* words =
+        reinterpret_cast<uint32_t*>(ring.Slab().PayloadPtr(kMutatedPacket));
+    words[2] ^= 1U;
+
+    constexpr uint32_t kHardwarePacket = kMutatedPacket + 1;
+    hw.SetTestRegister(
+        static_cast<::ASFW::Driver::Register32>(
+            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
+        ring.Slab().GetDescriptorIOVA(
+            kHardwarePacket * Layout::kBlocksPerPacket) |
+            Layout::kBlocksPerPacket);
+    RecordingCompletionObserver observer;
+    const auto refill =
+        ring.Refill(hw, 0, provider, nullptr, nullptr, &observer);
+
+    ASSERT_TRUE(refill.ok);
+    const auto fallback = std::find_if(
+        observer.completedSlots.begin(),
+        observer.completedSlots.end(),
+        [](const CompletedTxSlot& completed) {
+            return completed.metadata.state ==
+                   PreparedTxSlotState::SilenceFallback;
+        });
+    ASSERT_NE(fallback, observer.completedSlots.end());
+    EXPECT_EQ(fallback->packetIndex, kMutatedPacket);
+    EXPECT_TRUE(fallback->payloadHashMatches);
+    EXPECT_NE(fallback->metadata.preparedPayloadHash,
+              fallback->completedPayloadHash);
+    EXPECT_EQ(ring.RTCounters().completedPayloadHashMatches.load(
+                  std::memory_order_relaxed),
+              0U);
+    EXPECT_EQ(ring.RTCounters().completedPayloadHashMismatches.load(
+                  std::memory_order_relaxed),
+              0U);
 }
 
 TEST(IsochTxDmaRingTests, DeadlineFatalDoesNotModifyOrPublishPayload) {

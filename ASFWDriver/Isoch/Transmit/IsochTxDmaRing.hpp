@@ -95,6 +95,7 @@ struct PreparedTxPayloadRequest final {
 
 struct PreparedTxPayloadResult final {
     PreparedTxAction action{PreparedTxAction::NoChange};
+    PreparedTxSlotState preparedState{PreparedTxSlotState::InitialSilence};
     int32_t firstSourceSamples[2]{};
     uint32_t firstEncodedWords[2]{};
 };
