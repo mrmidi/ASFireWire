@@ -125,7 +125,9 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
 }
 
 bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept {
-    constexpr uint32_t kAttempts = 100;
+    // Isoch is already running here. Allow RX SYT/ZTS establishment to happen
+    // asynchronously without making it a prerequisite for starting IR or IT.
+    constexpr uint32_t kAttempts = 1000;
     constexpr uint32_t kDelayUsec = 1000;
     for (uint32_t attempt = 0; attempt < kAttempts; ++attempt) {
         if (PublishSharedZeroTimestampToHAL(ivars, "prime", true) == ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published) {

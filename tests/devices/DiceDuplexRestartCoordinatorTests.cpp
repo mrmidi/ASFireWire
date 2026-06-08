@@ -394,14 +394,19 @@ public:
     }
 
     void ReadDuplexHealth(HealthCallback callback) override {
-        ++healthReadCalls;
+        log_.Add("device.health");
+        const size_t readIndex = static_cast<size_t>(healthReadCalls++);
+        const uint32_t statusValue = healthStatusSequence.empty()
+            ? healthStatusValue
+            : healthStatusSequence[
+                  std::min(readIndex, healthStatusSequence.size() - 1)];
         callback(healthStatus,
                  DiceDuplexHealthResult{
-                     .generation = Generation{1},
+                     .generation = healthGeneration,
                      .appliedClock = currentClock_,
                      .runtimeCaps = currentCaps_,
                      .notification = healthNotification,
-                     .status = healthStatusValue,
+                     .status = statusValue,
                      .extStatus = healthExtStatusValue,
                  });
     }
@@ -452,6 +457,8 @@ public:
     uint32_t healthNotification{0x20};
     uint32_t healthStatusValue{0x201};
     uint32_t healthExtStatusValue{0};
+    std::vector<uint32_t> healthStatusSequence{};
+    Generation healthGeneration{1};
 
     int prepareCalls{0};
     int programRxCalls{0};
@@ -522,6 +529,7 @@ protected:
                                               gen),
                                 LinkPolicy{});
         runtime_.Insert(kTestGuid, protocol);
+        protocol_->healthGeneration = gen;
     }
 
     [[nodiscard]] std::optional<DiceRestartSession> GetSession() const {
@@ -565,7 +573,53 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
     EXPECT_EQ(protocol_->prepareCalls, 1);
     EXPECT_EQ(protocol_->programRxCalls, 1);
     EXPECT_EQ(protocol_->programTxCalls, 1);
+    EXPECT_EQ(protocol_->healthReadCalls, 3);
     EXPECT_EQ(protocol_->confirmCalls, 1);
+
+    const auto calls = LogSnapshot();
+    const auto programTx = std::find(calls.begin(), calls.end(), "device.program_tx");
+    const auto startReceive =
+        std::find(calls.begin(), calls.end(), "host.start_receive");
+    ASSERT_NE(programTx, calls.end());
+    ASSERT_NE(startReceive, calls.end());
+    EXPECT_EQ(std::count(programTx + 1, startReceive, "device.health"), 3);
+}
+
+TEST_F(DiceDuplexRestartCoordinatorTests,
+       GlobalClockRequiresConsecutiveStableReadsBeforeHostIsochStarts) {
+    protocol_->healthStatusSequence = {
+        0x201,
+        0x200,
+        0x201,
+        0x201,
+        0x201,
+    };
+
+    ASSERT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnSuccess);
+
+    EXPECT_EQ(protocol_->healthReadCalls, 5);
+    EXPECT_EQ(hostTransport_.startReceiveCalls, 1);
+    EXPECT_EQ(hostTransport_.startTransmitCalls, 1);
+}
+
+TEST_F(DiceDuplexRestartCoordinatorTests,
+       GlobalClockHealthFailureRollsBackBeforeHostIsochStarts) {
+    protocol_->healthStatus = kIOReturnNoDevice;
+
+    EXPECT_EQ(coordinator_.StartStreaming(kTestGuid), kIOReturnNoDevice);
+
+    const auto session = GetSession();
+    ASSERT_TRUE(session.has_value());
+    EXPECT_EQ(session->phase, DiceRestartPhase::kFailed);
+    ASSERT_TRUE(session->lastFailure.has_value());
+    EXPECT_EQ(session->lastFailure->failedPhase,
+              DiceRestartPhase::kWaitingGlobalClock);
+    EXPECT_EQ(session->lastFailure->cause,
+              DiceRestartFailureCause::kGlobalClockLock);
+    EXPECT_EQ(hostTransport_.startReceiveCalls, 0);
+    EXPECT_EQ(hostTransport_.startTransmitCalls, 0);
+    EXPECT_EQ(hostTransport_.stopCalls, 1);
+    EXPECT_EQ(protocol_->stopCalls, 1);
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests, StopStreamingClearsRestartProgressAndStopsHostAndDevice) {

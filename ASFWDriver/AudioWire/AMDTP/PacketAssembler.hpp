@@ -254,6 +254,17 @@ public:
 
         return packet;
     }
+
+    /// Emit CIP-only NO-DATA without advancing normal DATA cadence or DBC.
+    /// Used while an external timing source is not yet usable.
+    AssembledPacket assembleNoDataHoldCadence() noexcept {
+        AssembledPacket packet{};
+        packet.cycleNumber = currentCycleNumber();
+        packet.isData = false;
+        packet.dbc = dbcGen_.getDbc(false, static_cast<uint8_t>(samplesPerDataPacket()));
+        assembleNoDataPacket(packet);
+        return packet;
+    }
     
     /// Get current fill level of the ring buffer in frames.
     uint32_t bufferFillLevel() const noexcept {

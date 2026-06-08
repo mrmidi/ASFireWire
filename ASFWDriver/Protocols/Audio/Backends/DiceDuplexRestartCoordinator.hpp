@@ -89,6 +89,10 @@ private:
                                              FW::Generation topologyGeneration,
                                              const DICE::DiceDesiredClockConfig& desiredClock,
                                              DICE::DiceRestartReason reason) noexcept;
+    [[nodiscard]] IOReturn WaitForStableGlobalClock(
+        DICE::IDICEDuplexProtocol& diceProtocol,
+        FW::Generation topologyGeneration,
+        const DICE::DiceDesiredClockConfig& desiredClock) noexcept;
 
     // Resolves the record + its DICE duplex surface for `guid`. `outHold` receives a
     // shared_ptr to the owning IDeviceProtocol; callers must keep it alive for as long as
@@ -137,6 +141,9 @@ private:
 
     static constexpr uint32_t kSyncBridgeTimeoutMs = 12000;
     static constexpr uint32_t kSyncBridgePollMs = 10;
+    static constexpr uint32_t kGlobalClockLockTimeoutMs = 1000;
+    static constexpr uint32_t kGlobalClockLockPollMs = 10;
+    static constexpr uint32_t kGlobalClockStableReads = 3;
     static constexpr size_t kMaxCompletedClockRequestsPerGuid = 32;
 };
 

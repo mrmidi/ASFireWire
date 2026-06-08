@@ -40,6 +40,27 @@ TEST(PacketAssemblerTests, FirstPacketIsNoData) {
     EXPECT_FALSE(assembler.nextIsData());
 }
 
+TEST(PacketAssemblerTests, ForcedNoDataHoldsCadenceAndDbc) {
+    PacketAssembler assembler(2, 0x02);
+    assembler.reset(0xC0);
+
+    for (int i = 0; i < 8; ++i) {
+        const auto packet = assembler.assembleNoDataHoldCadence();
+        EXPECT_FALSE(packet.isData);
+        EXPECT_EQ(packet.size, kCIPHeaderSize);
+        EXPECT_EQ(packet.dbc, 0xC0);
+        EXPECT_EQ(packet.cycleNumber, 0U);
+        EXPECT_FALSE(assembler.nextIsData());
+    }
+
+    const auto normalNoData = assembler.assembleNext(0x1234);
+    const auto firstData = assembler.assembleNext(0x1234);
+    EXPECT_FALSE(normalNoData.isData);
+    EXPECT_EQ(normalNoData.dbc, 0xC0);
+    EXPECT_TRUE(firstData.isData);
+    EXPECT_EQ(firstData.dbc, 0xC0);
+}
+
 //==============================================================================
 // Cadence Pattern Tests
 //==============================================================================

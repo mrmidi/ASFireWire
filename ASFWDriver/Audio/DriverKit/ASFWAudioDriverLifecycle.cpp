@@ -133,6 +133,15 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         false, std::memory_order_release);
     ASFW_LOG(DirectAudio, "ADK DBG IO running=0 while arming transport");
 
+    auto* control = ivars->runtime.directAudioGraph.control;
+    if (control) {
+        // Select RX before transport startup so the first usable RX SYT/ZTS
+        // publication is accepted while IR is coming online.
+        control->ztsState.selectedSource.store(
+            ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock,
+            std::memory_order_release);
+    }
+
     const kern_return_t superStartKr = super::StartDevice(in_object_id, in_flags);
     if (superStartKr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioDriver: super::StartDevice failed: 0x%x", superStartKr);
@@ -186,11 +195,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
              policySnap.outputPacketLeadFrames,
              policySnap.inputPacketLeadFrames,
              policySnap.ztsPeriodFrames);
-
-    auto* control = ivars->runtime.directAudioGraph.control;
-    if (control) {
-        control->ztsState.selectedSource.store(ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock, std::memory_order_relaxed);
-    }
 
     if (EnsureZtsMirrorTimer(*this, *ivars)) {
         ASFW_LOG(DirectAudio,

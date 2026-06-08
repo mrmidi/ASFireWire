@@ -195,6 +195,7 @@ private:
     ASFW::AudioEngine::DirectIsoch::OutputPhaseToAudioMap txPhaseMap_{};
     ASFW::AudioEngine::DirectIsoch::TxOutputPhaseLoop::CycleResult lastPhaseResult_{};
     bool txPhaseReadIndexSeeded_{false};
+    bool rxTimingUsable_{false};
 
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 

@@ -204,10 +204,8 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ring_.SeedCycleTracking(*hardware_);
     audio_.SetCycleTrackingValid(true);
 
-    if (!audio_.PrimeSyncFromExternalBridge()) {
-        ASFW_LOG(Isoch, "IT: Cannot start - missing fresh RX SYT seed before prime");
-        return kIOReturnNotReady;
-    }
+    (void)audio_.PrimeSyncFromExternalBridge();
+    ASFW_LOG(Isoch, "IT: Starting without waiting for RX SYT/ZTS; TX remains NO-DATA until sync");
 
     ring_.DebugFillDescriptorSlab(0xDE);
     ASFW_LOG(Isoch, "IT: Pre-filled descriptor slab (%zu bytes) with 0xDE pattern", Tx::Layout::kDescriptorRingSize);
