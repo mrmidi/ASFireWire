@@ -275,10 +275,26 @@ TEST(IsochAudioTxPipelineTimelineTests,
         PreparePopulated(pipeline, WritableRequest(1, data, payload));
 
     ASSERT_EQ(result.action, PreparedTxAction::Prepared);
+    ASSERT_EQ(result.preparedState, PreparedTxSlotState::SilenceFallback);
     const auto* encoded = reinterpret_cast<const uint32_t*>(payload.data()) + 2;
     EXPECT_EQ(encoded[0], 0U);
     EXPECT_EQ(encoded[1], 0U);
+    EXPECT_EQ(control.counters.txSilenceFallback.load(std::memory_order_relaxed),
+              0U);
+
+    auto completedMetadata = SlotMetadata(data);
+    completedMetadata.state = result.preparedState;
+    EXPECT_TRUE(pipeline.OnTransmitSlotCompleted(
+        ASFW::Isoch::Tx::CompletedTxSlot{
+            .metadata = completedMetadata,
+            .packetIndex = 1,
+            .hwPacketIndex = 2,
+        }));
+    EXPECT_EQ(control.counters.txSilenceFallback.load(std::memory_order_relaxed),
+              1U);
     EXPECT_EQ(control.playbackRingReadFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.outputConsumedEndFrame.load(std::memory_order_acquire), 0U);
 }
 
 TEST(IsochAudioTxPipelineTimelineTests,
@@ -748,9 +764,12 @@ TEST(IsochAudioTxPipelineTimelineTests,
               0U);
     EXPECT_EQ(control.counters.txReadAheadFaults.load(std::memory_order_relaxed),
               0U);
-    EXPECT_GE(control.counters.txCompletedPcmSlots.load(
-                  std::memory_order_relaxed),
-              200U);
+    const uint64_t completedPcmSlots =
+        control.counters.txCompletedPcmSlots.load(std::memory_order_relaxed);
+    const uint64_t completedFallbackSlots =
+        control.counters.txSilenceFallback.load(std::memory_order_relaxed);
+    EXPECT_GE(completedPcmSlots + completedFallbackSlots, 200U);
+    EXPECT_GT(completedFallbackSlots, 0U);
     EXPECT_EQ(control.counters.txCompletedPayloadHashMismatches.load(
                   std::memory_order_relaxed),
               0U);
