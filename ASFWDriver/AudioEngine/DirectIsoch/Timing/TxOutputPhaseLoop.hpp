@@ -44,11 +44,33 @@ public:
     /// this (in the 1-second domain) is treated as a discontinuity.
     static constexpr int64_t kGlitchThresholdTicks = kTicksPerCycle / 2;  // 1536
 
+    /// Why ProcessCycle (re)seeded the phase and asked the caller to re-anchor.
+    /// Distinguishes the expected one-shot `kInitialSeed` from the steady-state
+    /// instability signals `kGlitch` / `kLeadReject` -- if either of the latter
+    /// keeps recurring, the cadence/device-clock relationship is not converging.
+    enum class RebaseReason : uint8_t {
+        kNone = 0,        // not rebased this cycle
+        kInitialSeed,     // first seed since construction or caller Reset()
+        kGlitch,          // recovered device phase jumped (discontinuity)
+        kLeadReject,      // output lead drifted outside the accepted window
+    };
+
+    [[nodiscard]] static constexpr const char* RebaseReasonName(RebaseReason reason) noexcept {
+        switch (reason) {
+            case RebaseReason::kInitialSeed: return "InitialSeed";
+            case RebaseReason::kGlitch:      return "Glitch";
+            case RebaseReason::kLeadReject:  return "LeadReject";
+            case RebaseReason::kNone:        return "None";
+        }
+        return "None";
+    }
+
     struct CycleResult {
         int64_t outputPhaseTicks{0};  // unwrapped phase for THIS packet (pre-advance)
         int64_t leadTicks{0};         // advisory lead vs device, 1-second domain
         bool    isData{false};        // echoes the caller's cadence decision
         bool    rebased{false};       // phase (re)seeded -> caller must re-anchor map/SYT
+        RebaseReason rebaseReason{RebaseReason::kNone};  // why, when rebased is true
         bool    tight{false};         // lead below one cycle (near underrun)
         bool    tooFar{false};        // lead beyond the reject window
     };
@@ -56,7 +78,10 @@ public:
     struct Diagnostics {
         uint64_t dataPackets{0};
         uint64_t noDataPackets{0};
-        uint64_t rebases{0};
+        uint64_t rebases{0};            // == rebasesInitialSeed + rebasesGlitch + rebasesLeadReject
+        uint64_t rebasesInitialSeed{0};
+        uint64_t rebasesGlitch{0};
+        uint64_t rebasesLeadReject{0};
         uint64_t tightWarnings{0};
         uint64_t farWarnings{0};
         uint64_t glitches{0};

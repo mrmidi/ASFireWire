@@ -302,6 +302,20 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
     if (lastPhaseResult_.rebased) {
         txPhaseMap_.Reset();
         sytGenerator_.armTransmitCycleAnchor();
+        if (directTxBinding_.control) {
+            directTxBinding_.control->counters.txPhaseRebases.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Reason-tagged + rate-limited: a steady stream of InitialSeed is normal
+        // start-of-stream churn, but recurring Glitch/LeadReject means the phase
+        // loop is not converging on the recovered device clock. Grep for
+        // "TX PHASE RESET reason=" to see which one is actually firing on hardware.
+        ASFW_LOG_RL(Isoch, "tx/phase_reset", 1000, OS_LOG_TYPE_DEFAULT,
+                    "TX PHASE RESET reason=%{public}s lead=%lld phase=%lld tooFar=%d total=%llu",
+                    TxOutputPhaseLoop::RebaseReasonName(lastPhaseResult_.rebaseReason),
+                    lastPhaseResult_.leadTicks,
+                    lastPhaseResult_.outputPhaseTicks,
+                    lastPhaseResult_.tooFar ? 1 : 0,
+                    txPhaseLoop_.GetDiagnostics().rebases);
     }
 
     // Anchor the frame map at reportedPlayhead - safety (NOT writtenEnd) on the first
@@ -317,9 +331,9 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
                 reportedPlayhead > safety ? reportedPlayhead - safety : 0;
             const uint64_t alignedAnchor = fpp ? (target / fpp) * fpp : target;
             txPhaseMap_.Anchor(lastPhaseResult_.outputPhaseTicks, alignedAnchor);
-            ASFW_LOG(Isoch,
-                     "IT: txPhaseMap anchored: phase=%lld playhead=%llu safety=%llu audio=%llu",
-                     lastPhaseResult_.outputPhaseTicks, reportedPlayhead, safety, alignedAnchor);
+            ASFW_LOG_RL(Isoch, "tx/phase_map_anchored", 1000, OS_LOG_TYPE_DEFAULT,
+                        "IT: txPhaseMap anchored: phase=%lld playhead=%llu safety=%llu audio=%llu",
+                        lastPhaseResult_.outputPhaseTicks, reportedPlayhead, safety, alignedAnchor);
         }
     }
 

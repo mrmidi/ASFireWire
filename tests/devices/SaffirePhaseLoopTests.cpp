@@ -24,10 +24,12 @@ TEST(TxOutputPhaseLoop, AdvancesByPacketStepOnDataHoldsOnNoData) {
 
     auto r0 = loop.ProcessCycle(0, 8, /*isData=*/true);   // first cycle seeds
     EXPECT_TRUE(r0.rebased);
+    EXPECT_EQ(r0.rebaseReason, TxOutputPhaseLoop::RebaseReason::kInitialSeed);
     EXPECT_EQ(r0.outputPhaseTicks, kLead);                // dev(0) + lead
 
     auto r1 = loop.ProcessCycle(kCyc, 8, /*isData=*/true);
     EXPECT_FALSE(r1.rebased);
+    EXPECT_EQ(r1.rebaseReason, TxOutputPhaseLoop::RebaseReason::kNone);
     EXPECT_EQ(r1.outputPhaseTicks, kLead + kStep);        // advanced one packet
 
     auto r2 = loop.ProcessCycle(2 * kCyc, 8, /*isData=*/false);  // NO-DATA holds
@@ -61,6 +63,9 @@ TEST(TxOutputPhaseLoop, RealisticSteadyState48k) {
     EXPECT_EQ(noDataCount, 200);
     const auto diag = loop.GetDiagnostics();
     EXPECT_EQ(diag.rebases, 1u);     // only the initial seed
+    EXPECT_EQ(diag.rebasesInitialSeed, 1u);
+    EXPECT_EQ(diag.rebasesGlitch, 0u);
+    EXPECT_EQ(diag.rebasesLeadReject, 0u);
     EXPECT_EQ(diag.glitches, 0u);
 }
 
@@ -75,17 +80,58 @@ TEST(TxOutputPhaseLoop, PerSecondWrapIsNotGlitch) {
     }
     EXPECT_EQ(loop.GetDiagnostics().glitches, 0u);
     EXPECT_EQ(loop.GetDiagnostics().rebases, 1u);  // only the initial seed
+    EXPECT_EQ(loop.GetDiagnostics().rebasesInitialSeed, 1u);
 }
 
-// A real device-phase jump is a discontinuity: re-seed at device + operating lead.
+// A real device-phase jump is a discontinuity: re-seed at device + operating lead,
+// and the cause must be tagged Glitch (not InitialSeed) so a recurring glitch on
+// hardware is distinguishable from one-time start-of-stream seeding.
 TEST(TxOutputPhaseLoop, GlitchRecovery) {
     TxOutputPhaseLoop loop;
-    (void)loop.ProcessCycle(1000, 8, /*isData=*/true);     // seed
+    auto seed = loop.ProcessCycle(1000, 8, /*isData=*/true);     // seed
+    EXPECT_EQ(seed.rebaseReason, TxOutputPhaseLoop::RebaseReason::kInitialSeed);
     auto r = loop.ProcessCycle(1000 + 50000, 8, /*isData=*/true);  // device jump
 
     const auto diag = loop.GetDiagnostics();
     EXPECT_EQ(diag.glitches, 1u);
     EXPECT_TRUE(r.rebased);
+    EXPECT_EQ(r.rebaseReason, TxOutputPhaseLoop::RebaseReason::kGlitch);
     EXPECT_EQ(r.leadTicks, kLead);
     EXPECT_EQ(r.outputPhaseTicks, 51000 + kLead);
+
+    EXPECT_EQ(diag.rebasesInitialSeed, 1u);
+    EXPECT_EQ(diag.rebasesGlitch, 1u);
+    EXPECT_EQ(diag.rebasesLeadReject, 0u);
+    EXPECT_EQ(diag.rebases, diag.rebasesInitialSeed + diag.rebasesGlitch + diag.rebasesLeadReject);
+}
+
+// Sustained 100% DATA cadence (no NO-DATA holds) advances the output phase faster
+// than the device phase progresses, so the lead grows past kLeadRejectTicks with no
+// device-phase discontinuity. The loop must re-seed and tag the cause as LeadReject
+// -- distinct from Glitch (no predicted-phase jump occurred) and from InitialSeed
+// (this is a steady-state correction, not start-of-stream). This is the signal the
+// reviewer flagged: if LeadReject keeps recurring on hardware, the phase loop is not
+// converging on the assembler cadence / recovered device clock relationship.
+TEST(TxOutputPhaseLoop, LeadRejectRecovery) {
+    TxOutputPhaseLoop loop;
+    int64_t dev = 0;
+    TxOutputPhaseLoop::CycleResult r{};
+
+    // lead grows by (kStep - kCyc) = 1024 ticks/cycle from the seeded kLead = 4608;
+    // it first exceeds kLeadRejectTicks (12287) on the 9th cycle (index 8): 4608 + 8*1024 = 12800.
+    for (int i = 0; i < 9; ++i) {
+        r = loop.ProcessCycle(dev, 8, /*isData=*/true);
+        dev = (dev + kCyc) % kSec;
+    }
+
+    EXPECT_TRUE(r.rebased);
+    EXPECT_EQ(r.rebaseReason, TxOutputPhaseLoop::RebaseReason::kLeadReject);
+    EXPECT_EQ(r.leadTicks, kLead);   // re-seeded back to the operating lead
+
+    const auto diag = loop.GetDiagnostics();
+    EXPECT_EQ(diag.glitches, 0u);
+    EXPECT_EQ(diag.rebasesInitialSeed, 1u);
+    EXPECT_EQ(diag.rebasesGlitch, 0u);
+    EXPECT_EQ(diag.rebasesLeadReject, 1u);
+    EXPECT_EQ(diag.rebases, diag.rebasesInitialSeed + diag.rebasesGlitch + diag.rebasesLeadReject);
 }
