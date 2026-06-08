@@ -154,8 +154,12 @@ private:
         PacketCipFields cip{};
     };
 
-    [[nodiscard]] bool TryGetRecoveredDevicePhaseTicks(uint32_t transmitCycle,
-                                                       int64_t* outDevicePhaseTicks) noexcept;
+    // Builds the 1-second-domain phase for this transmit cycle by grafting the
+    // device's recovered intra-cycle sub-phase onto the local bus cycle base.
+    // NOTE: This is NOT true recovered device phase — long-term whole-cycle device
+    // drift is handled separately by SYTGenerator::nudgeOffsetTicks().
+    [[nodiscard]] bool TryBuildTransmitCycleDeviceSubphase(uint32_t transmitCycle,
+                                                           int64_t* outDevicePhaseTicks) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
     void PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason reason,

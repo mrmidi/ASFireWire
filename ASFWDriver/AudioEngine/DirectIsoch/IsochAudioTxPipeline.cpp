@@ -275,7 +275,7 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
     // cadence. The loop only decides phase + discontinuity, never wire cadence.
     int64_t devicePhaseTicks = 0;
     const bool deviceValid =
-        TryGetRecoveredDevicePhaseTicks(request.transmitCycle, &devicePhaseTicks);
+        TryBuildTransmitCycleDeviceSubphase(request.transmitCycle, &devicePhaseTicks);
     if (deviceValid) {
         lastPhaseResult_ = txPhaseLoop_.ProcessCycle(devicePhaseTicks, fpp, isData);
     } else {
@@ -473,29 +473,38 @@ bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
                 completed.completedPayloadHash);
         }
     } else if (control) {
-        control->counters.txCompletedStartupSilenceSlots.fetch_add(
-            1, std::memory_order_relaxed);
-    }
-
-    lastCompletedAudioFrame_ = metadata.audioFrame + metadata.framesPerPacket;
-    if (control) {
-        auto& counters = control->counters;
-        if (metadata.state != Tx::PreparedTxSlotState::PcmPrepared) {
-            counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
+        if (metadata.state == Tx::PreparedTxSlotState::SilenceFallback) {
+            // Coverage miss at prepare time — ring slot was not populated.
+            // Count against txSilenceFallback (on-wire silence due to ring miss).
+            control->counters.txSilenceFallback.fetch_add(1, std::memory_order_relaxed);
+            control->counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
             if (metadata.syt == 0xFFFF) {
-                counters.txNoPhaseSilencePackets.fetch_add(
+                control->counters.txNoPhaseSilencePackets.fetch_add(
                     1, std::memory_order_relaxed);
             } else {
-                counters.txValidPhaseSilencePackets.fetch_add(
+                control->counters.txValidPhaseSilencePackets.fetch_add(
                     1, std::memory_order_relaxed);
             }
+        } else {
+            // InitialSilence — pre-anchor or startup; payload was never prepared.
+            control->counters.txCompletedStartupSilenceSlots.fetch_add(
+                1, std::memory_order_relaxed);
         }
-
-        control->txCompletedSampleFrame.store(
-            lastCompletedAudioFrame_, std::memory_order_release);
-
-        PublishDirectTxConsumedEndFrame(lastCompletedAudioFrame_);
     }
+
+    // Only advance the consumed-frame pointer for genuinely prepared PCM packets
+    // with a valid audio frame. Pre-anchor DATA (audioFrame==0) and SilenceFallback
+    // DATA must not publish a bogus position to the audio timing feedback path.
+    if (metadata.state == Tx::PreparedTxSlotState::PcmPrepared &&
+        metadata.audioFrame != 0) {
+        lastCompletedAudioFrame_ = metadata.audioFrame + metadata.framesPerPacket;
+        if (control) {
+            control->txCompletedSampleFrame.store(
+                lastCompletedAudioFrame_, std::memory_order_release);
+            PublishDirectTxConsumedEndFrame(lastCompletedAudioFrame_);
+        }
+    }
+
 
     return true;
 }
@@ -554,8 +563,20 @@ void IsochAudioTxPipeline::OnIsochEventGroup(const Core::IsochEventGroup& group)
     }
 }
 
-bool IsochAudioTxPipeline::TryGetRecoveredDevicePhaseTicks(uint32_t transmitCycle,
-                                                           int64_t* outDevicePhaseTicks) noexcept {
+// Builds the 1-second-domain phase for the given transmit cycle by grafting the
+// device's recovered intra-cycle sub-phase onto the local TX bus cycle base.
+//
+// What this computes:
+//   local bus cycle offset for `transmitCycle`
+//   + (cadence.recoveredDeviceOffsetTicks % kTicksPerCycle)   // sub-cycle graft
+//
+// What this does NOT compute:
+//   True cumulative recovered device phase. Long-term whole-cycle device drift is
+//   handled separately by SYTGenerator::nudgeOffsetTicks() in OnIsochEventGroup.
+//   This function is therefore a useful bridge but should eventually be replaced
+//   by a proper cumulative device-phase source if whole-cycle tracking is needed.
+bool IsochAudioTxPipeline::TryBuildTransmitCycleDeviceSubphase(uint32_t transmitCycle,
+                                                               int64_t* outDevicePhaseTicks) noexcept {
     if (!externalSyncBridge_) {
         return false;
     }
@@ -981,7 +1002,18 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     }
 
     out.action = Tx::PreparedTxAction::Prepared;
-    metadata.preparationState = Tx::PreparedTxSlotState::PcmPrepared;
+    if (covered) {
+        metadata.preparationState = Tx::PreparedTxSlotState::PcmPrepared;
+    } else {
+        // Coverage miss: ring slot was not populated for this audio frame.
+        // Silence from the ring was substituted above. Mark distinctly so
+        // OnTransmitSlotCompleted can account for it separately from real PCM.
+        metadata.preparationState = Tx::PreparedTxSlotState::SilenceFallback;
+        if (directTxBinding_.control) {
+            directTxBinding_.control->counters.txSilenceFallback.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
 
     return out;
 }

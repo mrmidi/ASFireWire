@@ -38,7 +38,7 @@ using ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge;
 constexpr uint32_t kChannels = 2;
 constexpr uint32_t kFrames = 1024;
 
-// Drive the cadence ring until it reports established, so TryGetRecoveredDevicePhaseTicks
+// Drive the cadence ring until it reports established, so TryBuildTransmitCycleDeviceSubphase
 // returns a stable device phase and the TX frame map can anchor (mirrors the RX path).
 void EstablishBridge(ExternalSyncBridge& bridge) {
     int64_t offset = 0;
