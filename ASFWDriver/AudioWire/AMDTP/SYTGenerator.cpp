@@ -91,8 +91,11 @@ void SYTGenerator::armTransmitCycleAnchor() noexcept {
     seeded_ = true;
     needsAnchor_ = true;
     dataPacketCount_ = 0;
-    ASFW_LOG(Isoch, "SYTGenerator: Armed transmit-cycle anchor (delay=%u ticks)",
-             kPresentationDelayTicks);
+    // Called from rebase/reset paths -- can repeat every cycle if the phase loop
+    // is unstable, so throttle rather than flood the log.
+    ASFW_LOG_RL(Isoch, "syt/armed_anchor", 1000, OS_LOG_TYPE_DEFAULT,
+                "SYTGenerator: Armed transmit-cycle anchor (delay=%u ticks)",
+                kPresentationDelayTicks);
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)

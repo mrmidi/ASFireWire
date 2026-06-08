@@ -23,22 +23,30 @@ TxOutputPhaseLoop::ProcessCycle(int64_t devicePhaseTicks,
     // 1. Discontinuity detection in the 1-second domain. The device phase the pipeline
     //    reconstructs from the transmit cycle wraps once per second; extOffsetDiff1s
     //    makes that wrap a no-op, so only real device jumps trip the detector.
+    bool glitchedThisCycle = false;
     if (predictedNextDevice_ >= 0) {
         const int64_t derr =
             ASFW::Timing::extOffsetDiff1s(devicePhaseTicks, predictedNextDevice_);
         if (std::llabs(derr) > kGlitchThresholdTicks) {
             seeded_ = false;
+            glitchedThisCycle = true;
             diag_.glitches++;
         }
     }
     predictedNextDevice_ = (devicePhaseTicks + kTicksPerCycle) % kOneSecondTicks;
 
     // 2. Seed the unwrapped phase the first time, or after a discontinuity.
+    //    Distinguish the expected one-shot initial seed from a glitch-driven
+    //    reseed: the former is normal start-of-stream behavior, the latter means
+    //    the recovered device clock just jumped underneath us.
     if (!seeded_) {
         outputPhaseTicks_ = devicePhaseTicks + kOperatingLead;
         seeded_ = true;
         res.rebased = true;
+        res.rebaseReason = glitchedThisCycle ? RebaseReason::kGlitch : RebaseReason::kInitialSeed;
         diag_.rebases++;
+        if (glitchedThisCycle) diag_.rebasesGlitch++;
+        else                   diag_.rebasesInitialSeed++;
     }
 
     // 3. Advisory lead (output ahead of device), 1-second domain.
@@ -46,10 +54,14 @@ TxOutputPhaseLoop::ProcessCycle(int64_t devicePhaseTicks,
 
     // 4. If the output has drifted out of the device's accepted window, the assembler
     //    cadence and the device clock have separated; re-seed and signal a re-anchor.
+    //    Recurring LeadReject (vs a one-time InitialSeed) means the phase relationship
+    //    is not converging -- see RebaseReason.
     if (!res.rebased && (lead <= 0 || lead > kLeadRejectTicks)) {
         outputPhaseTicks_ = devicePhaseTicks + kOperatingLead;
         res.rebased = true;
+        res.rebaseReason = RebaseReason::kLeadReject;
         diag_.rebases++;
+        diag_.rebasesLeadReject++;
         lead = ASFW::Timing::extOffsetDiff1s(outputPhaseTicks_, devicePhaseTicks);
     }
 
