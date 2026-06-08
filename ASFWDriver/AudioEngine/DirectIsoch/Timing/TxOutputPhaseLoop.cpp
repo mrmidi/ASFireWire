@@ -33,10 +33,20 @@ TxOutputPhaseLoop::ProcessCycle(uint32_t transmitCycle,
     // How many isoch cycles elapsed since the previous call. The caller is NOT
     // guaranteed to be invoked exactly once per cycle -- assuming so is what
     // manufactured false discontinuities out of ordinary scheduling gaps.
+    //
+    // CRITICAL: `transmitCycle` is a 13-bit OHCI bus-cycle field, 0..7999, that
+    // wraps every second (see IsochTxDmaRing::nextTransmitCycle_ -- it is
+    // incremented `(nextTransmitCycle_ + 1) % 8000` on every call). A monotonic
+    // `uint32_t` subtraction of two such wrapping values is WRONG: at the
+    // 7999->0 boundary it yields ~2^32 - 7999 (~4.29B ticks, which the
+    // continuity detector would then read as a giant device-phase jump and
+    // classify as kTimingDiscontinuity, firing exactly one false "TX PHASE
+    // RESET reason=Glitch" per second). Take the mod-8000 delta instead so
+    // the wrap reads as +1 cycle, just like every other step.
     uint32_t cycleDelta = 1;
     if (haveLastTransmitCycle_) {
-        cycleDelta = transmitCycle - lastTransmitCycle_;  // wraparound-safe (uint32)
-        if (cycleDelta == 0) cycleDelta = 1;
+        cycleDelta = (transmitCycle + kCyclesPerSecond - lastTransmitCycle_) % kCyclesPerSecond;
+        if (cycleDelta == 0) cycleDelta = 1;  // duplicate/same-cycle defensive fallback
     }
     lastTransmitCycle_ = transmitCycle;
     haveLastTransmitCycle_ = true;

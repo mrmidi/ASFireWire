@@ -72,6 +72,12 @@ public:
     static constexpr int64_t kTicksPerFrame  = ASFW::Timing::kTicksPerSample48k; // 512
     static constexpr int64_t kFramesPerCycle = kTicksPerCycle / kTicksPerFrame;  // 6
     static constexpr int64_t kOneSecondTicks = ASFW::Timing::kTicksPerSecond;    // 24'576'000
+    /// `transmitCycle` is the 13-bit OHCI bus-cycle field, 0..kCyclesPerSecond-1,
+    /// that wraps every second. The continuity predictor relies on the
+    /// mod-kCyclesPerSecond delta (NOT a monotonic uint32 subtraction -- that
+    /// would treat the 7999->0 wrap as a +~2^32 jump and manufacture a fake
+    /// kTimingDiscontinuity once per second).
+    static constexpr uint32_t kCyclesPerSecond = ASFW::Timing::kCyclesPerSecond; // 8000
 
     /// Operating lead: how far the output phase sits ahead of the recovered device
     /// phase when (re)seeded. 1.5 cycles = 9 frames, mid-window.
@@ -162,10 +168,13 @@ public:
     void Reset() noexcept;
 
     /// Process one transmit-cycle callback.
-    /// @param transmitCycle      the local TX bus cycle for this callback; used to
-    ///                           derive how many isoch cycles elapsed since the
-    ///                           previous call (the loop is not guaranteed to be
-    ///                           invoked exactly once per cycle).
+    /// @param transmitCycle      the local TX bus cycle for this callback; a 13-bit
+    ///                           OHCI field in [0, kCyclesPerSecond) that wraps
+    ///                           every second. The mod-kCyclesPerSecond delta
+    ///                           between successive calls is what tells the
+    ///                           continuity predictor how many isoch cycles
+    ///                           actually elapsed (the loop is not guaranteed
+    ///                           to be invoked exactly once per cycle).
     /// @param devicePhaseTicks   recovered device offset (24.576 MHz, 1-second domain).
     /// @param recoveredClockValid whether the recovered device clock is currently usable.
     /// @param dataCandidate      the wire DATA/NO-DATA cadence decision the caller has

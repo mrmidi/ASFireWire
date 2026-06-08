@@ -163,6 +163,55 @@ TEST(TxOutputPhaseLoop, PerSecondWrapIsNotDiscontinuity) {
     EXPECT_EQ(diag.initialSeeds, 1u);
 }
 
+// --- Test 4b (P0 regression for the 7999->0 bus-cycle wrap): the CALLER
+// (IsochTxDmaRing) increments `transmitCycle` modulo 8000 -- it is a 13-bit
+// OHCI bus-cycle field, NOT a monotonic uint32_t. The continuity predictor
+// must therefore take the mod-8000 delta, not a raw uint32 subtraction (the
+// old form treated the wrap as a +~2^32 jump and fired one false
+// kTimingDiscontinuity per second). The device phase here advances exactly
+// +kCyc per call so the only way the predictor can be wrong is the cycle
+// wrap itself. ---
+TEST(TxOutputPhaseLoop, TransmitCycleWrapIsNotDiscontinuity) {
+    TxOutputPhaseLoop loop;
+    int64_t dev = 7998 * kCyc;   // start two cycles before the 7999->0 wrap
+
+    auto a = loop.ProcessCycle(/*transmitCycle=*/7998, Wrap1s(dev), true,
+                               Cadence48k(0), kFpp);
+    ASSERT_EQ(a.continuityEvent, Continuity::kInitialSeed);
+
+    dev = Wrap1s(dev + kCyc);
+    auto b = loop.ProcessCycle(/*transmitCycle=*/7999, dev, true,
+                               Cadence48k(1), kFpp);
+    EXPECT_EQ(b.continuityEvent, Continuity::kNominal);
+    EXPECT_FALSE(b.resetPhaseMap);
+
+    // The wrap: transmitCycle goes 7999 -> 0. A naive `uint32` subtraction
+    // would compute 0 - 7999 = 4294959297; the corrected mod-8000 form
+    // computes (0 + 8000 - 7999) % 8000 = 1.
+    dev = Wrap1s(dev + kCyc);
+    auto c = loop.ProcessCycle(/*transmitCycle=*/0, dev, true,
+                               Cadence48k(2), kFpp);
+    EXPECT_EQ(c.continuityEvent, Continuity::kNominal);
+    EXPECT_FALSE(c.resetPhaseMap);
+    EXPECT_FALSE(c.armTransmitAnchor);
+
+    // A few more post-wrap cycles must remain nominal through the rest of
+    // the second; the previous code would have flagged cycle 0 itself as
+    // kTimingDiscontinuity and reset everything.
+    for (uint32_t i = 1; i < 200; ++i) {
+        auto d = loop.ProcessCycle(i, dev, true, Cadence48k(i), kFpp);
+        EXPECT_NE(d.continuityEvent, Continuity::kTimingDiscontinuity)
+            << "post-wrap cycle " << i << " falsely classified";
+        EXPECT_FALSE(d.resetPhaseMap);
+        dev = Wrap1s(dev + kCyc);
+    }
+
+    const auto diag = loop.GetDiagnostics();
+    EXPECT_EQ(diag.initialSeeds, 1u);
+    EXPECT_EQ(diag.timingDiscontinuities, 0u);
+    EXPECT_EQ(diag.resets(), 1u);
+}
+
 // --- Test 5: an isolated one-cycle slip (device skipped/repeated a cycle) is
 // absorbed -- classified, NOT treated as a discontinuity, and does not reset
 // anything. Up to kSlipToleranceLimit consecutive slips are tolerated. ---
