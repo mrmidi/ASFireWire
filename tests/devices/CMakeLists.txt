@@ -69,4 +69,11 @@ add_device_test(ApogeeDuetVendorCmdTests
 # Saffire-first timing phase loop and isoch event grouping
 add_device_test(SaffirePhaseLoopTests
     SaffirePhaseLoopTests.cpp
+    "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/Timing/TxOutputPhaseLoop.cpp"
+)
+
+# Output phase tick to absolute audio frame mapping
+add_device_test(OutputPhaseToAudioMapTests
+    OutputPhaseToAudioMapTests.cpp
+    "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/Timing/TxOutputPhaseLoop.cpp"
 )

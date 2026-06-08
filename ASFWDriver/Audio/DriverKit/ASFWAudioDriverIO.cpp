@@ -39,7 +39,6 @@ void PublishPlaybackRingWriteEnd(ASFW::Audio::Runtime::AudioGraphBinding& graph,
     if (update.discontinuity) {
         control.playbackRingDiscontinuityGeneration.fetch_add(1, std::memory_order_relaxed);
         control.discontinuities.fetch_add(1, std::memory_order_relaxed);
-        control.counters.txTimelineDiscontinuities.fetch_add(1, std::memory_order_relaxed);
     }
     if (update.overrun) {
         control.playbackRingOverruns.fetch_add(1, std::memory_order_relaxed);

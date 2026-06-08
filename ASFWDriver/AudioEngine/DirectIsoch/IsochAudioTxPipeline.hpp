@@ -9,15 +9,13 @@
 #include "../../AudioWire/AMDTP/PacketAssembler.hpp"
 #include "../../AudioWire/AMDTP/SYTGenerator.hpp"
 #include "../Direct/AudioClockPublisher.hpp"
-#include "../Direct/Tx/DirectTxTypes.hpp"
-#include "../Direct/Tx/TxAudioPacketWriter.hpp"
-#include "../Direct/Tx/OutputCursorDiscipline.hpp"
 #include "../Direct/DirectOutputReader.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioTransportControlBlock.hpp"
 #include "Sync/ExternalSyncBridge.hpp"
 #include "../../Isoch/Core/IsochEventGroup.hpp"
-#include "Timing/SaffirePhaseLoop.hpp"
+#include "Timing/TxOutputPhaseLoop.hpp"
+#include "Timing/OutputPhaseToAudioMap.hpp"
 #include "../../Isoch/Config/AudioTxProfiles.hpp"
 #include "../../Isoch/Memory/IIsochDMAMemory.hpp"
 #include "../../Logging/Logging.hpp"
@@ -38,35 +36,15 @@ class IsochAudioTxPipeline final : public Tx::IIsochTxPacketProvider,
 public:
     static constexpr bool kEnableDirectTxHardwarePath = true;
 
-    // Seed distance (in output frames) from the audio base to the TX timeline head.
-    //
-    // The TX timeline head (txScheduledSampleFrame_) is seeded at
-    // audioBase + kTxOutputOffsetFrames, then advances on the IT-DMA / wire clock
-    // while CoreAudio's write pointer advances on the HAL clock. PreparePayload()
-    // reads audioFirst = timelineFirstFrame - kTxOutputOffsetFrames, which must land
-    // inside the populated, written-audio window [oldestValid, writtenEnd).
-    //
-    // Empirically the wire clock leads the HAL write pointer by ~4840 frames once
-    // rate-locked (sched - wr measured at 4824..4856 across captures). With a 4096-frame
-    // output ring, any offset below ~4992 makes audioFirst point one ring generation
-    // ahead of the populated slot, so coverage checks fail and the slot still holds
-    // the previous lap's data (TX PAYLOAD UNCOVERED, lap delta = ring capacity = 4096).
-    //
-    // 5120 (packet-aligned, = 4096 + 1024) clears the ~4992 floor with margin and places
-    // audioFirst ~256..288 frames behind writtenEnd. Because sched leads wr, the effective
-    // output latency is offset - (sched - wr) ~= 6 ms, not the full 5120 frames. This is a
-    // phase compensation for the two-clock relationship; if clock anchoring drifts, this
-    // fixed seed needs revisiting (see ZTS/anchoring path).
-    static constexpr uint32_t kTxOutputOffsetFrames = 5120;
-
     struct Counters {
         std::atomic<uint64_t> resyncApplied{0};
 
         std::atomic<uint64_t> directTxPackets{0};
         std::atomic<uint64_t> directTxUnderrunSilencedPackets{0};
         std::atomic<uint64_t> directTxInvalidPackets{0};
-        std::atomic<uint64_t> directTxCursorResyncs{0};
-        std::atomic<uint64_t> directTxTimelineInvariantFailures{0};
+        std::atomic<uint64_t> directTxNoDataPackets{0};
+        std::atomic<uint64_t> directTxSilenceFallback{0};
+        std::atomic<uint64_t> directTxPhaseRebases{0};
     };
 
     /// Plain, RT-safe view of the ADK output stream memory + shared transport
@@ -169,32 +147,19 @@ private:
         uint32_t pcmChannels{0};
         uint32_t am824Slots{0};
         uint32_t packetIndex{0};
-        uint64_t generation{0};
         Encoding::AudioWireFormat wireFormat{Encoding::AudioWireFormat::kAM824};
-        uint64_t timelineFirstFrame{0};
-        uint64_t sourceFirstFrame{0};
-        uint64_t sourceEndFrame{0};
+        uint64_t audioFrame{0};
+        int64_t outputPhaseTicks{-1};
         Tx::PreparedTxSlotState preparationState{Tx::PreparedTxSlotState::InitialSilence};
         PacketCipFields cip{};
     };
 
-    [[nodiscard]] uint16_t ComputeDataSyt(uint32_t transmitCycle) noexcept;
+    [[nodiscard]] bool TryGetRecoveredDevicePhaseTicks(uint32_t transmitCycle,
+                                                       int64_t* outDevicePhaseTicks) noexcept;
     [[nodiscard]] ExternalSyncState ReadExternalSyncState(bool allowStartupQualifiedOnly) noexcept;
-    [[nodiscard]] bool IsPlaybackRingPathReady(const ProducedPacketMetadata& metadata) const noexcept;
-    [[nodiscard]] bool TryBuildPlaybackRingPacket(const ProducedPacketMetadata& metadata,
-                                                  uint8_t* packetBytes,
-                                                  uint32_t packetCapacityBytes) noexcept;
-    [[nodiscard]] bool InitializeDirectOutputCursor(const ProducedPacketMetadata& metadata) noexcept;
-    // Single source of the TX timeline seed: seeds the schedule/completion cursors at
-    // audioBase + txOutputOffsetFrames_, clears slot stamps, fills the ring with silence,
-    // and publishes to the control block. Requires txPcmPacketRing_ geometry to be valid.
-    // Returns the seeded timeline base; the audio base is left in txPcmPacketRing_.baseFrame.
-    uint64_t SeedTxTimeline(uint64_t oldestValid) noexcept;
     void PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept;
     void PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason reason,
                            const Tx::PreparedTxPayloadRequest& request,
-                           uint64_t sourceFirstFrame,
-                           uint64_t sourceEndFrame,
                            uint64_t oldestValidFrame,
                            uint64_t writtenEndFrame,
                            uint64_t preparedPayloadHash = 0,
@@ -212,17 +177,7 @@ private:
     ASFW::Audio::Runtime::AudioGraphBinding directOutputView_{};
     ASFW::AudioEngine::Direct::DirectOutputReader directOutputReader_{};
     ASFW::AudioEngine::Direct::AudioClockPublisher txClockPublisher_{};
-    // Retained temporarily for the legacy packet-builder helper. The live path
-    // prepares DMA payload slots through PreparePayload().
-    uint64_t directOutputFrameCursor_{0};
-    bool directCursorInitialized_{false};
-    uint64_t sourceTimelineOffsetFrames_{0};
-    uint64_t lastSourceFrame_{0};
-    bool sourceTimelineAnchored_{false};
-    uint64_t txScheduledSampleFrame_{0};
-    uint64_t txCompletedSampleFrame_{0};
-    uint64_t lastDiscontinuityGeneration_{0};
-    uint32_t txOutputOffsetFrames_{kTxOutputOffsetFrames};
+    uint64_t lastCompletedAudioFrame_{0};
     uint64_t txEventGroupCount_{0};
 
     Encoding::StreamMode requestedStreamMode_{Encoding::StreamMode::kNonBlocking};
@@ -232,7 +187,9 @@ private:
     Encoding::SYTGenerator sytGenerator_{};
     bool cycleTrackingValid_{false};
     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* externalSyncBridge_{nullptr};
-    ASFW::AudioEngine::DirectIsoch::SaffireTxPhaseLoop txPhaseLoop_{};
+    ASFW::AudioEngine::DirectIsoch::TxOutputPhaseLoop txPhaseLoop_{};
+    ASFW::AudioEngine::DirectIsoch::OutputPhaseToAudioMap txPhaseMap_{};
+    ASFW::AudioEngine::DirectIsoch::TxOutputPhaseLoop::CycleResult lastPhaseResult_{};
     bool txPhaseReadIndexSeeded_{false};
 
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
@@ -266,7 +223,7 @@ private:
         struct SlotStamp {
             uint64_t begin{0};
             uint64_t end{0};
-            uint32_t generation{0};
+            bool hasAudioWrite{false};
         };
 
         uint32_t words[kMaxOutputFrames * kMaxChannels]{0};
@@ -300,12 +257,6 @@ private:
 
         uint64_t PacketFirstFrame(uint64_t absoluteFrame) const noexcept {
             return absoluteFrame - FrameInsidePacket(absoluteFrame);
-        }
-
-        uint32_t GenerationForFrame(uint64_t absoluteFrame) const noexcept {
-            if (outputFrameCapacity == 0 || absoluteFrame < baseFrame) return 0;
-            return static_cast<uint32_t>(
-                ((absoluteFrame - baseFrame) / outputFrameCapacity) + 1);
         }
 
         uint32_t* PayloadForAudioFrame(uint64_t absoluteFrame) noexcept {

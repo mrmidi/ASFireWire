@@ -19,23 +19,19 @@ void IsochTxDmaRing::ResetForStart() noexcept {
     cycleTrackingValid_ = false;
     lastHwTimestamp_ = 0;
     slotMetadata_ = {};
-    slotGenerations_ = {};
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
 }
 
 void IsochTxDmaRing::InitializeSlotMetadata(const uint32_t packetIndex,
-                                            const uint64_t generation,
                                             const IsochTxPacket& packet) noexcept {
     if (packetIndex >= slotMetadata_.size()) {
         return;
     }
     slotMetadata_[packetIndex] = PreparedTxSlotMetadata{
-        .generation = generation,
-        .timelineFirstFrame = packet.timelineFirstFrame,
-        .sourceFirstFrame = 0,
-        .sourceEndFrame = 0,
+        .audioFrame = packet.audioFrame,
+        .outputPhaseTicks = packet.outputPhaseTicks,
         .preparationHostTicks = 0,
         .preparedPayloadHash = 0,
         .sizeBytes = packet.sizeBytes,
@@ -172,16 +168,14 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
     }
 
     slotMetadata_[pktIdx].state = PreparedTxSlotState::Completed;
-    const uint64_t generation = ++slotGenerations_[pktIdx];
     const TxPacketRequest request{
         .transmitCycle = nextTransmitCycle_,
         .packetIndex = pktIdx,
         .hwTimestamp = out.hwTimestamp,
-        .slotGeneration = generation,
     };
     const auto pkt = provider.NextTransmitPacket(request);
     nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
-    InitializeSlotMetadata(pktIdx, generation, pkt);
+    InitializeSlotMetadata(pktIdx, pkt);
 
     if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
         counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
@@ -251,16 +245,14 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(IIsochTxPacketProvider& provide
     slab_.ValidateDescriptorLayout();
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
-        const uint64_t generation = ++slotGenerations_[pktIdx];
         const TxPacketRequest request{
             .transmitCycle = nextTransmitCycle_,
             .packetIndex = pktIdx,
             .hwTimestamp = static_cast<uint16_t>(lastHwTimestamp_),
-            .slotGeneration = generation,
         };
         const auto pkt = provider.NextTransmitPacket(request);
         nextTransmitCycle_ = (nextTransmitCycle_ + 1) % 8000;
-        InitializeSlotMetadata(pktIdx, generation, pkt);
+        InitializeSlotMetadata(pktIdx, pkt);
 
         if (pkt.sizeBytes > Layout::kMaxPacketSize || pkt.sizeBytes > 0xFFFFu) {
             ASFW_LOG(Isoch, "IT: FATAL pkt.size=%u > max=%u pktIdx=%u",
@@ -465,8 +457,6 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
             .payloadCapacityBytes = writable ? Layout::kMaxPacketSize : 0,
         };
         const PreparedTxPayloadResult result = preparer.PreparePayload(request);
-        metadata.sourceFirstFrame = result.sourceFirstFrame;
-        metadata.sourceEndFrame = result.sourceEndFrame;
 
         switch (result.action) {
         case PreparedTxAction::NoChange:

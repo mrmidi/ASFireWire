@@ -180,6 +180,7 @@ add_audio_test(IsochTxDmaRingTests
 add_audio_test(IsochAudioTxPipelineTimelineTests
     IsochAudioTxPipelineTimelineTests.cpp
     "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/IsochAudioTxPipeline.cpp"
+    "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/Timing/TxOutputPhaseLoop.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/AudioClockPublisher.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
     "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"

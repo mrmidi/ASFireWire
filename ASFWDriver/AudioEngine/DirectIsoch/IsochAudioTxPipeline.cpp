@@ -15,7 +15,6 @@
 namespace ASFW::Isoch {
 
 namespace Direct = ASFW::AudioEngine::Direct;
-using DirectTxReadStatus = ASFW::AudioEngine::Direct::Tx::DirectTxReadStatus;
 
 extern "C" __attribute__((noinline, optnone, used))
 void ASFWDebugTxFrameMatrixBreakpoint(const int32_t* sourceMatrix,
@@ -96,52 +95,8 @@ void IsochAudioTxPipeline::SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch:
     txPhaseReadIndexSeeded_ = false;
 }
 
-uint64_t IsochAudioTxPipeline::SeedTxTimeline(uint64_t oldestValid) noexcept {
-    const uint32_t fpp = txPcmPacketRing_.framesPerPacket;
-    if (fpp == 0) {
-        return 0;
-    }
-
-    const uint64_t base = oldestValid - (oldestValid % fpp);
-    txOutputOffsetFrames_ = (kTxOutputOffsetFrames / fpp) * fpp;
-    const uint64_t timelineBase = base + txOutputOffsetFrames_;
-
-    txPcmPacketRing_.baseFrame = base;
-    txScheduledSampleFrame_ = timelineBase;
-    txCompletedSampleFrame_ = timelineBase;
-    lastPopulatedWriteEnd_ = oldestValid;
-
-    for (uint32_t s = 0; s < txPcmPacketRing_.packetSlots; ++s) {
-        txPcmPacketRing_.slotStamps[s] = {};
-    }
-
-    const uint32_t capacity = txPcmPacketRing_.outputFrameCapacity;
-    const uint32_t slots = txPcmPacketRing_.am824Slots;
-    const auto format = assembler_.audioWireFormat();
-    if (capacity > 0 && slots > 0) {
-        for (uint32_t f = 0; f < capacity; ++f) {
-            uint32_t* destPtr = txPcmPacketRing_.words + (f * slots);
-            Direct::Tx::EncodeDirectTxSilenceFrame(assembler_.channelCount(), slots, format, destPtr);
-        }
-        for (uint32_t f = 0; f < fpp; ++f) {
-            uint32_t* destPtr = txPcmPacketRing_.silenceWords + (f * slots);
-            Direct::Tx::EncodeDirectTxSilenceFrame(assembler_.channelCount(), slots, format, destPtr);
-        }
-    }
-
-    if (directTxBinding_.control) {
-        directTxBinding_.control->txScheduledSampleFrame.store(
-            timelineBase, std::memory_order_release);
-        directTxBinding_.control->txCompletedSampleFrame.store(
-            timelineBase, std::memory_order_release);
-    }
-
-    return timelineBase;
-}
-
 void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBinding& binding) noexcept {
     directTxBinding_ = binding;
-    lastDiscontinuityGeneration_ = 0;
     lastTxFrameMatrixLogNs_ = 0;
 
     // Rebuild the isoch-owned read view over the shared output memory + control block.
@@ -161,7 +116,6 @@ void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBindin
     }
 
     if (binding.enabled && directOutputReader_.IsBound()) {
-        const uint64_t oldestValid = directOutputReader_.OutputOldestValidFrame();
         const uint32_t framesPerPacket = assembler_.samplesPerDataPacket();
         
         const bool geometryOk =
@@ -185,8 +139,6 @@ void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBindin
             txPcmPacketRing_.packetBase = 0;
             txPcmPacketRing_.am824Slots = assembler_.am824SlotCount();
             txPcmPacketRing_.valid = true;
-
-            SeedTxTimeline(oldestValid);
         }
     } else {
         txPcmPacketRing_ = {};
@@ -194,11 +146,11 @@ void IsochAudioTxPipeline::SetDirectTxRuntimeBinding(const DirectTxRuntimeBindin
     }
 
     ASFW_LOG(Isoch,
-             "IT: DIRECT-TX binding %{public}s base=%p frames=%u ch=%u slots=%u rate=%u mode=%u offset=%u bound=%{public}s",
+             "IT: DIRECT-TX binding %{public}s base=%p frames=%u ch=%u slots=%u rate=%u mode=%u bound=%{public}s",
              binding.enabled ? "set(enabled)" : "set(disabled)",
              static_cast<const void*>(binding.outputBase),
              binding.outputFrames, binding.outputChannels, binding.am824Slots,
-             binding.sampleRateHz, binding.streamModeRaw, txOutputOffsetFrames_,
+             binding.sampleRateHz, binding.streamModeRaw,
              directOutputReader_.IsBound() ? "yes" : "no");
 }
 
@@ -264,24 +216,34 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     producedPacketMetadata_ = {};
     previousPacketMetadata_ = {};
     debugProducedPackets_ = 0;
-    txCompletedSampleFrame_ = 0;
-    txScheduledSampleFrame_ = 0;
-    lastDiscontinuityGeneration_ = 0;
+    lastCompletedAudioFrame_ = 0;
     lastTxFrameMatrixLogNs_ = 0;
     txEventGroupCount_ = 0;
     txPhaseLoop_.Reset();
+    txPhaseMap_.Reset();
     txPhaseReadIndexSeeded_ = false;
 
-    if (directOutputReader_.IsBound()) {
-        const uint64_t oldestValid = directOutputReader_.OutputOldestValidFrame();
-        const uint32_t fpp = assembler_.samplesPerDataPacket();
-        if (fpp > 0 && txPcmPacketRing_.valid) {
-            const uint64_t timelineBase = SeedTxTimeline(oldestValid);
-            ASFW_LOG(Isoch,
-                     "IT: ResetForStart seed - oldestValid=%llu audioBase=%llu timelineBase=%llu offset=%u",
-                     oldestValid, txPcmPacketRing_.baseFrame, timelineBase, txOutputOffsetFrames_);
+    // Reset ring stamps and pre-fill with silence.
+    for (uint32_t s = 0; s < txPcmPacketRing_.packetSlots; ++s) {
+        txPcmPacketRing_.slotStamps[s] = {};
+    }
+
+    const uint32_t capacity = txPcmPacketRing_.outputFrameCapacity;
+    const uint32_t am824Slots = txPcmPacketRing_.am824Slots;
+    const uint32_t fpp = txPcmPacketRing_.framesPerPacket;
+    const auto format = assembler_.audioWireFormat();
+    if (capacity > 0 && am824Slots > 0) {
+        for (uint32_t f = 0; f < capacity; ++f) {
+            uint32_t* destPtr = txPcmPacketRing_.words + (f * am824Slots);
+            Direct::Tx::EncodeDirectTxSilenceFrame(assembler_.channelCount(), am824Slots, format, destPtr);
         }
-    } else if (directTxBinding_.control) {
+        for (uint32_t f = 0; f < fpp; ++f) {
+            uint32_t* destPtr = txPcmPacketRing_.silenceWords + (f * am824Slots);
+            Direct::Tx::EncodeDirectTxSilenceFrame(assembler_.channelCount(), am824Slots, format, destPtr);
+        }
+    }
+
+    if (directTxBinding_.control) {
         directTxBinding_.control->txScheduledSampleFrame.store(0, std::memory_order_release);
         directTxBinding_.control->txCompletedSampleFrame.store(0, std::memory_order_release);
     }
@@ -304,9 +266,59 @@ bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
 }
 
 Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketRequest& request) noexcept {
+    // The AMDTP assembler owns the wire DATA/NO-DATA cadence; peek its decision so the
+    // phase loop, SYT generator and frame map all follow the same single authority.
+    const bool isData = assembler_.nextIsData();
+    const uint32_t fpp = assembler_.samplesPerDataPacket();
+
+    // Advance the output-phase accumulator / device-drift monitor on the assembler's
+    // cadence. The loop only decides phase + discontinuity, never wire cadence.
+    int64_t devicePhaseTicks = 0;
+    const bool deviceValid =
+        TryGetRecoveredDevicePhaseTicks(request.transmitCycle, &devicePhaseTicks);
+    if (deviceValid) {
+        lastPhaseResult_ = txPhaseLoop_.ProcessCycle(devicePhaseTicks, fpp, isData);
+    } else {
+        lastPhaseResult_ = {};
+    }
+
+    // A (re)seed of the phase is a discontinuity: drop the map/SYT anchors so they
+    // re-establish against the fresh phase and the current written-audio window.
+    if (lastPhaseResult_.rebased) {
+        txPhaseMap_.Reset();
+        sytGenerator_.armTransmitCycleAnchor();
+    }
+
+    // Anchor the frame map at reportedPlayhead - safety (NOT writtenEnd) on the first
+    // DATA packet once audio is flowing, so selected ranges sit inside [oldest,written).
+    if (isData && deviceValid && !txPhaseMap_.IsAnchored()) {
+        const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
+        if (writtenEnd > 0) {
+            const uint64_t reportedPlayhead =
+                timingPolicy_.HardwareOutputFrameToReportedFrame(writtenEnd);
+            const uint64_t safety =
+                timingPolicy_.PacketLeadFrames(ASFW::Audio::AudioDirection::Output);
+            const uint64_t target =
+                reportedPlayhead > safety ? reportedPlayhead - safety : 0;
+            const uint64_t alignedAnchor = fpp ? (target / fpp) * fpp : target;
+            txPhaseMap_.Anchor(lastPhaseResult_.outputPhaseTicks, alignedAnchor);
+            ASFW_LOG(Isoch,
+                     "IT: txPhaseMap anchored: phase=%lld playhead=%llu safety=%llu audio=%llu",
+                     lastPhaseResult_.outputPhaseTicks, reportedPlayhead, safety, alignedAnchor);
+        }
+    }
+
+    // SYT from the shared generator (transmit-cycle anchored, RX-cadence nudged in
+    // OnIsochEventGroup). computeDataSYT only cares about the cycle mod 16, so the
+    // per-second transmit-cycle wrap is harmless here.
     uint16_t syt = Encoding::SYTGenerator::kNoInfo;
-    if (assembler_.nextIsData()) {
-        syt = ComputeDataSyt(request.transmitCycle);
+    if (isData && deviceValid) {
+        syt = sytGenerator_.computeDataSYT(request.transmitCycle, fpp);
+    }
+
+    uint64_t audioFrame = 0;
+    if (isData && txPhaseMap_.IsAnchored()) {
+        audioFrame = txPhaseMap_.PhaseToFrame(lastPhaseResult_.outputPhaseTicks);
     }
 
     // silent=true: cadence/DBC/CIP advance, audio payload is valid silence.
@@ -334,13 +346,13 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
         .pcmChannels = assembler_.channelCount(),
         .am824Slots = assembler_.am824SlotCount(),
         .packetIndex = request.packetIndex,
-        .generation = request.slotGeneration,
         .wireFormat = assembler_.audioWireFormat(),
-        .timelineFirstFrame = pkt.isData ? txScheduledSampleFrame_ : 0,
+        .audioFrame = audioFrame,
+        .outputPhaseTicks = lastPhaseResult_.outputPhaseTicks,
         .cip = PacketCipFields{
             .sid = sid_,
             .dbc = pkt.dbc,
-            .syt = pkt.isData ? syt : Encoding::SYTGenerator::kNoInfo,
+            .syt = pkt.isData ? syt : static_cast<uint16_t>(0xFFFF),
         },
     };
     if (request.packetIndex < producedPacketMetadata_.size()) {
@@ -351,30 +363,23 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
 
     Tx::IsochTxPacket out{};
     std::memcpy(silentPacketStorage_.data(), pkt.data, pkt.size);
-    if (pkt.isData) {
-        if (txScheduledSampleFrame_ >
-            (std::numeric_limits<uint64_t>::max() - metadata.framesPerPacket)) {
-            counters_.directTxTimelineInvariantFailures.fetch_add(1, std::memory_order_relaxed);
-            if (directTxBinding_.control) {
-                directTxBinding_.control->counters.txTimelineInvariantFailures.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-        } else {
-            txScheduledSampleFrame_ += metadata.framesPerPacket;
-            if (directTxBinding_.control) {
-                directTxBinding_.control->txScheduledSampleFrame.store(
-                    txScheduledSampleFrame_, std::memory_order_release);
-            }
-        }
-    }
+    
     out.words = reinterpret_cast<const uint32_t*>(silentPacketStorage_.data());
     out.sizeBytes = pkt.size;
     out.isData = pkt.isData;
     out.dbc = pkt.dbc;
-    out.syt = pkt.isData ? syt : Encoding::SYTGenerator::kNoInfo;
+    out.syt = pkt.isData ? syt : static_cast<uint16_t>(0xFFFF);
     out.framesPerPacket = metadata.framesPerPacket;
-    out.timelineFirstFrame = metadata.timelineFirstFrame;
+    out.audioFrame = audioFrame;
+    out.outputPhaseTicks = metadata.outputPhaseTicks;
     if (directTxBinding_.control) {
+        // Only publish the schedule frame for anchored DATA packets so the value stays
+        // monotonic (NO-DATA/pre-anchor packets carry audioFrame==0).
+        if (pkt.isData && txPhaseMap_.IsAnchored()) {
+            directTxBinding_.control->txScheduledSampleFrame.store(
+                audioFrame, std::memory_order_release);
+        }
+
         auto& counters = directTxBinding_.control->counters;
         counters.txPackets.fetch_add(1, std::memory_order_relaxed);
         if (pkt.isData) {
@@ -409,22 +414,6 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
     return out;
 }
 
-uint16_t IsochAudioTxPipeline::ComputeDataSyt(uint32_t transmitCycle) noexcept {
-    if (!cycleTrackingValid_) {
-        return Encoding::SYTGenerator::kNoInfo;
-    }
-
-    const int64_t projectedOffsetTicks =
-        ASFW::Timing::tstampToOffsets(0, transmitCycle % ASFW::Timing::kCyclesPerSecond, 0);
-    uint16_t cadenceDelta = static_cast<uint16_t>(ASFW::Timing::kSytPacketStepTicks48k);
-    if (externalSyncBridge_) {
-        cadenceDelta = externalSyncBridge_->ReadCadenceDelta(txPhaseLoop_.CadenceReadIndex());
-    }
-
-    const auto result = txPhaseLoop_.EmitPacket(projectedOffsetTicks, cadenceDelta);
-    return result.syt;
-}
-
 bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
     const Tx::CompletedTxSlot& completed) noexcept {
     const auto& metadata = completed.metadata;
@@ -451,8 +440,6 @@ bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
         PublishFatalFault(
             ASFW::Audio::Runtime::FatalStreamReason::TxPayloadMismatch,
             request,
-            metadata.sourceFirstFrame,
-            metadata.sourceEndFrame,
             directOutputReader_.OutputOldestValidFrame(),
             directOutputReader_.OutputWrittenEndFrame(),
             metadata.preparedPayloadHash,
@@ -472,18 +459,14 @@ bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
         if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
             ASFW_LOG_RL(
                 Isoch, "tx/completed_payload", 1000, OS_LOG_TYPE_DEFAULT,
-                "IT TX COMPLETE pkt=%u hwPkt=%u gen=%llu prepDistance=%u dbc=0x%02x syt=0x%04x timeline=%llu source=[%llu,%llu) src=[%08x %08x] wire=[%08x %08x] hash=0x%016llx/0x%016llx",
+                "IT TX COMPLETE pkt=%u hwPkt=%u prepDistance=%u dbc=0x%02x syt=0x%04x audioFrame=%llu phase=%lld wire=[%08x %08x] hash=0x%016llx/0x%016llx",
                 completed.packetIndex,
                 completed.hwPacketIndex,
-                metadata.generation,
                 metadata.preparationDistance,
                 metadata.dbc,
                 metadata.syt,
-                metadata.timelineFirstFrame,
-                metadata.sourceFirstFrame,
-                metadata.sourceEndFrame,
-                static_cast<uint32_t>(metadata.firstSourceSamples[0]),
-                static_cast<uint32_t>(metadata.firstSourceSamples[1]),
+                metadata.audioFrame,
+                metadata.outputPhaseTicks,
                 metadata.firstEncodedWords[0],
                 metadata.firstEncodedWords[1],
                 metadata.preparedPayloadHash,
@@ -494,12 +477,12 @@ bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
             1, std::memory_order_relaxed);
     }
 
-    txCompletedSampleFrame_ += metadata.framesPerPacket;
+    lastCompletedAudioFrame_ = metadata.audioFrame + metadata.framesPerPacket;
     if (control) {
         auto& counters = control->counters;
         if (metadata.state != Tx::PreparedTxSlotState::PcmPrepared) {
             counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
-            if (metadata.syt == Encoding::SYTGenerator::kNoInfo) {
+            if (metadata.syt == 0xFFFF) {
                 counters.txNoPhaseSilencePackets.fetch_add(
                     1, std::memory_order_relaxed);
             } else {
@@ -509,33 +492,11 @@ bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
         }
 
         control->txCompletedSampleFrame.store(
-            txCompletedSampleFrame_, std::memory_order_release);
+            lastCompletedAudioFrame_, std::memory_order_release);
 
-        // Calculate consumed audio frame from completed timeline frame
-        const uint64_t consumedAudioFrame =
-            txCompletedSampleFrame_ >= txOutputOffsetFrames_
-                ? txCompletedSampleFrame_ - txOutputOffsetFrames_
-                : 0;
-        PublishDirectTxConsumedEndFrame(consumedAudioFrame);
+        PublishDirectTxConsumedEndFrame(lastCompletedAudioFrame_);
     }
 
-    constexpr uint64_t kMaxQueuedDataFrames =
-        static_cast<uint64_t>(Tx::Layout::kNumPackets) * Encoding::kSamplesPerPacket48k;
-    if (txCompletedSampleFrame_ > txScheduledSampleFrame_ ||
-        (txScheduledSampleFrame_ - txCompletedSampleFrame_) > kMaxQueuedDataFrames) {
-        counters_.directTxTimelineInvariantFailures.fetch_add(1, std::memory_order_relaxed);
-        if (directTxBinding_.control) {
-            directTxBinding_.control->counters.txTimelineInvariantFailures.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        ASFW_LOG_RL(Isoch, "tx/timeline_invariant", 1000, OS_LOG_TYPE_ERROR,
-                    "IT TX timeline invariant scheduled=%llu completed=%llu queued=%llu max=%llu",
-                    txScheduledSampleFrame_,
-                    txCompletedSampleFrame_,
-                    txScheduledSampleFrame_ >= txCompletedSampleFrame_
-                        ? txScheduledSampleFrame_ - txCompletedSampleFrame_ : 0,
-                    kMaxQueuedDataFrames);
-    }
     return true;
 }
 
@@ -553,57 +514,34 @@ void IsochAudioTxPipeline::OnIsochEventGroup(const Core::IsochEventGroup& group)
     const uint32_t hostNanosPerSampleQ8 =
         sampleRateHz == 0 ? 0 : static_cast<uint32_t>((1000000000ULL << 8) / sampleRateHz);
     if (txClockPublisher_.IsBound() && hostNanosPerSampleQ8 != 0) {
-        directOutputView_.control->device.Publish(txCompletedSampleFrame_,
+        // Use the last derived audio frame for ZTS publication.
+        directOutputView_.control->device.Publish(lastCompletedAudioFrame_,
                                                   group.hostTicks,
                                                   hostNanosPerSampleQ8);
         directOutputView_.control->counters.CountZtsPublished();
     }
 
-    ASFW::AudioEngine::DirectIsoch::RxCadenceSnapshot cadence{};
-    if (externalSyncBridge_) {
-        cadence = externalSyncBridge_->ReadCadenceSnapshot();
-        if (cadence.established && !txPhaseReadIndexSeeded_) {
-            txPhaseLoop_.SeedCadenceReadIndex(cadence.writeIndex);
-            txPhaseReadIndexSeeded_ = true;
+    // Track fractional device drift: nudge the SYT generator by the residual between the
+    // device's recovered per-DATA-packet step and the nominal 48k step (4096 ticks).
+    if (externalSyncBridge_ && sytGenerator_.isValid()) {
+        const auto cadence = externalSyncBridge_->ReadCadenceSnapshot();
+        if (cadence.established) {
+            const uint16_t stepTicks =
+                externalSyncBridge_->ReadCadenceDelta(cadence.writeIndex - 1);
+            int32_t residual = static_cast<int32_t>(stepTicks) -
+                               static_cast<int32_t>(ASFW::Timing::kSytPacketStepTicks48k);
+            // Clamp to a sane per-group correction (device runs within a few ppm of 48k).
+            residual = std::clamp(residual, -64, 64);
+            if (residual != 0) {
+                sytGenerator_.nudgeOffsetTicks(residual);
+            }
         }
     }
-
-    const uint32_t completedCycle = group.outputLastTimestamp & 0x1FFFu;
-    const uint32_t packetsAhead =
-        (group.firstRefillPacket + Tx::Layout::kNumPackets - group.completedPacketIndex) %
-        Tx::Layout::kNumPackets;
-    const uint32_t oldProjectedCycle =
-        (completedCycle + packetsAhead) % ASFW::Timing::kCyclesPerSecond;
-
-    uint32_t seedProjectedCycle = oldProjectedCycle;
-    const bool phaseWasValid = txPhaseLoop_.PhaseValid();
-    if (!phaseWasValid) {
-        seedProjectedCycle =
-            (oldProjectedCycle + group.refillPacketCount) % ASFW::Timing::kCyclesPerSecond;
-    }
-
-    if (txEventGroupCount_ < 8) {
-        ASFW_LOG(Isoch,
-                 "PHASE seed: phaseWasValid=%d completedCycle=%u packetsAhead=%u refillPacketCount=%u oldProjectedCycle=%u seedProjectedCycle=%u",
-                 phaseWasValid ? 1 : 0,
-                 completedCycle,
-                 packetsAhead,
-                 group.refillPacketCount,
-                 oldProjectedCycle,
-                 seedProjectedCycle);
-    }
-
-    const int64_t projectedOffsetTicks = ASFW::Timing::tstampToOffsets(0, seedProjectedCycle, 0);
-    txPhaseLoop_.BeginGroup(ASFW::AudioEngine::DirectIsoch::TxPhaseGroupUpdate{
-        .projectedOffsetTicks = projectedOffsetTicks,
-        .recoveredDeviceOffsetTicks = cadence.recoveredDeviceOffsetTicks,
-        .recoveredValid = cadence.established,
-    });
 
     ++txEventGroupCount_;
     if (txEventGroupCount_ <= 8 || (txEventGroupCount_ % 1024) == 0) {
         ASFW_LOG(Isoch,
-                 "IT EVENT group count=%llu host=%llu hwPkt=%u completed=%u+%u refill=%u+%u hwTs=0x%04x sample=%llu cadence(est=%d warm=%u wr=%u seq=%u phaseValid=%d phase=%lld)",
+                 "IT EVENT group count=%llu host=%llu hwPkt=%u completed=%u+%u refill=%u+%u hwTs=0x%04x sample=%llu",
                  txEventGroupCount_,
                  group.hostTicks,
                  group.hwPacketIndex,
@@ -612,14 +550,32 @@ void IsochAudioTxPipeline::OnIsochEventGroup(const Core::IsochEventGroup& group)
                  group.firstRefillPacket,
                  group.refillPacketCount,
                  group.outputLastTimestamp,
-                 txCompletedSampleFrame_,
-                 cadence.established,
-                 cadence.warmupCount,
-                 cadence.writeIndex,
-                 cadence.seq,
-                 txPhaseLoop_.PhaseValid(),
-                 txPhaseLoop_.OutputPhaseTicks());
+                 lastCompletedAudioFrame_);
     }
+}
+
+bool IsochAudioTxPipeline::TryGetRecoveredDevicePhaseTicks(uint32_t transmitCycle,
+                                                           int64_t* outDevicePhaseTicks) noexcept {
+    if (!externalSyncBridge_) {
+        return false;
+    }
+    const auto cadence = externalSyncBridge_->ReadCadenceSnapshot();
+    if (!cadence.established) {
+        return false;
+    }
+
+    // Projected bus offset for the target cycle.
+    const int64_t busOffsetTicks =
+        ASFW::Timing::tstampToOffsets(0, transmitCycle % ASFW::Timing::kCyclesPerSecond, 0);
+
+    // Graft the device's CONSTANT recovered sub-cycle phase onto that cycle.
+    // This follows the SaffirePhaseLoop "grafting" principle to ensure sub-cycle stability.
+    const int64_t cyc = static_cast<int64_t>(ASFW::Timing::kTicksPerCycle);
+    const int64_t subCycle = ((cadence.recoveredDeviceOffsetTicks % cyc) + cyc) % cyc;
+    *outDevicePhaseTicks = ASFW::Timing::normalizeOffsetDomain(
+        busOffsetTicks - (((busOffsetTicks % cyc) + cyc) % cyc) + subCycle);
+
+    return true;
 }
 
 IsochAudioTxPipeline::ExternalSyncState
@@ -679,441 +635,12 @@ IsochAudioTxPipeline::ReadExternalSyncState(const bool allowStartupQualifiedOnly
     return state;
 }
 
-bool IsochAudioTxPipeline::IsPlaybackRingPathReady(const ProducedPacketMetadata& metadata) const noexcept {
-    if constexpr (!kEnableDirectTxHardwarePath) {
-        return false;
-    }
-
-    if (!metadata.valid || !metadata.isData || metadata.framesPerPacket == 0) {
-        return false;
-    }
-
-    if (!directTxBinding_.enabled ||
-        directTxBinding_.outputBase == nullptr ||
-        directTxBinding_.control == nullptr ||
-        !directOutputReader_.IsBound()) {
-        return false;
-    }
-
-    if (directTxBinding_.sampleRateHz != 48000 ||
-        directTxBinding_.streamModeRaw != std::to_underlying(ASFW::Encoding::StreamMode::kBlocking) ||
-        effectiveStreamMode_ != Encoding::StreamMode::kBlocking) {
-        return false;
-    }
-
-    const auto format = assembler_.audioWireFormat();
-    if (format != Encoding::AudioWireFormat::kAM824 &&
-        format != Encoding::AudioWireFormat::kRawPcm24In32) {
-        return false;
-    }
-
-    if (directTxBinding_.outputChannels == 0 ||
-        directTxBinding_.outputChannels != metadata.pcmChannels ||
-        directTxBinding_.am824Slots < directTxBinding_.outputChannels ||
-        directTxBinding_.am824Slots != metadata.am824Slots) {
-        return false;
-    }
-
-    return true;
-}
-
 void IsochAudioTxPipeline::PublishDirectTxConsumedEndFrame(uint64_t consumedEndFrame) noexcept {
     if (directTxBinding_.control) {
         directTxBinding_.control->outputConsumedEndFrame.store(consumedEndFrame,
                                                                std::memory_order_release);
         directTxBinding_.control->playbackRingReadFrame.store(consumedEndFrame,
                                                               std::memory_order_release);
-    }
-}
-
-bool IsochAudioTxPipeline::InitializeDirectOutputCursor(const ProducedPacketMetadata& metadata) noexcept {
-    (void)metadata;
-    const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
-    if (writtenEnd == 0) {
-        return false;
-    }
-
-    const uint64_t kTargetLead =
-        timingPolicy_.PacketLeadFrames(ASFW::Audio::AudioDirection::Output);
-    const uint64_t target = (writtenEnd > kTargetLead) ? (writtenEnd - kTargetLead) : 0;
-    directOutputFrameCursor_ = std::max(target, directOutputReader_.OutputOldestValidFrame());
-    directCursorInitialized_ = true;
-
-    // Hot-path cursor diagnostic, disabled for audio stability.
-    // ASFW_LOG(Isoch,
-    //          "IT: DIRECT-TX cursor init writtenEnd=%llu targetLead=%llu cursor=%llu ch=%u slots=%u framesPerPacket=%u",
-    //          writtenEnd, kTargetLead, directOutputFrameCursor_,
-    //          metadata.pcmChannels, metadata.am824Slots, metadata.framesPerPacket);
-    return true;
-}
-
-bool IsochAudioTxPipeline::TryBuildPlaybackRingPacket(const ProducedPacketMetadata& metadata,
-                                                      uint8_t* packetBytes,
-                                                      uint32_t packetCapacityBytes) noexcept {
-    if (!metadata.valid || !metadata.isData || !packetBytes || packetCapacityBytes == 0) {
-        return false;
-    }
-
-    const PacketCipFields cip = metadata.cip;
-    const uint32_t am824Slots =
-        metadata.am824Slots == 0 ? metadata.pcmChannels : metadata.am824Slots;
-    const auto format = metadata.wireFormat;
-
-    ++debugTryBuildCount_;
-
-    auto logAndReturn = [&](bool succ, const char* dec, ASFW::Audio::Runtime::TxPacketState resState,
-                            ASFW::Audio::Runtime::TxBlockingResult resBlocking, uint32_t resFrames) noexcept -> bool {
-        if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
-            const uint64_t playWr = directOutputReader_.OutputWrittenEndFrame();
-            const uint64_t oldest = directOutputReader_.OutputOldestValidFrame();
-            const uint64_t playRd = directTxBinding_.control ? directTxBinding_.control->playbackRingReadFrame.load(std::memory_order_relaxed) : 0;
-            const uint64_t currentCursor = directOutputFrameCursor_;
-            const uint64_t avail = (playWr > currentCursor) ? (playWr - currentCursor) : 0;
-            ASFW_LOG_RL(Isoch, "tx/ring_decision", 1000, OS_LOG_TYPE_DEFAULT,
-                     "TXRING pkt=%u dbc=0x%02x syt=0x%04x scheduled=%llu completed=%llu source=%llu oldest=%llu written=%llu decision=%{public}s state=%u blocking=%u frames=%u playRd=%llu avail=%llu",
-                     metadata.packetIndex,
-                     cip.dbc,
-                     cip.syt,
-                     metadata.timelineFirstFrame,
-                     txCompletedSampleFrame_,
-                     currentCursor,
-                     oldest,
-                     playWr,
-                     dec,
-                     static_cast<uint32_t>(resState),
-                     static_cast<uint32_t>(resBlocking),
-                     resFrames,
-                     playRd,
-                     avail);
-        }
-        return succ;
-    };
-
-    auto writeSilence = [&](ASFW::Audio::Runtime::TxPacketState state) noexcept -> bool {
-        uint32_t bytesWritten = 0;
-        const Direct::Tx::DirectTxPacketHeaderRequest header{
-            .sid = cip.sid,
-            .am824Slots = am824Slots,
-            .dbc = cip.dbc,
-            .syt = cip.syt,
-            .isNoData = false,
-        };
-        if (!Direct::Tx::BeginDirectTxPacket(header, packetBytes, packetCapacityBytes, bytesWritten)) {
-            return false;
-        }
-        auto* payload = Direct::Tx::DirectTxPacketPayloadQuadlets(packetBytes);
-        if (!payload) {
-            return false;
-        }
-        for (uint32_t frame = 0; frame < metadata.framesPerPacket; ++frame) {
-            auto* frameOut = payload + (static_cast<size_t>(frame) * am824Slots);
-            Direct::Tx::EncodeDirectTxSilenceFrame(metadata.pcmChannels, am824Slots, format, frameOut);
-        }
-        counters_.directTxUnderrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
-        counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
-        if (directTxBinding_.control) {
-            auto& counters = directTxBinding_.control->counters;
-            counters.txPackets.fetch_add(1, std::memory_order_relaxed);
-            counters.txDataPackets.fetch_add(1, std::memory_order_relaxed);
-            counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
-            if (cip.syt == 0xffff) {
-                counters.txSytFfffPackets.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                counters.txValidSytPackets.fetch_add(1, std::memory_order_relaxed);
-            }
-            switch (state) {
-                case ASFW::Audio::Runtime::TxPacketState::NoPhaseSilence:
-                    counters.txNoPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::UnderrunSilence:
-                    counters.txUnderrunSilencePackets.fetch_add(1, std::memory_order_relaxed);
-                    counters.txUnderruns.fetch_add(1, std::memory_order_relaxed);
-                    directTxBinding_.control->playbackRingUnderruns.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::StaleSync:
-                    counters.txStaleSyncPackets.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                default:
-                    counters.txValidPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
-                    break;
-            }
-        }
-        return true;
-    };
-
-    if (cip.syt == Encoding::SYTGenerator::kNoInfo) {
-        return logAndReturn(writeSilence(ASFW::Audio::Runtime::TxPacketState::NoPhaseSilence),
-                            "no_phase",
-                            ASFW::Audio::Runtime::TxPacketState::NoPhaseSilence,
-                            ASFW::Audio::Runtime::TxBlockingResult::NoData,
-                            0);
-    }
-
-    if (!IsPlaybackRingPathReady(metadata)) {
-        return logAndReturn(writeSilence(ASFW::Audio::Runtime::TxPacketState::UnderrunSilence),
-                            "not_ready",
-                            ASFW::Audio::Runtime::TxPacketState::UnderrunSilence,
-                            ASFW::Audio::Runtime::TxBlockingResult::NoData,
-                            0);
-    }
-
-    bool rxAuthorityEstablished = false;
-    if (directTxBinding_.control) {
-        const auto source =
-            directTxBinding_.control->ztsState.selectedSource.load(std::memory_order_relaxed);
-        const auto gen =
-            directTxBinding_.control->ztsState.sourceGeneration.load(std::memory_order_relaxed);
-        rxAuthorityEstablished =
-            (source == ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock && gen > 0);
-    }
-
-    if (rxAuthorityEstablished) {
-        const auto sync = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
-        if (sync.status != ExternalSyncState::SeedStatus::Ok) {
-            if (directTxBinding_.control) {
-                directTxBinding_.control->ztsState.selectedSource.store(
-                    ASFW::Audio::Runtime::ZtsAuthoritySource::None,
-                    std::memory_order_relaxed);
-                directTxBinding_.control->fatalReason.store(
-                    ASFW::Audio::Runtime::FatalStreamReason::RxAuthorityLost,
-                    std::memory_order_release);
-                directTxBinding_.control->fatalGeneration.fetch_add(1, std::memory_order_release);
-            }
-            ASFW_LOG(Audio,
-                     "ADK FATAL: RX clock authority lost during playback-ring TX status=%u ageUsec=%llu threshold=%llu",
-                     static_cast<uint32_t>(sync.status),
-                     sync.ageUsec,
-                     sync.staleThresholdUsec);
-            counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-            return logAndReturn(writeSilence(ASFW::Audio::Runtime::TxPacketState::StaleSync),
-                                "stale_sync",
-                                ASFW::Audio::Runtime::TxPacketState::StaleSync,
-                                ASFW::Audio::Runtime::TxBlockingResult::NoData,
-                                0);
-        }
-    }
-
-    const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
-    const uint64_t oldestValid = directOutputReader_.OutputOldestValidFrame();
-    const uint64_t discontinuityGeneration = directTxBinding_.control
-        ? directTxBinding_.control->playbackRingDiscontinuityGeneration.load(
-              std::memory_order_acquire)
-        : 0;
-
-    uint64_t sourceFrame =
-        timingPolicy_.HardwareOutputFrameToReportedFrame(metadata.timelineFirstFrame);
-
-    auto applyForwardCorrection = [&](uint64_t correctedSource) noexcept {
-        if (correctedSource <= sourceFrame) {
-            return;
-        }
-        const uint64_t delta = correctedSource - sourceFrame;
-        if (sourceTimelineOffsetFrames_ <=
-            (std::numeric_limits<uint64_t>::max() - delta)) {
-            sourceTimelineOffsetFrames_ += delta;
-            sourceFrame = correctedSource;
-            counters_.directTxCursorResyncs.fetch_add(1, std::memory_order_relaxed);
-            if (directTxBinding_.control) {
-                directTxBinding_.control->counters.txForwardCursorCorrections.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-        }
-    };
-
-    if (sourceTimelineOffsetFrames_ >
-        (std::numeric_limits<uint64_t>::max() - sourceFrame)) {
-        counters_.directTxTimelineInvariantFailures.fetch_add(1, std::memory_order_relaxed);
-        if (directTxBinding_.control) {
-            directTxBinding_.control->counters.txTimelineInvariantFailures.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        return logAndReturn(false,
-                            "source_overflow",
-                            ASFW::Audio::Runtime::TxPacketState::InvalidGeometry,
-                            ASFW::Audio::Runtime::TxBlockingResult::NoData,
-                            0);
-    }
-    sourceFrame += sourceTimelineOffsetFrames_;
-
-    if (!sourceTimelineAnchored_ && writtenEnd != 0) {
-        applyForwardCorrection(oldestValid);
-        sourceTimelineAnchored_ = true;
-        lastDiscontinuityGeneration_ = discontinuityGeneration;
-    } else if (sourceTimelineAnchored_ &&
-               discontinuityGeneration != lastDiscontinuityGeneration_) {
-        if (sourceFrame < oldestValid) {
-            applyForwardCorrection(oldestValid);
-        } else if (sourceFrame > oldestValid && directTxBinding_.control) {
-            directTxBinding_.control->counters.txPreventedBackwardCorrections.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        lastDiscontinuityGeneration_ = discontinuityGeneration;
-    }
-
-    if (directCursorInitialized_ && sourceFrame < lastSourceFrame_) {
-        sourceFrame = lastSourceFrame_;
-        counters_.directTxTimelineInvariantFailures.fetch_add(1, std::memory_order_relaxed);
-        if (directTxBinding_.control) {
-            directTxBinding_.control->counters.txTimelineInvariantFailures.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-    }
-    lastSourceFrame_ = sourceFrame;
-    directOutputFrameCursor_ = sourceFrame;
-    directCursorInitialized_ = true;
-
-    if (directOutputFrameCursor_ >
-        (std::numeric_limits<uint64_t>::max() - static_cast<uint64_t>(metadata.framesPerPacket))) {
-        counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-        return logAndReturn(false,
-                            "cursor_overflow",
-                            ASFW::Audio::Runtime::TxPacketState::ValidPhaseSilence,
-                            ASFW::Audio::Runtime::TxBlockingResult::NoData,
-                            0);
-    }
-
-    const uint64_t readFrame = sourceFrame;
-    const Direct::Tx::TxAudioPacketWriteRequest request{
-        .firstFrame = readFrame,
-        .frameCount = metadata.framesPerPacket,
-        .channels = metadata.pcmChannels,
-        .am824Slots = am824Slots,
-        .sid = cip.sid,
-        .dbc = cip.dbc,
-        .syt = cip.syt,
-        .dataPacket = true,
-        .wireFormat = format,
-    };
-
-    Direct::Tx::TxAudioPacketWriter writer(directOutputReader_);
-    {
-        const ASFW::Audio::Runtime::TxPacketProductionResult result =
-            writer.WritePacket(request, packetBytes, packetCapacityBytes);
-        const auto sourceReadStatus =
-            static_cast<DirectTxReadStatus>(result.sourceReadStatus);
-
-        if (result.fatal) {
-            counters_.directTxInvalidPackets.fetch_add(1, std::memory_order_relaxed);
-            if (directTxBinding_.control) {
-                directTxBinding_.control->counters.txInvalidGeometryPackets.fetch_add(1, std::memory_order_relaxed);
-                directTxBinding_.control->fatalReason.store(ASFW::Audio::Runtime::FatalStreamReason::InvalidGeometry,
-                                                            std::memory_order_release);
-                directTxBinding_.control->fatalGeneration.fetch_add(1, std::memory_order_release);
-            }
-            return logAndReturn(false,
-                                "writer_fatal",
-                                result.state,
-                                result.blockingResult,
-                                result.frames);
-        }
-
-        if (result.frames != metadata.framesPerPacket) {
-            return logAndReturn(writeSilence(ASFW::Audio::Runtime::TxPacketState::UnderrunSilence),
-                                "writer_underrun",
-                                result.state,
-                                result.blockingResult,
-                                result.frames);
-        }
-
-        if (directTxBinding_.control) {
-            auto& counters = directTxBinding_.control->counters;
-            if (sourceReadStatus == DirectTxReadStatus::kStaleOverwritten) {
-                counters.txStaleOverwrittenReads.fetch_add(1, std::memory_order_relaxed);
-            } else if (sourceReadStatus == DirectTxReadStatus::kUnderrun) {
-                counters.txProducerAheadUnderruns.fetch_add(1, std::memory_order_relaxed);
-            }
-
-            if (sourceReadStatus == DirectTxReadStatus::kAvailable) {
-                bool anyNonzero = false;
-                for (uint32_t frame = 0; frame < metadata.framesPerPacket && !anyNonzero; ++frame) {
-                    const int32_t* frameIn = directOutputReader_.Frame(readFrame + frame);
-                    if (!frameIn) {
-                        break;
-                    }
-                    for (uint32_t ch = 0; ch < metadata.pcmChannels; ++ch) {
-                        if (frameIn[ch] != 0) {
-                            anyNonzero = true;
-                            break;
-                        }
-                    }
-                }
-                if (anyNonzero) {
-                    counters.txPcmNonzeroPackets.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    counters.txPcmAllZeroPackets.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-
-            counters.txPackets.fetch_add(1, std::memory_order_relaxed);
-            if (result.blockingResult == ASFW::Audio::Runtime::TxBlockingResult::Data) {
-                counters.txDataPackets.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                counters.txNoDataPackets.fetch_add(1, std::memory_order_relaxed);
-            }
-            if (result.syt == 0xffff) {
-                counters.txSytFfffPackets.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                counters.txValidSytPackets.fetch_add(1, std::memory_order_relaxed);
-            }
-
-            switch (result.state) {
-                case ASFW::Audio::Runtime::TxPacketState::ValidPhasePcm:
-                    counters.txValidPhasePcmPackets.fetch_add(1, std::memory_order_relaxed);
-                    counters.txPcmFramesEncoded.fetch_add(result.frames, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::UnderrunSilence:
-                    counters.txUnderrunSilencePackets.fetch_add(1, std::memory_order_relaxed);
-                    counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
-                    counters.txUnderruns.fetch_add(1, std::memory_order_relaxed);
-                    directTxBinding_.control->playbackRingUnderruns.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::ValidPhaseSilence:
-                    counters.txValidPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
-                    counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::NoPhaseSilence:
-                    counters.txNoPhaseSilencePackets.fetch_add(1, std::memory_order_relaxed);
-                    counters.txSilenceSubstitutions.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::StaleSync:
-                    counters.txStaleSyncPackets.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                case ASFW::Audio::Runtime::TxPacketState::InvalidGeometry:
-                    counters.txInvalidGeometryPackets.fetch_add(1, std::memory_order_relaxed);
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        directOutputFrameCursor_ = readFrame + result.frames;
-        PublishDirectTxConsumedEndFrame(directOutputFrameCursor_);
-        if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
-            const int32_t* source = directOutputReader_.Frame(readFrame);
-            const uint32_t* encoded = Direct::Tx::DirectTxPacketPayloadQuadlets(packetBytes);
-            ASFW_LOG_RL(
-                Isoch, "tx/source_timeline", 1000, OS_LOG_TYPE_DEFAULT,
-                "IT TX SOURCE pkt=%u dbc=0x%02x syt=0x%04x scheduled=%llu completed=%llu source=%llu oldest=%llu written=%llu decision=%u src=[%08x %08x] wire=[%08x %08x]",
-                metadata.packetIndex,
-                metadata.cip.dbc,
-                metadata.cip.syt,
-                metadata.timelineFirstFrame,
-                txCompletedSampleFrame_,
-                readFrame,
-                oldestValid,
-                writtenEnd,
-                static_cast<uint32_t>(sourceReadStatus),
-                source ? static_cast<uint32_t>(source[0]) : 0,
-                source && metadata.pcmChannels > 1 ? static_cast<uint32_t>(source[1]) : 0,
-                encoded ? encoded[0] : 0,
-                encoded && metadata.am824Slots > 1 ? encoded[1] : 0);
-        }
-        counters_.directTxPackets.fetch_add(1, std::memory_order_relaxed);
-        return logAndReturn(true,
-                            "success",
-                            result.state,
-                            result.blockingResult,
-                            result.frames);
     }
 }
 
@@ -1175,8 +702,6 @@ void IsochAudioTxPipeline::MarkPreparationRequestHandled(
 void IsochAudioTxPipeline::PublishFatalFault(
     const ASFW::Audio::Runtime::FatalStreamReason reason,
     const Tx::PreparedTxPayloadRequest& request,
-    const uint64_t sourceFirstFrame,
-    const uint64_t sourceEndFrame,
     const uint64_t oldestValidFrame,
     const uint64_t writtenEndFrame,
     const uint64_t preparedPayloadHash,
@@ -1189,11 +714,10 @@ void IsochAudioTxPipeline::PublishFatalFault(
     }
 
     auto& snapshot = control->txFatalSnapshot;
-    snapshot.packetGeneration.store(request.metadata.generation, std::memory_order_relaxed);
-    snapshot.timelineFirstFrame.store(request.metadata.timelineFirstFrame,
-                                      std::memory_order_relaxed);
-    snapshot.sourceFirstFrame.store(sourceFirstFrame, std::memory_order_relaxed);
-    snapshot.sourceEndFrame.store(sourceEndFrame, std::memory_order_relaxed);
+    snapshot.audioFrame.store(request.metadata.audioFrame,
+                              std::memory_order_relaxed);
+    snapshot.outputPhaseTicks.store(request.metadata.outputPhaseTicks,
+                                    std::memory_order_relaxed);
     snapshot.oldestValidFrame.store(oldestValidFrame, std::memory_order_relaxed);
     snapshot.writtenEndFrame.store(writtenEndFrame, std::memory_order_relaxed);
     snapshot.packetIndex.store(request.packetIndex, std::memory_order_relaxed);
@@ -1235,10 +759,9 @@ void IsochAudioTxPipeline::PublishFatalFault(
     }
 
     ASFW_LOG(Audio,
-             "ADK FATAL TX PREP reason=%u pkt=%u gen=%llu hwPkt=%u distance=%u writable=%d deadline=%d state=%u dbc=0x%02x syt=0x%04x timeline=%llu source=[%llu,%llu) valid=[%llu,%llu) src=[%08x %08x] wire=[%08x %08x] hash=0x%016llx/0x%016llx",
+             "ADK FATAL TX PREP reason=%u pkt=%u hwPkt=%u distance=%u writable=%d deadline=%d state=%u dbc=0x%02x syt=0x%04x audioFrame=%llu valid=[%llu,%llu) src=[%08x %08x] wire=[%08x %08x] hash=0x%016llx/0x%016llx",
              static_cast<uint32_t>(reason),
              request.packetIndex,
-             request.metadata.generation,
              request.hwPacketIndex,
              request.distanceToHardware,
              request.writable,
@@ -1246,9 +769,7 @@ void IsochAudioTxPipeline::PublishFatalFault(
              static_cast<uint32_t>(request.metadata.state),
              request.metadata.dbc,
              request.metadata.syt,
-             request.metadata.timelineFirstFrame,
-             sourceFirstFrame,
-             sourceEndFrame,
+             request.metadata.audioFrame,
              oldestValidFrame,
              writtenEndFrame,
              static_cast<uint32_t>(request.metadata.firstSourceSamples[0]),
@@ -1265,7 +786,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
 
     if (request.packetIndex >= producedPacketMetadata_.size()) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, 0, 0);
+                          request, 0, 0);
         out.action = Tx::PreparedTxAction::Fatal;
         return out;
     }
@@ -1276,16 +797,15 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
 
     auto& metadata = producedPacketMetadata_[request.packetIndex];
     if (!metadata.valid || !metadata.isData ||
-        metadata.generation != request.metadata.generation ||
-        metadata.timelineFirstFrame != request.metadata.timelineFirstFrame ||
+        metadata.audioFrame != request.metadata.audioFrame ||
         metadata.framesPerPacket != request.metadata.framesPerPacket) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, 0, 0);
+                          request, 0, 0);
         out.action = Tx::PreparedTxAction::Fatal;
         return out;
     }
 
-    if (!IsPlaybackRingPathReady(metadata) || !txPcmPacketRing_.valid) {
+    if (!txPcmPacketRing_.valid) {
         if (directTxBinding_.control) {
             directTxBinding_.control->counters.txStartupSilenceSlots.fetch_add(
                 1, std::memory_order_relaxed);
@@ -1306,79 +826,32 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     const uint64_t oldestValid = directOutputReader_.OutputOldestValidFrame();
     const uint64_t writtenEnd = directOutputReader_.OutputWrittenEndFrame();
 
-    // A binding can appear after the DMA ring was primed. Those existing slots
-    // use the old zero-based timeline and must drain as startup silence.
-    if (metadata.timelineFirstFrame < txOutputOffsetFrames_) {
-        directTxBinding_.control->counters.txStartupSilenceSlots.fetch_add(
-            1, std::memory_order_relaxed);
-        ASFW_LOG_RL(
-            Isoch, "tx/prebinding_slot", 1000, OS_LOG_TYPE_DEFAULT,
-            "IT TX PRE-BINDING SLOT: pkt=%u timeline=%llu offset=%u state=%u; keeping startup silence",
-            request.packetIndex,
-            metadata.timelineFirstFrame,
-            txOutputOffsetFrames_,
-            static_cast<uint32_t>(metadata.preparationState));
+    if (metadata.audioFrame == 0 && !txPhaseMap_.IsAnchored()) {
         out.action = Tx::PreparedTxAction::NoChange;
         return out;
     }
 
-    // Discontinuity diagnostics
-    const uint64_t discontinuityGeneration =
-        directTxBinding_.control->playbackRingDiscontinuityGeneration.load(
-            std::memory_order_acquire);
-
-    if (discontinuityGeneration != lastDiscontinuityGeneration_) {
-        lastDiscontinuityGeneration_ = discontinuityGeneration;
-        if (directTxBinding_.control) {
-            directTxBinding_.control->counters.txTimelineDiscontinuities.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        ASFW_LOG(
-            Audio,
-            "ADK TX DISCONTINUITY RECORDED disc=%llu pkt=%u writtenEnd=%llu oldest=%llu",
-            discontinuityGeneration,
-            request.packetIndex,
-            writtenEnd,
-            oldestValid);
-    }
-
-    if (metadata.timelineFirstFrame >
-            std::numeric_limits<uint64_t>::max() - metadata.framesPerPacket) {
-        PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, oldestValid, writtenEnd);
-        out.action = Tx::PreparedTxAction::Fatal;
-        return out;
-    }
-    const uint64_t audioFirst =
-        metadata.timelineFirstFrame - txOutputOffsetFrames_;
+    const uint64_t audioFirst = metadata.audioFrame;
     const uint64_t audioEnd = audioFirst + metadata.framesPerPacket;
 
     const uint32_t slot = txPcmPacketRing_.SlotForFrame(audioFirst);
     const auto& stamp = txPcmPacketRing_.slotStamps[slot];
-    const uint32_t expectedGeneration =
-        txPcmPacketRing_.GenerationForFrame(audioFirst);
     const bool covered =
-        stamp.generation == expectedGeneration &&
+        stamp.hasAudioWrite &&
         stamp.begin <= audioFirst &&
         stamp.end >= audioEnd;
+
     if (!covered) {
         ASFW_LOG_RL(Isoch, "tx/payload_uncovered", 100, OS_LOG_TYPE_DEFAULT,
-                    "TX PAYLOAD UNCOVERED slot=%u expected=[%llu,%llu) gen=%u stamp=[%llu,%llu) stampGen=%u "
-                    "timeline=[%llu,%llu) offset=%u audio=[%llu,%llu) written=[%llu,%llu) lagToWritten=%lld missToStamp=%lld",
-                    slot, audioFirst, audioEnd, expectedGeneration,
-                    stamp.begin, stamp.end, stamp.generation,
-                    metadata.timelineFirstFrame, metadata.timelineFirstFrame + metadata.framesPerPacket,
-                    txOutputOffsetFrames_,
+                    "TX PAYLOAD UNCOVERED slot=%u expected=[%llu,%llu) stamp=[%llu,%llu) hasAudioWrite=%d "
+                    "audio=[%llu,%llu) written=[%llu,%llu) lagToWritten=%lld missToStamp=%lld",
+                    slot, audioFirst, audioEnd,
+                    stamp.begin, stamp.end, stamp.hasAudioWrite,
                     audioFirst, audioEnd,
                     oldestValid, writtenEnd,
                     static_cast<int64_t>(writtenEnd) - static_cast<int64_t>(audioFirst),
                     static_cast<int64_t>(audioFirst) - static_cast<int64_t>(stamp.begin));
-        if (audioFirst >= oldestValid) {
-            out.action = Tx::PreparedTxAction::NoChange;
-            out.sourceFirstFrame = audioFirst;
-            out.sourceEndFrame = audioEnd;
-            return out;
-        }
+        // We do not retry or halt. Proceed to send whatever is in the ring (silence).
     }
 
     const uint32_t* srcPayload = covered
@@ -1386,7 +859,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
         : txPcmPacketRing_.SilencePayload();
     if (!srcPayload) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, oldestValid, writtenEnd);
+                          request, oldestValid, writtenEnd);
         out.action = Tx::PreparedTxAction::Fatal;
         return out;
     }
@@ -1404,7 +877,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
 
     if (!Direct::Tx::BeginDirectTxPacket(header, request.payloadBytes, request.payloadCapacityBytes, bytesWritten)) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, oldestValid, writtenEnd);
+                          request, oldestValid, writtenEnd);
         out.action = Tx::PreparedTxAction::Fatal;
         return out;
     }
@@ -1413,7 +886,7 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     const uint32_t payloadSizeBytes = payloadQuadlets * sizeof(uint32_t);
     if (bytesWritten + payloadSizeBytes > request.payloadCapacityBytes) {
         PublishFatalFault(ASFW::Audio::Runtime::FatalStreamReason::TxSlotInvariant,
-                          request, 0, 0, oldestValid, writtenEnd);
+                          request, oldestValid, writtenEnd);
         out.action = Tx::PreparedTxAction::Fatal;
         return out;
     }
@@ -1488,13 +961,13 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
         ASFW_LOG_RL(
             Isoch, "tx/prepared_clip_payload", 1000, OS_LOG_TYPE_DEFAULT,
-            "IT TX PACKET PAYLOAD: pkt=%u gen=%llu distance=%u dbc=0x%02x syt=0x%04x timeline=%llu wire=[%08x %08x] nonzero=%d fMask=0x%x chMask=0x%x srcFMask=0x0 srcChMask=0x0 (first f=%d ch=%d) pop=%d oldest=%llu written=%llu",
+            "IT TX PACKET PAYLOAD: pkt=%u distance=%u dbc=0x%02x syt=0x%04x audioFrame=%llu phase=%lld wire=[%08x %08x] nonzero=%d fMask=0x%x chMask=0x%x (first f=%d ch=%d) pop=%d oldest=%llu written=%llu",
             request.packetIndex,
-            request.metadata.generation,
             request.distanceToHardware,
             metadata.cip.dbc,
             metadata.cip.syt,
-            metadata.timelineFirstFrame,
+            metadata.audioFrame,
+            metadata.outputPhaseTicks,
             out.firstEncodedWords[0],
             out.firstEncodedWords[1],
             (payloadFrameMask != 0) ? 1 : 0,
@@ -1508,11 +981,6 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     }
 
     out.action = Tx::PreparedTxAction::Prepared;
-    out.sourceFirstFrame = audioFirst;
-    out.sourceEndFrame = audioEnd;
-
-    metadata.sourceFirstFrame = audioFirst;
-    metadata.sourceEndFrame = audioEnd;
     metadata.preparationState = Tx::PreparedTxSlotState::PcmPrepared;
 
     return out;
@@ -1580,17 +1048,15 @@ void IsochAudioTxPipeline::PopulateClipStyleTxRingFromWrittenRange() noexcept {
             txPcmPacketRing_.PacketFirstFrame(frame);
         const uint64_t packetEnd =
             packetFirst + txPcmPacketRing_.framesPerPacket;
-        const uint32_t generation =
-            txPcmPacketRing_.GenerationForFrame(frame);
         const bool samePacket =
-            stamp.generation == generation &&
+            stamp.hasAudioWrite &&
             stamp.begin >= packetFirst &&
             stamp.end <= packetEnd;
 
         if (!samePacket) {
             stamp.begin = frame;
             stamp.end = frame + 1;
-            stamp.generation = generation;
+            stamp.hasAudioWrite = true;
         } else if (frame == stamp.end) {
             ++stamp.end;
         } else if (frame + 1 == stamp.begin) {
@@ -1634,9 +1100,7 @@ void IsochAudioTxPipeline::MaybeLogTxFrameMatrix(uint64_t populatedBegin,
 
     const uint32_t ringSlot = txPcmPacketRing_.SlotForFrame(packetFirst);
     const auto& stamp = txPcmPacketRing_.slotStamps[ringSlot];
-    const uint32_t expectedGeneration =
-        txPcmPacketRing_.GenerationForFrame(packetFirst);
-    if (stamp.generation != expectedGeneration ||
+    if (!stamp.hasAudioWrite ||
         stamp.begin > packetFirst ||
         stamp.end < packetEnd) {
         return;
@@ -1687,14 +1151,16 @@ void IsochAudioTxPipeline::MaybeLogTxFrameMatrix(uint64_t populatedBegin,
 
     ASFW_LOG(
         Audio,
-        "TX FRAME MATRIX BEGIN source=[%llu,%llu) frames=%u channels=%u slots=%u format=%u generation=%u",
+        "TX FRAME MATRIX BEGIN source=[%llu,%llu) frames=%u channels=%u slots=%u format=%u phase=%lld lead=%lld rebased=%d",
         packetFirst,
         packetEnd,
         framesPerPacket,
         channels,
         slots,
         static_cast<uint32_t>(assembler_.audioWireFormat()),
-        expectedGeneration);
+        lastPhaseResult_.outputPhaseTicks,
+        lastPhaseResult_.leadTicks,
+        lastPhaseResult_.rebased);
 
     const uint32_t matrixSlots = std::max(channels, slots);
     for (uint32_t frame = 0; frame < framesPerPacket; ++frame) {

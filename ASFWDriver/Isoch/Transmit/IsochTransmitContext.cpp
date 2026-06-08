@@ -412,15 +412,12 @@ void IsochTransmitContext::StopImmediatelyForTxFault(
     const Tx::IsochTxDmaRing::PreparationOutcome& outcome) noexcept {
     ASFW_LOG(
         Isoch,
-        "IT FATAL STOP: prepared-payload fault pkt=%u distance=%u hwPkt=%u gen=%llu state=%u timeline=%llu source=[%llu,%llu)",
+        "IT FATAL STOP: prepared-payload fault pkt=%u distance=%u hwPkt=%u state=%u audioFrame=%llu",
         outcome.faultPacketIndex,
         outcome.faultDistance,
         outcome.hwPacketIndex,
-        outcome.faultMetadata.generation,
         static_cast<uint32_t>(outcome.faultMetadata.state),
-        outcome.faultMetadata.timelineFirstFrame,
-        outcome.faultMetadata.sourceFirstFrame,
-        outcome.faultMetadata.sourceEndFrame);
+        outcome.faultMetadata.audioFrame);
     StopImmediatelyForTxFault();
 }
 
