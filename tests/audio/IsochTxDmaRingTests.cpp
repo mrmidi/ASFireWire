@@ -66,7 +66,7 @@ public:
             .dbc = static_cast<uint8_t>(firstFrame),
             .syt = 0x1234,
             .framesPerPacket = 8,
-            .timelineFirstFrame = firstFrame,
+            .audioFrame = firstFrame,
         };
     }
 
@@ -86,8 +86,6 @@ public:
         words[2] = 0xA5000000u | request.packetIndex;
         return PreparedTxPayloadResult{
             .action = PreparedTxAction::Prepared,
-            .sourceFirstFrame = request.metadata.timelineFirstFrame + 1000,
-            .sourceEndFrame = request.metadata.timelineFirstFrame + 1008,
         };
     }
 };
@@ -99,9 +97,6 @@ public:
         return PreparedTxPayloadResult{
             .action = request.deadline ? PreparedTxAction::Fatal
                                        : PreparedTxAction::NoChange,
-            .sourceFirstFrame = request.metadata.timelineFirstFrame,
-            .sourceEndFrame =
-                request.metadata.timelineFirstFrame + request.metadata.framesPerPacket,
         };
     }
 };
@@ -490,33 +485,4 @@ TEST(IsochTxDmaRingTests, PreparationGuardOwnershipWrapsAtRingEnd) {
     EXPECT_EQ(firstWritable[2], 0xA5000000U | firstWritablePacket);
     EXPECT_EQ(ring.SlotMetadata(firstWritablePacket).state,
               PreparedTxSlotState::PcmPrepared);
-}
-
-TEST(IsochTxDmaRingTests, RefillIncrementsRecycledSlotGeneration) {
-    ::ASFW::Driver::HardwareInterface hw;
-    auto memory =
-        MakeTestIsochMemory(hw, Layout::kNumPackets, Layout::kMaxPacketSize);
-    ASSERT_TRUE(memory);
-    IsochTxDmaRing ring;
-    ASSERT_EQ(ring.SetupRings(*memory), kIOReturnSuccess);
-    ring.ResetForStart();
-    TimedSilentPacketProvider provider;
-    ASSERT_EQ(ring.Prime(provider).packetsAssembled, Layout::kNumPackets);
-    EXPECT_EQ(ring.SlotMetadata(0).generation, 1U);
-
-    constexpr uint32_t kHwPacketIndex = 8;
-    hw.SetTestRegister(
-        static_cast<::ASFW::Driver::Register32>(
-            ::DMAContextHelpers::IsoXmitCommandPtr(0)),
-        ring.Slab().GetDescriptorIOVA(
-            kHwPacketIndex * Layout::kBlocksPerPacket) |
-            Layout::kBlocksPerPacket);
-    const auto refill = ring.Refill(hw, 0, provider, nullptr, nullptr);
-    ASSERT_TRUE(refill.ok);
-    ASSERT_EQ(refill.refillPacketCount, 4U);
-    for (uint32_t packet = 0; packet < refill.refillPacketCount; ++packet) {
-        EXPECT_EQ(ring.SlotMetadata(packet).generation, 2U);
-        EXPECT_EQ(ring.SlotMetadata(packet).state,
-                  PreparedTxSlotState::InitialSilence);
-    }
 }

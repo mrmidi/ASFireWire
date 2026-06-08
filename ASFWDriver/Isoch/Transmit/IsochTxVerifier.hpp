@@ -72,9 +72,8 @@ private:
         uint32_t cipQ1Host{0};
         uint16_t reqCount{0};
         uint16_t audioQuadletCount{0};
-        uint64_t generation{0};
-        uint64_t sourceFirstFrame{0};
-        uint64_t sourceEndFrame{0};
+        uint64_t audioFrame{0};
+        int64_t outputPhaseTicks{-1};
         uint64_t preparedPayloadHash{0};
         uint32_t preparationDistance{0};
         Tx::PreparedTxSlotState preparationState{

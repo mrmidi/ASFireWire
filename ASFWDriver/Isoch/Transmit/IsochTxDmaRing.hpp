@@ -27,14 +27,14 @@ struct IsochTxPacket final {
     uint8_t dbc{0};
     uint16_t syt{0xFFFF};
     uint32_t framesPerPacket{0};
-    uint64_t timelineFirstFrame{0};
+    uint64_t audioFrame{0};
+    int64_t outputPhaseTicks{-1};
 };
 
 struct TxPacketRequest final {
     uint32_t transmitCycle{0};
     uint32_t packetIndex{0};
     uint16_t hwTimestamp{0};
-    uint64_t slotGeneration{0};
 };
 
 class IIsochTxPacketProvider {
@@ -63,10 +63,8 @@ enum class PreparedTxAction : uint8_t {
 };
 
 struct PreparedTxSlotMetadata final {
-    uint64_t generation{0};
-    uint64_t timelineFirstFrame{0};
-    uint64_t sourceFirstFrame{0};
-    uint64_t sourceEndFrame{0};
+    uint64_t audioFrame{0};
+    int64_t outputPhaseTicks{-1};
     uint64_t preparationHostTicks{0};
     uint64_t preparedPayloadHash{0};
     uint32_t sizeBytes{0};
@@ -95,8 +93,6 @@ struct PreparedTxPayloadRequest final {
 
 struct PreparedTxPayloadResult final {
     PreparedTxAction action{PreparedTxAction::NoChange};
-    uint64_t sourceFirstFrame{0};
-    uint64_t sourceEndFrame{0};
     int32_t firstSourceSamples[2]{};
     uint32_t firstEncodedWords[2]{};
 };
@@ -272,7 +268,6 @@ private:
                                                  uint32_t& outPacketIndex,
                                                  uint32_t& outCmdPtr) noexcept;
     void InitializeSlotMetadata(uint32_t packetIndex,
-                                uint64_t generation,
                                 const IsochTxPacket& packet) noexcept;
 
     uint8_t channel_{0};
@@ -290,7 +285,6 @@ private:
     uint32_t lastHwTimestamp_{0};
 
     std::array<PreparedTxSlotMetadata, Layout::kNumPackets> slotMetadata_{};
-    std::array<uint64_t, Layout::kNumPackets> slotGenerations_{};
 
     Counters counters_{};
 };

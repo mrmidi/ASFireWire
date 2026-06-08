@@ -174,9 +174,8 @@ void IsochTxVerifier::CaptureBeforeOverwrite(uint32_t packetIndex,
     entry.lastDescControl = lastDesc->control;
     entry.lastDescStatus = lastDesc->statusWord;
     entry.reqCount = static_cast<uint16_t>(lastDesc->control & 0xFFFFu);
-    entry.generation = metadata.generation;
-    entry.sourceFirstFrame = metadata.sourceFirstFrame;
-    entry.sourceEndFrame = metadata.sourceEndFrame;
+    entry.audioFrame = metadata.audioFrame;
+    entry.outputPhaseTicks = metadata.outputPhaseTicks;
     entry.preparedPayloadHash = metadata.preparedPayloadHash;
     entry.preparationDistance = metadata.preparationDistance;
     entry.preparationState = metadata.state;
@@ -482,14 +481,12 @@ void IsochTxVerifier::CheckAudioPayload(const TraceEntry& entry,
     const bool shouldHaveAudio = inputs_.directOutputReady && (deltaUnderrunSilenced == 0);
     if (shouldHaveAudio) {
         ASFW_LOG_RL(Isoch, "txverify/silence_run", 10000, OS_LOG_TYPE_DEFAULT,
-                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u gen=%llu state=%u prepDistance=%u source=[%llu,%llu) hash=0x%016llx directReady=%u framesPerPkt=%u",
+                    "IT TX VERIFY: SUSPICIOUS SILENCE RUN len=%u pkt=%u state=%u prepDistance=%u audioFrame=%llu hash=0x%016llx directReady=%u framesPerPkt=%u",
                     state_.silentDataRun,
                     entry.packetIndex,
-                    entry.generation,
                     static_cast<uint32_t>(entry.preparationState),
                     entry.preparationDistance,
-                    entry.sourceFirstFrame,
-                    entry.sourceEndFrame,
+                    entry.audioFrame,
                     entry.preparedPayloadHash,
                     inputs_.directOutputReady ? 1u : 0u,
                     inputs_.framesPerPacket);
@@ -517,11 +514,10 @@ void IsochTxVerifier::MaybeLogDmaFrameMatrix(
         std::min(inputs_.framesPerPacket, capturedFrames);
     ASFW_LOG(
         Isoch,
-        "IT TX DMA MATRIX BEGIN pkt=%u generation=%llu source=[%llu,%llu) frames=%u slots=%u req=%u hash=0x%016llx",
+        "IT TX DMA MATRIX BEGIN pkt=%u audioFrame=%llu phase=%lld frames=%u slots=%u req=%u hash=0x%016llx",
         entry.packetIndex,
-        entry.generation,
-        entry.sourceFirstFrame,
-        entry.sourceEndFrame,
+        entry.audioFrame,
+        entry.outputPhaseTicks,
         frames,
         slots,
         entry.reqCount,
@@ -541,9 +537,9 @@ void IsochTxVerifier::MaybeLogDmaFrameMatrix(
 
             ASFW_LOG(
                 Isoch,
-                "IT TX DMA FRAME pkt=%u sourceFrame=%llu row=%u slots=[%u,%u) dstDmaHost=[%08x %08x %08x %08x %08x %08x %08x %08x]",
+                "IT TX DMA FRAME pkt=%u audioFrame=%llu row=%u slots=[%u,%u) dstDmaHost=[%08x %08x %08x %08x %08x %08x %08x %08x]",
                 entry.packetIndex,
-                entry.sourceFirstFrame + frame,
+                entry.audioFrame + frame,
                 frame,
                 slotBase,
                 slotBase + slotCount,
@@ -554,10 +550,10 @@ void IsochTxVerifier::MaybeLogDmaFrameMatrix(
 
     ASFW_LOG(
         Isoch,
-        "IT TX DMA MATRIX END pkt=%u source=[%llu,%llu)",
+        "IT TX DMA MATRIX END pkt=%u audioFrame=[%llu,%llu)",
         entry.packetIndex,
-        entry.sourceFirstFrame,
-        entry.sourceEndFrame);
+        entry.audioFrame,
+        entry.audioFrame + frames);
 }
 
 void IsochTxVerifier::RunWork() noexcept {

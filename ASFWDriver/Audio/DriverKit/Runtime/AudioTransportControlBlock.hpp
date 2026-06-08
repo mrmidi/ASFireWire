@@ -24,10 +24,8 @@ enum class FatalStreamReason : uint32_t {
 };
 
 struct TxFatalSnapshot final {
-    std::atomic<uint64_t> packetGeneration{0};
-    std::atomic<uint64_t> timelineFirstFrame{0};
-    std::atomic<uint64_t> sourceFirstFrame{0};
-    std::atomic<uint64_t> sourceEndFrame{0};
+    std::atomic<uint64_t> audioFrame{0};
+    std::atomic<int64_t> outputPhaseTicks{-1};
     std::atomic<uint64_t> oldestValidFrame{0};
     std::atomic<uint64_t> writtenEndFrame{0};
     std::atomic<uint32_t> packetIndex{0};
@@ -39,10 +37,8 @@ struct TxFatalSnapshot final {
     std::atomic<uint64_t> completedPayloadHash{0};
 
     void Reset() noexcept {
-        packetGeneration.store(0, std::memory_order_relaxed);
-        timelineFirstFrame.store(0, std::memory_order_relaxed);
-        sourceFirstFrame.store(0, std::memory_order_relaxed);
-        sourceEndFrame.store(0, std::memory_order_relaxed);
+        audioFrame.store(0, std::memory_order_relaxed);
+        outputPhaseTicks.store(-1, std::memory_order_relaxed);
         oldestValidFrame.store(0, std::memory_order_relaxed);
         writtenEndFrame.store(0, std::memory_order_relaxed);
         packetIndex.store(0, std::memory_order_relaxed);
