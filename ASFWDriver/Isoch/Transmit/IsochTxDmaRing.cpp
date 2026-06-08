@@ -435,6 +435,7 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
             (out.hwPacketIndex + distance) % Layout::kNumPackets;
         auto& metadata = slotMetadata_[packetIndex];
         if (!metadata.valid || !metadata.isData ||
+            metadata.state == PreparedTxSlotState::SilenceFallback ||
             metadata.state == PreparedTxSlotState::PcmPrepared ||
             metadata.state == PreparedTxSlotState::Completed) {
             continue;

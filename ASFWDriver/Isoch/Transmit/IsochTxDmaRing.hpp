@@ -51,9 +51,11 @@ public:
 };
 
 enum class PreparedTxSlotState : uint8_t {
-    InitialSilence = 0,
-    PcmPrepared,
-    Completed,
+    InitialSilence = 0,  // DATA slot assembled but payload preparation not yet attempted
+    SilenceFallback,     // PreparePayload ran but the packet ring slot was not covered
+                         // (coverage miss) — silence from the ring was substituted.
+    PcmPrepared,         // PreparePayload ran and real PCM from the ring was written.
+    Completed,           // Slot has been consumed by hardware (terminal state).
 };
 
 enum class PreparedTxAction : uint8_t {

@@ -336,7 +336,8 @@ bool IsochTransmitContext::DoPrepareOnce() noexcept {
     if (!hardware_ || !ring_.HasRings()) {
         return false;
     }
-    audio_.PopulateClipStyleTxRingFromWrittenRange();
+    // NOTE: PopulateClipStyleTxRingFromWrittenRange is called once per
+    // DrainPreparationRequests pass, not per DoPrepareOnce iteration.
     const auto outcome = ring_.PreparePayloads(*hardware_, contextIndex_, audio_);
     if (outcome.fatal || audio_.HasFatalFault()) {
         StopImmediatelyForTxFault(outcome);
@@ -346,6 +347,12 @@ bool IsochTransmitContext::DoPrepareOnce() noexcept {
 }
 
 bool IsochTransmitContext::DrainPreparationRequests() noexcept {
+    // Transitional: populate the PCM packet ring once per preparation drain pass.
+    // Still runs on the isoch transmit queue under the existing preparation/refill
+    // serialization. Keep it here until TxPcmPacketRing population is made
+    // explicitly audio-side-safe and moved to the true WriteEnd path.
+    audio_.PopulateClipStyleTxRingFromWrittenRange();
+
     for (;;) {
         const uint64_t requested = std::max(
             requestedPreparationGeneration_.load(std::memory_order_acquire),
