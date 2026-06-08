@@ -25,6 +25,7 @@ using ASFW::Audio::DICE::DiceClockRequestCompletion;
 using ASFW::Audio::DICE::DiceClockRequestOutcome;
 using ASFW::Audio::DICE::DiceDesiredClockConfig;
 using ASFW::Audio::DICE::DiceDuplexConfirmResult;
+using ASFW::Audio::DICE::DiceDuplexHealthResult;
 using ASFW::Audio::DICE::DiceDuplexPrepareResult;
 using ASFW::Audio::DICE::DiceDuplexStageResult;
 using ASFW::Audio::DICE::DiceRestartErrorClass;
@@ -48,6 +49,18 @@ constexpr uint32_t kCaptureBandwidthUnits = 576;
 constexpr uint32_t kBlockingStreamModeRaw = static_cast<uint32_t>(Model::StreamMode::kBlocking);
 constexpr uint32_t kClockRequestWaitTimeoutMs = 15000;
 constexpr uint32_t kWaitPollMs = 10;
+
+[[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
+    mach_timebase_info_data_t timebase{};
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS ||
+        timebase.denom == 0) {
+        return 0;
+    }
+    const unsigned __int128 nanos =
+        static_cast<unsigned __int128>(mach_absolute_time()) *
+        timebase.numer / timebase.denom;
+    return static_cast<uint64_t>(nanos / 1'000'000U);
+}
 
 [[nodiscard]] bool IsValidIsoChannel(uint8_t channel) noexcept {
     return channel <= 0x3F;
@@ -159,6 +172,7 @@ struct DiceRecoveryDecision {
         case DiceRestartPhase::kStartingHostReceive: return "StartingHostReceive";
         case DiceRestartPhase::kProgrammingDeviceTx: return "ProgrammingDeviceTx";
         case DiceRestartPhase::kDeviceTxArmed: return "DeviceTxArmed";
+        case DiceRestartPhase::kWaitingGlobalClock: return "WaitingGlobalClock";
         case DiceRestartPhase::kStartingHostTransmit: return "StartingHostTransmit";
         case DiceRestartPhase::kConfirmingDeviceStart: return "ConfirmingDeviceStart";
         case DiceRestartPhase::kRunning: return "Running";
@@ -211,6 +225,7 @@ struct DiceRecoveryDecision {
         case DiceRestartFailureCause::kReserveCapture: return "ReserveCapture";
         case DiceRestartFailureCause::kStartReceive: return "StartReceive";
         case DiceRestartFailureCause::kProgramTx: return "ProgramTx";
+        case DiceRestartFailureCause::kGlobalClockLock: return "GlobalClockLock";
         case DiceRestartFailureCause::kStartTransmit: return "StartTransmit";
         case DiceRestartFailureCause::kConfirmStart: return "ConfirmStart";
         case DiceRestartFailureCause::kIdleClockApply: return "IdleClockApply";
@@ -1416,6 +1431,21 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     SetSessionPhase(session, DiceRestartPhase::kDeviceTxArmed);
     StoreSession(session);
 
+    SetSessionPhase(session, DiceRestartPhase::kWaitingGlobalClock);
+    StoreSession(session);
+    const IOReturn clockLockStatus =
+        WaitForStableGlobalClock(diceProtocol, topologyGeneration, desiredClock);
+    if (clockLockStatus != kIOReturnSuccess) {
+        return rollbackToFailure(clockLockStatus,
+                                 DiceRestartPhase::kWaitingGlobalClock,
+                                 DiceRestartFailureCause::kGlobalClockLock);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kWaitingGlobalClock,
+                                      DiceRestartFailureCause::kGlobalClockLock);
+    }
+
     Encoding::AudioWireFormat rxWireFormat = Encoding::AudioWireFormat::kAM824;
     if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
         record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
@@ -1509,6 +1539,70 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     StoreSession(session);
     LogTerminal(session);
     return kIOReturnSuccess;
+}
+
+IOReturn DiceDuplexRestartCoordinator::WaitForStableGlobalClock(
+    DICE::IDICEDuplexProtocol& diceProtocol,
+    const FW::Generation topologyGeneration,
+    const DiceDesiredClockConfig& desiredClock) noexcept {
+    uint32_t consecutiveLockedReads = 0;
+    const uint64_t startMs = UptimeMilliseconds();
+    const uint64_t deadlineMs = startMs + kGlobalClockLockTimeoutMs;
+
+    while (UptimeMilliseconds() < deadlineMs) {
+        const uint64_t nowMs = UptimeMilliseconds();
+        const uint32_t remainingMs = static_cast<uint32_t>(deadlineMs - nowMs);
+        const auto health = WaitForAsyncResult<DiceDuplexHealthResult>(
+            [&](auto callback) { diceProtocol.ReadDuplexHealth(std::move(callback)); },
+            std::max(remainingMs, 1U),
+            kIOReturnTimeout);
+        if (health.status != kIOReturnSuccess) {
+            ASFW_LOG_ERROR(
+                Audio,
+                "DICE global clock health read failed before isoch start kr=0x%x",
+                health.status);
+            return health.status;
+        }
+        if (health.value.generation != topologyGeneration) {
+            ASFW_LOG_ERROR(
+                Audio,
+                "DICE global clock generation changed before isoch start expected=%u actual=%u",
+                GenerationValue(topologyGeneration),
+                GenerationValue(health.value.generation));
+            return kIOReturnOffline;
+        }
+
+        const bool lockedAtTarget =
+            DICE::IsSourceLocked(health.value.status) &&
+            DICE::NominalRateHz(health.value.status) == desiredClock.sampleRateHz &&
+            health.value.appliedClock.sampleRateHz == desiredClock.sampleRateHz &&
+            health.value.appliedClock.clockSelect == desiredClock.clockSelect;
+        consecutiveLockedReads = lockedAtTarget ? consecutiveLockedReads + 1 : 0;
+
+        if (consecutiveLockedReads >= kGlobalClockStableReads) {
+            ASFW_LOG(
+                Audio,
+                "DICE global clock stable before isoch start rate=%u status=0x%08x reads=%u",
+                desiredClock.sampleRateHz,
+                health.value.status,
+                consecutiveLockedReads);
+            return kIOReturnSuccess;
+        }
+
+        const uint64_t afterReadMs = UptimeMilliseconds();
+        if (afterReadMs >= deadlineMs) {
+            break;
+        }
+        IOSleep(std::min<uint64_t>(
+            kGlobalClockLockPollMs, deadlineMs - afterReadMs));
+    }
+
+    ASFW_LOG_ERROR(
+        Audio,
+        "DICE global clock failed to stabilize before isoch start rate=%u timeoutMs=%u",
+        desiredClock.sampleRateHz,
+        kGlobalClockLockTimeoutMs);
+    return kIOReturnTimeout;
 }
 
 IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(

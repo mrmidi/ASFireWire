@@ -41,6 +41,18 @@ constexpr uint32_t kFrames = 1024;
 // Drive the cadence ring until it reports established, so TryBuildTransmitCycleDeviceSubphase
 // returns a stable device phase and the TX frame map can anchor (mirrors the RX path).
 void EstablishBridge(ExternalSyncBridge& bridge) {
+    bridge.active.store(true, std::memory_order_release);
+    bridge.clockEstablished.store(true, std::memory_order_release);
+    bridge.startupQualified.store(true, std::memory_order_release);
+    bridge.lastPackedRx.store(
+        ExternalSyncBridge::PackRxSample(
+            0x1234,
+            ExternalSyncBridge::kFdf48k,
+            static_cast<uint8_t>(kChannels)),
+        std::memory_order_release);
+    bridge.lastUpdateHostTicks.store(
+        mach_absolute_time(), std::memory_order_release);
+
     int64_t offset = 0;
     for (uint32_t i = 0; i < ExternalSyncBridge::kCadenceRingSize; ++i) {
         offset += ASFW::Timing::kSytPacketStepTicks48k;
@@ -145,6 +157,64 @@ std::shared_ptr<ASFW::Isoch::Memory::IIsochDMAMemory> MakeIsochMemory(
     return memory;
 }
 
+TEST(IsochAudioTxPipelineTimelineTests,
+     TxStaysNoDataUntilRxTimingEstablishesThenRestartsCadence) {
+    AudioTransportControlBlock control{};
+    std::array<int32_t, kFrames * kChannels> output{};
+    IsochAudioTxPipeline pipeline;
+    ASSERT_EQ(pipeline.Configure(
+                  0,
+                  static_cast<uint32_t>(ASFW::Encoding::StreamMode::kBlocking),
+                  kChannels,
+                  kChannels,
+                  AudioWireFormat::kRawPcm24In32),
+              kIOReturnSuccess);
+    pipeline.SetDirectTxRuntimeBinding(
+        IsochAudioTxPipeline::DirectTxRuntimeBinding{
+            .outputBase = output.data(),
+            .outputBytes = output.size() * sizeof(int32_t),
+            .outputFrames = kFrames,
+            .control = &control,
+            .enabled = true,
+            .sampleRateHz = 48000,
+            .streamModeRaw =
+                static_cast<uint32_t>(ASFW::Encoding::StreamMode::kBlocking),
+            .outputChannels = kChannels,
+            .am824Slots = kChannels,
+        });
+
+    ExternalSyncBridge bridge;
+    bridge.Reset();
+    bridge.active.store(true, std::memory_order_release);
+    pipeline.SetExternalSyncBridge(&bridge);
+    pipeline.ResetForStart();
+    pipeline.SetCycleTrackingValid(true);
+
+    for (uint32_t packet = 0; packet < 8; ++packet) {
+        const auto out = pipeline.NextTransmitPacket(TxPacketRequest{
+            .transmitCycle = 1000 + packet,
+            .packetIndex = packet,
+        });
+        EXPECT_FALSE(out.isData);
+        EXPECT_EQ(out.sizeBytes, ASFW::Encoding::kCIPHeaderSize);
+        EXPECT_EQ(out.syt, ExternalSyncBridge::kNoInfoSyt);
+    }
+
+    EstablishBridge(bridge);
+    const auto firstSynced = pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1008,
+        .packetIndex = 8,
+    });
+    const auto secondSynced = pipeline.NextTransmitPacket(TxPacketRequest{
+        .transmitCycle = 1009,
+        .packetIndex = 9,
+    });
+
+    EXPECT_FALSE(firstSynced.isData);
+    EXPECT_TRUE(secondSynced.isData);
+    EXPECT_NE(secondSynced.syt, ExternalSyncBridge::kNoInfoSyt);
+}
+
 TEST(IsochAudioTxPipelineTimelineTests, PacketProductionIsTimedSilenceOnly) {
     AudioTransportControlBlock control{};
     std::array<int32_t, kFrames * kChannels> output{};
@@ -176,6 +246,10 @@ TEST(IsochAudioTxPipelineTimelineTests,
                   kChannels,
                   AudioWireFormat::kRawPcm24In32),
               kIOReturnSuccess);
+    ExternalSyncBridge bridge;
+    bridge.Reset();
+    EstablishBridge(bridge);
+    pipeline.SetExternalSyncBridge(&bridge);
     pipeline.ResetForStart();
 
     (void)pipeline.NextTransmitPacket(TxPacketRequest{
@@ -206,6 +280,10 @@ TEST(IsochAudioTxPipelineTimelineTests,
                   kChannels,
                   AudioWireFormat::kRawPcm24In32),
               kIOReturnSuccess);
+    ExternalSyncBridge bridge;
+    bridge.Reset();
+    EstablishBridge(bridge);
+    pipeline.SetExternalSyncBridge(&bridge);
     pipeline.ResetForStart();
 
     (void)pipeline.NextTransmitPacket(TxPacketRequest{
@@ -236,12 +314,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
     EXPECT_EQ(oldResult.action, PreparedTxAction::NoChange);
     EXPECT_FALSE(pipeline.HasFatalFault());
 
-    // Recovered device clock arrives with the binding; packets produced afterwards anchor.
-    static ExternalSyncBridge bridge;
-    bridge.Reset();
-    EstablishBridge(bridge);
-    pipeline.SetExternalSyncBridge(&bridge);
-
+    // Packets produced after the binding can anchor and prepare from CoreAudio.
     const auto packetAfterBinding = pipeline.NextTransmitPacket(TxPacketRequest{
         .transmitCycle = 1002, .packetIndex = 2});
     ASSERT_TRUE(packetAfterBinding.isData);

@@ -222,6 +222,7 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     txPhaseLoop_.Reset();
     txPhaseMap_.Reset();
     txPhaseReadIndexSeeded_ = false;
+    rxTimingUsable_ = false;
 
     // Reset ring stamps and pre-fill with silence.
     for (uint32_t s = 0; s < txPcmPacketRing_.packetSlots; ++s) {
@@ -266,16 +267,30 @@ bool IsochAudioTxPipeline::PrimeSyncFromExternalBridge() noexcept {
 }
 
 Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketRequest& request) noexcept {
-    // The AMDTP assembler owns the wire DATA/NO-DATA cadence; peek its decision so the
-    // phase loop, SYT generator and frame map all follow the same single authority.
-    const bool isData = assembler_.nextIsData();
+    int64_t devicePhaseTicks = 0;
+    const bool deviceValid =
+        TryBuildTransmitCycleDeviceSubphase(request.transmitCycle, &devicePhaseTicks);
+
+    if (deviceValid != rxTimingUsable_) {
+        txPhaseLoop_.Reset();
+        txPhaseMap_.Reset();
+        sytGenerator_.reset();
+        sytGenerator_.armTransmitCycleAnchor();
+        assembler_.reset();
+        dbcTracker_.Reset();
+        rxTimingUsable_ = deviceValid;
+        ASFW_LOG(Isoch,
+                 "IT: RX timing %{public}s; TX cadence/phase reset",
+                 deviceValid ? "established" : "lost");
+    }
+
+    // Before RX timing is usable, hold normal cadence and emit CIP-only NO-DATA.
+    // Once timing appears, cadence restarts from its defined initial state.
+    const bool isData = deviceValid && assembler_.nextIsData();
     const uint32_t fpp = assembler_.samplesPerDataPacket();
 
     // Advance the output-phase accumulator / device-drift monitor on the assembler's
     // cadence. The loop only decides phase + discontinuity, never wire cadence.
-    int64_t devicePhaseTicks = 0;
-    const bool deviceValid =
-        TryBuildTransmitCycleDeviceSubphase(request.transmitCycle, &devicePhaseTicks);
     if (deviceValid) {
         lastPhaseResult_ = txPhaseLoop_.ProcessCycle(devicePhaseTicks, fpp, isData);
     } else {
@@ -322,7 +337,9 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
     }
 
     // silent=true: cadence/DBC/CIP advance, audio payload is valid silence.
-    auto pkt = assembler_.assembleNext(syt, /*silent=*/true);
+    auto pkt = deviceValid
+        ? assembler_.assembleNext(syt, /*silent=*/true)
+        : assembler_.assembleNoDataHoldCadence();
 
     // Producer-side DBC continuity validation (ignore NO-DATA).
     if (pkt.isData) {
@@ -348,7 +365,7 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
         .packetIndex = request.packetIndex,
         .wireFormat = assembler_.audioWireFormat(),
         .audioFrame = audioFrame,
-        .outputPhaseTicks = lastPhaseResult_.outputPhaseTicks,
+        .outputPhaseTicks = deviceValid ? lastPhaseResult_.outputPhaseTicks : -1,
         .cip = PacketCipFields{
             .sid = sid_,
             .dbc = pkt.dbc,
@@ -577,7 +594,8 @@ void IsochAudioTxPipeline::OnIsochEventGroup(const Core::IsochEventGroup& group)
 //   by a proper cumulative device-phase source if whole-cycle tracking is needed.
 bool IsochAudioTxPipeline::TryBuildTransmitCycleDeviceSubphase(uint32_t transmitCycle,
                                                                int64_t* outDevicePhaseTicks) noexcept {
-    if (!externalSyncBridge_) {
+    const auto syncState = ReadExternalSyncState(/*allowStartupQualifiedOnly=*/false);
+    if (syncState.status != ExternalSyncState::SeedStatus::Ok) {
         return false;
     }
     const auto cadence = externalSyncBridge_->ReadCadenceSnapshot();
