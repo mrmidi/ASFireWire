@@ -286,36 +286,50 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
 
     // Before RX timing is usable, hold normal cadence and emit CIP-only NO-DATA.
     // Once timing appears, cadence restarts from its defined initial state.
+    //
+    // The wire DATA/NO-DATA cadence is the assembler's call -- spec-mandated
+    // CIP/DBC sequencing the device expects bit-for-bit -- and stays authoritative
+    // and unchanged here (`isData`, wire truth). The phase loop does not get a vote
+    // on cadence; it TRACKS the decision via `dataCandidate`: emitData mirrors it
+    // exactly, the output phase advances in lockstep with it, and emissionEvent
+    // (LeadAccepted/LeadGateNoData) becomes a pure lead-HEALTH signal -- "was the
+    // lead in range when we shipped or withheld this cycle" -- logged and counted,
+    // never overriding the assembler's cadence. See TxOutputPhaseLoop.hpp,
+    // "WHO DECIDES THE WIRE -- AND WHY THE LOOP DOES NOT".
     const bool isData = deviceValid && assembler_.nextIsData();
     const uint32_t fpp = assembler_.samplesPerDataPacket();
 
-    // Advance the output-phase accumulator / device-drift monitor on the assembler's
-    // cadence. The loop only decides phase + discontinuity, never wire cadence.
     if (deviceValid) {
-        lastPhaseResult_ = txPhaseLoop_.ProcessCycle(devicePhaseTicks, fpp, isData);
+        lastPhaseResult_ = txPhaseLoop_.ProcessCycle(request.transmitCycle, devicePhaseTicks,
+                                                      /*recoveredClockValid=*/deviceValid,
+                                                      /*dataCandidate=*/isData, fpp);
     } else {
         lastPhaseResult_ = {};
     }
 
-    // A (re)seed of the phase is a discontinuity: drop the map/SYT anchors so they
-    // re-establish against the fresh phase and the current written-audio window.
-    if (lastPhaseResult_.rebased) {
+    // A (re)seed of the phase is a real discontinuity: drop the map/SYT anchors so
+    // they re-establish against the fresh phase and the current written-audio
+    // window. Only kInitialSeed/kTimingDiscontinuity ever set this -- recurring
+    // lead-health NO-DATA reads must not (that conflation, treating ordinary
+    // cadence telemetry as instability, is the bug this replaced: "TX PHASE RESET
+    // reason=Glitch" firing on every lead-gate NO-DATA cycle).
+    if (lastPhaseResult_.resetPhaseMap) {
         txPhaseMap_.Reset();
         sytGenerator_.armTransmitCycleAnchor();
         if (directTxBinding_.control) {
             directTxBinding_.control->counters.txPhaseRebases.fetch_add(1, std::memory_order_relaxed);
         }
         // Reason-tagged + rate-limited: a steady stream of InitialSeed is normal
-        // start-of-stream churn, but recurring Glitch/LeadReject means the phase
+        // start-of-stream churn, but recurring TimingDiscontinuity means the phase
         // loop is not converging on the recovered device clock. Grep for
         // "TX PHASE RESET reason=" to see which one is actually firing on hardware.
         ASFW_LOG_RL(Isoch, "tx/phase_reset", 1000, OS_LOG_TYPE_DEFAULT,
                     "TX PHASE RESET reason=%{public}s lead=%lld phase=%lld tooFar=%d total=%llu",
-                    TxOutputPhaseLoop::RebaseReasonName(lastPhaseResult_.rebaseReason),
+                    AudioEngine::DirectIsoch::TxOutputPhaseLoop::ContinuityEventName(lastPhaseResult_.continuityEvent),
                     lastPhaseResult_.leadTicks,
                     lastPhaseResult_.outputPhaseTicks,
                     lastPhaseResult_.tooFar ? 1 : 0,
-                    txPhaseLoop_.GetDiagnostics().rebases);
+                    txPhaseLoop_.GetDiagnostics().resets());
     }
 
     // Anchor the frame map at reportedPlayhead - safety (NOT writtenEnd) on the first
@@ -1213,7 +1227,7 @@ void IsochAudioTxPipeline::MaybeLogTxFrameMatrix(uint64_t populatedBegin,
 
     ASFW_LOG(
         Audio,
-        "TX FRAME MATRIX BEGIN source=[%llu,%llu) frames=%u channels=%u slots=%u format=%u phase=%lld lead=%lld rebased=%d",
+        "TX FRAME MATRIX BEGIN source=[%llu,%llu) frames=%u channels=%u slots=%u format=%u phase=%lld lead=%lld resetMap=%d",
         packetFirst,
         packetEnd,
         framesPerPacket,
@@ -1222,7 +1236,7 @@ void IsochAudioTxPipeline::MaybeLogTxFrameMatrix(uint64_t populatedBegin,
         static_cast<uint32_t>(assembler_.audioWireFormat()),
         lastPhaseResult_.outputPhaseTicks,
         lastPhaseResult_.leadTicks,
-        lastPhaseResult_.rebased);
+        lastPhaseResult_.resetPhaseMap);
 
     const uint32_t matrixSlots = std::max(channels, slots);
     for (uint32_t frame = 0; frame < framesPerPacket; ++frame) {
