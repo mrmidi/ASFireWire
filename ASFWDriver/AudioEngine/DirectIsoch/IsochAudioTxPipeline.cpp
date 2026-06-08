@@ -369,6 +369,24 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
         ? assembler_.assembleNext(syt, /*silent=*/true)
         : assembler_.assembleNoDataHoldCadence();
 
+    // Defensive: the phase loop just tracked `dataCandidate` (= nextIsData())
+    // as the wire DATA/NO-DATA cadence, mirroring it into emitData and
+    // advancing outputPhaseTicks_ in lockstep. If the assembler's actual
+    // decision (pkt.isData) ever disagrees, the loop's phase tracking has
+    // silently diverged from the wire -- a far more dangerous condition
+    // than the lead-gate telemetry it normally reports. Surface it loudly;
+    // treat it as a hard inconsistency, not a recoverable warning.
+    if (deviceValid && pkt.isData != isData) {
+        ASFW_LOG(Isoch,
+                 "IT: TX CADENCE MISMATCH nextIsData=%{public}d pkt.isData=%{public}d "
+                 "txCycle=%{public}u dbc=0x%02x syt=0x%04x -- phase loop will diverge from wire",
+                 isData ? 1 : 0,
+                 pkt.isData ? 1 : 0,
+                 request.transmitCycle,
+                 pkt.dbc,
+                 pkt.isData ? syt : static_cast<uint16_t>(0xFFFF));
+    }
+
     // Producer-side DBC continuity validation (ignore NO-DATA).
     if (pkt.isData) {
         const uint8_t samplesInPkt = static_cast<uint8_t>(assembler_.samplesPerDataPacket());
