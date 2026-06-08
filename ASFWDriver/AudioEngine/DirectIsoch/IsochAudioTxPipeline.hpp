@@ -193,7 +193,7 @@ private:
     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* externalSyncBridge_{nullptr};
     ASFW::AudioEngine::DirectIsoch::TxOutputPhaseLoop txPhaseLoop_{};
     ASFW::AudioEngine::DirectIsoch::OutputPhaseToAudioMap txPhaseMap_{};
-    ASFW::AudioEngine::DirectIsoch::TxOutputPhaseLoop::CycleResult lastPhaseResult_{};
+    ASFW::AudioEngine::DirectIsoch::TxOutputPhaseLoop::Decision lastPhaseResult_{};
     bool txPhaseReadIndexSeeded_{false};
     bool rxTimingUsable_{false};
 
