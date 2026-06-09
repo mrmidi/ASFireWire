@@ -51,12 +51,20 @@ enum CoolScan {
     /// SET WINDOW offsets/extents are then expressed in. coolscan3 sets
     /// `unit_dpi = resx_max` (the optical max, 4000 on the 9000).
     static func modeSelect(_ s: SBP2Session, unitDpi: UInt16) throws -> SCSIResult {
-        // 20-byte parameter list (coolscan3 cs3_mode_select); the unit dpi is a BE
-        // word at offset 18, the LAST field — no trailing bytes follow it. (A stray
-        // 2-byte tail here made it 22 bytes, which mis-sizes the parameter list and
-        // can make the scanner misread the measurement unit → corrupt window units.)
-        var p: [UInt8] = [0, 0, 0, 0, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x03, 0x06, 0, 0]
-        p += be16(unitDpi)   // offset 18..19 → 20 bytes total
+        // 20-byte MODE SELECT(6) parameter list, byte-exact from coolscan3
+        // cs3_mode_select. It is a well-formed SCSI parameter list:
+        //   [0..3]   mode parameter header — byte 3 = block-descriptor length = 0x08
+        //   [4..11]  8-byte block descriptor (ends in 0x01)
+        //   [12..19] mode page: code 0x03, length 0x06, with unit_dpi at [16..17]
+        // CRITICAL: the 0x08 is the block-descriptor-length and MUST sit at offset 3.
+        // A prior version put it at offset 4 (an extra leading 0x00 shifted the whole
+        // list one byte) → the header read BDL=0 and a page code 0x08 / length 0, which
+        // the 9000 rejects with CHECK CONDITION 0x5/0x26 (INVALID FIELD IN PARAM LIST).
+        var p: [UInt8] = [0x00, 0x00, 0x00, 0x08,                        // header (BDL = 8)
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // block descriptor
+                          0x03, 0x06, 0x00, 0x00]                        // mode page 0x03, len 0x06
+        p += be16(unitDpi)   // page data offset 2..3 → list offset 16..17
+        p += [0x00, 0x00]    // list offset 18..19 → 20 bytes total
         return try s.sendSCSI(cdb: [0x15, 0x10, 0x00, 0x00, UInt8(p.count), 0x00],
                               direction: .toTarget, transferLength: UInt32(p.count), outgoing: p)
     }
@@ -319,10 +327,32 @@ enum CoolScan {
                               transferLength: length, timeoutMs: 5_000, captureSense: false)
     }
 
-    // TODO: sendLUT (0x2a 00 03 …), setBoundary (0x2a 00 88 …)
-    //       — sendLUT may be required for "normal" (non-raw) scans; setBoundary is
-    //       for medium-format multi-frame holders. Both deferred: FH-835S 35 mm is
-    //       a single frame, and we want the raw read path proven first.
+    /// SET BOUNDARY (0x2a / byte2 0x88) — define the medium-format frame grid.
+    /// coolscan3's cs3_set_boundary issues this UNCONDITIONALLY before SET WINDOW;
+    /// the 8000/9000 reject SET WINDOW with 0x5/0x26 until a boundary exists (the
+    /// window has no frame to validate against). Each frame is 16 bytes:
+    ///   [yOffset:long][reserved:long][yEnd:long][xBoundary:long]
+    /// Payload = [len:word][n_frames][n_frames] + n_frames×16. The xBoundary/yEnd =
+    /// boundaryX-1 / boundaryY-1 — exactly the 0x270F/0x3623 values seen in EVPD 0xC1.
+    static func setBoundary(_ s: SBP2Session,
+                            frames: [(yOffset: UInt32, yEnd: UInt32, xBoundary: UInt32)]) throws -> SCSIResult {
+        let n = frames.count
+        let len = 4 + n * 16
+        var data: [UInt8] = [UInt8((len >> 8) & 0xff), UInt8(len & 0xff), UInt8(n), UInt8(n)]
+        for f in frames {
+            data += be32(f.yOffset); data += be32(0); data += be32(f.yEnd); data += be32(f.xBoundary)
+        }
+        let cdb: [UInt8] = [0x2a, 0x00, 0x88, 0x00, 0x00, 0x03] + be24(UInt32(len)) + [0x00]
+        return try s.sendSCSI(cdb: cdb, direction: .toTarget,
+                              transferLength: UInt32(len), outgoing: data)
+    }
+
+    /// One frame spanning the whole scannable area (the simplest valid boundary).
+    static func setBoundaryFullFrame(_ s: SBP2Session, _ caps: Capabilities) throws -> SCSIResult {
+        try setBoundary(s, frames: [(yOffset: 0, yEnd: caps.boundaryY &- 1, xBoundary: caps.boundaryX &- 1)])
+    }
+
+    // TODO: sendLUT (0x2a 00 03 …) — may be required for "normal" (non-raw) scans.
 
     // MARK: - Scan orchestration (cs3_scan, minimal proof-of-read path)
 
@@ -373,6 +403,11 @@ enum CoolScan {
             g.logicalHeight = UInt32(rows)
             g.heightDU = UInt32(rows) * g.pitchY
         }
+
+        // 0) RESERVE UNIT — coolscan3 does this in sane_open() before any setup.
+        //    Some firmware rejects MODE SELECT / SET WINDOW on an unreserved unit.
+        //    Best-effort: a target that doesn't require it just returns GOOD.
+        _ = try? reserve(s)
 
         // 1) Wait until the scanner reports ready (film loaded, lamp warm).
         guard try waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (TUR-timeout)") }

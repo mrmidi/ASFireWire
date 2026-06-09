@@ -79,10 +79,18 @@ INQUIRY (EVPD)    12 01 ‹page› 00 ‹len› 00               (in)   // page 
 relevante bits er 0, 120 s timeout.
 
 ### MODE SELECT — sett base-oppløsningsenhet
+Byte-eksakt fra `cs3_mode_select`. Parameterlisten er en velformet SCSI-liste:
+4-byte header (block-descriptor-length = `0x08` på **offset 3**) + 8-byte block
+descriptor + mode page (kode `0x03`, lengde `0x06`) med `unit_dpi` på offset 16–17.
 ```
-15 10 00 00 14 00   (CDB: param-lengde 0x14=20)
-+ param (20B): 00 00 00 00 08 00 00 00 00 00 00 00 00 01 03 06 00 00 ‹unit_dpi:word› 00 00
+CDB (6B):    15 10 00 00 14 00                 (param-lengde 0x14 = 20)
+param (20B): 00 00 00 08 | 00 00 00 00 00 00 00 01 | 03 06 00 00 ‹unit_dpi:word› 00 00
+             └ header ──┘ └ block descriptor ────┘ └ mode page 0x03/len 0x06 ───────┘
 ```
+⚠️ `0x08` MÅ ligge på offset 3 (block-descriptor-length), ikke offset 4. En tidligere
+håndtranskripsjon skjøv `0x08` til offset 4 og droppet hale-`00 00` → 9000 svarer
+CHECK CONDITION `0x5/0x26` (INVALID FIELD IN PARAMETER LIST). coolscan3 sender RESERVE
+UNIT (`16 …`) i `sane_open()` *før* MODE SELECT.
 
 ### Fokus
 ```
