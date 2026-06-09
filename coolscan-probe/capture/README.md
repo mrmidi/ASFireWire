@@ -26,12 +26,16 @@ single 35mm-frame scan, in order:
 - VueScan installed; Source = the FireWire 9000, Media = the 35mm strip holder.
 - **SIP off** (DTrace needs it): `csrutil status` → "disabled".
 
-## Method: DTrace IOFireWireSBP2Lib (see `sbp2-trace.d`)
-macOS routes the CDB/data through IOFireWireSBP2Lib (mapped ORB memory) before DMA,
-so we trace the lib's setters, not IOKit. Steps:
+## Method: DTrace SCSITaskLib (see `scsitask-trace.d`)
+VueScan does NOT use IOFireWireSBP2Lib (verified on Sequoia 15.7.4: vmmap shows no
+FireWire lib in the process). The SBP-2 LUN is bridged in-kernel
+(IOFireWireSerialBusProtocolTransport → IOSCSIPeripheralDeviceNub) and VueScan opens
+a **SCSITaskUserClient** on the nub (IORegistry: `IOUserClientCreator = pid …, VueScan`).
+So we trace SCSITaskLib's CDB/buffer setters instead. (`sbp2-trace.d` is kept for
+apps that do use the SBP-2 plugin directly, e.g. old Nikon Scan.) Steps:
 
 1. `pgrep -x VueScan` to get the pid (launch VueScan first).
-2. `sudo dtrace -qs sbp2-trace.d -p "$(pgrep -x VueScan)" -o capture.txt`
+2. `sudo dtrace -Z -qs scsitask-trace.d -p "$(pgrep -x VueScan)" -o capture.txt`
 3. In VueScan: **Preview** the strip (triggers frame detect + SET BOUNDARY), then
    **Scan ONE frame** at a low resolution. Then Ctrl-C the dtrace.
 4. Inspect `capture.txt` — find the `[CDB …] 2a 00 88 …` (SET BOUNDARY) and its

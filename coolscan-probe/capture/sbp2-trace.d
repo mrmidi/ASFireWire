@@ -29,6 +29,13 @@
 #pragma D option quiet
 #pragma D option bufsize=32m
 #pragma D option dynvarsize=16m
+/* IOFireWireSBP2Lib is a CFPlugin loaded lazily when the app opens the device.
+ * zdefs lets this script compile with zero matching probes; they arm when the
+ * plugin loads. Symbols verified on Sequoia 15.7.4 (nm on the plugin binary):
+ *   IOFireWireSBP2LibORB::setCommandBlock(void*, UInt32)
+ *   IOFireWireSBP2LibORB::setCommandBuffersAsRanges(FWSBP2VirtualRange*, count, dir, off, len)
+ * plus static* wrappers — each call may print twice (wrapper + instance). */
+#pragma D option zdefs
 
 /* CDB: setCommandBlock(self, void *buf, UInt32 len)  →  arg1=buf, arg2=len. */
 pid$target::*etCommandBlock*:entry
@@ -44,8 +51,9 @@ pid$target::*etCommandBuffers*:entry
 {
     self->rng = (uint64_t *)copyin(arg1, 16);
     self->n   = self->rng[1] > 256 ? 256 : self->rng[1];
-    printf("\n[DATA-OUT %s] addr=0x%llx len=%d\n",
-           probefunc, (unsigned long long)self->rng[0], (int)self->rng[1]);
+    /* arg3 = direction (distinguishes data-out from data-in buffers) */
+    printf("\n[DATA %s] dir=%d addr=0x%llx len=%d\n",
+           probefunc, (int)arg3, (unsigned long long)self->rng[0], (int)self->rng[1]);
     tracemem(copyin(self->rng[0], self->n), 256, self->n);
 }
 
