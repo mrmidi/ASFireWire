@@ -15,11 +15,19 @@ void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
     outConfig.sampleRate = 48000;
     outConfig.streamMode = AMDTP::StreamMode::Blocking;
     outConfig.sid = 0; // host transmits on ch0/SID0; the device answers on ch1
-    // Lab default is stereo; bench channel counts come from the device's DICE
-    // TX/RX config registers, not from the profile.
-    outConfig.pcmChannels = 2;
-    outConfig.dbs = 2;
-    outConfig.midiSlots = 0;
+    // Stream shapes confirmed by a Saffire.kext wire capture at 48 kHz:
+    // host→device ch0 = 296 B, dbs 9 (8 audio + 1 MIDI); device→host ch1 =
+    // 552 B, dbs 17 (16 AM824 audio + 1 MIDI). Empty MIDI slots carry
+    // 0x80000000 in both directions.
+    if (direction == DiceStreamDirection::HostToDevice) {
+        outConfig.pcmChannels = 8;
+        outConfig.midiSlots = 1;
+        outConfig.dbs = 9;
+    } else {
+        outConfig.pcmChannels = 16;
+        outConfig.midiSlots = 1;
+        outConfig.dbs = 17;
+    }
     outConfig.framesPerDataPacket = 8; // blocking SYT_INTERVAL at 48 kHz
     outConfig.fdf = 0x02;
     outConfig.fmt = 0x10;

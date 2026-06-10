@@ -229,14 +229,15 @@ void RunVerifierScenarioTests(TestContext& ctx) {
             }
             const uint8_t* payloadBytes =
                 pump.controller.FakeSlotProvider().SlotBytes(index) + 8;
-            const uint32_t payloadSize =
-                packet->framesInPacket * packet->dbs * 4;
 
+            // "Silent" means the PCM slots are zero. Non-PCM slots are not:
+            // the Saffire MIDI placeholder (0x80000000) rides along even in
+            // silence, exactly as on the wire.
             bool allZero = true;
-            for (uint32_t i = 0; i < payloadSize; ++i) {
-                if (payloadBytes[i] != 0) {
-                    allZero = false;
-                    break;
+            for (uint32_t f = 0; f < packet->framesInPacket && allZero; ++f) {
+                for (uint32_t s = 0; s < kChannels && allZero; ++s) {
+                    const uint8_t* q = payloadBytes + (f * packet->dbs + s) * 4;
+                    allZero = (q[0] | q[1] | q[2] | q[3]) == 0;
                 }
             }
 

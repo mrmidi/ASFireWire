@@ -35,12 +35,16 @@ void RunPcmSlotCodecTests(TestContext& ctx) {
     // Raw 24-in-32, big-endian slot: no label, right-justified
     CHECK_EQ_U32(ctx, PcmSlotCodec::EncodeFloat32(1.0f, PcmSlotEncoding::RawSigned24In32BE),
                  0x007FFFFF);
+    // Negative samples sign-extend into the top byte (0xFF), matching the
+    // Saffire.kext host→device wire capture — not zero padding.
     CHECK_EQ_U32(ctx, PcmSlotCodec::EncodeFloat32(-1.0f, PcmSlotEncoding::RawSigned24In32BE),
-                 0x00800001);
+                 0xFF800001);
 
     // Raw 24-in-32, little-endian slot: byte-swapped BE value
     CHECK_EQ_U32(ctx, PcmSlotCodec::EncodeFloat32(1.0f, PcmSlotEncoding::RawSigned24In32LE),
                  0xFFFF7F00);
+    CHECK_EQ_U32(ctx, PcmSlotCodec::EncodeFloat32(-1.0f, PcmSlotEncoding::RawSigned24In32LE),
+                 0x010080FF);
     CHECK_EQ_U32(ctx, PcmSlotCodec::EncodeFloat32(0.0f, PcmSlotEncoding::RawSigned24In32LE),
                  0x00000000);
 

@@ -44,10 +44,9 @@ using namespace ASFW::Driver;
 
 namespace {
 
-constexpr uint32_t kSampleRate = 48000;
-constexpr uint32_t kOutputChannels = 8;
+constexpr uint32_t kSampleRate = 48000; // the ZTS period math below is 48 kHz-only
+constexpr uint32_t kMaxOutputChannels = 32; // bound for the layout array
 constexpr uint32_t kBytesPerSample = sizeof(float);
-constexpr uint32_t kOutputBytesPerFrame = kOutputChannels * kBytesPerSample;
 constexpr uint64_t kZtsPeriodNsNumer = 32000000ull; // 512/48000 s = 32e6/3 ns
 constexpr uint64_t kZtsPeriodNsDenom = 3ull;
 constexpr uint32_t kMaxPreparePerCall = 512; // runaway guard for the pump
@@ -197,24 +196,40 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     ivars->controller->SelectProfile(identity);
     LAB_LOG("init - selected profile for Focusrite (vendor 0x00130e)");
 
+    // Device caps come from the selected profile, not from constants here:
+    // the profile carries the bench-confirmed stream shape and the HAL
+    // format/channel layout must follow it.
+    ASFW::Driver::OutputDeviceCaps caps{};
+    if (!ivars->controller->GetOutputDeviceCaps(caps) ||
+        caps.pcmChannels == 0 || caps.pcmChannels > kMaxOutputChannels) {
+        LAB_LOG("init - GetOutputDeviceCaps failed (pcmChannels = %{public}u)",
+                caps.pcmChannels);
+        return false;
+    }
+    if (caps.sampleRate != kSampleRate) {
+        // NsForPeriodIndex/kZtsPeriodNs* are exact-thirds 48 kHz math; refuse
+        // a profile rate the lab clock chain cannot honor.
+        LAB_LOG("init - profile sample rate %{public}u unsupported by lab clock chain",
+                caps.sampleRate);
+        return false;
+    }
+    LAB_LOG("init - device caps from profile: %{public}u ch @ %{public}u Hz",
+            caps.pcmChannels, caps.sampleRate);
+
     // The lab device reports as a FireWire-transport clock device — that is
     // the contract ASFW will live under (AudioDriverKitTypes.h '1394').
     LAB_LOG("init - setting transport type to FireWire");
     SetTransportType(IOUserAudioTransportType::FireWire);
 
-    // Set up preferred output channel layout (8 discrete channels)
+    // Discrete channel layout sized by the profile caps (CoreAudio discrete
+    // labels are contiguous from Discrete_0).
     LAB_LOG("init - setting preferred output channel layout");
-    IOUserAudioChannelLabel outputChannelLayout[kOutputChannels] = {
-        IOUserAudioChannelLabel::Discrete_0,
-        IOUserAudioChannelLabel::Discrete_1,
-        IOUserAudioChannelLabel::Discrete_2,
-        IOUserAudioChannelLabel::Discrete_3,
-        IOUserAudioChannelLabel::Discrete_4,
-        IOUserAudioChannelLabel::Discrete_5,
-        IOUserAudioChannelLabel::Discrete_6,
-        IOUserAudioChannelLabel::Discrete_7
-    };
-    kern_return_t kr = SetPreferredOutputChannelLayout(outputChannelLayout, kOutputChannels);
+    IOUserAudioChannelLabel outputChannelLayout[kMaxOutputChannels] = {};
+    for (uint32_t ch = 0; ch < caps.pcmChannels; ++ch) {
+        outputChannelLayout[ch] = static_cast<IOUserAudioChannelLabel>(
+            static_cast<uint32_t>(IOUserAudioChannelLabel::Discrete_0) + ch);
+    }
+    kern_return_t kr = SetPreferredOutputChannelLayout(outputChannelLayout, caps.pcmChannels);
     if (kr != kIOReturnSuccess) {
         LAB_LOG("init - SetPreferredOutputChannelLayout failed (kr = 0x%{public}08x)", kr);
     } else {
@@ -246,21 +261,22 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         LAB_LOG("init - SetOutputSafetyOffset set to 0");
     }
 
-    // Set up a basic float32 output stream (8 channels, 48kHz)
-    double sampleRate = kSampleRate;
+    // Float32 output stream shaped by the profile caps.
+    double sampleRate = caps.sampleRate;
     LAB_LOG("init - setting available sample rate to %{public}.1f", sampleRate);
     SetAvailableSampleRates(&sampleRate, 1);
     LAB_LOG("init - setting current sample rate to %{public}.1f", sampleRate);
     SetSampleRate(sampleRate);
 
+    const uint32_t outputBytesPerFrame = caps.pcmChannels * kBytesPerSample;
     IOUserAudioStreamBasicDescription format = {
         .mSampleRate = sampleRate,
         .mFormatID = IOUserAudioFormatID::LinearPCM,
         .mFormatFlags = static_cast<IOUserAudioFormatFlags>(IOUserAudioFormatFlags::FormatFlagIsFloat | IOUserAudioFormatFlags::FormatFlagsNativeEndian),
-        .mBytesPerPacket = kOutputBytesPerFrame,
+        .mBytesPerPacket = outputBytesPerFrame,
         .mFramesPerPacket = 1,
-        .mBytesPerFrame = kOutputBytesPerFrame,
-        .mChannelsPerFrame = kOutputChannels,
+        .mBytesPerFrame = outputBytesPerFrame,
+        .mChannelsPerFrame = caps.pcmChannels,
         .mBitsPerChannel = 32
     };
 
@@ -329,7 +345,7 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     LAB_LOG("init - stream added successfully to device");
 
     LAB_LOG("init - configuring controller output stream");
-    ivars->controller->ConfigureOutputStream(kSampleRate, ivars->outputChannels,
+    ivars->controller->ConfigureOutputStream(caps.sampleRate, ivars->outputChannels,
                                              ivars->ringFrames);
 
     // M2: SYT realism — the controller stamps real SYTs from TxTimingModel
