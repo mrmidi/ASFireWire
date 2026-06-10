@@ -1,8 +1,12 @@
 #include "TestHarness.hpp"
 
+#include "../Core/TxTimingModel.hpp"
 #include "../Core/VirtualAudioDeviceController.hpp"
 #include "../Lab/VerifyingSlotProvider.hpp"
+#include "../Lab/WriteEndTraceReplayer.hpp"
 #include "../Protocols/Audio/DICE/DiceTxStreamEngine.hpp"
+
+#include <cstring>
 
 // Step 6 scenario pump (README, Milestone 1 exit criteria): WriteEnd-shaped
 // schedules driving controller → engine → Verifying(Fake). The regular
@@ -41,24 +45,44 @@ struct LabPump final {
     uint64_t exposedFrames{0};
     uint64_t prepareFailures{0};
 
+    bool timed{false};
+
     LabPump() noexcept : verifier(controller.FakeSlotProvider()) {}
 
-    bool Init() noexcept {
+    bool Init(bool useTiming = false) noexcept {
         if (!controller.Initialize() ||
             !controller.SelectProfile(kFocusriteIdentity) ||
             !controller.ConfigureOutputStream(48000, kChannels, kRingFrames)) {
             return false;
         }
         controller.BindLabSlotProvider(&verifier);
+        if (useTiming) {
+            timed = true;
+            VerifyingSlotProvider::Config config{};
+            config.p5Enabled = true; // M2: data packets must carry real SYTs
+            verifier.Configure(config);
+            controller.EnableLabTiming(Driver::TxTimingModel::Config{});
+        }
         controller.ResetTransportLab(0, 0);
         verifier.Reset();
         return true;
     }
 
-    // Prepare packets until the exposed frame timeline covers endFrame.
+    // Prepare packets until the exposed frame timeline covers endFrame. In
+    // timed mode the simulated bus rides the exposure cursor — the lab analog
+    // of stamping SYT against the packet's projected transmit cycle (the
+    // Saffire FillFirewireBuffers model), not against "now".
     void PrepareCoverage(uint64_t endFrame) noexcept {
         while (exposedFrames < endFrame) {
-            if (!controller.PrepareLabPacket(nextPacketIndex, 0xFFFF, false)) {
+            bool prepared;
+            if (timed) {
+                controller.AdvanceLabTimelineToFrame(exposedFrames);
+                prepared = controller.PrepareLabPacketTimed(nextPacketIndex);
+            } else {
+                prepared =
+                    controller.PrepareLabPacket(nextPacketIndex, 0xFFFF, false);
+            }
+            if (!prepared) {
                 ++prepareFailures;
                 return;
             }
@@ -295,6 +319,91 @@ void RunVerifierScenarioTests(TestContext& ctx) {
             sampleTime += 512;
         }
         CheckAllGreen(ctx, pump);
+    }
+
+    // Scenario G — Milestone 2 timed soak: real SYTs on every data packet,
+    // P1–P5 all green, and the transmit lead pinned at the seed value (the
+    // bus rides the exposure cursor, so peek-to-commit is lockstep: lead
+    // stays exactly at the grafted seed, inside the accept window).
+    {
+        LabPump pump{};
+        CHECK(ctx, pump.Init(true));
+
+        uint64_t sampleTime = 0;
+        for (int i = 0; i < 1000; ++i) {
+            pump.Callback(sampleTime, 512, 0.25f);
+            sampleTime += 512;
+        }
+
+        CheckAllGreen(ctx, pump);
+        const auto& timing = pump.controller.TimingCounters();
+        CHECK(ctx, timing.dataPackets > 60000);
+        CHECK_EQ_U64(ctx, timing.seeds, 1);
+        CHECK_EQ_U64(ctx, timing.tightWarn, 0);
+        CHECK_EQ_U64(ctx, timing.late, 0);
+        CHECK_EQ_U64(ctx, timing.gate, 0);
+        CHECK_EQ_U64(ctx, timing.escalate, 0);
+        CHECK_EQ_U64(ctx, static_cast<uint64_t>(timing.lastLeadTicks), 3248);
+
+        const auto& payload = pump.controller.PayloadCounters();
+        CHECK_EQ_U64(ctx, payload.framesVisited.load(),
+                     payload.framesWritten.load());
+    }
+
+    // Scenario H — trace-driven timed run: a recorded WriteEnd sequence
+    // replayed through the full pipeline (the regression shape Milestone 3's
+    // captured trace will use).
+    {
+        LabPump pump{};
+        CHECK(ctx, pump.Init(true));
+
+        const char* trace =
+            "# sample_time host_time frames\n"
+            "0 1000 512\n"
+            "512 2000 512\n"
+            "1024 3000 480\n"
+            "1504 4000 512\n"
+            "2016 5000 53\n"
+            "2069 6000 512\n";
+        Lab::WriteEndEvent events[8]{};
+        const auto parsed = Lab::WriteEndTraceReplayer::ParseTraceText(
+            trace, std::strlen(trace), events, 8);
+        CHECK_EQ_U64(ctx, parsed.eventCount, 6);
+        CHECK_EQ_U64(ctx, parsed.malformedLines, 0);
+
+        Lab::WriteEndTraceReplayer::Replay(
+            events, parsed.eventCount, [&](const Lab::WriteEndEvent& event) {
+                pump.Callback(event.sampleTime, event.frameCount, 0.25f);
+            });
+
+        CheckAllGreen(ctx, pump);
+        CHECK(ctx, pump.controller.TimingCounters().dataPackets > 0);
+    }
+
+    // Scenario I — restart under timing: counters and the SYT anchor reset
+    // with the stream, then the rerun is green with a fresh single seed.
+    {
+        LabPump pump{};
+        CHECK(ctx, pump.Init(true));
+
+        uint64_t sampleTime = 0;
+        for (int i = 0; i < 8; ++i) {
+            pump.Callback(sampleTime, 512, 0.25f);
+            sampleTime += 512;
+        }
+        CheckAllGreen(ctx, pump);
+
+        pump.controller.ResetTransportLab(0, 0);
+        pump.verifier.Reset();
+        pump.exposedFrames = 0;
+
+        sampleTime = 0;
+        for (int i = 0; i < 8; ++i) {
+            pump.Callback(sampleTime, 512, 0.25f);
+            sampleTime += 512;
+        }
+        CheckAllGreen(ctx, pump);
+        CHECK_EQ_U64(ctx, pump.controller.TimingCounters().seeds, 1);
     }
 }
 

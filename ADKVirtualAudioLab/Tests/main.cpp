@@ -15,6 +15,8 @@ void RunPayloadWriterTests(TestContext& ctx);
 void RunDiceTxEngineTests(TestContext& ctx);
 void RunVerifyingSlotProviderTests(TestContext& ctx);
 void RunVerifierScenarioTests(TestContext& ctx);
+void RunTxTimingModelTests(TestContext& ctx);
+void RunWriteEndTraceReplayerTests(TestContext& ctx);
 
 } // namespace ASFW::LabTests
 
@@ -33,6 +35,8 @@ int main() {
     RunPayloadWriterTests(ctx);
     RunDiceTxEngineTests(ctx);
     RunVerifyingSlotProviderTests(ctx);
+    RunTxTimingModelTests(ctx);
+    RunWriteEndTraceReplayerTests(ctx);
     RunVerifierScenarioTests(ctx);
 
     std::printf("%d checks, %d failures\n", ctx.checks, ctx.failures);

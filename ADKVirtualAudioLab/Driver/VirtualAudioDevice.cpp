@@ -140,10 +140,15 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     }
 
     // Step 6 instrument under real pacing: Verifying(Fake) for the whole run.
+    // P5 enabled — M2 timing stamps real SYTs on every data packet.
     ivars->diagSink = new ASFW::Lab::StickyCounterSink();
-    ivars->verifier = new ASFW::Lab::VerifyingSlotProvider(
-        ivars->controller->FakeSlotProvider(),
-        ASFW::Lab::VerifyingSlotProvider::Config{true, 0x02, ivars->diagSink});
+    {
+        ASFW::Lab::VerifyingSlotProvider::Config verifierConfig{};
+        verifierConfig.diagSink = ivars->diagSink;
+        verifierConfig.p5Enabled = true;
+        ivars->verifier = new ASFW::Lab::VerifyingSlotProvider(
+            ivars->controller->FakeSlotProvider(), verifierConfig);
+    }
     ivars->controller->BindLabSlotProvider(ivars->verifier);
 
     // Pick Saffire for testing
@@ -192,6 +197,11 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
 
     ivars->controller->ConfigureOutputStream(kSampleRate, ivars->outputChannels,
                                              ivars->ringFrames);
+
+    // M2: SYT realism — the controller stamps real SYTs from TxTimingModel
+    // against the simulated timeline (which rides the exposure cursor: the
+    // packet's projected transmit position, per the Saffire model).
+    ivars->controller->EnableLabTiming(ASFW::Driver::TxTimingModel::Config{});
 
     // The ZTS heartbeat timer (armed in StartIO).
     IOTimerDispatchSource* timer = nullptr;
@@ -317,8 +327,10 @@ static void PrepareCoverage(VirtualAudioDevice_IVars* ivars, uint64_t targetFram
 {
     uint32_t prepared = 0;
     while (ivars->exposedFrames < targetFrames && prepared < kMaxPreparePerCall) {
-        if (!ivars->controller->PrepareLabPacket(ivars->nextPacketIndex, 0xFFFF,
-                                                 false)) {
+        // The simulated bus rides the exposure cursor (projected transmit
+        // position), so SYT lead stays at the grafted seed by construction.
+        ivars->controller->AdvanceLabTimelineToFrame(ivars->exposedFrames);
+        if (!ivars->controller->PrepareLabPacketTimed(ivars->nextPacketIndex)) {
             ++ivars->prepareFailures;
             return;
         }
@@ -471,7 +483,7 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
 
         IOLog("ADKLab[dump] verifier: violations=%llu p1_win=%llu p1_run=%llu "
               "p1_idx=%llu p2_dbc=%llu p3_bytes=%llu p3_q0=%llu p3_q1=%llu "
-              "p3_unacq=%llu p4_tile=%llu p4_cnt=%llu\n",
+              "p3_unacq=%llu p4_tile=%llu p4_cnt=%llu p5_step=%llu p5_graft=%llu\n",
               snapshot.TotalViolations(),
               snapshot.Value(VerifierCounterId::kP1CadenceWindowViolation),
               snapshot.Value(VerifierCounterId::kP1CadenceRunViolation),
@@ -482,7 +494,18 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
               snapshot.Value(VerifierCounterId::kP3CipQ1Violation),
               snapshot.Value(VerifierCounterId::kP3UnacquiredPublishViolation),
               snapshot.Value(VerifierCounterId::kP4FrameTilingViolation),
-              snapshot.Value(VerifierCounterId::kP4FrameCountViolation));
+              snapshot.Value(VerifierCounterId::kP4FrameCountViolation),
+              snapshot.Value(VerifierCounterId::kP5SytStepViolation),
+              snapshot.Value(VerifierCounterId::kP5SytGraftViolation));
+
+        if (ivars->controller && ivars->controller->LabTimingEnabled()) {
+            const auto& timing = ivars->controller->TimingCounters();
+            IOLog("ADKLab[dump] timing: data_syts=%llu seeds=%llu tight=%llu "
+                  "late=%llu gate=%llu escalate=%llu last_lead=%lld\n",
+                  timing.dataPackets, timing.seeds, timing.tightWarn,
+                  timing.late, timing.gate, timing.escalate,
+                  timing.lastLeadTicks);
+        }
 
         IOLog("ADKLab[dump] packets: published=%llu data=%llu nodata=%llu "
               "acquire_failures=%llu\n",
