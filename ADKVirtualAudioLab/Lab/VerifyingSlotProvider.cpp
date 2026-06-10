@@ -67,6 +67,8 @@ void VerifyingSlotProvider::Reset() noexcept {
     consecutiveNoData_ = 0;
     windowPackets_ = 0;
     windowDataPackets_ = 0;
+    p5PrevValid_ = false;
+    p5PrevDomainTick_ = 0;
 
     for (auto& counter : counters_) {
         counter.store(0, std::memory_order_relaxed);
@@ -124,6 +126,9 @@ void VerifyingSlotProvider::PublishSlot(const PreparedTxPacket& packet) noexcept
     CheckFrameTiling(packet);
     if (config_.blockingMode) {
         CheckCadence(packet);
+    }
+    if (config_.p5Enabled) {
+        CheckSytDiscipline(packet);
     }
 
     if (inner_ != nullptr) {
@@ -262,6 +267,45 @@ void VerifyingSlotProvider::CheckFrameTiling(
     }
     expectedNextFrame_ = packet.firstAudioFrame + packet.framesInPacket;
     nextFrameValid_ = true;
+}
+
+void VerifyingSlotProvider::CheckSytDiscipline(
+    const PreparedTxPacket& packet) noexcept {
+    // P5 (README, Milestone 2): data SYTs advance by exactly p5StepTicks in
+    // the 16-cycle (49152-tick) domain, with the sub-cycle offset pinned to
+    // the device graft lattice — at 48 kHz blocking (step 4096 = 3072+1024)
+    // the offset walks {graft, graft+1024, graft+2048} so offset mod 1024
+    // stays equal to graft mod 1024. No-data SYT (0xFFFF) is enforced by P3.
+    if (!packet.isData) {
+        return;
+    }
+
+    if (packet.syt == kSytNoInfo) {
+        // A timing-valid run must stamp real SYTs on data packets.
+        Violation(VerifierCounterId::kP5SytStepViolation, packet.packetIndex);
+        p5PrevValid_ = false;
+        return;
+    }
+
+    const uint32_t cycle = (packet.syt >> 12) & 0xFu;
+    const uint32_t offset = packet.syt & 0xFFFu;
+
+    if (offset >= 3072u ||
+        (offset % 1024u) != (config_.p5GraftOffsetTicks % 1024u)) {
+        Violation(VerifierCounterId::kP5SytGraftViolation, packet.packetIndex);
+    }
+
+    const uint32_t domainTick = cycle * 3072u + offset;
+    if (p5PrevValid_) {
+        const uint32_t expected =
+            (p5PrevDomainTick_ + config_.p5StepTicks) % 49152u;
+        if (domainTick != expected) {
+            Violation(VerifierCounterId::kP5SytStepViolation,
+                      packet.packetIndex);
+        }
+    }
+    p5PrevDomainTick_ = domainTick;
+    p5PrevValid_ = true;
 }
 
 void VerifyingSlotProvider::CheckCadence(const PreparedTxPacket& packet) noexcept {
