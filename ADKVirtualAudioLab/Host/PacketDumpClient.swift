@@ -17,6 +17,7 @@ enum PacketDumpWire {
     static let userClientType: UInt32 = 0x4C44_4247 // 'LDBG'
     static let selectorDumpPackets: UInt32 = 0
     static let anchorLatest: UInt64 = .max
+    static let anchorPayload: UInt64 = .max - 1
 
     static let flagIsData: UInt32 = 1 << 0
     static let flagPublished: UInt32 = 1 << 1
@@ -39,6 +40,8 @@ struct PacketDumpHeader {
     var framesWithoutPacket: UInt64 = 0
     var framesOutsidePacket: UInt64 = 0
     var framesRacedReuse: UInt64 = 0
+    var expectedNextSampleTime: UInt64 = 0
+    var expectedSampleTimeValid: Bool = false
 
     var ztsSampleTime: UInt64 { periodIndex * UInt64(ztsPeriodFrames) }
 }
@@ -195,6 +198,7 @@ final class PacketDumpClient {
     func dump(count: UInt32 = 4,
               anchor: UInt64 = PacketDumpWire.anchorLatest) throws -> PacketDump {
         try ensureConnection()
+        defer { close() }
 
         let clamped = min(max(count, 1), PacketDumpWire.maxRecords)
         var scalars: [UInt64] = [UInt64(clamped), anchor]
@@ -258,6 +262,8 @@ final class PacketDumpClient {
             dump.header.framesWithoutPacket = u64(88)
             dump.header.framesOutsidePacket = u64(96)
             dump.header.framesRacedReuse = u64(104)
+            dump.header.expectedNextSampleTime = u64(112)
+            dump.header.expectedSampleTimeValid = u32(120) != 0
 
             for i in 0..<recordCount {
                 let base = PacketDumpWire.headerSize + i * stride
