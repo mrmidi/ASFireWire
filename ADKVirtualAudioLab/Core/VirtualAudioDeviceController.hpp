@@ -72,6 +72,9 @@ public:
     const Lab::FakeIsochTxSlotProvider& FakeSlotProvider() const noexcept;
     Lab::FakeIsochTxSlotProvider& FakeSlotProvider() noexcept;
 
+    // Read-only timeline view for the diagnostic dump (work-queue confined).
+    const Protocols::Audio::AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
+
 private:
     Protocols::Audio::DICE::Profiles::FocusriteSaffireProfile focusriteProfile_{};
     Protocols::Audio::DICE::DiceProfileRegistry registry_{};

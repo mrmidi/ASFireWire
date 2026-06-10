@@ -6,5 +6,9 @@
 	<false/>
 	<key>com.apple.developer.system-extension.install</key>
 	<true/>
+	<key>com.apple.developer.driverkit.userclient-access</key>
+	<array>
+		<string>net.mrmidi.ASFW.ADKVirtualAudioLab</string>
+	</array>
 </dict>
 </plist>

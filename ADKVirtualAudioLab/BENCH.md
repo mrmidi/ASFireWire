@@ -90,9 +90,37 @@ ADKLab[dump] writeend: count, frames, min/max io size, sample_breaks, first_samp
                        first_host_delta (ticks from StartIO seed), other_ops
 ADKLab[dump] verifier: violations + the P1..P4 breakdown (Step 6 ids)
 ADKLab[dump] packets:  published/data/nodata/acquire_failures
-ADKLab[dump] payload:  visited/written/without_packet/outside_packet
+ADKLab[dump] payload:  visited/written/without_packet/outside_packet/raced_reuse
 ADKLab[free] ...:      io_after_stop / timer_after_stop (O2, logged at teardown)
 ```
+
+## Packet inspector (live dumps)
+
+The host app embeds a packet inspector below the activation controls. **Dump**
+(or ⌘D) snapshots the most recent N packets (8/16/32/64) from the running
+dext — any time, including mid-stream. The capture is one `DispatchSync` onto
+the dext work queue (~µs, serialized with the pump); the RT path is never
+touched, so it is soak-safe.
+
+Plumbing: `LabDiagUserClient` (connection type `'LDBG'`, selector 0) returns a
+`PacketDumpBlob` (`Lab/PacketDumpBlob.hpp` is the layout contract, mirrored in
+`Host/PacketDumpClient.swift`). The host app needs the
+`com.apple.developer.driverkit.userclient-access` entitlement (already in
+`ADKLabHost.entitlements`); on the SIP-on lane the provisioning profile must
+carry it too.
+
+Reading the inspector:
+- Cadence strip: blue **D** = data, gray **N** = no-data, red **·** = evicted
+  from the 512-deep ring (older than ~85 ms at 48 k).
+- Detail pane: decoded CIP (sid/dbs/fn/qpc/sph/dbc, fmt/fdf/syt) plus the
+  frames×channels slot grid — hex wire word and decoded raw-24 float per cell;
+  zero slots are dimmed.
+- "LIVE" on a record means the slot is still `ExposedForAudio`: the RT writer
+  may land PCM into those bytes after the copy. Published/Completed records
+  are frozen.
+- The context line carries the capture-time cursors (zts sample time, exposed
+  frames, writeEnd count) and the payload counters, so a dump is
+  interpretable as a point on the stream timeline.
 
 ## Mapping counters → README questions
 

@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.1</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VirtualAudioDriver</key>
@@ -42,6 +42,13 @@
 				<string>IOUserUserClient</string>
 				<key>IOUserClass</key>
 				<string>IOUserAudioDriverUserClient</string>
+			</dict>
+			<key>LabDiagUserClientProperties</key>
+			<dict>
+				<key>IOClass</key>
+				<string>IOUserUserClient</string>
+				<key>IOUserClass</key>
+				<string>LabDiagUserClient</string>
 			</dict>
 		</dict>
 	</dict>

@@ -39,6 +39,13 @@ public:
     // period's packets (the lab's stand-in for a hardware ring interrupt).
     virtual void ZtsTimerOccurred(OSAction* action,
                                   uint64_t time) TYPE(IOTimerDispatchSource::TimerOccurred);
+
+    // Inspector dump: snapshot up to in_count recent packets (ending at
+    // in_anchor, ~0 = latest) into a PacketDumpBlob. Dispatches onto the
+    // work queue internally — callable from the diag user client.
+    virtual kern_return_t CopyPacketDump(uint32_t in_count,
+                                         uint64_t in_anchor,
+                                         OSData** out_data) LOCALONLY;
 };
 
 #endif

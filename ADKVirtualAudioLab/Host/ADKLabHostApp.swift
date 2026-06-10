@@ -12,7 +12,7 @@ struct ADKLabHostApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 420, minHeight: 220)
+                .frame(minWidth: 760, minHeight: 560)
         }
     }
 }
@@ -38,9 +38,14 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
-            Text("After activation, the virtual device appears in Audio MIDI Setup. Start playback at it, then stop — the dext dumps verifier and O/C counters at StopIO (see BENCH.md).")
+            Text("After activation, the virtual device appears in Audio MIDI Setup. Start playback at it, then stop — the dext dumps verifier and O/C counters at StopIO (see BENCH.md). The inspector below snapshots recent packets on demand (⌘D) without touching the streaming path.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+
+            Divider()
+
+            PacketInspectorView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(20)
     }

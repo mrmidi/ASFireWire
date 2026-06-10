@@ -9,6 +9,7 @@
 
 #define LAB_LOG(fmt, ...) os_log(OS_LOG_DEFAULT, "[ADKLab] " fmt, ##__VA_ARGS__)
 #include "../Core/VirtualAudioDeviceController.hpp"
+#include "../Lab/PacketDumpBlob.hpp"
 #include "../Lab/StickyCounterSink.hpp"
 #include "../Lab/VerifyingSlotProvider.hpp"
 
@@ -712,6 +713,64 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
     });
 
     return kr;
+}
+
+kern_return_t VirtualAudioDevice::CopyPacketDump(uint32_t in_count,
+                                                 uint64_t in_anchor,
+                                                 OSData** out_data)
+{
+    if (out_data == nullptr) {
+        return kIOReturnBadArgument;
+    }
+    *out_data = nullptr;
+    if (ivars == nullptr || ivars->controller == nullptr ||
+        ivars->workQueue.get() == nullptr) {
+        return kIOReturnNotReady;
+    }
+
+    const uint32_t count =
+        (in_count == 0) ? ASFW::Lab::kPacketDumpDefaultRecords
+        : (in_count > ASFW::Lab::kPacketDumpMaxRecords)
+            ? ASFW::Lab::kPacketDumpMaxRecords
+            : in_count;
+    const size_t capacity = ASFW::Lab::PacketDumpBlobSize(count);
+
+    uint8_t* buffer = IONewZero(uint8_t, capacity);
+    if (buffer == nullptr) {
+        return kIOReturnNoMemory;
+    }
+
+    // The copy runs on the work queue: serialized with the packet pump, so
+    // slot metadata is consistent without touching the RT path at all.
+    __block size_t blobSize = 0;
+    auto ivarsPtr = ivars;
+    ivars->workQueue->DispatchSync(^(){
+        ASFW::Lab::PacketDumpContext context{};
+        context.hostTimeTicks = mach_absolute_time();
+        context.periodIndex = ivarsPtr->periodIndex;
+        context.ztsPeriodFrames = GetZeroTimestampPeriod();
+        context.ioRunning =
+            ivarsPtr->ioRunning.load(std::memory_order_relaxed);
+        context.exposedFrames = ivarsPtr->exposedFrames;
+        context.nextPacketIndex = ivarsPtr->nextPacketIndex;
+        context.prepareFailures = ivarsPtr->prepareFailures;
+        context.writeEndCount =
+            ivarsPtr->writeEndCount.load(std::memory_order_relaxed);
+
+        blobSize = ASFW::Lab::BuildPacketDumpBlob(
+            ivarsPtr->controller->FakeSlotProvider(),
+            ivarsPtr->controller->Timeline(),
+            ivarsPtr->controller->PayloadCounters(), context, count,
+            in_anchor, buffer, capacity);
+    });
+
+    kern_return_t result = kIOReturnInternalError;
+    if (blobSize != 0) {
+        *out_data = OSData::withBytes(buffer, static_cast<uint32_t>(blobSize));
+        result = (*out_data != nullptr) ? kIOReturnSuccess : kIOReturnNoMemory;
+    }
+    IODelete(buffer, uint8_t, capacity);
+    return result;
 }
 
 kern_return_t VirtualAudioDevice::PerformDeviceConfigurationChange(uint64_t change_action,

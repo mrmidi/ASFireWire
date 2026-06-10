@@ -173,4 +173,9 @@ VirtualAudioDeviceController::FakeSlotProvider() noexcept {
     return fakeSlotProvider_;
 }
 
+const Protocols::Audio::AMDTP::AmdtpPacketTimeline&
+VirtualAudioDeviceController::Timeline() const noexcept {
+    return txEngine_.Timeline();
+}
+
 } // namespace ASFW::Driver
