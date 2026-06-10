@@ -29,7 +29,9 @@
 			<key>IOMatchCategory</key>
 			<string>VirtualAudioDriver</string>
 			<key>IOProviderClass</key>
-			<string>IOUserService</string>
+			<string>IOUserResources</string>
+			<key>IOResourceMatch</key>
+			<string>IOKit</string>
 			<key>IOUserClass</key>
 			<string>VirtualAudioDriver</string>
 			<key>IOUserServerName</key>
@@ -37,6 +39,6 @@
 		</dict>
 	</dict>
 	<key>OSBundleUsageDescription</key>
-	<string></string>
+	<string>ADKVirtualAudioLab — hardware-free AudioDriverKit research dext for the ASFW audio path.</string>
 </dict>
 </plist>
