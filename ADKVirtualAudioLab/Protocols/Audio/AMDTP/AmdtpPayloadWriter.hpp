@@ -13,6 +13,10 @@ struct AmdtpPayloadWriterCounters final {
     std::atomic<uint64_t> framesWritten{0};
     std::atomic<uint64_t> framesWithoutPacket{0};
     std::atomic<uint64_t> framesOutsidePacket{0};
+    // Overlap diagnostic, not a partition bucket: frames already counted in
+    // framesWritten whose slot was reused while the payload was being
+    // written (detected by the post-write generation recheck).
+    std::atomic<uint64_t> framesRacedReuse{0};
 };
 
 class AmdtpPayloadWriter final {

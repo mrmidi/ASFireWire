@@ -8,10 +8,14 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    (packetIndex % slotCount_) is internal to the timeline.
 // 2. FindSlotForAudioFrame is a bounded scan: the frame→slot mapping is not
 //    arithmetic in blocking mode (no-data ring positions carry zero frames).
-// 3. Reusing a ring position bumps the slot's generation counter so a stale
-//    reader that raced the wrap can detect the mismatch. Single-queue use
-//    today makes this nearly moot; it becomes load-bearing across the
-//    audio↔isoch boundary after graduation.
+// 3. The generation counter is a per-slot seqlock sequence (odd while a
+//    mutation is in flight, even when stable). It is load-bearing NOW: the
+//    ADK IO handler runs on a real-time thread while the ZTS-timer pump
+//    rewrites slots on the work queue. The RT side must read slots only via
+//    SnapshotSlotForAudioFrame, which validates the sequence around a field
+//    copy — re-reading a live slot after lookup is exactly the race that
+//    produced the M3 WriteBE32 wild-pointer crash (stale range check, then
+//    a reused slot's newer firstAudioFrame underflowing frameInPacket).
 // 4. State ownership: the timeline owns Empty→ExposedForAudio (expose) and
 //    retirement; the provider path owns →Published. No-data ring positions go
 //    straight to Completed and are invisible to frame lookup.
@@ -21,17 +25,31 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    (at/beyond the mark) versus "no longer writable" (below it). Cleared
 //    only by Reset()/AttachSlots().
 //
-// Ordering contract: slot fields are plain data, published by the release
-// store of `state` after the fields are written, and observed under the
-// acquire load of `state` before the fields are read.
+// Ordering contract (Linux-style seqlock; the slot fields stay plain data):
+// every mutation is bracketed by BeginSlotWrite (generation++ to odd, then a
+// release fence) and EndSlotWrite (release store back to even). A concurrent
+// snapshot reader loads generation (acquire), copies the fields, issues an
+// acquire fence, and re-loads generation — equal-and-even means the copy is
+// consistent. Torn intermediate field reads are possible during a race but
+// are discarded by the recheck; they never reach the caller.
+
+void AmdtpPacketTimeline::BeginSlotWrite(PacketTimelineSlot& slot) noexcept {
+    slot.generation.fetch_add(1, std::memory_order_relaxed); // now odd
+    std::atomic_thread_fence(std::memory_order_release);
+}
+
+void AmdtpPacketTimeline::EndSlotWrite(PacketTimelineSlot& slot) noexcept {
+    slot.generation.fetch_add(1, std::memory_order_release); // even again
+}
 
 void AmdtpPacketTimeline::Reset() noexcept {
-    exposedFrameEnd_ = 0;
+    exposedFrameEnd_.store(0, std::memory_order_relaxed);
     if (slots_ == nullptr) {
         return;
     }
     for (uint32_t i = 0; i < slotCount_; ++i) {
         PacketTimelineSlot& slot = slots_[i];
+        BeginSlotWrite(slot);
         slot.packetIndex = 0;
         slot.packetBytes = nullptr;
         slot.packetCapacityBytes = 0;
@@ -40,8 +58,8 @@ void AmdtpPacketTimeline::Reset() noexcept {
         slot.firstAudioFrame = 0;
         slot.framesInPacket = 0;
         slot.dbs = 0;
-        slot.generation.store(0, std::memory_order_relaxed);
-        slot.state.store(PacketSlotState::Empty, std::memory_order_release);
+        slot.state.store(PacketSlotState::Empty, std::memory_order_relaxed);
+        EndSlotWrite(slot);
     }
 }
 
@@ -71,12 +89,7 @@ bool AmdtpPacketTimeline::ExposeDataPacket(const PreparedTxPacket& packet,
 
     PacketTimelineSlot& slot = slots_[packet.packetIndex % slotCount_];
 
-    // Ring-position reuse: invalidate the previous occupant first.
-    if (slot.state.load(std::memory_order_relaxed) != PacketSlotState::Empty) {
-        slot.generation.fetch_add(1, std::memory_order_relaxed);
-        slot.state.store(PacketSlotState::Empty, std::memory_order_release);
-    }
-
+    BeginSlotWrite(slot);
     slot.packetIndex = packet.packetIndex;
     slot.packetBytes = packetBytes;
     slot.packetCapacityBytes = packetCapacityBytes;
@@ -85,12 +98,12 @@ bool AmdtpPacketTimeline::ExposeDataPacket(const PreparedTxPacket& packet,
     slot.firstAudioFrame = packet.firstAudioFrame;
     slot.framesInPacket = packet.framesInPacket;
     slot.dbs = packet.dbs;
-
-    slot.state.store(PacketSlotState::ExposedForAudio, std::memory_order_release);
+    slot.state.store(PacketSlotState::ExposedForAudio, std::memory_order_relaxed);
+    EndSlotWrite(slot);
 
     const uint64_t frameEnd = packet.firstAudioFrame + packet.framesInPacket;
-    if (frameEnd > exposedFrameEnd_) {
-        exposedFrameEnd_ = frameEnd;
+    if (frameEnd > exposedFrameEnd_.load(std::memory_order_relaxed)) {
+        exposedFrameEnd_.store(frameEnd, std::memory_order_release);
     }
     return true;
 }
@@ -101,11 +114,7 @@ void AmdtpPacketTimeline::MarkNoDataPacket(uint32_t packetIndex) noexcept {
     }
     PacketTimelineSlot& slot = slots_[packetIndex % slotCount_];
 
-    if (slot.state.load(std::memory_order_relaxed) != PacketSlotState::Empty) {
-        slot.generation.fetch_add(1, std::memory_order_relaxed);
-        slot.state.store(PacketSlotState::Empty, std::memory_order_release);
-    }
-
+    BeginSlotWrite(slot);
     slot.packetIndex = packetIndex;
     slot.packetBytes = nullptr;
     slot.packetCapacityBytes = 0;
@@ -114,9 +123,9 @@ void AmdtpPacketTimeline::MarkNoDataPacket(uint32_t packetIndex) noexcept {
     slot.firstAudioFrame = 0;
     slot.framesInPacket = 0;
     slot.dbs = 0;
-
     // Retired immediately: never enters frame lookup.
-    slot.state.store(PacketSlotState::Completed, std::memory_order_release);
+    slot.state.store(PacketSlotState::Completed, std::memory_order_relaxed);
+    EndSlotWrite(slot);
 }
 
 const PacketTimelineSlot*
@@ -148,6 +157,55 @@ AmdtpPacketTimeline::FindSlotForAudioFrame(uint64_t absoluteFrame) noexcept {
             absoluteFrame));
 }
 
+bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
+    uint64_t absoluteFrame, PacketSlotSnapshot& out) const noexcept {
+    if (slots_ == nullptr) {
+        return false;
+    }
+    for (uint32_t i = 0; i < slotCount_; ++i) {
+        const PacketTimelineSlot& slot = slots_[i];
+
+        const uint32_t gen = slot.generation.load(std::memory_order_acquire);
+        if ((gen & 1u) != 0) {
+            continue; // mutation in flight: this slot is being rewritten
+        }
+
+        const PacketSlotState state = slot.state.load(std::memory_order_relaxed);
+        const bool isData = slot.isData;
+        uint8_t* packetBytes = slot.packetBytes;
+        const uint32_t packetSizeBytes = slot.packetSizeBytes;
+        const uint64_t firstAudioFrame = slot.firstAudioFrame;
+        const uint32_t framesInPacket = slot.framesInPacket;
+        const uint32_t dbs = slot.dbs;
+
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (slot.generation.load(std::memory_order_relaxed) != gen) {
+            continue; // rewritten under us: the copy may be torn, discard it
+        }
+
+        if (state != PacketSlotState::ExposedForAudio || !isData) {
+            continue;
+        }
+        if (absoluteFrame < firstAudioFrame ||
+            absoluteFrame >= firstAudioFrame + framesInPacket) {
+            continue;
+        }
+        if (packetBytes == nullptr || dbs == 0) {
+            continue;
+        }
+
+        out.slot = &slot;
+        out.generation = gen;
+        out.packetBytes = packetBytes;
+        out.packetSizeBytes = packetSizeBytes;
+        out.firstAudioFrame = firstAudioFrame;
+        out.framesInPacket = framesInPacket;
+        out.dbs = dbs;
+        return true;
+    }
+    return false;
+}
+
 const PacketTimelineSlot*
 AmdtpPacketTimeline::SlotByIndex(uint32_t packetIndex) const noexcept {
     if (slots_ == nullptr) {
@@ -174,7 +232,7 @@ uint32_t AmdtpPacketTimeline::SlotCount() const noexcept {
 }
 
 uint64_t AmdtpPacketTimeline::ExposedFrameEnd() const noexcept {
-    return exposedFrameEnd_;
+    return exposedFrameEnd_.load(std::memory_order_relaxed);
 }
 
 } // namespace ASFW::Protocols::Audio::AMDTP

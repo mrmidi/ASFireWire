@@ -437,6 +437,37 @@ void RunPayloadWriterTests(TestContext& ctx) {
         CHECK_EQ_U64(ctx, s.outsidePacket, 0);
         CHECK(ctx, Balanced(s));
         CHECK_EQ_U64(ctx, f.timeline.ExposedFrameEnd(), 600000);
+        // No concurrent pump in the harness: the reuse-race diagnostic
+        // must stay silent across the whole run.
+        CHECK_EQ_U64(ctx, f.writer.Counters().framesRacedReuse.load(), 0);
+    }
+
+    // --- Seqlock guard: a slot mid-rewrite is unwritable, not a crash ---
+    {
+        WriterFixture f;
+        CHECK(ctx, f.Setup(MakeConfig48kBlocking(2, 0), AmdtpTxPolicy{}));
+        CHECK(ctx, f.PrepareCycles(2)); // frames 0..7 exposed
+
+        // Simulate the pump caught mid-mutation: odd sequence on the slot.
+        f.timelineSlots[1].generation.fetch_add(1);
+
+        float host[8 * 2];
+        FillHostWindow(host, 0, 8, 2);
+        const HostAudioBufferView view{host, 0, 8, 1024, 2};
+        f.writer.WriteFloat32Interleaved(view);
+
+        CounterSnapshot s = Snap(f.writer.Counters());
+        CHECK_EQ_U64(ctx, s.written, 0);
+        CHECK_EQ_U64(ctx, s.outsidePacket, 8); // below high-water mark = late
+        CHECK(ctx, Balanced(s));
+
+        // Mutation finishes (even again): the same window now lands.
+        f.timelineSlots[1].generation.fetch_add(1);
+        f.writer.WriteFloat32Interleaved(view);
+        s = Snap(f.writer.Counters());
+        CHECK_EQ_U64(ctx, s.written, 8);
+        CHECK(ctx, Balanced(s));
+        CHECK_EQ_U64(ctx, f.writer.Counters().framesRacedReuse.load(), 0);
     }
 }
 

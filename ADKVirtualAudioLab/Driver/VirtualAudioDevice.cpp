@@ -35,6 +35,11 @@ using namespace ASFW::Driver;
 // - O2 instrumentation: the IO block keeps the SDK-documented raw ivars
 //   capture; ioRunning gates it and late fires are counted instead of
 //   crashing, so the lifecycle question is answered with a counter.
+// - RT discipline (post-M3 crash fix): the ring is mapped once in init()
+//   and its raw base cached before SetIOOperationHandler; the IO block uses
+//   only cached state and is fully gated by ioRunning; StartIO does all
+//   driver-side prep first and calls super last; slot access on the RT side
+//   goes through the timeline's generation seqlock (see AmdtpPacketTimeline).
 
 namespace {
 
@@ -77,6 +82,11 @@ struct VirtualAudioDevice_IVars
     ASFW::Lab::VerifyingSlotProvider* verifier{nullptr};
     ASFW::Lab::StickyCounterSink* diagSink{nullptr};
 
+    // Cached IO-path state, per the SetIOOperationHandler contract (RT
+    // thread, cached/captured info only): all four are set in init() before
+    // the handler is registered and never mutated afterwards — the mapping
+    // lives for the device lifetime, so no Start/Stop lifecycle race.
+    float* ringBase{nullptr};
     uint32_t outputBytesPerFrame{0};
     uint32_t outputChannels{0};
     uint32_t ringFrames{0};
@@ -281,6 +291,21 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     }
     LAB_LOG("init - IOBufferMemoryDescriptor created successfully. Length: %{public}u bytes", bufferSize);
 
+    // Map the ring here, before SetIOOperationHandler ever runs: the RT IO
+    // callback must use only cached state, and StartIO must not be the first
+    // place the buffer becomes reachable (ADK contract: prepare IO state
+    // before super::StartIO).
+    LAB_LOG("init - creating memory mapping for output ring");
+    kr = buffer->CreateMapping(0, 0, 0, 0, 0, ivars->outputMemoryMap.attach());
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - CreateMapping failed (kr = 0x%{public}08x)", kr);
+        return false;
+    }
+    ivars->ringBase = reinterpret_cast<float*>(
+        ivars->outputMemoryMap->GetAddress() + ivars->outputMemoryMap->GetOffset());
+    LAB_LOG("init - output ring mapped: address = 0x%{public}llx, length = %{public}llu bytes",
+            ivars->outputMemoryMap->GetAddress(), ivars->outputMemoryMap->GetLength());
+
     LAB_LOG("init - creating output stream object");
     ivars->outputStream = IOUserAudioStream::Create(in_driver, IOUserAudioStreamDirection::Output, buffer.get());
     if (!ivars->outputStream) {
@@ -340,7 +365,10 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     {
         if (in_io_operation == IOUserAudioIOOperationWriteEnd) {
             if (!ivarsPtr->ioRunning.load(std::memory_order_relaxed)) {
+                // Late/early callback outside the IO window: count it and do
+                // nothing else — driver-side state may be mid-reset.
                 ivarsPtr->ioAfterStop.fetch_add(1, std::memory_order_relaxed);
+                return kIOReturnSuccess;
             }
 
             // C3 shape instrumentation (RT-safe: counters only).
@@ -373,16 +401,18 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                 in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
             ivarsPtr->expectedSampleTimeValid.store(true, std::memory_order_relaxed);
 
-            if (ivarsPtr->controller && ivarsPtr->outputMemoryMap) {
-                float* floatBuffer = reinterpret_cast<float*>(ivarsPtr->outputMemoryMap->GetAddress() + ivarsPtr->outputMemoryMap->GetOffset());
-                uint32_t ringFrames = static_cast<uint32_t>(ivarsPtr->outputMemoryMap->GetLength() / ivarsPtr->outputBytesPerFrame);
-                uint32_t offsetFrames = static_cast<uint32_t>(in_sample_time % ringFrames);
+            // Cached-only IO state (no IOMemoryMap deref on the RT thread).
+            if (ivarsPtr->controller && ivarsPtr->ringBase &&
+                ivarsPtr->ringFrames != 0) {
+                const uint32_t offsetFrames =
+                    static_cast<uint32_t>(in_sample_time % ivarsPtr->ringFrames);
 
                 ASFW::Protocols::Audio::AMDTP::HostAudioBufferView outputView {
-                    .interleavedFloat32 = &floatBuffer[offsetFrames * ivarsPtr->outputChannels],
+                    .interleavedFloat32 =
+                        &ivarsPtr->ringBase[offsetFrames * ivarsPtr->outputChannels],
                     .firstFrame = in_sample_time,
                     .frameCount = in_io_buffer_frame_size,
-                    .frameCapacity = ringFrames,
+                    .frameCapacity = ivarsPtr->ringFrames,
                     .channels = ivarsPtr->outputChannels
                 };
 
@@ -499,36 +529,11 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
 
     __block kern_return_t kr = kIOReturnSuccess;
     ivars->workQueue->DispatchSync(^(){
-        LAB_LOG("StartIO - calling super::StartIO");
-        kr = super::StartIO(in_flags);
-        if (kr != kIOReturnSuccess) {
-            LAB_LOG("StartIO - super::StartIO failed (kr = 0x%{public}08x)", kr);
-            return;
-        }
-        LAB_LOG("StartIO - super::StartIO succeeded");
-
-        if (ivars->outputStream) {
-            LAB_LOG("StartIO - getting output stream memory descriptor");
-            auto buffer = ivars->outputStream->GetIOMemoryDescriptor();
-            if (buffer) {
-                uint64_t bufferLength = 0;
-                buffer->GetLength(&bufferLength);
-                LAB_LOG("StartIO - creating memory mapping for output stream (length = %{public}llu bytes)", bufferLength);
-                kern_return_t mapKr = buffer->CreateMapping(0, 0, 0, 0, 0, ivars->outputMemoryMap.attach());
-                if (mapKr != kIOReturnSuccess) {
-                    LAB_LOG("StartIO - CreateMapping failed (kr = 0x%{public}08x)", mapKr);
-                    kr = mapKr;
-                    return;
-                }
-                LAB_LOG("StartIO - output memory map created: address = 0x%{public}llx, offset = %{public}llu, length = %{public}llu bytes",
-                        ivars->outputMemoryMap->GetAddress(), ivars->outputMemoryMap->GetOffset(), ivars->outputMemoryMap->GetLength());
-            } else {
-                LAB_LOG("StartIO - output stream has no memory descriptor");
-                kr = kIOReturnInternalError;
-                return;
-            }
-        } else {
-            LAB_LOG("StartIO - output stream is null");
+        // ADK contract: do all driver-side start work first and call
+        // super::StartIO last (it flips the device's IO state). The ring
+        // mapping was created in init(), so nothing to map here.
+        if (ivars->ringBase == nullptr) {
+            LAB_LOG("StartIO - output ring is not mapped");
             kr = kIOReturnInternalError;
             return;
         }
@@ -571,13 +576,27 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
             PrepareCoverage(ivars, 3ull * GetZeroTimestampPeriod());
         }
 
+        // Open the RT gate before super so the first WriteEnds are accepted,
+        // then let super flip the device IO state.
         ivars->ioRunning.store(true, std::memory_order_relaxed);
+
+        LAB_LOG("StartIO - calling super::StartIO");
+        kr = super::StartIO(in_flags);
+        if (kr != kIOReturnSuccess) {
+            LAB_LOG("StartIO - super::StartIO failed (kr = 0x%{public}08x)", kr);
+            ivars->ioRunning.store(false, std::memory_order_relaxed);
+            return;
+        }
+        LAB_LOG("StartIO - super::StartIO succeeded");
+
+        // Arm the wrap timer only once IO actually started; the t=0 anchor
+        // above already seeds the clock chain.
         ivars->periodIndex = 1;
         const uint64_t deadline =
             ivars->startHostTime +
             ivars->timebase.NsToTicks(NsForPeriodIndex(1));
         const uint64_t leeway = ivars->timebase.NsToTicks(500000);
-        
+
         LAB_LOG("StartIO - arming ZTS timer for first deadline = %{public}llu ticks (leeway = %{public}llu)", deadline, leeway);
         if (ivars->ztsTimer) {
             ivars->ztsTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline,
@@ -608,8 +627,9 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
             LAB_LOG("StopIO - super::StopIO succeeded");
         }
 
-        LAB_LOG("StopIO - resetting output memory map");
-        ivars->outputMemoryMap.reset();
+        // The ring mapping is deliberately NOT torn down here: a late RT
+        // WriteEnd may still be executing against the cached base pointer.
+        // The mapping lives until free() (the ioRunning gate stops new work).
 
         // ---- M3 dump (StopIO may take as long as necessary) ----
         const auto snapshot = ivars->verifier ? ivars->verifier->Snapshot()
@@ -681,11 +701,13 @@ kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
         if (ivars->controller) {
             const auto& payload = ivars->controller->PayloadCounters();
             LAB_LOG("dump payload: visited=%{public}llu written=%{public}llu "
-                    "without_packet=%{public}llu outside_packet=%{public}llu",
+                    "without_packet=%{public}llu outside_packet=%{public}llu "
+                    "raced_reuse=%{public}llu",
                     payload.framesVisited.load(std::memory_order_relaxed),
                     payload.framesWritten.load(std::memory_order_relaxed),
                     payload.framesWithoutPacket.load(std::memory_order_relaxed),
-                    payload.framesOutsidePacket.load(std::memory_order_relaxed));
+                    payload.framesOutsidePacket.load(std::memory_order_relaxed),
+                    payload.framesRacedReuse.load(std::memory_order_relaxed));
         }
     });
 
