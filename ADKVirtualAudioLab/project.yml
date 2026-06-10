@@ -2,7 +2,7 @@ name: ADKVirtualAudioLab
 options:
   bundleIdPrefix: net.mrmidi.ASFW
 targets:
-  ADKVirtualAudioLab:
+  net.mrmidi.ASFW.ADKVirtualAudioLab:
     type: com.apple.product-type.driver-extension
     platform: macOS
     deploymentTarget: "15.0"
@@ -16,10 +16,13 @@ targets:
     settings:
       SDKROOT: driverkit
       DEXT_INSTALL_PATH: /System/Library/DriverExtensions
-      CODE_SIGNING_ALLOWED: NO
-      CODE_SIGNING_REQUIRED: NO
-      CODE_SIGN_IDENTITY: ""
-      CODE_SIGN_ENTITLEMENTS: ""
+      AD_HOC_CODE_SIGNING_ALLOWED: YES
+      DEVELOPMENT_TEAM: F6YA6B56LR
+      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: Driver/ADKVirtualAudioLab.entitlements
+      PRODUCT_NAME: net.mrmidi.ASFW.ADKVirtualAudioLab
+      PRODUCT_BUNDLE_IDENTIFIER: net.mrmidi.ASFW.ADKVirtualAudioLab
       CLANG_CXX_LANGUAGE_STANDARD: gnu++2b
       FRAMEWORK_SEARCH_PATHS: $(SDKROOT)/System/DriverKit/System/Library/Frameworks
       OTHER_LDFLAGS: -framework DriverKit -framework AudioDriverKit
@@ -46,19 +49,17 @@ targets:
     sources:
       - path: Host
     dependencies:
-      - target: ADKVirtualAudioLab
+      - target: net.mrmidi.ASFW.ADKVirtualAudioLab
         embed: true
     info:
       path: Host/Info.plist
       properties:
         CFBundleDisplayName: ADKLab Host
         NSPrincipalClass: NSApplication
-    entitlements:
-      path: Host/ADKLabHost.entitlements
-      properties:
-        com.apple.developer.system-extension.install: true
     settings:
-      CODE_SIGNING_ALLOWED: NO
-      CODE_SIGNING_REQUIRED: NO
-      CODE_SIGN_IDENTITY: ""
+      AD_HOC_CODE_SIGNING_ALLOWED: YES
+      DEVELOPMENT_TEAM: F6YA6B56LR
+      CODE_SIGN_IDENTITY: "-"
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_ENTITLEMENTS: Host/ADKLabHost.entitlements
       SWIFT_VERSION: "5.9"
