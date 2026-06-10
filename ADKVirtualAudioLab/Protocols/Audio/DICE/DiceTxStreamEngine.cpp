@@ -104,6 +104,11 @@ const DiceTxEngineCounters& DiceTxStreamEngine::Counters() const noexcept {
     return counters_;
 }
 
+const AMDTP::AmdtpPayloadWriterCounters&
+DiceTxStreamEngine::PayloadWriterCounters() const noexcept {
+    return payloadWriter_.Counters();
+}
+
 AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     const DiceDeviceQuirks& quirks) const noexcept {
     AMDTP::AmdtpTxPolicy policy{};
