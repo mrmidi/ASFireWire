@@ -17,6 +17,9 @@ struct AmdtpPayloadWriterCounters final {
     // framesWritten whose slot was reused while the payload was being
     // written (detected by the post-write generation recheck).
     std::atomic<uint64_t> framesRacedReuse{0};
+    std::atomic<uint64_t> framesNonZero{0};
+    std::atomic<uint64_t> slotsNonZero{0};
+    std::atomic<uint32_t> maxAbsSampleBits{0}; // IEEE 754 float32 bit pattern
 };
 
 class AmdtpPayloadWriter final {

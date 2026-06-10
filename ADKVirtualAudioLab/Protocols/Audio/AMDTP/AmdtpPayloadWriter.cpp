@@ -3,6 +3,7 @@
 #include "PcmSlotCodec.hpp"
 
 #include <atomic>
+#include <cstring>
 
 namespace ASFW::Protocols::Audio::AMDTP {
 
@@ -85,6 +86,9 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
     uint64_t racedReuse = 0;
+    uint64_t nonZeroFrames = 0;
+    uint64_t nonZeroSlots = 0;
+    float localMaxAbs = 0.0f;
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -121,11 +125,23 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
                                       ? streamConfig_.pcmChannels
                                       : snap.dbs;
+        bool frameNonZero = false;
         for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
             const float sample = (ch < hostBuffer.channels) ? source[ch] : 0.0f;
             WriteBE32(dest + ch * kBytesPerSlot,
                       PcmSlotCodec::EncodeFloat32(
                           sample, txPolicy_.hostToDevicePcmEncoding));
+            if (sample != 0.0f) {
+                frameNonZero = true;
+                ++nonZeroSlots;
+                const float absSample = (sample >= 0.0f) ? sample : -sample;
+                if (absSample > localMaxAbs) {
+                    localMaxAbs = absSample;
+                }
+            }
+        }
+        if (frameNonZero) {
+            ++nonZeroFrames;
         }
         ++written;
 
@@ -145,6 +161,26 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                             std::memory_order_relaxed);
     counters_.framesRacedReuse.fetch_add(racedReuse,
                                          std::memory_order_relaxed);
+    counters_.framesNonZero.fetch_add(nonZeroFrames,
+                                      std::memory_order_relaxed);
+    counters_.slotsNonZero.fetch_add(nonZeroSlots,
+                                     std::memory_order_relaxed);
+    // IEEE 754 float32: for non-negative values, the uint32 bit pattern is
+    // monotonically increasing, so a simple max on the bit representation
+    // is correct. Only one RT writer thread exists, so the CAS never
+    // contends.
+    if (localMaxAbs > 0.0f) {
+        uint32_t desired;
+        std::memcpy(&desired, &localMaxAbs, sizeof(desired));
+        uint32_t expected =
+            counters_.maxAbsSampleBits.load(std::memory_order_relaxed);
+        while (desired > expected) {
+            if (counters_.maxAbsSampleBits.compare_exchange_weak(
+                    expected, desired, std::memory_order_relaxed)) {
+                break;
+            }
+        }
+    }
 }
 
 const AmdtpPayloadWriterCounters& AmdtpPayloadWriter::Counters() const noexcept {

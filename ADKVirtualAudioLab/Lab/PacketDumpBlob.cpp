@@ -33,10 +33,10 @@ size_t BuildPacketDumpBlob(const FakeIsochTxSlotProvider& provider,
     // evicted and are reported as such rather than silently skipped.
     uint64_t windowEnd = anchorPacketIndex;
     if (windowEnd == kPacketDumpAnchorPayload) {
-        if (!context.expectedSampleTimeValid || context.expectedNextSampleTime == 0) {
+        if (!context.payloadCommittedValid || context.payloadCommittedEndFrame == 0) {
             windowEnd = kPacketDumpAnchorLatest;
         } else {
-            const uint64_t targetFrame = context.expectedNextSampleTime - 1;
+            const uint64_t targetFrame = context.payloadCommittedEndFrame - 1;
             bool found = false;
             const uint64_t startScan = context.nextPacketIndex != 0 ? context.nextPacketIndex - 1 : 0;
             const uint64_t minScan = context.nextPacketIndex > FakeIsochTxSlotProvider::kSlotCount
@@ -96,8 +96,6 @@ size_t BuildPacketDumpBlob(const FakeIsochTxSlotProvider& provider,
     header.nextPacketIndex = context.nextPacketIndex;
     header.prepareFailures = context.prepareFailures;
     header.writeEndCount = context.writeEndCount;
-    header.expectedNextSampleTime = context.expectedNextSampleTime;
-    header.expectedSampleTimeValid = context.expectedSampleTimeValid ? 1u : 0u;
     header.framesVisited =
         payloadCounters.framesVisited.load(std::memory_order_relaxed);
     header.framesWritten =
@@ -108,6 +106,16 @@ size_t BuildPacketDumpBlob(const FakeIsochTxSlotProvider& provider,
         payloadCounters.framesOutsidePacket.load(std::memory_order_relaxed);
     header.framesRacedReuse =
         payloadCounters.framesRacedReuse.load(std::memory_order_relaxed);
+    header.expectedNextSampleTime = context.expectedNextSampleTime;
+    header.expectedSampleTimeValid = context.expectedSampleTimeValid ? 1u : 0u;
+    header.payloadCommittedValid = context.payloadCommittedValid ? 1u : 0u;
+    header.payloadCommittedEndFrame = context.payloadCommittedEndFrame;
+    header.framesNonZero =
+        payloadCounters.framesNonZero.load(std::memory_order_relaxed);
+    header.slotsNonZero =
+        payloadCounters.slotsNonZero.load(std::memory_order_relaxed);
+    header.maxAbsSampleBits =
+        payloadCounters.maxAbsSampleBits.load(std::memory_order_relaxed);
     std::memcpy(out, &header, sizeof(header));
 
     uint8_t* cursor = out + sizeof(header);

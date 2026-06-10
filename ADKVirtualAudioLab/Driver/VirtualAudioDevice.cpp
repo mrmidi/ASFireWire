@@ -48,7 +48,6 @@ constexpr uint32_t kSampleRate = 48000;
 constexpr uint32_t kOutputChannels = 8;
 constexpr uint32_t kBytesPerSample = sizeof(float);
 constexpr uint32_t kOutputBytesPerFrame = kOutputChannels * kBytesPerSample;
-constexpr uint32_t kRingPeriods = 8; // ring = 8 ZTS periods (4096 frames)
 constexpr uint64_t kZtsPeriodNsNumer = 32000000ull; // 512/48000 s = 32e6/3 ns
 constexpr uint64_t kZtsPeriodNsDenom = 3ull;
 constexpr uint32_t kMaxPreparePerCall = 512; // runaway guard for the pump
@@ -115,6 +114,8 @@ struct VirtualAudioDevice_IVars
     std::atomic<uint64_t> sampleTimeBreaks{0};
     std::atomic<uint64_t> expectedNextSampleTime{0};
     std::atomic<bool> expectedSampleTimeValid{false};
+    std::atomic<uint64_t> payloadCommittedEndFrame{0};
+    std::atomic<bool> payloadCommittedValid{false};
     std::atomic<uint64_t> firstWriteEndSampleTime{0};
     std::atomic<uint64_t> firstWriteEndHostTime{0};
     std::atomic<uint64_t> otherIoOperations{0};
@@ -276,10 +277,10 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     ivars->outputBytesPerFrame = format.mBytesPerFrame;
     ivars->outputChannels = format.mChannelsPerFrame;
 
-    // Ring = 8 ZTS periods. A one-period ring leaves the HAL zero headroom
-    // around the wrap anchor; 8 matches the host scenario pump (4096 frames).
-    // C4 (period vs IO buffer size coupling) stays observable by varying this.
-    ivars->ringFrames = kRingPeriods * in_zero_timestamp_period;
+    // CoreAudio HAL wraps stream writes at zeroTimestampPeriod, so the ring
+    // buffer size must match the period exactly to avoid a wrap mismatch where
+    // the driver reads unwritten/silent buffer regions.
+    ivars->ringFrames = in_zero_timestamp_period;
 
     LAB_LOG("init - creating output ring buffer (%{public}u bytes, ringFrames = %{public}u, zeroTimestampPeriod = %{public}u)",
             ivars->ringFrames * format.mBytesPerFrame, ivars->ringFrames, in_zero_timestamp_period);
@@ -418,6 +419,10 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                 };
 
                 ivarsPtr->controller->SubmitWriteEnd(outputView);
+
+                ivarsPtr->payloadCommittedEndFrame.store(
+                    in_sample_time + in_io_buffer_frame_size, std::memory_order_relaxed);
+                ivarsPtr->payloadCommittedValid.store(true, std::memory_order_relaxed);
             }
         } else {
             ivarsPtr->otherIoOperations.fetch_add(1, std::memory_order_relaxed);
@@ -561,6 +566,8 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         ivars->maxIoFrames.store(0, std::memory_order_relaxed);
         ivars->sampleTimeBreaks.store(0, std::memory_order_relaxed);
         ivars->expectedSampleTimeValid.store(false, std::memory_order_relaxed);
+        ivars->payloadCommittedEndFrame.store(0, std::memory_order_relaxed);
+        ivars->payloadCommittedValid.store(false, std::memory_order_relaxed);
         ivars->otherIoOperations.store(0, std::memory_order_relaxed);
 
         // Seed the clock chain: anchor (0, now), pre-expose two periods, and
@@ -760,6 +767,10 @@ kern_return_t VirtualAudioDevice::CopyPacketDump(uint32_t in_count,
             ivarsPtr->expectedNextSampleTime.load(std::memory_order_relaxed);
         context.expectedSampleTimeValid =
             ivarsPtr->expectedSampleTimeValid.load(std::memory_order_relaxed);
+        context.payloadCommittedEndFrame =
+            ivarsPtr->payloadCommittedEndFrame.load(std::memory_order_relaxed);
+        context.payloadCommittedValid =
+            ivarsPtr->payloadCommittedValid.load(std::memory_order_relaxed);
 
         blobSize = ASFW::Lab::BuildPacketDumpBlob(
             ivarsPtr->controller->FakeSlotProvider(),
