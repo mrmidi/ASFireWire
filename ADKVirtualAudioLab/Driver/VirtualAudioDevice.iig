@@ -1,0 +1,37 @@
+#ifndef VirtualAudioDevice_h
+#define VirtualAudioDevice_h
+
+#include <DriverKit/DriverKit.iig>
+#include <AudioDriverKit/IOUserAudioDevice.iig>
+#include <AudioDriverKit/IOUserAudioStream.iig>
+#include <AudioDriverKit/AudioDriverKitTypes.h>
+
+using namespace AudioDriverKit;
+
+class IOUserAudioDriver;
+
+class VirtualAudioDevice : public IOUserAudioDevice
+{
+public:
+    virtual bool init(IOUserAudioDriver* in_driver,
+                      bool in_supports_prewarming,
+                      OSString* in_device_uid,
+                      OSString* in_model_uid,
+                      OSString* in_manufacturer_uid,
+                      uint32_t in_zero_timestamp_period) override LOCALONLY;
+
+    virtual void free() override LOCALONLY;
+
+    virtual kern_return_t StartIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
+    virtual kern_return_t StopIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
+
+    virtual kern_return_t PerformDeviceConfigurationChange(uint64_t change_action,
+                                                           OSObject* in_change_info) override LOCALONLY;
+
+    virtual kern_return_t AbortDeviceConfigurationChange(uint64_t change_action,
+                                                         OSObject* in_change_info) override LOCALONLY;
+
+    virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override LOCALONLY;
+};
+
+#endif
