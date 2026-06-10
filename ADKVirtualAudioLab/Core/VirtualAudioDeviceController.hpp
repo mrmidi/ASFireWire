@@ -24,6 +24,14 @@ struct TxTimingLabCounters final {
     int64_t lastLeadTicks{0};
 };
 
+// HAL-facing capabilities derived from the selected profile's default TX
+// stream shape. MIDI slots are wire-only — they never appear as CoreAudio
+// channels, so they are deliberately absent here.
+struct OutputDeviceCaps final {
+    uint32_t sampleRate{0};
+    uint32_t pcmChannels{0};
+};
+
 class VirtualAudioDeviceController final {
 public:
     VirtualAudioDeviceController() noexcept = default;
@@ -31,6 +39,11 @@ public:
     bool Initialize() noexcept;
 
     bool SelectProfile(const Protocols::Audio::DICE::DiceDeviceIdentity& identity) noexcept;
+
+    // Valid after SelectProfile (or Initialize, which selects the generic
+    // fallback). The device publishes its stream format and channel layout
+    // from this instead of hardcoding a shape.
+    [[nodiscard]] bool GetOutputDeviceCaps(OutputDeviceCaps& outCaps) const noexcept;
 
     bool ConfigureOutputStream(uint32_t sampleRate,
                                uint32_t channels,

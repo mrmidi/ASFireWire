@@ -34,6 +34,20 @@ bool VirtualAudioDeviceController::SelectProfile(
     return selectedProfile_ != nullptr;
 }
 
+bool VirtualAudioDeviceController::GetOutputDeviceCaps(
+    OutputDeviceCaps& outCaps) const noexcept {
+    if (selectedProfile_ == nullptr) {
+        return false;
+    }
+    DiceStreamConfig txConfig{};
+    if (!selectedProfile_->BuildDefaultTxStreamConfig(txConfig)) {
+        return false;
+    }
+    outCaps.sampleRate = txConfig.sampleRate;
+    outCaps.pcmChannels = txConfig.pcmChannels;
+    return true;
+}
+
 bool VirtualAudioDeviceController::ConfigureOutputStream(
     uint32_t sampleRate, uint32_t channels, uint32_t frameCapacity) noexcept {
     if (selectedProfile_ == nullptr || channels == 0 || channels > 64) {

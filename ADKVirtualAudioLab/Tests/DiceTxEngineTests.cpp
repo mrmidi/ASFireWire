@@ -75,6 +75,12 @@ struct EngineFixture final {
         if (!profile.BuildDefaultTxStreamConfig(txConfig)) {
             return false;
         }
+        // Pin a stereo, MIDI-free shape: these tests assert byte-exact CIP
+        // and tiling images. The profile's bench shape (8+1, dbs 9) is
+        // covered by the profile and controller end-to-end tests.
+        txConfig.pcmChannels = 2;
+        txConfig.midiSlots = 0;
+        txConfig.dbs = 2;
         if (!engine.Configure(profile, txConfig)) {
             return false;
         }
@@ -144,16 +150,23 @@ void RunDiceTxEngineTests(TestContext& ctx) {
         CHECK(ctx, genericQuirks.tx.hostToDevicePcmEncoding ==
                        AMDTP::PcmSlotEncoding::Am824MBLA);
 
+        // Bench shapes from the Saffire.kext wire capture: host→device
+        // dbs 9 (8 audio + 1 MIDI), device→host dbs 17 (16 audio + 1 MIDI).
         DiceStreamConfig tx{};
         CHECK(ctx, saffire.BuildDefaultTxStreamConfig(tx));
         CHECK(ctx, tx.direction == DiceStreamDirection::HostToDevice);
         CHECK_EQ_U32(ctx, tx.sampleRate, 48000);
-        CHECK_EQ_U32(ctx, tx.pcmChannels, 2);
+        CHECK_EQ_U32(ctx, tx.pcmChannels, 8);
+        CHECK_EQ_U32(ctx, tx.midiSlots, 1);
+        CHECK_EQ_U32(ctx, tx.dbs, 9);
         CHECK_EQ_U32(ctx, tx.framesPerDataPacket, 8);
 
         DiceStreamConfig rx{};
         CHECK(ctx, saffire.BuildDefaultRxStreamConfig(rx));
         CHECK(ctx, rx.direction == DiceStreamDirection::DeviceToHost);
+        CHECK_EQ_U32(ctx, rx.pcmChannels, 16);
+        CHECK_EQ_U32(ctx, rx.midiSlots, 1);
+        CHECK_EQ_U32(ctx, rx.dbs, 17);
     }
 
     // --- Registry: lookup and generic fallback ---
@@ -299,9 +312,18 @@ void RunDiceTxEngineTests(TestContext& ctx) {
         Driver::VirtualAudioDeviceController controller;
         CHECK(ctx, controller.Initialize());
         CHECK(ctx, controller.SelectProfile(kFocusriteIdentity));
-        CHECK(ctx, !controller.ConfigureOutputStream(44100, 2, 512)); // honest
+
+        // The HAL shape comes from the profile via caps (8 PCM channels;
+        // the MIDI slot is wire-only).
+        Driver::OutputDeviceCaps caps{};
+        CHECK(ctx, controller.GetOutputDeviceCaps(caps));
+        CHECK_EQ_U32(ctx, caps.sampleRate, 48000);
+        CHECK_EQ_U32(ctx, caps.pcmChannels, 8);
+
+        CHECK(ctx, !controller.ConfigureOutputStream(44100, 8, 512)); // honest
         CHECK(ctx, !controller.ConfigureOutputStream(48000, 0, 512));
-        CHECK(ctx, controller.ConfigureOutputStream(48000, 2, 512));
+        CHECK(ctx, controller.ConfigureOutputStream(caps.sampleRate,
+                                                    caps.pcmChannels, 512));
         controller.ResetTransportLab(0, 0);
 
         bool prepared = true;
@@ -310,21 +332,29 @@ void RunDiceTxEngineTests(TestContext& ctx) {
         }
         CHECK(ctx, prepared);
 
-        float host[24 * 2];
-        FillHostWindow(host, 0, 24, 2);
-        const AMDTP::HostAudioBufferView view{host, 0, 24, 512, 2};
+        float host[24 * 8];
+        FillHostWindow(host, 0, 24, 8);
+        const AMDTP::HostAudioBufferView view{host, 0, 24, 512, 8};
         controller.SubmitWriteEnd(view);
 
+        // Wire shape per the Saffire.kext capture: dbs 9, 296-byte data
+        // packets, raw sign-extended PCM, empty MIDI slot = 0x80000000.
         const Lab::FakeIsochTxSlotProvider& fake = controller.FakeSlotProvider();
         const AMDTP::PreparedTxPacket* data1 = fake.PublishedPacket(1);
         CHECK(ctx, data1 != nullptr && data1->isData);
+        CHECK_EQ_U32(ctx, data1->dbs, 9);
+        CHECK_EQ_U32(ctx, data1->byteCount, 8 + 8 * 9 * 4);
         bool pcmOk = true;
+        bool midiOk = true;
         for (uint32_t i = 0; i < 8; ++i) {
             pcmOk = pcmOk &&
-                    FrameMatches(fake.SlotBytes(1), i, 2, i, 2,
+                    FrameMatches(fake.SlotBytes(1), i, 9, i, 8,
                                  AMDTP::PcmSlotEncoding::RawSigned24In32BE);
+            midiOk = midiOk &&
+                     (ReadSlotQuadlet(fake.SlotBytes(1), i, 9, 8) == 0x80000000u);
         }
         CHECK(ctx, pcmOk);
+        CHECK(ctx, midiOk);
     }
 
     // --- Controller end-to-end: unknown device → generic profile → AM824 ---

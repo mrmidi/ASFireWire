@@ -39,8 +39,12 @@ uint32_t PcmSlotCodec::EncodeAm824MBLA(float sample) noexcept {
 }
 
 uint32_t PcmSlotCodec::EncodeRawSigned24In32BE(float sample) noexcept {
-    // 24-bit sample right-justified in a 32-bit slot, no label byte.
-    return static_cast<uint32_t>(Float32ToSigned24(sample)) & 0x00FFFFFFu;
+    // 24-bit sample sign-extended across the full 32-bit slot, no label byte.
+    // Saffire.kext host→device wire capture shows negative samples with 0xFF
+    // in [31:24] (e.g. 0xFFFC9F0C): the top byte is sign extension, not zero
+    // padding. Masking to 24 bits would turn negative samples into large
+    // positive values for a receiver reading the slot as int32.
+    return static_cast<uint32_t>(Float32ToSigned24(sample));
 }
 
 uint32_t PcmSlotCodec::EncodeRawSigned24In32LE(float sample) noexcept {
