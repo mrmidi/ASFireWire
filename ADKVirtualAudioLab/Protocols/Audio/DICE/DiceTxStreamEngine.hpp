@@ -40,6 +40,9 @@ public:
 
     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
 
+    [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters&
+    PayloadWriterCounters() const noexcept;
+
 private:
     AMDTP::AmdtpTxPolicy BuildTxPolicy(const DiceDeviceQuirks& quirks) const noexcept;
 
