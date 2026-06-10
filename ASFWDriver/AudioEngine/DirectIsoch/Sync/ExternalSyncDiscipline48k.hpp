@@ -25,8 +25,9 @@ public:
     static constexpr int32_t kDeadbandTicks = 512;
 
     /// Safety limit: if corrected offset exceeds this, emit SYT=0xFFFF.
-    /// ~4 cycles worth of ticks, matching Saffire's 12287-tick safety valve.
-    static constexpr int32_t kSafetyLimitTicks = 12287;
+    /// ~2.5 cycles worth of ticks, matching Saffire's 7620-tick hardware rejection threshold.
+    /// (Note: Saffire's 12287 check is log-only; actual packet rejection begins at 7620.)
+    static constexpr int32_t kSafetyLimitTicks = 7620;
 
     struct Result {
         bool active{false};
