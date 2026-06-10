@@ -4,7 +4,10 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOTimerDispatchSource.h>
+#include <os/log.h>
 #include "VirtualAudioDevice.h"
+
+#define LAB_LOG(fmt, ...) os_log(OS_LOG_DEFAULT, "[ADKLab] " fmt, ##__VA_ARGS__)
 #include "../Core/VirtualAudioDeviceController.hpp"
 #include "../Lab/StickyCounterSink.hpp"
 #include "../Lab/VerifyingSlotProvider.hpp"
@@ -112,42 +115,56 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                                OSString* in_manufacturer_uid,
                                uint32_t in_zero_timestamp_period)
 {
-    IOLog("VirtualAudioDevice: calling super::init\n");
+    LAB_LOG("init - entering. DeviceUID: %{public}s, ModelUID: %{public}s, ManufacturerUID: %{public}s, zeroTimestampPeriod: %{public}u",
+            in_device_uid ? in_device_uid->getCStringNoCopy() : "NULL",
+            in_model_uid ? in_model_uid->getCStringNoCopy() : "NULL",
+            in_manufacturer_uid ? in_manufacturer_uid->getCStringNoCopy() : "NULL",
+            in_zero_timestamp_period);
+
+    LAB_LOG("init - calling super::init");
     if (!super::init(in_driver, in_supports_prewarming, in_device_uid, in_model_uid, in_manufacturer_uid, in_zero_timestamp_period)) {
-        IOLog("VirtualAudioDevice: super::init failed\n");
+        LAB_LOG("init - super::init failed");
         return false;
     }
+    LAB_LOG("init - super::init succeeded");
 
-    IOLog("VirtualAudioDevice: allocating ivars\n");
+    LAB_LOG("init - allocating ivars");
     ivars = IONewZero(VirtualAudioDevice_IVars, 1);
     if (ivars == nullptr) {
-        IOLog("VirtualAudioDevice: failed to allocate ivars\n");
+        LAB_LOG("init - failed to allocate ivars");
         return false;
     }
+    LAB_LOG("init - ivars allocated successfully");
 
     ivars->driver = OSSharedPtr(in_driver, OSRetain);
     ivars->workQueue = GetWorkQueue();
     if (ivars->workQueue.get() == nullptr) {
-        IOLog("VirtualAudioDevice: workQueue is null\n");
+        LAB_LOG("init - workQueue is null");
         return false;
     }
+    LAB_LOG("init - workQueue retrieved successfully");
 
     mach_timebase_info_data_t timebaseInfo{};
     if (mach_timebase_info(&timebaseInfo) == KERN_SUCCESS &&
         timebaseInfo.numer != 0 && timebaseInfo.denom != 0) {
         ivars->timebase.numer = timebaseInfo.numer;
         ivars->timebase.denom = timebaseInfo.denom;
+        LAB_LOG("init - Mach timebase info: numer=%{public}u, denom=%{public}u", timebaseInfo.numer, timebaseInfo.denom);
+    } else {
+        LAB_LOG("init - mach_timebase_info failed");
     }
 
-    IOLog("VirtualAudioDevice: initializing controller\n");
+    LAB_LOG("init - initializing controller");
     ivars->controller = new VirtualAudioDeviceController();
     if (!ivars->controller->Initialize()) {
-        IOLog("VirtualAudioDevice: Failed to initialize controller\n");
+        LAB_LOG("init - Failed to initialize controller");
         return false;
     }
+    LAB_LOG("init - controller initialized successfully");
 
     // Step 6 instrument under real pacing: Verifying(Fake) for the whole run.
     // P5 enabled — M2 timing stamps real SYTs on every data packet.
+    LAB_LOG("init - setting up VerifyingSlotProvider");
     ivars->diagSink = new ASFW::Lab::StickyCounterSink();
     {
         ASFW::Lab::VerifyingSlotProvider::Config verifierConfig{};
@@ -157,19 +174,62 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
             ivars->controller->FakeSlotProvider(), verifierConfig);
     }
     ivars->controller->BindLabSlotProvider(ivars->verifier);
+    LAB_LOG("init - VerifyingSlotProvider bound to controller");
 
     // Pick Saffire for testing
     ASFW::Protocols::Audio::DICE::DiceDeviceIdentity identity{};
     identity.vendorId = 0x00130e; // Focusrite
     ivars->controller->SelectProfile(identity);
+    LAB_LOG("init - selected profile for Focusrite (vendor 0x00130e)");
 
     // The lab device reports as a FireWire-transport clock device — that is
     // the contract ASFW will live under (AudioDriverKitTypes.h '1394').
+    LAB_LOG("init - setting transport type to FireWire");
     SetTransportType(IOUserAudioTransportType::FireWire);
+
+    // Set up preferred output channel layout (Left, Right)
+    LAB_LOG("init - setting preferred output channel layout");
+    IOUserAudioChannelLabel outputChannelLayout[2] = {
+        IOUserAudioChannelLabel::Left,
+        IOUserAudioChannelLabel::Right
+    };
+    kern_return_t kr = SetPreferredOutputChannelLayout(outputChannelLayout, 2);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetPreferredOutputChannelLayout failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetPreferredOutputChannelLayout succeeded");
+    }
+
+    // Set capabilities for default output
+    LAB_LOG("init - setting default output device capabilities");
+    kr = SetCanBeDefaultOutputDevice(true);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetCanBeDefaultOutputDevice failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetCanBeDefaultOutputDevice set to true");
+    }
+
+    kr = SetCanBeDefaultSystemOutputDevice(true);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetCanBeDefaultSystemOutputDevice failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetCanBeDefaultSystemOutputDevice set to true");
+    }
+
+    // Set output safety offset
+    LAB_LOG("init - setting output safety offset to 0");
+    kr = SetOutputSafetyOffset(0);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetOutputSafetyOffset failed (kr = 0x%{public}08x)", kr);
+    } else {
+        LAB_LOG("init - SetOutputSafetyOffset set to 0");
+    }
 
     // Set up a basic float32 output stream (2 channels, 48kHz)
     double sampleRate = kSampleRate;
+    LAB_LOG("init - setting available sample rate to %{public}.1f", sampleRate);
     SetAvailableSampleRates(&sampleRate, 1);
+    LAB_LOG("init - setting current sample rate to %{public}.1f", sampleRate);
     SetSampleRate(sampleRate);
 
     IOUserAudioStreamBasicDescription format = {
@@ -183,6 +243,16 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         .mBitsPerChannel = 32
     };
 
+    LAB_LOG("init - stream format basic description:");
+    LAB_LOG("  mSampleRate: %{public}.1f", format.mSampleRate);
+    LAB_LOG("  mFormatID: 0x%{public}x (lpcm = 0x6c70636d)", static_cast<uint32_t>(format.mFormatID));
+    LAB_LOG("  mFormatFlags: 0x%{public}x (Float/Packed/Native)", static_cast<uint32_t>(format.mFormatFlags));
+    LAB_LOG("  mBytesPerPacket: %{public}u", format.mBytesPerPacket);
+    LAB_LOG("  mFramesPerPacket: %{public}u", format.mFramesPerPacket);
+    LAB_LOG("  mBytesPerFrame: %{public}u", format.mBytesPerFrame);
+    LAB_LOG("  mChannelsPerFrame: %{public}u", format.mChannelsPerFrame);
+    LAB_LOG("  mBitsPerChannel: %{public}u", format.mBitsPerChannel);
+
     ivars->outputBytesPerFrame = format.mBytesPerFrame;
     ivars->outputChannels = format.mChannelsPerFrame;
 
@@ -191,42 +261,49 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     // C4 (period vs IO buffer size coupling) stays observable by varying this.
     ivars->ringFrames = kRingPeriods * in_zero_timestamp_period;
 
-    IOLog("VirtualAudioDevice: creating output ring buffer (%d bytes)\n", ivars->ringFrames * format.mBytesPerFrame);
+    LAB_LOG("init - creating output ring buffer (%{public}u bytes, ringFrames = %{public}u, zeroTimestampPeriod = %{public}u)",
+            ivars->ringFrames * format.mBytesPerFrame, ivars->ringFrames, in_zero_timestamp_period);
     OSSharedPtr<IOBufferMemoryDescriptor> buffer;
     uint32_t bufferSize = ivars->ringFrames * format.mBytesPerFrame;
-    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, bufferSize, 0, buffer.attach());
+    kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, bufferSize, 0, buffer.attach());
     if (kr != kIOReturnSuccess) {
-        IOLog("VirtualAudioDevice: Failed to create output IOBufferMemoryDescriptor (kr = 0x%08x)\n", kr);
+        LAB_LOG("init - Failed to create output IOBufferMemoryDescriptor (kr = 0x%{public}08x)", kr);
         return false;
     }
+    LAB_LOG("init - IOBufferMemoryDescriptor created successfully. Length: %{public}u bytes", bufferSize);
 
-    IOLog("VirtualAudioDevice: creating output stream\n");
+    LAB_LOG("init - creating output stream object");
     ivars->outputStream = IOUserAudioStream::Create(in_driver, IOUserAudioStreamDirection::Output, buffer.get());
     if (!ivars->outputStream) {
-        IOLog("VirtualAudioDevice: Failed to create output IOUserAudioStream\n");
+        LAB_LOG("init - Failed to create output IOUserAudioStream");
         return false;
     }
+    LAB_LOG("init - output stream object created successfully");
 
+    LAB_LOG("init - configuring stream formats");
     ivars->outputStream->SetAvailableStreamFormats(&format, 1);
     ivars->outputStream->SetCurrentStreamFormat(&format);
 
-    IOLog("VirtualAudioDevice: adding stream\n");
+    LAB_LOG("init - adding stream to device");
     kr = AddStream(ivars->outputStream.get());
     if (kr != kIOReturnSuccess) {
-        IOLog("VirtualAudioDevice: AddStream failed (kr = 0x%08x)\n", kr);
+        LAB_LOG("init - AddStream failed (kr = 0x%{public}08x)", kr);
         return false;
     }
+    LAB_LOG("init - stream added successfully to device");
 
+    LAB_LOG("init - configuring controller output stream");
     ivars->controller->ConfigureOutputStream(kSampleRate, ivars->outputChannels,
                                              ivars->ringFrames);
 
     // M2: SYT realism — the controller stamps real SYTs from TxTimingModel
     // against the simulated timeline (which rides the exposure cursor: the
     // packet's projected transmit position, per the Saffire model).
+    LAB_LOG("init - enabling controller timing model");
     ivars->controller->EnableLabTiming(ASFW::Driver::TxTimingModel::Config{});
 
     // The ZTS heartbeat timer (armed in StartIO).
-    IOLog("VirtualAudioDevice: creating ZTS timer\n");
+    LAB_LOG("init - creating ZTS timer");
     IOTimerDispatchSource* timer = nullptr;
     if (IOTimerDispatchSource::Create(ivars->workQueue.get(), &timer) == kIOReturnSuccess) {
         ivars->ztsTimer = OSSharedPtr(timer, OSNoRetain);
@@ -234,22 +311,23 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         if (CreateActionZtsTimerOccurred(0, &action) == kIOReturnSuccess) {
             ivars->ztsTimerAction = OSSharedPtr(action, OSNoRetain);
             ivars->ztsTimer->SetHandler(ivars->ztsTimerAction.get());
+            LAB_LOG("init - ZTS timer and action created successfully");
         } else {
-            IOLog("VirtualAudioDevice: failed to create ZTS timer action\n");
+            LAB_LOG("init - failed to create ZTS timer action");
             return false;
         }
     } else {
-        IOLog("VirtualAudioDevice: failed to create ZTS timer\n");
+        LAB_LOG("init - failed to create ZTS timer");
         return false;
     }
 
     auto ivarsPtr = ivars;
 
     auto io_operation = ^kern_return_t(IOUserAudioObjectID in_device,
-                                      IOUserAudioIOOperation in_io_operation,
-                                      uint32_t in_io_buffer_frame_size,
-                                      uint64_t in_sample_time,
-                                      uint64_t in_host_time)
+                                       IOUserAudioIOOperation in_io_operation,
+                                       uint32_t in_io_buffer_frame_size,
+                                       uint64_t in_sample_time,
+                                       uint64_t in_host_time)
     {
         if (in_io_operation == IOUserAudioIOOperationWriteEnd) {
             if (!ivarsPtr->ioRunning.load(std::memory_order_relaxed)) {
@@ -307,7 +385,13 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         return kIOReturnSuccess;
     };
 
-    SetIOOperationHandler(io_operation);
+    LAB_LOG("init - setting IO operation handler");
+    kr = SetIOOperationHandler(io_operation);
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("init - SetIOOperationHandler failed (kr = 0x%{public}08x)", kr);
+        return false;
+    }
+    LAB_LOG("init - SetIOOperationHandler succeeded. Device initialization complete.");
 
     return true;
 }
@@ -316,9 +400,9 @@ void VirtualAudioDevice::free()
 {
     if (ivars != nullptr) {
         // O2 answer at teardown: how many callbacks arrived after StopIO.
-        IOLog("ADKLab[free] io_after_stop=%llu timer_after_stop=%llu\n",
-              ivars->ioAfterStop.load(std::memory_order_relaxed),
-              ivars->timerAfterStop.load(std::memory_order_relaxed));
+        LAB_LOG("free: io_after_stop=%{public}llu timer_after_stop=%{public}llu",
+                ivars->ioAfterStop.load(std::memory_order_relaxed),
+                ivars->timerAfterStop.load(std::memory_order_relaxed));
 
         if (ivars->ztsTimer) {
             ivars->ztsTimer->Cancel(^{});
@@ -402,24 +486,50 @@ void VirtualAudioDevice::ZtsTimerOccurred_Impl(OSAction* action, uint64_t time)
 
 kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
 {
-    IOLog("VirtualAudioDevice: StartIO\n");
+    LAB_LOG("StartIO - entering. flags = 0x%{public}x", in_flags);
 
     __block kern_return_t kr = kIOReturnSuccess;
     ivars->workQueue->DispatchSync(^(){
+        LAB_LOG("StartIO - calling super::StartIO");
         kr = super::StartIO(in_flags);
         if (kr != kIOReturnSuccess) {
+            LAB_LOG("StartIO - super::StartIO failed (kr = 0x%{public}08x)", kr);
             return;
         }
+        LAB_LOG("StartIO - super::StartIO succeeded");
+
         if (ivars->outputStream) {
+            LAB_LOG("StartIO - getting output stream memory descriptor");
             auto buffer = ivars->outputStream->GetIOMemoryDescriptor();
             if (buffer) {
-                buffer->CreateMapping(0, 0, 0, 0, 0, ivars->outputMemoryMap.attach());
+                uint64_t bufferLength = 0;
+                buffer->GetLength(&bufferLength);
+                LAB_LOG("StartIO - creating memory mapping for output stream (length = %{public}llu bytes)", bufferLength);
+                kern_return_t mapKr = buffer->CreateMapping(0, 0, 0, 0, 0, ivars->outputMemoryMap.attach());
+                if (mapKr != kIOReturnSuccess) {
+                    LAB_LOG("StartIO - CreateMapping failed (kr = 0x%{public}08x)", mapKr);
+                    kr = mapKr;
+                    return;
+                }
+                LAB_LOG("StartIO - output memory map created: address = 0x%{public}llx, offset = %{public}llu, length = %{public}llu bytes",
+                        ivars->outputMemoryMap->GetAddress(), ivars->outputMemoryMap->GetOffset(), ivars->outputMemoryMap->GetLength());
+            } else {
+                LAB_LOG("StartIO - output stream has no memory descriptor");
+                kr = kIOReturnInternalError;
+                return;
             }
+        } else {
+            LAB_LOG("StartIO - output stream is null");
+            kr = kIOReturnInternalError;
+            return;
         }
+
         if (ivars->controller) {
+            LAB_LOG("StartIO - resetting controller transport lab");
             ivars->controller->ResetTransportLab(0, 0);
         }
         if (ivars->verifier) {
+            LAB_LOG("StartIO - resetting verifier");
             ivars->verifier->Reset();
         }
 
@@ -442,11 +552,13 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
         // arm the first wrap. C1 counts how many anchors precede the first
         // WriteEnd the HAL ever delivers.
         ivars->startHostTime = mach_absolute_time();
+        LAB_LOG("StartIO - seeding clock chain: startHostTime = %{public}llu ticks", ivars->startHostTime);
         UpdateCurrentZeroTimestamp(0, ivars->startHostTime);
         ivars->anchorsPublished.fetch_add(1, std::memory_order_relaxed);
         ivars->anchorsBeforeFirstWriteEnd.fetch_add(1, std::memory_order_relaxed);
 
         if (ivars->controller) {
+            LAB_LOG("StartIO - pre-preparing coverage");
             PrepareCoverage(ivars, 2ull * GetZeroTimestampPeriod());
         }
 
@@ -456,101 +568,115 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
             ivars->startHostTime +
             ivars->timebase.NsToTicks(NsForPeriodIndex(1));
         const uint64_t leeway = ivars->timebase.NsToTicks(500000);
+        
+        LAB_LOG("StartIO - arming ZTS timer for first deadline = %{public}llu ticks (leeway = %{public}llu)", deadline, leeway);
         if (ivars->ztsTimer) {
             ivars->ztsTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime, deadline,
                                         leeway);
+        } else {
+            LAB_LOG("StartIO - ZTS timer is null!");
         }
     });
 
+    LAB_LOG("StartIO - exiting. result = 0x%{public}08x", kr);
     return kr;
 }
 
 kern_return_t VirtualAudioDevice::StopIO(IOUserAudioStartStopFlags in_flags)
 {
-    IOLog("VirtualAudioDevice: StopIO\n");
+    LAB_LOG("StopIO - entering. flags = 0x%{public}x", in_flags);
 
     __block kern_return_t kr = kIOReturnSuccess;
     ivars->workQueue->DispatchSync(^(){
+        LAB_LOG("StopIO - setting ioRunning to false");
         ivars->ioRunning.store(false, std::memory_order_relaxed);
 
+        LAB_LOG("StopIO - calling super::StopIO");
         kr = super::StopIO(in_flags);
+        if (kr != kIOReturnSuccess) {
+            LAB_LOG("StopIO - super::StopIO failed (kr = 0x%{public}08x)", kr);
+        } else {
+            LAB_LOG("StopIO - super::StopIO succeeded");
+        }
+
+        LAB_LOG("StopIO - resetting output memory map");
         ivars->outputMemoryMap.reset();
 
         // ---- M3 dump (StopIO may take as long as necessary) ----
         const auto snapshot = ivars->verifier ? ivars->verifier->Snapshot()
-                                              : ASFW::Lab::VerifierSnapshot{};
+                                               : ASFW::Lab::VerifierSnapshot{};
         using ASFW::Lab::VerifierCounterId;
 
-        IOLog("ADKLab[dump] zts: anchors=%llu before_first_io=%llu period=%u "
-              "ring_frames=%u prepare_failures=%llu\n",
-              ivars->anchorsPublished.load(std::memory_order_relaxed),
-              ivars->anchorsBeforeFirstWriteEnd.load(std::memory_order_relaxed),
-              GetZeroTimestampPeriod(), ivars->ringFrames,
-              ivars->prepareFailures);
+        LAB_LOG("dump zts: anchors=%{public}llu before_first_io=%{public}llu period=%{public}u "
+                "ring_frames=%{public}u prepare_failures=%{public}llu",
+                ivars->anchorsPublished.load(std::memory_order_relaxed),
+                ivars->anchorsBeforeFirstWriteEnd.load(std::memory_order_relaxed),
+                GetZeroTimestampPeriod(), ivars->ringFrames,
+                ivars->prepareFailures);
 
         const uint64_t firstHost =
             ivars->firstWriteEndHostTime.load(std::memory_order_relaxed);
-        IOLog("ADKLab[dump] writeend: count=%llu frames=%llu min=%u max=%u "
-              "sample_breaks=%llu first_sample=%llu first_host_delta=%lld "
-              "other_ops=%llu\n",
-              ivars->writeEndCount.load(std::memory_order_relaxed),
-              ivars->framesDelivered.load(std::memory_order_relaxed),
-              ivars->minIoFrames.load(std::memory_order_relaxed),
-              ivars->maxIoFrames.load(std::memory_order_relaxed),
-              ivars->sampleTimeBreaks.load(std::memory_order_relaxed),
-              ivars->firstWriteEndSampleTime.load(std::memory_order_relaxed),
-              (firstHost != 0)
-                  ? (int64_t)(firstHost - ivars->startHostTime)
-                  : (int64_t)0,
-              ivars->otherIoOperations.load(std::memory_order_relaxed));
+        LAB_LOG("dump writeend: count=%{public}llu frames=%{public}llu min=%{public}u max=%{public}u "
+                "sample_breaks=%{public}llu first_sample=%{public}llu first_host_delta=%{public}lld "
+                "other_ops=%{public}llu",
+                ivars->writeEndCount.load(std::memory_order_relaxed),
+                ivars->framesDelivered.load(std::memory_order_relaxed),
+                ivars->minIoFrames.load(std::memory_order_relaxed),
+                ivars->maxIoFrames.load(std::memory_order_relaxed),
+                ivars->sampleTimeBreaks.load(std::memory_order_relaxed),
+                ivars->firstWriteEndSampleTime.load(std::memory_order_relaxed),
+                (firstHost != 0)
+                    ? (int64_t)(firstHost - ivars->startHostTime)
+                    : (int64_t)0,
+                ivars->otherIoOperations.load(std::memory_order_relaxed));
 
-        IOLog("ADKLab[dump] verifier: violations=%llu p1_win=%llu p1_run=%llu "
-              "p1_idx=%llu p2_dbc=%llu p3_bytes=%llu p3_q0=%llu p3_q1=%llu "
-              "p3_unacq=%llu p4_tile=%llu p4_cnt=%llu p5_step=%llu p5_graft=%llu\n",
-              snapshot.TotalViolations(),
-              snapshot.Value(VerifierCounterId::kP1CadenceWindowViolation),
-              snapshot.Value(VerifierCounterId::kP1CadenceRunViolation),
-              snapshot.Value(VerifierCounterId::kP1PacketIndexGapViolation),
-              snapshot.Value(VerifierCounterId::kP2DbcViolation),
-              snapshot.Value(VerifierCounterId::kP3ByteCountViolation),
-              snapshot.Value(VerifierCounterId::kP3CipQ0Violation),
-              snapshot.Value(VerifierCounterId::kP3CipQ1Violation),
-              snapshot.Value(VerifierCounterId::kP3UnacquiredPublishViolation),
-              snapshot.Value(VerifierCounterId::kP4FrameTilingViolation),
-              snapshot.Value(VerifierCounterId::kP4FrameCountViolation),
-              snapshot.Value(VerifierCounterId::kP5SytStepViolation),
-              snapshot.Value(VerifierCounterId::kP5SytGraftViolation));
+        LAB_LOG("dump verifier: violations=%{public}llu p1_win=%{public}llu p1_run=%{public}llu "
+                "p1_idx=%{public}llu p2_dbc=%{public}llu p3_bytes=%{public}llu p3_q0=%{public}llu p3_q1=%{public}llu "
+                "p3_unacq=%{public}llu p4_tile=%{public}llu p4_cnt=%{public}llu p5_step=%{public}llu p5_graft=%{public}llu",
+                snapshot.TotalViolations(),
+                snapshot.Value(VerifierCounterId::kP1CadenceWindowViolation),
+                snapshot.Value(VerifierCounterId::kP1CadenceRunViolation),
+                snapshot.Value(VerifierCounterId::kP1PacketIndexGapViolation),
+                snapshot.Value(VerifierCounterId::kP2DbcViolation),
+                snapshot.Value(VerifierCounterId::kP3ByteCountViolation),
+                snapshot.Value(VerifierCounterId::kP3CipQ0Violation),
+                snapshot.Value(VerifierCounterId::kP3CipQ1Violation),
+                snapshot.Value(VerifierCounterId::kP3UnacquiredPublishViolation),
+                snapshot.Value(VerifierCounterId::kP4FrameTilingViolation),
+                snapshot.Value(VerifierCounterId::kP4FrameCountViolation),
+                snapshot.Value(VerifierCounterId::kP5SytStepViolation),
+                snapshot.Value(VerifierCounterId::kP5SytGraftViolation));
 
         if (ivars->controller && ivars->controller->LabTimingEnabled()) {
             const auto& timing = ivars->controller->TimingCounters();
-            IOLog("ADKLab[dump] timing: data_syts=%llu seeds=%llu tight=%llu "
-                  "late=%llu gate=%llu escalate=%llu last_lead=%lld\n",
-                  timing.dataPackets, timing.seeds, timing.tightWarn,
-                  timing.late, timing.gate, timing.escalate,
-                  timing.lastLeadTicks);
+            LAB_LOG("dump timing: data_syts=%{public}llu seeds=%{public}llu tight=%{public}llu "
+                    "late=%{public}llu gate=%{public}llu escalate=%{public}llu last_lead=%{public}lld",
+                    timing.dataPackets, timing.seeds, timing.tightWarn,
+                    timing.late, timing.gate, timing.escalate,
+                    timing.lastLeadTicks);
         }
 
-        IOLog("ADKLab[dump] packets: published=%llu data=%llu nodata=%llu "
-              "acquire_failures=%llu\n",
-              snapshot.Value(VerifierCounterId::kPacketsPublished),
-              snapshot.Value(VerifierCounterId::kDataPackets),
-              snapshot.Value(VerifierCounterId::kNoDataPackets),
-              snapshot.Value(VerifierCounterId::kAcquireFailures));
+        LAB_LOG("dump packets: published=%{public}llu data=%{public}llu nodata=%{public}llu "
+                "acquire_failures=%{public}llu",
+                snapshot.Value(VerifierCounterId::kPacketsPublished),
+                snapshot.Value(VerifierCounterId::kDataPackets),
+                snapshot.Value(VerifierCounterId::kNoDataPackets),
+                snapshot.Value(VerifierCounterId::kAcquireFailures));
 
         if (snapshot.firstViolationValid) {
-            IOLog("ADKLab[dump] verifier_first: id=%u packet=%llu\n",
-                  snapshot.firstViolationId,
-                  snapshot.firstViolationPacketIndex);
+            LAB_LOG("dump verifier_first: id=%{public}u packet=%{public}llu",
+                    snapshot.firstViolationId,
+                    snapshot.firstViolationPacketIndex);
         }
 
         if (ivars->controller) {
             const auto& payload = ivars->controller->PayloadCounters();
-            IOLog("ADKLab[dump] payload: visited=%llu written=%llu "
-                  "without_packet=%llu outside_packet=%llu\n",
-                  payload.framesVisited.load(std::memory_order_relaxed),
-                  payload.framesWritten.load(std::memory_order_relaxed),
-                  payload.framesWithoutPacket.load(std::memory_order_relaxed),
-                  payload.framesOutsidePacket.load(std::memory_order_relaxed));
+            LAB_LOG("dump payload: visited=%{public}llu written=%{public}llu "
+                    "without_packet=%{public}llu outside_packet=%{public}llu",
+                    payload.framesVisited.load(std::memory_order_relaxed),
+                    payload.framesWritten.load(std::memory_order_relaxed),
+                    payload.framesWithoutPacket.load(std::memory_order_relaxed),
+                    payload.framesOutsidePacket.load(std::memory_order_relaxed));
         }
     });
 
