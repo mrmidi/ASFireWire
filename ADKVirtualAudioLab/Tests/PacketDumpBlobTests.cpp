@@ -87,9 +87,9 @@ const PacketDumpRecord* RecordOf(const std::vector<uint8_t>& blob, uint32_t i) {
 
 void RunPacketDumpBlobTests(TestContext& ctx) {
     // --- Layout is the wire contract shared with the Swift inspector ---
-    CHECK_EQ_U32(ctx, sizeof(PacketDumpHeader), 128);
+    CHECK_EQ_U32(ctx, sizeof(PacketDumpHeader), 192);
     CHECK_EQ_U32(ctx, sizeof(PacketDumpRecord), 576);
-    CHECK_EQ_U64(ctx, PacketDumpBlobSize(6), 128 + 6 * 576);
+    CHECK_EQ_U64(ctx, PacketDumpBlobSize(6), 192 + 6 * 576);
 
     // --- Window resolution, ordering, and header context ---
     {

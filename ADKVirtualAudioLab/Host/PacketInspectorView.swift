@@ -170,6 +170,9 @@ struct PacketInspectorView: View {
                 badge(title: "Payload", value: "\(h.framesWritten)/\(h.framesVisited)", icon: "waveform")
                 badge(title: "Misses", value: "\(h.framesWithoutPacket)+\(h.framesOutsidePacket)", icon: "exclamationmark.triangle", color: totalMisses > 0 ? .orange : .secondary)
                 badge(title: "Raced", value: "\(h.framesRacedReuse)", icon: "bolt.horizontal", color: h.framesRacedReuse > 0 ? .red : .secondary)
+                badge(title: "Non-Zero", value: "\(h.framesNonZero) fr / \(h.slotsNonZero) sl", icon: "waveform.path")
+                let maxAbsVal = Float(bitPattern: h.maxAbsSampleBits)
+                badge(title: "Max Amp", value: String(format: "%.6f", maxAbsVal), icon: "arrow.up.and.down")
             }
             .padding(.vertical, 2)
         }
@@ -256,21 +259,23 @@ struct PacketInspectorView: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
             if record.isData, let dump = model.dump {
-                let cursor = dump.header.expectedSampleTimeValid ? dump.header.expectedNextSampleTime : 0
+                let isCommitted = dump.header.payloadCommittedValid
+                let cursor = isCommitted ? dump.header.payloadCommittedEndFrame : (dump.header.expectedSampleTimeValid ? dump.header.expectedNextSampleTime : 0)
+                let cursorName = isCommitted ? "committed payload cursor" : "expected payload cursor"
                 let delta = Int64(record.firstAudioFrame) - Int64(cursor)
                 if delta >= 0 {
-                    Text("PCM not expected yet: +\(delta) frames ahead of payload cursor (\(cursor))")
+                    Text("PCM not expected yet: +\(delta) frames ahead of \(cursorName) (\(cursor))")
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.orange)
                 } else {
                     let absDelta = abs(delta)
                     let endDelta = delta + Int64(record.framesInPacket)
                     if endDelta <= 0 {
-                        Text("Behind payload cursor: -\(absDelta) frames behind payload cursor (\(cursor))")
+                        Text("Behind \(cursorName): -\(absDelta) frames behind \(cursorName) (\(cursor))")
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundStyle(.green)
                     } else {
-                        Text("Spans payload cursor: -\(absDelta)..\(endDelta - 1) frames relative to payload cursor (\(cursor))")
+                        Text("Spans \(cursorName): -\(absDelta)..\(endDelta - 1) frames relative to \(cursorName) (\(cursor))")
                             .font(.system(.caption2, design: .monospaced))
                             .foregroundStyle(.blue)
                     }

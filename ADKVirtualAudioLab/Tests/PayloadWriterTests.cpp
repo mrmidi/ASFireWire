@@ -5,6 +5,8 @@
 #include "../Protocols/Audio/AMDTP/AmdtpTxPacketizer.hpp"
 #include "../Protocols/Audio/AMDTP/PcmSlotCodec.hpp"
 
+#include <cstring>
+
 namespace ASFW::LabTests {
 
 using namespace Protocols::Audio::AMDTP;
@@ -468,6 +470,73 @@ void RunPayloadWriterTests(TestContext& ctx) {
         CHECK_EQ_U64(ctx, s.written, 8);
         CHECK(ctx, Balanced(s));
         CHECK_EQ_U64(ctx, f.writer.Counters().framesRacedReuse.load(), 0);
+    }
+
+    // --- CoreAudio ring buffer wrap size mismatch simulation (bug validation) ---
+    {
+        AmdtpTxPacketizer packetizer{};
+        AmdtpPacketTimeline timeline{};
+        AmdtpPayloadWriter writer{};
+        PacketTimelineSlot timelineSlots[1024]{};
+        static uint8_t bytes[1024][512]{};
+
+        CHECK(ctx, timeline.AttachSlots(timelineSlots, 1024));
+        packetizer.BindTimeline(&timeline);
+        CHECK(ctx, packetizer.Configure(MakeConfig48kBlocking(2, 0), AmdtpTxPolicy{}));
+        writer.Configure(packetizer.StreamConfig(), AmdtpTxPolicy{});
+        writer.BindTimeline(&timeline);
+        
+        // Expose 4096 frames (covering 512 data packets of 8 frames each)
+        // Blocking cadence has 3 data packets + 1 no-data packet per 4 packets.
+        // To get 4096 exposed frames, we need 512 data packets.
+        // 512 data packets / 3 * 4 = 682.6 packets. Let's prepare 684 packets.
+        const AmdtpTimingState noClock{};
+        PreparedTxPacket packet{};
+        for (uint32_t i = 0; i < 684; ++i) {
+            const TxPacketSlotView slot{i, bytes[i % 1024], 512};
+            CHECK(ctx, packetizer.PrepareNextPacket(slot, noClock, packet));
+        }
+        CHECK_EQ_U64(ctx, timeline.ExposedFrameEnd(), 4104);
+
+        // CoreAudio ring buffer is 4096 frames.
+        // CoreAudio wraps at 512 frames, leaving offsets 512..4095 as zero.
+        static float host[4096 * 2];
+        for (uint32_t frame = 0; frame < 512; ++frame) {
+            host[frame * 2] = 0.5f;
+            host[frame * 2 + 1] = -0.5f;
+        }
+        for (uint32_t frame = 512; frame < 4096; ++frame) {
+            host[frame * 2] = 0.0f;
+            host[frame * 2 + 1] = 0.0f;
+        }
+
+        // Write 4096 frames in blocks of 128 frames
+        uint64_t frame = 0;
+        for (uint32_t block = 0; block < 32; ++block) {
+            const HostAudioBufferView view{
+                &host[(frame % 4096) * 2],
+                frame,
+                128,
+                4096,
+                2
+            };
+            writer.WriteFloat32Interleaved(view);
+            frame += 128;
+        }
+
+        const auto& counters = writer.Counters();
+        CHECK_EQ_U64(ctx, counters.framesVisited.load(), 4096);
+        CHECK_EQ_U64(ctx, counters.framesWritten.load(), 4096);
+        
+        // Due to the 512-frame wrap mismatch, only 512 out of 4096 frames
+        // (exactly 12.5%) are non-zero!
+        CHECK_EQ_U64(ctx, counters.framesNonZero.load(), 512);
+        CHECK_EQ_U64(ctx, counters.slotsNonZero.load(), 1024);
+        
+        uint32_t expectedBits;
+        float maxAbsVal = 0.5f;
+        std::memcpy(&expectedBits, &maxAbsVal, sizeof(expectedBits));
+        CHECK_EQ_U32(ctx, counters.maxAbsSampleBits.load(), expectedBits);
     }
 }
 

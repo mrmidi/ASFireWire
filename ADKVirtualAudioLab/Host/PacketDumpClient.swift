@@ -7,8 +7,8 @@ import IOKit
 
 enum PacketDumpWire {
     static let magic: UInt32 = 0x4C44_4D50 // 'LDMP'
-    static let version: UInt32 = 1
-    static let headerSize = 128
+    static let version: UInt32 = 2
+    static let headerSize = 192
     static let recordMetaSize = 64
     static let packetBytesSize = 512
     static let recordSize = recordMetaSize + packetBytesSize // 576
@@ -42,6 +42,11 @@ struct PacketDumpHeader {
     var framesRacedReuse: UInt64 = 0
     var expectedNextSampleTime: UInt64 = 0
     var expectedSampleTimeValid: Bool = false
+    var payloadCommittedValid: Bool = false
+    var payloadCommittedEndFrame: UInt64 = 0
+    var framesNonZero: UInt64 = 0
+    var slotsNonZero: UInt64 = 0
+    var maxAbsSampleBits: UInt32 = 0
 
     var ztsSampleTime: UInt64 { periodIndex * UInt64(ztsPeriodFrames) }
 }
@@ -264,6 +269,11 @@ final class PacketDumpClient {
             dump.header.framesRacedReuse = u64(104)
             dump.header.expectedNextSampleTime = u64(112)
             dump.header.expectedSampleTimeValid = u32(120) != 0
+            dump.header.payloadCommittedValid = u32(124) != 0
+            dump.header.payloadCommittedEndFrame = u64(128)
+            dump.header.framesNonZero = u64(136)
+            dump.header.slotsNonZero = u64(144)
+            dump.header.maxAbsSampleBits = u32(152)
 
             for i in 0..<recordCount {
                 let base = PacketDumpWire.headerSize + i * stride

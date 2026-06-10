@@ -25,7 +25,7 @@ namespace ASFW::Lab {
 //   constants in sync with Host/PacketDumpClient.swift.
 
 constexpr uint32_t kPacketDumpMagic = 0x4C444D50;   // 'LDMP'
-constexpr uint32_t kPacketDumpVersion = 1;
+constexpr uint32_t kPacketDumpVersion = 2;
 constexpr uint32_t kPacketDumpMaxRecords = 6;
 constexpr uint32_t kPacketDumpDefaultRecords = 4;
 constexpr uint64_t kPacketDumpAnchorLatest = ~0ull;
@@ -60,9 +60,14 @@ struct PacketDumpHeader final {
     uint64_t framesRacedReuse{0};
     uint64_t expectedNextSampleTime{0};
     uint32_t expectedSampleTimeValid{0};
-    uint8_t reserved[4]{};
+    uint32_t payloadCommittedValid{0};
+    uint64_t payloadCommittedEndFrame{0};
+    uint64_t framesNonZero{0};
+    uint64_t slotsNonZero{0};
+    uint32_t maxAbsSampleBits{0};
+    uint8_t reserved[36]{};
 };
-static_assert(sizeof(PacketDumpHeader) == 128, "header layout is the wire contract");
+static_assert(sizeof(PacketDumpHeader) == 192, "header layout is the wire contract");
 
 struct PacketDumpRecord final {
     uint64_t packetIndex{0};
@@ -90,6 +95,8 @@ struct PacketDumpContext final {
     uint64_t prepareFailures{0};
     uint64_t writeEndCount{0};
     uint64_t expectedNextSampleTime{0};
+    uint64_t payloadCommittedEndFrame{0};
+    bool payloadCommittedValid{false};
     bool expectedSampleTimeValid{false};
 };
 
