@@ -62,5 +62,4 @@ opencode.json
 build-codex/
 
 # Xcode generated projects
-*.xcodeproj/
-**/*.xcodeproj/
+ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
