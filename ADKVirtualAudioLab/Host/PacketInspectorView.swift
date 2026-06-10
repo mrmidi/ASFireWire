@@ -6,16 +6,25 @@ import SwiftUI
 
 @MainActor
 final class PacketInspectorModel: ObservableObject {
+    enum AnchorMode: String, CaseIterable, Identifiable {
+        case latest = "Latest"
+        case payload = "Payload"
+
+        var id: String { self.rawValue }
+    }
+
     @Published var dump: PacketDump?
     @Published var selection: UInt64?
     @Published var status = "No dump yet."
     @Published var requestedCount = 4
+    @Published var anchorMode: AnchorMode = .latest
 
     private let client = PacketDumpClient()
 
     func performDump() {
         do {
-            let result = try client.dump(count: UInt32(requestedCount))
+            let anchorVal = anchorMode == .latest ? PacketDumpWire.anchorLatest : PacketDumpWire.anchorPayload
+            let result = try client.dump(count: UInt32(requestedCount), anchor: anchorVal)
             dump = result
             if let selected = selection,
                !result.records.contains(where: { $0.id == selected }) {
@@ -35,7 +44,7 @@ struct PacketInspectorView: View {
     @StateObject private var model = PacketInspectorModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             controls
             if let dump = model.dump {
                 cadenceStrip(dump)
@@ -51,23 +60,74 @@ struct PacketInspectorView: View {
                 Spacer()
             }
         }
+        .padding(12)
     }
 
     private var controls: some View {
-        HStack(spacing: 12) {
-            Button("Dump") { model.performDump() }
-                .keyboardShortcut("d")
-            Picker("Packets:", selection: $model.requestedCount) {
-                ForEach([2, 4, 6], id: \.self) { Text("\($0)").tag($0) }
+        HStack(spacing: 16) {
+            Button(action: { model.performDump() }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .font(.system(size: 13))
+                    Text("Dump")
+                        .fontWeight(.medium)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-            Text(model.status)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .textSelection(.enabled)
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut("d")
+
+            Divider()
+                .frame(height: 16)
+
+            HStack(spacing: 6) {
+                Text("Packets:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Picker("Packets:", selection: $model.requestedCount) {
+                    ForEach([2, 4, 6], id: \.self) { Text("\($0)").tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 90)
+            }
+
+            HStack(spacing: 6) {
+                Text("Anchor:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Picker("Anchor:", selection: $model.anchorMode) {
+                    ForEach(PacketInspectorModel.AnchorMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 130)
+            }
+
+            Spacer()
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(model.dump?.header.ioRunning == true ? Color.green : Color.red)
+                    .frame(width: 7, height: 7)
+                Text(model.status)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
     }
 
     // One chip per packet: the N/D cadence at a glance, click to select.
@@ -100,10 +160,43 @@ struct PacketInspectorView: View {
 
     private func contextLine(_ dump: PacketDump) -> some View {
         let h = dump.header
-        return Text("zts \(h.ztsSampleTime) (period \(h.periodIndex)×\(h.ztsPeriodFrames)) · exposed \(h.exposedFrames) · writeEnds \(h.writeEndCount) · payload \(h.framesWritten)/\(h.framesVisited) (miss \(h.framesWithoutPacket)+\(h.framesOutsidePacket), raced \(h.framesRacedReuse))")
-            .font(.system(.caption2, design: .monospaced))
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
+        let totalMisses = h.framesWithoutPacket + h.framesOutsidePacket
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                badge(title: "ZTS Time", value: "\(h.ztsSampleTime)", icon: "clock")
+                badge(title: "Period", value: "\(h.periodIndex)×\(h.ztsPeriodFrames)", icon: "hourglass")
+                badge(title: "Exposed", value: "\(h.exposedFrames)", icon: "eye")
+                badge(title: "WriteEnds", value: "\(h.writeEndCount)", icon: "arrow.right.doc.on.clipboard")
+                badge(title: "Payload", value: "\(h.framesWritten)/\(h.framesVisited)", icon: "waveform")
+                badge(title: "Misses", value: "\(h.framesWithoutPacket)+\(h.framesOutsidePacket)", icon: "exclamationmark.triangle", color: totalMisses > 0 ? .orange : .secondary)
+                badge(title: "Raced", value: "\(h.framesRacedReuse)", icon: "bolt.horizontal", color: h.framesRacedReuse > 0 ? .red : .secondary)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func badge(title: String, value: String, icon: String, color: Color = .secondary) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+                .foregroundColor(color)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title.uppercased())
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.primary)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
     }
 
     private func recordList(_ dump: PacketDump) -> some View {
@@ -162,6 +255,27 @@ struct PacketInspectorView: View {
             Text("\(record.isData ? "data" : (record.isPublished ? "no-data" : "evicted")) · \(record.byteCount) B · slot \(record.slotStateName) gen \(record.generation)\(record.hasLiveBytes ? " · LIVE (PCM may still land)" : "")")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if record.isData, let dump = model.dump {
+                let cursor = dump.header.expectedSampleTimeValid ? dump.header.expectedNextSampleTime : 0
+                let delta = Int64(record.firstAudioFrame) - Int64(cursor)
+                if delta >= 0 {
+                    Text("PCM not expected yet: +\(delta) frames ahead of payload cursor (\(cursor))")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.orange)
+                } else {
+                    let absDelta = abs(delta)
+                    let endDelta = delta + Int64(record.framesInPacket)
+                    if endDelta <= 0 {
+                        Text("Behind payload cursor: -\(absDelta) frames behind payload cursor (\(cursor))")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("Spans payload cursor: -\(absDelta)..\(endDelta - 1) frames relative to payload cursor (\(cursor))")
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.blue)
+                    }
+                }
+            }
         }
     }
 

@@ -756,6 +756,10 @@ kern_return_t VirtualAudioDevice::CopyPacketDump(uint32_t in_count,
         context.prepareFailures = ivarsPtr->prepareFailures;
         context.writeEndCount =
             ivarsPtr->writeEndCount.load(std::memory_order_relaxed);
+        context.expectedNextSampleTime =
+            ivarsPtr->expectedNextSampleTime.load(std::memory_order_relaxed);
+        context.expectedSampleTimeValid =
+            ivarsPtr->expectedSampleTimeValid.load(std::memory_order_relaxed);
 
         blobSize = ASFW::Lab::BuildPacketDumpBlob(
             ivarsPtr->controller->FakeSlotProvider(),

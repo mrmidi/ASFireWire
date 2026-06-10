@@ -29,6 +29,7 @@ constexpr uint32_t kPacketDumpVersion = 1;
 constexpr uint32_t kPacketDumpMaxRecords = 6;
 constexpr uint32_t kPacketDumpDefaultRecords = 4;
 constexpr uint64_t kPacketDumpAnchorLatest = ~0ull;
+constexpr uint64_t kPacketDumpAnchorPayload = ~1ull;
 
 // User-client plumbing shared with the host app.
 constexpr uint32_t kLabDiagUserClientType = 0x4C444247; // 'LDBG'
@@ -57,7 +58,9 @@ struct PacketDumpHeader final {
     uint64_t framesWithoutPacket{0};
     uint64_t framesOutsidePacket{0};
     uint64_t framesRacedReuse{0};
-    uint8_t reserved[16]{};
+    uint64_t expectedNextSampleTime{0};
+    uint32_t expectedSampleTimeValid{0};
+    uint8_t reserved[4]{};
 };
 static_assert(sizeof(PacketDumpHeader) == 128, "header layout is the wire contract");
 
@@ -86,6 +89,8 @@ struct PacketDumpContext final {
     uint64_t nextPacketIndex{0};
     uint64_t prepareFailures{0};
     uint64_t writeEndCount{0};
+    uint64_t expectedNextSampleTime{0};
+    bool expectedSampleTimeValid{false};
 };
 
 [[nodiscard]] constexpr size_t PacketDumpBlobSize(uint32_t recordCount) noexcept {

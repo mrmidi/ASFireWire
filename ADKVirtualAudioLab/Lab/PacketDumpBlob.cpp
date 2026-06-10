@@ -32,6 +32,36 @@ size_t BuildPacketDumpBlob(const FakeIsochTxSlotProvider& provider,
     // ring holds the last kSlotCount publications; older indices have been
     // evicted and are reported as such rather than silently skipped.
     uint64_t windowEnd = anchorPacketIndex;
+    if (windowEnd == kPacketDumpAnchorPayload) {
+        if (!context.expectedSampleTimeValid || context.expectedNextSampleTime == 0) {
+            windowEnd = kPacketDumpAnchorLatest;
+        } else {
+            const uint64_t targetFrame = context.expectedNextSampleTime - 1;
+            bool found = false;
+            const uint64_t startScan = context.nextPacketIndex != 0 ? context.nextPacketIndex - 1 : 0;
+            const uint64_t minScan = context.nextPacketIndex > FakeIsochTxSlotProvider::kSlotCount
+                                         ? context.nextPacketIndex - FakeIsochTxSlotProvider::kSlotCount
+                                         : 0;
+            for (uint64_t idx = startScan; idx >= minScan; --idx) {
+                const auto* published = provider.PublishedPacket(static_cast<uint32_t>(idx));
+                if (published != nullptr && published->isData) {
+                    if (targetFrame >= published->firstAudioFrame &&
+                        targetFrame < published->firstAudioFrame + published->framesInPacket) {
+                        windowEnd = idx;
+                        found = true;
+                        break;
+                    }
+                }
+                if (idx == 0) {
+                    break;
+                }
+            }
+            if (!found) {
+                windowEnd = kPacketDumpAnchorLatest;
+            }
+        }
+    }
+
     if (windowEnd == kPacketDumpAnchorLatest) {
         if (context.nextPacketIndex == 0) {
             windowEnd = 0; // nothing published yet → empty dump below
@@ -66,6 +96,8 @@ size_t BuildPacketDumpBlob(const FakeIsochTxSlotProvider& provider,
     header.nextPacketIndex = context.nextPacketIndex;
     header.prepareFailures = context.prepareFailures;
     header.writeEndCount = context.writeEndCount;
+    header.expectedNextSampleTime = context.expectedNextSampleTime;
+    header.expectedSampleTimeValid = context.expectedSampleTimeValid ? 1u : 0u;
     header.framesVisited =
         payloadCounters.framesVisited.load(std::memory_order_relaxed);
     header.framesWritten =
