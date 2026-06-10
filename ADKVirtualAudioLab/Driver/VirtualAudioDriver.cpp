@@ -2,8 +2,11 @@
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/OSString.h>
+#include <os/log.h>
 #include "VirtualAudioDriver.h"
 #include "VirtualAudioDevice.h"
+
+#define LAB_LOG(fmt, ...) os_log(OS_LOG_DEFAULT, "[ADKLab] " fmt, ##__VA_ARGS__)
 
 struct VirtualAudioDriver_IVars
 {
@@ -37,23 +40,23 @@ void VirtualAudioDriver::free()
 
 kern_return_t VirtualAudioDriver::Start_Impl(IOService* provider)
 {
-    IOLog("VirtualAudioDriver: Start_Impl entering\n");
+    LAB_LOG("Start_Impl entering");
     kern_return_t kr = Start(provider, SUPERDISPATCH);
     if (kr != kIOReturnSuccess) {
-        IOLog("VirtualAudioDriver: Start super failed with 0x%08x\n", kr);
+        LAB_LOG("Start super failed with 0x%{public}08x", kr);
         return kr;
     }
     
     ivars->workQueue = GetWorkQueue();
     if (ivars->workQueue.get() == nullptr) {
-        IOLog("VirtualAudioDriver: GetWorkQueue returned null\n");
+        LAB_LOG("GetWorkQueue returned null");
         return kIOReturnInvalid;
     }
     
-    IOLog("VirtualAudioDriver: Allocating VirtualAudioDevice\n");
+    LAB_LOG("Allocating VirtualAudioDevice");
     ivars->audioDevice = OSSharedPtr(OSTypeAlloc(VirtualAudioDevice), OSNoRetain);
     if (!ivars->audioDevice) {
-        IOLog("VirtualAudioDriver: Failed to allocate VirtualAudioDevice\n");
+        LAB_LOG("Failed to allocate VirtualAudioDevice");
         return kIOReturnNoMemory;
     }
     
@@ -62,44 +65,44 @@ kern_return_t VirtualAudioDriver::Start_Impl(IOService* provider)
     auto manufacturerUID = OSSharedPtr(OSString::withCString("Alexander Shabelnikov"), OSNoRetain);
     
     if (!deviceUID || !modelUID || !manufacturerUID) {
-        IOLog("VirtualAudioDriver: Failed to allocate UID strings\n");
+        LAB_LOG("Failed to allocate UID strings");
         return kIOReturnNoMemory;
     }
     
-    IOLog("VirtualAudioDriver: Initializing VirtualAudioDevice\n");
+    LAB_LOG("Initializing VirtualAudioDevice");
     if (!ivars->audioDevice->init(this, false, deviceUID.get(), modelUID.get(), manufacturerUID.get(), 512)) {
-        IOLog("VirtualAudioDriver: VirtualAudioDevice::init failed\n");
+        LAB_LOG("VirtualAudioDevice::init failed");
         return kIOReturnInternalError;
     }
     
-    IOLog("VirtualAudioDriver: Setting device name\n");
+    LAB_LOG("Setting device name");
     kr = ivars->audioDevice->SetName(deviceUID.get());
     if (kr != kIOReturnSuccess) {
-        IOLog("VirtualAudioDriver: SetName failed with 0x%08x\n", kr);
+        LAB_LOG("SetName failed with 0x%{public}08x", kr);
         return kr;
     }
     
-    IOLog("VirtualAudioDriver: Adding device object\n");
+    LAB_LOG("Adding device object");
     kr = AddObject(ivars->audioDevice.get());
     if (kr != kIOReturnSuccess) {
-        IOLog("VirtualAudioDriver: AddObject failed with 0x%08x\n", kr);
+        LAB_LOG("AddObject failed with 0x%{public}08x", kr);
         return kr;
     }
     
-    IOLog("VirtualAudioDriver: Registering service\n");
+    LAB_LOG("Registering service");
     kr = RegisterService();
     if (kr != kIOReturnSuccess) {
-        IOLog("VirtualAudioDriver: RegisterService failed with 0x%08x\n", kr);
+        LAB_LOG("RegisterService failed with 0x%{public}08x", kr);
         return kr;
     }
     
-    IOLog("VirtualAudioDriver: Start_Impl completed successfully\n");
+    LAB_LOG("Start_Impl completed successfully");
     return kIOReturnSuccess;
 }
 
 kern_return_t VirtualAudioDriver::Stop_Impl(IOService* provider)
 {
-    IOLog("VirtualAudioDriver: Stop\n");
+    LAB_LOG("Stop_Impl");
     
     if (ivars->audioDevice) {
         RemoveObject(ivars->audioDevice.get());
@@ -121,13 +124,41 @@ kern_return_t VirtualAudioDriver::NewUserClient_Impl(uint32_t in_type, IOUserCli
 kern_return_t VirtualAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                                               IOUserAudioStartStopFlags in_flags)
 {
-    IOLog("VirtualAudioDriver: StartDevice 0x%x\n", (uint32_t)in_object_id);
-    return kIOReturnSuccess;
+    LAB_LOG("StartDevice 0x%{public}x", (uint32_t)in_object_id);
+    
+    if (!ivars->audioDevice || in_object_id != ivars->audioDevice->GetObjectID()) {
+        LAB_LOG("StartDevice - unknown object id 0x%{public}x", (uint32_t)in_object_id);
+        return kIOReturnBadArgument;
+    }
+    
+    __block kern_return_t kr = kIOReturnSuccess;
+    ivars->workQueue->DispatchSync(^(){
+        kr = super::StartDevice(in_object_id, in_flags);
+    });
+    
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("StartDevice - super::StartDevice failed with 0x%{public}08x", kr);
+    }
+    return kr;
 }
 
 kern_return_t VirtualAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
                                              IOUserAudioStartStopFlags in_flags)
 {
-    IOLog("VirtualAudioDriver: StopDevice 0x%x\n", (uint32_t)in_object_id);
-    return kIOReturnSuccess;
+    LAB_LOG("StopDevice 0x%{public}x", (uint32_t)in_object_id);
+    
+    if (!ivars->audioDevice || in_object_id != ivars->audioDevice->GetObjectID()) {
+        LAB_LOG("StopDevice - unknown object id 0x%{public}x", (uint32_t)in_object_id);
+        return kIOReturnBadArgument;
+    }
+    
+    __block kern_return_t kr = kIOReturnSuccess;
+    ivars->workQueue->DispatchSync(^(){
+        kr = super::StopDevice(in_object_id, in_flags);
+    });
+    
+    if (kr != kIOReturnSuccess) {
+        LAB_LOG("StopDevice - super::StopDevice failed with 0x%{public}08x", kr);
+    }
+    return kr;
 }
