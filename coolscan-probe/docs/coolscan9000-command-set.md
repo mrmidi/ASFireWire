@@ -159,6 +159,11 @@ RGBI   1b 00 00 00 04 00 01 02 03 09     (none)   // 4 farger inkl. IR (0x09)
 
 ## Full skannesekvens (`cs3_scan`)
 
+> **UTDATERT for 9000:** VueScan-capturen (`capture/DECODED.md`) viser at den
+> ekte sekvensen verken bruker SET BOUNDARY eller MODE SELECT, sender SCAN-listen
+> som data-OUT, og bruker kontrollbyte 0x80 på SET WINDOW/READ. Følg DECODED.md;
+> lista under er coolscan3s (delvis feilaktige) rekonstruksjon.
+
 1. `scanner_ready` (vent til dokument klart)
 2. **convert_options** — beregn geometri (host-side, ingen kommando)
 3. **SET BOUNDARY** (`2a 00 88 …`) — ramme-grenser (mellomformat)

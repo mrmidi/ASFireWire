@@ -62,10 +62,17 @@ Payload = 8-byte header `00 00 00 00 00 00 00 32` (descriptor length 50) + 50 B:
 | 22–24 | `00 00 00` | brightness/threshold/contrast |
 | 25 | `05` | image composition = 0x05 (multi-channel/16-bit mode) |
 | 26 | `10` | bits per pixel = 16 |
-| 27–39 | `00 …` | halftone/RIF/bit-order/compression: all zero |
-| 40–44 | `81 01 02 02 ff` | vendor block (constant across all windows/passes) |
-| 45 | `00` | vendor |
+| 27–40 | `00 …` | halftone/RIF/bit-order/compression + vendor byte 40: all zero (**14 bytes**) |
+| 41–45 | `81 01 02 02 ff` | vendor block (constant across all windows/passes) |
 | 46–49 | per window | **per-channel exposure**: preview R=40000, G=100000, B=140000, IR=0; scan R=240000, G=600000, B=840000, IR=0 (exactly 6× preview; R:G:B ≈ 1:2.5:3.5) |
+
+> ⚠️ An earlier version of this table had the vendor block one byte early
+> (40–44 + a trailing `00` at 45). The raw capture tail row is
+> `30: 00 81 01 02 02 ff` + be32 exposure in **all 11 captured windows** —
+> byte 40 is zero. `0x81` at byte 40 is rejected with CHECK CONDITION 5/26
+> (proven on HW). Two more HW-proven constraints: resolution below the 0xC1
+> caps minimum (666 dpi) → 5/26, and width/height go on the wire as **raw
+> device units** (VueScan sends 4000 even when not a multiple of the pitch).
 
 Notes:
 - Preview window (165,203)+4000×5904 = exactly the 0xC1 caps frame box at a
@@ -84,6 +91,17 @@ Notes:
   lines per READ (~510 KB chunks). Whether the 4 channels are line-sequential or
   pixel-interleaved within a line: confirm from first real probe data.
 - READ CDB transfer length [6–8] in bytes, control byte 0x80.
+
+## EVPD page 0xC8 = the frame table (decoded on HW 2026-06-10, not in capture)
+
+`12 01 c8 00 c5 80` (VueScan polls it ~200×; the DTrace capture has no DATA-IN,
+so this was decoded from our own probe): header `06 c8 00 c1 0c` = PDT/page/
+page-length 0xc1/**frame count 12**, then one 16-byte record per frame:
+`{ULX:be32, ULY:be32, width:be32, height:be32}` in device units. With the
+12-frame 120-holder: two columns (x=165, x=5834) × six rows (y=203, 6188,
+12172, 18156, 24140, 30125), each 4000×5904. **Record 1 = (165,203)+4000×5904
+= exactly the captured SET WINDOW box** — this page is where VueScan gets its
+window geometry. Caps byte 75 (`nFrames`) matches the record count.
 
 ## SEND LUT
 

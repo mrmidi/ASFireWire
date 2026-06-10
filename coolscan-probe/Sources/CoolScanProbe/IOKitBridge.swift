@@ -56,10 +56,12 @@ enum ASFW {
     static let sbp2SwVersion: UInt32 = 0x010483
 }
 
-/// Errors surfaced by the bridge.
+/// Errors surfaced by the bridge. `kr` carries the raw kern_return for callers
+/// that need to react to specific codes (e.g. retry on a busy dext slot).
 struct ProbeError: Error, CustomStringConvertible {
     let description: String
-    init(_ m: String) { description = m }
+    let kr: kern_return_t?
+    init(_ m: String, kr: kern_return_t? = nil) { description = m; self.kr = kr }
 }
 
 /// Live connection to the ASFireWire dext user client.
@@ -134,7 +136,7 @@ final class ASFWConnection {
             (kr, out) = invoke(max(structOutCap * 4, 256 * 1024))
         }
         guard kr == KERN_SUCCESS else {
-            throw ProbeError("\(sel) (selector \(sel.rawValue)) feilet: \(Self.decode(kr))")
+            throw ProbeError("\(sel) (selector \(sel.rawValue)) feilet: \(Self.decode(kr))", kr: kr)
         }
         return (Array(scalarOut.prefix(Int(scalarOutCnt))), out)
     }

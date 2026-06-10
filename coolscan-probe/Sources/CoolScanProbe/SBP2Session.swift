@@ -4,10 +4,29 @@ import Foundation
 struct SCSIResult {
     let transportStatus: Int32   // 0 == transport OK
     let sbpStatus: UInt8         // 0 == kNoAdditionalInfo
+    /// SAM status from the SBP-2 status block (dext v14+). nil = target sent no
+    /// command-set-dependent status (normal on GOOD) or old dext. 0x02 = CHECK
+    /// CONDITION — before v14 this was masked and looked like GOOD.
+    let scsiStatus: UInt8?
     let payload: Data            // data read from target
-    let sense: Data              // sense bytes (if CHECK CONDITION + captureSense)
+    let sense: Data              // decoded autosense (CHECK CONDITION) or captureSense copy
 
-    var ok: Bool { transportStatus == 0 && sbpStatus == 0 }
+    var ok: Bool { transportStatus == 0 && sbpStatus == 0 && (scsiStatus ?? 0) == 0 }
+
+    /// Human-readable status for diagnostics: SCSI status + sense key/ASC/ASCQ.
+    var statusText: String {
+        var parts = ["transport=\(transportStatus)", "sbp=\(sbpStatus)"]
+        if let s = scsiStatus {
+            parts.append("scsi=0x" + String(format: "%02x", s))
+            if s == 0x02, sense.count >= 14 {
+                let key = sense[sense.startIndex + 2] & 0x0F
+                let asc = sense[sense.startIndex + 12]
+                let ascq = sense[sense.startIndex + 13]
+                parts.append(String(format: "sense=%x/%02x/%02x", key, asc, ascq))
+            }
+        }
+        return parts.joined(separator: " ")
+    }
 }
 
 /// A logged-in SBP-2 session against one target, exposing raw SCSI passthrough.
@@ -102,10 +121,45 @@ final class SBP2Session {
         req.append(contentsOf: cdb)
         req.append(contentsOf: outgoing)
 
-        try conn.call(.submitSBP2Command, scalarIn: [handle], structIn: req)
+        // The dext refuses new submissions (kIOReturnError) while a previous ORB
+        // is still in flight. A wedged ORB releases its slot when the dext-side
+        // timeout/settle-poll failure path fires — that can take tens of seconds
+        // (each AGENT_STATE poll read has its own async timeout). Wait it out
+        // instead of dying: one lost ORB should cost a stall, not the whole run.
+        var submitTry = 0
+        while true {
+            do {
+                try conn.call(.submitSBP2Command, scalarIn: [handle], structIn: req)
+                break
+            } catch let e as ProbeError where e.kr == kIOReturnError {
+                submitTry += 1
+                if let st = try? state(), st.login != .loggedIn {
+                    throw ProbeError("submit avvist og sesjonen er ikke lenger innlogget "
+                        + "(state=\(st.login.label)) — gir opp")
+                }
+                guard submitTry < 45 else { throw e }
+                if submitTry == 1 {
+                    print("   ⏳ submit avvist (forrige ORB henger i dext-en) — venter på frigjort slot…")
+                } else if submitTry % 10 == 0 {
+                    print("   ⏳ venter fortsatt (\(submitTry)s)…")
+                }
+                usleep(1_000_000)
+            }
+        }
 
         // Poll for the result (GetSBP2CommandResult returns NotFound until ready).
-        let cap = Int(transferLength) + 256 // payload + result header + sense headroom
+        // The dext only returns payload bytes for data-IN (registry fills
+        // result.payload solely for FromTarget); data-OUT/no-data results are
+        // header+sense only, and captureSense duplicates a data-IN payload into
+        // the sense field (doubling the result). The requested cap rides the
+        // user-client marshalling, which has three zones: ≤ ~2304 B inline OK;
+        // 2305–4095 overflows the IIG RPC reply (BadArgument); > 4096 the kernel
+        // hands the dext a structureOutputDescriptor, which dext v13+ fills.
+        // Round dead-zone requests up into the descriptor zone.
+        let payloadCap = direction == .fromTarget
+            ? Int(transferLength) * (captureSense ? 2 : 1) : 0
+        var cap = payloadCap + 256
+        if cap > 2304 { cap = max(cap, 4352) }
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0 + 2.0)
         while Date() < deadline {
             // Raw single call (no auto-retry) so we can see the exact kern_return
@@ -168,10 +222,12 @@ final class SBP2Session {
 
     private func parseResult(_ data: Data) -> SCSIResult {
         guard data.count >= 16 else {
-            return SCSIResult(transportStatus: -1, sbpStatus: 0xFF, payload: Data(), sense: Data())
+            return SCSIResult(transportStatus: -1, sbpStatus: 0xFF, scsiStatus: nil,
+                              payload: Data(), sense: Data())
         }
         let transportStatus = data.i32(0)
         let sbpStatus = data.u8(4)
+        let scsiStatus: UInt8? = data.u8(5) != 0 ? data.u8(6) : nil
         let payloadLen = Int(data.u32(8))
         let senseLen = Int(data.u32(12))
         var off = 16
@@ -182,7 +238,7 @@ final class SBP2Session {
             ? data.subdata(in: data.startIndex + off ..< data.startIndex + off + senseLen)
             : Data()
         return SCSIResult(transportStatus: transportStatus, sbpStatus: sbpStatus,
-                          payload: payload, sense: sense)
+                          scsiStatus: scsiStatus, payload: payload, sense: sense)
     }
 
     /// Tear down the session. The dext issues an async LOGOUT ORB and retains the

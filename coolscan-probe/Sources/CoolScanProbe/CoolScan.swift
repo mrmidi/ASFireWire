@@ -1,19 +1,15 @@
 import Foundation
 
-// CoolScan SCSI command set — skeleton ported from SANE coolscan3 (GPL).
-// Every operation is a raw CDB sent through SBP2Session.sendSCSI. All multi-byte
-// fields are BIG-ENDIAN (SCSI convention). See docs/coolscan9000-command-set.md.
-//
-// Status: command builders are laid out per the coolscan3 reference but NOT yet
-// validated against hardware. Items marked TODO need the real 9000 to confirm.
+// CoolScan SCSI command set. Originally laid out from SANE coolscan3 (GPL);
+// the scan path is now byte-exact against a DTrace capture of VueScan driving a
+// real 9000 on Sequoia — see capture/DECODED.md. Where coolscan3 and the capture
+// disagree, the capture wins. All multi-byte fields are BIG-ENDIAN (SCSI).
 
 enum CoolScan {
 
-    /// Device color ids (cs3_colors): R, G, B, IR.
-    enum Color: UInt8 { case red = 1, green = 2, blue = 3, infrared = 9 }
-
-    /// Scan "kind" byte in the SET WINDOW descriptor (offset 50).
-    enum ScanKind: UInt8 { case normal = 0x01, autoExposure = 0x20, autoExposureWB = 0x40 }
+    /// Device color ids: R, G, B, IR. One SET WINDOW + SEND LUT per id; one SCAN
+    /// delivers all four channels (window list 01 02 03 09).
+    enum Color: UInt8, CaseIterable { case red = 1, green = 2, blue = 3, infrared = 9 }
 
     // MARK: - Big-endian packing (SCSI)
 
@@ -23,33 +19,61 @@ enum CoolScan {
         [UInt8((v >> 24) & 0xff), UInt8((v >> 16) & 0xff), UInt8((v >> 8) & 0xff), UInt8(v & 0xff)]
     }
 
+    static func hexLine(_ b: [UInt8]) -> String {
+        b.map { String(format: "%02x", $0) }.joined(separator: " ")
+    }
+
     // MARK: - Status & lifecycle
 
+    // Per-command ORB timeouts (probe-controlled; the dext uses timeoutMs as the
+    // ORB timer). The default 5 s declared slow-but-alive commands dead: when the
+    // scanner is mechanically busy (boot, AF, calibration) it simply doesn't
+    // fetch/complete ORBs for many seconds, and timing out fires AGENT_RESET mid
+    // operation — observed as the "wedge" (HW-run 12: agent recovered ~44 s
+    // later both times). VueScan's stack just waits. So: wait.
+    static let kSlowCmdTimeoutMs: UInt32 = 30_000
+    static let kPollCmdTimeoutMs: UInt32 = 15_000
+
     static func testUnitReady(_ s: SBP2Session) throws -> SCSIResult {
-        try s.sendSCSI(cdb: [0x00, 0, 0, 0, 0, 0], direction: .none)
+        try s.sendSCSI(cdb: [0x00, 0, 0, 0, 0, 0], direction: .none,
+                       timeoutMs: kPollCmdTimeoutMs)
     }
 
     /// REQUEST SENSE — read status/error bits the scanner_ready loop polls on.
     static func requestSense(_ s: SBP2Session, length: UInt8 = 18) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0x03, 0, 0, 0, length, 0], direction: .fromTarget,
-                       transferLength: UInt32(length))
+                       transferLength: UInt32(length), timeoutMs: kPollCmdTimeoutMs)
     }
 
-    /// Poll TEST UNIT READY until it succeeds (coolscan3 scanner_ready, simplified).
-    /// TODO: decode REQUEST SENSE status bits (NO_DOCS / READY) for the 9000.
+    /// Decoded (key, ASC, ASCQ) from one REQUEST SENSE, or nil on empty/timeout.
+    static func senseTriple(_ s: SBP2Session) -> (key: UInt8, asc: UInt8, ascq: UInt8)? {
+        guard let r = try? requestSense(s) else { return nil }
+        let b = [UInt8](r.payload)
+        guard b.count >= 14 else { return nil }
+        return (b[2] & 0x0f, b[12], b[13])
+    }
+
+    /// Poll until the scanner is TRULY ready (coolscan3's cs3_scanner_ready).
+    /// TUR alone is not enough: the dext masks the SCSI status byte, so TUR's ok
+    /// lies — REQUEST SENSE is the real verdict. key 0 = ready; key 6 = queued
+    /// UNIT ATTENTION (power-on/holder events): drain and re-poll immediately,
+    /// since a pending UA CHECK-CONDITIONs the next command without executing it.
     @discardableResult
-    static func waitReady(_ s: SBP2Session, timeout: TimeInterval = 120) throws -> Bool {
+    static func waitReady(_ s: SBP2Session, timeout: TimeInterval = 120) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if try testUnitReady(s).ok { return true }
-            usleep(1_000_000) // 1 s, matching coolscan3
+            _ = try? testUnitReady(s)
+            guard let t = senseTriple(s) else { usleep(500_000); continue }
+            if t.key == 0 { return true }
+            if t.key == 6 { usleep(120_000); continue }
+            usleep(1_000_000)
         }
         return false
     }
 
-    /// MODE SELECT(6) — set the base resolution unit (1/unitDpi inch) that all
-    /// SET WINDOW offsets/extents are then expressed in. coolscan3 sets
-    /// `unit_dpi = resx_max` (the optical max, 4000 on the 9000).
+    /// MODE SELECT(6) — set the base resolution unit (1/unitDpi inch).
+    /// NOT part of VueScan's flow (the capture never sends it — offsets are in
+    /// 1/4000″ device units by default). Kept only for the windowcheck diagnostic.
     static func modeSelect(_ s: SBP2Session, unitDpi: UInt16) throws -> SCSIResult {
         // 20-byte MODE SELECT(6) parameter list, byte-exact from coolscan3
         // cs3_mode_select. It is a well-formed SCSI parameter list:
@@ -76,9 +100,19 @@ enum CoolScan {
         try s.sendSCSI(cdb: [0x17, 0, 0, 0, 0, 0], direction: .none)
     }
 
-    /// EXECUTE (vendor trigger) — issued after parameter-setting commands.
+    /// EXECUTE (vendor trigger) — issued after parameter-setting commands
+    /// (set AF point / set focus). AF moves the carriage and can hold the ORB
+    /// for a long time — give it minutes, not seconds.
     static func execute(_ s: SBP2Session) throws -> SCSIResult {
-        try s.sendSCSI(cdb: [0xc1, 0, 0, 0, 0, 0], direction: .none)
+        try s.sendSCSI(cdb: [0xc1, 0, 0, 0, 0, 0], direction: .none,
+                       timeoutMs: 120_000)
+    }
+
+    /// Vendor 0xC0 — abort/idle. VueScan sends it after autofocus and at
+    /// end-of-pass (after the last READ).
+    static func abortIdle(_ s: SBP2Session) throws -> SCSIResult {
+        try s.sendSCSI(cdb: [0xc0, 0, 0, 0, 0, 0], direction: .none,
+                       timeoutMs: kSlowCmdTimeoutMs)
     }
 
     private static func vendorWrite13(_ s: SBP2Session, sub: UInt8) throws -> SCSIResult {
@@ -162,45 +196,80 @@ enum CoolScan {
 
     // MARK: - Focus
 
+    /// Set focus position, then `execute`. Captured payload puts the value in
+    /// bytes 1..4 (leading zero byte) — `00 00 00 00 eb …` for focus 235.
     static func setFocus(_ s: SBP2Session, focus: UInt32) throws -> SCSIResult {
-        var data = be32(focus); data += [0, 0, 0, 0]   // 9-byte payload total
+        let data: [UInt8] = [0x00] + be32(focus) + [0, 0, 0, 0]   // 9 bytes
         return try s.sendSCSI(cdb: [0xe0, 0x00, 0xc1, 0, 0, 0, 0, 0, 0x09, 0x00],
-                              direction: .toTarget, transferLength: UInt32(data.count), outgoing: data)
+                              direction: .toTarget, transferLength: UInt32(data.count),
+                              outgoing: data, timeoutMs: kSlowCmdTimeoutMs)
     }
 
-    /// READ FOCUS → returns the current focus value (13-byte response).
+    /// Vendor read e1/c1, 13 bytes — frame/holder info; VueScan reads it before
+    /// every pass and it is the likely source of the SET WINDOW offsets. Dump raw
+    /// until the layout is understood. Bytes 1..4 hold the focus position.
+    static func readFrameInfo(_ s: SBP2Session) throws -> SCSIResult {
+        try s.sendSCSI(cdb: [0xe1, 0x00, 0xc1, 0, 0, 0, 0, 0, 0x0d, 0x00],
+                       direction: .fromTarget, transferLength: 13)
+    }
+
+    /// Vendor read e1/c1, 9 bytes — AF result; VueScan reads it right after the
+    /// autofocus EXECUTE completes. Focus position in bytes 1..4 (BE).
+    static func readAFResult(_ s: SBP2Session) throws -> SCSIResult {
+        try s.sendSCSI(cdb: [0xe1, 0x00, 0xc1, 0, 0, 0, 0, 0, 0x09, 0x00],
+                       direction: .fromTarget, transferLength: 9)
+    }
+
+    /// EVPD page 0xC8 (197 B) — undecoded; VueScan polls it constantly (~200×
+    /// in the capture), so it is probably unit/holder status. Control byte 0x80
+    /// to match the captured CDB `12 01 c8 00 c5 80` exactly.
+    static func readPageC8(_ s: SBP2Session) throws -> SCSIResult {
+        try s.sendSCSI(cdb: [0x12, 0x01, 0xc8, 0x00, 0xc5, 0x80],
+                       direction: .fromTarget, transferLength: 0xc5)
+    }
+
+    /// READ FOCUS → current focus value (bytes 1..4 of the 13-byte response).
     static func readFocus(_ s: SBP2Session) throws -> UInt32 {
-        let r = try s.sendSCSI(cdb: [0xe1, 0x00, 0xc1, 0, 0, 0, 0, 0, 0x0d, 0x00],
-                               direction: .fromTarget, transferLength: 13)
-        let b = [UInt8](r.payload)
+        let b = [UInt8](try readFrameInfo(s).payload)
         guard b.count >= 5 else { return 0 }
         return (UInt32(b[1]) << 24) | (UInt32(b[2]) << 16) | (UInt32(b[3]) << 8) | UInt32(b[4])
     }
 
+    /// Set the autofocus point, then `execute`. Same 9-byte framing as setFocus:
+    /// `00` + x + y (capture: `00 00 00 0b 68 00 00 0f 60`).
     static func autofocus(_ s: SBP2Session, x: UInt32, y: UInt32) throws -> SCSIResult {
-        let data = be32(x) + be32(y)
+        let data: [UInt8] = [0x00] + be32(x) + be32(y)
         return try s.sendSCSI(cdb: [0xe0, 0x00, 0xa0, 0, 0, 0, 0, 0, 0x09, 0x00],
-                              direction: .toTarget, transferLength: UInt32(data.count), outgoing: data)
+                              direction: .toTarget, transferLength: UInt32(data.count),
+                              outgoing: data, timeoutMs: kSlowCmdTimeoutMs)
     }
 
     // MARK: - SET WINDOW
 
-    /// Geometry + acquisition parameters for one SET WINDOW call (device units).
+    /// Geometry + acquisition parameters for one SET WINDOW call (device units,
+    /// 1/4000″). One window per colour channel, same geometry in all four.
     struct Window {
         var color: Color
         var resX: UInt16
         var resY: UInt16
-        var xOffset: UInt32
-        var yOffset: UInt32
+        var xOffset: UInt32         // ULX
+        var yOffset: UInt32         // ULY
         var width: UInt32
         var height: UInt32
-        var depth: UInt8            // 8 / 14 / 16
-        var samplesPerScan: UInt8   // multi-sampling (1 = single)
+        var depth: UInt8            // bits per pixel (capture: 16)
         var negative: Bool
-        var kind: ScanKind
-        var exposure: UInt32        // ×10 ns; ignored for IR
-        /// LS40/LS4000/LS50/LS5000 set CDB byte9 = 0x80. 8000/9000 use 0x00.
-        var ls40Family: Bool = false
+        var exposure: UInt32        // per channel; 0 for IR
+    }
+
+    /// Per-channel exposure from the capture's preview pass (R:G:B ≈ 1:2.5:3.5;
+    /// the real-scan pass used exactly 6× these). IR is always 0.
+    static func defaultExposure(_ c: Color) -> UInt32 {
+        switch c {
+        case .red: return 40_000
+        case .green: return 100_000
+        case .blue: return 140_000
+        case .infrared: return 0
+        }
     }
 
     /// Resolved scan geometry, following coolscan3's `cs3_convert_options`.
@@ -216,35 +285,52 @@ enum CoolScan {
         var nColors: Int
 
         var bytesPerPixel: Int { depth > 8 ? 2 : 1 }
-        /// Each scanline carries all colour planes back-to-back (line-sequential),
-        /// each padded to an even byte count.
+        /// Each scanline carries all four channels: bytes_per_line = width_px × 8
+        /// at 16 bit (validated by the capture's READ totals). Whether channels
+        /// are line-sequential or pixel-interleaved within the line is unconfirmed.
         var oddPadding: Int { (Int(logicalWidth) * bytesPerPixel) % 2 == 1 ? 1 : 0 }
         var bytesPerLine: Int { nColors * (Int(logicalWidth) * bytesPerPixel + oddPadding) }
         var totalBytes: Int { bytesPerLine * Int(logicalHeight) }
     }
 
+    /// Frame box VueScan used for the FH-835S 35mm holder (frame 1 in the
+    /// capture): the 0xC1 caps frame size at a holder-specific offset. The offset
+    /// likely comes from `readFrameInfo` — dump it and refine.
+    static let captureFrame = (x: UInt32(165), y: UInt32(203), w: UInt32(4000), h: UInt32(5904))
+
     /// Resolve a scan area (in device units, 1/`resXMax`″) at a requested resolution
-    /// into a `ScanGeometry`. Defaults to the full reported boundary.
+    /// into a `ScanGeometry`. Defaults to the full reported boundary. Always four
+    /// channels (R, G, B, IR) — that is what the captured scans acquire.
     static func geometry(_ caps: Capabilities, resolution: UInt16,
-                         depth: UInt8? = nil, infrared: Bool = false,
+                         depth: UInt8? = nil,
                          xOffsetDU: UInt32 = 0, yOffsetDU: UInt32 = 0,
                          widthDU: UInt32? = nil, heightDU: UInt32? = nil) -> ScanGeometry {
         let resMaxX = UInt32(max(caps.resXMax, 1)), resMaxY = UInt32(max(caps.resYMax, 1))
-        let pitchX = max(1, resMaxX / UInt32(max(resolution, 1)))
-        let pitchY = max(1, resMaxY / UInt32(max(resolution, 1)))
+        // The caps "min" fields are real device limits: SET WINDOW below them is
+        // rejected with CHECK CONDITION 5/26 (INVALID FIELD IN PARAMETER LIST) —
+        // proven on HW with 500 dpi vs resXMin=666. VueScan's low-dpi pass used
+        // exactly 666. Clamp up before snapping.
+        let wanted = max(resolution, max(caps.resXMin, caps.resYMin))
+        let pitchX = max(1, resMaxX / UInt32(max(wanted, 1)))
+        let pitchY = max(1, resMaxY / UInt32(max(wanted, 1)))
         let realResX = UInt16(resMaxX / pitchX)        // snapped to a divisor of resMax
         let realResY = UInt16(resMaxY / pitchY)
         let extentX = widthDU ?? caps.boundaryX
         let extentY = heightDU ?? caps.boundaryY
-        let logW = max(1, extentX / pitchX)
-        let logH = max(1, extentY / pitchY)
+        // Extents go on the wire unsnapped: the capture sends width=4000 du at
+        // pitch 6 (not a multiple), and our pitch-aligned 3996 was the only
+        // byte-level diff when SET WINDOW came back 5/26. Pixel counts follow
+        // the scanner's own rounding, ceil(du × dpi / resMax) — validated
+        // against both captured passes' READ totals.
+        let logW = max(1, (extentX * UInt32(realResX) + resMaxX - 1) / resMaxX)
+        let logH = max(1, (extentY * UInt32(realResY) + resMaxY - 1) / resMaxY)
         return ScanGeometry(
             realResX: realResX, realResY: realResY,
             pitchX: pitchX, pitchY: pitchY,
             xOffsetDU: xOffsetDU, yOffsetDU: yOffsetDU,
-            widthDU: logW * pitchX, heightDU: logH * pitchY,
+            widthDU: extentX, heightDU: extentY,
             logicalWidth: logW, logicalHeight: logH,
-            depth: depth ?? caps.maxBits, nColors: infrared ? 4 : 3)
+            depth: depth ?? caps.maxBits, nColors: 4)
     }
 
     /// Build the per-colour `Window` for a resolved geometry.
@@ -252,11 +338,12 @@ enum CoolScan {
         Window(color: color, resX: g.realResX, resY: g.realResY,
                xOffset: g.xOffsetDU, yOffset: g.yOffsetDU,
                width: g.widthDU, height: g.heightDU,
-               depth: g.depth, samplesPerScan: 1,
-               negative: negative, kind: .normal, exposure: 0)
+               depth: g.depth, negative: negative,
+               exposure: defaultExposure(color))
     }
 
-    /// Build the 58-byte SET WINDOW descriptor (see doc table for offsets).
+    /// Build the 58-byte SET WINDOW payload, byte-exact per the capture:
+    /// 8-byte header + 50-byte descriptor (offset table in capture/DECODED.md).
     static func windowDescriptor(_ w: Window) -> [UInt8] {
         var d = [UInt8]()
         d += [0, 0, 0, 0, 0, 0, 0, 0x32]          // header, 0x32 = descriptor length
@@ -267,25 +354,27 @@ enum CoolScan {
         d += be32(w.yOffset)
         d += be32(w.width)
         d += be32(w.height)
-        d += [0x00, 0x00, 0x00]                    // brightness/contrast
-        d += [0x05]                                // image composition
-        d += [w.depth]                             // pixel/bit depth
-        d += [UInt8](repeating: 0, count: 13)
-        d += [(w.samplesPerScan &- 1) << 4]        // multiread/ordering
-        d += [w.negative ? UInt8(0x80) : UInt8(0x81)] // averaging + pos/neg
-        d += [w.kind.rawValue]                     // scan kind
-        d += [w.samplesPerScan == 1 ? 0x02 : 0x10] // single / multi
-        d += [0x02]                                // color interleaving
-        d += [0xff]                                // (AE)
-        if w.color == .infrared { d += [0, 0, 0, 0] } else { d += be32(w.exposure) }
+        d += [0x00, 0x00, 0x00]                    // brightness/threshold/contrast
+        d += [0x05]                                // image composition (multi-channel)
+        d += [w.depth]                             // bits per pixel
+        d += [UInt8](repeating: 0, count: 14)      // halftone/RIF/bit-order/compression + byte 40
+        // Vendor block at descriptor bytes 41–45. The raw capture tail is
+        // `00 81 01 02 02 ff` + be32 exposure in all 11 windows — byte 40 is
+        // ZERO. DECODED.md's first table had the block one byte early (40–44);
+        // 0x81 at byte 40 is what the scanner rejected with 5/26.
+        // 0x81→0x80 for negatives per coolscan3 (unverified — capture was one film).
+        d += [w.negative ? 0x80 : 0x81, 0x01, 0x02, 0x02, 0xff]
+        d += be32(w.color == .infrared ? 0 : w.exposure)
         return d // 58 bytes
     }
 
+    /// SET WINDOW — control byte (CDB[9]) is 0x80 on the 9000, per the capture.
     static func setWindow(_ s: SBP2Session, _ w: Window) throws -> SCSIResult {
         let data = windowDescriptor(w)
-        let cdb: [UInt8] = [0x24, 0, 0, 0, 0, 0, 0, 0, 0x3a, w.ls40Family ? 0x80 : 0x00]
+        let cdb: [UInt8] = [0x24, 0, 0, 0, 0, 0, 0, 0, 0x3a, 0x80]
         return try s.sendSCSI(cdb: cdb, direction: .toTarget,
-                              transferLength: UInt32(data.count), outgoing: data)
+                              transferLength: UInt32(data.count), outgoing: data,
+                              timeoutMs: kSlowCmdTimeoutMs)
     }
 
     /// GET WINDOW → read back the exposure for one color (bytes 54..57).
@@ -307,57 +396,87 @@ enum CoolScan {
 
     // MARK: - Scan & read
 
-    /// SCAN — lists the colour channels to acquire (RGB or RGBI).
-    static func scan(_ s: SBP2Session, infrared: Bool) throws -> SCSIResult {
-        let cdb: [UInt8] = infrared
-            ? [0x1b, 0, 0, 0, 0x04, 0, 0x01, 0x02, 0x03, 0x09]
-            : [0x1b, 0, 0, 0, 0x03, 0, 0x01, 0x02, 0x03]
-        return try s.sendSCSI(cdb: cdb, direction: .none)
+    /// SEND LUT (0x2a / byte2 0x03) — per-window gamma table, sent after SET
+    /// WINDOW and before SCAN for every window id. VueScan sends a 14-bit-deep
+    /// identity ramp: 16384 × 16-bit BE values 0x0000…0x3fff (32768 bytes).
+    static func sendLUT(_ s: SBP2Session, color: Color) throws -> SCSIResult {
+        var lut = [UInt8](); lut.reserveCapacity(2 * 16384)
+        for v in 0..<16384 { lut += be16(UInt16(v)) }
+        return try s.sendSCSI(cdb: [0x2a, 0x00, 0x03, 0x00, color.rawValue, 0x01, 0x00, 0x80, 0x00, 0x00],
+                              direction: .toTarget, transferLength: UInt32(lut.count), outgoing: lut,
+                              timeoutMs: kSlowCmdTimeoutMs)
     }
 
-    /// READ(10) — fetch `length` bytes of image data. For multi-sampling the caller
-    /// must pre-multiply length by samplesPerScan (coolscan3 does this).
-    static func readData(_ s: SBP2Session, length: UInt32) throws -> SCSIResult {
-        let cdb: [UInt8] = [0x28, 0, 0, 0, 0, 0] + be24(length) + [0x00]
+    /// SCAN — the window-id list goes as a small data-OUT payload (capture),
+    /// NOT appended to the CDB as coolscan3 suggests.
+    static func scan(_ s: SBP2Session, colors: [Color] = Color.allCases) throws -> SCSIResult {
+        let ids = colors.map(\.rawValue)
+        return try s.sendSCSI(cdb: [0x1b, 0, 0, 0, UInt8(ids.count), 0],
+                              direction: .toTarget, transferLength: UInt32(ids.count),
+                              outgoing: ids, timeoutMs: kSlowCmdTimeoutMs)
+    }
+
+    /// READ(10) — fetch `length` bytes of image data. Control byte 0x80, like
+    /// SET WINDOW. The stream is plain bytes; chunks need not be line-aligned.
+    static func readData(_ s: SBP2Session, length: UInt32,
+                         timeoutMs: UInt32 = 5_000) throws -> SCSIResult {
+        let cdb: [UInt8] = [0x28, 0, 0, 0, 0, 0] + be24(length) + [0x80]
         // captureSense:false — the dext duplicates payload into senseData when
         // captureSenseData is set, doubling the result size (and it isn't real
-        // SCSI sense, just a copy). For image reads that only inflates the
-        // user-client struct-output past the inline limit.
+        // SCSI sense, just a copy of the payload).
         return try s.sendSCSI(cdb: cdb, direction: .fromTarget,
-                              transferLength: length, timeoutMs: 5_000, captureSense: false)
+                              transferLength: length, timeoutMs: timeoutMs, captureSense: false)
     }
-
-    /// SET BOUNDARY (0x2a / byte2 0x88) — define the medium-format frame grid.
-    /// coolscan3's cs3_set_boundary issues this UNCONDITIONALLY before SET WINDOW;
-    /// the 8000/9000 reject SET WINDOW with 0x5/0x26 until a boundary exists (the
-    /// window has no frame to validate against). Each frame is 16 bytes:
-    ///   [yOffset:long][reserved:long][yEnd:long][xBoundary:long]
-    /// Payload = [len:word][n_frames][n_frames] + n_frames×16. The xBoundary/yEnd =
-    /// boundaryX-1 / boundaryY-1 — exactly the 0x270F/0x3623 values seen in EVPD 0xC1.
-    static func setBoundary(_ s: SBP2Session,
-                            frames: [(yOffset: UInt32, yEnd: UInt32, xBoundary: UInt32)]) throws -> SCSIResult {
-        let n = frames.count
-        let len = 4 + n * 16
-        var data: [UInt8] = [UInt8((len >> 8) & 0xff), UInt8(len & 0xff), UInt8(n), UInt8(n)]
-        for f in frames {
-            data += be32(f.yOffset); data += be32(0); data += be32(f.yEnd); data += be32(f.xBoundary)
-        }
-        let cdb: [UInt8] = [0x2a, 0x00, 0x88, 0x00, 0x00, 0x03] + be24(UInt32(len)) + [0x00]
-        return try s.sendSCSI(cdb: cdb, direction: .toTarget,
-                              transferLength: UInt32(len), outgoing: data)
-    }
-
-    /// One frame spanning the whole scannable area (the simplest valid boundary).
-    static func setBoundaryFullFrame(_ s: SBP2Session, _ caps: Capabilities) throws -> SCSIResult {
-        try setBoundary(s, frames: [(yOffset: 0, yEnd: caps.boundaryY &- 1, xBoundary: caps.boundaryX &- 1)])
-    }
-
-    // TODO: sendLUT (0x2a 00 03 …) — may be required for "normal" (non-raw) scans.
 
     // MARK: - Scan orchestration (cs3_scan, minimal proof-of-read path)
 
+    /// Retry transient reset-per-ORB hiccups (~1 command in 10) on BOTH thrown
+    /// errors and non-ok results — transport=-1/sbp=0xFF is the transient
+    /// submit/resubmit failure, not a device verdict. A real CHECK CONDITION is
+    /// masked by the dext anyway (shows as GOOD + sense), so nothing real is
+    /// swallowed by retrying !ok. Same policy as the READ(10) loop.
+    /// `diag` is appended to thrown errors — used to attach transfer-activity
+    /// evidence (did the target actually fetch our data-OUT buffer?). `recover`
+    /// runs between tries instead of a blind sleep — scanFrame passes a TUR
+    /// ride-out so a retry waits until the device answers again (the agent has
+    /// been observed to come back ~44 s after a transport drop).
+    private static func attempt(_ label: String, tries: Int = 8,
+                                diag: (() -> String)? = nil,
+                                recover: (() -> Void)? = nil,
+                                _ body: () throws -> SCSIResult) throws -> SCSIResult {
+        var lastInfo = "ingen forsøk"
+        for i in 1...tries {
+            var rejected: String? = nil
+            do {
+                let r = try body()
+                if r.ok { return r }
+                lastInfo = r.statusText
+                // ILLEGAL REQUEST (key 5) is a deterministic rejection of the
+                // command's bytes — retrying the identical command just poisons
+                // the pipe (observed: 4× 5/26 then timeout/submit-fail).
+                if r.scsiStatus == 0x02, r.sense.count >= 14,
+                   (r.sense[r.sense.startIndex + 2] & 0x0F) == 0x05 {
+                    rejected = r.statusText
+                }
+            } catch { lastInfo = "\(error)" }
+            if let rejected {
+                throw ProbeError("\(label) avvist av skanneren: \(rejected)\(diag?() ?? "") — "
+                    + "deterministisk (ILLEGAL REQUEST), ingen retry")
+            }
+            if i < tries {
+                print("   ↻ \(label) forsøk \(i)/\(tries): \(lastInfo)")
+                if let recover {
+                    recover()
+                } else {
+                    usleep(UInt32(min(200_000 * i, 1_000_000)))
+                }
+            }
+        }
+        throw ProbeError("\(label) ga opp etter \(tries) forsøk: \(lastInfo)\(diag?() ?? "")")
+    }
+
     /// Raw result of a scan: the geometry used plus the unprocessed byte stream
-    /// exactly as the scanner delivered it (line-sequential colour planes).
+    /// exactly as the scanner delivered it.
     struct ScanResult {
         let geometry: ScanGeometry
         let raw: Data
@@ -365,74 +484,150 @@ enum CoolScan {
         var complete: Bool { raw.count >= expectedBytes }
     }
 
-    /// Run the minimal proven scan path: wait-ready → MODE SELECT → SET WINDOW per
-    /// colour → SCAN → READ(10) loop. Returns the raw byte stream for offline
-    /// inspection (we do NOT yet assume the pixel/byte layout — see ScanGeometry).
+    /// Run the captured VueScan scan sequence: wait-ready → set focus → SET
+    /// WINDOW ×4 → SEND LUT ×4 → SCAN → READ(10) loop → abort/idle. Returns the
+    /// raw byte stream for offline inspection (channel interleave within a line
+    /// is still unconfirmed — see ScanGeometry).
     ///
     /// `progress` is called as bytes arrive so the caller can show a bar.
-    /// NOTE (unvalidated on hardware): SEND LUT and SET FOCUS are intentionally
-    /// skipped — if the scanner refuses to produce data without a LUT, that's the
-    /// first thing to add.
+    /// v1 skips autofocus and sets the captured focus position directly, exactly
+    /// like VueScan's final scan pass did.
     static func scanFrame(_ s: SBP2Session, caps: Capabilities,
                           resolution: UInt16, depth: UInt8? = nil,
-                          infrared: Bool = false, negative: Bool = false,
+                          negative: Bool = false,
                           rows: Int? = nil,   // cap output height (thin-strip proof)
-                          // Start the strip this many device units (1/resXMax″) down
-                          // the scannable area. The top edge of the boundary is the
-                          // opaque holder mask / film leader, which scans as pure
-                          // zero — offsetting into the frame is how we tell "masked
-                          // edge" apart from "data-in DMA delivered nothing".
-                          yOffsetDU: UInt32 = 0,
-                          // READ(10) results come back via the user client's INLINE
-                          // struct-output. The framework rejects the *requested*
-                          // output buffer (transferLength + 256 headroom, see
-                          // sendSCSI) once it exceeds an inline ceiling — measured
-                          // empirically between 2304 (works) and 3256 (BadArgument
-                          // 0xe00002c2), so well below one page. chunk=2048 → cap
-                          // 2304 is the proven-good value; 3000/4080 both got
-                          // rejected. Do NOT raise this without a dext-side
-                          // structureOutputDescriptor path (the real fix; TODO),
-                          // which lifts the ceiling AND collapses ~1080 fragile
-                          // AGENT_RESET→resubmit reads into a handful.
-                          maxChunkBytes: Int = 2048,
+                          // Skip setFocus+EXECUTE entirely. Diagnostic: on HW the
+                          // device stopped fetching ORBs after the focus EXECUTE
+                          // (mechanical click heard, then SET WINDOW timed out 8×).
+                          skipFocus: Bool = false,
+                          focus: UInt32 = 235,   // captured value for the test slide
+                          // Frame box in device units (1/resXMax″). Defaults to the
+                          // captured 35mm frame-1 box until readFrameInfo is decoded.
+                          xOffsetDU: UInt32 = captureFrame.x,
+                          yOffsetDU: UInt32 = captureFrame.y,
+                          widthDU: UInt32 = captureFrame.w,
+                          heightDU: UInt32 = captureFrame.h,
+                          // READ(10) results return via the user client's
+                          // structureOutputDescriptor path (dext v13+): caps over
+                          // 4096 B arrive as a memory descriptor the dext fills,
+                          // so chunks can be VueScan-sized (~510 KB → a handful of
+                          // READs per frame instead of ~1440 fragile
+                          // AGENT_RESET→resubmit round-trips). The loop floors the
+                          // chunk to whole lines. Inline fallback (≤2048) still
+                          // works against an old dext.
+                          maxChunkBytes: Int = 480_000,
                           readTimeoutMs: UInt32 = 30_000,
                           progress: ((Int, Int) -> Void)? = nil) throws -> ScanResult {
-        var g = geometry(caps, resolution: resolution, depth: depth, infrared: infrared,
-                         yOffsetDU: yOffsetDU)
+        var g = geometry(caps, resolution: resolution, depth: depth,
+                         xOffsetDU: xOffsetDU, yOffsetDU: yOffsetDU,
+                         widthDU: widthDU, heightDU: heightDU)
         if let rows = rows, rows > 0, UInt32(rows) < g.logicalHeight {
             g.logicalHeight = UInt32(rows)
             g.heightDU = UInt32(rows) * g.pitchY
         }
 
-        // 0) RESERVE UNIT — coolscan3 does this in sane_open() before any setup.
-        //    Some firmware rejects MODE SELECT / SET WINDOW on an unreserved unit.
-        //    Best-effort: a target that doesn't require it just returns GOOD.
-        _ = try? reserve(s)
+        let t0 = Date()
+        func step(_ msg: String) { print(String(format: "  [%5.1fs] %@", Date().timeIntervalSince(t0), msg)) }
+
+        // 0) No RESERVE — VueScan never sends it (full-capture CDB vocabulary
+        //    checked); dropped to eliminate every sequence difference while
+        //    SET WINDOW 5/26 is unexplained.
 
         // 1) Wait until the scanner reports ready (film loaded, lamp warm).
-        guard try waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (TUR-timeout)") }
+        guard waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (sense-timeout)") }
+        step("scanner klar")
 
-        // 2) Set the measurement unit, then a window per colour channel.
-        _ = try modeSelect(s, unitDpi: caps.resXMax)
-        let colors: [Color] = infrared ? [.red, .green, .blue, .infrared] : [.red, .green, .blue]
-        for c in colors {
-            let r = try setWindow(s, window(g, color: c, negative: negative))
-            guard r.ok else {
-                throw ProbeError("SET WINDOW (\(c)) avvist: transport=\(r.transportStatus) sbp=\(r.sbpStatus)")
+        // 1b) Post-ready state dumps. The boot-time reads in main happen while
+        //     the scanner still reports UA/not-ready and return zeros — these
+        //     are the trustworthy ones.
+        if let c = try? capabilities(s) {
+            step("caps etter klar: nFrames=\(c.nFrames) fokus=\(c.focusMin)–\(c.focusMax)")
+            if c.nFrames == 0 {
+                print("  ⚠️ nFrames=0 — skanneren melder INGEN holder/rammer (caps byte 75);"
+                    + " SET WINDOW kan avvises på det")
             }
         }
-
-        // 3) Trigger the scan.
-        let scanR = try scan(s, infrared: infrared)
-        guard scanR.ok else {
-            throw ProbeError("SCAN avvist: transport=\(scanR.transportStatus) sbp=\(scanR.sbpStatus)")
+        if let fi = try? readFrameInfo(s) {
+            print("  Frame-info etter klar: \(hexLine([UInt8](fi.payload))) (\(fi.statusText))")
+        }
+        if let c8 = try? readPageC8(s) {
+            print("  EVPD C8 (\(c8.payload.count)B, \(c8.statusText)): \(hexLine([UInt8](c8.payload)))")
         }
 
-        // 4) Pull the image as a byte stream. READ(10) is a plain byte stream, so
-        //    chunks need not be line-aligned — keep each result under the user
-        //    client's inline struct-output limit (~4 KB). Layout is reconstructed
-        //    offline from the total byte count.
-        let chunkBytes = UInt32(max(1, maxChunkBytes))
+        // 2) Capture preamble, replicated verbatim from the preview pass: set AF
+        //    point (center) → EXECUTE → frame-info → AF result → c0 → set focus
+        //    → EXECUTE. Autofocus has run before the FIRST SET WINDOW of every
+        //    captured session, so it may be required state — payload bytes and
+        //    focus-only state are already eliminated (HW-runs 8/9). Best-effort:
+        //    AF failures are printed, not fatal, so SET WINDOW below always
+        //    reports its own verdict. `skipFocus` keeps the captured focus value
+        //    instead of adopting the AF result (like VueScan's final scan pass).
+        // Between tries: ride TUR until the device answers again instead of a
+        // blind sleep — a dropped transport has been observed to need ~44 s.
+        let ride: () -> Void = { _ = waitReady(s, timeout: 60) }
+        var appliedFocus = focus
+        do {
+            _ = try attempt("SET AF-PUNKT", tries: 3, recover: ride) { try autofocus(s, x: 2920, y: 3936) }
+            _ = try attempt("EXECUTE (AF)", tries: 3, recover: ride) { try execute(s) }
+            let afReady = waitReady(s, timeout: 120)
+            step(afReady ? "autofokus ferdig" : "⚠️ ikke klar etter AF — fortsetter")
+            if let fi = try? readFrameInfo(s) {
+                print("  Frame-info etter AF: \(hexLine([UInt8](fi.payload)))")
+            }
+            if let af = try? readAFResult(s) {
+                let b = [UInt8](af.payload)
+                print("  AF-resultat (9B): \(hexLine(b)) (\(af.statusText))")
+                if !skipFocus, b.count >= 5 {
+                    let v = (UInt32(b[1]) << 24) | (UInt32(b[2]) << 16)
+                          | (UInt32(b[3]) << 8) | UInt32(b[4])
+                    if v > 0 && v <= 450 { appliedFocus = v }
+                }
+            }
+            _ = try? abortIdle(s)
+        } catch {
+            print("  ⚠️ AF-preamble feilet: \(error) — fortsetter med fast fokus")
+        }
+        _ = try attempt("SET FOCUS", recover: ride) { try setFocus(s, focus: appliedFocus) }
+        _ = try attempt("EXECUTE (fokus)", recover: ride) { try execute(s) }
+        let fReady = waitReady(s, timeout: 60)
+        step(fReady ? "fokus satt (\(appliedFocus))" : "⚠️ ikke klar etter fokus — fortsetter")
+
+        // 3) One window per colour channel, then a LUT per channel — VueScan's
+        //    order: all four SET WINDOW first, then all four SEND LUT.
+        let colors: [Color] = Color.allCases
+        let xferDiag: () -> String = {
+            guard let t = s.lastTransferInfo() else { return " [xfer utilgjengelig]" }
+            return " [target leste \(t.targetReadBytes)B/\(t.targetReadCalls)x av \(t.expectedBytes)B forventet]"
+        }
+        if let gw = try? getWindowRaw(s, color: .red) {
+            print("  GET WINDOW(red) før SET (\(gw.statusText)): \(hexLine([UInt8](gw.payload)))")
+        }
+        print("  SET WINDOW payload (red): "
+            + hexLine(windowDescriptor(window(g, color: .red, negative: negative))))
+        for c in colors {
+            _ = try attempt("SET WINDOW (\(c))", diag: xferDiag, recover: ride) {
+                try setWindow(s, window(g, color: c, negative: negative))
+            }
+            step("SET WINDOW \(c) ok")
+        }
+        for c in colors {
+            _ = try attempt("SEND LUT (\(c))", recover: ride) { try sendLUT(s, color: c) }
+            step("SEND LUT \(c) ok (32768B)")
+        }
+
+        // 4) Trigger the scan (window-id list as data-OUT payload).
+        let scanResult = try attempt("SCAN", recover: ride) { try scan(s, colors: colors) }
+        step("SCAN akseptert (\(scanResult.statusText)) — leser data")
+
+        // 5) Pull the image as a byte stream. Whole-line chunks like VueScan
+        //    (~510 KB ≈ 100+ lines per READ); layout is reconstructed offline
+        //    from the total byte count.
+        let lineBytes = max(1, g.bytesPerLine)
+        var alignedChunk = max(1, maxChunkBytes)
+        if alignedChunk >= lineBytes {
+            alignedChunk -= alignedChunk % lineBytes
+        }
+        let chunkBytes = UInt32(alignedChunk)
         var raw = Data(capacity: g.totalBytes)
         while raw.count < g.totalBytes {
             let remaining = g.totalBytes - raw.count
@@ -445,24 +640,43 @@ enum CoolScan {
             var ok: SCSIResult? = nil
             var attempt = 0
             var lastInfo = ""
-            while attempt < 12 {
+            // Mid-scan the device goes quiet while the carriage moves/buffers
+            // (stops fetching ORBs well past our old 3 s window) — be patient.
+            while attempt < 30 {
                 do {
-                    let r = try readData(s, length: want)
+                    let r = try readData(s, length: want, timeoutMs: readTimeoutMs)
                     if r.ok { ok = r; break }
-                    lastInfo = "transport=\(r.transportStatus) sbp=\(r.sbpStatus)"
+                    lastInfo = r.statusText
                 } catch {
                     lastInfo = "\(error)"
                 }
                 attempt += 1
-                usleep(UInt32(min(50_000 * attempt, 400_000))) // 50ms … 400ms cap
+                usleep(UInt32(min(100_000 * attempt, 1_000_000))) // 100ms … 1s cap
             }
             guard let r = ok else {
-                throw ProbeError("READ(10) ga opp ved \(raw.count)/\(g.totalBytes) byte etter \(attempt) forsøk: \(lastInfo)")
+                // Keep what we got — even a few lines is enough to validate the
+                // pixel layout offline. The caller sees complete=false.
+                print("\n  ⚠️ READ(10) ga opp ved \(raw.count)/\(g.totalBytes) byte etter \(attempt) forsøk: \(lastInfo) — lagrer partial")
+                break
             }
             if r.payload.isEmpty { break } // short read — scanner says done
+            // Discriminator for the zero-pixel mystery: targetWROTE == payload
+            // size means the scanner really sent these bytes (zeros = scanner-
+            // side); targetWROTE == 0 means the data phase never happened and
+            // we are reading back our own zeroed buffer (transport-side).
+            let nonZero = r.payload.contains { $0 != 0 }
+            var xferNote = ""
+            if let t = s.lastTransferInfo() {
+                xferNote = " targetWROTE=\(t.targetWroteBytes)B/\(t.targetWroteCalls)x"
+            }
+            print("  READ \(r.payload.count)B \(r.statusText)\(xferNote) "
+                + (nonZero ? "✅ ekte data" : "⚠️ kun nuller"))
             raw.append(r.payload)
             progress?(raw.count, g.totalBytes)
         }
+
+        // 6) End-of-pass abort/idle, like VueScan.
+        _ = try? abortIdle(s)
         return ScanResult(geometry: g, raw: raw)
     }
 }

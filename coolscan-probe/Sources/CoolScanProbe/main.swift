@@ -144,152 +144,6 @@ func run() -> Int32 {
         return allOk ? 0 : 9
     }
 
-    // SCANDIAG mode: the transport works and a scan completes, but every byte is
-    // zero. Find WHERE in the scan sequence it goes wrong, using the scanner's own
-    // SCSI state instead of relying on listening to the mechanism:
-    //   • TUR polled right after SCAN — a BUSY/not-ready → ready transition PROVES
-    //     the scanner is physically acquiring. Staying instantly ready = it never
-    //     scanned (⇒ missing pre-scan setup: SEND LUT / SET FOCUS / LOAD).
-    //   • REQUEST SENSE at each step — a sense key/ASC tells us what it wants.
-    //   • the first READ's actual bytes — zero vs non-zero, decisively.
-    if CommandLine.arguments.contains("scandiag") {
-        print("\n=== SCANDIAG v18: grunngitt boundary → poll 30s (akseptert+BUSY vs wedget?) ===")
-        // Retry transient reset-per-ORB timeouts (~1 command in ~10) so a single
-        // hiccup doesn't abort the diagnostic.
-        func attempt<T>(_ label: String, _ body: () throws -> T) throws -> T {
-            var last: Error = ProbeError("\(label): ingen forsøk")
-            for i in 1...4 {
-                do { return try body() }
-                catch { last = error; if i < 4 { usleep(250_000) } }
-            }
-            throw last
-        }
-        // One REQUEST SENSE → decoded (key,asc,ascq), or nil on empty/timeout.
-        func senseOnce() -> (key: UInt8, asc: UInt8, ascq: UInt8)? {
-            guard let r = try? CoolScan.requestSense(session) else { return nil }
-            let b = [UInt8](r.payload)
-            guard b.count >= 14 else { return nil }
-            return (b[2] & 0x0f, b[12], b[13])
-        }
-        func show(_ label: String, _ s: (key: UInt8, asc: UInt8, ascq: UInt8)) {
-            print("  [\(label)] key=0x\(String(format: "%x", s.key)) "
-                + "ASC=0x\(String(format: "%02x", s.asc)) ASCQ=0x\(String(format: "%02x", s.ascq)) "
-                + "(\(senseText(key: s.key, asc: s.asc, ascq: s.ascq)))")
-        }
-        // Drain queued UNIT ATTENTION (key 6) conditions until NO SENSE or a real
-        // (non-UA) condition appears. A pending UA makes the scanner CHECK-CONDITION
-        // the next command WITHOUT executing it, so the window never applies until
-        // the queue is empty (this is what coolscan3's scanner_ready does).
-        @discardableResult
-        func drainUA(_ label: String) -> UInt8 {
-            for _ in 0..<8 {
-                guard let s = senseOnce() else { print("  [\(label)] (sense tom/timeout)"); return 0xff }
-                show(label, s)
-                if s.key != 6 { return s.key }   // NO SENSE (0) or a real condition — done
-                usleep(120_000)
-            }
-            return 6
-        }
-        // Issue a command, then read its OWN sense. UNIT ATTENTION (key 6) means a
-        // queued power-on/holder condition CHECK-CONDITIONed the command WITHOUT
-        // executing it — so drain it and re-issue, until the command's sense is clean
-        // (key 0 = executed) or a real reject (key 5 = bad field) appears. A single
-        // drainUA at the start is not enough: the scanner keeps arming UAs as it
-        // calibrates and detects the holder after power-on. This is exactly what
-        // coolscan3's scanner_ready loops on between steps.
-        func settle(_ label: String, maxTries: Int = 12, _ body: () throws -> SCSIResult) {
-            for i in 1...maxTries {
-                let cmd = try? attempt(label) { try body() }
-                // Show the command's OWN SBP-2 result (transport/sbp) — settle used to
-                // discard it, so a flaky follow-up sense hid whether the command itself
-                // transported GOOD (accepted) vs timed out.
-                let st = cmd.map { "transport=\($0.transportStatus) sbp=\($0.sbpStatus)\($0.ok ? " GOOD" : "")" } ?? "kastet/timeout"
-                // Follow-up REQUEST SENSE is transiently flaky — retry so a single miss
-                // doesn't hide the verdict.
-                var s: (key: UInt8, asc: UInt8, ascq: UInt8)? = nil
-                for _ in 0..<5 { if let x = senseOnce() { s = x; break }; usleep(200_000) }
-                guard let sk = s else { print("  [\(label)] cmd[\(st)] — sense utilgjengelig (5×)"); return }
-                if sk.key != 6 {
-                    let v = sk.key == 5 ? "❌ AVVIST (bad felt)"
-                          : sk.key == 0 ? "✅ AKSEPTERT (ren)"
-                          : "? key=0x\(String(format: "%x", sk.key))"
-                    show("\(label) cmd[\(st)] → \(v) (etter \(i))", sk)
-                    return
-                }
-                show("\(label): UA — drener (\(i)/\(maxTries))", sk)
-                usleep(150_000)
-            }
-            print("  [\(label)] ⚠️ kom aldri forbi UNIT ATTENTION (\(maxTries)×)")
-        }
-        // Poll until TRULY ready — TUR then REQUEST SENSE (the real status; the dext
-        // masks the SCSI status byte, so TUR's own "ok" lies). key 0 = ready; key 6 =
-        // UA (drain, re-poll now); not-ready / not-self-configured (key 2/0xb, ASC
-        // 0x04/0x3e) = still booting → wait. coolscan3's cs3_scanner_ready.
-        func scannerReady(_ label: String, timeout: TimeInterval = 120) -> Bool {
-            let deadline = Date().addingTimeInterval(timeout)
-            var polls = 0
-            while Date() < deadline {
-                _ = try? attempt(label) { try CoolScan.testUnitReady(session) }
-                polls += 1
-                guard let s = senseOnce() else { usleep(500_000); continue }
-                if s.key == 0 { print("  [\(label)] ✅ klar (etter \(polls) poll)"); return true }
-                if s.key == 6 { continue }   // UA — drain, re-poll straks
-                if polls % 5 == 1 { show("\(label): venter", s) }
-                usleep(1_000_000)
-            }
-            print("  [\(label)] ⚠️ ikke klar innen \(Int(timeout))s")
-            return false
-        }
-        let caps = CoolScan.Capabilities.coolScan9000
-        print("— drener UA-kø —"); _ = drainUA("drain")
-        settle("RESERVE")     { try CoolScan.reserve(session) }
-        // Vent ut power-on selv-konfigurering (0x3e) FØR de ekte kommandoene — ellers
-        // aborterer alt med key 0xb/ASC 0x3e og boundary-testen blir meningsløs.
-        guard scannerReady("scanner-ready") else {
-            print("  ⚠️ scanneren ble ikke klar (film/holder isatt? nettopp slått på?).")
-            return 0
-        }
-        settle("MODE SELECT") { try CoolScan.modeSelect(session, unitDpi: caps.resXMax) }
-
-        // NO 0xC1 read — it wedges this firmware (v15: all post-read REQUEST SENSEs timed
-        // out). We already have the live per-frame values from v14's dump (stable for this
-        // FH 35mm holder): per-frame 4000×5904 du, resy_max 4000, frame_offset(cs3)=6001.
-        // Hardcode them and test coolscan3's EXACT frame-0 geometry — never tested with the
-        // right values (yEnd=fo-1=6000, xBoundary = per-frame boundaryX-1 = 3999, NOT 9999).
-        // v17: cs3-grounded SET BOUNDARY (yEnd=6000, xB=3999) returned SBP-2 GOOD — UNLIKE
-        // the wrong-geometry attempts (clean 0x26 reject) — then sense went unavailable and
-        // the next commands failed transport (-1/255). Pattern = ACCEPTED + scanner BUSY (or
-        // wedged). Issue once, then poll up to 30s (riding out BUSY + reset-per-ORB transient)
-        // for the real verdict.
-        let pfX: UInt32 = 4000, pfY: UInt32 = 5904, fo: UInt32 = 6001
-        func runAndSettle(_ label: String, timeout: TimeInterval = 30, _ body: () throws -> SCSIResult) {
-            let cmd = try? attempt(label) { try body() }
-            let st = cmd.map { "transport=\($0.transportStatus) sbp=\($0.sbpStatus)\($0.ok ? " GOOD" : "")" } ?? "kastet"
-            let dl = Date().addingTimeInterval(timeout)
-            var polls = 0
-            while Date() < dl {
-                polls += 1
-                if let s = senseOnce(), s.key != 6 {
-                    let v = s.key == 5 ? "❌ AVVIST" : s.key == 0 ? "✅ AKSEPTERT/ren" : "key=0x\(String(format: "%x", s.key))"
-                    show("\(label) cmd[\(st)] → \(v) (poll \(polls))", s); return
-                }
-                _ = try? CoolScan.testUnitReady(session)   // nudge through BUSY/transient
-                usleep(500_000)
-            }
-            print("  [\(label)] cmd[\(st)] — ingen lesbar sense innen \(Int(timeout))s (BUSY/wedget?)")
-        }
-        runAndSettle("SET BOUNDARY cs3 yEnd=\(fo - 1) xB=\(pfX - 1)") {
-            try CoolScan.setBoundary(session, frames: [(yOffset: 0, yEnd: fo - 1, xBoundary: pfX - 1)])
-        }
-        var liveCaps = CoolScan.Capabilities.coolScan9000
-        liveCaps.boundaryX = pfX; liveCaps.boundaryY = pfY
-        var gg = CoolScan.geometry(liveCaps, resolution: 1000, depth: 8, yOffsetDU: 0)
-        gg.widthDU = 2000; gg.logicalWidth  = max(1, 2000 / gg.pitchX)
-        gg.heightDU = 2000; gg.logicalHeight = max(1, 2000 / gg.pitchY)
-        runAndSettle("SET WINDOW small") { try CoolScan.setWindow(session, CoolScan.window(gg, color: .red)) }
-        return 0
-    }
-
     // WINDOWCHECK mode: prove whether data-OUT actually reaches the scanner.
     // SET WINDOW (data-out) with distinctive values, then GET WINDOW (small
     // data-in, a path we KNOW works via INQUIRY/0xC1) and compare. If the fields
@@ -384,27 +238,37 @@ func run() -> Int32 {
         return 0
     }
 
-    // SCAN mode: «CoolScanProbe scan [dpi]» runs the minimal scan path and dumps
-    // the raw byte stream for offline inspection. Default 500 dpi (fast, ~13 MB).
+    // SCAN mode: «CoolScanProbe scan [dpi]» replicates VueScan's captured scan
+    // sequence (capture/DECODED.md) and dumps the raw RGBI byte stream. Default
+    // 500 dpi, frame box = the captured 35mm frame 1.
     if CommandLine.arguments.contains("scan") {
         let dpi = scanDpiArg() ?? 500
         let rows = scanRowsArg()   // optional thin-strip cap
-        let yOff = scanYOffsetArg() ?? 0   // optional: start strip N device units down
+        let yOff = scanYOffsetArg() ?? CoolScan.captureFrame.y   // optional override
         do {
+            // No frame-info read here: this early in the run the scanner is
+            // still booting and returns zeros — scanFrame dumps it post-ready.
+            // Every pre-ready command is also one more pull of the transport
+            // roulette before the diagnostics get a chance to run.
             let caps = try CoolScan.capabilities(session)
-            print("\nKapabiliteter: optisk \(caps.resXOptical) dpi, areal "
+            print("Kapabiliteter: optisk \(caps.resXOptical) dpi, areal "
                 + "\(caps.boundaryX)×\(caps.boundaryY) du, \(caps.maxBits) bit.")
-            var g = CoolScan.geometry(caps, resolution: dpi, yOffsetDU: yOff)
+            var g = CoolScan.geometry(caps, resolution: dpi, depth: nil,
+                                      xOffsetDU: CoolScan.captureFrame.x, yOffsetDU: yOff,
+                                      widthDU: CoolScan.captureFrame.w,
+                                      heightDU: CoolScan.captureFrame.h)
             if let rows = rows, rows > 0, UInt32(rows) < g.logicalHeight {
                 g.logicalHeight = UInt32(rows); g.heightDU = UInt32(rows) * g.pitchY
             }
             print("Skann @ \(g.realResX)×\(g.realResY) dpi → \(g.logicalWidth)×\(g.logicalHeight) px, "
                 + "\(g.nColors) kanaler, \(g.bytesPerPixel)B/px → \(g.totalBytes) byte forventet"
                 + (rows != nil ? " (stripe: \(rows!) rader)" : "")
-                + (yOff > 0 ? " @ y-offset \(yOff) du" : "") + ".")
+                + " @ offset (\(CoolScan.captureFrame.x),\(yOff)) du.")
             var lastPct = -1
+            let skipFocus = CommandLine.arguments.contains("nofocus")
             let result = try CoolScan.scanFrame(session, caps: caps, resolution: dpi,
-                                                rows: rows, yOffsetDU: yOff) { got, total in
+                                                rows: rows, skipFocus: skipFocus,
+                                                yOffsetDU: yOff) { got, total in
                 let pct = total > 0 ? got * 100 / total : 0
                 if pct != lastPct { lastPct = pct; FileHandle.standardError.write(Data("\r  les \(pct)% (\(got)/\(total) byte)".utf8)) }
             }
@@ -548,15 +412,15 @@ func saveScan(_ r: CoolScan.ScanResult) throws {
     CoolScan 9000 raw scan
     resolution    : \(g.realResX) x \(g.realResY) dpi (pitch \(g.pitchX)/\(g.pitchY))
     logical pixels: \(g.logicalWidth) x \(g.logicalHeight)
-    channels      : \(g.nColors)  (line-sequential planes, order R,G,B[,IR])
+    channels      : \(g.nColors)  (R,G,B,IR — window ids 01,02,03,09)
     bytes/pixel   : \(g.bytesPerPixel)  (depth \(g.depth) bit)
-    bytes/line    : \(g.bytesPerLine)  (incl. \(g.oddPadding)B odd-padding per plane)
+    bytes/line    : \(g.bytesPerLine)  (all channels per line, per capture READ totals)
     expected bytes: \(g.totalBytes)
     received bytes: \(r.raw.count)\(r.complete ? "" : "  ⚠️ SHORT")
 
-    Layout is UNCONFIRMED on hardware. To view: interpret as \(g.nColors) planes of
-    \(g.logicalWidth)x\(g.logicalHeight), \(g.bytesPerPixel == 2 ? "16-bit big-endian" : "8-bit"). If it looks
-    wrong, the colour interleave or byte order differs — adjust before writing TIFF.
+    Channel interleave WITHIN a line (line-sequential vs pixel-interleaved) is
+    unconfirmed — try \(g.logicalWidth)x\(g.logicalHeight), \(g.bytesPerPixel == 2 ? "16-bit big-endian" : "8-bit"), \(g.nColors) ch
+    both ways and keep the one that looks right before writing TIFF.
     """
     try sidecar.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent(base + ".txt"), atomically: true, encoding: .utf8)
