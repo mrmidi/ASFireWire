@@ -283,6 +283,6 @@ TEST(AudioRingBufferTests, ExactCapacityFill) {
 TEST(AudioRingBufferTests, DefaultStereoBuffer) {
     StereoAudioRingBuffer buffer;
     
-    // Should have 4095 frame capacity (4096 - 1)
-    EXPECT_EQ(buffer.capacity(), 4095);
+    // Should have 511 frame capacity (512 - 1)
+    EXPECT_EQ(buffer.capacity(), 511);
 }

@@ -5,8 +5,8 @@
 using ASFW::AudioEngine::Direct::Tx::DisciplineOutputCursor;
 
 namespace {
-constexpr uint64_t kLead = 768;      // ~1.5 IO periods @48k
-constexpr uint64_t kDeadband = 256;  // ~0.5 IO period
+constexpr uint64_t kLead = 384;      // ~0.75 IO periods @48k
+constexpr uint64_t kDeadband = 64;   // ~0.125 IO period
 } // namespace
 
 // Lead exactly on target: leave the cursor for the caller's per-packet advance.
@@ -67,10 +67,10 @@ TEST(OutputCursorDiscipline, WrittenEndBelowTargetClampsToZero) {
 
 // constexpr usability (compile-time evaluation).
 TEST(OutputCursorDiscipline, IsConstexpr) {
-    // lead = 1000, target = 768, |diff| = 232 < deadband 256 -> no resync.
-    constexpr auto rInBand = DisciplineOutputCursor(99000, 100000, kLead, kDeadband);
-    static_assert(!rInBand.resynced, "232 < 256 deadband should not resync");
-    static_assert(rInBand.newCursor == 99000, "cursor unchanged within deadband");
+    // lead = 400, target = 384, |diff| = 16 < deadband 64 -> no resync.
+    constexpr auto rInBand = DisciplineOutputCursor(99600, 100000, kLead, kDeadband);
+    static_assert(!rInBand.resynced, "16 < 64 deadband should not resync");
+    static_assert(rInBand.newCursor == 99600, "cursor unchanged within deadband");
 
     // A cursor ahead of the target is retained even if the producer lead is small.
     constexpr auto rOut = DisciplineOutputCursor(99900, 100000, kLead, kDeadband);
@@ -82,7 +82,7 @@ TEST(OutputCursorDiscipline, IsConstexpr) {
 
 TEST(OutputCursorDiscipline, RepeatedWriteBurstsAndPacketConsumptionStayMonotonic) {
     uint64_t cursor = 0;
-    uint64_t writtenEnd = 768;
+    uint64_t writtenEnd = 320;
     uint64_t corrections = 0;
 
     for (uint32_t burst = 0; burst < 64; ++burst) {

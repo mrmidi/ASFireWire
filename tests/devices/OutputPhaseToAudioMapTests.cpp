@@ -83,9 +83,9 @@ TEST(TxTimelineIntegration, CoverageHoldsAcrossSecondsAndWrap) {
     constexpr int64_t kSec = TxOutputPhaseLoop::kOneSecondTicks;
     constexpr uint32_t kFpp = 8;
     constexpr uint32_t kFramesPerCycle = 6;
-    constexpr uint64_t kRingCapacity = 4096;
+    constexpr uint64_t kRingCapacity = 512;
     constexpr uint64_t kReportedOffset = 48;  // TimingCursorPolicy::CursorOffsetFrames(Output)
-    constexpr uint64_t kSafety = 768;         // TimingCursorPolicy::PacketLeadFrames(Output)
+    constexpr uint64_t kSafety = 384;         // TimingCursorPolicy::PacketLeadFrames(Output)
 
     uint64_t writtenEnd = kRingCapacity * 2;  // a couple laps already written
     int64_t dev = 0;
