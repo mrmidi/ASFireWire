@@ -60,3 +60,7 @@ opencode.json
 
 # Local Codex scratch builds
 build-codex/
+
+# Xcode generated projects
+*.xcodeproj/
+**/*.xcodeproj/
