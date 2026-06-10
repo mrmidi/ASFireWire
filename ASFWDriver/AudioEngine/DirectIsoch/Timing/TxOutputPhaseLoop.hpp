@@ -84,9 +84,11 @@ public:
     static constexpr int64_t kOperatingLead   = 4608;
     /// Below one cycle of lead is a near-underrun warning (advisory only).
     static constexpr int64_t kLeadTightTicks  = kTicksPerCycle;   // 3072
-    /// Lead gate: below this there is room to ship DATA; at/above it, hold.
+    /// Lead gate: below this there is room to ship DATA; at/above it, hold (emits SYT=0xFFFF).
+    /// Actual Saffire hardware packet rejection begins here.
     static constexpr int64_t kLeadAcceptTicks = 7620;             // ~2.48 cycles
     /// Advisory-only ceiling for the "lead has drifted very far" warning.
+    /// Saffire's 12287 check is purely log-escalation (louder warning), not a separate rejection gate.
     static constexpr int64_t kLeadRejectTicks = 12287;            // ~4 cycles
 
     /// Continuity-check tuning. The tolerance absorbs measurement jitter around an

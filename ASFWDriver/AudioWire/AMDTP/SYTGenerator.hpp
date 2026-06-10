@@ -83,12 +83,12 @@ private:
     /// Forward presentation lead: how far ahead of the actual transmit cycle the
     /// TX SYT presents, in 24.576 MHz ticks. Saffire `FillFirewireBuffers` (0xe778)
     /// computes the lead as `extOffsetDiff(phase, projectedTransmit)` and accepts
-    /// only `< 7620` ticks (`<= 3071` is a near-underrun warning; `>= 7620` emits
-    /// SYT=0xFFFF; `> 12287` is "too far"). It seeds an invalid phase at the
-    /// `+3072` (1-cycle) edge and slews via `adjustOutputPhase`. We anchor at one
-    /// blocking packet step (~1.33 cycles) inside that window and let
+    /// only `< 7620` ticks (`<= 3071` is a near-underrun warning but still ships;
+    /// `>= 7620` is the absolute behavior boundary that emits `SYT=0xFFFF` / no-data;
+    /// `> 12287` is purely a louder log-escalation warning threshold, not a separate gate).
+    /// We anchor at one blocking packet step (~1.33 cycles) inside that window and let
     /// `ExternalSyncDiscipline48k` track fractional drift from there.
-    /// (Previously 17918 ≈ 5.8 cycles — far past the device's 12287-tick limit,
+    /// (Previously 17918 ≈ 5.8 cycles — far past the device's accepted window,
     /// which made the device drop packets → audible dropouts.)
     static constexpr uint32_t kPresentationDelayTicks = 4096;
     static constexpr uint32_t kMinPresentationLeadTicks = 3072;  // near-underrun edge
