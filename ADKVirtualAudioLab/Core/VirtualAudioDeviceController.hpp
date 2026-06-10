@@ -31,6 +31,16 @@ public:
 
     void SubmitWriteEnd(const Protocols::Audio::AMDTP::HostAudioBufferView& output) noexcept;
 
+    // Step 6 seam: interpose a decorator (Verifying(Fake)) between the engine
+    // and the fake ring. Call after Initialize(), which binds the bare fake;
+    // passing nullptr restores the fake. The caller owns the provider and
+    // typically wraps FakeSlotProvider() itself.
+    void BindLabSlotProvider(
+        Protocols::Audio::AMDTP::IAmdtpTxSlotProvider* provider) noexcept;
+
+    const Protocols::Audio::AMDTP::AmdtpPayloadWriterCounters&
+    PayloadCounters() const noexcept;
+
     const Lab::FakeIsochTxSlotProvider& FakeSlotProvider() const noexcept;
     Lab::FakeIsochTxSlotProvider& FakeSlotProvider() noexcept;
 
