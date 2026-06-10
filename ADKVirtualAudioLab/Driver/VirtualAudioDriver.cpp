@@ -1,3 +1,4 @@
+#include <new> // first, before DriverKit headers (libc++ placement-new clash)
 #include <AudioDriverKit/AudioDriverKit.h>
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IODispatchQueue.h>
@@ -5,6 +6,8 @@
 #include <os/log.h>
 #include "VirtualAudioDriver.h"
 #include "VirtualAudioDevice.h"
+
+#include "../Lab/PacketDumpBlob.hpp"
 
 #define LAB_LOG(fmt, ...) os_log(OS_LOG_DEFAULT, "[ADKLab] " fmt, ##__VA_ARGS__)
 
@@ -118,7 +121,31 @@ kern_return_t VirtualAudioDriver::NewUserClient_Impl(uint32_t in_type, IOUserCli
     if (in_type == kIOUserAudioDriverUserClientType) {
         return super::NewUserClient(in_type, out_user_client, SUPERDISPATCH);
     }
+
+    // Lab inspector connection ('LDBG'): instantiate LabDiagUserClient via
+    // the personality dictionary in Info.plist.
+    if (in_type == ASFW::Lab::kLabDiagUserClientType) {
+        IOService* service = nullptr;
+        kern_return_t kr = Create(this, "LabDiagUserClientProperties", &service);
+        if (kr != kIOReturnSuccess) {
+            LAB_LOG("NewUserClient - Create(LabDiagUserClientProperties) failed 0x%{public}08x", kr);
+            return kr;
+        }
+        IOUserClient* client = OSDynamicCast(IOUserClient, service);
+        if (client == nullptr) {
+            service->release();
+            return kIOReturnError;
+        }
+        *out_user_client = client;
+        return kIOReturnSuccess;
+    }
+
     return kIOReturnBadArgument;
+}
+
+VirtualAudioDevice* VirtualAudioDriver::GetVirtualAudioDevice()
+{
+    return (ivars != nullptr) ? ivars->audioDevice.get() : nullptr;
 }
 
 kern_return_t VirtualAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,

@@ -1,0 +1,25 @@
+#ifndef LabDiagUserClient_h
+#define LabDiagUserClient_h
+
+#include <DriverKit/IOUserClient.iig>
+
+// Diagnostic user client for the ADKLab host inspector. Opened with
+// connection type 'LDBG' (see Lab/PacketDumpBlob.hpp); selector 0 returns a
+// PacketDumpBlob via structureOutput. Strictly read-only: it never mutates
+// driver state and never touches the RT path.
+class LabDiagUserClient : public IOUserClient
+{
+public:
+    virtual bool init() override;
+    virtual void free() override;
+    virtual kern_return_t Start(IOService* provider) override;
+    virtual kern_return_t Stop(IOService* provider) override;
+
+    virtual kern_return_t ExternalMethod(uint64_t selector,
+                                         IOUserClientMethodArguments* arguments,
+                                         const IOUserClientMethodDispatch* dispatch,
+                                         OSObject* target,
+                                         void* reference) override;
+};
+
+#endif

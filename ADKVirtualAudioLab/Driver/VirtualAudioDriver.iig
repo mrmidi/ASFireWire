@@ -3,6 +3,8 @@
 
 using namespace AudioDriverKit;
 
+class VirtualAudioDevice;
+
 class VirtualAudioDriver : public IOUserAudioDriver
 {
 public:
@@ -10,7 +12,7 @@ public:
     virtual void free() override;
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
-    
+
     virtual kern_return_t NewUserClient(uint32_t in_type,
                                         IOUserClient** out_user_client) override;
 
@@ -18,4 +20,8 @@ public:
                                       IOUserAudioStartStopFlags in_flags) override;
     virtual kern_return_t StopDevice(IOUserAudioObjectID in_object_id,
                                      IOUserAudioStartStopFlags in_flags) override;
+
+    // Borrowed pointer for the diag user client (null until Start / after
+    // Stop). Callers must tolerate teardown — CopyPacketDump self-guards.
+    virtual VirtualAudioDevice* GetVirtualAudioDevice() LOCALONLY;
 };
