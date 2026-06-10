@@ -13,6 +13,8 @@ void RunPacketTimelineTests(TestContext& ctx);
 void RunPacketizerTests(TestContext& ctx);
 void RunPayloadWriterTests(TestContext& ctx);
 void RunDiceTxEngineTests(TestContext& ctx);
+void RunVerifyingSlotProviderTests(TestContext& ctx);
+void RunVerifierScenarioTests(TestContext& ctx);
 
 } // namespace ASFW::LabTests
 
@@ -30,6 +32,8 @@ int main() {
     RunPacketizerTests(ctx);
     RunPayloadWriterTests(ctx);
     RunDiceTxEngineTests(ctx);
+    RunVerifyingSlotProviderTests(ctx);
+    RunVerifierScenarioTests(ctx);
 
     std::printf("%d checks, %d failures\n", ctx.checks, ctx.failures);
     return ctx.failures == 0 ? 0 : 1;

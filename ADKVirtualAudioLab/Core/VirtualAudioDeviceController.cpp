@@ -76,6 +76,20 @@ void VirtualAudioDeviceController::SubmitWriteEnd(
     audioIOPath_.HandleWriteEnd(output);
 }
 
+void VirtualAudioDeviceController::BindLabSlotProvider(
+    Protocols::Audio::AMDTP::IAmdtpTxSlotProvider* provider) noexcept {
+    txEngine_.BindSlotProvider(
+        provider != nullptr
+            ? provider
+            : static_cast<Protocols::Audio::AMDTP::IAmdtpTxSlotProvider*>(
+                  &fakeSlotProvider_));
+}
+
+const Protocols::Audio::AMDTP::AmdtpPayloadWriterCounters&
+VirtualAudioDeviceController::PayloadCounters() const noexcept {
+    return txEngine_.PayloadWriterCounters();
+}
+
 const Lab::FakeIsochTxSlotProvider&
 VirtualAudioDeviceController::FakeSlotProvider() const noexcept {
     return fakeSlotProvider_;
