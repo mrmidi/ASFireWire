@@ -10,7 +10,7 @@ namespace ASFW::Lab {
 class FakeIsochTxSlotProvider final
     : public Protocols::Audio::AMDTP::IAmdtpTxSlotProvider {
 public:
-    static constexpr uint32_t kSlotCount = 256;
+    static constexpr uint32_t kSlotCount = 512;
     static constexpr uint32_t kSlotCapacityBytes = 512;
 
     FakeIsochTxSlotProvider() noexcept = default;

@@ -287,9 +287,10 @@ void RunDiceTxEngineTests(TestContext& ctx) {
         packet.packetIndex = 0;
         provider.PublishSlot(packet);
         CHECK(ctx, provider.PublishedPacket(0) != nullptr);
-        CHECK(ctx, provider.PublishedPacket(256) == nullptr); // same ring pos
+        const uint32_t count = provider.SlotCount();
+        CHECK(ctx, provider.PublishedPacket(count) == nullptr); // same ring pos
 
-        CHECK(ctx, provider.AcquireWritableSlot(256, slot)); // reuse evicts
+        CHECK(ctx, provider.AcquireWritableSlot(count, slot)); // reuse evicts
         CHECK(ctx, provider.PublishedPacket(0) == nullptr);
     }
 

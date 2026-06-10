@@ -54,7 +54,7 @@ private:
     AMDTP::AmdtpTxPacketizer packetizer_{};
     AMDTP::AmdtpPayloadWriter payloadWriter_{};
 
-    AMDTP::PacketTimelineSlot timelineSlots_[256]{};
+    AMDTP::PacketTimelineSlot timelineSlots_[512]{};
     AMDTP::AmdtpPacketTimeline timeline_{};
 
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};

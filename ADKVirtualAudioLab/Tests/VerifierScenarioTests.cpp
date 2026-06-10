@@ -26,7 +26,7 @@ using Protocols::Audio::DICE::DiceDeviceIdentity;
 
 namespace {
 
-constexpr uint32_t kChannels = 2;
+constexpr uint32_t kChannels = 8;
 constexpr uint32_t kRingFrames = 4096;
 
 // Matches DiceTxEngineTests: resolves to the Focusrite profile
@@ -219,7 +219,7 @@ void RunVerifierScenarioTests(TestContext& ctx) {
         bool sawSilentGapPacket = false;
         bool sawWrittenPacket = false;
         const uint32_t scanStart =
-            (pump.nextPacketIndex > 256) ? pump.nextPacketIndex - 256 : 0;
+            (pump.nextPacketIndex > 512) ? pump.nextPacketIndex - 512 : 0;
         for (uint32_t index = scanStart; index < pump.nextPacketIndex; ++index) {
             const auto* packet =
                 pump.controller.FakeSlotProvider().PublishedPacket(index);
