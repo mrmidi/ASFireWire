@@ -9,7 +9,7 @@ final class PacketInspectorModel: ObservableObject {
     @Published var dump: PacketDump?
     @Published var selection: UInt64?
     @Published var status = "No dump yet."
-    @Published var requestedCount = 16
+    @Published var requestedCount = 4
 
     private let client = PacketDumpClient()
 
@@ -58,10 +58,10 @@ struct PacketInspectorView: View {
             Button("Dump") { model.performDump() }
                 .keyboardShortcut("d")
             Picker("Packets:", selection: $model.requestedCount) {
-                ForEach([8, 16, 32, 64], id: \.self) { Text("\($0)").tag($0) }
+                ForEach([2, 4, 6], id: \.self) { Text("\($0)").tag($0) }
             }
             .pickerStyle(.segmented)
-            .frame(width: 220)
+            .frame(width: 140)
             Text(model.status)
                 .font(.caption)
                 .foregroundStyle(.secondary)

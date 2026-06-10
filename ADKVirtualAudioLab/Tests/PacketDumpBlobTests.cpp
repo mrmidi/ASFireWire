@@ -89,7 +89,7 @@ void RunPacketDumpBlobTests(TestContext& ctx) {
     // --- Layout is the wire contract shared with the Swift inspector ---
     CHECK_EQ_U32(ctx, sizeof(PacketDumpHeader), 128);
     CHECK_EQ_U32(ctx, sizeof(PacketDumpRecord), 576);
-    CHECK_EQ_U64(ctx, PacketDumpBlobSize(16), 128 + 16 * 576);
+    CHECK_EQ_U64(ctx, PacketDumpBlobSize(6), 128 + 6 * 576);
 
     // --- Window resolution, ordering, and header context ---
     {
@@ -103,44 +103,44 @@ void RunPacketDumpBlobTests(TestContext& ctx) {
             }
         }
 
-        std::vector<uint8_t> blob(PacketDumpBlobSize(16));
+        std::vector<uint8_t> blob(PacketDumpBlobSize(6));
         const size_t written = BuildPacketDumpBlob(
-            f.provider, f.timeline, f.payload, f.Context(20), 16,
+            f.provider, f.timeline, f.payload, f.Context(20), 6,
             kPacketDumpAnchorLatest, blob.data(), blob.size());
-        CHECK_EQ_U64(ctx, written, PacketDumpBlobSize(16));
+        CHECK_EQ_U64(ctx, written, PacketDumpBlobSize(6));
 
         const PacketDumpHeader* header = HeaderOf(blob);
         CHECK_EQ_U32(ctx, header->magic, kPacketDumpMagic);
         CHECK_EQ_U32(ctx, header->version, kPacketDumpVersion);
-        CHECK_EQ_U32(ctx, header->recordCount, 16);
+        CHECK_EQ_U32(ctx, header->recordCount, 6);
         CHECK_EQ_U32(ctx, header->recordStride, sizeof(PacketDumpRecord));
         CHECK_EQ_U64(ctx, header->nextPacketIndex, 20);
         CHECK_EQ_U64(ctx, header->writeEndCount, 42);
         CHECK_EQ_U32(ctx, header->ioRunning, 1);
 
         // Oldest → newest, ending at the anchor (19).
-        CHECK_EQ_U64(ctx, RecordOf(blob, 0)->packetIndex, 4);
-        CHECK_EQ_U64(ctx, RecordOf(blob, 15)->packetIndex, 19);
+        CHECK_EQ_U64(ctx, RecordOf(blob, 0)->packetIndex, 14);
+        CHECK_EQ_U64(ctx, RecordOf(blob, 5)->packetIndex, 19);
 
         // No-data record: published, not data, 8 B, timeline Completed.
-        const PacketDumpRecord* noData = RecordOf(blob, 4); // index 8
-        CHECK_EQ_U64(ctx, noData->packetIndex, 8);
+        const PacketDumpRecord* noData = RecordOf(blob, 2); // index 16
+        CHECK_EQ_U64(ctx, noData->packetIndex, 16);
         CHECK(ctx, (noData->flags & kDumpFlagPublished) != 0);
         CHECK(ctx, (noData->flags & kDumpFlagIsData) == 0);
         CHECK_EQ_U32(ctx, noData->byteCount, 8);
         CHECK_EQ_U32(ctx, noData->slotState, 3); // Completed
 
         // Data record: flags, geometry, marker bytes, live (ExposedForAudio).
-        const PacketDumpRecord* data = RecordOf(blob, 5); // index 9
-        CHECK_EQ_U64(ctx, data->packetIndex, 9);
+        const PacketDumpRecord* data = RecordOf(blob, 3); // index 17
+        CHECK_EQ_U64(ctx, data->packetIndex, 17);
         CHECK(ctx, (data->flags & kDumpFlagIsData) != 0);
         CHECK(ctx, (data->flags & kDumpFlagTimelineLive) != 0);
         CHECK(ctx, (data->flags & kDumpFlagLiveBytes) != 0);
         CHECK_EQ_U32(ctx, data->byteCount, 72);
         CHECK_EQ_U32(ctx, data->framesInPacket, 8);
         CHECK_EQ_U32(ctx, data->dbs, 2);
-        CHECK_EQ_U32(ctx, data->bytes[0], 0x40 + 9);
-        CHECK_EQ_U32(ctx, data->bytes[511], 0x40 + 9);
+        CHECK_EQ_U32(ctx, data->bytes[0], 0x40 + 17);
+        CHECK_EQ_U32(ctx, data->bytes[511], 0x40 + 17);
         CHECK_EQ_U32(ctx, data->slotState, 1); // ExposedForAudio
     }
 
@@ -150,9 +150,9 @@ void RunPacketDumpBlobTests(TestContext& ctx) {
         f.PublishData(0, 0x11);
         f.PublishData(1, 0x22);
 
-        std::vector<uint8_t> blob(PacketDumpBlobSize(16));
+        std::vector<uint8_t> blob(PacketDumpBlobSize(6));
         const size_t written = BuildPacketDumpBlob(
-            f.provider, f.timeline, f.payload, f.Context(2), 16,
+            f.provider, f.timeline, f.payload, f.Context(2), 6,
             kPacketDumpAnchorLatest, blob.data(), blob.size());
         CHECK_EQ_U64(ctx, written, PacketDumpBlobSize(2));
         CHECK_EQ_U32(ctx, HeaderOf(blob)->recordCount, 2);
@@ -163,9 +163,9 @@ void RunPacketDumpBlobTests(TestContext& ctx) {
     // --- Nothing published yet: header-only blob ---
     {
         DumpFixture f;
-        std::vector<uint8_t> blob(PacketDumpBlobSize(16));
+        std::vector<uint8_t> blob(PacketDumpBlobSize(6));
         const size_t written = BuildPacketDumpBlob(
-            f.provider, f.timeline, f.payload, f.Context(0), 16,
+            f.provider, f.timeline, f.payload, f.Context(0), 6,
             kPacketDumpAnchorLatest, blob.data(), blob.size());
         CHECK_EQ_U64(ctx, written, PacketDumpBlobSize(0));
         CHECK_EQ_U32(ctx, HeaderOf(blob)->recordCount, 0);
