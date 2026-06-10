@@ -310,7 +310,7 @@ Tx::IsochTxPacket IsochAudioTxPipeline::NextTransmitPacket(const Tx::TxPacketReq
     // A (re)seed of the phase is a real discontinuity: drop the map/SYT anchors so
     // they re-establish against the fresh phase and the current written-audio
     // window. Only kInitialSeed/kTimingDiscontinuity ever set this -- recurring
-    // lead-health NO-DATA reads must not (that conflation, treating ordinary
+    // lead-health NO-DATAreads must not (that conflation, treating ordinary
     // cadence telemetry as instability, is the bug this replaced: "TX PHASE RESET
     // reason=Glitch" firing on every lead-gate NO-DATA cycle).
     if (lastPhaseResult_.resetPhaseMap) {

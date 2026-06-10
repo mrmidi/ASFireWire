@@ -335,7 +335,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
         output[frame * kChannels] = static_cast<int32_t>((frame + 1) << 8);
         output[frame * kChannels + 1] = -static_cast<int32_t>((frame + 1) << 8);
     }
-    PublishRange(control, 100, 868);
+    PublishRange(control, 500, 868);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output);
 
@@ -669,7 +669,7 @@ TEST(IsochAudioTxPipelineTimelineTests, PreparedAm824PayloadMatchesSourceMarkers
     std::array<int32_t, kFrames * kChannels> output{};
     output[0] = 0x00123456;
     output[1] = static_cast<int32_t>(0x00FEDCBA);
-    PublishRange(control, 0, 768);
+    PublishRange(control, 0, 384);
     IsochAudioTxPipeline pipeline;
     ConfigurePipeline(pipeline, control, output, AudioWireFormat::kAM824);
 

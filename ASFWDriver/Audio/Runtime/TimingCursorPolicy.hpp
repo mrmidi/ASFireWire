@@ -70,7 +70,7 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t PacketLeadFrames(AudioDirection direction) const noexcept {
-        return (direction == AudioDirection::Output) ? 768 : 0; // matching Config::kOutputConsumerLeadFrames
+        return (direction == AudioDirection::Output) ? 384 : 0; // matching Config::kOutputConsumerLeadFrames
     }
 
     [[nodiscard]] constexpr uint32_t StartupLeadFrames(AudioDirection direction) const noexcept {
@@ -83,7 +83,7 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t CursorResyncDeadbandFrames() const noexcept {
-        return 256; // matching Config::kOutputCursorResyncDeadbandFrames
+        return 64; // matching Config::kOutputCursorResyncDeadbandFrames
     }
 
     [[nodiscard]] constexpr uint32_t ZtsPeriodFrames() const noexcept {
