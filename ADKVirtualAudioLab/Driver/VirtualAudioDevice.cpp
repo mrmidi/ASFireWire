@@ -112,19 +112,25 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
                                OSString* in_manufacturer_uid,
                                uint32_t in_zero_timestamp_period)
 {
+    IOLog("VirtualAudioDevice: calling super::init\n");
     if (!super::init(in_driver, in_supports_prewarming, in_device_uid, in_model_uid, in_manufacturer_uid, in_zero_timestamp_period)) {
+        IOLog("VirtualAudioDevice: super::init failed\n");
         return false;
     }
 
+    IOLog("VirtualAudioDevice: allocating ivars\n");
     ivars = IONewZero(VirtualAudioDevice_IVars, 1);
     if (ivars == nullptr) {
+        IOLog("VirtualAudioDevice: failed to allocate ivars\n");
         return false;
     }
 
     ivars->driver = OSSharedPtr(in_driver, OSRetain);
     ivars->workQueue = GetWorkQueue();
-
-    IOLog("VirtualAudioDevice: init\n");
+    if (ivars->workQueue.get() == nullptr) {
+        IOLog("VirtualAudioDevice: workQueue is null\n");
+        return false;
+    }
 
     mach_timebase_info_data_t timebaseInfo{};
     if (mach_timebase_info(&timebaseInfo) == KERN_SUCCESS &&
@@ -133,6 +139,7 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         ivars->timebase.denom = timebaseInfo.denom;
     }
 
+    IOLog("VirtualAudioDevice: initializing controller\n");
     ivars->controller = new VirtualAudioDeviceController();
     if (!ivars->controller->Initialize()) {
         IOLog("VirtualAudioDevice: Failed to initialize controller\n");
@@ -184,15 +191,30 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     // C4 (period vs IO buffer size coupling) stays observable by varying this.
     ivars->ringFrames = kRingPeriods * in_zero_timestamp_period;
 
+    IOLog("VirtualAudioDevice: creating output ring buffer (%d bytes)\n", ivars->ringFrames * format.mBytesPerFrame);
     OSSharedPtr<IOBufferMemoryDescriptor> buffer;
     uint32_t bufferSize = ivars->ringFrames * format.mBytesPerFrame;
-    if (IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, bufferSize, 0, buffer.attach()) == kIOReturnSuccess) {
-        ivars->outputStream = IOUserAudioStream::Create(in_driver, IOUserAudioStreamDirection::Output, buffer.get());
-        if (ivars->outputStream) {
-            ivars->outputStream->SetAvailableStreamFormats(&format, 1);
-            ivars->outputStream->SetCurrentStreamFormat(&format);
-            AddStream(ivars->outputStream.get());
-        }
+    kern_return_t kr = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, bufferSize, 0, buffer.attach());
+    if (kr != kIOReturnSuccess) {
+        IOLog("VirtualAudioDevice: Failed to create output IOBufferMemoryDescriptor (kr = 0x%08x)\n", kr);
+        return false;
+    }
+
+    IOLog("VirtualAudioDevice: creating output stream\n");
+    ivars->outputStream = IOUserAudioStream::Create(in_driver, IOUserAudioStreamDirection::Output, buffer.get());
+    if (!ivars->outputStream) {
+        IOLog("VirtualAudioDevice: Failed to create output IOUserAudioStream\n");
+        return false;
+    }
+
+    ivars->outputStream->SetAvailableStreamFormats(&format, 1);
+    ivars->outputStream->SetCurrentStreamFormat(&format);
+
+    IOLog("VirtualAudioDevice: adding stream\n");
+    kr = AddStream(ivars->outputStream.get());
+    if (kr != kIOReturnSuccess) {
+        IOLog("VirtualAudioDevice: AddStream failed (kr = 0x%08x)\n", kr);
+        return false;
     }
 
     ivars->controller->ConfigureOutputStream(kSampleRate, ivars->outputChannels,
@@ -204,6 +226,7 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     ivars->controller->EnableLabTiming(ASFW::Driver::TxTimingModel::Config{});
 
     // The ZTS heartbeat timer (armed in StartIO).
+    IOLog("VirtualAudioDevice: creating ZTS timer\n");
     IOTimerDispatchSource* timer = nullptr;
     if (IOTimerDispatchSource::Create(ivars->workQueue.get(), &timer) == kIOReturnSuccess) {
         ivars->ztsTimer = OSSharedPtr(timer, OSNoRetain);
