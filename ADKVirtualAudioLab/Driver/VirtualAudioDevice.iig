@@ -2,6 +2,7 @@
 #define VirtualAudioDevice_h
 
 #include <DriverKit/DriverKit.iig>
+#include <DriverKit/IOTimerDispatchSource.iig>
 #include <AudioDriverKit/IOUserAudioDevice.iig>
 #include <AudioDriverKit/IOUserAudioStream.iig>
 #include <AudioDriverKit/AudioDriverKitTypes.h>
@@ -32,6 +33,12 @@ public:
                                                          OSObject* in_change_info) override LOCALONLY;
 
     virtual kern_return_t HandleChangeSampleRate(double in_sample_rate) override LOCALONLY;
+
+    // M3: the dext clock model — a timer fires once per ZTS period, anchors
+    // UpdateCurrentZeroTimestamp with the raw fire time, and exposes the next
+    // period's packets (the lab's stand-in for a hardware ring interrupt).
+    virtual void ZtsTimerOccurred(OSAction* action,
+                                  uint64_t time) TYPE(IOTimerDispatchSource::TimerOccurred);
 };
 
 #endif
