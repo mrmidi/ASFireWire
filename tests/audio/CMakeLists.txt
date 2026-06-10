@@ -48,6 +48,11 @@ add_audio_test(RawPcm24In32Tests
     RawPcm24In32Tests.cpp
 )
 
+# Saffire Isoch Latency Model Tests (UpdateIsochBufferParams lift)
+add_audio_test(SaffireIsochLatencyTests
+    SaffireIsochLatencyTests.cpp
+)
+
 # CIP Header Builder Tests
 add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp
