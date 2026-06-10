@@ -123,9 +123,12 @@ void RunPacketTimelineTests(TestContext& ctx) {
         }
         const uint32_t gen0 = slots[0].generation.load();
 
-        // packetIndex 4 lands on ring position 0, evicting packetIndex 0
+        // packetIndex 4 lands on ring position 0, evicting packetIndex 0.
+        // Seqlock protocol: one mutation = two increments (odd while in
+        // flight, back to even when stable).
         CHECK(ctx, timeline.ExposeDataPacket(MakeDataPacket(4, 32), bytes[4], 512));
-        CHECK(ctx, slots[0].generation.load() == gen0 + 1);
+        CHECK(ctx, slots[0].generation.load() == gen0 + 2);
+        CHECK(ctx, (slots[0].generation.load() & 1u) == 0);
 
         // Old occupant fully invalidated
         CHECK(ctx, timeline.SlotByIndex(0) == nullptr);
@@ -141,6 +144,49 @@ void RunPacketTimelineTests(TestContext& ctx) {
         CHECK(ctx, timeline.SlotByIndex(1) == nullptr);
         CHECK(ctx, timeline.FindSlotForAudioFrame(8) == nullptr);
         CHECK(ctx, timeline.SlotByIndex(5) != nullptr);
+    }
+
+    // --- Seqlock snapshot: the RT-side lookup ---
+    {
+        AmdtpPacketTimeline timeline;
+        PacketTimelineSlot slots[4]{};
+        uint8_t bytes[2][512]{};
+        timeline.AttachSlots(slots, 4);
+
+        timeline.MarkNoDataPacket(0);
+        CHECK(ctx, timeline.ExposeDataPacket(MakeDataPacket(1, 1000), bytes[0], 512));
+
+        // Hit: fields match the exposed packet and the sequence is even.
+        PacketSlotSnapshot snap{};
+        CHECK(ctx, timeline.SnapshotSlotForAudioFrame(1003, snap));
+        CHECK(ctx, snap.slot == &slots[1]);
+        CHECK(ctx, snap.packetBytes == bytes[0]);
+        CHECK_EQ_U64(ctx, snap.firstAudioFrame, 1000);
+        CHECK_EQ_U32(ctx, snap.framesInPacket, 8);
+        CHECK_EQ_U32(ctx, snap.dbs, 2);
+        CHECK_EQ_U32(ctx, snap.packetSizeBytes, 72);
+        CHECK(ctx, (snap.generation & 1u) == 0);
+
+        // Boundary misses mirror FindSlotForAudioFrame.
+        CHECK(ctx, !timeline.SnapshotSlotForAudioFrame(999, snap));
+        CHECK(ctx, !timeline.SnapshotSlotForAudioFrame(1008, snap));
+        // No-data / Completed positions stay invisible.
+        CHECK(ctx, !timeline.SnapshotSlotForAudioFrame(0, snap));
+
+        // Mid-write guard: an odd sequence (mutation in flight) makes the
+        // slot unsnapshotable; restoring even parity makes it visible again.
+        slots[1].generation.fetch_add(1);
+        CHECK(ctx, !timeline.SnapshotSlotForAudioFrame(1003, snap));
+        slots[1].generation.fetch_add(1);
+        CHECK(ctx, timeline.SnapshotSlotForAudioFrame(1003, snap));
+
+        // Post-write reuse detection seam: the live slot's sequence moves on
+        // when the position is reused, so a writer holding the snapshot can
+        // see that its payload landed in a newer packet image.
+        const uint32_t heldGen = snap.generation;
+        CHECK(ctx, timeline.ExposeDataPacket(MakeDataPacket(5, 2000), bytes[1], 512));
+        CHECK(ctx, snap.slot->generation.load() != heldGen);
+        CHECK(ctx, !timeline.SnapshotSlotForAudioFrame(1003, snap)); // evicted
     }
 
     // --- Reset clears everything ---
