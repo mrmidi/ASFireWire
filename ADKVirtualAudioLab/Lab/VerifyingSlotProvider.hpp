@@ -38,7 +38,11 @@ enum class VerifierCounterId : uint32_t {
     kP4FrameTilingViolation = 40, // firstAudioFrame != expected next frame
     kP4FrameCountViolation = 41,  // data frame count inconsistent / no-data frames != 0
 
-    kIdLimit = 42,
+    // P5 — SYT discipline (Milestone 2; checked only when Config::p5Enabled)
+    kP5SytStepViolation = 50,  // data SYT not prev + step in the 16-cycle domain
+    kP5SytGraftViolation = 51, // sub-cycle offset off the device graft lattice
+
+    kIdLimit = 52,
 };
 
 struct VerifierSnapshot final {
@@ -105,6 +109,14 @@ public:
         bool blockingMode{true};      // enables P1 run-length + 8000-window checks
         uint8_t expectedDataFdf{0x02}; // AM824 | 48 kHz (the lab is 48 k-only)
         Ports::IDiagSink* diagSink{nullptr};
+
+        // P5 (Milestone 2): only meaningful for timing-valid runs — data
+        // packets must then carry real SYTs stepping by p5StepTicks in the
+        // 16-cycle domain, on the device's constant sub-cycle graft lattice
+        // (offset ≡ graft mod 1024 at 48 kHz blocking: 4096 % 3072 = 1024).
+        bool p5Enabled{false};
+        uint16_t p5GraftOffsetTicks{0x0B0};
+        uint32_t p5StepTicks{4096};
     };
 
     explicit VerifyingSlotProvider(
@@ -150,6 +162,8 @@ private:
         const Protocols::Audio::AMDTP::PreparedTxPacket& packet) noexcept;
     void CheckCadence(
         const Protocols::Audio::AMDTP::PreparedTxPacket& packet) noexcept;
+    void CheckSytDiscipline(
+        const Protocols::Audio::AMDTP::PreparedTxPacket& packet) noexcept;
 
     Protocols::Audio::AMDTP::IAmdtpTxSlotProvider* inner_{nullptr};
     Config config_{};
@@ -177,6 +191,9 @@ private:
 
     uint32_t windowPackets_{0};
     uint32_t windowDataPackets_{0};
+
+    bool p5PrevValid_{false};
+    uint32_t p5PrevDomainTick_{0};
 
     std::atomic<uint64_t>
         counters_[static_cast<uint32_t>(VerifierCounterId::kIdLimit)]{};

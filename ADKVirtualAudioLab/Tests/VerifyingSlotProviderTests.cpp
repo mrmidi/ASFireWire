@@ -63,7 +63,7 @@ struct GoldenDriver final {
             return false;
         }
 
-        const auto words = isData ? cip_.BuildData(dbc_, 0xFFFF)
+        const auto words = isData ? cip_.BuildData(dbc_, nextDataSyt)
                                   : cip_.BuildNoData(dbc_);
         WriteBE32(slot.bytes, words.q0);
         WriteBE32(slot.bytes + 4, words.q1);
@@ -79,7 +79,7 @@ struct GoldenDriver final {
         packet.byteCount = 8 + payloadBytes;
         packet.isData = isData;
         packet.dbc = dbc_;
-        packet.syt = 0xFFFF;
+        packet.syt = isData ? nextDataSyt : 0xFFFF;
         packet.firstAudioFrame = frame_;
         packet.framesInPacket = isData ? kFramesPerData : 0;
         packet.dbs = kDbs;
@@ -113,6 +113,20 @@ struct GoldenDriver final {
     uint8_t pending_{0};
     uint8_t dbc_{0};
     uint64_t frame_{0};
+    uint16_t nextDataSyt{0xFFFF}; // P5 tests drive a real SYT sequence
+};
+
+// Sequenced SYT source for P5 self-tests: walks the 16-cycle domain by the
+// blocking step, on the 0x0B0 graft lattice (mirrors TxTimingModel).
+struct P5SytSequence final {
+    uint32_t domainTick{3248}; // cycle 1, offset 0x0B0
+
+    uint16_t Next() noexcept {
+        const uint16_t syt = static_cast<uint16_t>(
+            ((domainTick / 3072u) << 12) | (domainTick % 3072u));
+        domainTick = (domainTick + 4096u) % 49152u;
+        return syt;
+    }
 };
 
 // Runs warmup, one corrupted emit, cooldown; checks the targeted counter
@@ -317,6 +331,117 @@ void RunVerifyingSlotProviderTests(TestContext& ctx) {
         CHECK_EQ_U64(ctx, snapshot.Value(VerifierCounterId::kDataPackets), 5999);
         CHECK_EQ_U64(
             ctx, snapshot.Value(VerifierCounterId::kP1CadenceWindowViolation), 1);
+        CHECK_EQ_U64(ctx, snapshot.TotalViolations(), 1);
+    }
+
+    // P5 — clean sequenced run: real SYTs on the graft lattice, exact step.
+    {
+        FakeIsochTxSlotProvider fake{};
+        VerifyingSlotProvider verifier{fake};
+        VerifyingSlotProvider::Config config{};
+        config.p5Enabled = true;
+        verifier.Configure(config);
+
+        GoldenDriver driver{verifier};
+        P5SytSequence sequence{};
+        for (int i = 0; i < 200; ++i) {
+            const bool isData = (driver.pending_ + 6) >= 8;
+            if (isData) {
+                driver.nextDataSyt = sequence.Next();
+            }
+            CHECK(ctx, driver.EmitAuto());
+        }
+        CHECK_EQ_U64(ctx, verifier.Snapshot().TotalViolations(), 0);
+    }
+
+    // P5 — one skipped step: exactly one step violation, then resync.
+    {
+        FakeIsochTxSlotProvider fake{};
+        VerifyingSlotProvider verifier{fake};
+        VerifyingSlotProvider::Config config{};
+        config.p5Enabled = true;
+        verifier.Configure(config);
+
+        GoldenDriver driver{verifier};
+        P5SytSequence sequence{};
+        for (int i = 0; i < 120; ++i) {
+            if (i == 60) {
+                (void)sequence.Next(); // the producer lost one step
+            }
+            const bool isData = (driver.pending_ + 6) >= 8;
+            if (isData) {
+                driver.nextDataSyt = sequence.Next();
+            }
+            CHECK(ctx, driver.EmitAuto());
+        }
+        const VerifierSnapshot snapshot = verifier.Snapshot();
+        CHECK_EQ_U64(ctx,
+                     snapshot.Value(VerifierCounterId::kP5SytStepViolation), 1);
+        CHECK_EQ_U64(ctx, snapshot.TotalViolations(), 1);
+    }
+
+    // P5 — off-lattice first SYT: graft violation on the first data packet,
+    // plus exactly one step violation when the producer returns to the
+    // lattice (resync-after-violation keeps both isolated).
+    {
+        FakeIsochTxSlotProvider fake{};
+        VerifyingSlotProvider verifier{fake};
+        VerifyingSlotProvider::Config config{};
+        config.p5Enabled = true;
+        verifier.Configure(config);
+
+        GoldenDriver driver{verifier};
+        P5SytSequence sequence{};
+        bool corruptedFirst = false;
+        for (int i = 0; i < 80; ++i) {
+            const bool isData = (driver.pending_ + 6) >= 8;
+            if (isData) {
+                uint16_t syt = sequence.Next();
+                if (!corruptedFirst) {
+                    syt = static_cast<uint16_t>(syt + 512); // off the lattice
+                    corruptedFirst = true;
+                }
+                driver.nextDataSyt = syt;
+            }
+            CHECK(ctx, driver.EmitAuto());
+        }
+        const VerifierSnapshot snapshot = verifier.Snapshot();
+        CHECK_EQ_U64(ctx,
+                     snapshot.Value(VerifierCounterId::kP5SytGraftViolation), 1);
+        CHECK_EQ_U64(ctx,
+                     snapshot.Value(VerifierCounterId::kP5SytStepViolation), 1);
+        CHECK_EQ_U64(ctx, snapshot.TotalViolations(), 2);
+    }
+
+    // P5 — a data packet carrying 0xFFFF in a timing-valid run.
+    {
+        FakeIsochTxSlotProvider fake{};
+        VerifyingSlotProvider verifier{fake};
+        VerifyingSlotProvider::Config config{};
+        config.p5Enabled = true;
+        verifier.Configure(config);
+
+        GoldenDriver driver{verifier};
+        P5SytSequence sequence{};
+        bool dropped = false;
+        int dataSeen = 0;
+        for (int i = 0; i < 80; ++i) {
+            const bool isData = (driver.pending_ + 6) >= 8;
+            if (isData) {
+                ++dataSeen;
+                if (dataSeen == 30 && !dropped) {
+                    driver.nextDataSyt = 0xFFFF; // producer lost its clock
+                    (void)sequence.Next();       // it still consumed the step
+                    dropped = true;
+                } else {
+                    driver.nextDataSyt = sequence.Next();
+                }
+            }
+            CHECK(ctx, driver.EmitAuto());
+        }
+        const VerifierSnapshot snapshot = verifier.Snapshot();
+        CHECK_EQ_U64(ctx,
+                     snapshot.Value(VerifierCounterId::kP5SytStepViolation), 1);
         CHECK_EQ_U64(ctx, snapshot.TotalViolations(), 1);
     }
 
