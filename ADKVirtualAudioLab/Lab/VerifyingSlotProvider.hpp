@@ -99,7 +99,7 @@ struct VerifierSnapshot final {
 class VerifyingSlotProvider final
     : public Protocols::Audio::AMDTP::IAmdtpTxSlotProvider {
 public:
-    static constexpr uint32_t kTrackedSlots = 256;
+    static constexpr uint32_t kTrackedSlots = 512;
     static constexpr uint32_t kCadenceWindowPackets = 8000;
     static constexpr uint32_t kCadenceWindowDataPackets = 6000;
     static constexpr uint32_t kMaxConsecutiveData = 3;

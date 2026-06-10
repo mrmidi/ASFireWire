@@ -39,6 +39,9 @@ using namespace ASFW::Driver;
 namespace {
 
 constexpr uint32_t kSampleRate = 48000;
+constexpr uint32_t kOutputChannels = 8;
+constexpr uint32_t kBytesPerSample = sizeof(float);
+constexpr uint32_t kOutputBytesPerFrame = kOutputChannels * kBytesPerSample;
 constexpr uint32_t kRingPeriods = 8; // ring = 8 ZTS periods (4096 frames)
 constexpr uint64_t kZtsPeriodNsNumer = 32000000ull; // 512/48000 s = 32e6/3 ns
 constexpr uint64_t kZtsPeriodNsDenom = 3ull;
@@ -187,13 +190,19 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
     LAB_LOG("init - setting transport type to FireWire");
     SetTransportType(IOUserAudioTransportType::FireWire);
 
-    // Set up preferred output channel layout (Left, Right)
+    // Set up preferred output channel layout (8 discrete channels)
     LAB_LOG("init - setting preferred output channel layout");
-    IOUserAudioChannelLabel outputChannelLayout[2] = {
-        IOUserAudioChannelLabel::Left,
-        IOUserAudioChannelLabel::Right
+    IOUserAudioChannelLabel outputChannelLayout[kOutputChannels] = {
+        IOUserAudioChannelLabel::Discrete_0,
+        IOUserAudioChannelLabel::Discrete_1,
+        IOUserAudioChannelLabel::Discrete_2,
+        IOUserAudioChannelLabel::Discrete_3,
+        IOUserAudioChannelLabel::Discrete_4,
+        IOUserAudioChannelLabel::Discrete_5,
+        IOUserAudioChannelLabel::Discrete_6,
+        IOUserAudioChannelLabel::Discrete_7
     };
-    kern_return_t kr = SetPreferredOutputChannelLayout(outputChannelLayout, 2);
+    kern_return_t kr = SetPreferredOutputChannelLayout(outputChannelLayout, kOutputChannels);
     if (kr != kIOReturnSuccess) {
         LAB_LOG("init - SetPreferredOutputChannelLayout failed (kr = 0x%{public}08x)", kr);
     } else {
@@ -225,7 +234,7 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         LAB_LOG("init - SetOutputSafetyOffset set to 0");
     }
 
-    // Set up a basic float32 output stream (2 channels, 48kHz)
+    // Set up a basic float32 output stream (8 channels, 48kHz)
     double sampleRate = kSampleRate;
     LAB_LOG("init - setting available sample rate to %{public}.1f", sampleRate);
     SetAvailableSampleRates(&sampleRate, 1);
@@ -236,10 +245,10 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         .mSampleRate = sampleRate,
         .mFormatID = IOUserAudioFormatID::LinearPCM,
         .mFormatFlags = static_cast<IOUserAudioFormatFlags>(IOUserAudioFormatFlags::FormatFlagIsFloat | IOUserAudioFormatFlags::FormatFlagsNativeEndian),
-        .mBytesPerPacket = 8,
+        .mBytesPerPacket = kOutputBytesPerFrame,
         .mFramesPerPacket = 1,
-        .mBytesPerFrame = 8,
-        .mChannelsPerFrame = 2,
+        .mBytesPerFrame = kOutputBytesPerFrame,
+        .mChannelsPerFrame = kOutputChannels,
         .mBitsPerChannel = 32
     };
 
@@ -472,7 +481,7 @@ void VirtualAudioDevice::ZtsTimerOccurred_Impl(OSAction* action, uint64_t time)
 
     // The "hardware" requests the next period's data: keep the exposed
     // timeline one ring-wrap ahead of where the HAL will write.
-    PrepareCoverage(ivars, sampleTime + 2ull * GetZeroTimestampPeriod());
+    PrepareCoverage(ivars, sampleTime + 3ull * GetZeroTimestampPeriod());
 
     // Drift-free nominal chain: the next deadline comes from the period
     // index, never from the (jittered) previous fire time.
@@ -559,7 +568,7 @@ kern_return_t VirtualAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags)
 
         if (ivars->controller) {
             LAB_LOG("StartIO - pre-preparing coverage");
-            PrepareCoverage(ivars, 2ull * GetZeroTimestampPeriod());
+            PrepareCoverage(ivars, 3ull * GetZeroTimestampPeriod());
         }
 
         ivars->ioRunning.store(true, std::memory_order_relaxed);
