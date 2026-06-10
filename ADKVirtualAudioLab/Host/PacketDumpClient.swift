@@ -12,7 +12,7 @@ enum PacketDumpWire {
     static let recordMetaSize = 64
     static let packetBytesSize = 512
     static let recordSize = recordMetaSize + packetBytesSize // 576
-    static let maxRecords: UInt32 = 64
+    static let maxRecords: UInt32 = 6
 
     static let userClientType: UInt32 = 0x4C44_4247 // 'LDBG'
     static let selectorDumpPackets: UInt32 = 0
@@ -192,7 +192,7 @@ final class PacketDumpClient {
         }
     }
 
-    func dump(count: UInt32 = 16,
+    func dump(count: UInt32 = 4,
               anchor: UInt64 = PacketDumpWire.anchorLatest) throws -> PacketDump {
         try ensureConnection()
 

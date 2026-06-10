@@ -26,8 +26,8 @@ namespace ASFW::Lab {
 
 constexpr uint32_t kPacketDumpMagic = 0x4C444D50;   // 'LDMP'
 constexpr uint32_t kPacketDumpVersion = 1;
-constexpr uint32_t kPacketDumpMaxRecords = 64;
-constexpr uint32_t kPacketDumpDefaultRecords = 16;
+constexpr uint32_t kPacketDumpMaxRecords = 6;
+constexpr uint32_t kPacketDumpDefaultRecords = 4;
 constexpr uint64_t kPacketDumpAnchorLatest = ~0ull;
 
 // User-client plumbing shared with the host app.
