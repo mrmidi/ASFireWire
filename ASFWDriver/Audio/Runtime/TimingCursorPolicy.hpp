@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SaffireIsochLatency.hpp"
+
 #include <cstdint>
 
 namespace ASFW::Audio {
@@ -57,16 +59,36 @@ public:
         return 512;
     }
 
+    // The Saffire latency mode this policy operates at. Mode kLow = 6/16
+    // delay packets, per the UpdateIsochBufferParams trace recommendation
+    // (start at mode 0–1 for TX, widen only if frames-without-packet misses
+    // climb). See SaffireIsochLatency.hpp for the full lifted model.
+    [[nodiscard]] static constexpr SaffireLatencyMode LatencyMode() noexcept {
+        return SaffireLatencyMode::kLow;
+    }
+
+    [[nodiscard]] static constexpr SaffireIsochBufferParams SaffireParams() noexcept {
+        SaffireIsochBufferParams params{};
+        (void)SaffireIsochLatency::Lookup(LatencyMode(), 48000, params);
+        return params;
+    }
+
     [[nodiscard]] constexpr uint32_t CursorOffsetFrames(AudioDirection direction) const noexcept {
-        return (direction == AudioDirection::Output) ? 48 : 128; // 6 packets * 8 vs 16 packets * 8
+        // Derived from the lifted table: delayPackets × framesPerPacket.
+        return (direction == AudioDirection::Output)
+                   ? SaffireParams().OutputDelayFrames()
+                   : SaffireParams().InputDelayFrames();
     }
 
     [[nodiscard]] constexpr uint32_t ReportedLatencyFrames(AudioDirection direction) const noexcept {
+        // Bench-tuned ADK value, deliberately NOT the table's delay frames:
+        // the cursor offset above already absorbs the packet delay; this is
+        // what we report on top. Mapping question still open on the bench.
         return (direction == AudioDirection::Output) ? 29 : 0;
     }
 
     [[nodiscard]] constexpr uint32_t SafetyOffsetFrames(AudioDirection direction) const noexcept {
-        return 8; // Saffire-style baseline
+        return 8; // Saffire-style baseline (bench-tuned ADK value, see above)
     }
 
     [[nodiscard]] constexpr uint32_t PacketLeadFrames(AudioDirection direction) const noexcept {
@@ -109,8 +131,8 @@ public:
         return TimingCursorPolicySnapshot{
             .sampleRateHz = SampleRateHz(),
             .framesPerPacketMax = FramesPerPacketMax(),
-            .outputDelayPackets = 6,
-            .inputDelayPackets = 16,
+            .outputDelayPackets = SaffireParams().outputDelayPackets,
+            .inputDelayPackets = SaffireParams().inputDelayPackets,
             .outputCursorOffsetFrames = CursorOffsetFrames(AudioDirection::Output),
             .inputCursorOffsetFrames = CursorOffsetFrames(AudioDirection::Input),
             .reportedOutputLatencyFrames = ReportedLatencyFrames(AudioDirection::Output),
@@ -126,5 +148,15 @@ public:
 private:
     AudioTimingMode mode_;
 };
+
+// The table derivation must reproduce the previously hand-planted values
+// exactly — this change is single-sourcing, not retuning.
+static_assert(TimingCursorPolicy::SaffireParams().OutputDelayFrames() == 48,
+              "mode kLow output delay at 48 kHz must stay 6 packets * 8 frames");
+static_assert(TimingCursorPolicy::SaffireParams().InputDelayFrames() == 128,
+              "mode kLow input delay at 48 kHz must stay 16 packets * 8 frames");
+static_assert(TimingCursorPolicy::SaffireParams().outputDelayPackets == 6 &&
+                  TimingCursorPolicy::SaffireParams().inputDelayPackets == 16,
+              "snapshot delay packets must match the lifted table at mode kLow");
 
 } // namespace ASFW::Audio
