@@ -35,3 +35,30 @@ targets:
       - path: Ports
     settings:
       CLANG_CXX_LANGUAGE_STANDARD: gnu++2b
+  # Milestone 3 activation host: embeds the dext and submits the
+  # OSSystemExtensionRequest. Signing stays off by default like the dext —
+  # see BENCH.md for the ad-hoc (SIP-off bench) and Developer-ID/provisioned
+  # (SIP-on) signing override lanes.
+  ADKLabHost:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Host
+    dependencies:
+      - target: ADKVirtualAudioLab
+        embed: true
+    info:
+      path: Host/Info.plist
+      properties:
+        CFBundleDisplayName: ADKLab Host
+        NSPrincipalClass: NSApplication
+    entitlements:
+      path: Host/ADKLabHost.entitlements
+      properties:
+        com.apple.developer.system-extension.install: true
+    settings:
+      CODE_SIGNING_ALLOWED: NO
+      CODE_SIGNING_REQUIRED: NO
+      CODE_SIGN_IDENTITY: ""
+      SWIFT_VERSION: "5.9"
