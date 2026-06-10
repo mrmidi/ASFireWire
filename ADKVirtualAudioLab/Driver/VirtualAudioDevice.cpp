@@ -12,6 +12,7 @@
 #include "../Lab/PacketDumpBlob.hpp"
 #include "../Lab/StickyCounterSink.hpp"
 #include "../Lab/VerifyingSlotProvider.hpp"
+#include "../Protocols/Audio/DICE/SaffireIsochLatency.hpp"
 
 using namespace ASFW::Driver;
 
@@ -252,13 +253,47 @@ bool VirtualAudioDevice::init(IOUserAudioDriver* in_driver,
         LAB_LOG("init - SetCanBeDefaultSystemOutputDevice set to true");
     }
 
-    // Set output safety offset
-    LAB_LOG("init - setting output safety offset to 0");
-    kr = SetOutputSafetyOffset(0);
-    if (kr != kIOReturnSuccess) {
-        LAB_LOG("init - SetOutputSafetyOffset failed (kr = 0x%{public}08x)", kr);
-    } else {
-        LAB_LOG("init - SetOutputSafetyOffset set to 0");
+    // Output safety offset + latency from the lifted Saffire model
+    // (SaffireIsochLatency.hpp — the UpdateIsochBufferParams trace). Mode
+    // per the trace's recommendation: start at 0–1 for TX, widen only if
+    // framesWithoutPacket climbs. delayPackets × framesPerPacket = frames.
+    {
+        constexpr auto kLabLatencyMode =
+            ASFW::Protocols::Audio::DICE::SaffireLatencyMode::kLow;
+        ASFW::Protocols::Audio::DICE::SaffireIsochBufferParams latencyParams{};
+        if (ASFW::Protocols::Audio::DICE::SaffireIsochLatency::Lookup(
+                kLabLatencyMode, kSampleRate, latencyParams)) {
+            const uint32_t outputOffsetFrames =
+                latencyParams.OutputSafetyOffsetFrames();
+            LAB_LOG("init - Saffire latency model: mode=%{public}u "
+                    "out_packets=%{public}u out_frames=%{public}u "
+                    "in_packets=%{public}u dma_depth=%{public}u",
+                    static_cast<uint32_t>(kLabLatencyMode),
+                    latencyParams.outputDelayPackets, outputOffsetFrames,
+                    latencyParams.inputDelayPackets,
+                    latencyParams.dmaProgramDepthPackets);
+
+            kr = SetOutputSafetyOffset(outputOffsetFrames);
+            if (kr != kIOReturnSuccess) {
+                LAB_LOG("init - SetOutputSafetyOffset failed (kr = 0x%{public}08x)", kr);
+            } else {
+                LAB_LOG("init - SetOutputSafetyOffset set to %{public}u", outputOffsetFrames);
+            }
+
+            // The kext stated both fields (setSampleOffset/setSampleLatency);
+            // which ADK property maps to which is a bench question — start
+            // with both carrying the model value and observe.
+            kr = SetOutputLatency(outputOffsetFrames);
+            if (kr != kIOReturnSuccess) {
+                LAB_LOG("init - SetOutputLatency failed (kr = 0x%{public}08x)", kr);
+            } else {
+                LAB_LOG("init - SetOutputLatency set to %{public}u", outputOffsetFrames);
+            }
+        } else {
+            LAB_LOG("init - Saffire latency lookup failed for rate %{public}u; "
+                    "leaving safety offset at default",
+                    kSampleRate);
+        }
     }
 
     // Float32 output stream shaped by the profile caps.
