@@ -138,9 +138,42 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ASFW_LOG(Audio, "ASFWAudioDriver: Using default device configuration (no nub properties)");
     }
 
+    // Resolve audio profile registry on startup
+    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
+            parsedConfig.vendorId, parsedConfig.modelId, parsedConfig.guid)) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: Resolved profile '%{public}s'", profile->Name());
+        strlcpy(parsedConfig.deviceName, profile->Name(), sizeof(parsedConfig.deviceName));
+
+        const uint32_t rxChannels = profile->RxChannelCount();
+        const uint32_t txChannels = profile->TxChannelCount();
+        if (rxChannels > 0) {
+            parsedConfig.inputChannelCount = rxChannels;
+        }
+        if (txChannels > 0) {
+            parsedConfig.outputChannelCount = txChannels;
+        }
+        parsedConfig.channelCount = std::max(parsedConfig.inputChannelCount, parsedConfig.outputChannelCount);
+
+        // Regenerate channel names for the updated channel counts
+        for (uint32_t index = 0; index < parsedConfig.inputChannelCount && index < ASFW::Isoch::Audio::kMaxNamedChannels; ++index) {
+            snprintf(parsedConfig.inputChannelNames[index],
+                     sizeof(parsedConfig.inputChannelNames[index]),
+                     "%s %u",
+                     parsedConfig.inputPlugName,
+                     index + 1);
+        }
+        for (uint32_t index = 0; index < parsedConfig.outputChannelCount && index < ASFW::Isoch::Audio::kMaxNamedChannels; ++index) {
+            snprintf(parsedConfig.outputChannelNames[index],
+                     sizeof(parsedConfig.outputChannelNames[index]),
+                     "%s %u",
+                     parsedConfig.outputPlugName,
+                     index + 1);
+        }
+    }
+
     ASFW::Isoch::Audio::BuildFallbackBoolControls(parsedConfig);
     ASFW::Isoch::Audio::ApplyBringupSingleFormatPolicy(parsedConfig);
-    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Isoch::Config::kMaxPcmChannels);
+    ASFW::Isoch::Audio::ClampAudioDriverChannels(parsedConfig, ASFW::Encoding::kMaxPcmChannels);
     CopyParsedConfigToDeviceState(parsedConfig, ivars.device);
 
     kern_return_t error = ValidateDeviceStateForGraph(ivars.device);
@@ -192,7 +225,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                                                   deviceUID.get(),
                                                   modelUID.get(),
                                                   manufacturerUID.get(),
-                                                  ASFW::Isoch::Config::kAudioIoPeriodFrames);
+                                                  ASFW::IsochTransport::kAudioIoPeriodFrames);
     if (!ivars.audioDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
         return kIOReturnNoMemory;
@@ -415,19 +448,39 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     ivars.audioDevice->SetWantsControlsRestored(true);
     driver.SetTransportType(IOUserAudioTransportType::FireWire);
     ivars.audioDevice->SetTransportType(IOUserAudioTransportType::FireWire);
+    // Should test IIR clock algorithm as well and make it configurable later
     ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::TwelvePtMovingWindowAverage);
     ivars.audioDevice->SetClockIsStable(true);
     ivars.audioDevice->SetClockDomain(1);
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
-    ivars.audioDevice->SetOutputLatency(policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output));
-    ivars.audioDevice->SetInputLatency(policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input));
-    ivars.audioDevice->SetOutputSafetyOffset(policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output));
-    ivars.audioDevice->SetInputSafetyOffset(policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input));
+    const double currentSampleRate = ivars.device.currentSampleRate;
+    const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
+        ivars.device.vendorId, ivars.device.modelId, ivars.device.guid);
+
+    uint32_t outLatency = 0;
+    uint32_t inLatency = 0;
+    uint32_t outSafety = 0;
+    uint32_t inSafety = 0;
+
+    if (profile) {
+        outLatency = profile->TxReportedLatencyFrames(currentSampleRate);
+        inLatency = profile->RxReportedLatencyFrames(currentSampleRate);
+        outSafety = profile->TxSafetyOffsetFrames(currentSampleRate);
+        inSafety = profile->RxSafetyOffsetFrames(currentSampleRate);
+    } else {
+        outLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output);
+        inLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input);
+        outSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output);
+        inSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input);
+    }
+
+    ivars.audioDevice->SetOutputLatency(outLatency);
+    ivars.audioDevice->SetInputLatency(inLatency);
+    ivars.audioDevice->SetOutputSafetyOffset(outSafety);
+    ivars.audioDevice->SetInputSafetyOffset(inSafety);
+
     ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out=%u/in=%u, safety out=%u/in=%u frames",
-             policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Output),
-             policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input),
-             policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output),
-             policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input));
+             outLatency, inLatency, outSafety, inSafety);
 
     const kern_return_t ztsKr =
         ivars.audioDevice->SetZeroTimeStampPeriod(policy.HalZeroTimestampPeriodFrames());

@@ -94,8 +94,8 @@ static uint32_t ClampAudioChannels(uint32_t channels) {
     if (channels == 0) {
         return 0;
     }
-    return (channels > ASFW::Isoch::Config::kMaxPcmChannels)
-        ? ASFW::Isoch::Config::kMaxPcmChannels
+    return (channels > ASFW::Encoding::kMaxPcmChannels)
+        ? ASFW::Encoding::kMaxPcmChannels
         : channels;
 }
 
@@ -355,26 +355,7 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
 
 kern_return_t IMPL(ASFWAudioNub, RequestTxPayloadPreparation)
 {
-    if (!ivars || requestGeneration == 0) {
-        return kIOReturnBadArgument;
-    }
-
-    ASFWDriver* parent = GetParentASFWDriver(ivars);
-    auto* ctx = parent
-        ? static_cast<ServiceContext*>(parent->GetServiceContext())
-        : nullptr;
-    if (!ctx || !ctx->workQueue || ctx->stopping.load(std::memory_order_acquire)) {
-        return kIOReturnNotReady;
-    }
-
-    ctx->workQueue->DispatchAsync(^{
-        if (ctx->stopping.load(std::memory_order_acquire)) {
-            return;
-        }
-        if (auto* transmit = ctx->isoch.TransmitContext()) {
-            transmit->RequestPayloadPreparation(requestGeneration);
-        }
-    });
+    // Obsolete: audio side now updates exposeCursor and commitGen directly in shared memory.
     return kIOReturnSuccess;
 }
 
@@ -416,6 +397,90 @@ kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
                                            outGeneration);
 }
 
+// Allocates the shared payload slab, metadata ring, and control block.
+kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    // Retrieve the parent driver and its service context
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    // Delegate allocation to the core IsochService
+    return ctx->isoch.AllocateTxIsochResources(
+        numSlots, maxPacketBytes, interruptInterval,
+        outPayloadSlab, outMetadataRing, outControlBlock);
+}
+
+// Releases all allocated shared transmit resources.
+kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    return ctx->isoch.FreeTxIsochResources();
+}
+
+// Starts the low-level FireWire transmit DMA stream on the specified channel and speed.
+kern_return_t IMPL(ASFWAudioNub, StartTxStream)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx || !ctx->deps.hardware) {
+        return kIOReturnNotReady;
+    }
+
+    return ctx->isoch.StartTxStream(channel, speed, *ctx->deps.hardware);
+}
+
+// Stops the low-level FireWire transmit DMA stream context.
+kern_return_t IMPL(ASFWAudioNub, StopTxStream)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    return ctx->isoch.StopTxStream();
+}
+
+// Queries the synchronized host time and physical cycle timer snapshot.
+kern_return_t IMPL(ASFWAudioNub, GetCycleTimePair)
+{
+    if (!outHostTimeMid || !outCycleTimer) {
+        return kIOReturnBadArgument;
+    }
+    *outHostTimeMid = 0;
+    *outCycleTimer = 0;
+
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx || !ctx->deps.hardware) {
+        return kIOReturnNotReady;
+    }
+
+    return ctx->isoch.GetCycleTimePair(outHostTimeMid, outCycleTimer, *ctx->deps.hardware);
+}
 
 void ASFWAudioNub::SetChannelCount(uint32_t channels)
 {
