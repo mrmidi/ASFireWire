@@ -52,6 +52,49 @@ public:
                                                 uint32_t* outSampleRateHz,
                                                 uint64_t* outGeneration);
 
+    /**
+     * @brief Allocate memory resources for isochronous audio transmit.
+     * Mapped memory is shared between the user-space ADK engine client and the core Dext.
+     * @param numSlots The number of packet slots in the payload ring buffer.
+     * @param maxPacketBytes Maximum size of a single packet payload in bytes.
+     * @param interruptInterval Frequency of interrupts in packets.
+     * @param outPayloadSlab Shared memory descriptor containing all packet payloads.
+     * @param outMetadataRing Shared memory descriptor containing packet metadata.
+     * @param outControlBlock Shared memory descriptor containing stream control states.
+     */
+    virtual kern_return_t AllocateTxIsochResources(
+        uint32_t numSlots,
+        uint32_t maxPacketBytes,
+        uint32_t interruptInterval,
+        IOMemoryDescriptor** outPayloadSlab,
+        IOMemoryDescriptor** outMetadataRing,
+        IOMemoryDescriptor** outControlBlock);
+
+    /**
+     * @brief Release all allocated transmit isochronous resources.
+     */
+    virtual kern_return_t FreeTxIsochResources();
+
+    /**
+     * @brief Start the transmit DMA context and begin streaming on the specified FireWire channel.
+     * @param channel The FireWire channel number (0-63).
+     * @param speed The transmission speed code (S100, S200, S400).
+     */
+    virtual kern_return_t StartTxStream(uint32_t channel, uint32_t speed);
+
+    /**
+     * @brief Stop the transmit DMA context and halt isochronous streaming.
+     */
+    virtual kern_return_t StopTxStream();
+
+    /**
+     * @brief Query the current host time and FireWire cycle timer snapshot.
+     * Offloads clock-smoothing to the ADK user client, returning raw synchronized pairs.
+     * @param outHostTimeMid Monotonic host system time in ticks.
+     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
+     */
+    virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 

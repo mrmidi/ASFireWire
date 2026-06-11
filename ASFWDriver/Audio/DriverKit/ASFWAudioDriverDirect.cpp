@@ -276,6 +276,17 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     const uint32_t outputFrameCapacity =
         FrameCapacityFromSegment(outputSegment, ivars.device.outputChannelCount);
 
+    // Resolve the device profile to determine the host-to-device wire format.
+    // Standard DICE fallback profiles use AM824 sub-frame formatting, while
+    // Focusrite Saffire playback uses sign-extended 24-in-32 big-endian formatting.
+    ASFW::Audio::Runtime::AudioWireFormat wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
+    if (const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
+            ivars.device.vendorId, ivars.device.modelId, ivars.device.guid)) {
+        if (profile->TxWireFormat() == ASFW::Encoding::AudioWireFormat::kRawPcm24In32) {
+            wireFormat = ASFW::Audio::Runtime::AudioWireFormat::kRawPcm24In32;
+        }
+    }
+
     ivars.runtime.directAudioGraph = ASFW::Audio::Runtime::AudioGraphBinding{
         .guid = ivars.device.guid,
         .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
@@ -292,7 +303,7 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
         .deviceToHostAm824Slots = ivars.device.inputChannelCount,
         .hostToDeviceAm824Slots = ivars.device.outputChannelCount,
         .streamMode = DirectStreamModeFromRaw(ivars.device.streamModeRaw),
-        .hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824,
+        .hostToDeviceWireFormat = wireFormat,
         .audioDevice = ivars.audioDevice.get(),
     };
 

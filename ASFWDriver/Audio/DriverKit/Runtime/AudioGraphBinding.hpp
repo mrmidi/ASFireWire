@@ -18,6 +18,7 @@ enum class AudioStreamMode : uint32_t {
 enum class AudioWireFormat : uint32_t {
     kUnknown = 0,
     kAM824 = 1,
+    kRawPcm24In32 = 2,
 };
 
 struct AudioGraphBinding final {

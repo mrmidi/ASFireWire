@@ -818,55 +818,9 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    if (!ctx.audioCoordinator || !ctx.deps.deviceRegistry) {
-        return kIOReturnNotReady;
-    }
-
-    const auto guid = ctx.audioCoordinator->GetSinglePublishedGuid();
-    if (!guid.has_value()) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartIsochTransmit: no single audio nub published");
-        return kIOReturnNotReady;
-    }
-    auto* nub = ctx.audioCoordinator->GetNub(*guid);
-    if (!nub) {
-        return kIOReturnNotReady;
-    }
-
-    auto endpoint = ctx.deps.audioRuntimeRegistry
-        ? ctx.deps.audioRuntimeRegistry->FindEndpointRuntime(*guid)
-        : nullptr;
-    auto* bindingSource = endpoint.get();
-    if (!bindingSource) {
-        ASFW_LOG(Controller,
-                 "[Isoch] ❌ StartIsochTransmit: no endpoint runtime binding source GUID=0x%016llx",
-                 *guid);
-        return kIOReturnNotReady;
-    }
-
-    const uint32_t pcmChannels = nub->GetOutputChannelCount();
-    uint32_t am824Slots = pcmChannels;
-    ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
-    std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocol;
-    if (ctx.deps.audioRuntimeRegistry) {
-        protocol = ctx.deps.audioRuntimeRegistry->FindShared(*guid);
-    }
-    if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
-        record && protocol) {
-        ASFW::Audio::AudioStreamRuntimeCaps caps{};
-        if (protocol->GetRuntimeAudioStreamCaps(caps) && caps.hostToDeviceAm824Slots > 0) {
-            am824Slots = caps.hostToDeviceAm824Slots;
-        }
-        wireFormat = ResolveHostToDeviceWireFormat(record->vendorId,
-                                                   record->modelId,
-                                                   pcmChannels,
-                                                   am824Slots);
-    }
-
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
-    const uint32_t streamModeRaw = nub->GetStreamMode();
 
-    return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
-                                   am824Slots, wireFormat, bindingSource);
+    return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {
