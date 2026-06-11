@@ -225,6 +225,39 @@ void ASFWAudioDriver::ZtsMirrorTimerFired_Impl(ASFWAudioDriver_ZtsMirrorTimerFir
             ASFW::Audio::DriverKit::PerformLoudTeardown(*ivars, "Isoch path fatal error");
             return;
         }
+
+        // Run the transmit pump to keep the timeline exposed ahead of the hardware
+        const auto* txControl = ivars->runtime.txSlotProvider.controlBlock;
+        if (txControl) {
+            const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
+            const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
+            const uint64_t targetPacketIndex = completionCursor + 256;
+
+            uint64_t nextPacketToPrepare = exposeCursor;
+            uint32_t preparedCount = 0;
+            constexpr uint32_t kMaxPreparePerCall = 64;
+
+            while (nextPacketToPrepare < targetPacketIndex && preparedCount < kMaxPreparePerCall) {
+                const auto decision = ivars->runtime.txTimingModel.PeekNextDataSyt(ivars->runtime.txCycleTimeline);
+
+                ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
+                timing.txClockValid = (decision.health != ASFW::Driver::TxTimingModel::LeadHealth::kNotSeeded);
+                timing.nextDataSyt = decision.syt;
+
+                if (!ivars->runtime.txStreamEngine.PrepareNextTransmitSlot(static_cast<uint32_t>(nextPacketToPrepare), timing)) {
+                    break;
+                }
+
+                const uint32_t slotIdx = nextPacketToPrepare % ivars->runtime.txSlotProvider.numSlots;
+                auto& meta = ivars->runtime.txSlotProvider.metadataRing[slotIdx];
+                if (meta.payloadLength > 8) {
+                    ivars->runtime.txTimingModel.CommitDataPacket();
+                }
+
+                nextPacketToPrepare++;
+                preparedCount++;
+            }
+        }
     }
 
     const auto result = ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(*ivars, "pump", false);

@@ -5,45 +5,40 @@
 //
 
 #include <gtest/gtest.h>
-#include "Audio/Wire/AMDTP/NonBlockingCadence48k.hpp"
+#include "Audio/Wire/AMDTP/AmdtpCadence.hpp"
 
-using namespace ASFW::Encoding;
-
-TEST(NonBlockingCadenceTests, ConstantsAreCorrect) {
-    EXPECT_EQ(kNonBlockingSamplesPerPacket48k, 6u);
-    EXPECT_EQ(kNonBlockingDataPacketsPer8Cycles, 8u);
-    EXPECT_EQ(kNonBlockingNoDataPacketsPer8Cycles, 0u);
-}
+using namespace ASFW::Protocols::Audio::AMDTP;
 
 TEST(NonBlockingCadenceTests, AlwaysDataEveryCycle) {
-    NonBlockingCadence48k cadence;
+    NonBlocking48kCadence cadence;
     for (int i = 0; i < 16; ++i) {
         SCOPED_TRACE("Cycle " + std::to_string(i));
-        EXPECT_TRUE(cadence.isDataPacket());
-        EXPECT_EQ(cadence.samplesThisCycle(), 6u);
-        cadence.advance();
+        EXPECT_TRUE(cadence.CurrentCycleIsData());
+        EXPECT_EQ(cadence.CurrentCycleDataFrames(), 6u);
+        cadence.AdvanceCycle();
     }
 }
 
 TEST(NonBlockingCadenceTests, Produces48kSamplesPerSecond) {
-    NonBlockingCadence48k cadence;
+    NonBlocking48kCadence cadence;
     uint32_t totalSamples = 0;
 
     for (int i = 0; i < 8000; ++i) {
-        totalSamples += cadence.samplesThisCycle();
-        cadence.advance();
+        totalSamples += cadence.CurrentCycleDataFrames();
+        cadence.AdvanceCycle();
     }
 
     EXPECT_EQ(totalSamples, 48000u);
 }
 
 TEST(NonBlockingCadenceTests, ResetRestoresInitialState) {
-    NonBlockingCadence48k cadence;
-    cadence.advanceBy(123);
-    EXPECT_GT(cadence.getTotalCycles(), 0u);
+    NonBlocking48kCadence cadence;
+    for (int i = 0; i < 123; ++i) {
+        cadence.AdvanceCycle();
+    }
+    EXPECT_GT(cadence.TotalCycles(), 0u);
 
-    cadence.reset();
-    EXPECT_EQ(cadence.getTotalCycles(), 0u);
-    EXPECT_EQ(cadence.getCycleIndex(), 0u);
-    EXPECT_TRUE(cadence.isDataPacket());
+    cadence.Reset();
+    EXPECT_EQ(cadence.TotalCycles(), 0u);
+    EXPECT_TRUE(cadence.CurrentCycleIsData());
 }

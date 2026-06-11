@@ -6,6 +6,8 @@
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../Config/TimingCursorPolicy.hpp"
+#include "Config/AudioProfileRegistry.hpp"
+#include "../../Common/DriverKitOwnership.hpp"
 #include <DriverKit/DriverKit.h>
 
 using ASFW::Audio::DriverKit::BuildAudioGraph;
@@ -166,6 +168,19 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                          stopKr);
             }
         }
+        ivars->txPayloadMap = nullptr;
+        ivars->txMetadataMap = nullptr;
+        ivars->txControlMap = nullptr;
+        ivars->txPayloadBuffer = nullptr;
+        ivars->txMetadataBuffer = nullptr;
+        ivars->txControlBuffer = nullptr;
+        if (ivars->runtime.txFloatScratchBuffer) {
+            delete[] ivars->runtime.txFloatScratchBuffer;
+            ivars->runtime.txFloatScratchBuffer = nullptr;
+        }
+        if (ivars->device.audioNub) {
+            ivars->device.audioNub->FreeTxIsochResources();
+        }
         (void)super::StopDevice(in_object_id, in_flags);
         ASFW_LOG(Audio,
                  "ASFWAudioDriver: StartDevice failed at %{public}s kr=0x%x",
@@ -179,6 +194,93 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(startKr, "StartAudioStreaming");
     }
     streamingStarted = true;
+
+    // --- Allocate and map shared TX isoch resources ---
+    {
+        const auto* baseProfile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
+            ivars->device.vendorId,
+            ivars->device.modelId,
+            ivars->device.guid
+        );
+        const auto* profile = static_cast<const ASFW::Isoch::Audio::DICE::IDiceDeviceProfile*>(baseProfile);
+        if (!profile) {
+            ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - profile not found");
+            return failStartDevice(kIOReturnError, "ResolveProfile");
+        }
+
+        ASFW::Isoch::Audio::DICE::DiceStreamConfig txConfig{};
+        if (!profile->BuildDefaultTxStreamConfig(txConfig)) {
+            ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - BuildDefaultTxStreamConfig failed");
+            return failStartDevice(kIOReturnError, "BuildDefaultTxStreamConfig");
+        }
+
+        const uint32_t numSlots = 512;
+        const uint32_t maxPacketBytes = 512;
+        const uint32_t interruptInterval = 8;
+
+        IOMemoryDescriptor* rawPayload = nullptr;
+        IOMemoryDescriptor* rawMetadata = nullptr;
+        IOMemoryDescriptor* rawControl = nullptr;
+
+        kern_return_t kr = ivars->device.audioNub->AllocateTxIsochResources(
+            numSlots,
+            maxPacketBytes,
+            interruptInterval,
+            &rawPayload,
+            &rawMetadata,
+            &rawControl
+        );
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Audio, "ASFWAudioDriver: AllocateTxIsochResources failed: 0x%x", kr);
+            return failStartDevice(kr, "AllocateTxIsochResources");
+        }
+
+        ivars->txPayloadBuffer = ASFW::Common::AdoptRetained(rawPayload);
+        ivars->txMetadataBuffer = ASFW::Common::AdoptRetained(rawMetadata);
+        ivars->txControlBuffer = ASFW::Common::AdoptRetained(rawControl);
+
+        kr = ASFW::Common::CreateSharedMapping(ivars->txPayloadBuffer, ivars->txPayloadMap);
+        if (kr != kIOReturnSuccess) {
+            return failStartDevice(kr, "CreateSharedMapping txPayload");
+        }
+        kr = ASFW::Common::CreateSharedMapping(ivars->txMetadataBuffer, ivars->txMetadataMap);
+        if (kr != kIOReturnSuccess) {
+            return failStartDevice(kr, "CreateSharedMapping txMetadata");
+        }
+        kr = ASFW::Common::CreateSharedMapping(ivars->txControlBuffer, ivars->txControlMap);
+        if (kr != kIOReturnSuccess) {
+            return failStartDevice(kr, "CreateSharedMapping txControl");
+        }
+
+        uint8_t* payloadBase = reinterpret_cast<uint8_t*>(ivars->txPayloadMap->GetAddress());
+        auto* metadataRing = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(ivars->txMetadataMap->GetAddress());
+        auto* controlBlock = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(ivars->txControlMap->GetAddress());
+
+        ivars->runtime.txSlotProvider.payloadBase = payloadBase;
+        ivars->runtime.txSlotProvider.metadataRing = metadataRing;
+        ivars->runtime.txSlotProvider.controlBlock = controlBlock;
+        ivars->runtime.txSlotProvider.numSlots = numSlots;
+        ivars->runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
+        ivars->runtime.txSlotProvider.isoChannel = txConfig.sid;
+
+        ivars->runtime.txCycleTimeline.controlBlock = controlBlock;
+        ivars->runtime.txCycleTimeline.wrapCount = 0;
+        ivars->runtime.txCycleTimeline.lastSeconds = 0;
+
+        if (!ivars->runtime.txStreamEngine.Configure(*profile, txConfig)) {
+            ASFW_LOG(Audio, "ASFWAudioDriver: txStreamEngine Configure failed");
+            return failStartDevice(kIOReturnError, "txStreamEngine.Configure");
+        }
+        ivars->runtime.txStreamEngine.BindSlotProvider(&ivars->runtime.txSlotProvider);
+        ivars->runtime.txStreamEngine.ResetForStart(0, 0);
+
+        ASFW::Driver::TxTimingModel::Config timeConfig{};
+        ivars->runtime.txTimingModel.Configure(timeConfig);
+
+        ivars->runtime.txFloatScratchBuffer = new float[32768]();
+
+        ASFW_LOG(Audio, "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u", txConfig.sid);
+    }
 
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const auto policySnap = policy.Snapshot();
@@ -290,6 +392,22 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
         }
     }
 
+    if (ivars) {
+        ivars->txPayloadMap = nullptr;
+        ivars->txMetadataMap = nullptr;
+        ivars->txControlMap = nullptr;
+        ivars->txPayloadBuffer = nullptr;
+        ivars->txMetadataBuffer = nullptr;
+        ivars->txControlBuffer = nullptr;
+        if (ivars->runtime.txFloatScratchBuffer) {
+            delete[] ivars->runtime.txFloatScratchBuffer;
+            ivars->runtime.txFloatScratchBuffer = nullptr;
+        }
+        if (ivars->device.audioNub) {
+            ivars->device.audioNub->FreeTxIsochResources();
+        }
+    }
+
     const kern_return_t superStopKr = super::StopDevice(in_object_id, in_flags);
     if (superStopKr != kIOReturnSuccess) {
         ASFW_LOG(Audio, "ASFWAudioDriver: super::StopDevice failed: 0x%x", superStopKr);
@@ -318,6 +436,18 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
         if (stopKr != kIOReturnSuccess) {
             ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in loud teardown: 0x%x", stopKr);
         }
+        
+        ivars.txPayloadMap = nullptr;
+        ivars.txMetadataMap = nullptr;
+        ivars.txControlMap = nullptr;
+        ivars.txPayloadBuffer = nullptr;
+        ivars.txMetadataBuffer = nullptr;
+        ivars.txControlBuffer = nullptr;
+        if (ivars.runtime.txFloatScratchBuffer) {
+            delete[] ivars.runtime.txFloatScratchBuffer;
+            ivars.runtime.txFloatScratchBuffer = nullptr;
+        }
+        ivars.device.audioNub->FreeTxIsochResources();
     }
 
     // 4. Emit final diagnostic snapshot

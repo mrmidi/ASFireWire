@@ -299,13 +299,15 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             return out;
         }
 
+        const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
+
         // Copy quadlets to OMI descriptor (Descriptor 0)
-        auto* desc0 = slab_.GetDescriptorPtr(pktSlot * Layout::kBlocksPerPacket);
+        auto* desc0 = slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket);
         desc0->branchWord = meta.immediateHeader[0];
         desc0->statusWord = meta.immediateHeader[1];
 
         // Update OL descriptor (Descriptor 2) reqCount
-        auto* desc2 = slab_.GetDescriptorPtr(pktSlot * Layout::kBlocksPerPacket + 2);
+        auto* desc2 = slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket + 2);
         desc2->control = (desc2->control & 0xFFFF0000u) | (meta.payloadLength & 0xFFFFu);
         AR_init_status(*desc2, meta.payloadLength);
 

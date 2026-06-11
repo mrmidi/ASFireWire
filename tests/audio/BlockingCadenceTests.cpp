@@ -2,44 +2,26 @@
 // ASFW - Phase 1.5 Encoding Tests
 //
 // Tests for 48 kHz blocking cadence pattern.
-// Reference: 000-48kORIG.txt
 //
 
 #include <gtest/gtest.h>
-#include "Audio/Wire/AMDTP/BlockingCadence48k.hpp"
+#include "Audio/Wire/AMDTP/AmdtpCadence.hpp"
 
-using namespace ASFW::Encoding;
-
-//==============================================================================
-// Constants Tests
-//==============================================================================
-
-TEST(BlockingCadenceTests, CorrectSamplesPerPacket) {
-    EXPECT_EQ(kSamplesPerPacket48k, 8);
-}
-
-TEST(BlockingCadenceTests, CorrectDataPacketsPerPeriod) {
-    EXPECT_EQ(kDataPacketsPer8Cycles, 6);
-}
-
-TEST(BlockingCadenceTests, CorrectNoDataPacketsPerPeriod) {
-    EXPECT_EQ(kNoDataPacketsPer8Cycles, 2);
-}
+using namespace ASFW::Protocols::Audio::AMDTP;
 
 //==============================================================================
 // Initial State Tests
 //==============================================================================
 
 TEST(BlockingCadenceTests, StartsAtCycleZero) {
-    BlockingCadence48k cadence;
-    EXPECT_EQ(cadence.getCycleIndex(), 0);
-    EXPECT_EQ(cadence.getTotalCycles(), 0);
+    Blocking48kCadence cadence;
+    EXPECT_EQ(cadence.TotalCycles(), 0);
 }
 
 TEST(BlockingCadenceTests, FirstCycleIsNoData) {
-    BlockingCadence48k cadence;
-    EXPECT_FALSE(cadence.isDataPacket());
-    EXPECT_EQ(cadence.samplesThisCycle(), 0);
+    Blocking48kCadence cadence;
+    EXPECT_FALSE(cadence.CurrentCycleIsData());
+    EXPECT_EQ(cadence.CurrentCycleDataFrames(), 0);
 }
 
 //==============================================================================
@@ -47,46 +29,46 @@ TEST(BlockingCadenceTests, FirstCycleIsNoData) {
 //==============================================================================
 
 TEST(BlockingCadenceTests, FullPatternOver8Cycles) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     
     // Expected pattern: N-D-D-D-N-D-D-D
     bool expected[] = {false, true, true, true, false, true, true, true};
     
     for (int i = 0; i < 8; i++) {
         SCOPED_TRACE("Cycle " + std::to_string(i));
-        EXPECT_EQ(cadence.isDataPacket(), expected[i]);
-        cadence.advance();
+        EXPECT_EQ(cadence.CurrentCycleIsData(), expected[i]);
+        cadence.AdvanceCycle();
     }
 }
 
 TEST(BlockingCadenceTests, PatternRepeatsAfter8Cycles) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     
     // Get first 8 cycles
     bool first8[8];
     for (int i = 0; i < 8; i++) {
-        first8[i] = cadence.isDataPacket();
-        cadence.advance();
+        first8[i] = cadence.CurrentCycleIsData();
+        cadence.AdvanceCycle();
     }
     
     // Next 8 should match
     for (int i = 0; i < 8; i++) {
         SCOPED_TRACE("Cycle " + std::to_string(i + 8));
-        EXPECT_EQ(cadence.isDataPacket(), first8[i]);
-        cadence.advance();
+        EXPECT_EQ(cadence.CurrentCycleIsData(), first8[i]);
+        cadence.AdvanceCycle();
     }
 }
 
 TEST(BlockingCadenceTests, SamplesMatchPattern) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     
     // Expected: 0, 8, 8, 8, 0, 8, 8, 8
     uint32_t expected[] = {0, 8, 8, 8, 0, 8, 8, 8};
     
     for (int i = 0; i < 8; i++) {
         SCOPED_TRACE("Cycle " + std::to_string(i));
-        EXPECT_EQ(cadence.samplesThisCycle(), expected[i]);
-        cadence.advance();
+        EXPECT_EQ(cadence.CurrentCycleDataFrames(), expected[i]);
+        cadence.AdvanceCycle();
     }
 }
 
@@ -95,12 +77,12 @@ TEST(BlockingCadenceTests, SamplesMatchPattern) {
 //==============================================================================
 
 TEST(BlockingCadenceTests, Total48SamplesPer8Cycles) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     uint32_t totalSamples = 0;
     
     for (int i = 0; i < 8; i++) {
-        totalSamples += cadence.samplesThisCycle();
-        cadence.advance();
+        totalSamples += cadence.CurrentCycleDataFrames();
+        cadence.AdvanceCycle();
     }
     
     // 6 DATA × 8 samples = 48 samples
@@ -108,13 +90,13 @@ TEST(BlockingCadenceTests, Total48SamplesPer8Cycles) {
 }
 
 TEST(BlockingCadenceTests, Correct48kSamplesPerSecond) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     uint32_t totalSamples = 0;
     
     // 8000 cycles = 1 second at FireWire rate
     for (int i = 0; i < 8000; i++) {
-        totalSamples += cadence.samplesThisCycle();
-        cadence.advance();
+        totalSamples += cadence.CurrentCycleDataFrames();
+        cadence.AdvanceCycle();
     }
     
     // Should be exactly 48000 samples
@@ -126,33 +108,26 @@ TEST(BlockingCadenceTests, Correct48kSamplesPerSecond) {
 //==============================================================================
 
 TEST(BlockingCadenceTests, AdvanceIncrementsCycle) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     
-    EXPECT_EQ(cadence.getTotalCycles(), 0);
-    cadence.advance();
-    EXPECT_EQ(cadence.getTotalCycles(), 1);
-    cadence.advance();
-    EXPECT_EQ(cadence.getTotalCycles(), 2);
-}
-
-TEST(BlockingCadenceTests, AdvanceByMultiple) {
-    BlockingCadence48k cadence;
-    
-    cadence.advanceBy(5);
-    EXPECT_EQ(cadence.getTotalCycles(), 5);
-    EXPECT_EQ(cadence.getCycleIndex(), 5);
+    EXPECT_EQ(cadence.TotalCycles(), 0);
+    cadence.AdvanceCycle();
+    EXPECT_EQ(cadence.TotalCycles(), 1);
+    cadence.AdvanceCycle();
+    EXPECT_EQ(cadence.TotalCycles(), 2);
 }
 
 TEST(BlockingCadenceTests, ResetClearsState) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     
-    cadence.advanceBy(100);
-    EXPECT_GT(cadence.getTotalCycles(), 0);
+    for (int i = 0; i < 100; ++i) {
+        cadence.AdvanceCycle();
+    }
+    EXPECT_GT(cadence.TotalCycles(), 0);
     
-    cadence.reset();
-    EXPECT_EQ(cadence.getTotalCycles(), 0);
-    EXPECT_EQ(cadence.getCycleIndex(), 0);
-    EXPECT_FALSE(cadence.isDataPacket());  // First cycle is NO-DATA
+    cadence.Reset();
+    EXPECT_EQ(cadence.TotalCycles(), 0);
+    EXPECT_FALSE(cadence.CurrentCycleIsData());  // First cycle is NO-DATA
 }
 
 //==============================================================================
@@ -161,7 +136,7 @@ TEST(BlockingCadenceTests, ResetClearsState) {
 //==============================================================================
 
 TEST(BlockingCadenceTests, MatchesFireBugPattern) {
-    BlockingCadence48k cadence;
+    Blocking48kCadence cadence;
     
     // From capture (starting at an arbitrary point in the pattern):
     // 977: NO-DATA (8 bytes)
@@ -176,12 +151,12 @@ TEST(BlockingCadenceTests, MatchesFireBugPattern) {
     // This matches: N-D-D-D-N-D-D-D
     // Which is our pattern starting at cycle 0
     
-    EXPECT_FALSE(cadence.isDataPacket()); cadence.advance();  // N
-    EXPECT_TRUE(cadence.isDataPacket());  cadence.advance();  // D
-    EXPECT_TRUE(cadence.isDataPacket());  cadence.advance();  // D
-    EXPECT_TRUE(cadence.isDataPacket());  cadence.advance();  // D
-    EXPECT_FALSE(cadence.isDataPacket()); cadence.advance();  // N
-    EXPECT_TRUE(cadence.isDataPacket());  cadence.advance();  // D
-    EXPECT_TRUE(cadence.isDataPacket());  cadence.advance();  // D
-    EXPECT_TRUE(cadence.isDataPacket());  cadence.advance();  // D
+    EXPECT_FALSE(cadence.CurrentCycleIsData()); cadence.AdvanceCycle();  // N
+    EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
+    EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
+    EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
+    EXPECT_FALSE(cadence.CurrentCycleIsData()); cadence.AdvanceCycle();  // N
+    EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
+    EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
+    EXPECT_TRUE(cadence.CurrentCycleIsData());  cadence.AdvanceCycle();  // D
 }

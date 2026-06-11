@@ -3,8 +3,6 @@
 #include "DirectRxTypes.hpp"
 #include "../../../Wire/AM824/AM824Decoder.hpp"
 #include "../../../Wire/RawPcm24In32/RawPcm24In32Decoder.hpp"
-#include "../../../Wire/AMDTP/PacketAssembler.hpp"
-
 #include <cstdint>
 
 namespace ASFW::AudioEngine::Direct::Rx {

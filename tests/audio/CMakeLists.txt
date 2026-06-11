@@ -56,17 +56,15 @@ add_audio_test(CIPHeaderBuilderTests
 # Blocking Cadence Tests
 add_audio_test(BlockingCadenceTests
     BlockingCadenceTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
 )
 
 # Non-Blocking Cadence Tests
 add_audio_test(NonBlockingCadenceTests
     NonBlockingCadenceTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
 )
 
-# Blocking DBC Tests
-add_audio_test(BlockingDbcTests
-    BlockingDbcTests.cpp
-)
 
 # Audio Ring Buffer Tests
 add_audio_test(AudioRingBufferTests
@@ -79,10 +77,7 @@ add_audio_test(AudioDriverConfigPolicyTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioDriverConfigPolicy.cpp"
 )
 
-# Packet Assembler Tests
-add_audio_test(PacketAssemblerTests
-    PacketAssemblerTests.cpp
-)
+
 
 # Direct ADK audio skeleton tests (AudioRuntime files)
 add_audio_test(AudioDirectRuntimeTests
@@ -116,10 +111,11 @@ add_audio_test(IsochTxDmaRingTests
     "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
 )
 
-# SYT generator tests
-add_audio_test(SYTGeneratorTests
-    SYTGeneratorTests.cpp
-    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/SYTGenerator.cpp"
+# TxTimingModel Tests
+add_audio_test(TxTimingModelTests
+    TxTimingModelTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/TxTimingModel.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/Syt.cpp"
 )
 
 

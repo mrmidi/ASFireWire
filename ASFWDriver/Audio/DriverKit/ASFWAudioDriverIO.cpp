@@ -219,6 +219,34 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
+
+                // Convert int32_t output samples to float32 interleaved in scratch buffer
+                const uint32_t channels = driverIvars->runtime.directAudioGraph.memory.outputChannels;
+                float* scratch = driverIvars->runtime.txFloatScratchBuffer;
+                if (scratch && channels > 0 && (ioBufferFrameSize * channels <= 32768)) {
+                    for (uint32_t f = 0; f < ioBufferFrameSize; ++f) {
+                        const int32_t* frameData = driverIvars->runtime.directAudioGraph.memory.OutputFrame(sampleTime + f);
+                        if (frameData) {
+                            for (uint32_t ch = 0; ch < channels; ++ch) {
+                                scratch[f * channels + ch] = static_cast<float>(frameData[ch]) / 2147483648.0f;
+                            }
+                        } else {
+                            for (uint32_t ch = 0; ch < channels; ++ch) {
+                                scratch[f * channels + ch] = 0.0f;
+                            }
+                        }
+                    }
+
+                    ASFW::Protocols::Audio::AMDTP::HostAudioBufferView hostBuffer{};
+                    hostBuffer.interleavedFloat32 = scratch;
+                    hostBuffer.firstFrame = sampleTime;
+                    hostBuffer.frameCount = ioBufferFrameSize;
+                    hostBuffer.frameCapacity = 0;
+                    hostBuffer.channels = channels;
+
+                    driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(hostBuffer);
+                }
+
                 control->counters.CountWriteEnd();
                 (void)PublishSharedZeroTimestampToHAL(*driverIvars, "io", false);
                 const uint64_t writeCount =

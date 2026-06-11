@@ -74,10 +74,10 @@ public:
 
 private:
     struct DuetPrefetchState {
-        std::optional<Audio::Oxford::Apogee::InputParams> inputParams;
-        std::optional<Audio::Oxford::Apogee::MixerParams> mixerParams;
-        std::optional<Audio::Oxford::Apogee::OutputParams> outputParams;
-        std::optional<Audio::Oxford::Apogee::DisplayParams> displayParams;
+        std::optional<::ASFW::Audio::Oxford::Apogee::InputParams> inputParams;
+        std::optional<::ASFW::Audio::Oxford::Apogee::MixerParams> mixerParams;
+        std::optional<::ASFW::Audio::Oxford::Apogee::OutputParams> outputParams;
+        std::optional<::ASFW::Audio::Oxford::Apogee::DisplayParams> displayParams;
         std::optional<uint32_t> firmwareId;
         std::optional<uint32_t> hardwareId;
         bool timedOut{false};
@@ -98,35 +98,35 @@ private:
     void UpdateCurrentSampleRate(Music::MusicSubunit& musicSubunit) const;
     void ApplyTargetSampleRateIfSupported(const std::shared_ptr<AVCUnit>& avcUnit,
                                           Music::MusicSubunit& musicSubunit) const;
-    [[nodiscard]] Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(uint64_t guid,
+    [[nodiscard]] ::ASFW::Audio::Model::ASFWAudioDevice BuildAudioDeviceConfig(uint64_t guid,
                                                                        const Discovery::FWDevice& device,
                                                                        const Music::MusicSubunit& musicSubunit) const;
-    void PublishReadyAudioConfig(uint64_t guid, const Audio::Model::ASFWAudioDevice& config);
+    void PublishReadyAudioConfig(uint64_t guid, const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void PrefetchDuetStateAndCreateNub(uint64_t guid,
                                        const std::shared_ptr<AVCUnit>& avcUnit,
-                                       const Audio::Model::ASFWAudioDevice& config);
+                                       const ::ASFW::Audio::Model::ASFWAudioDevice& config);
     void ContinueDuetPrefetchMixer(uint64_t guid,
-                                   const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                   const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                    const std::shared_ptr<DuetPrefetchState>& state,
                                    const std::shared_ptr<std::atomic<bool>>& completed,
                                    const std::shared_ptr<std::function<void(const char*)>>& finish);
     void ContinueDuetPrefetchOutput(uint64_t guid,
-                                    const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                    const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                     const std::shared_ptr<DuetPrefetchState>& state,
                                     const std::shared_ptr<std::atomic<bool>>& completed,
                                     const std::shared_ptr<std::function<void(const char*)>>& finish);
     void ContinueDuetPrefetchDisplay(uint64_t guid,
-                                     const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                     const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                      const std::shared_ptr<DuetPrefetchState>& state,
                                      const std::shared_ptr<std::atomic<bool>>& completed,
                                      const std::shared_ptr<std::function<void(const char*)>>& finish);
     void ContinueDuetPrefetchFirmware(uint64_t guid,
-                                      const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                      const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                       const std::shared_ptr<DuetPrefetchState>& state,
                                       const std::shared_ptr<std::atomic<bool>>& completed,
                                       const std::shared_ptr<std::function<void(const char*)>>& finish);
     void ContinueDuetPrefetchHardware(uint64_t guid,
-                                      const std::shared_ptr<Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
+                                      const std::shared_ptr<::ASFW::Audio::Oxford::Apogee::ApogeeDuetProtocol>& protocol,
                                       const std::shared_ptr<DuetPrefetchState>& state,
                                       const std::shared_ptr<std::atomic<bool>>& completed,
                                       const std::shared_ptr<std::function<void(const char*)>>& finish);

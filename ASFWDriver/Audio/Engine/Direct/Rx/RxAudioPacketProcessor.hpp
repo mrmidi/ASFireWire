@@ -2,7 +2,7 @@
 
 #include "../DirectInputWriter.hpp"
 #include "DirectRxTypes.hpp"
-#include "../../../Wire/AMDTP/PacketAssembler.hpp"
+#include "../../../Wire/AMDTP/AmdtpTypes.hpp"
 
 #include <cstdint>
 #include <cstddef>

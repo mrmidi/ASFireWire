@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "../../Wire/AMDTP/PacketAssembler.hpp"
+#include "../../Wire/AMDTP/AmdtpTypes.hpp"
 #include <cstdint>
 
 namespace ASFW::Isoch::Audio {
