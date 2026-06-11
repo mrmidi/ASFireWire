@@ -51,7 +51,7 @@ enum {
     kMethodSendRawFCPCommand = 38,
     kMethodGetRawFCPCommandResult = 39,
     kMethodSetIsochVerbosity = 40,
-    kMethodSetIsochTxVerifier = 41,
+    // 41 retired (was the dev TX-verifier toggle)
     kMethodSetAudioAutoStart = 42,
     kMethodGetAudioAutoStart = 43,
     kMethodAsyncBlockRead = 44,
@@ -244,9 +244,6 @@ MethodDispatchResult DispatchDriverScalarSetters(ASFWDriver& driver,
     case kMethodSetHexDumps:
         return value ? MethodDispatchResult{driver.SetHexDumps(*value)}
                      : MethodDispatchResult{kIOReturnBadArgument};
-    case kMethodSetIsochTxVerifier:
-        return value ? MethodDispatchResult{driver.SetIsochTxVerifier(*value)}
-                     : MethodDispatchResult{kIOReturnBadArgument};
     case kMethodSetAudioAutoStart:
         return value ? MethodDispatchResult{driver.SetAudioAutoStart(*value)}
                      : MethodDispatchResult{kIOReturnBadArgument};
@@ -289,8 +286,7 @@ kern_return_t HandleGetLogConfig(ASFWDriver& driver,
     arguments->scalarOutput[1] = hexDumpsEnabled;
     if (arguments->scalarOutputCount >= 4) {
         arguments->scalarOutput[2] = isochVerbosity;
-        arguments->scalarOutput[3] =
-            ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled() ? 1 : 0;
+        arguments->scalarOutput[3] = 0;  // reserved (was the removed dev TX-verifier flag)
         arguments->scalarOutputCount = 4;
     } else if (arguments->scalarOutputCount >= 3) {
         arguments->scalarOutput[2] = isochVerbosity;

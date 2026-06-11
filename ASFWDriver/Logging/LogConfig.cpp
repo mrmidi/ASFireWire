@@ -47,7 +47,6 @@ LogConfig::LogConfig()
     isochVerbosity_.store(1);           // Default: Compact
     directAudioVerbosity_.store(1);     // Default: Compact slow ADK metrics
     enableHexDumps_.store(false);       // Default: No hex dumps
-    isochTxVerifierEnabled_.store(false); // Default: disabled (dev-only, expensive)
     audioAutoStartEnabled_.store(true); // Default: enabled
     logStatistics_.store(true);         // Default: Show statistics
     initialized_.store(false);
@@ -89,7 +88,6 @@ void LogConfig::Initialize(IOService* service) {
     isochVerbosity_.store(ReadUInt8Property(service, "ASFWIsochVerbosity", 1));
     directAudioVerbosity_.store(ReadUInt8Property(service, "ASFWDirectAudioVerbosity", 1));
     enableHexDumps_.store(ReadBoolProperty(service, "ASFWEnableHexDumps", false));
-    isochTxVerifierEnabled_.store(ReadBoolProperty(service, "ASFWEnableIsochTxVerifier", false));
     audioAutoStartEnabled_.store(ReadBoolProperty(service, "ASFWAutoStartAudioStreams", true));
     logStatistics_.store(ReadBoolProperty(service, "ASFWLogStatistics", true));
 
@@ -97,14 +95,14 @@ void LogConfig::Initialize(IOService* service) {
 
     // Log configuration (always visible at INFO level)
     ASFW_LOG_INFO(Controller,
-                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u DICE=%u Isoch=%u DirectAudio=%u HexDumps=%d TxVerify=%d AutoStart=%d Stats=%d",
+                  "LogConfig initialized: Async=%u Controller=%u Hardware=%u Discovery=%u ConfigROM=%u UserClient=%u Music=%u FCP=%u CMP=%u IRM=%u AVC=%u DICE=%u Isoch=%u DirectAudio=%u HexDumps=%d AutoStart=%d Stats=%d",
                   asyncVerbosity_.load(), controllerVerbosity_.load(), hardwareVerbosity_.load(),
                   discoveryVerbosity_.load(), configROMVerbosity_.load(), userClientVerbosity_.load(),
                   musicSubunitVerbosity_.load(), fcpVerbosity_.load(), cmpVerbosity_.load(), irmVerbosity_.load(), avcVerbosity_.load(),
                   diceVerbosity_.load(),
                   isochVerbosity_.load(),
                   directAudioVerbosity_.load(),
-                  enableHexDumps_.load(), isochTxVerifierEnabled_.load(),
+                  enableHexDumps_.load(),
                   audioAutoStartEnabled_.load(),
                   logStatistics_.load());
 }
@@ -175,10 +173,6 @@ bool LogConfig::IsHexDumpsEnabled() const {
 
 bool LogConfig::IsStatisticsEnabled() const {
     return logStatistics_.load(std::memory_order_relaxed);
-}
-
-bool LogConfig::IsIsochTxVerifierEnabled() const {
-    return isochTxVerifierEnabled_.load(std::memory_order_relaxed);
 }
 
 bool LogConfig::IsAudioAutoStartEnabled() const {
@@ -276,11 +270,6 @@ void LogConfig::SetDirectAudioVerbosity(uint8_t level) {
 void LogConfig::SetHexDumps(bool enable) {
     enableHexDumps_.store(enable, std::memory_order_relaxed);
     ASFW_LOG_INFO(Controller, "Hex dumps %{public}s", enable ? "enabled" : "disabled");
-}
-
-void LogConfig::SetIsochTxVerifierEnabled(bool enable) {
-    isochTxVerifierEnabled_.store(enable, std::memory_order_relaxed);
-    ASFW_LOG_INFO(Controller, "Isoch TX verifier %{public}s", enable ? "enabled" : "disabled");
 }
 
 void LogConfig::SetAudioAutoStartEnabled(bool enable) {

@@ -149,8 +149,6 @@ void WatchdogCoordinator::TickIsochTransmit(
         isochTransmitContext->GetState() == ASFW::Isoch::ITState::Running;
     if (isRunning) {
         isochTransmitContext->Poll();
-        isochTransmitContext->ServiceTxRecovery();
-        isochTransmitContext->KickTxVerifier();
     }
 
     if (++itLogDivider_ < 1000) {

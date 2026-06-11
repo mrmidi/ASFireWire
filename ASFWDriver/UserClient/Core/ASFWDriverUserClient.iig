@@ -49,7 +49,7 @@ public:
         kMethodSendRawFCPCommand       = 38,
         kMethodGetRawFCPCommandResult  = 39,
         kMethodSetIsochVerbosity       = 40,
-        kMethodSetIsochTxVerifier      = 41,
+        // 41 retired (was the dev TX-verifier toggle)
         kMethodSetAudioAutoStart       = 42,
         kMethodGetAudioAutoStart       = 43,
         kMethodAsyncBlockRead          = 44,

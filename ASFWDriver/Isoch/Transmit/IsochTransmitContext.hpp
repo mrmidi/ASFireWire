@@ -5,15 +5,12 @@
 // Internals are modular:
 //   - Tx::IsochTxDmaRing: low-level OHCI descriptor/payload engine (no audio semantics)
 //   - IsochAudioTxPipeline: CIP/AM824 + direct ADK memory mapping
-//   - IsochTxVerifier + IsochTxRecoveryController: dev-only verification + restart gating
 
 #pragma once
 
 #include "../../AudioEngine/DirectIsoch/IsochAudioTxPipeline.hpp"
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
-#include "IsochTxVerifier.hpp"
-#include "IsochTxRecoveryController.hpp"
 
 #include "../Memory/IIsochDMAMemory.hpp"
 #include "../../Hardware/RegisterMap.hpp"
@@ -52,7 +49,6 @@ enum class ITState {
 class IsochTransmitContext {
 public:
     using State = ITState;
-    using RecoveryCallback = std::function<bool(uint32_t reasonBits)>;
 
     // ==========================================================================
     // Linux-style OHCI page padding constants (public API)
@@ -100,9 +96,6 @@ public:
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
     void RequestPayloadPreparation(uint64_t requestGeneration) noexcept;
-    void KickTxVerifier() noexcept;
-    void ServiceTxRecovery() noexcept;
-    void SetRecoveryCallback(RecoveryCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
 
@@ -118,7 +111,6 @@ public:
     uint64_t NoDataPackets() const noexcept { return noDataPackets_; }
     
     void LogStatistics() const noexcept;
-    void DumpPayloadBuffers(uint32_t numPackets = 4) const noexcept;
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 private:
@@ -136,8 +128,6 @@ private:
     // ==========================================================================
     Tx::IsochTxDmaRing ring_{};
     IsochAudioTxPipeline audio_{};
-    IsochTxVerifier verifier_{};
-    IsochTxRecoveryController recovery_{};
 
     State state_{State::Unconfigured};
     uint8_t channel_{0};
@@ -168,8 +158,6 @@ private:
     std::atomic<uint64_t> latencyBucket3_{0};
     std::atomic<uint32_t> maxRefillLatencyUs_{0};
     std::atomic<uint64_t> irqWatchdogKicks_{0};
-
-    RecoveryCallback recoveryCallback_{};
 };
 
 } // namespace Isoch

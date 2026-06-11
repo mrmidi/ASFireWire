@@ -5,7 +5,7 @@
 #include "AudioEngine/Direct/Tx/DirectTxPacketScratch.hpp"
 #include "AudioEngine/Direct/Tx/TxAudioPacketProcessor.hpp"
 #include "AudioWire/AM824/AM824Encoder.hpp"
-#include "Isoch/Transmit/TxVerifierDecode.hpp"
+#include "../../support/CipDecodeTestSupport.hpp"
 
 #include <gtest/gtest.h>
 

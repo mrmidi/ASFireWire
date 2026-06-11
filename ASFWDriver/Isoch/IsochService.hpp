@@ -55,7 +55,6 @@ struct IsochDuplexStartParams {
 class IsochService {
 public:
     using TimingLossCallback = std::function<void(uint64_t guid)>;
-    using TxRecoveryCallback = std::function<bool(uint64_t guid, uint32_t reasonBits)>;
 
     IsochService() = default;
     ~IsochService() = default;
@@ -96,7 +95,6 @@ public:
 
     void StopAll();
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
-    void SetTxRecoveryCallback(TxRecoveryCallback callback) noexcept;
 
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
@@ -104,9 +102,7 @@ public:
 private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
     void RefreshReceiveTimingLossCallback() noexcept;
-    void RefreshTransmitRecoveryCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
-    [[nodiscard]] bool OnTransmitRecoveryRequested(uint32_t reasonBits) noexcept;
 
     ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
@@ -114,7 +110,6 @@ private:
 
     uint64_t activeGuid_{0};
     TimingLossCallback timingLossCallback_{};
-    TxRecoveryCallback txRecoveryCallback_{};
 
     struct ReservedDuplexResources {
         bool playbackActive{false};

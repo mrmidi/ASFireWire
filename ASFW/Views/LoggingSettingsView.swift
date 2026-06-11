@@ -5,7 +5,6 @@ struct LoggingSettingsView: View {
     @State private var asyncVerbosity: Double = 1.0
     @State private var isochTelemetryEnabled: Bool = false
     @State private var hexDumpsEnabled: Bool = false
-    @State private var txVerifierEnabled: Bool = false
     @State private var isLoading: Bool = false
     
     let verbosityLevels: [(Int, String, String)] = [
@@ -83,21 +82,6 @@ struct LoggingSettingsView: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
 
-            // Dev TX Verifier / Recovery Toggle
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Enable Isoch TX Verifier + Recovery (Dev)", isOn: $txVerifierEnabled)
-                    .font(.headline)
-                    .disabled(!connector.isConnected || isLoading)
-
-                Text("Enables watchdog-driven TX verifier checks and recovery triggers. Intended for debugging, not production.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.leading, 4)
-            }
-            .padding()
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
-            
             // Action Buttons
             HStack(spacing: 12) {
                 Button("Refresh") {
@@ -130,7 +114,6 @@ struct LoggingSettingsView: View {
                     self.asyncVerbosity = Double(config.asyncVerbosity)
                     self.hexDumpsEnabled = config.hexDumpsEnabled
                     self.isochTelemetryEnabled = config.isochVerbosity >= 3
-                    self.txVerifierEnabled = config.isochTxVerifierEnabled
                     self.isLoading = false
                 }
             } else {
@@ -149,7 +132,6 @@ struct LoggingSettingsView: View {
             _ = connector.setAsyncVerbosity(UInt32(asyncVerbosity))
             _ = connector.setIsochTelemetryLogging(enabled: isochTelemetryEnabled)
             _ = connector.setHexDumps(enabled: hexDumpsEnabled)
-            _ = connector.setIsochTxVerifier(enabled: txVerifierEnabled)
             
             DispatchQueue.main.async {
                 self.isLoading = false

@@ -1,8 +1,6 @@
-// TxVerifierDecode.hpp
-// ASFW - Dev-only IT TX verifier helpers (host-test friendly)
-//
-// These utilities are intentionally free of DriverKit dependencies so they can
-// be unit-tested on the host (ASFW_HOST_TEST).
+// CipDecodeTestSupport.hpp
+// ASFW tests - CIP header decode helpers for TX assertions.
+// Relocated from the retired driver-side TX verifier; free of DriverKit deps.
 
 #pragma once
 

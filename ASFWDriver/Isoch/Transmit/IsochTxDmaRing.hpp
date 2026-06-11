@@ -43,13 +43,6 @@ public:
     [[nodiscard]] virtual IsochTxPacket NextTransmitPacket(const TxPacketRequest& request) noexcept = 0;
 };
 
-class IIsochTxAudioInjector {
-public:
-    virtual ~IIsochTxAudioInjector() = default;
-    virtual void InjectNearHw(uint32_t hwPacketIndex,
-                              IsochTxDescriptorSlab& slab) noexcept = 0;
-};
-
 enum class PreparedTxSlotState : uint8_t {
     InitialSilence = 0,  // DATA slot assembled but payload preparation not yet attempted
     SilenceFallback,     // PreparePayload ran but the packet ring slot was not covered
@@ -120,17 +113,6 @@ public:
     virtual ~IIsochTxPayloadPreparer() = default;
     [[nodiscard]] virtual PreparedTxPayloadResult PreparePayload(
         const PreparedTxPayloadRequest& request) noexcept = 0;
-};
-
-class IsochTxCaptureHook {
-public:
-    virtual ~IsochTxCaptureHook() = default;
-    virtual void CaptureBeforeOverwrite(uint32_t packetIndex,
-                                        uint32_t hwPacketIndexCmdPtr,
-                                        uint32_t cmdPtr,
-                                        const Async::HW::OHCIDescriptor* lastDesc,
-                                        const uint32_t* payload32,
-                                        const PreparedTxSlotMetadata& metadata) noexcept = 0;
 };
 
 class IsochTxDmaRing final {
@@ -220,8 +202,6 @@ public:
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
                                        uint8_t contextIndex,
                                        IIsochTxPacketProvider& provider,
-                                       IsochTxCaptureHook* captureHook,
-                                       IIsochTxAudioInjector* injector,
                                        IIsochTxCompletionObserver* completionObserver = nullptr) noexcept;
 
     [[nodiscard]] PreparationOutcome PreparePayloads(
@@ -234,7 +214,6 @@ public:
     // Debug helpers (delegated by IsochTransmitContext)
     void DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t contextIndex) const noexcept;
     void DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept;
-    void DumpPayloadBuffers(uint32_t numPackets) const noexcept;
 
     [[nodiscard]] const Counters& RTCounters() const noexcept { return counters_; }
     [[nodiscard]] uint32_t LastHwTimestamp() const noexcept { return lastHwTimestamp_; }
@@ -263,7 +242,6 @@ private:
                                     uint32_t hwPacketIndex,
                                     uint32_t cmdPtr,
                                     IIsochTxPacketProvider& provider,
-                                    IsochTxCaptureHook* captureHook,
                                     RefillOutcome& out) noexcept;
     void CommitRefill(uint32_t toFill) noexcept;
     [[nodiscard]] bool DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,

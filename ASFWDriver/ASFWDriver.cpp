@@ -692,13 +692,6 @@ kern_return_t ASFWDriver::SetHexDumps(uint32_t enabled) const {
     return kIOReturnSuccess;
 }
 
-kern_return_t ASFWDriver::SetIsochTxVerifier(uint32_t enabled) const {
-    ASFW_LOG_INFO(Controller, "UserClient: Setting isoch TX verifier to %{public}s",
-                  enabled ? "enabled" : "disabled");
-    ASFW::LogConfig::Shared().SetIsochTxVerifierEnabled(enabled != 0);
-    return kIOReturnSuccess;
-}
-
 kern_return_t ASFWDriver::SetAudioAutoStart(uint32_t enabled) const {
     ASFW_LOG_INFO(Controller, "UserClient: Setting audio auto-start to %{public}s",
                   enabled ? "enabled" : "disabled");

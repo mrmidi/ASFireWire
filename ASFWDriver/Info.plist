@@ -40,8 +40,6 @@
 			<integer>1</integer>
 			<key>ASFWEnableHexDumps</key>
 			<false/>
-			<key>ASFWEnableIsochTxVerifier</key>
-			<false/>
 			<key>ASFWAutoStartAudioStreams</key>
 			<true/>
 			<key>ASFWLogStatistics</key>

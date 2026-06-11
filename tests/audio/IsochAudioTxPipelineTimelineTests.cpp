@@ -825,7 +825,7 @@ TEST(IsochAudioTxPipelineTimelineTests,
                 hwPacket * Layout::kBlocksPerPacket) |
                 Layout::kBlocksPerPacket);
         const auto refill =
-            ring.Refill(hardware, 0, pipeline, nullptr, nullptr, &pipeline);
+            ring.Refill(hardware, 0, pipeline, &pipeline);
         ASSERT_TRUE(refill.ok);
         pipeline.PopulateClipStyleTxRingFromWrittenRange();
         ASSERT_TRUE(ring.PreparePayloads(hardware, 0, pipeline).ok);

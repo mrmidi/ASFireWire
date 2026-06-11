@@ -208,10 +208,6 @@ The Isoch stack is organized into functional layers:
 *   [IsochTransmitContext.cpp](Transmit/IsochTransmitContext.cpp) / [IsochTransmitContext.hpp](Transmit/IsochTransmitContext.hpp)
     *   **Role**: OHCI Isochronous Transmit (IT) DMA Context Manager.
     *   **Responsibilities**: Manages the IT DMA context. Handles descriptor ring priming, interrupt-driven recycling of completed packets, and synchronizes with the hardware cycle timer.
-*   [SimITEngine.hpp](Transmit/SimITEngine.hpp)
-    *   **Role**: Offline Hardware Simulator.
-    *   **Responsibilities**: A test harness that mocks the behavior of the OHCI IT context. Used for validating the `PacketAssembler` and `CadenceGenerator` logic without requiring physical FireWire hardware.
-
 ---
 
 ## DMA Memory Architecture

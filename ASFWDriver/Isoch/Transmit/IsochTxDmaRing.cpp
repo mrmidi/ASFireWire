@@ -147,7 +147,6 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
                                   const uint32_t hwPacketIndex,
                                   const uint32_t cmdPtr,
                                   IIsochTxPacketProvider& provider,
-                                  IsochTxCaptureHook* captureHook,
                                   RefillOutcome& out) noexcept {
     const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
     uint8_t* payloadVirt = slab_.PayloadPtr(pktIdx);
@@ -155,16 +154,6 @@ bool IsochTxDmaRing::RefillPacket(const uint32_t pktIdx,
     if (!payloadVirt) {
         counters_.fatalDescriptorBounds.fetch_add(1, std::memory_order_relaxed);
         return false;
-    }
-
-    if (captureHook) {
-        auto* existingLastDesc = slab_.GetDescriptorPtr(descBase + 2);
-        captureHook->CaptureBeforeOverwrite(pktIdx,
-                                            hwPacketIndex,
-                                            cmdPtr,
-                                            existingLastDesc,
-                                            reinterpret_cast<const uint32_t*>(payloadVirt),
-                                            slotMetadata_[pktIdx]);
     }
 
     slotMetadata_[pktIdx].state = PreparedTxSlotState::Completed;
@@ -517,8 +506,6 @@ IsochTxDmaRing::PreparationOutcome IsochTxDmaRing::PreparePayloads(
 IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& hw,
                                                      uint8_t contextIndex,
                                                      IIsochTxPacketProvider& provider,
-                                                     IsochTxCaptureHook* captureHook,
-                                                     IIsochTxAudioInjector* injector,
                                                      IIsochTxCompletionObserver* completionObserver) noexcept {
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
 
@@ -579,7 +566,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
 
         for (uint32_t i = 0; i < toFill; ++i) {
             const uint32_t pktIdx = (softwareFillIndex_ + i) % Layout::kNumPackets;
-            if (!RefillPacket(pktIdx, hwPacketIndex, cmdPtr, provider, captureHook, out)) {
+            if (!RefillPacket(pktIdx, hwPacketIndex, cmdPtr, provider, out)) {
                 return out;
             }
         }
@@ -598,11 +585,6 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& 
         .outputLastTimestamp = out.hwTimestamp,
         .sampleFrame = 0,
     };
-
-    // Phase 3: near-HW audio injection
-    if (injector) {
-        injector->InjectNearHw(hwPacketIndex, slab_);
-    }
 
     out.ok = true;
     return out;
@@ -649,43 +631,6 @@ void IsochTxDmaRing::DumpAtCmdPtr(Driver::HardwareInterface& hw, uint8_t context
                  logicalIdx + k, b->control, b->dataAddress, b->branchWord, b->statusWord);
     }
 #endif
-}
-
-void IsochTxDmaRing::DumpPayloadBuffers(uint32_t numPackets) const noexcept {
-    const auto buf = slab_.PayloadRegion();
-    if (!buf.virtualBase) {
-        ASFW_LOG(Isoch, "IT: DumpPayloadBuffers - no buffer allocated");
-        return;
-    }
-
-    const uint32_t numTotalPackets = Layout::kNumPackets;
-    if (numPackets > numTotalPackets) numPackets = numTotalPackets;
-
-    ASFW_LOG(Isoch, "IT: === DMA Payload Buffer Dump (first %u of %u packets) ===", numPackets, numTotalPackets);
-
-    for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
-        const uint8_t* payloadVirt = reinterpret_cast<const uint8_t*>(buf.virtualBase) +
-                                     (static_cast<size_t>(pktIdx) * Layout::kMaxPacketSize);
-        const uint32_t* payload32 = reinterpret_cast<const uint32_t*>(payloadVirt);
-
-        const uint32_t cip0 = payload32[0];
-        const uint32_t cip1 = payload32[1];
-
-        const uint32_t aud0 = payload32[2];
-        const uint32_t aud1 = payload32[3];
-        const uint32_t aud2 = payload32[4];
-        const uint32_t aud3 = payload32[5];
-
-        const bool isNoData = (aud0 == 0 && aud1 == 0);
-        const bool isSilence = ((aud0 & 0xFFFFFF) == 0) && ((aud1 & 0xFFFFFF) == 0);
-
-        ASFW_LOG(Isoch, "  Pkt[%u] CIP=[%08x %08x] Audio=[%08x %08x %08x %08x] %{public}s%{public}s",
-                 pktIdx, cip0, cip1, aud0, aud1, aud2, aud3,
-                 isNoData ? "NO-DATA" : "DATA",
-                 (isSilence && !isNoData) ? " (SILENCE!)" : "");
-    }
-
-    ASFW_LOG(Isoch, "IT: === End DMA Buffer Dump ===");
 }
 
 void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {
