@@ -88,7 +88,12 @@ public:
     [[nodiscard]] PrimeStats Prime() noexcept;
 
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
-                                       uint8_t contextIndex) noexcept;
+                                       uint8_t contextIndex,
+                                       ASFW::IsochTransport::TxPacketMeta* metadataRing,
+                                       ASFW::IsochTransport::TxStreamControl* controlBlock,
+                                       uint32_t numSlots,
+                                       uint8_t* payloadBase,
+                                       uint64_t payloadIOVA) noexcept;
 
     void WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept;
 
@@ -122,11 +127,11 @@ private:
     Memory::IIsochDMAMemory* dmaMemory_{nullptr};
 
     // Fill-ahead tracking
-    uint32_t softwareFillIndex_{0};
+    uint64_t softwareFillAbsIdx_{0};
     uint32_t lastHwPacketIndex_{0};
     uint32_t ringPacketsAhead_{0};
 
-    // Cycle tracking for SYT generation
+    // Isoch cycle tracking for packet timing
     uint32_t nextTransmitCycle_{0};
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};

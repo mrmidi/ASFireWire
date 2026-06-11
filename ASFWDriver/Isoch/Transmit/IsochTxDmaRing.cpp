@@ -11,7 +11,7 @@ using namespace ASFW::Async::HW;
 using namespace ASFW::Driver;
 
 void IsochTxDmaRing::ResetForStart() noexcept {
-    softwareFillIndex_ = 0;
+    softwareFillAbsIdx_ = 0;
     lastHwPacketIndex_ = 0;
     ringPacketsAhead_ = 0;
 
@@ -99,13 +99,14 @@ void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
     out.hwTimestamp = static_cast<uint16_t>(0x8000u | hwCycle);
     lastHwTimestamp_ = hwTimestamp;
 
+    const uint32_t softwareFillIndex = static_cast<uint32_t>(softwareFillAbsIdx_ % Layout::kNumPackets);
     const uint32_t aheadCount =
-        (softwareFillIndex_ + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
+        (softwareFillIndex + Layout::kNumPackets - lastProcessedPkt) % Layout::kNumPackets;
     nextTransmitCycle_ = (hwCycle + aheadCount) % 8000;
 }
 
 void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
-    softwareFillIndex_ = (softwareFillIndex_ + toFill) % Layout::kNumPackets;
+    softwareFillAbsIdx_ += toFill;
     ringPacketsAhead_ += toFill;
 
     std::atomic_thread_fence(std::memory_order_release);
@@ -115,9 +116,59 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
 }
 
 IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime() noexcept {
-    // Prime will be rewritten in Stage 3 using the shared metadata ring.
-    // In Stage 2, it is a no-op that returns 0 assembled packets.
     PrimeStats stats{};
+    if (!slab_.IsValid()) {
+        ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
+        return stats;
+    }
+
+    const uint32_t numPackets = Layout::kNumPackets;
+    const uint32_t bufBaseIOVA = static_cast<uint32_t>(slab_.PayloadRegion().deviceBase);
+
+    for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
+        const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
+        auto* desc0 = slab_.GetDescriptorPtr(descBase);
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
+
+        // Prime the OMI descriptor structure (Descriptor 0 and 1)
+        std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
+        immDesc->common.control = OHCIDescriptor::BuildControl({
+            .reqCount = 4, // CIP Q0 only
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyImmediate,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+
+        // Prime the OL descriptor (Descriptor 2)
+        auto* desc2 = slab_.GetDescriptorPtr(descBase + 2);
+        std::memset(desc2, 0, sizeof(OHCIDescriptor));
+
+        const uint32_t nextPktIdx = (pktIdx + 1) % numPackets;
+        const uint32_t nextDescIOVA = slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
+
+        desc2->control = OHCIDescriptor::BuildControl({
+            .reqCount = 0, // Set during refill
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = ((pktIdx + 1) % 8 == 0) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
+
+        // Set status update bit (s=1)
+        desc2->control |= (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
+
+        desc2->dataAddress = bufBaseIOVA + pktIdx * Layout::kMaxPacketSize;
+        desc2->branchWord = MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket);
+        AR_init_status(*desc2, 0);
+    }
+
+    if (dmaMemory_) {
+        dmaMemory_->PublishToDevice(slab_.DescriptorRegion().virtualBase, slab_.DescriptorRegion().size);
+    }
+
+    stats.packetsAssembled = numPackets;
+    ASFW_LOG(Isoch, "IT: Static descriptor ring primed. numPackets=%u", numPackets);
     return stats;
 }
 
@@ -139,56 +190,145 @@ bool IsochTxDmaRing::DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
     return outPacketIndex < Layout::kNumPackets;
 }
 
-IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(Driver::HardwareInterface& hw,
-                                                     uint8_t contextIndex) noexcept {
+IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
+    Driver::HardwareInterface& hw,
+    uint8_t contextIndex,
+    ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    ASFW::IsochTransport::TxStreamControl* controlBlock,
+    uint32_t numSlots,
+    uint8_t* payloadBase,
+    uint64_t payloadIOVA) noexcept
+{
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
-
     RefillOutcome out{};
 
-    Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
+    if (!metadataRing || !controlBlock || numSlots == 0) {
+        out.ok = false;
+        return out;
+    }
+
+    // 1. Capture CYCLE_TIMER and host time, and publish under seqlock.
+    // Clock-smoothing / filtering is handled natively by AudioDriverKit's clock algorithms.
+    {
+        const uint32_t cycleTimer = hw.Read(static_cast<Register32>(Register32::kCycleTimer));
+        const uint64_t hostTime = mach_absolute_time();
+
+        ASFW::IsochTransport::ClockPairSample sample{};
+        sample.hostTimeMid = hostTime;
+        sample.cycleTimer32 = cycleTimer;
+        controlBlock->clockPair.Publish(sample);
+    }
+
+    // 2. Check context status
+    const Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const uint32_t ctrl = hw.Read(ctrlReg);
     const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
     if (dead) {
         counters_.exitDead.fetch_add(1, std::memory_order_relaxed);
+        controlBlock->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+        controlBlock->streamGeneration.fetch_add(1, std::memory_order_release);
         out.dead = true;
         return out;
     }
 
-    Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex));
-    const uint32_t cmdPtr = hw.Read(cmdPtrReg);
-    const uint32_t cmdAddr = cmdPtr & 0xFFFFFFF0u;
-
-    out.cmdPtr = cmdPtr;
-    out.cmdAddr = cmdAddr;
-
-    uint32_t hwLogicalIndex = 0;
-    if (!slab_.DecodeCmdAddrToLogicalIndex(cmdAddr, hwLogicalIndex)) {
+    // 3. Decode hardware pointer and advance completed cursor
+    uint32_t hwPacketIndex = 0;
+    uint32_t cmdPtr = 0;
+    if (!DecodeHardwarePacketIndex(hw, contextIndex, hwPacketIndex, cmdPtr)) {
         counters_.exitDecodeFail.fetch_add(1, std::memory_order_relaxed);
         out.decodeFailed = true;
         return out;
     }
 
-    const uint32_t hwPacketIndex = hwLogicalIndex / Layout::kBlocksPerPacket;
-    if (hwPacketIndex >= Layout::kNumPackets) {
-        counters_.exitHwOOB.fetch_add(1, std::memory_order_relaxed);
-        out.hwOOB = true;
-        return out;
-    }
-
     out.hwPacketIndex = hwPacketIndex;
+    out.cmdPtr = cmdPtr;
+    out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
 
     const uint32_t deltaConsumed = ComputeDeltaConsumed(hwPacketIndex);
     const uint32_t gap = ringPacketsAhead_;
     UpdateGapCounters(gap);
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
 
-    // Stage 2: Refill loop is stubbed out. Descriptors are not populated.
+    // Fetch and publish completed stamps
+    const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
+    for (uint32_t i = 0; i < deltaConsumed; ++i) {
+        const uint64_t currentAbsIdx = completedAbsIdx + i;
+        const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
+
+        auto* desc2 = slab_.GetDescriptorPtr(completedPktSlot * Layout::kBlocksPerPacket + 2);
+        if (dmaMemory_) {
+            dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(*desc2));
+        }
+
+        const uint16_t hwTimestamp = static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
+        controlBlock->PushCompletionStamp(currentAbsIdx, hwTimestamp);
+    }
+    if (deltaConsumed > 0) {
+        controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);
+    }
+
+    // 4. Refill batch: try to fill deltaConsumed slots
+    // If softwareFillAbsIdx_ is 0, initialize it from the completedAbsIdx + ringPacketsAhead_
+    if (softwareFillAbsIdx_ == 0) {
+        softwareFillAbsIdx_ = completedAbsIdx + ringPacketsAhead_;
+    }
+
+    uint32_t packetsFilled = 0;
+    for (uint32_t i = 0; i < deltaConsumed; ++i) {
+        const uint64_t fillAbsIdx = softwareFillAbsIdx_ + i;
+        const uint32_t pktSlot = static_cast<uint32_t>(fillAbsIdx % numSlots);
+
+        auto& meta = metadataRing[pktSlot];
+        const uint64_t expectedGen = ASFW::IsochTransport::ExpectedCommitGen(fillAbsIdx, numSlots);
+        const uint64_t commitGen = meta.commitGen.load(std::memory_order_acquire);
+
+        // Check if committed
+        if (commitGen != expectedGen) {
+            // Fatal Underrun!
+            ASFW_LOG(Isoch, "IT FATAL UNDERRUN: fillAbsIdx=%llu expectedGen=%llu commitGen=%llu",
+                     fillAbsIdx, expectedGen, commitGen);
+            controlBlock->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal, std::memory_order_release);
+            controlBlock->streamGeneration.fetch_add(1, std::memory_order_release);
+
+            // Stop context immediately
+            const Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex));
+            hw.Write(ctrlClrReg, Driver::ContextControl::kRun);
+            hw.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex));
+
+            out.ok = false;
+            return out;
+        }
+
+        // Copy quadlets to OMI descriptor (Descriptor 0)
+        auto* desc0 = slab_.GetDescriptorPtr(pktSlot * Layout::kBlocksPerPacket);
+        desc0->branchWord = meta.immediateHeader[0];
+        desc0->statusWord = meta.immediateHeader[1];
+
+        // Update OL descriptor (Descriptor 2) reqCount
+        auto* desc2 = slab_.GetDescriptorPtr(pktSlot * Layout::kBlocksPerPacket + 2);
+        desc2->control = (desc2->control & 0xFFFF0000u) | (meta.payloadLength & 0xFFFFu);
+        AR_init_status(*desc2, meta.payloadLength);
+
+        // Flush descriptor changes to device
+        if (dmaMemory_) {
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc0), sizeof(OHCIDescriptorImmediate));
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
+        }
+
+        packetsFilled++;
+    }
+
+    if (packetsFilled > 0) {
+        CommitRefill(packetsFilled);
+    }
+
     out.ok = true;
+    out.packetsFilled = packetsFilled;
     return out;
 }
 
 void IsochTxDmaRing::WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept {
-    Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContext(contextIndex));
+    Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const uint32_t ctrl = hw.Read(ctrlReg);
 
     const bool run = (ctrl & Driver::ContextControl::kRun) != 0;

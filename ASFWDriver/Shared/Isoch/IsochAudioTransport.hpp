@@ -28,6 +28,20 @@ namespace ASFW::IsochTransport {
 inline constexpr uint32_t kTransportAbiVersion = 1;
 
 // =============================================================================
+// Shared queue / buffer sizing (ADK §3.3 / §6.4).
+// These constants are the "Iron Rule" ground truth for both sides.
+// =============================================================================
+
+inline constexpr uint32_t kAudioRingBufferFrames = 512;
+inline constexpr uint32_t kAudioIoPeriodFrames = 512;
+
+/// Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
+inline constexpr uint32_t kOutputConsumerLeadFrames = 384;  ///< ~0.75 period (~8ms @48k)
+
+/// Deadband: rebase the consumer cursor only when |lead - target| exceeds this.
+inline constexpr uint32_t kOutputCursorResyncDeadbandFrames = 64;  ///< ~0.125 period
+
+// =============================================================================
 // Metadata ring (ADK §3.2) — one entry per payload-slab slot.
 // =============================================================================
 
