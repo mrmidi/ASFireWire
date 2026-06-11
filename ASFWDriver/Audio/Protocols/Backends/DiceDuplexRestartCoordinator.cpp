@@ -129,9 +129,6 @@ struct DiceRecoveryDecision {
 
     AudioStreamRuntimeCaps caps{};
     bool haveCaps = protocol && protocol->GetRuntimeAudioStreamCaps(caps);
-    if (!haveCaps) {
-        haveCaps = DICE::TCAT::TryGetKnownDICEProfile(record.vendorId, record.modelId, caps);
-    }
 
     if (haveCaps) {
         if (IsValidIsoChannel(caps.deviceToHostIsoChannel)) {
@@ -1492,12 +1489,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     const kern_return_t startTransmitStatus = hostTransport_.StartTransmit(
         channels.hostToDeviceIsoChannel,
         hardware_,
-        ReadLocalSid(hardware_),
-        kBlockingStreamModeRaw,
-        session.runtimeCaps.hostOutputPcmChannels,
-        session.runtimeCaps.hostToDeviceAm824Slots,
-        wireFormat,
-        bindingSource);
+        ReadLocalSid(hardware_));
     if (startTransmitStatus != kIOReturnSuccess) {
         return rollbackToFailure(startTransmitStatus,
                                  DiceRestartPhase::kStartingHostTransmit,
@@ -1617,7 +1609,7 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStop(
     SetSessionState(session, DiceRestartState::kStopping, "stop_requested");
     StoreSession(session);
 
-    const kern_return_t hostStatus = hostTransport_.StopDuplex(guid, diceProtocol.GetIRMClient());
+    const kern_return_t hostStatus = hostTransport_.StopAll();
     if (hostStatus != kIOReturnSuccess) {
         result = hostStatus;
     }

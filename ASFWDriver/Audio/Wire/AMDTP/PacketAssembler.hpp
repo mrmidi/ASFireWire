@@ -65,7 +65,7 @@ constexpr uint32_t kCIPHeaderSize = 8;
 
 /// Compile-time max audio payload size (8 frames × max AM824 slots × 4 bytes)
 constexpr size_t kMaxAudioDataSize =
-    static_cast<size_t>(kSamplesPerDataPacket) * Isoch::Config::kMaxAmdtpDbs * sizeof(uint32_t);
+    static_cast<size_t>(kSamplesPerDataPacket) * kMaxAmdtpDbs * sizeof(uint32_t);
 
 /// Compile-time max assembled packet size (CIP header + max audio data)
 constexpr size_t kMaxAssembledPacketSize = kCIPHeaderSize + kMaxAudioDataSize;
@@ -104,7 +104,7 @@ struct AssembledPacket {
 class PacketAssembler {
 public:
     /// Construct a packet assembler.
-    /// @param channels Number of PCM audio channels (1..Isoch::Config::kMaxPcmChannels)
+    /// @param channels Number of PCM audio channels (1..kMaxPcmChannels)
     /// @param sid Source node ID (6 bits)
     explicit PacketAssembler(uint32_t channels = 2, uint8_t sid = 0) noexcept
         : channelCount_(channels)
@@ -324,7 +324,7 @@ private:
         std::memcpy(packet.data + 4, &cip.q1, 4);
 
         // Read audio samples - ZERO-COPY path or ring buffer fallback
-        int32_t samples[kSamplesPerDataPacket * Isoch::Config::kMaxPcmChannels];
+        int32_t samples[kSamplesPerDataPacket * kMaxPcmChannels];
         uint32_t framesRead = 0;
 
         if (zeroCopyEnabled_ && zeroCopyBase_) {

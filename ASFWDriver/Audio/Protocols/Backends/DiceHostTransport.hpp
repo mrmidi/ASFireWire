@@ -43,15 +43,8 @@ public:
     [[nodiscard]] virtual kern_return_t StartTransmit(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
-        uint8_t sourceId,
-        uint32_t streamModeRaw,
-        uint32_t pcmChannels,
-        uint32_t dataBlockSize,
-        Encoding::AudioWireFormat wireFormat,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t StopDuplex(
-        uint64_t guid,
-        ::ASFW::IRM::IRMClient* irmClient) noexcept = 0;
+        uint8_t sourceId) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
 };
 
 class DiceIsochHostTransport final : public IDiceHostTransport {
@@ -79,15 +72,8 @@ public:
     [[nodiscard]] kern_return_t StartTransmit(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
-        uint8_t sourceId,
-        uint32_t streamModeRaw,
-        uint32_t pcmChannels,
-        uint32_t dataBlockSize,
-        Encoding::AudioWireFormat wireFormat,
-        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept override;
-    [[nodiscard]] kern_return_t StopDuplex(
-        uint64_t guid,
-        ::ASFW::IRM::IRMClient* irmClient) noexcept override;
+        uint8_t sourceId) noexcept override;
+    [[nodiscard]] kern_return_t StopAll() noexcept override;
 
 private:
     Driver::IsochService& isoch_;

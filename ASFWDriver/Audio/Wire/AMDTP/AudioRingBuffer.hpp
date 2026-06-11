@@ -37,14 +37,14 @@ namespace Encoding {
 ///
 // Cacheline separation here is intentional for the SPSC hot path.
 // NOLINTNEXTLINE(clang-analyzer-optin.performance.Padding)
-template <uint32_t FrameCount = Isoch::Config::kAudioRingBufferFrames>
+template <uint32_t FrameCount = ASFW::IsochTransport::kAudioRingBufferFrames>
 class AudioRingBuffer { // NOLINT(clang-analyzer-optin.performance.Padding)
 public:
     static_assert((FrameCount & (FrameCount - 1)) == 0,
                   "FrameCount must be power of 2 for efficient modulo");
 
     /// Max buffer size in samples (compile-time, uses max channel count)
-    static constexpr uint32_t kMaxTotalSamples = FrameCount * Isoch::Config::kMaxPcmChannels;
+    static constexpr uint32_t kMaxTotalSamples = FrameCount * kMaxPcmChannels;
 
     /// Mask for efficient modulo (works because FrameCount is power of 2)
     static constexpr uint32_t kFrameMask = FrameCount - 1;
@@ -229,7 +229,7 @@ private:
 };
 
 /// Convenience alias for standard 4096-frame buffer (backward compat)
-using StereoAudioRingBuffer = AudioRingBuffer<Isoch::Config::kAudioRingBufferFrames>;
+using StereoAudioRingBuffer = AudioRingBuffer<IsochTransport::kAudioRingBufferFrames>;
 
 } // namespace Encoding
 } // namespace ASFW

@@ -98,7 +98,7 @@ public:
             !readFrame ||
             !IsPowerOfTwo(capacityFrames) ||
             channels == 0 ||
-            channels > ASFW::Isoch::Config::kMaxPcmChannels) {
+            channels > ASFW::Encoding::kMaxPcmChannels) {
             return kIOReturnBadArgument;
         }
 

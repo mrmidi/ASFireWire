@@ -6,14 +6,14 @@
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../Model/ASFWAudioDevice.hpp"
 #include "../Runtime/AudioSampleRing.hpp"
-#include "../../Isoch/Config/AudioConstants.hpp"
+#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/IOLib.h>
 
 #if defined(ASFW_HOST_TEST)
 #include "../../Testing/HostDriverKitStubs.hpp"
-using IOMemoryDescriptor = IOBufferMemoryDescriptor;
 #else
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryDescriptor.h>
@@ -400,8 +400,8 @@ private:
         const uint32_t inputChannels = ClampAudioChannels(
             config_.inputChannelCount ? config_.inputChannelCount : config_.channelCount);
         const uint32_t sampleRateHz = config_.currentSampleRate ? config_.currentSampleRate : 48000;
-        const uint32_t outputFrames = ASFW::Isoch::Config::kAudioOutputRingFrames;
-        const uint32_t inputFrames = ASFW::Isoch::Config::kAudioRingBufferFrames;
+        const uint32_t outputFrames = IsochTransport::kAudioRingBufferFrames;
+        const uint32_t inputFrames = IsochTransport::kAudioRingBufferFrames;
 
         if (outputChannels == 0 || inputChannels == 0 || sampleRateHz == 0) {
             ASFW_LOG(DirectAudio,
