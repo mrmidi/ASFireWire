@@ -41,8 +41,6 @@
 #include "Audio/Core/AudioCoordinator.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
-#include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
-#include "Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "Bus/SelfIDCapture.hpp"
 #include "Common/DriverKitOwnership.hpp"
 #include "ConfigROM/ConfigROMStager.hpp"
@@ -709,7 +707,7 @@ kern_return_t ASFWDriver::GetAudioAutoStart(uint32_t* enabled) const {
     return kIOReturnSuccess;
 }
 
-kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
+kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) {
     if (!ivars || !ivars->context) {
         return kIOReturnNotReady;
     }
@@ -734,10 +732,6 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
         ASFW_LOG(Controller, "[Isoch] ❌ StartIsochReceive: no single audio nub published");
         return kIOReturnNotReady;
     }
-    auto* nub = ctx.audioCoordinator->GetNub(*guid);
-    if (!nub) {
-        return kIOReturnNotReady;
-    }
 
     auto endpoint = ctx.deps.audioRuntimeRegistry
         ? ctx.deps.audioRuntimeRegistry->FindEndpointRuntime(*guid)
@@ -750,29 +744,7 @@ kern_return_t ASFWDriver::StartIsochReceive(uint8_t channel) {
         return kIOReturnNotReady;
     }
 
-    const uint32_t pcmChannels = nub->GetInputChannelCount();
-    uint32_t am824Slots = pcmChannels;
-    ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
-    std::shared_ptr<ASFW::Audio::IDeviceProtocol> protocol;
-    if (ctx.deps.audioRuntimeRegistry) {
-        protocol = ctx.deps.audioRuntimeRegistry->FindShared(*guid);
-    }
-    if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
-        record && protocol) {
-        ASFW::Audio::AudioStreamRuntimeCaps caps{};
-        if (protocol->GetRuntimeAudioStreamCaps(caps) && caps.deviceToHostAm824Slots > 0) {
-            am824Slots = caps.deviceToHostAm824Slots;
-        }
-        if (record->vendorId == ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId &&
-            record->modelId == ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId &&
-            pcmChannels == 8 &&
-            am824Slots == 9) {
-            wireFormat = ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
-        } else {
-            wireFormat = ASFW::Encoding::AudioWireFormat::kAM824;
-        }
-    }
-
+    auto wireFormat = static_cast<ASFW::Encoding::AudioWireFormat>(wireFormatRaw);
     return ctx.isoch.StartReceive(channel, *ctx.deps.hardware, bindingSource, wireFormat, am824Slots);
 }
 
