@@ -60,80 +60,18 @@ struct ASFWAudioDevice {
         }
 
         auto deviceNameStr = OSSharedPtr(OSString::withCString(deviceName.c_str()), OSNoRetain);
-        auto channelCountNum = OSSharedPtr(OSNumber::withNumber(channelCount, 32), OSNoRetain);
         auto guidNum = OSSharedPtr(OSNumber::withNumber(guid, 64), OSNoRetain);
         auto vendorIdNum = OSSharedPtr(OSNumber::withNumber(vendorId, 32), OSNoRetain);
         auto modelIdNum = OSSharedPtr(OSNumber::withNumber(modelId, 32), OSNoRetain);
-        auto inputChannelCountNum = OSSharedPtr(OSNumber::withNumber(inputChannelCount, 32), OSNoRetain);
-        auto outputChannelCountNum = OSSharedPtr(OSNumber::withNumber(outputChannelCount, 32), OSNoRetain);
-        auto sampleRatesArray = OSSharedPtr(
-            OSArray::withCapacity(static_cast<uint32_t>(sampleRates.size())), OSNoRetain);
-        auto inputPlugNameStr = OSSharedPtr(OSString::withCString(inputPlugName.c_str()), OSNoRetain);
-        auto outputPlugNameStr = OSSharedPtr(OSString::withCString(outputPlugName.c_str()), OSNoRetain);
-        auto currentRateNum = OSSharedPtr(OSNumber::withNumber(currentSampleRate, 32), OSNoRetain);
-        auto streamModeNum = OSSharedPtr(
-            OSNumber::withNumber(static_cast<uint32_t>(streamMode), 32), OSNoRetain);
-        auto hasPhantomOverrideBool = OSSharedPtr(
-            hasPhantomOverride ? kOSBooleanTrue : kOSBooleanFalse,
-            OSNoRetain);
-        auto phantomSupportedMaskNum = OSSharedPtr(OSNumber::withNumber(phantomSupportedMask, 32), OSNoRetain);
-        auto phantomInitialMaskNum = OSSharedPtr(OSNumber::withNumber(phantomInitialMask, 32), OSNoRetain);
-        auto boolControlOverridesArray = OSSharedPtr(
-            OSArray::withCapacity(static_cast<uint32_t>(boolControlOverrides.size())), OSNoRetain);
 
-        if (!deviceNameStr || !channelCountNum || !guidNum || !vendorIdNum || !modelIdNum ||
-            !inputChannelCountNum || !outputChannelCountNum ||
-            !sampleRatesArray || !inputPlugNameStr || !outputPlugNameStr ||
-            !currentRateNum || !streamModeNum || !hasPhantomOverrideBool ||
-            !phantomSupportedMaskNum || !phantomInitialMaskNum || !boolControlOverridesArray) {
+        if (!deviceNameStr || !guidNum || !vendorIdNum || !modelIdNum) {
             return false;
         }
 
-        for (uint32_t rate : sampleRates) {
-            auto rateNum = OSSharedPtr(OSNumber::withNumber(rate, 32), OSNoRetain);
-            if (rateNum) {
-                sampleRatesArray->setObject(rateNum.get());
-            }
-        }
-
-        for (const auto& overrideDesc : boolControlOverrides) {
-            auto dict = OSSharedPtr(OSDictionary::withCapacity(5), OSNoRetain);
-            auto classIdNum = OSSharedPtr(OSNumber::withNumber(overrideDesc.classIdFourCC, 32), OSNoRetain);
-            auto scopeNum = OSSharedPtr(OSNumber::withNumber(overrideDesc.scopeFourCC, 32), OSNoRetain);
-            auto elementNum = OSSharedPtr(OSNumber::withNumber(overrideDesc.element, 32), OSNoRetain);
-            auto settableNum = OSSharedPtr(
-                overrideDesc.isSettable ? kOSBooleanTrue : kOSBooleanFalse,
-                OSNoRetain);
-            auto initialNum = OSSharedPtr(
-                overrideDesc.initialValue ? kOSBooleanTrue : kOSBooleanFalse,
-                OSNoRetain);
-            if (!dict || !classIdNum || !scopeNum || !elementNum || !settableNum || !initialNum) {
-                continue;
-            }
-            dict->setObject(PropertyKeys::kBoolClassId, classIdNum.get());
-            dict->setObject(PropertyKeys::kBoolScope, scopeNum.get());
-            dict->setObject(PropertyKeys::kBoolElement, elementNum.get());
-            dict->setObject(PropertyKeys::kBoolSettable, settableNum.get());
-            dict->setObject(PropertyKeys::kBoolInitial, initialNum.get());
-            boolControlOverridesArray->setObject(dict.get());
-        }
-
         properties->setObject(PropertyKeys::kDeviceName, deviceNameStr.get());
-        properties->setObject(PropertyKeys::kChannelCount, channelCountNum.get());
-        properties->setObject(PropertyKeys::kSampleRates, sampleRatesArray.get());
         properties->setObject(PropertyKeys::kGuid, guidNum.get());
         properties->setObject(PropertyKeys::kVendorId, vendorIdNum.get());
         properties->setObject(PropertyKeys::kModelId, modelIdNum.get());
-        properties->setObject(PropertyKeys::kInputChannelCount, inputChannelCountNum.get());
-        properties->setObject(PropertyKeys::kOutputChannelCount, outputChannelCountNum.get());
-        properties->setObject(PropertyKeys::kInputPlugName, inputPlugNameStr.get());
-        properties->setObject(PropertyKeys::kOutputPlugName, outputPlugNameStr.get());
-        properties->setObject(PropertyKeys::kCurrentSampleRate, currentRateNum.get());
-        properties->setObject(PropertyKeys::kStreamMode, streamModeNum.get());
-        properties->setObject(PropertyKeys::kHasPhantomOverride, hasPhantomOverrideBool.get());
-        properties->setObject(PropertyKeys::kPhantomSupportedMask, phantomSupportedMaskNum.get());
-        properties->setObject(PropertyKeys::kPhantomInitialMask, phantomInitialMaskNum.get());
-        properties->setObject(PropertyKeys::kBoolControlOverrides, boolControlOverridesArray.get());
 
         return true;
     }

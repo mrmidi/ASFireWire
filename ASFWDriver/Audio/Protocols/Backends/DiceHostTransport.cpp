@@ -45,26 +45,15 @@ kern_return_t DiceIsochHostTransport::StartReceive(
 kern_return_t DiceIsochHostTransport::StartTransmit(
     uint8_t channel,
     Driver::HardwareInterface& hardware,
-    uint8_t sourceId,
-    uint32_t streamModeRaw,
-    uint32_t pcmChannels,
-    uint32_t dataBlockSize,
-    Encoding::AudioWireFormat wireFormat,
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept {
+    uint8_t sourceId) noexcept {
     return isoch_.StartTransmit(channel,
                                 hardware,
-                                sourceId,
-                                streamModeRaw,
-                                pcmChannels,
-                                dataBlockSize,
-                                wireFormat,
-                                bindingSource);
+                                sourceId);
 }
 
-kern_return_t DiceIsochHostTransport::StopDuplex(
-    uint64_t guid,
-    ::ASFW::IRM::IRMClient* irmClient) noexcept {
-    return isoch_.StopDuplex(guid, irmClient);
+kern_return_t DiceIsochHostTransport::StopAll() noexcept {
+    isoch_.StopAll();
+    return kIOReturnSuccess;
 }
 
 } // namespace ASFW::Audio

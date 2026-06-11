@@ -220,19 +220,10 @@ IOReturn AVCAudioBackend::StartStreaming(uint64_t guid) noexcept {
     // Start IT transport (host->device) and then connect iPCR[0].
     {
         const uint8_t sid = ReadLocalSid(hardware_);
-        const uint32_t streamModeRaw = static_cast<uint32_t>(config.streamMode);
-
-        // AV/C playback streams normally have PCM-only wire slots.
-        const uint32_t am824Slots = config.outputChannelCount;
 
         const kern_return_t krTx = isoch_.StartTransmit(kDefaultItChannel,
                                                         hardware_,
-                                                        sid,
-                                                        streamModeRaw,
-                                                        config.outputChannelCount,
-                                                        am824Slots,
-                                                        ASFW::Encoding::AudioWireFormat::kAM824,
-                                                        bindingSource);
+                                                        sid);
         if (krTx != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "AVCAudioBackend: StartTransmit failed GUID=0x%016llx kr=0x%x", guid, krTx);
             (void)isoch_.StopReceive();

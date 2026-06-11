@@ -221,30 +221,27 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
 
     ASFW_LOG_WARNING(Audio,
                      "DiceAudioBackend: lock health DEGRADED GUID=%llx notify=%{public}s clock=%{public}s ext=%{public}s sourceLocked=%u extHealthy=%u -> recover",
-                     guid,
-                     notifyStr,
-                     clockStr,
-                     extStr,
-                     sourceLocked ? 1U : 0U,
-                     extClockHealthy ? 1U : 0U);
-    HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterLockLoss);
+                     guid, notifyStr, clockStr, extStr, sourceLocked, extClockHealthy);
+
+    (void)guid;
+    (void)notificationBits;
 }
 
 bool DiceAudioBackend::TryBeginRecovery(uint64_t guid) noexcept {
-    if (!lock_) {
-        return true;
-    }
+    if (!lock_) return false;
 
     IOLockLock(lock_);
-    const auto [_, inserted] = recoveringGuids_.insert(guid);
+    if (recoveringGuids_.find(guid) != recoveringGuids_.end()) {
+        IOLockUnlock(lock_);
+        return false;
+    }
+    recoveringGuids_.insert(guid);
     IOLockUnlock(lock_);
-    return inserted;
+    return true;
 }
 
 void DiceAudioBackend::FinishRecovery(uint64_t guid) noexcept {
-    if (!lock_) {
-        return;
-    }
+    if (!lock_) return;
 
     IOLockLock(lock_);
     recoveringGuids_.erase(guid);
@@ -271,67 +268,6 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     }
 
     auto protocol = runtime_.FindShared(guid);
-    if (!protocol) {
-        return;
-    }
-
-    AudioStreamRuntimeCaps caps{};
-    const bool ready = protocol->GetRuntimeAudioStreamCaps(caps);
-
-    if (!ready || caps.sampleRateHz == 0 || caps.hostInputPcmChannels == 0 || caps.hostOutputPcmChannels == 0) {
-        if (DICE::TCAT::TryGetKnownDICEProfile(record->vendorId, record->modelId, caps)) {
-            ASFW_LOG_WARNING(Audio,
-                             "DiceAudioBackend: runtime caps not ready for GUID=%llx; using known DICE profile %u/%u",
-                             guid,
-                             caps.hostInputPcmChannels,
-                             caps.hostOutputPcmChannels);
-        } else {
-            bool shouldRetry = false;
-            uint8_t attempt = 0;
-            bool outstanding = false;
-
-            if (lock_) {
-                IOLockLock(lock_);
-                attempt = attemptsByGuid_[guid];
-                outstanding = (retryOutstanding_.find(guid) != retryOutstanding_.end());
-                if (attempt < kCapsRetryMaxAttempts && !outstanding) {
-                    attemptsByGuid_[guid] = static_cast<uint8_t>(attempt + 1u);
-                    retryOutstanding_.insert(guid);
-                    shouldRetry = true;
-                    attempt = static_cast<uint8_t>(attempt + 1u);
-                }
-                IOLockUnlock(lock_);
-            }
-
-            if (outstanding) {
-                return;
-            }
-
-            if (shouldRetry && workQueue_) {
-                ASFW_LOG(Audio,
-                         "DiceAudioBackend: runtime caps not ready for GUID=%llx; retry %u/%u in %u ms",
-                         guid,
-                         attempt,
-                         kCapsRetryMaxAttempts,
-                         kCapsRetryDelayMs);
-                workQueue_->DispatchAsync(^{
-                    IOSleep(kCapsRetryDelayMs);
-                    if (lock_) {
-                        IOLockLock(lock_);
-                        retryOutstanding_.erase(guid);
-                        IOLockUnlock(lock_);
-                    }
-                    EnsureNubForGuid(guid);
-                });
-                return;
-            }
-
-            ASFW_LOG_ERROR(Audio,
-                           "DiceAudioBackend: runtime caps not ready for GUID=%llx; refusing to publish a lying nub",
-                           guid);
-            return;
-        }
-    }
 
     Model::ASFWAudioDevice dev{};
     dev.guid = record->guid;
@@ -343,33 +279,12 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
 
-    dev.currentSampleRate = caps.sampleRateHz ? caps.sampleRateHz : 48000;
-    dev.sampleRates = {dev.currentSampleRate};
-
-    dev.inputChannelCount = caps.hostInputPcmChannels;
-    dev.outputChannelCount = caps.hostOutputPcmChannels;
-    dev.channelCount = (dev.inputChannelCount > dev.outputChannelCount)
-        ? dev.inputChannelCount
-        : dev.outputChannelCount;
-
-    // DICE family policy: 48k uses blocking cadence (NDDD).
-    dev.streamMode = Model::StreamMode::kBlocking;
-
     if (auto endpoint = runtime_.EnsureEndpointRuntime(guid)) {
         endpoint->UpdateConfig(dev);
     }
 
     (void)publisher_.EnsureNub(guid, dev, "DICE");
-
-    if (lock_) {
-        IOLockLock(lock_);
-        attemptsByGuid_.erase(guid);
-        retryOutstanding_.erase(guid);
-        IOLockUnlock(lock_);
-    }
 }
-
-
 
 IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) {
