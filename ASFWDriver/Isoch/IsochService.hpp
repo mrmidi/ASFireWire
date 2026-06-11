@@ -13,7 +13,6 @@
 #endif
 
 #include "IsochReceiveContext.hpp"
-#include "../AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "../Audio/Model/ASFWAudioDevice.hpp"
 #include "../Common/DriverKitOwnership.hpp"
@@ -104,7 +103,6 @@ private:
     void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
 
-    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
 

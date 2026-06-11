@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "../../AudioEngine/DirectIsoch/IsochAudioTxPipeline.hpp"
 #include "IsochTxDmaRing.hpp"
 #include "IsochTxLayout.hpp"
 
@@ -30,10 +29,6 @@
 #endif
 
 namespace ASFW {
-
-namespace Audio::Runtime {
-class IDirectAudioBindingSource;
-}
 
 namespace Driver { class HardwareInterface; }
 
@@ -95,39 +90,23 @@ public:
     
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
-    void RequestPayloadPreparation(uint64_t requestGeneration) noexcept;
 
     State GetState() const noexcept { return state_; }
-
-    void SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept;
-    
-    void SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept;
-    void SetDirectTxRuntimeBinding(const IsochAudioTxPipeline::DirectTxRuntimeBinding& binding) noexcept;
-    Encoding::StreamMode RequestedStreamMode() const noexcept { return audio_.RequestedStreamMode(); }
-    Encoding::StreamMode EffectiveStreamMode() const noexcept { return audio_.EffectiveStreamMode(); }
     
     uint64_t PacketsAssembled() const noexcept { return packetsAssembled_; }
-    uint64_t DataPackets() const noexcept { return dataPackets_; }
-    uint64_t NoDataPackets() const noexcept { return noDataPackets_; }
     
     void LogStatistics() const noexcept;
     void DumpDescriptorRing(uint32_t startPacket = 0, uint32_t numPackets = 8) const noexcept;
 
 private:
     void WakeHardware() noexcept;
-    void RefreshDirectAudioBinding(bool force) noexcept;
     void DoRefillOnce(uint64_t eventHostTicks, bool publishTimingEvent) noexcept;
-    [[nodiscard]] bool DoPrepareOnce() noexcept;
-    [[nodiscard]] bool DrainPreparationRequests() noexcept;
-    void ReleasePreparationGate() noexcept;
     void StopImmediatelyForTxFault() noexcept;
-    void StopImmediatelyForTxFault(const Tx::IsochTxDmaRing::PreparationOutcome& outcome) noexcept;
 
     // ==========================================================================
     // Member variables
     // ==========================================================================
     Tx::IsochTxDmaRing ring_{};
-    IsochAudioTxPipeline audio_{};
 
     State state_{State::Unconfigured};
     uint8_t channel_{0};
@@ -136,18 +115,12 @@ private:
     Driver::HardwareInterface* hardware_{nullptr};
     std::shared_ptr<Memory::IIsochDMAMemory> dmaMemory_;
 
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* directAudioBindingSource_{nullptr};
-    uint64_t lastDirectAudioGeneration_{0};
-
     uint64_t packetsAssembled_{0};
-    uint64_t dataPackets_{0};
-    uint64_t noDataPackets_{0};
     uint64_t tickCount_{0};
     std::atomic<uint64_t> interruptCount_{0};
     
     // Refill coordination / IRQ-stall recovery
     std::atomic_flag refillInProgress_ = ATOMIC_FLAG_INIT;
-    std::atomic<uint64_t> requestedPreparationGeneration_{0};
     uint64_t lastInterruptCountSeen_{0};
     uint32_t irqStallTicks_{0};
 

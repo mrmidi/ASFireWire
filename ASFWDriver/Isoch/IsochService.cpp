@@ -41,7 +41,6 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
             ASFW_LOG(Isoch, "IsochService: Failed to create IR context");
             return kIOReturnNoMemory;
         }
-        isochReceiveContext_->SetExternalSyncBridge(&externalSyncBridge_);
         RefreshReceiveTimingLossCallback();
     }
 
@@ -55,13 +54,6 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
 
     ASFW_LOG(Isoch, "IsochService: Starting IR on channel %u (Direct-Only)", channel);
     const kern_return_t startKr = isochReceiveContext_->Start();
-    if (startKr == kIOReturnSuccess) {
-        // RX is the device-clock source. Mark the bridge active so the TX SYT
-        // discipline (ExternalSyncDiscipline48k via ReadExternalSyncState) can
-        // engage once RX establishes lock. Without this the discipline is gated
-        // off and TX SYT free-runs vs the device clock.
-        externalSyncBridge_.active.store(true, std::memory_order_release);
-    }
     return startKr;
 }
 
@@ -70,7 +62,6 @@ kern_return_t IsochService::StopReceive() {
         isochReceiveContext_->Stop();
         isochReceiveContext_->SetDirectAudioBindingSource(nullptr);
     }
-    externalSyncBridge_.active.store(false, std::memory_order_release);
     return kIOReturnSuccess;
 }
 
@@ -105,7 +96,6 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
             ASFW_LOG(Isoch, "IsochService: Failed to create IT context");
             return kIOReturnNoMemory;
         }
-        isochTransmitContext_->SetExternalSyncBridge(&externalSyncBridge_);
     }
 
     isochTransmitContext_->SetDirectAudioBindingSource(bindingSource);

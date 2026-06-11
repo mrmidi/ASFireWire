@@ -120,6 +120,7 @@ kern_return_t IsochReceiveContext::Start() {
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
     rxZtsPublishCount_ = 0;
+    sytConsecutiveValid_ = 0;
     (void)ASFW::Timing::initializeHostTimebase();
     rxCycleHostTicks_ = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
 
@@ -251,29 +252,22 @@ uint32_t IsochReceiveContext::Poll() {
                 const uint64_t packetHostTicks =
                     (drainHostTicks > packetBackTicks) ? (drainHostTicks - packetBackTicks) : drainHostTicks;
                 bool rxClockEstablished = false;
-                if (externalSyncBridge_ && result.hasValidCip) {
-                    uint32_t updateSeq = 0;
-                    const bool establishTransition = externalSyncClockState_.ObserveSample(
-                        *externalSyncBridge_,
-                        packetHostTicks,
-                        result.syt,
-                        result.fdf,
-                        result.dbs,
-                        &updateSeq
-                    );
-                    if (establishTransition) {
-                        ASFW_LOG(Isoch, "IR SYT CLOCK ESTABLISHED syt=0x%04x fdf=0x%02x dbs=%u seq=%u",
-                                 result.syt, result.fdf, result.dbs, updateSeq);
-                        externalSyncBridge_->clockEstablished.store(true, std::memory_order_release);
-                        externalSyncBridge_->startupQualified.store(true, std::memory_order_release);
+                if (result.hasValidCip) {
+                    if (result.syt != 0xFFFF) {
+                        if (sytConsecutiveValid_ < 16) {
+                            ++sytConsecutiveValid_;
+                            if (sytConsecutiveValid_ == 16) {
+                                ASFW_LOG(Isoch, "IR SYT CLOCK ESTABLISHED syt=0x%04x fdf=0x%02x dbs=%u",
+                                         result.syt, result.fdf, result.dbs);
+                            }
+                        }
                     }
-                    rxClockEstablished =
-                        externalSyncBridge_->clockEstablished.load(std::memory_order_acquire);
+                    rxClockEstablished = (sytConsecutiveValid_ >= 16);
                 }
 
                 const uint64_t nextFrameCursor = absoluteFrameCursor_ + result.framesDecoded;
                 if (result.hasValidCip &&
-                    result.syt != ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge::kNoInfoSyt &&
+                    result.syt != 0xFFFF &&
                     result.framesDecoded > 0 &&
                     directInputView_.sampleRateHz != 0 &&
                     clockPublisher_.IsBound() &&
@@ -281,11 +275,6 @@ uint32_t IsochReceiveContext::Poll() {
                     const uint32_t hostNanosPerSampleQ8 =
                         static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
                     clockPublisher_.Publish(nextFrameCursor, packetHostTicks, hostNanosPerSampleQ8);
-                    if (externalSyncBridge_) {
-                        externalSyncBridge_->PublishTransportTiming(nextFrameCursor,
-                                                                    packetHostTicks,
-                                                                    hostNanosPerSampleQ8);
-                    }
 
                     ++rxZtsPublishCount_;
                     if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 1024) == 0) {
@@ -321,9 +310,7 @@ void IsochReceiveContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDir
     lastDirectAudioGeneration_ = 0;
 }
 
-void IsochReceiveContext::SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept {
-    externalSyncBridge_ = bridge;
-}
+
 
 void IsochReceiveContext::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
