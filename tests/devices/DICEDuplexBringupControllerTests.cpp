@@ -821,7 +821,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOUsesNegotiatedSpeedAndD
     DICETransaction tx(io);
 
     std::optional<AsyncStatus> readStatus;
-    io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
+    (void)io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
                   [&readStatus](AsyncStatus status, uint32_t value) {
                        readStatus = status;
                        EXPECT_EQ(value, kTxEntryQuadlets);
@@ -859,7 +859,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesTimeo
     bus.SetScript(kRequests, kResponses);
 
     std::optional<AsyncStatus> readStatus;
-    io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
+    (void)io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
                   [&readStatus](AsyncStatus status, uint32_t value) {
                       readStatus = status;
                       EXPECT_EQ(value, 0U);
@@ -885,7 +885,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOReadQuadPropagatesShort
     bus.SetScript(kRequests, kResponses);
 
     std::optional<AsyncStatus> readStatus;
-    io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
+    (void)io.ReadQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kSize),
                   [&readStatus](AsyncStatus status, uint32_t value) {
                       readStatus = status;
                       EXPECT_EQ(value, 0U);
@@ -901,7 +901,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOWriteQuadUsesNegotiated
     ProtocolRegisterIO io(bus, bus, 0x02);
 
     std::optional<AsyncStatus> writeStatus;
-    io.WriteQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kIsochronous),
+    (void)io.WriteQuadBE(MakeDICEAddress(kTxSectionOffset + TxOffset::kIsochronous),
                    0x00000001U,
                    [&writeStatus](AsyncStatus status) { writeStatus = status; });
 
@@ -922,7 +922,7 @@ TEST(DICEDuplexBringupControllerTests, ProtocolRegisterIOCompareSwap64UsesLockAn
 
     std::optional<AsyncStatus> lockStatus;
     std::optional<uint64_t> previousOwner;
-    io.CompareSwap64BE(MakeDICEAddress(ownerOffset),
+    (void)io.CompareSwap64BE(MakeDICEAddress(ownerOffset),
                        kOwnerNoOwner,
                        0xFFC0000100000000ULL,
                        [&lockStatus, &previousOwner](AsyncStatus status, uint64_t value) {

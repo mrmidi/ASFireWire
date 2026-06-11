@@ -286,7 +286,12 @@ public:
     uint64_t GetLength() const { return length_; }
 };
 
-class IOBufferMemoryDescriptor : public OSObject {
+class IOMemoryDescriptor : public OSObject {
+public:
+    virtual kern_return_t GetAddressRange(IOAddressSegment* range) = 0;
+};
+
+class IOBufferMemoryDescriptor : public IOMemoryDescriptor {
     void* buffer_{nullptr};
     uint64_t length_{0};
 public:
@@ -311,7 +316,7 @@ public:
         return kIOReturnSuccess;
     }
 
-    kern_return_t GetAddressRange(IOAddressSegment* range) {
+    virtual kern_return_t GetAddressRange(IOAddressSegment* range) override {
         if (!range) return kIOReturnBadArgument;
         range->address = reinterpret_cast<uint64_t>(buffer_);
         range->length = length_;

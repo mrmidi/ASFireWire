@@ -15,9 +15,9 @@ add_executable(IsochReceiveContextTests
     IsochRxDmaRingTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/AudioClockPublisher.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/DirectInputWriter.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Rx/RxAudioPacketProcessor.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/DirectInputWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
     "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
@@ -106,10 +106,20 @@ add_audio_test(IsochTxDescriptorSlabTests
     "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
 )
 
+# Isoch TX DMA Ring Tests
+add_audio_test(IsochTxDmaRingTests
+    IsochTxDmaRingTests.cpp
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
+    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
+    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
+)
+
 # SYT generator tests
 add_audio_test(SYTGeneratorTests
     SYTGeneratorTests.cpp
-    "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/SYTGenerator.cpp"
 )
 
 
@@ -128,6 +138,15 @@ add_audio_test(AudioEndpointRuntimeTests
 # Audio Profile Registry Tests
 add_audio_test(AudioProfileRegistryTests
     AudioProfileRegistryTests.cpp
+)
+
+# DICE Profile Registry and Quirks Tests
+add_audio_test(DiceProfileTests
+    DiceProfileTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/AudioProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfileRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
 )
 
 # IT Descriptor Layout Tests
