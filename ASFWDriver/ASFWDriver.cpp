@@ -79,20 +79,6 @@ class ASFWDriverUserClient;
 namespace {
 constexpr uint64_t kAsyncWatchdogPeriodUsec = 1000; // 1 ms tick (hybrid: interrupt + timer backup)
 
-[[nodiscard]] constexpr ASFW::Encoding::AudioWireFormat ResolveHostToDeviceWireFormat(
-    uint32_t vendorId,
-    uint32_t modelId,
-    uint32_t pcmChannels,
-    uint32_t am824Slots) noexcept {
-    if (vendorId == ASFW::Audio::DeviceProtocolFactory::kFocusriteVendorId &&
-        modelId == ASFW::Audio::DeviceProtocolFactory::kSPro24DspModelId &&
-        pcmChannels == 8 &&
-        am824Slots == 9) {
-        return ASFW::Encoding::AudioWireFormat::kRawPcm24In32;
-    }
-    return ASFW::Encoding::AudioWireFormat::kAM824;
-}
-
 [[nodiscard]] ASFW::IRM::IRMClient::LocalIRMAccess
 MakeLocalIRMAccess(const std::shared_ptr<HardwareInterface>& hardware) {
     return ASFW::IRM::IRMClient::LocalIRMAccess{

@@ -38,10 +38,6 @@ public:
     virtual kern_return_t Start(IOService* provider) override;
     virtual kern_return_t Stop(IOService* provider) override;
 
-    // RPC method: AudioDriver calls this to start/stop audio streaming for this GUID.
-    virtual kern_return_t StartAudioStreaming();
-    virtual kern_return_t StopAudioStreaming();
-    virtual kern_return_t RequestTxPayloadPreparation(uint64_t requestGeneration);
     virtual kern_return_t CopyDirectAudioMemory(IOMemoryDescriptor** outOutputMemory,
                                                 IOMemoryDescriptor** outInputMemory,
                                                 IOMemoryDescriptor** outControlMemory,
@@ -51,6 +47,9 @@ public:
                                                 uint32_t* outInputChannels,
                                                 uint32_t* outSampleRateHz,
                                                 uint64_t* outGeneration);
+
+    virtual kern_return_t StartAudioStreaming();
+    virtual kern_return_t StopAudioStreaming();
 
     /**
      * @brief Allocate memory resources for isochronous audio transmit.

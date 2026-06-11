@@ -134,8 +134,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
 }
 
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
-    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire) &&
-                       runtime.directAudioEngine.IsBound();
+    const bool bound = runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
     const auto snapshot = ASFW::Audio::Runtime::CaptureDirectAudioDebugSnapshot(
         runtime.directAudioGraph,
         bound,
@@ -148,38 +147,17 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
 
     ASFW_LOG(
         DirectAudio,
-        "ADK FORCED CORE (%{public}s) bound=%d writeEnd=%llu playback=[%llu,%llu) oldest=%llu avail=%llu sched=%llu completed=%llu",
+        "ADK FORCED CORE (%{public}s) bound=%d writeEnd=%llu playback=[%llu,%llu) oldest=%llu avail=%llu",
         context ? context : "unknown",
         snapshot.bound,
         snapshot.outputClientWriteEndFrame,
         snapshot.playbackRingReadFrame,
         snapshot.playbackRingWriteFrame,
         snapshot.playbackRingOldestValidFrame,
-        snapshot.playbackRingAvailableFrames,
-        snapshot.txScheduledSampleFrame,
-        snapshot.txCompletedSampleFrame);
+        snapshot.playbackRingAvailableFrames);
     ASFW_LOG(
         DirectAudio,
-        "ADK FORCED PREP minDistance=%llu prepared=%llu startup=%llu",
-        snapshot.txMinimumPreparationDistance,
-        snapshot.txPreparedPcmSlots,
-        snapshot.txStartupSilenceSlots);
-    ASFW_LOG(
-        DirectAudio,
-        "ADK FORCED COMPLETE pcm=%llu startupSilence=%llu hash(match=%llu mismatch=%llu) faults(readAhead=%llu overwritten=%llu deadline=%llu ownership=%llu payload=%llu stops=%llu)",
-        snapshot.txCompletedPcmSlots,
-        snapshot.txCompletedStartupSilenceSlots,
-        snapshot.txCompletedPayloadHashMatches,
-        snapshot.txCompletedPayloadHashMismatches,
-        snapshot.txReadAheadFaults,
-        snapshot.txSourceOverwrittenFaults,
-        snapshot.txPreparationDeadlineFaults,
-        snapshot.txSlotOwnershipFaults,
-        snapshot.txPayloadMismatchFaults,
-        snapshot.txImmediateStops);
-    ASFW_LOG(
-        DirectAudio,
-        "ADK FORCED FATAL reason=%u generation=%llu pkt=%u distance=%u audioFrame=%llu phase=%lld valid=[%llu,%llu) hash=0x%016llx/0x%016llx",
+        "ADK FORCED FATAL reason=%u generation=%llu pkt=%u distance=%u audioFrame=%llu phase=%lld valid=[%llu,%llu)",
         static_cast<uint32_t>(snapshot.fatalReason),
         snapshot.fatalGeneration,
         snapshot.fatalPacketIndex,
@@ -187,26 +165,7 @@ void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const ch
         snapshot.fatalAudioFrame,
         snapshot.fatalOutputPhaseTicks,
         snapshot.fatalOldestValidFrame,
-        snapshot.fatalWrittenEndFrame,
-        snapshot.fatalPreparedPayloadHash,
-        snapshot.fatalCompletedPayloadHash);
-    ASFW_LOG(DirectAudio,
-             "ADK FORCED TX PREP WAKE requested=%llu handled=%llu pending=%llu requestTicks=%llu handledTicks=%llu latency(last=%llu max=%llu) requests=%llu dispatches=%llu coalesced=%llu drainPasses=%llu",
-             snapshot.txPreparationRequestedGeneration,
-             snapshot.txPreparationHandledGeneration,
-             snapshot.txPreparationRequestedGeneration >=
-                     snapshot.txPreparationHandledGeneration
-                 ? snapshot.txPreparationRequestedGeneration -
-                       snapshot.txPreparationHandledGeneration
-                 : 0,
-             snapshot.txPreparationRequestHostTicks,
-             snapshot.txPreparationHandledHostTicks,
-             snapshot.txLastPreparationLatencyTicks,
-             snapshot.txMaxPreparationLatencyTicks,
-             snapshot.txPreparationWakeRequests,
-             snapshot.txPreparationWakeDispatches,
-             snapshot.txPreparationWakeCoalesced,
-             snapshot.txPreparationDrainPasses);
+        snapshot.fatalWrittenEndFrame);
 }
 
 } // namespace ASFW::Audio::DriverKit::DirectDiagnostics
@@ -307,13 +266,12 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
         .audioDevice = ivars.audioDevice.get(),
     };
 
-    const bool bound = ivars.runtime.directAudioEngine.Bind(ivars.runtime.directAudioGraph);
     ivars.runtime.directAudioDebugLog.Reset();
     ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
-    ivars.runtime.directAudioSkeletonBound.store(bound, std::memory_order_release);
+    ivars.runtime.directAudioSkeletonBound.store(true, std::memory_order_release);
     ASFW_LOG(DirectAudio,
              "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
-             bound ? "bound" : "inactive",
+             "bound",
              static_cast<const void*>(ivars.runtime.directAudioGraph.memory.outputBase),
              ivars.runtime.directAudioGraph.memory.outputFrameCapacity,
              ivars.runtime.directAudioGraph.memory.outputChannels,
@@ -323,12 +281,11 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
              static_cast<void*>(ivars.runtime.directAudioGraph.control),
              static_cast<void*>(ivars.runtime.directAudioGraph.audioDevice),
              ivars.runtime.directAudioGraph.sampleRateHz);
-    return bound;
+    return true;
 }
 
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.directAudioSkeletonBound.store(false, std::memory_order_release);
-    ivars.runtime.directAudioEngine.Unbind();
     ivars.runtime.directAudioGraph = {};
     ivars.runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
     ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);

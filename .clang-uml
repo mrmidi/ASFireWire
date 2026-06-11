@@ -1,0 +1,29 @@
+# .clang-uml configuration file
+compilation_database_dir: .
+output_directory: ./diagrams
+
+# Wipe out Xcode's broken command arguments entirely
+remove_compile_flags:
+  - '.*'
+
+# Inject clean, direct flags that standard LLVM can understand
+add_compile_flags:
+  - "-std=gnu++23"
+  - "-xc++"
+  - "-fsyntax-only"
+  - "-D__DRIVERKIT__=1"
+  - "-DDEBUG=1"
+  - "-I/Volumes/SDExt/DEV/ASFireWire/ASFWDriver"
+  - "-isysroot"
+  - "/Applications/Xcode.app/Contents/Developer/Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.5.sdk"
+  - "-internal-isystem"
+  - "/Applications/Xcode.app/Contents/Developer/Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.5.sdk/System/DriverKit/usr/include/c++/v1"
+  - "-internal-externc-isystem"
+  - "/Applications/Xcode.app/Contents/Developer/Platforms/DriverKit.platform/Developer/SDKs/DriverKit25.5.sdk/System/DriverKit/usr/include"
+
+diagrams:
+  asfw_architecture:
+    type: class
+    include:
+      paths:
+        - ASFWDriver
