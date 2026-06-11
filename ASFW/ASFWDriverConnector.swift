@@ -51,7 +51,6 @@ final class ASFWDriverConnector: ObservableObject {
         case sendRawFCPCommand = 38
         case getRawFCPCommandResult = 39
         case setIsochVerbosity = 40
-        case setIsochTxVerifier = 41
         case asyncBlockRead = 44
         case asyncBlockWrite = 45
     }

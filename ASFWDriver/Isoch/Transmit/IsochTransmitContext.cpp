@@ -48,21 +48,13 @@ std::unique_ptr<IsochTransmitContext> IsochTransmitContext::Create(
     ctx->hardware_ = hw;
     ctx->dmaMemory_ = std::move(dmaMemory);
 
-    ctx->verifier_.BindRecovery(&ctx->recovery_);
-
     return ctx;
 }
 
-IsochTransmitContext::~IsochTransmitContext() noexcept {
-    verifier_.Shutdown();
-}
+IsochTransmitContext::~IsochTransmitContext() noexcept = default;
 
 void IsochTransmitContext::SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept {
     audio_.SetExternalSyncBridge(bridge);
-}
-
-void IsochTransmitContext::SetRecoveryCallback(RecoveryCallback callback) noexcept {
-    recoveryCallback_ = std::move(callback);
 }
 
 void IsochTransmitContext::SetDirectTxRuntimeBinding(
@@ -127,8 +119,6 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
         ASFW_LOG(Isoch, "IT: Configure rejected - state=%s", TxStateName(state_));
         return kIOReturnBusy;
     }
-
-    verifier_.BindRecovery(&recovery_);
 
     channel_ = channel;
     ring_.SetChannel(channel_);
@@ -198,8 +188,6 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     audio_.ResetForStart();
     ASFW_LOG(Isoch, "IT DBG START bindingSource=%p lastGen=%llu", directAudioBindingSource_,
              lastDirectAudioGeneration_);
-
-    verifier_.ResetForStart(static_cast<uint8_t>(audio_.FramesPerDataPacket()));
 
     ring_.SeedCycleTracking(*hardware_);
     audio_.SetCycleTrackingValid(true);
@@ -289,8 +277,6 @@ void IsochTransmitContext::Stop() noexcept {
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped from configured state before hardware run");
     }
-
-    verifier_.Shutdown();
 }
 
 void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
@@ -299,13 +285,8 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         return;
     }
 
-    Tx::IsochTxCaptureHook* capture = nullptr;
-    if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
-        capture = &verifier_;
-    }
-
     const auto outcome =
-        ring_.Refill(*hardware_, contextIndex_, audio_, capture, nullptr, &audio_);
+        ring_.Refill(*hardware_, contextIndex_, audio_, &audio_);
     if (audio_.HasFatalFault()) {
         StopImmediatelyForTxFault();
         return;
@@ -545,76 +526,8 @@ void IsochTransmitContext::WakeHardware() noexcept {
     ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
 }
 
-void IsochTransmitContext::KickTxVerifier() noexcept {
-    if (state_ != State::Running) {
-        return;
-    }
-
-    IsochTxVerifier::Inputs in{};
-    in.framesPerPacket = audio_.FramesPerDataPacket();
-    in.pcmChannels = audio_.ChannelCount();
-    in.am824Slots = audio_.Am824SlotCount();
-    in.audioWireFormat = audio_.WireFormat();
-    in.directOutputReady = (directAudioBindingSource_ != nullptr);
-
-    const auto& audioC = audio_.RTCounters();
-    const auto& ringC = ring_.RTCounters();
-    in.underrunSilencedPackets = audioC.directTxUnderrunSilencedPackets.load(std::memory_order_relaxed);
-    in.criticalGapEvents = ringC.criticalGapEvents.load(std::memory_order_relaxed);
-    in.dbcDiscontinuities = 0; // DBC continuity check is producer-side only now
-
-    verifier_.Kick(in);
-}
-
-void IsochTransmitContext::ServiceTxRecovery() noexcept {
-    if (state_ != State::Running) {
-        return;
-    }
-
-    const uint64_t nowNs = ASFW::LogDetail::NowNs();
-    uint32_t reasons = 0;
-    if (!recovery_.TryBegin(nowNs, reasons)) {
-        return;
-    }
-
-    const uint64_t restartIndex = recovery_.RestartCount() + 1;
-    ASFW_LOG_V0(Isoch,
-                "IT TX RECOVER: restarting IT (idx=%llu reasons=0x%08x invalid_label=%d cip=%d dbc=%d uncomplete=%d)",
-                restartIndex, reasons,
-                (reasons & IsochTxRecoveryController::kReasonInvalidLabel) != 0,
-                (reasons & IsochTxRecoveryController::kReasonCipAnomaly) != 0,
-                (reasons & IsochTxRecoveryController::kReasonDbcDiscontinuity) != 0,
-                (reasons & IsochTxRecoveryController::kReasonUncompletedOverwrite) != 0);
-
-    if (recoveryCallback_) {
-        if (recoveryCallback_(reasons)) {
-            ASFW_LOG_V0(Isoch, "IT TX RECOVER: delegated to upper-layer recovery coordinator");
-            recovery_.Complete(nowNs, reasons, true);
-            return;
-        }
-
-        ASFW_LOG_V1(Isoch,
-                    "IT TX RECOVER: upper-layer recovery delegate rejected request, will retry later");
-        recovery_.Complete(nowNs, reasons, false);
-        return;
-    }
-
-    Stop();
-    const kern_return_t kr = Start();
-    const bool ok = (kr == kIOReturnSuccess);
-    if (!ok) {
-        ASFW_LOG_V0(Isoch, "IT TX RECOVER: restart failed (kr=0x%08x), will retry", kr);
-    }
-
-    recovery_.Complete(nowNs, reasons, ok);
-}
-
 void IsochTransmitContext::LogStatistics() const noexcept {
     // No-op for now, simplified architecture.
-}
-
-void IsochTransmitContext::DumpPayloadBuffers(uint32_t numPackets) const noexcept {
-    ring_.DumpPayloadBuffers(numPackets);
 }
 
 void IsochTransmitContext::DumpDescriptorRing(uint32_t startPacket, uint32_t numPackets) const noexcept {

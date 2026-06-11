@@ -15,11 +15,6 @@ void DiceIsochHostTransport::SetTimingLossCallback(
     isoch_.SetTimingLossCallback(std::move(callback));
 }
 
-void DiceIsochHostTransport::SetTxRecoveryCallback(
-    Driver::IsochService::TxRecoveryCallback callback) noexcept {
-    isoch_.SetTxRecoveryCallback(std::move(callback));
-}
-
 kern_return_t DiceIsochHostTransport::BeginSplitDuplex(uint64_t guid) noexcept {
     return isoch_.BeginSplitDuplex(guid);
 }

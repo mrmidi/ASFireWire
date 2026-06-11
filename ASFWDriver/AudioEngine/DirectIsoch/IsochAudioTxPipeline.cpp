@@ -16,22 +16,6 @@ namespace ASFW::Isoch {
 
 namespace Direct = ASFW::AudioEngine::Direct;
 
-extern "C" __attribute__((noinline, optnone, used))
-void ASFWDebugTxFrameMatrixBreakpoint(const int32_t* sourceMatrix,
-                                      const uint32_t* encodedDestinationMatrix,
-                                      uint64_t packetFirstFrame,
-                                      uint32_t frames,
-                                      uint32_t sourceChannels,
-                                      uint32_t destinationSlots) noexcept {
-    (void)sourceMatrix;
-    (void)encodedDestinationMatrix;
-    (void)packetFirstFrame;
-    (void)frames;
-    (void)sourceChannels;
-    (void)destinationSlots;
-    __asm__ __volatile__("" ::: "memory");
-}
-
 namespace {
 
 inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualifiedOnly) noexcept {
@@ -47,44 +31,6 @@ inline uint64_t ExternalSyncStaleThresholdTicks(const bool allowStartupQualified
 
 [[maybe_unused]] [[nodiscard]] constexpr bool ShouldLogTxHotPathSample(uint64_t count) noexcept {
     return count <= 16 || (count % 8000) == 0;
-}
-
-constexpr uint64_t kTxFrameMatrixLogIntervalNs = 1'000'000'000ULL;
-constexpr uint32_t kTxFrameMatrixChunkSlots = 8;
-constexpr uint32_t kTxFrameMatrixMaxFrames = Encoding::kSamplesPerPacket48k;
-constexpr uint32_t kTxFrameMatrixMaxSlots = 16;
-
-void LogTxFrameChunk(uint64_t packetFirstFrame,
-                     uint32_t frameInPacket,
-                     uint32_t slotBase,
-                     uint32_t slotCount,
-                     const int32_t* srcFrame,
-                     uint32_t sourceChannels,
-                     const uint32_t* encodedFrame,
-                     uint32_t encodedSlots) noexcept {
-    const auto srcAt = [&](uint32_t offset) noexcept -> uint32_t {
-        const uint32_t channel = slotBase + offset;
-        return srcFrame && channel < sourceChannels
-            ? static_cast<uint32_t>(srcFrame[channel])
-            : 0;
-    };
-    const auto dstAt = [&](uint32_t offset) noexcept -> uint32_t {
-        const uint32_t slot = slotBase + offset;
-        return encodedFrame && slot < encodedSlots ? encodedFrame[slot] : 0;
-    };
-
-    ASFW_LOG(
-        Audio,
-        "TX FRAME SRC_RING packetFirst=%llu frame=%llu row=%u slots=[%u,%u) srcNative=[%08x %08x %08x %08x %08x %08x %08x %08x] dstEncodedHost=[%08x %08x %08x %08x %08x %08x %08x %08x]",
-        packetFirstFrame,
-        packetFirstFrame + frameInPacket,
-        frameInPacket,
-        slotBase,
-        slotBase + slotCount,
-        srcAt(0), srcAt(1), srcAt(2), srcAt(3),
-        srcAt(4), srcAt(5), srcAt(6), srcAt(7),
-        dstAt(0), dstAt(1), dstAt(2), dstAt(3),
-        dstAt(4), dstAt(5), dstAt(6), dstAt(7));
 }
 
 } // namespace
@@ -519,22 +465,6 @@ bool IsochAudioTxPipeline::OnTransmitSlotCompleted(
             1, std::memory_order_relaxed);
         control->counters.txCompletedPcmSlots.fetch_add(
             1, std::memory_order_relaxed);
-        if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
-            ASFW_LOG_RL(
-                Isoch, "tx/completed_payload", 1000, OS_LOG_TYPE_DEFAULT,
-                "IT TX COMPLETE pkt=%u hwPkt=%u prepDistance=%u dbc=0x%02x syt=0x%04x audioFrame=%llu phase=%lld wire=[%08x %08x] hash=0x%016llx/0x%016llx",
-                completed.packetIndex,
-                completed.hwPacketIndex,
-                metadata.preparationDistance,
-                metadata.dbc,
-                metadata.syt,
-                metadata.audioFrame,
-                metadata.outputPhaseTicks,
-                metadata.firstEncodedWords[0],
-                metadata.firstEncodedWords[1],
-                metadata.preparedPayloadHash,
-                completed.completedPayloadHash);
-        }
     } else if (control) {
         if (metadata.state == Tx::PreparedTxSlotState::SilenceFallback) {
             // Coverage miss at prepare time — ring slot was not populated.
@@ -984,9 +914,6 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
 
     // Audit and count wire payload
     uint32_t payloadFrameMask = 0;
-    uint32_t payloadChannelMask = 0;
-    int32_t payloadFirstNonzeroFrame = -1;
-    int32_t payloadFirstNonzeroChannel = -1;
     const auto wireFormat = metadata.wireFormat;
 
     for (uint32_t f = 0; f < metadata.framesPerPacket; ++f) {
@@ -1001,11 +928,6 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
 
             if (wordIsNonzero) {
                 payloadFrameMask |= (1u << f);
-                payloadChannelMask |= (1u << ch);
-                if (payloadFirstNonzeroFrame == -1) {
-                    payloadFirstNonzeroFrame = static_cast<int32_t>(f);
-                    payloadFirstNonzeroChannel = static_cast<int32_t>(ch);
-                }
             }
         }
     }
@@ -1042,28 +964,6 @@ Tx::PreparedTxPayloadResult IsochAudioTxPipeline::PreparePayload(
     out.firstSourceSamples[1] = 0;
     out.firstEncodedWords[0] = srcPayload[0];
     out.firstEncodedWords[1] = am824Slots > 1 ? srcPayload[1] : 0;
-
-    if (ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
-        ASFW_LOG_RL(
-            Isoch, "tx/prepared_clip_payload", 1000, OS_LOG_TYPE_DEFAULT,
-            "IT TX PACKET PAYLOAD: pkt=%u distance=%u dbc=0x%02x syt=0x%04x audioFrame=%llu phase=%lld wire=[%08x %08x] nonzero=%d fMask=0x%x chMask=0x%x (first f=%d ch=%d) pop=%d oldest=%llu written=%llu",
-            request.packetIndex,
-            request.distanceToHardware,
-            metadata.cip.dbc,
-            metadata.cip.syt,
-            metadata.audioFrame,
-            metadata.outputPhaseTicks,
-            out.firstEncodedWords[0],
-            out.firstEncodedWords[1],
-            (payloadFrameMask != 0) ? 1 : 0,
-            payloadFrameMask,
-            payloadChannelMask,
-            payloadFirstNonzeroFrame,
-            payloadFirstNonzeroChannel,
-            covered ? 1 : 0,
-            oldestValid,
-            writtenEnd);
-    }
 
     out.action = Tx::PreparedTxAction::Prepared;
     if (covered) {
@@ -1168,121 +1068,9 @@ void IsochAudioTxPipeline::PopulateClipStyleTxRingFromWrittenRange() noexcept {
     }
 }
 
-void IsochAudioTxPipeline::MaybeLogTxFrameMatrix(uint64_t populatedBegin,
-                                                 uint64_t populatedEnd) noexcept {
-    if (!ASFW::LogConfig::Shared().IsIsochTxVerifierEnabled()) {
-        return;
-    }
-
-    const uint32_t framesPerPacket = txPcmPacketRing_.framesPerPacket;
-    const uint32_t channels = assembler_.channelCount();
-    const uint32_t slots = txPcmPacketRing_.am824Slots;
-    if (framesPerPacket == 0 || slots == 0 ||
-        framesPerPacket > kTxFrameMatrixMaxFrames ||
-        channels > kTxFrameMatrixMaxSlots ||
-        slots > kTxFrameMatrixMaxSlots ||
-        populatedEnd < framesPerPacket) {
-        return;
-    }
-
-    const uint64_t packetFirst =
-        txPcmPacketRing_.PacketFirstFrame(populatedEnd - framesPerPacket);
-    const uint64_t packetEnd = packetFirst + framesPerPacket;
-    if (packetFirst < populatedBegin || packetEnd > populatedEnd) {
-        return;
-    }
-
-    const uint32_t ringSlot = txPcmPacketRing_.SlotForFrame(packetFirst);
-    const auto& stamp = txPcmPacketRing_.slotStamps[ringSlot];
-    if (!stamp.hasAudioWrite ||
-        stamp.begin > packetFirst ||
-        stamp.end < packetEnd) {
-        return;
-    }
-
-    const uint64_t now = ASFW::LogDetail::NowNs();
-    if (lastTxFrameMatrixLogNs_ != 0 &&
-        now - lastTxFrameMatrixLogNs_ < kTxFrameMatrixLogIntervalNs) {
-        return;
-    }
-    lastTxFrameMatrixLogNs_ = now;
-
-    const uint32_t* encodedPacket =
-        txPcmPacketRing_.PacketPayloadForTimeline(packetFirst);
-    if (!encodedPacket) {
-        return;
-    }
-
-    std::array<int32_t,
-               kTxFrameMatrixMaxFrames * kTxFrameMatrixMaxSlots>
-        sourceMatrix{};
-    std::array<uint32_t,
-               kTxFrameMatrixMaxFrames * kTxFrameMatrixMaxSlots>
-        encodedDestinationMatrix{};
-    for (uint32_t frame = 0; frame < framesPerPacket; ++frame) {
-        const int32_t* srcFrame =
-            directOutputReader_.Frame(packetFirst + frame);
-        if (srcFrame) {
-            std::copy_n(
-                srcFrame,
-                channels,
-                sourceMatrix.data() +
-                    static_cast<size_t>(frame) * kTxFrameMatrixMaxSlots);
-        }
-        std::copy_n(
-            encodedPacket + static_cast<size_t>(frame) * slots,
-            slots,
-            encodedDestinationMatrix.data() +
-                static_cast<size_t>(frame) * kTxFrameMatrixMaxSlots);
-    }
-
-    ASFWDebugTxFrameMatrixBreakpoint(sourceMatrix.data(),
-                                     encodedDestinationMatrix.data(),
-                                     packetFirst,
-                                     framesPerPacket,
-                                     channels,
-                                     slots);
-
-    ASFW_LOG(
-        Audio,
-        "TX FRAME MATRIX BEGIN source=[%llu,%llu) frames=%u channels=%u slots=%u format=%u phase=%lld lead=%lld resetMap=%d",
-        packetFirst,
-        packetEnd,
-        framesPerPacket,
-        channels,
-        slots,
-        static_cast<uint32_t>(assembler_.audioWireFormat()),
-        lastPhaseResult_.outputPhaseTicks,
-        lastPhaseResult_.leadTicks,
-        lastPhaseResult_.resetPhaseMap);
-
-    const uint32_t matrixSlots = std::max(channels, slots);
-    for (uint32_t frame = 0; frame < framesPerPacket; ++frame) {
-        const int32_t* srcFrame =
-            sourceMatrix.data() +
-            static_cast<size_t>(frame) * kTxFrameMatrixMaxSlots;
-        const uint32_t* encodedFrame =
-            encodedDestinationMatrix.data() +
-            static_cast<size_t>(frame) * kTxFrameMatrixMaxSlots;
-        for (uint32_t slotBase = 0; slotBase < matrixSlots;
-             slotBase += kTxFrameMatrixChunkSlots) {
-            const uint32_t slotCount =
-                std::min(kTxFrameMatrixChunkSlots, matrixSlots - slotBase);
-            LogTxFrameChunk(packetFirst,
-                            frame,
-                            slotBase,
-                            slotCount,
-                            srcFrame,
-                            channels,
-                            encodedFrame,
-                            slots);
-        }
-    }
-
-    ASFW_LOG(Audio,
-             "TX FRAME MATRIX END source=[%llu,%llu)",
-             packetFirst,
-             packetEnd);
+void IsochAudioTxPipeline::MaybeLogTxFrameMatrix(uint64_t /*populatedBegin*/,
+                                                 uint64_t /*populatedEnd*/) noexcept {
+    // Dev frame-matrix dump retired with the TX verifier (Stage 1 cleanup).
 }
 
 } // namespace ASFW::Isoch

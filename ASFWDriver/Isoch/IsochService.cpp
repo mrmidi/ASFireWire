@@ -106,7 +106,6 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
             return kIOReturnNoMemory;
         }
         isochTransmitContext_->SetExternalSyncBridge(&externalSyncBridge_);
-        RefreshTransmitRecoveryCallback();
     }
 
     isochTransmitContext_->SetDirectAudioBindingSource(bindingSource);
@@ -220,10 +219,6 @@ void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
 }
 
-void IsochService::SetTxRecoveryCallback(TxRecoveryCallback callback) noexcept {
-    txRecoveryCallback_ = std::move(callback);
-}
-
 kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
     if (activeGuid_ != 0 && activeGuid_ != guid) {
         ASFW_LOG(Isoch, "IsochService: GUID conflict 0x%llx (active: 0x%llx)",
@@ -242,25 +237,10 @@ void IsochService::RefreshReceiveTimingLossCallback() noexcept {
     }
 }
 
-void IsochService::RefreshTransmitRecoveryCallback() noexcept {
-    if (isochTransmitContext_) {
-        isochTransmitContext_->SetRecoveryCallback([this](uint32_t reasonBits) {
-            return OnTransmitRecoveryRequested(reasonBits);
-        });
-    }
-}
-
 void IsochService::OnReceiveTimingLossDetected() noexcept {
     if (timingLossCallback_ && activeGuid_ != 0) {
         timingLossCallback_(activeGuid_);
     }
-}
-
-bool IsochService::OnTransmitRecoveryRequested(uint32_t reasonBits) noexcept {
-    if (txRecoveryCallback_ && activeGuid_ != 0) {
-        return txRecoveryCallback_(activeGuid_, reasonBits);
-    }
-    return false;
 }
 
 } // namespace ASFW::Driver

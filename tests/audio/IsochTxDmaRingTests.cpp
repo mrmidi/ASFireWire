@@ -252,7 +252,7 @@ TEST(IsochTxDmaRingTests, ResyncCycleTracking_BugDemonstration) {
     DummyPacketProvider provider;
     
     // Call Refill.
-    const auto outcome = ring.Refill(hw, /*contextIndex=*/0, provider, nullptr, nullptr);
+    const auto outcome = ring.Refill(hw, /*contextIndex=*/0, provider);
     ASSERT_TRUE(outcome.ok);
 
     // Inspect the outcome's hwTimestamp (which is outputLastTimestamp & 0x1FFF).
@@ -297,7 +297,7 @@ TEST(IsochTxDmaRingTests, PrimeAndRefillPublishPayloadThenBarrierThenDescriptor)
             ::DMAContextHelpers::IsoXmitCommandPtr(0)),
         commandPointer);
 
-    const auto refill = ring.Refill(hw, 0, provider, nullptr, nullptr);
+    const auto refill = ring.Refill(hw, 0, provider);
     ASSERT_TRUE(refill.ok);
     ASSERT_EQ(refill.refillPacketCount, 4U);
     ASSERT_EQ(memory.events.size(), refill.refillPacketCount * 3U);
@@ -416,7 +416,7 @@ TEST(IsochTxDmaRingTests,
             Layout::kBlocksPerPacket);
     RecordingCompletionObserver observer;
     const auto refill =
-        ring.Refill(hw, 0, provider, nullptr, nullptr, &observer);
+        ring.Refill(hw, 0, provider, &observer);
 
     EXPECT_FALSE(refill.ok);
     ASSERT_FALSE(observer.completedSlots.empty());
@@ -473,7 +473,7 @@ TEST(IsochTxDmaRingTests,
             Layout::kBlocksPerPacket);
     RecordingCompletionObserver observer;
     const auto refill =
-        ring.Refill(hw, 0, provider, nullptr, nullptr, &observer);
+        ring.Refill(hw, 0, provider, &observer);
 
     ASSERT_TRUE(refill.ok);
     const auto fallback = std::find_if(

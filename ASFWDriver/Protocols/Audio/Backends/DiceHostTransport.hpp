@@ -60,7 +60,6 @@ public:
         : isoch_(isoch) {}
 
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
-    void SetTxRecoveryCallback(Driver::IsochService::TxRecoveryCallback callback) noexcept;
 
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
     [[nodiscard]] kern_return_t ReservePlaybackResources(uint64_t guid,

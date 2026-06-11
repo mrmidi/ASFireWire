@@ -141,7 +141,6 @@ uint8_t LogConfig::GetMusicSubunitVerbosity() const { return 0; }
 uint8_t LogConfig::GetDICEVerbosity() const { return 0; }
 uint8_t LogConfig::GetIsochVerbosity() const { return 0; }
 bool LogConfig::IsHexDumpsEnabled() const { return false; }
-bool LogConfig::IsIsochTxVerifierEnabled() const { return false; }
 bool LogConfig::IsStatisticsEnabled() const { return false; }
 bool LogConfig::IsAudioAutoStartEnabled() const { return false; }
 
@@ -159,7 +158,6 @@ void LogConfig::SetMusicSubunitVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetDICEVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetIsochVerbosity(uint8_t) { /* no-op stub */ }
 void LogConfig::SetHexDumps(bool) { /* no-op stub */ }
-void LogConfig::SetIsochTxVerifierEnabled(bool) { /* no-op stub */ }
 void LogConfig::SetStatistics(bool) { /* no-op stub */ }
 void LogConfig::SetAudioAutoStartEnabled(bool) { /* no-op stub */ }
 

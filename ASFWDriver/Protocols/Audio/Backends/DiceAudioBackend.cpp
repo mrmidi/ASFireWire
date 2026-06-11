@@ -55,20 +55,11 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
     hostTransport_.SetTimingLossCallback([this](uint64_t guid) {
         HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTimingLoss);
     });
-    hostTransport_.SetTxRecoveryCallback([this](uint64_t guid, uint32_t reasonBits) {
-        ASFW_LOG_WARNING(Audio,
-                         "DiceAudioBackend: TX recovery requested GUID=%llx reasons=0x%08x",
-                         guid,
-                         reasonBits);
-        HandleRecoveryEvent(guid, DICE::DiceRestartReason::kRecoverAfterTxFault);
-        return true;
-    });
 }
 
 DiceAudioBackend::~DiceAudioBackend() noexcept {
     DICE::NotificationMailbox::ClearObserver(this);
     hostTransport_.SetTimingLossCallback({});
-    hostTransport_.SetTxRecoveryCallback({});
     if (lock_) {
         IOLockFree(lock_);
         lock_ = nullptr;

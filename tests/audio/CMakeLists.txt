@@ -53,11 +53,6 @@ add_audio_test(CIPHeaderBuilderTests
     CIPHeaderBuilderTests.cpp
 )
 
-# TX Verifier Decode Tests
-add_audio_test(TxVerifierDecodeTests
-    TxVerifierDecodeTests.cpp
-)
-
 # Blocking Cadence Tests
 add_audio_test(BlockingCadenceTests
     BlockingCadenceTests.cpp
@@ -148,11 +143,6 @@ add_audio_test(ExternalSyncBridgeTests
 # External sync discipline (48k) tests
 add_audio_test(ExternalSyncDiscipline48kTests
     ExternalSyncDiscipline48kTests.cpp
-)
-
-# SimITEngine Tests
-add_audio_test(SimITEngineTests
-    SimITEngineTests.cpp
 )
 
 # Audio Profile Registry Tests
