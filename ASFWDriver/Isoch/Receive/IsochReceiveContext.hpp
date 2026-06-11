@@ -133,6 +133,7 @@ private:
     uint64_t rxCycleHostTicks_{0};
 
     uint32_t sytConsecutiveValid_{0};
+    bool rxCadenceEstablishedLogged_{false};
     TimingLossCallback timingLossCallback_{nullptr};
 
     Registers GetRegisters(uint8_t index) const;

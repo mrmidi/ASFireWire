@@ -38,7 +38,8 @@ size_t IsochDMAMemoryManager::RoundUp(size_t v, size_t align) noexcept {
 }
 
 bool IsochDMAMemoryManager::ValidateConfig() const noexcept {
-    if (cfg_.numDescriptors == 0 || cfg_.packetSizeBytes == 0) {
+    if (cfg_.numDescriptors == 0 ||
+        (cfg_.allocatePayloadSlab && cfg_.packetSizeBytes == 0)) {
         return false;
     }
     if (cfg_.descriptorAlignment < kMinDescriptorAlign) {
@@ -71,17 +72,23 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
     const size_t descSlabBytes = RoundUp(descBytesRaw + descHeaderRoom, kMinSlabRounding);
 
     // Payload slab: exact ring length in bytes, plus headroom for IOVA alignment.
+    // Zero-copy TX uses a separately shared producer slab and explicitly disables
+    // this allocation so there cannot be a second, stale DMA payload owner.
     size_t payloadBytesRaw = 0;
-    if (__builtin_mul_overflow(cfg_.numDescriptors, cfg_.packetSizeBytes, &payloadBytesRaw)) {
+    if (cfg_.allocatePayloadSlab &&
+        __builtin_mul_overflow(cfg_.numDescriptors, cfg_.packetSizeBytes, &payloadBytesRaw)) {
          ASFW_LOG(Isoch, "IsochDMAMemoryManager: payload size overflow");
          return false;
     }
-    const size_t payloadSlabBytes = RoundUp(payloadBytesRaw + (cfg_.payloadPageAlignment - 1), kMinSlabRounding);
+    const size_t payloadSlabBytes = cfg_.allocatePayloadSlab
+        ? RoundUp(payloadBytesRaw + (cfg_.payloadPageAlignment - 1), kMinSlabRounding)
+        : 0;
 
 
     ASFW_LOG(Isoch,
-             "IsochDMAMemoryManager: Initialize desc=%zu bytes payload=%zu bytes (payloadAlign=%zu)",
-             descSlabBytes, payloadSlabBytes, cfg_.payloadPageAlignment);
+             "IsochDMAMemoryManager: Initialize desc=%zu bytes payload=%zu bytes (payloadAlign=%zu externalPayload=%d)",
+             descSlabBytes, payloadSlabBytes, cfg_.payloadPageAlignment,
+             !cfg_.allocatePayloadSlab);
 
     // Initialize descriptor slab
     if (!descMgr_.Initialize(hw, descSlabBytes)) {
@@ -92,31 +99,30 @@ bool IsochDMAMemoryManager::Initialize(ASFW::Driver::HardwareInterface& hw) {
              "IsochDMAMemoryManager: Descriptor slab - vaddr=%p iova=0x%llx size=%zu",
              descMgr_.BaseVirtual(), descMgr_.BaseIOVA(), descMgr_.TotalSize());
 
-    // Initialize payload slab
-    if (!payloadMgr_.Initialize(hw, payloadSlabBytes)) {
-        ASFW_LOG(Isoch, "IsochDMAMemoryManager: payloadMgr.Initialize failed");
-        descMgr_.Reset();
-        return false;
-    }
-    ASFW_LOG(Isoch,
-             "IsochDMAMemoryManager: Payload slab - vaddr=%p iova=0x%llx size=%zu",
-             payloadMgr_.BaseVirtual(), payloadMgr_.BaseIOVA(), payloadMgr_.TotalSize());
+    if (cfg_.allocatePayloadSlab) {
+        if (!payloadMgr_.Initialize(hw, payloadSlabBytes)) {
+            ASFW_LOG(Isoch, "IsochDMAMemoryManager: payloadMgr.Initialize failed");
+            descMgr_.Reset();
+            return false;
+        }
+        ASFW_LOG(Isoch,
+                 "IsochDMAMemoryManager: Payload slab - vaddr=%p iova=0x%llx size=%zu",
+                 payloadMgr_.BaseVirtual(), payloadMgr_.BaseIOVA(), payloadMgr_.TotalSize());
 
-    // Payload base alignment
-    if (!payloadMgr_.AlignCursorToIOVA(cfg_.payloadPageAlignment)) {
-        ASFW_LOG(Isoch, "IsochDMAMemoryManager: AlignCursorToIOVA(%zu) failed", cfg_.payloadPageAlignment);
-        payloadMgr_.Reset();
-        descMgr_.Reset();
-        return false;
-    }
-    
-    // Safety check: ensure we still have enough space after alignment
-    if (payloadMgr_.AvailableSize() < payloadBytesRaw) {
-        ASFW_LOG(Isoch, "IsochDMAMemoryManager: payload slab too small after alignment (need %zu, have %zu)", 
-                 payloadBytesRaw, payloadMgr_.AvailableSize());
-        payloadMgr_.Reset();
-        descMgr_.Reset();
-        return false;
+        if (!payloadMgr_.AlignCursorToIOVA(cfg_.payloadPageAlignment)) {
+            ASFW_LOG(Isoch, "IsochDMAMemoryManager: AlignCursorToIOVA(%zu) failed", cfg_.payloadPageAlignment);
+            payloadMgr_.Reset();
+            descMgr_.Reset();
+            return false;
+        }
+
+        if (payloadMgr_.AvailableSize() < payloadBytesRaw) {
+            ASFW_LOG(Isoch, "IsochDMAMemoryManager: payload slab too small after alignment (need %zu, have %zu)",
+                     payloadBytesRaw, payloadMgr_.AvailableSize());
+            payloadMgr_.Reset();
+            descMgr_.Reset();
+            return false;
+        }
     }
 
     // Descriptor base alignment (optional but good practice)
@@ -149,7 +155,7 @@ std::optional<ASFW::Shared::DMARegion> IsochDMAMemoryManager::AllocateDescriptor
 }
 
 std::optional<ASFW::Shared::DMARegion> IsochDMAMemoryManager::AllocatePayloadBuffer(size_t bytes) {
-    if (!initialized_) return std::nullopt;
+    if (!initialized_ || !cfg_.allocatePayloadSlab) return std::nullopt;
 
     // Packet buffers themselves just need normal alignment; base alignment is already guaranteed by AlignCursorToIOVA.
     auto r = payloadMgr_.AllocateRegion(bytes, 16);
@@ -171,13 +177,13 @@ std::optional<ASFW::Shared::DMARegion> IsochDMAMemoryManager::AllocateRegion(siz
 uint64_t IsochDMAMemoryManager::VirtToIOVA(const std::byte* virt) const noexcept {
     const uint64_t d = descMgr_.VirtToIOVA(virt);
     if (d != 0) return d;
-    return payloadMgr_.VirtToIOVA(virt);
+    return cfg_.allocatePayloadSlab ? payloadMgr_.VirtToIOVA(virt) : 0;
 }
 
 std::byte* IsochDMAMemoryManager::IOVAToVirt(uint64_t iova) const noexcept {
     std::byte* d = descMgr_.IOVAToVirt(iova);
     if (d != nullptr) return d;
-    return payloadMgr_.IOVAToVirt(iova);
+    return cfg_.allocatePayloadSlab ? payloadMgr_.IOVAToVirt(iova) : nullptr;
 }
 
 void IsochDMAMemoryManager::PublishToDevice(const std::byte* address,
@@ -191,7 +197,7 @@ void IsochDMAMemoryManager::PublishToDevice(const std::byte* address,
         descMgr_.PublishRange(address, length);
         return;
     }
-    if (payloadMgr_.VirtToIOVA(address) != 0) {
+    if (cfg_.allocatePayloadSlab && payloadMgr_.VirtToIOVA(address) != 0) {
         payloadMgr_.PublishRange(address, length);
         return;
     }
@@ -208,7 +214,7 @@ void IsochDMAMemoryManager::FetchFromDevice(const std::byte* address,
         descMgr_.FetchRange(address, length);
         return;
     }
-    if (payloadMgr_.VirtToIOVA(address) != 0) {
+    if (cfg_.allocatePayloadSlab && payloadMgr_.VirtToIOVA(address) != 0) {
         payloadMgr_.FetchRange(address, length);
         return;
     }
@@ -216,11 +222,13 @@ void IsochDMAMemoryManager::FetchFromDevice(const std::byte* address,
 }
 
 size_t IsochDMAMemoryManager::TotalSize() const noexcept {
-    return descMgr_.TotalSize() + payloadMgr_.TotalSize();
+    return descMgr_.TotalSize() +
+           (cfg_.allocatePayloadSlab ? payloadMgr_.TotalSize() : 0);
 }
 
 size_t IsochDMAMemoryManager::AvailableSize() const noexcept {
-    return descMgr_.AvailableSize() + payloadMgr_.AvailableSize();
+    return descMgr_.AvailableSize() +
+           (cfg_.allocatePayloadSlab ? payloadMgr_.AvailableSize() : 0);
 }
 
 } // namespace ASFW::Isoch::Memory

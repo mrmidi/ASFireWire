@@ -4,6 +4,7 @@
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
 #include "../../Runtime/ZtsAuthority.hpp"
+#include "../../Wire/AMDTP/RxSytCadence.hpp"
 
 
 #include <atomic>
@@ -91,6 +92,7 @@ struct AudioTransportControlBlock final {
     DeviceTimeline device{};
     AudioRtCounters counters{};
     ZtsAuthorityState ztsState{};
+    ASFW::Driver::RxSytCadence rxSytCadence{};
 
     std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
     std::atomic<uint64_t> fatalGeneration{0};
@@ -182,6 +184,7 @@ struct AudioTransportControlBlock final {
         device.Reset();
         counters.Reset();
         ztsState.Reset();
+        rxSytCadence.Reset();
 
         fatalReason.store(FatalStreamReason::None, std::memory_order_release);
         fatalGeneration.store(0, std::memory_order_release);

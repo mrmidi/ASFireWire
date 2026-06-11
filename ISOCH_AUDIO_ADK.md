@@ -421,10 +421,10 @@ kern_return_t FreeTxIsochResources();
 // Writes startAnchor to the control block BEFORE arming cycleMatch.
 kern_return_t StartTxStream(uint32_t channel, uint32_t speed);
 kern_return_t StopTxStream();
-
-// One-shot bracketed read for seeding; steady state uses the seqlock clockPair.
-kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
 ```
+
+Clock samples are published by the isoch core through the shared control block.
+There is no separate audio-facing raw `CYCLE_TIMER` RPC.
 
 RX mirrors this later (`AllocateRxIsochResources`: core fills an RX metadata ring
 with `{actualLength, descriptorTimestamp}` per received packet — which is exactly

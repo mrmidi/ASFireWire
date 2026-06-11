@@ -12,6 +12,8 @@
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
 
+#include <new>
+
 bool ASFWAudioDriver::init()
 {
     bool result = super::init();
@@ -20,11 +22,12 @@ bool ASFWAudioDriver::init()
         return false;
     }
 
-    ivars = IONewZero(ASFWAudioDriver_IVars, 1);
-    if (!ivars) {
+    auto* ivarStorage = IONewZero(ASFWAudioDriver_IVars, 1);
+    if (!ivarStorage) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to allocate ivars");
         return false;
     }
+    ivars = ::new (ivarStorage) ASFWAudioDriver_IVars{};
 
     ASFW::Audio::DriverKit::ResetDeviceStateFromDefaultConfig(*ivars);
     ASFW_LOG(Audio, "ASFWAudioDriver: init() succeeded");
@@ -56,6 +59,7 @@ void ASFWAudioDriver::free()
         ivars->controlBuffer.reset();
         ivars->audioDevice.reset();
         ivars->workQueue.reset();
+        ivars->~ASFWAudioDriver_IVars();
         IOSafeDeleteNULL(ivars, ASFWAudioDriver_IVars, 1);
     }
 

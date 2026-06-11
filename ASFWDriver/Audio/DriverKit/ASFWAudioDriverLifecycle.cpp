@@ -189,12 +189,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return result;
     };
 
-    const kern_return_t startKr = ivars->device.audioNub->StartAudioStreaming();
-    if (startKr != kIOReturnSuccess) {
-        return failStartDevice(startKr, "StartAudioStreaming");
-    }
-    streamingStarted = true;
-
     // --- Allocate and map shared TX isoch resources ---
     {
         const auto* baseProfile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
@@ -263,9 +257,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         ivars->runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
         ivars->runtime.txSlotProvider.isoChannel = txConfig.sid;
 
-        ivars->runtime.txCycleTimeline.controlBlock = controlBlock;
-        ivars->runtime.txCycleTimeline.wrapCount = 0;
-        ivars->runtime.txCycleTimeline.lastSeconds = 0;
+        ivars->runtime.txExecutionTimeline.controlBlock = controlBlock;
 
         if (!ivars->runtime.txStreamEngine.Configure(*profile, txConfig)) {
             ASFW_LOG(Audio, "ASFWAudioDriver: txStreamEngine Configure failed");
@@ -281,6 +273,19 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
 
         ASFW_LOG(Audio, "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u", txConfig.sid);
     }
+
+    // Seed the transmit ring with cadence-correct NO_INFO packets before
+    // StartAudioStreaming
+    // raises the IT DMA RUN bit. Without this, the first refill interrupt
+    // (~8 packets in) observes commitGen=0 and fatally stops the context before
+    // the ZTS pump produces its first packet, leaving the channel off the wire.
+    ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(*ivars);
+
+    const kern_return_t startKr = ivars->device.audioNub->StartAudioStreaming();
+    if (startKr != kIOReturnSuccess) {
+        return failStartDevice(startKr, "StartAudioStreaming");
+    }
+    streamingStarted = true;
 
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const auto policySnap = policy.Snapshot();

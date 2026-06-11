@@ -177,12 +177,17 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     controlBlock_->interruptInterval = interruptInterval;
     controlBlock_->ztsPeriodFrames = ztsPeriodFrames;
 
-    // Reset runtime counters / status
+    // Reset consumer-owned runtime counters / status only. exposeCursor is
+    // PRODUCER-owned (the audio side advances it as it commits slots) and the
+    // audio-side prefill has already run by the time this consumer maps the
+    // block — resetting it here would stomp the prefill's committed lead back to
+    // zero, desyncing the pump's lead math and starving the ring after the
+    // prefilled packets drain. The buffer is freshly allocated (zero-filled)
+    // each start, so exposeCursor is 0 unless the prefill legitimately set it.
     controlBlock_->streamGeneration.store(0, std::memory_order_relaxed);
     controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_relaxed);
     controlBlock_->completionCursor.store(0, std::memory_order_relaxed);
     controlBlock_->completionStampCount.store(0, std::memory_order_relaxed);
-    controlBlock_->exposeCursor.store(0, std::memory_order_relaxed);
 
     ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadIOVA=0x%llx metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
              payloadIOVA_, metadataRing_, controlBlock_, numSlots, maxPacketBytes);
@@ -204,6 +209,12 @@ kern_return_t IsochTransmitContext::Start() noexcept {
         ASFW_LOG(Isoch, "IT: Cannot start - no DMA ring");
         return kIOReturnNoResources;
     }
+    if (!payloadBase_ || payloadIOVA_ == 0 || !metadataRing_ || !controlBlock_ ||
+        controlBlock_->numSlots == 0 || controlBlock_->slotStrideBytes == 0 ||
+        controlBlock_->maxPacketBytes == 0) {
+        ASFW_LOG(Isoch, "IT: Cannot start - shared TX payload contract is incomplete");
+        return kIOReturnNotReady;
+    }
 
     packetsAssembled_ = 0;
     tickCount_ = 0;
@@ -224,11 +235,16 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
 
-    if (controlBlock_) {
-        controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kRunning, std::memory_order_release);
+    const auto primeStats =
+        ring_.Prime(payloadIOVA_, controlBlock_->numSlots, controlBlock_->slotStrideBytes);
+    if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
+        ASFW_LOG(Isoch, "IT: Failed to prime descriptor ring against shared payload slab");
+        return kIOReturnInternalError;
     }
-
-    ring_.Prime();
+    packetsAssembled_ = primeStats.packetsAssembled;
+    controlBlock_->statusWord.store(
+        ASFW::IsochTransport::TxStreamStatus::kRunning,
+        std::memory_order_release);
     
     Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_));

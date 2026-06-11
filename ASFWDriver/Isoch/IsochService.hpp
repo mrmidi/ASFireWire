@@ -97,14 +97,6 @@ public:
      */
     kern_return_t StopTxStream();
 
-    /**
-     * @brief Query the current host time and FireWire cycle timer snapshot.
-     * @param outHostTimeMid Monotonic host system time in ticks.
-     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
-     * @param hardware Reference to the hardware interface.
-     */
-    kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware);
-
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 

@@ -66,6 +66,22 @@ TEST_F(IsochDMAMemoryManagerTest, DescriptorSlicing) {
     EXPECT_EQ(d2->virtualBase, d1->virtualBase + 32);
 }
 
+TEST_F(IsochDMAMemoryManagerTest, DescriptorOnlyModeRejectsPrivatePayloadAllocation) {
+    IsochMemoryConfig config;
+    config.numDescriptors = 16;
+    config.packetSizeBytes = 0;
+    config.descriptorAlignment = 16;
+    config.payloadPageAlignment = 4096;
+    config.allocatePayloadSlab = false;
+
+    auto manager = IsochDMAMemoryManager::Create(config);
+    ASSERT_NE(manager, nullptr);
+    ASSERT_TRUE(manager->Initialize(hardware_));
+
+    EXPECT_TRUE(manager->AllocateDescriptor(64).has_value());
+    EXPECT_FALSE(manager->AllocatePayloadBuffer(64).has_value());
+}
+
 TEST_F(IsochDMAMemoryManagerTest, PayloadSlicingAndPageAlignment) {
     IsochMemoryConfig config;
     config.numDescriptors = 2; // small slab

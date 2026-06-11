@@ -86,14 +86,6 @@ public:
      */
     virtual kern_return_t StopTxStream();
 
-    /**
-     * @brief Query the current host time and FireWire cycle timer snapshot.
-     * Offloads clock-smoothing to the ADK user client, returning raw synchronized pairs.
-     * @param outHostTimeMid Monotonic host system time in ticks.
-     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
-     */
-    virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
-
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 

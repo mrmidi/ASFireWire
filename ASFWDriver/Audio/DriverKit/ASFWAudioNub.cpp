@@ -456,27 +456,6 @@ kern_return_t IMPL(ASFWAudioNub, StopTxStream)
     return ctx->isoch.StopTxStream();
 }
 
-// Queries the synchronized host time and physical cycle timer snapshot.
-kern_return_t IMPL(ASFWAudioNub, GetCycleTimePair)
-{
-    if (!outHostTimeMid || !outCycleTimer) {
-        return kIOReturnBadArgument;
-    }
-    *outHostTimeMid = 0;
-    *outCycleTimer = 0;
-
-    if (!ivars) {
-        return kIOReturnNotReady;
-    }
-    ASFWDriver* parent = GetParentASFWDriver(ivars);
-    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
-    if (!ctx || !ctx->deps.hardware) {
-        return kIOReturnNotReady;
-    }
-
-    return ctx->isoch.GetCycleTimePair(outHostTimeMid, outCycleTimer, *ctx->deps.hardware);
-}
-
 void ASFWAudioNub::SetChannelCount(uint32_t channels)
 {
     if (!ivars) return;

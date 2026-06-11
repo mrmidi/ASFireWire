@@ -121,6 +121,7 @@ kern_return_t IsochReceiveContext::Start() {
     cursorInitialized_ = false;
     rxZtsPublishCount_ = 0;
     sytConsecutiveValid_ = 0;
+    rxCadenceEstablishedLogged_ = false;
     (void)ASFW::Timing::initializeHostTimebase();
     rxCycleHostTicks_ = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
 
@@ -219,13 +220,18 @@ uint32_t IsochReceiveContext::Poll() {
     }
 
     const uint64_t drainHostTicks = mach_absolute_time();
+    const uint32_t drainCycleTimer =
+        hardware_ ? hardware_->ReadCycleTime() : 0;
     uint64_t cycleHostTicks = rxCycleHostTicks_;
     if (cycleHostTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
         cycleHostTicks = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
         rxCycleHostTicks_ = cycleHostTicks;
     }
 
-    const uint32_t processed = rxRing_.DrainCompleted(*dmaMemory_, [this, drainHostTicks, cycleHostTicks](const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
+    const uint32_t processed = rxRing_.DrainCompleted(
+        *dmaMemory_,
+        [this, drainHostTicks, drainCycleTimer, cycleHostTicks](
+            const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         if (pkt.payload) {
             const uint32_t channels = directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
@@ -251,13 +257,63 @@ uint32_t IsochReceiveContext::Poll() {
                     cycleHostTicks * static_cast<uint64_t>((kRxTimingGroupPackets - 1u) - packetInGroup);
                 const uint64_t packetHostTicks =
                     (drainHostTicks > packetBackTicks) ? (drainHostTicks - packetBackTicks) : drainHostTicks;
+                const auto drainCycle =
+                    ASFW::Timing::decodeCycleTimer(drainCycleTimer);
+                int64_t packetCycleTicks =
+                    ASFW::Timing::tstampToOffsets(drainCycle) -
+                    static_cast<int64_t>((kRxTimingGroupPackets - 1u) -
+                                         packetInGroup) *
+                        static_cast<int64_t>(ASFW::Timing::kTicksPerCycle);
+                constexpr int64_t kCycleTimerDomainTicks =
+                    static_cast<int64_t>(ASFW::Timing::kFWTimeWrapSeconds) *
+                    static_cast<int64_t>(ASFW::Timing::kTicksPerSecond);
+                packetCycleTicks %= kCycleTimerDomainTicks;
+                if (packetCycleTicks < 0) {
+                    packetCycleTicks += kCycleTimerDomainTicks;
+                }
+                const uint32_t packetSeconds = static_cast<uint32_t>(
+                    packetCycleTicks / ASFW::Timing::kTicksPerSecond);
+                const int64_t packetSecondTicks =
+                    packetCycleTicks % ASFW::Timing::kTicksPerSecond;
+                const uint32_t packetCycle = static_cast<uint32_t>(
+                    packetSecondTicks / ASFW::Timing::kTicksPerCycle);
+                const uint32_t packetOffset = static_cast<uint32_t>(
+                    packetSecondTicks % ASFW::Timing::kTicksPerCycle);
+                const uint32_t packetCycleTimer =
+                    (packetSeconds << ASFW::Timing::kCycleTimerSecondsShift) |
+                    (packetCycle << ASFW::Timing::kCycleTimerCyclesShift) |
+                    packetOffset;
                 bool rxClockEstablished = false;
                 if (result.hasValidCip) {
                     if (result.syt != 0xFFFF) {
+                        if (directInputView_.control) {
+                            const bool cadenceAccepted =
+                                directInputView_.control->rxSytCadence.Observe(
+                                result.syt, packetCycleTimer);
+                            if (cadenceAccepted && !rxCadenceEstablishedLogged_) {
+                                ASFW::Driver::RxSytCadence::Snapshot cadence{};
+                                if (directInputView_.control->rxSytCadence.TrySnapshot(cadence) &&
+                                    cadence.established) {
+                                    // Saffire's TX reader trails the RX writer by
+                                    // 256 entries in the shared 512-entry ring.
+                                    const uint16_t delayedReadIndex =
+                                        static_cast<uint16_t>(
+                                            (cadence.writeIndex +
+                                             ASFW::Driver::RxSytCadence::kReadDelay) &
+                                            (ASFW::Driver::RxSytCadence::kEntryCount - 1));
+                                    ASFW_LOG(Isoch,
+                                             "IR RX CADENCE ESTABLISHED updates=%u rollingTicks=%u readIndex=%u",
+                                             cadence.validUpdates,
+                                             cadence.rollingCadenceTicks,
+                                             delayedReadIndex);
+                                    rxCadenceEstablishedLogged_ = true;
+                                }
+                            }
+                        }
                         if (sytConsecutiveValid_ < 16) {
                             ++sytConsecutiveValid_;
                             if (sytConsecutiveValid_ == 16) {
-                                ASFW_LOG(Isoch, "IR SYT CLOCK ESTABLISHED syt=0x%04x fdf=0x%02x dbs=%u",
+                                ASFW_LOG(Isoch, "IR SYT ZTS QUALIFIED syt=0x%04x fdf=0x%02x dbs=%u",
                                          result.syt, result.fdf, result.dbs);
                             }
                         }

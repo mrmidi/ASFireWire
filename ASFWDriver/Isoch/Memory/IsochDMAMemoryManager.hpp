@@ -16,12 +16,12 @@ struct IsochMemoryConfig {
     size_t packetSizeBytes = 0;         // per-packet buffer size (max)
     size_t descriptorAlignment = 16;    // OHCI needs >=16
     size_t payloadPageAlignment = 16384; // modern macOS default
+    bool allocatePayloadSlab = true;    // false for zero-copy TX descriptor-only managers
 };
 
 // Dedicated DMA for Isoch: separate from Async slab.
-// Internally uses two independent DMAMemoryManager slabs:
-//  - descriptor slab: small, tight alignment
-//  - payload slab: large, with cursor aligned so buffers start at payloadPageAlignment IOVA boundary
+// The descriptor slab always exists. RX can additionally own a payload slab;
+// zero-copy TX disables it and uses the externally shared producer slab.
 class IsochDMAMemoryManager final : public IIsochDMAMemory {
 public:
     using IIsochDMAMemory::FetchFromDevice;
@@ -32,7 +32,7 @@ public:
 
     ~IsochDMAMemoryManager() override;
 
-    // Allocate the two slabs using the same AllocateDMA path as Async.
+    // Allocate the configured slabs using the same AllocateDMA path as Async.
     bool Initialize(ASFW::Driver::HardwareInterface& hw);
 
     // IIsochDMAMemory Implementation

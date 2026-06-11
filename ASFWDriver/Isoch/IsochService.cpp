@@ -70,9 +70,10 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
-        config.packetSizeBytes = ASFW::Isoch::Tx::Layout::kMaxPacketSize;
+        config.packetSizeBytes = 0;
         config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kOHCIPageSize;
         config.payloadPageAlignment = 16384;
+        config.allocatePayloadSlab = false;
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem) {
@@ -96,6 +97,21 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     if (kr != kIOReturnSuccess) {
         ASFW_LOG(Isoch, "IsochService: IT Configure failed: 0x%08x", kr);
         return kr;
+    }
+
+    if (txPayloadSlab_ && txMetadataRing_ && txControlBlock_) {
+        const kern_return_t memKr = isochTransmitContext_->SetSharedMemoryDescriptors(
+            txPayloadSlab_.get(),
+            txMetadataRing_.get(),
+            txControlBlock_.get(),
+            interruptInterval_,
+            512);
+        if (memKr != kIOReturnSuccess) {
+            ASFW_LOG(Isoch,
+                     "IsochService: IT shared-memory setup failed: 0x%08x",
+                     memKr);
+            return memKr;
+        }
     }
 
     ASFW_LOG(Isoch, "IsochService: Starting IT on channel %u (Direct-Only)", channel);
@@ -267,9 +283,10 @@ kern_return_t IsochService::StartTxStream(uint32_t channel, uint32_t speed, Hard
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
-        config.packetSizeBytes = ASFW::Isoch::Tx::Layout::kMaxPacketSize;
+        config.packetSizeBytes = 0;
         config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kOHCIPageSize;
         config.payloadPageAlignment = 16384;
+        config.allocatePayloadSlab = false;
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
         if (!isochMem) {
@@ -313,19 +330,6 @@ kern_return_t IsochService::StopTxStream() {
     if (isochTransmitContext_) {
         isochTransmitContext_->Stop();
     }
-    return kIOReturnSuccess;
-}
-
-kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware) {
-    if (!outHostTimeMid || !outCycleTimer) {
-        return kIOReturnBadArgument;
-    }
-
-    const uint32_t cycleTimer = hardware.Read(static_cast<Register32>(Register32::kCycleTimer));
-    const uint64_t hostTime = mach_absolute_time();
-
-    *outHostTimeMid = hostTime;
-    *outCycleTimer = cycleTimer;
     return kIOReturnSuccess;
 }
 

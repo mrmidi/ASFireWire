@@ -8,6 +8,7 @@
 #include "../../../Logging/Logging.hpp"
 #include "../DICE/Core/DICENotificationMailbox.hpp"
 #include "../DeviceProtocolFactory.hpp"
+#include "../../DriverKit/Config/DICE/DiceProfileRegistry.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/OSSharedPtr.h>
@@ -267,15 +268,31 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
         return;
     }
 
+    // Check modelid/vendor id first to find a known profile.
+    ASFW::Isoch::Audio::DICE::DiceDeviceIdentity identity{
+        .guid = record->guid,
+        .vendorId = record->vendorId,
+        .modelId = record->modelId
+    };
+    static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
+    const auto* profile = diceRegistry.FindProfile(identity);
+    if (!profile) {
+        // We neither retrieve stream geometry for unknown device nor fail loudly.
+        // Skip the logic of retrieving geometry and stick to only known profiles for now.
+        // TODO: Support dynamic stream geometry retrieval for unknown devices.
+        return;
+    }
+
     auto protocol = runtime_.FindShared(guid);
 
     Model::ASFWAudioDevice dev{};
     dev.guid = record->guid;
     dev.vendorId = record->vendorId;
     dev.modelId = record->modelId;
-    dev.deviceName = !record->vendorName.empty() && !record->modelName.empty()
-        ? (record->vendorName + " " + record->modelName)
-        : std::string(protocol ? protocol->GetName() : "DICE Audio");
+    dev.deviceName = profile->Name();
+    dev.inputChannelCount = profile->RxChannelCount();
+    dev.outputChannelCount = profile->TxChannelCount();
+    dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
 
