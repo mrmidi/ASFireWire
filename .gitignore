@@ -63,3 +63,17 @@ build-codex/
 
 # Xcode generated projects
 ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
+
+# In-tree reference stacks (third-party, local only — wire-compat doctrine refs)
+/firewire/
+/IOFireWireFamily.kmodproj/
+/IOFireWireAVC/
+/IOFireWireSBP2/
+/libffado-2.5.0/
+
+# Local scratch / tool artifacts
+/Testing/
+/tmp/
+/CMakeLists.txt.bak
+/validation_data.json
+__pycache__/

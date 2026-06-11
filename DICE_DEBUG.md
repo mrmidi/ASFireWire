@@ -2,6 +2,15 @@
 
 _Branch: `DICE` · Snapshot: 2026-06-06 · Device: Focusrite **Saffire PRO 24 DSP**_
 
+> **RESOLVED 2026-06-11** by commit `79e45e92` — ring buffer capacity synchronized
+> with the 512-frame ZTS period (wrap-mismatch class, same family as `0d897ecb`).
+> Real PCM now plays on the wire. Residual defect: **underruns** — the fix pins a
+> 384-frame consumer lead + 64-frame deadband inside a 512-frame ring (~128 frames
+> ≈ 2.7 ms writer headroom), and the ring cannot be widened past the ZTS period
+> without reintroducing this silence bug. Treated as structural and accepted until
+> the `ISOCH_AUDIO_ADK.md` rebuild (slab depth independent of ZTS period, §6.4;
+> see `ISOCH_AUDIO_CLEANUP_PREP.md` §1). The analysis below is kept as history.
+
 ---
 
 ## UPDATE 2026-06-07 (later) — TX timeline offset fix + Saffire output-lead RE
