@@ -353,11 +353,6 @@ kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)
     return kr;
 }
 
-kern_return_t IMPL(ASFWAudioNub, RequestTxPayloadPreparation)
-{
-    // Obsolete: audio side now updates exposeCursor and commitGen directly in shared memory.
-    return kIOReturnSuccess;
-}
 
 kern_return_t IMPL(ASFWAudioNub, CopyDirectAudioMemory)
 {
