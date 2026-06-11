@@ -3,8 +3,8 @@
 //
 // Public façade for IT transmit.
 // Internals are modular:
-//   - Tx::IsochTxDmaRing: low-level OHCI descriptor/payload engine (no audio semantics)
-//   - IsochAudioTxPipeline: CIP/AM824 + direct ADK memory mapping
+//   - Tx::IsochTxDmaRing: low-level OHCI descriptor/payload engine (no transport semantics)
+//   - Shared transport memory mapping (payload slab, metadata ring, control block)
 
 #pragma once
 
@@ -42,33 +42,15 @@ enum class ITState {
     Stopped
 };
 
-class IsochTransmitContext {
+/**
+ * @brief Orchestrator for an Isochronous Transmit (IT) context.
+ * 
+ * This class owns the OHCI DMA ring (IsochTxDmaRing) and manages the lifecycle 
+ * of the transport. It does not interpret the payload bytes (AMDTP/CIP/Audio).
+ */
+class IsochTransmitContext final {
 public:
     using State = ITState;
-
-    // ==========================================================================
-    // Linux-style OHCI page padding constants (public API)
-    // ==========================================================================
-    static constexpr size_t kOHCIPageSize = Tx::Layout::kOHCIPageSize;
-    static constexpr size_t kOHCIPrefetchSize = Tx::Layout::kOHCIPrefetchSize;
-    static constexpr size_t kUsablePerPage = Tx::Layout::kUsablePerPage;
-
-    static constexpr uint32_t kBlocksPerPacket = Tx::Layout::kBlocksPerPacket;
-    static constexpr uint32_t kNumPackets = Tx::Layout::kNumPackets;
-    static constexpr uint32_t kRingBlocks = Tx::Layout::kRingBlocks;
-
-    static constexpr uint32_t kDescriptorStride = Tx::Layout::kDescriptorStride;
-    static constexpr uint32_t kDescriptorsPerPageRaw = Tx::Layout::kDescriptorsPerPageRaw;
-    static constexpr uint32_t kDescriptorsPerPage = Tx::Layout::kDescriptorsPerPage;
-    static constexpr uint32_t kTotalPages = Tx::Layout::kTotalPages;
-    static constexpr size_t kDescriptorRingSize = Tx::Layout::kDescriptorRingSize;
-
-    static constexpr uint32_t kMaxPacketSize = Tx::Layout::kMaxPacketSize;
-    static constexpr size_t kPayloadBufferSize = Tx::Layout::kPayloadBufferSize;
-
-    static constexpr uint32_t kGuardBandPackets = Tx::Layout::kGuardBandPackets;
-    static constexpr uint32_t kAudioWriteAhead = Tx::Layout::kAudioWriteAhead;
-    static constexpr uint32_t kMaxWriteAhead = Tx::Layout::kMaxWriteAhead;
 
     // ==========================================================================
     // Public interface
@@ -80,12 +62,24 @@ public:
         Driver::HardwareInterface* hw,
         std::shared_ptr<Memory::IIsochDMAMemory> dmaMemory) noexcept;
 
-    kern_return_t Configure(uint8_t channel,
-                            uint8_t sid,
-                            uint32_t streamModeRaw = 0,
-                            uint32_t requestedChannels = 0,
-                            uint32_t requestedAm824Slots = 0,
-                            Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824) noexcept;
+    kern_return_t Configure(uint8_t channel, uint8_t sid) noexcept;
+
+    /**
+     * @brief Map the shared memory regions allocated by the host into the Dext address space.
+     * Prepares the payload slab for DMA and resolves its physical IOVA for descriptor priming.
+     * @param payloadSlab Shared memory descriptor containing all packet payloads.
+     * @param metadataRing Shared memory descriptor containing packet metadata.
+     * @param controlBlock Shared memory descriptor containing stream control states.
+     * @param interruptInterval Interrupt interval in packets.
+     * @param ztsPeriodFrames Verification parameter for HAL ring wrap (passed through to control block).
+     */
+    kern_return_t SetSharedMemoryDescriptors(
+        IOMemoryDescriptor* payloadSlab,
+        IOMemoryDescriptor* metadataRing,
+        IOMemoryDescriptor* controlBlock,
+        uint32_t interruptInterval,
+        uint32_t ztsPeriodFrames) noexcept;
+
     kern_return_t Start() noexcept;
     void Stop() noexcept;
     
@@ -132,6 +126,18 @@ private:
     std::atomic<uint64_t> latencyBucket3_{0};
     std::atomic<uint32_t> maxRefillLatencyUs_{0};
     std::atomic<uint64_t> irqWatchdogKicks_{0};
+
+    // Shared transport memory regions
+    OSSharedPtr<IOMemoryMap> payloadMap_{nullptr};
+    OSSharedPtr<IOMemoryMap> metadataMap_{nullptr};
+    OSSharedPtr<IOMemoryMap> controlMap_{nullptr};
+
+    uint8_t* payloadBase_{nullptr};
+    ASFW::IsochTransport::TxPacketMeta* metadataRing_{nullptr};
+    ASFW::IsochTransport::TxStreamControl* controlBlock_{nullptr};
+
+    uint64_t payloadIOVA_{0};
+    OSSharedPtr<IODMACommand> payloadDmaCmd_{nullptr};
 };
 
 } // namespace Isoch

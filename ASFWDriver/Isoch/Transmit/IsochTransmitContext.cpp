@@ -50,12 +50,7 @@ std::unique_ptr<IsochTransmitContext> IsochTransmitContext::Create(
 
 IsochTransmitContext::~IsochTransmitContext() noexcept = default;
 
-kern_return_t IsochTransmitContext::Configure(uint8_t channel,
-                                              uint8_t sid,
-                                              uint32_t streamModeRaw,
-                                              uint32_t requestedChannels,
-                                              uint32_t requestedAm824Slots,
-                                              Encoding::AudioWireFormat wireFormat) noexcept {
+kern_return_t IsochTransmitContext::Configure(uint8_t channel, uint8_t sid) noexcept {
     if (state_ != State::Unconfigured && state_ != State::Stopped) {
         ASFW_LOG(Isoch, "IT: Configure rejected - state=%s", TxStateName(state_));
         return kIOReturnBusy;
@@ -77,6 +72,120 @@ kern_return_t IsochTransmitContext::Configure(uint8_t channel,
 
     state_ = State::Configured;
     ASFW_LOG(Isoch, "IT: Configured ch=%u sid=%u", channel, sid);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
+    IOMemoryDescriptor* payloadSlab,
+    IOMemoryDescriptor* metadataRing,
+    IOMemoryDescriptor* controlBlock,
+    uint32_t interruptInterval,
+    uint32_t ztsPeriodFrames) noexcept {
+
+    if (!payloadSlab || !metadataRing || !controlBlock) {
+        return kIOReturnBadArgument;
+    }
+
+    // Unmap any existing maps first
+    payloadMap_ = nullptr;
+    metadataMap_ = nullptr;
+    controlMap_ = nullptr;
+    payloadBase_ = nullptr;
+    metadataRing_ = nullptr;
+    controlBlock_ = nullptr;
+    if (payloadDmaCmd_) {
+        payloadDmaCmd_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+        payloadDmaCmd_ = nullptr;
+    }
+    payloadIOVA_ = 0;
+
+    // 1. Map Payload Slab
+    IOMemoryMap* pMap = nullptr;
+    kern_return_t kr = payloadSlab->CreateMapping(0, 0, 0, 0, 0, &pMap);
+    if (kr != kIOReturnSuccess || !pMap) {
+        ASFW_LOG(Isoch, "IT: Failed to map payload slab: 0x%08x", kr);
+        return kr;
+    }
+    payloadMap_ = OSSharedPtr<IOMemoryMap>(pMap, OSNoRetain);
+    payloadBase_ = reinterpret_cast<uint8_t*>(payloadMap_->GetAddress());
+
+    // Prepare Payload Slab for DMA (to get IOVA)
+    if (hardware_) {
+        auto dmaCmd = hardware_->CreateDMACommand();
+        if (!dmaCmd) {
+            ASFW_LOG(Isoch, "IT: Failed to create DMA command for payload slab");
+            return kIOReturnNoMemory;
+        }
+
+        IOAddressSegment segments[1];
+        uint32_t segmentCount = 1;
+        uint64_t flags = 0;
+        uint64_t slabLen = 0;
+        payloadSlab->GetLength(&slabLen);
+
+        kr = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, payloadSlab, 0, slabLen, &flags,
+                                    &segmentCount, segments);
+        if (kr != kIOReturnSuccess) {
+            ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab: 0x%08x", kr);
+            return kr;
+        }
+        payloadDmaCmd_ = std::move(dmaCmd);
+        payloadIOVA_ = segments[0].address;
+
+        if (payloadIOVA_ > 0xFFFFFFFFULL) {
+            ASFW_LOG(Isoch, "IT: Payload slab IOVA 0x%llx exceeds 32-bit range", payloadIOVA_);
+            payloadDmaCmd_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+            payloadDmaCmd_ = nullptr;
+            payloadIOVA_ = 0;
+            return kIOReturnInternalError;
+        }
+    }
+
+    // 2. Map Metadata Ring
+    IOMemoryMap* mMap = nullptr;
+    kr = metadataRing->CreateMapping(0, 0, 0, 0, 0, &mMap);
+    if (kr != kIOReturnSuccess || !mMap) {
+        ASFW_LOG(Isoch, "IT: Failed to map metadata ring: 0x%08x", kr);
+        return kr;
+    }
+    metadataMap_ = OSSharedPtr<IOMemoryMap>(mMap, OSNoRetain);
+    metadataRing_ = reinterpret_cast<ASFW::IsochTransport::TxPacketMeta*>(metadataMap_->GetAddress());
+
+    // 3. Map Control Block
+    IOMemoryMap* cMap = nullptr;
+    kr = controlBlock->CreateMapping(0, 0, 0, 0, 0, &cMap);
+    if (kr != kIOReturnSuccess || !cMap) {
+        ASFW_LOG(Isoch, "IT: Failed to map control block: 0x%08x", kr);
+        return kr;
+    }
+    controlMap_ = OSSharedPtr<IOMemoryMap>(cMap, OSNoRetain);
+    controlBlock_ = reinterpret_cast<ASFW::IsochTransport::TxStreamControl*>(controlMap_->GetAddress());
+
+    // Populate structural fields
+    uint64_t metadataLen = 0;
+    metadataRing->GetLength(&metadataLen);
+    uint64_t payloadLen = 0;
+    payloadSlab->GetLength(&payloadLen);
+
+    const uint32_t numSlots = static_cast<uint32_t>(metadataLen / sizeof(ASFW::IsochTransport::TxPacketMeta));
+    const uint32_t maxPacketBytes = static_cast<uint32_t>(payloadLen / numSlots);
+
+    controlBlock_->abiVersion = ASFW::IsochTransport::kTransportAbiVersion;
+    controlBlock_->numSlots = numSlots;
+    controlBlock_->slotStrideBytes = maxPacketBytes;
+    controlBlock_->maxPacketBytes = maxPacketBytes;
+    controlBlock_->interruptInterval = interruptInterval;
+    controlBlock_->ztsPeriodFrames = ztsPeriodFrames;
+
+    // Reset runtime counters / status
+    controlBlock_->streamGeneration.store(0, std::memory_order_relaxed);
+    controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_relaxed);
+    controlBlock_->completionCursor.store(0, std::memory_order_relaxed);
+    controlBlock_->completionStampCount.store(0, std::memory_order_relaxed);
+    controlBlock_->exposeCursor.store(0, std::memory_order_relaxed);
+
+    ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadIOVA=0x%llx metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
+             payloadIOVA_, metadataRing_, controlBlock_, numSlots, maxPacketBytes);
     return kIOReturnSuccess;
 }
 
@@ -113,12 +222,13 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ring_.ResetForStart();
     ring_.SeedCycleTracking(*hardware_);
 
-    ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 2 - Teardown)");
+    ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
 
-    ring_.DebugFillDescriptorSlab(0xDE);
+    if (controlBlock_) {
+        controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kRunning, std::memory_order_release);
+    }
 
-    // Note: Priming and initial ring fill will be implemented using the shared metadata
-    // ring in Stage 3. Under Stage 2, the descriptors are set up but not active.
+    ring_.Prime();
     
     Register32 cmdPtrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(contextIndex_));
     Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex_));
@@ -172,6 +282,10 @@ void IsochTransmitContext::Stop() noexcept {
 
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
 
+        if (controlBlock_) {
+            controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_release);
+        }
+
         state_ = State::Stopped;
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped. Stats: %llu pkts IRQs=%llu",
@@ -191,9 +305,22 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         return;
     }
 
-    // Refill logic is stubbed out for Stage 2. 
-    // In Stage 3, it will acquire-load commitGen from the metadata ring 
-    // and copy immediate headers into descriptors.
+    if (!metadataRing_ || !controlBlock_) {
+        return;
+    }
+
+    const uint32_t numSlots = controlBlock_->numSlots;
+
+    auto outcome = ring_.Refill(*hardware_, contextIndex_, metadataRing_, controlBlock_, numSlots, payloadBase_, payloadIOVA_);
+    if (!outcome.ok) {
+        ASFW_LOG(Isoch, "IT: Refill failed - stopping immediately");
+        StopImmediatelyForTxFault();
+    } else {
+        packetsAssembled_ += outcome.packetsFilled;
+        if (outcome.packetsFilled > 0) {
+            ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
+        }
+    }
 }
 
 void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
@@ -207,6 +334,9 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
         hardware_->Write(ctrlClrReg, Driver::ContextControl::kRun);
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
     }
+    if (controlBlock_) {
+        controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+    }
     state_ = State::Stopped;
     ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked");
 }
@@ -215,7 +345,18 @@ void IsochTransmitContext::Poll() noexcept {
     if (state_ != State::Running) return;
     ++tickCount_;
 
-    // Watchdog and refill triggers are stubbed out until Stage 3.
+    const uint64_t currentInterrupts = interruptCount_.load(std::memory_order_relaxed);
+    if (currentInterrupts == lastInterruptCountSeen_) {
+        irqStallTicks_++;
+        if (irqStallTicks_ >= 5) {
+            irqStallTicks_ = 0;
+            irqWatchdogKicks_.fetch_add(1, std::memory_order_relaxed);
+            DoRefillOnce(mach_absolute_time(), /*publishTimingEvent=*/false);
+        }
+    } else {
+        lastInterruptCountSeen_ = currentInterrupts;
+        irqStallTicks_ = 0;
+    }
 }
 
 void IsochTransmitContext::HandleInterrupt() noexcept {

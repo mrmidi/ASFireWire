@@ -24,9 +24,7 @@ struct Layout final {
 
     // We program packets as: OUTPUT_MORE_IMMEDIATE (Isoch header) + OUTPUT_LAST.
     static constexpr uint32_t kBlocksPerPacket = 3;
-    // TODO(DICE): Unify kTimingGroupPackets (currently 8) with Core::TimingGroupPacketCount48k() in a single place
-    static constexpr uint32_t kTimingGroupPackets = 8;  // Saffire 48 kHz blocking DCL group
-    static constexpr uint32_t kNumPackets = 192;  // 16 timing groups, ~24ms @ 8000 pkts/sec
+    static constexpr uint32_t kNumPackets = 192;  // ~24ms @ 8000 pkts/sec
     static constexpr uint32_t kRingBlocks = kNumPackets * kBlocksPerPacket;
 
     static constexpr uint32_t kDescriptorStride = 16;
@@ -52,8 +50,8 @@ struct Layout final {
     static constexpr uint32_t kPreparationDeadlinePackets = 64;
     static constexpr uint32_t kGuardBandPackets = kHardwareOwnedGuardPackets;
 
-    // Audio verification window for inspecting recently refilled packet payloads.
-    static constexpr uint32_t kAudioWriteAhead = 16;
+    // Metadata exposure window for inspecting recently refilled packet metadata/payloads.
+    static constexpr uint32_t kMetadataWriteAhead = 16;
     static constexpr uint32_t kMaxWriteAhead =
         kNumPackets - kHardwareOwnedGuardPackets;  // 188
 
@@ -66,7 +64,6 @@ struct Layout final {
     static_assert((static_cast<size_t>(kDescriptorsPerPage) * kDescriptorStride) <= kUsablePerPage,
                   "Must fit in usable space");
     static_assert(kBlocksPerPacket == 3, "Z must be 3 for OMI(2)+OL(1)");
-    static_assert((kNumPackets % kTimingGroupPackets) == 0, "IT ring must preserve timing-group cadence");
     static_assert(sizeof(Async::HW::OHCIDescriptor) == 16, "OHCI descriptor must be 16 bytes");
     static_assert(kDescriptorStride == sizeof(Async::HW::OHCIDescriptor), "Stride must match descriptor size");
 };

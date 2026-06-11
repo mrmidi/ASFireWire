@@ -28,28 +28,6 @@ namespace ASFW::Driver {
 
 class HardwareInterface;
 
-struct IsochDuplexStartParams {
-    uint64_t guid{0};
-
-    uint8_t irChannel{0};  // device -> host
-    uint8_t itChannel{0};  // host -> device
-    uint8_t sid{0};        // local node number (6-bit)
-
-    uint32_t sampleRateHz{0};
-
-    uint32_t hostInputPcmChannels{0};
-    uint32_t hostOutputPcmChannels{0};
-
-    uint32_t deviceToHostAm824Slots{0};
-    uint32_t hostToDeviceAm824Slots{0};
-    ASFW::Encoding::AudioWireFormat deviceToHostWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
-    ASFW::Encoding::AudioWireFormat hostToDeviceWireFormat{ASFW::Encoding::AudioWireFormat::kAM824};
-
-    ASFW::Encoding::StreamMode streamMode{ASFW::Encoding::StreamMode::kNonBlocking};
-
-    ASFW::Audio::Runtime::IDirectAudioBindingSource* directAudioBindingSource{nullptr};
-};
-
 class IsochService {
 public:
     using TimingLossCallback = std::function<void(uint64_t guid)>;
@@ -67,12 +45,7 @@ public:
 
     kern_return_t StartTransmit(uint8_t channel,
                                 HardwareInterface& hardware,
-                                uint8_t sid,
-                                uint32_t streamModeRaw,
-                                uint32_t pcmChannels,
-                                uint32_t am824Slots,
-                                ASFW::Encoding::AudioWireFormat wireFormat,
-                                ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource);
+                                uint8_t sid);
 
     kern_return_t StopTransmit();
 
@@ -86,13 +59,51 @@ public:
                                           uint8_t channel,
                                           uint32_t bandwidthUnits);
 
-    kern_return_t StartDuplex(const IsochDuplexStartParams& params,
-                              HardwareInterface& hardware);
-
-    kern_return_t StopDuplex(uint64_t guid, IRM::IRMClient* irmClient = nullptr);
-
     void StopAll();
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
+
+    /**
+     * @brief Allocates the shared payload slab, metadata ring, and control block.
+     * @param numSlots The number of packet slots in the payload ring buffer.
+     * @param maxPacketBytes Maximum size of a single packet payload in bytes.
+     * @param interruptInterval Frequency of interrupts in packets.
+     * @param outPayloadSlab Shared memory descriptor containing all packet payloads.
+     * @param outMetadataRing Shared memory descriptor containing packet metadata.
+     * @param outControlBlock Shared memory descriptor containing stream control states.
+     */
+    kern_return_t AllocateTxIsochResources(
+        uint32_t numSlots,
+        uint32_t maxPacketBytes,
+        uint32_t interruptInterval,
+        IOMemoryDescriptor** outPayloadSlab,
+        IOMemoryDescriptor** outMetadataRing,
+        IOMemoryDescriptor** outControlBlock);
+
+    /**
+     * @brief Releases all allocated shared transmit resources.
+     */
+    kern_return_t FreeTxIsochResources();
+
+    /**
+     * @brief Configure, initialize, and start the transmit DMA context stream.
+     * @param channel The FireWire channel number (0-63).
+     * @param speed The transmission speed code (S100, S200, S400).
+     * @param hardware Reference to the low-level MMIO hardware interface.
+     */
+    kern_return_t StartTxStream(uint32_t channel, uint32_t speed, HardwareInterface& hardware);
+
+    /**
+     * @brief Stop the transmit DMA context stream.
+     */
+    kern_return_t StopTxStream();
+
+    /**
+     * @brief Query the current host time and FireWire cycle timer snapshot.
+     * @param outHostTimeMid Monotonic host system time in ticks.
+     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
+     * @param hardware Reference to the hardware interface.
+     */
+    kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware);
 
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
@@ -105,8 +116,13 @@ private:
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
 
+    OSSharedPtr<IOBufferMemoryDescriptor> txPayloadSlab_{nullptr};
+    OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_{nullptr};
+    OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_{nullptr};
+
     uint64_t activeGuid_{0};
     TimingLossCallback timingLossCallback_{};
+    uint32_t interruptInterval_{8};
 
     struct ReservedDuplexResources {
         bool playbackActive{false};
