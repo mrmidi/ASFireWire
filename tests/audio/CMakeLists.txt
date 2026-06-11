@@ -93,21 +93,12 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/DirectAudioEngineTests.cpp
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
     AudioRuntime/AudioSampleRingTests.cpp
-    AudioRuntime/TimingCursorPolicyTests.cpp
     AudioRuntime/ZtsAuthorityTests.cpp
     AudioRuntime/ZtsTimelineCalculatorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
 )
 
-# Direct TX sidecar tests (AudioEngineDirect files)
-add_audio_test(AudioEngineDirectTxTests
-    AudioEngineDirect/DirectTxProbeTests.cpp
-    AudioEngineDirect/TxAudioPacketProcessorTests.cpp
-    AudioEngineDirect/TxAudioPacketWriterTests.cpp
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketProcessor.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
-)
+
 
 # Isoch TX Descriptor Slab Tests
 add_audio_test(IsochTxDescriptorSlabTests
@@ -121,10 +112,7 @@ add_audio_test(SYTGeneratorTests
     "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
 )
 
-# Output Cursor Discipline Tests
-add_audio_test(OutputCursorDisciplineTests
-    OutputCursorDisciplineTests.cpp
-)
+
 
 add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
@@ -135,15 +123,7 @@ add_audio_test(AudioEndpointRuntimeTests
     AudioEndpointRuntimeTests.cpp
 )
 
-# External sync bridge tests
-add_audio_test(ExternalSyncBridgeTests
-    ExternalSyncBridgeTests.cpp
-)
 
-# External sync discipline (48k) tests
-add_audio_test(ExternalSyncDiscipline48kTests
-    ExternalSyncDiscipline48kTests.cpp
-)
 
 # Audio Profile Registry Tests
 add_audio_test(AudioProfileRegistryTests
@@ -155,31 +135,6 @@ add_audio_test(ITDescriptorLayoutTests
     ITDescriptorLayoutTests.cpp
 )
 
-# Isoch Transmit DMA Ring Tests
-add_audio_test(IsochTxDmaRingTests
-    IsochTxDmaRingTests.cpp
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
-    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
-    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
-    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
-    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
-)
 
-add_audio_test(IsochAudioTxPipelineTimelineTests
-    IsochAudioTxPipelineTimelineTests.cpp
-    "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/IsochAudioTxPipeline.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/DirectIsoch/Timing/TxOutputPhaseLoop.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/AudioClockPublisher.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/DirectTxProbe.cpp"
-    "${ASFW_DRIVER_DIR}/AudioEngine/Direct/Tx/TxAudioPacketWriter.cpp"
-    "${ASFW_DRIVER_DIR}/AudioWire/AMDTP/SYTGenerator.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDmaRing.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Transmit/IsochTxDescriptorSlab.cpp"
-    "${ASFW_DRIVER_DIR}/Shared/Rings/DescriptorRing.cpp"
-    "${ASFW_DRIVER_DIR}/Shared/Rings/BufferRing.cpp"
-    "${ASFW_DRIVER_DIR}/Isoch/Memory/IsochDMAMemoryManager.cpp"
-    "${ASFW_DRIVER_DIR}/Shared/Memory/DMAMemoryManager.cpp"
-    "${ASFW_DRIVER_DIR}/Common/BarrierUtils.cpp"
-)
+
+

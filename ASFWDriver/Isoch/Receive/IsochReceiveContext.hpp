@@ -21,7 +21,6 @@
 #include "../../AudioEngine/Direct/AudioClockPublisher.hpp"
 #include "../../AudioEngine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
-#include "../../AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
 #include "../Config/AudioConstants.hpp"
 
 namespace ASFW {
@@ -90,7 +89,6 @@ public:
     void SetCallback(IsochReceiveCallback callback);
 
     void SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept;
-    void SetExternalSyncBridge(ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* bridge) noexcept;
     
     using TimingLossCallback = std::function<void()>;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
@@ -135,8 +133,7 @@ private:
     uint64_t rxZtsPublishCount_{0};
     uint64_t rxCycleHostTicks_{0};
 
-    ASFW::AudioEngine::DirectIsoch::ExternalSyncBridge* externalSyncBridge_{nullptr};
-    ASFW::AudioEngine::DirectIsoch::ExternalSyncClockState externalSyncClockState_{};
+    uint32_t sytConsecutiveValid_{0};
     TimingLossCallback timingLossCallback_{nullptr};
 
     Registers GetRegisters(uint8_t index) const;
