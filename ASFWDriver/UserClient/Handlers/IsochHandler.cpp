@@ -177,7 +177,7 @@ kern_return_t IsochHandler::TestCMPConnectOPCR(IOUserClientMethodArguments* args
             // AUTO-START ISOCH RECEIVE
             // Hardcode Channel 0 for now as per test requirement
             ASFW_LOG(UserClient, "[Auto-Start] Triggering Isoch Receive on Channel 0...");
-            driver->StartIsochReceive(0);
+            driver->StartIsochReceive(0, 0, 2);
 
         } else {
             ASFW_LOG(UserClient, "❌ CMP oPCR connect failed: %d", static_cast<int>(status));
@@ -278,13 +278,18 @@ kern_return_t IsochHandler::TestCMPDisconnectIPCR(IOUserClientMethodArguments* a
 // ============================================================================
 
 kern_return_t IsochHandler::StartIsochReceive(IOUserClientMethodArguments* args) {
-    // Arguments: [0] = channel
+    // Arguments: [0] = channel, [1] = wireFormatRaw (optional), [2] = am824Slots (optional)
     if (args->scalarInputCount < 1)
         return kIOReturnBadArgument;
     uint64_t channel = args->scalarInput[0];
+    uint64_t wireFormatRaw = args->scalarInputCount >= 2 ? args->scalarInput[1] : 0; // default 0 (kAM824)
+    uint64_t am824Slots = args->scalarInputCount >= 3 ? args->scalarInput[2] : 2; // default 2 channels
 
-    ASFW_LOG(UserClient, "StartIsochReceive called for channel %llu", channel);
-    return driver_->StartIsochReceive(static_cast<uint8_t>(channel));
+    ASFW_LOG(UserClient, "StartIsochReceive called for channel %llu wireFormat=%llu slots=%llu",
+             channel, wireFormatRaw, am824Slots);
+    return driver_->StartIsochReceive(static_cast<uint8_t>(channel),
+                                      static_cast<uint32_t>(wireFormatRaw),
+                                      static_cast<uint32_t>(am824Slots));
 }
 
 kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) {

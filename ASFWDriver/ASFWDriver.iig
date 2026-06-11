@@ -70,7 +70,7 @@ public:
     kern_return_t GetAudioAutoStart(uint32_t* enabled) const LOCALONLY;
 
     // Isochronous Receive Control
-    kern_return_t StartIsochReceive(uint8_t channel) LOCALONLY;
+    kern_return_t StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) LOCALONLY;
     kern_return_t StopIsochReceive() LOCALONLY;
     void* GetIsochReceiveContext() const LOCALONLY;
     
