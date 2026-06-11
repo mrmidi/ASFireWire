@@ -209,6 +209,89 @@ bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver,
     return true;
 }
 
+uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
+                             uint64_t startPacketIndex,
+                             uint64_t targetPacketIndex,
+                             uint32_t maxToPrepare) noexcept {
+    const uint32_t numSlots = ivars.runtime.txSlotProvider.numSlots;
+    auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
+    auto* directControl = ivars.runtime.directAudioGraph.control;
+    if (numSlots == 0 || metadataRing == nullptr || directControl == nullptr) {
+        return 0;
+    }
+
+    uint64_t nextPacketToPrepare = startPacketIndex;
+    uint32_t preparedCount = 0;
+
+    while (nextPacketToPrepare < targetPacketIndex && preparedCount < maxToPrepare) {
+        int64_t packetAnchorTicks = 0;
+        const bool havePacketAnchor =
+            ivars.runtime.txExecutionTimeline.AnchorForPacket(
+                nextPacketToPrepare, packetAnchorTicks);
+        const auto decision = havePacketAnchor
+            ? ivars.runtime.txTimingModel.PeekNextDataSyt(
+                  packetAnchorTicks,
+                  directControl->rxSytCadence)
+            : ASFW::Driver::TxTimingModel::Decision{};
+
+        ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
+        timing.txClockValid = decision.syt != 0xFFFFu;
+        timing.nextDataSyt = decision.syt;
+
+        if (!ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
+                static_cast<uint32_t>(nextPacketToPrepare), timing)) {
+            break;
+        }
+
+        const uint32_t slotIdx = nextPacketToPrepare % numSlots;
+        auto& meta = metadataRing[slotIdx];
+        if (meta.payloadLength > 8) {
+            ivars.runtime.txTimingModel.CommitDataPacket();
+        }
+
+        nextPacketToPrepare++;
+        preparedCount++;
+    }
+
+    return preparedCount;
+}
+
+void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
+    const uint32_t numSlots = ivars.runtime.txSlotProvider.numSlots;
+    auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
+    if (numSlots == 0 || metadataRing == nullptr) {
+        return;
+    }
+
+    // Seed the shared metadata ring with the pump's full lead before the IT DMA
+    // context is started, so the first refill interrupt never meets an
+    // uncommitted slot (which would fatally stop the context — channel never
+    // reaches the wire).
+    //
+    // Critically, this runs before RX cadence acquisition and before any
+    // OUTPUT_LAST completion can provide a packet execution anchor. Saffire's
+    // StartStreams/FillFirewireBuffers path likewise pre-fills with NO_INFO
+    // until ReadFirewireBuffers establishes the RX cadence history.
+    // The packetizer owns DBC continuity, so the prefill-to-live handoff stays
+    // gapless.
+    ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
+    timing.txClockValid = false;
+
+    uint32_t prepared = 0;
+    for (uint64_t packetIndex = 0; packetIndex < kTxPumpLeadPackets; ++packetIndex) {
+        if (!ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
+                static_cast<uint32_t>(packetIndex), timing)) {
+            break;
+        }
+        ++prepared;
+    }
+
+    ASFW_LOG(DirectAudio,
+             "ADK DBG TX prefill seeded %u NO_INFO packets before isoch start (lead=%llu, model left unseeded)",
+             prepared,
+             kTxPumpLeadPackets);
+}
+
 } // namespace ASFW::Audio::DriverKit
 
 void ASFWAudioDriver::ZtsMirrorTimerFired_Impl(ASFWAudioDriver_ZtsMirrorTimerFired_Args)
@@ -231,32 +314,10 @@ void ASFWAudioDriver::ZtsMirrorTimerFired_Impl(ASFWAudioDriver_ZtsMirrorTimerFir
         if (txControl) {
             const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
             const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
-            const uint64_t targetPacketIndex = completionCursor + 256;
-
-            uint64_t nextPacketToPrepare = exposeCursor;
-            uint32_t preparedCount = 0;
+            const uint64_t targetPacketIndex = completionCursor + kTxPumpLeadPackets;
             constexpr uint32_t kMaxPreparePerCall = 64;
-
-            while (nextPacketToPrepare < targetPacketIndex && preparedCount < kMaxPreparePerCall) {
-                const auto decision = ivars->runtime.txTimingModel.PeekNextDataSyt(ivars->runtime.txCycleTimeline);
-
-                ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-                timing.txClockValid = (decision.health != ASFW::Driver::TxTimingModel::LeadHealth::kNotSeeded);
-                timing.nextDataSyt = decision.syt;
-
-                if (!ivars->runtime.txStreamEngine.PrepareNextTransmitSlot(static_cast<uint32_t>(nextPacketToPrepare), timing)) {
-                    break;
-                }
-
-                const uint32_t slotIdx = nextPacketToPrepare % ivars->runtime.txSlotProvider.numSlots;
-                auto& meta = ivars->runtime.txSlotProvider.metadataRing[slotIdx];
-                if (meta.payloadLength > 8) {
-                    ivars->runtime.txTimingModel.CommitDataPacket();
-                }
-
-                nextPacketToPrepare++;
-                preparedCount++;
-            }
+            (void)ASFW::Audio::DriverKit::PrepareTransmitSlots(
+                *ivars, exposeCursor, targetPacketIndex, kMaxPreparePerCall);
         }
     }
 

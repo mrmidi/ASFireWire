@@ -176,6 +176,9 @@ struct TxStreamControl final {
     // -------------------------------------------------------------------------
     // Completion-stamp ring access (writer = core ISR, reader = audio pump).
     // -------------------------------------------------------------------------
+    // `cycleTimestamp` is a full CYCLE_TIMER-format value. OHCI supplies the
+    // authoritative seconds/cycle; the core pairs it with the same refill
+    // sample's subcycle before publishing.
     void PushCompletionStamp(uint64_t packetIndex, uint32_t cycleTimestamp) noexcept {
         const uint64_t count = completionStampCount.load(std::memory_order_relaxed);
         auto& slot = completionStamps[count % kCompletionStampSlots];
@@ -219,9 +222,9 @@ enum class CipBlockingMode : uint8_t {
 };
 
 enum class TxSytMode : uint8_t {
-    /// Our transmit cycle + transfer-delay lead, with the device's constant
-    /// sub-cycle offset grafted on (the settled recipe, ADK §5.4).
-    kTransmitCycleWithDeviceSubCycleGraft = 0,
+    /// RX-recovered device cadence, disciplined against completed OHCI IT
+    /// packet execution anchors (Saffire.kext full-duplex timing model).
+    kRxRecoveredDeviceClock = 0,
     kFreeRunning = 1,
 };
 
@@ -242,7 +245,7 @@ struct AudioStreamProfile final {
     StreamDescriptor deviceToHost{};
     uint32_t sampleRateHz{0};
     uint8_t framesPerPacket{0};   ///< Rate ladder: 8 / 16 / 32 (ADK §6.6).
-    TxSytMode sytMode{TxSytMode::kTransmitCycleWithDeviceSubCycleGraft};
+    TxSytMode sytMode{TxSytMode::kRxRecoveredDeviceClock};
     uint8_t latencyMode{0};       ///< Index into the delayPackets table.
     uint8_t inputDelayPackets{0};
     uint8_t outputDelayPackets{0};

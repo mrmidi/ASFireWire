@@ -2,25 +2,16 @@
 
 #include "../IEC61883/Syt.hpp"
 
+#include <cstdlib>
+
 namespace ASFW::Driver {
 
-// Design decisions (see TxTimingModel.hpp and the README, Milestone 2):
-//
-// 1. Seed-on-peek: the first PeekNextDataSyt after arming derives the phase
-//    from the timeline (transmit-cycle anchoring), so the anchor lands on the
-//    moment the first data packet is actually being stamped — mirroring
-//    SYTGenerator's armTransmitCycleAnchor/computeDataSYT split.
-// 2. The graft follows the reference model literally:
-//    phase - (phase % kTicksPerCycle) + deviceSubCycleTicks. Because the
-//    graft replaces the sub-cycle offset, it can move the phase backward by
-//    up to one cycle; a bounded guard then re-adds whole cycles until the
-//    lead is positive again — the graft fixes the sub-cycle, the cycle count
-//    is free.
-// 3. Commit is separate from Peek and advances exactly one packet step:
-//    cadence owns the wire, the model tracks emitted data packets only.
-// 4. Lead health thresholds are compared the way the Saffire decompile
-//    behaves: accept is exclusive (< 7620 ships), tight and escalate are
-//    advisory bands, kLate covers a phase already in the past.
+// Port of the Saffire.kext TX phase state machine:
+//   ReadFirewireBuffers 0xd69e-0xd81e: recover RX cadence and master phase.
+//   FillFirewireBuffers 0xec14-0xed72: seed one cycle ahead, initialize the
+//   cadence reader 256 entries behind RX, gate lead, then advance by observed
+//   cadence only after a DATA packet is emitted.
+//   adjustOutputPhase 0xc9c2-0xcded: forced/deadbanded phase correction.
 
 using Protocols::Audio::IEC61883::SytFormatter;
 
@@ -36,11 +27,10 @@ const TxTimingModel::Config& TxTimingModel::GetConfig() const noexcept {
 void TxTimingModel::Reset() noexcept {
     phaseTicks_ = 0;
     seeded_ = false;
-    anchorArmed_ = true;
-}
-
-void TxTimingModel::ArmTransmitCycleAnchor() noexcept {
-    anchorArmed_ = true;
+    forceAdjust_ = true;
+    cadenceEpoch_ = 0;
+    cadenceReadIndex_ = RxSytCadence::kNoInfo;
+    pendingCadenceTicks_ = 0;
 }
 
 bool TxTimingModel::IsSeeded() const noexcept {
@@ -48,44 +38,127 @@ bool TxTimingModel::IsSeeded() const noexcept {
 }
 
 TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
-    const Ports::ICycleTimeline& timeline) noexcept {
+    int64_t packetAnchorTicks,
+    const RxSytCadence& rxCadence) noexcept {
     Decision decision{};
-    const int64_t now = timeline.NowTicks();
 
-    if (anchorArmed_ || !seeded_) {
-        int64_t phase = now + config_.presentationDelayTicks;
-        if (config_.graftEnabled) {
-            phase = phase - (phase % kTicksPerCycle) +
-                    static_cast<int64_t>(config_.deviceSubCycleTicks);
-            // The graft may have stepped back past "now"; whole cycles are
-            // free, the sub-cycle is not. Bounded by construction (the graft
-            // moves at most one cycle back).
-            while (phase <= now) {
-                phase += kTicksPerCycle;
-            }
-        }
-        phaseTicks_ = phase;
+    RxSytCadence::Snapshot rx{};
+    if (!rxCadence.TrySnapshot(rx) || !rx.established ||
+        rx.rollingCadenceTicks == 0) {
+        return decision;
+    }
+
+    packetAnchorTicks =
+        ASFW::Timing::normalizeOffsetDomain(packetAnchorTicks);
+
+    if (cadenceEpoch_ != rx.epoch) {
+        Reset();
+        cadenceEpoch_ = rx.epoch;
+    }
+
+    if (!seeded_) {
+        phaseTicks_ = ASFW::Timing::normalizeOffsetDomain(
+            packetAnchorTicks + config_.initialLeadTicks);
         seeded_ = true;
-        anchorArmed_ = false;
+        forceAdjust_ = true;
         decision.seededThisCall = true;
     }
 
+    phaseTicks_ = AdjustOutputPhase(packetAnchorTicks, phaseTicks_, rx);
+
+    if (cadenceReadIndex_ == RxSytCadence::kNoInfo) {
+        cadenceReadIndex_ = static_cast<uint16_t>(
+            (rx.writeIndex + RxSytCadence::kReadDelay) &
+            (RxSytCadence::kEntryCount - 1));
+    }
+
     decision.syt = SytForPhase(phaseTicks_);
-    decision.leadTicks = phaseTicks_ - now;
+    decision.leadTicks =
+        ASFW::Timing::extOffsetDiff(phaseTicks_, packetAnchorTicks);
     decision.health = HealthForLead(decision.leadTicks);
+
+    // Saffire's 0xc9c2/0xe778 path still ships negative and tight leads with a
+    // warning. Only the upper lead-time gate suppresses this packet and forces
+    // phase reacquisition.
+    if (decision.health == LeadHealth::kGate ||
+        decision.health == LeadHealth::kEscalate) {
+        phaseTicks_ = 0;
+        seeded_ = false;
+        forceAdjust_ = true;
+        cadenceReadIndex_ = RxSytCadence::kNoInfo;
+        pendingCadenceTicks_ = 0;
+        decision.syt = SytFormatter::kNoInfo;
+        return decision;
+    }
+
+    pendingCadenceTicks_ = rxCadence.ReadEntry(cadenceReadIndex_);
+    if (pendingCadenceTicks_ == 0) {
+        phaseTicks_ = 0;
+        seeded_ = false;
+        forceAdjust_ = true;
+        cadenceReadIndex_ = RxSytCadence::kNoInfo;
+        decision = {};
+    }
     return decision;
 }
 
 void TxTimingModel::CommitDataPacket() noexcept {
-    if (seeded_) {
-        phaseTicks_ += kPacketStepTicks;
+    if (seeded_ && pendingCadenceTicks_ != 0) {
+        phaseTicks_ = ASFW::Timing::normalizeOffsetDomain(
+            phaseTicks_ + pendingCadenceTicks_);
+        cadenceReadIndex_ = static_cast<uint16_t>(
+            (cadenceReadIndex_ + 1) & (RxSytCadence::kEntryCount - 1));
+        pendingCadenceTicks_ = 0;
     }
 }
 
-void TxTimingModel::NudgeOffsetTicks(int32_t deltaTicks) noexcept {
-    if (seeded_) {
-        phaseTicks_ += deltaTicks;
+int64_t TxTimingModel::AdjustOutputPhase(
+    int64_t executionPhaseTicks,
+    int64_t candidatePhaseTicks,
+    const RxSytCadence::Snapshot& rx) noexcept {
+    const int64_t phaseError =
+        ASFW::Timing::extOffsetDiff(candidatePhaseTicks,
+                                   rx.recoveredPhaseTicks);
+    const int64_t cadenceScale =
+        static_cast<int64_t>(config_.sytIntervalFrames) << 8;
+    if (cadenceScale == 0 || rx.rollingCadenceTicks == 0) {
+        return candidatePhaseTicks;
     }
+
+    const int64_t rolling = rx.rollingCadenceTicks;
+    int64_t remainder = 0;
+    int64_t complement = 0;
+    if (phaseError >= 0) {
+        remainder = (phaseError * cadenceScale) % rolling;
+        complement = rolling - remainder;
+    } else {
+        remainder = ((-phaseError) * cadenceScale) % rolling;
+        complement = remainder;
+    }
+
+    int64_t correctionTicks = 0;
+    int64_t frameError = 0;
+    if (remainder != 0) {
+        correctionTicks = complement / cadenceScale;
+        int64_t signedRemainder = remainder;
+        if (remainder > rolling / 2) {
+            signedRemainder -= rolling;
+        }
+        frameError = signedRemainder / cadenceScale;
+    }
+
+    if (!forceAdjust_ &&
+        std::abs(frameError) <= config_.phaseDeadband) {
+        return candidatePhaseTicks;
+    }
+
+    forceAdjust_ = false;
+    // Exact Saffire behavior at 0xcd4c-0xcd63: forced correction is based on
+    // argument 3 (the current output-DCL execution phase), not argument 4 (the
+    // carried/seeded output phase). The deadband path above is the only path
+    // that returns the carried candidate unchanged.
+    return ASFW::Timing::normalizeOffsetDomain(
+        executionPhaseTicks + correctionTicks);
 }
 
 int64_t TxTimingModel::OutputPhaseTicks() const noexcept {

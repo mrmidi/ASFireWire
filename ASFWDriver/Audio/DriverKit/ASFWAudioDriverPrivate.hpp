@@ -29,6 +29,11 @@ static constexpr uint32_t kReportedSafetyOffsetFrames =
     ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
 static constexpr uint64_t kZtsMirrorPumpPeriodUsec = 1000;
 
+// Packets the transmit pump keeps committed ahead of the hardware completion
+// cursor. Also the count seeded into the ring before the IT DMA is started, so
+// the first refill interrupt (~8 packets in) never observes an uncommitted slot.
+static constexpr uint64_t kTxPumpLeadPackets = 256;
+
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
@@ -54,29 +59,45 @@ struct AudioDriverDeviceState {
     char outputChannelNames[8][64]{};
 };
 
-class DextCycleTimeline final : public ASFW::Ports::ICycleTimeline {
+class DextTxExecutionTimeline final {
 public:
     const ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
-    mutable uint64_t wrapCount{0};
-    mutable uint32_t lastSeconds{0};
 
-    int64_t NowTicks() const noexcept override {
-        if (!controlBlock) return 0;
-        
-        ASFW::IsochTransport::ClockPairSample sample{};
-        if (!controlBlock->clockPair.TryRead(sample)) {
-            return 0;
+    [[nodiscard]] bool AnchorForPacket(uint64_t packetIndex,
+                                       int64_t& outTicks) const noexcept {
+        if (!controlBlock) {
+            return false;
         }
-        
-        const auto decoded = ASFW::Timing::decodeCycleTimer(sample.cycleTimer32);
-        if (decoded.seconds < lastSeconds) {
-            wrapCount++;
+
+        const uint64_t count =
+            controlBlock->completionStampCount.load(std::memory_order_acquire);
+        if (count == 0) {
+            return false;
         }
-        lastSeconds = decoded.seconds;
-        
-        const int64_t unwrappedTicks = (static_cast<int64_t>(wrapCount) * 128LL * 24576000LL)
-                                     + ASFW::Timing::tstampToOffsets(decoded.seconds, decoded.cycle, decoded.offset);
-        return unwrappedTicks;
+
+        uint64_t completedPacketIndex = 0;
+        uint32_t timestamp = 0;
+        if (!controlBlock->ReadCompletionStamp(
+                count - 1, completedPacketIndex, timestamp) ||
+            packetIndex < completedPacketIndex) {
+            return false;
+        }
+
+        // Linux consumes OHCI's 16-bit OUTPUT_LAST status timestamp at
+        // firewire/ohci.c:3055. The core expands that stamp at publication
+        // with the same refill's CYCLE_TIMER subcycle, yielding the full
+        // timestamp Saffire's DCL path passes to tstampToOffsets() at 0xe9bf.
+        const auto completed = ASFW::Timing::decodeCycleTimer(timestamp);
+        const uint64_t packetDistance = packetIndex - completedPacketIndex;
+
+        outTicks = ASFW::Timing::normalizeOffsetDomain(
+            ASFW::Timing::tstampToOffsets(completed.seconds,
+                                          completed.cycle %
+                                              ASFW::Timing::kCyclesPerSecond,
+                                          completed.offset) +
+            static_cast<int64_t>(packetDistance) *
+                static_cast<int64_t>(ASFW::Timing::kTicksPerCycle));
+        return true;
     }
 };
 
@@ -107,15 +128,26 @@ public:
         meta.packetIndex = packet.packetIndex;
         meta.payloadLength = packet.byteCount;
 
-        // tag = 1 (standard CIP), channel = isoChannel, tcode = 0xA (isoch data block transmit), sy = 0
-        const uint32_t isochHeaderHost = (static_cast<uint32_t>(1 & 0x3) << 14) |
-                                         (static_cast<uint32_t>(isoChannel & 0x3F) << 8) |
-                                         (static_cast<uint32_t>(0xA & 0xF) << 4);
-        meta.immediateHeader[0] = OSSwapHostToLittleInt32(isochHeaderHost);
+        // immediateData[0] = isoch packet header: spd=2 (S400) at [18:16],
+        // tag=1 (standard CIP) at [15:14], channel at [13:8], tcode=0xA (isoch
+        // data block transmit) at [7:4], sy=0. The speed field is mandatory —
+        // omitting it transmits at S100 and produces a header the device/
+        // analyzer treats as malformed.
+        // Cross-validated with Linux: firewire/ohci.h:277-286 and
+        // firewire/ohci.c:3377-3381.
+        const uint32_t isochHeaderQ0 = (static_cast<uint32_t>(2 & 0x7) << 16) |
+                                       (static_cast<uint32_t>(1 & 0x3) << 14) |
+                                       (static_cast<uint32_t>(isoChannel & 0x3F) << 8) |
+                                       (static_cast<uint32_t>(0xA & 0xF) << 4);
+        meta.immediateHeader[0] = OSSwapHostToLittleInt32(isochHeaderQ0);
 
-        // CIP Q0 is the first 4 bytes of slot bytes
-        const uint8_t* slotBytes = payloadBase + (slotIdx * slotStrideBytes);
-        meta.immediateHeader[1] = *reinterpret_cast<const uint32_t*>(slotBytes);
+        // immediateData[1] = data_length (payload bytes) in bits [31:16]. The
+        // CIP header is the first 8 bytes of the payload buffer and is shipped
+        // by the OUTPUT_LAST descriptor — it does NOT belong in the packet
+        // header immediate. Cross-validated with Linux:
+        // firewire/ohci.h:287-288 and firewire/ohci.c:3383.
+        meta.immediateHeader[1] = OSSwapHostToLittleInt32(
+            static_cast<uint32_t>(packet.byteCount & 0xFFFF) << 16);
 
         // Compute expectedGen and release-store commitGen
         const uint64_t gen = ASFW::IsochTransport::ExpectedCommitGen(packet.packetIndex, numSlots);
@@ -153,7 +185,7 @@ struct AudioDriverRuntimeState {
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Driver::TxTimingModel txTimingModel;
     DextTxSlotProvider txSlotProvider;
-    DextCycleTimeline txCycleTimeline;
+    DextTxExecutionTimeline txExecutionTimeline;
     float* txFloatScratchBuffer{nullptr};
 };
 
@@ -218,6 +250,22 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
 [[nodiscard]] bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept;
+
+// Prepares transmit slots [startPacketIndex, targetPacketIndex) into the shared
+// metadata ring, committing each slot's generation so the IT DMA refill never
+// observes an uncommitted slot. Returns the number of slots prepared. Shared by
+// the steady-state ZTS pump and the pre-RUN prefill; with an unseeded transmit
+// clock the normal AMDTP cadence is preserved but every packet carries NO_INFO
+// (SYT=0xffff), matching the reference Saffire seed behavior.
+uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
+                              uint64_t startPacketIndex,
+                              uint64_t targetPacketIndex,
+                              uint32_t maxToPrepare) noexcept;
+
+// Synchronously seeds the transmit ring with cadence-correct NO_INFO packets
+// before the IT DMA context starts, so the first refill finds committed slots.
+void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
+
 void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
 void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
 bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
