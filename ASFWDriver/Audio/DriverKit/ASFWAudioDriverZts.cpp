@@ -6,11 +6,11 @@
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
-#include "../../AudioWire/AMDTP/TimingUtils.hpp"
+#include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include "../Runtime/ZtsTimelineCalculator.hpp"
-#include "../Runtime/TimingCursorPolicy.hpp"
+#include "../Config/TimingCursorPolicy.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>

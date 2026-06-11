@@ -9,11 +9,11 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "AudioNubPublisher.hpp"
-#include "../../Protocols/Audio/Backends/AVCAudioBackend.hpp"
-#include "../../Protocols/Audio/Backends/DiceAudioBackend.hpp"
+#include "../Protocols/Backends/AVCAudioBackend.hpp"
+#include "../Protocols/Backends/DiceAudioBackend.hpp"
 
 #include "../../Logging/Logging.hpp"
-#include "../../Protocols/Audio/DeviceProtocolFactory.hpp"
+#include "../Protocols/DeviceProtocolFactory.hpp"
 
 #include "../../Discovery/IDeviceManager.hpp"
 

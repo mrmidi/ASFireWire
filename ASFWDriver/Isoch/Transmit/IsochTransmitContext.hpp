@@ -13,6 +13,7 @@
 
 #include "../Memory/IIsochDMAMemory.hpp"
 #include "../../Hardware/RegisterMap.hpp"
+#include "../../Shared/Isoch/IsochAudioTransport.hpp"
 
 #include "../../Logging/Logging.hpp"
 #include <array>

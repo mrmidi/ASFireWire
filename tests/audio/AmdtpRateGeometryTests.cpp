@@ -1,4 +1,4 @@
-#include "AudioWire/AMDTP/AmdtpRateGeometry.hpp"
+#include "Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 
 #include <gtest/gtest.h>
 

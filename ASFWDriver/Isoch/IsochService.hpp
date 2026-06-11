@@ -14,7 +14,6 @@
 
 #include "IsochReceiveContext.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
-#include "../Audio/Model/ASFWAudioDevice.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 
 namespace ASFW::Audio::Runtime {

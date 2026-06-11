@@ -17,11 +17,10 @@
 #include "../Memory/IIsochDMAMemory.hpp"
 
 #include "IsochRxDmaRing.hpp"
-#include "../../AudioEngine/Direct/DirectInputWriter.hpp"
-#include "../../AudioEngine/Direct/AudioClockPublisher.hpp"
-#include "../../AudioEngine/Direct/Rx/RxAudioPacketProcessor.hpp"
+#include "../../Audio/Engine/Direct/DirectInputWriter.hpp"
+#include "../../Audio/Engine/Direct/AudioClockPublisher.hpp"
+#include "../../Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
-#include "../Config/AudioConstants.hpp"
 
 namespace ASFW {
 namespace Audio::Runtime {

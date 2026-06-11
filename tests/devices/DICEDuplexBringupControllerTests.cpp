@@ -5,9 +5,9 @@
 #include "Common/WireFormat.hpp"
 #include "Bus/IRM/IRMCSRConstants.hpp"
 #include "Bus/IRM/IRMClient.hpp"
-#include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
-#include "Protocols/Audio/DICE/Core/DICETransaction.hpp"
-#include "Protocols/Audio/DICE/Core/DICEDuplexBringupController.hpp"
+#include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
+#include "Audio/Protocols/DICE/Core/DICEDuplexBringupController.hpp"
 #include "Protocols/Ports/ProtocolRegisterIO.hpp"
 
 #include <algorithm>

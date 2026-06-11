@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "AudioWire/AMDTP/TimingUtils.hpp"
+#include "Common/TimingUtils.hpp"
+#include "Audio/Wire/AMDTP/AmdtpTiming.hpp"
 
 using namespace ASFW::Timing;
 

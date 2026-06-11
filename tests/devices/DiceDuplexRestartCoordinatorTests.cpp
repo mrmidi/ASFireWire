@@ -3,14 +3,14 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
-#include "Protocols/Audio/Backends/DiceDuplexRestartCoordinator.hpp"
+#include "Audio/Protocols/Backends/DiceDuplexRestartCoordinator.hpp"
 #include "Audio/Core/AudioRuntimeRegistry.hpp"
 #include "Discovery/DeviceRegistry.hpp"
 #include "Hardware/HardwareInterface.hpp"
 #include "Bus/IRM/IRMClient.hpp"
-#include "Protocols/Audio/DeviceProtocolFactory.hpp"
-#include "Protocols/Audio/IDeviceProtocol.hpp"
-#include "Protocols/Audio/DICE/Core/IDICEDuplexProtocol.hpp"
+#include "Audio/Protocols/DeviceProtocolFactory.hpp"
+#include "Audio/Protocols/IDeviceProtocol.hpp"
+#include "Audio/Protocols/DICE/Core/IDICEDuplexProtocol.hpp"
 
 #include <condition_variable>
 #include <chrono>

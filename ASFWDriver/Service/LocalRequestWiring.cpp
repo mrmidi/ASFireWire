@@ -21,8 +21,8 @@
 #include "../Hardware/IEEE1394.hpp"
 #include "../Logging/Logging.hpp"
 #include "../Protocols/AVC/FCPResponseRouter.hpp"
-#include "../Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
-#include "../Protocols/Audio/DICE/Core/DICETypes.hpp"
+#include "../Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "../Audio/Protocols/DICE/Core/DICETypes.hpp"
 #include "../Protocols/Ports/FireWireRxPort.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 

@@ -5,8 +5,8 @@
 
 #include <gtest/gtest.h>
 #include <span>
-#include "Protocols/Audio/Oxford/Apogee/ApogeeDuetProtocol.hpp"
-#include "Protocols/Audio/Oxford/Apogee/ApogeeTypes.hpp"
+#include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
 #include "Protocols/AVC/FCPTransport.hpp"
 
 using namespace ASFW::Audio::Oxford::Apogee;

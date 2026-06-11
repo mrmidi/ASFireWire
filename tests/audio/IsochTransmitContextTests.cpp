@@ -15,7 +15,7 @@
 #include "../ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp"
 #include "../ASFWDriver/AudioWire/AMDTP/TimingUtils.hpp"
 #include "../ASFWDriver/AudioEngine/DirectIsoch/Sync/ExternalSyncBridge.hpp"
-#include "../ASFWDriver/Isoch/Config/AudioConstants.hpp"
+#include "../ASFWDriver/Audio/Config/AudioConstants.hpp"
 
 using namespace ASFW::Isoch;
 using namespace ASFW::Encoding;

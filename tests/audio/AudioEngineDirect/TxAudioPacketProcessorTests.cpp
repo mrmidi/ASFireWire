@@ -1,10 +1,10 @@
 #include <AudioDriverKit/AudioDriverKit.h>
 
 #include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
-#include "AudioEngine/Direct/DirectOutputReader.hpp"
-#include "AudioEngine/Direct/Tx/DirectTxPacketScratch.hpp"
-#include "AudioEngine/Direct/Tx/TxAudioPacketProcessor.hpp"
-#include "AudioWire/AM824/AM824Encoder.hpp"
+#include "Audio/Engine/Direct/DirectOutputReader.hpp"
+#include "Audio/Engine/Direct/Tx/DirectTxPacketScratch.hpp"
+#include "Audio/Engine/Direct/Tx/TxAudioPacketProcessor.hpp"
+#include "Audio/Wire/AM824/AM824Encoder.hpp"
 #include "../../support/CipDecodeTestSupport.hpp"
 
 #include <gtest/gtest.h>

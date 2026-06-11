@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "Protocols/Audio/DICE/Core/DICERestartSession.hpp"
+#include "Audio/Protocols/DICE/Core/DICERestartSession.hpp"
 
 namespace {
 

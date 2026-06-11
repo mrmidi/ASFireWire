@@ -3,10 +3,9 @@
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Async/Interfaces/IFireWireBus.hpp"
 #include "Common/WireFormat.hpp"
-#include "Protocols/Audio/DICE/Core/DICETypes.hpp"
-#include "Protocols/Audio/DICE/Focusrite/SPro24DspProtocol.hpp"
-#include "Protocols/Audio/DICE/TCAT/DICEKnownProfiles.hpp"
-#include "Protocols/Audio/DICE/TCAT/DICETcatProtocol.hpp"
+#include "Audio/Protocols/DICE/Core/DICETypes.hpp"
+#include "Audio/Protocols/DICE/Focusrite/SPro24DspProtocol.hpp"
+#include "Audio/Protocols/DICE/TCAT/DICETcatProtocol.hpp"
 
 #include <array>
 #include <cstdint>

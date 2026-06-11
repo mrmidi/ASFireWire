@@ -1,7 +1,7 @@
 #include <AudioDriverKit/AudioDriverKit.h>
 
 #include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
-#include "AudioEngine/Direct/FireWireAudioEngine.hpp"
+#include "Audio/Engine/Direct/FireWireAudioEngine.hpp"
 
 #include <gtest/gtest.h>
 

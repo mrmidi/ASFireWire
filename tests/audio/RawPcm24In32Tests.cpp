@@ -3,8 +3,8 @@
 //
 
 #include <gtest/gtest.h>
-#include "AudioWire/RawPcm24In32/RawPcm24In32Encoder.hpp"
-#include "AudioWire/RawPcm24In32/RawPcm24In32Decoder.hpp"
+#include "Audio/Wire/RawPcm24In32/RawPcm24In32Encoder.hpp"
+#include "Audio/Wire/RawPcm24In32/RawPcm24In32Decoder.hpp"
 #include <vector>
 
 using namespace ASFW::Encoding;

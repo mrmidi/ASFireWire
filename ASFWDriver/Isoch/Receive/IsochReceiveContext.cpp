@@ -2,7 +2,7 @@
 #include "../Core/IsochEventGroup.hpp"
 #include "../../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 
-#include "../../AudioWire/AMDTP/TimingUtils.hpp"
+#include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitUtils.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Hardware/RegisterMap.hpp"

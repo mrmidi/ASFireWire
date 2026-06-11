@@ -17,9 +17,9 @@
 #include "../../Logging/LogConfig.hpp"
 #include "../Core/AudioCoordinator.hpp"
 #include "../../Protocols/AVC/IAVCDiscovery.hpp"
-#include "../../Protocols/Audio/IDeviceProtocol.hpp"
+#include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Service/DriverContext.hpp"
-#include "../../Isoch/Config/AudioConstants.hpp"
+#include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 
 #include <DriverKit/DriverKit.h>
 #include <DriverKit/IOLib.h>
