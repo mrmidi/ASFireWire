@@ -115,15 +115,25 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
     counters_.packetsRefilled.fetch_add(toFill, std::memory_order_relaxed);
 }
 
-IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime() noexcept {
+IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+    const uint64_t payloadIOVA,
+    const uint32_t numSlots,
+    const uint32_t slotStrideBytes) noexcept {
     PrimeStats stats{};
     if (!slab_.IsValid()) {
         ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
         return stats;
     }
+    if (payloadIOVA == 0 || payloadIOVA > 0xFFFFFFFFULL ||
+        numSlots == 0 || slotStrideBytes == 0) {
+        ASFW_LOG(Isoch,
+                 "IT: Prime failed - invalid shared payload geometry iova=0x%llx slots=%u stride=%u",
+                 payloadIOVA, numSlots, slotStrideBytes);
+        return stats;
+    }
 
     const uint32_t numPackets = Layout::kNumPackets;
-    const uint32_t bufBaseIOVA = static_cast<uint32_t>(slab_.PayloadRegion().deviceBase);
+    const uint32_t payloadBaseIOVA = static_cast<uint32_t>(payloadIOVA);
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
         const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
@@ -133,12 +143,17 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime() noexcept {
         // Prime the OMI descriptor structure (Descriptor 0 and 1)
         std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
         immDesc->common.control = OHCIDescriptor::BuildControl({
-            .reqCount = 4, // CIP Q0 only
+            .reqCount = 8, // isoch packet header = 2 immediate quadlets (Q0 + data_length)
             .command = OHCIDescriptor::kCmdOutputMore,
             .key = OHCIDescriptor::kKeyImmediate,
             .interruptBits = OHCIDescriptor::kIntNever,
             .branchBits = OHCIDescriptor::kBranchNever,
         });
+        // Linux queue_iso_transmit() self-links the skip address so a lost
+        // cycle/FIFO overrun skips one cycle without dropping this packet.
+        // Cross-validated with Linux: firewire/ohci.c:3364-3373.
+        immDesc->common.branchWord =
+            MakeBranchWordAT(slab_.GetDescriptorIOVA(descBase), Layout::kBlocksPerPacket);
 
         // Prime the OL descriptor (Descriptor 2)
         auto* desc2 = slab_.GetDescriptorPtr(descBase + 2);
@@ -158,7 +173,16 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime() noexcept {
         // Set status update bit (s=1)
         desc2->control |= (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
 
-        desc2->dataAddress = bufBaseIOVA + pktIdx * Layout::kMaxPacketSize;
+        const uint32_t producerSlot = pktIdx % numSlots;
+        const uint64_t packetIOVA =
+            static_cast<uint64_t>(payloadBaseIOVA) +
+            static_cast<uint64_t>(producerSlot) * slotStrideBytes;
+        if (packetIOVA > 0xFFFFFFFFULL) {
+            ASFW_LOG(Isoch, "IT: Prime failed - packet payload IOVA overflow slot=%u iova=0x%llx",
+                     producerSlot, packetIOVA);
+            return stats;
+        }
+        desc2->dataAddress = static_cast<uint32_t>(packetIOVA);
         desc2->branchWord = MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket);
         AR_init_status(*desc2, 0);
     }
@@ -202,20 +226,26 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
     RefillOutcome out{};
 
-    if (!metadataRing || !controlBlock || numSlots == 0) {
+    if (!metadataRing || !controlBlock || !payloadBase ||
+        payloadIOVA == 0 || payloadIOVA > 0xFFFFFFFFULL ||
+        numSlots == 0 || numSlots != controlBlock->numSlots ||
+        controlBlock->slotStrideBytes == 0 ||
+        controlBlock->maxPacketBytes == 0 ||
+        controlBlock->maxPacketBytes > controlBlock->slotStrideBytes) {
         out.ok = false;
         return out;
     }
 
     // 1. Capture CYCLE_TIMER and host time, and publish under seqlock.
     // Clock-smoothing / filtering is handled natively by AudioDriverKit's clock algorithms.
+    const uint32_t refillCycleTimer =
+        hw.Read(static_cast<Register32>(Register32::kCycleTimer));
     {
-        const uint32_t cycleTimer = hw.Read(static_cast<Register32>(Register32::kCycleTimer));
         const uint64_t hostTime = mach_absolute_time();
 
         ASFW::IsochTransport::ClockPairSample sample{};
         sample.hostTimeMid = hostTime;
-        sample.cycleTimer32 = cycleTimer;
+        sample.cycleTimer32 = refillCycleTimer;
         controlBlock->clockPair.Publish(sample);
     }
 
@@ -260,8 +290,20 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(*desc2));
         }
 
-        const uint16_t hwTimestamp = static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
-        controlBlock->PushCompletionStamp(currentAbsIdx, hwTimestamp);
+        const uint16_t hwTimestamp =
+            static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
+
+        // OHCI OUTPUT_LAST reports only sec[2:0]:cycle[12:0]. Preserve those
+        // authoritative completion fields and add the lower 12-bit subcycle
+        // from this same refill's CYCLE_TIMER sample. This creates the full
+        // timestamp consumed by Saffire's tstampToOffsets() equivalent while
+        // keeping the stamp and its subcycle atomically paired.
+        const uint32_t completionCycleTimer =
+            (static_cast<uint32_t>((hwTimestamp >> 13) & 0x7u) << 25) |
+            (static_cast<uint32_t>(hwTimestamp & 0x1FFFu) << 12) |
+            (refillCycleTimer & 0x0FFFu);
+        controlBlock->PushCompletionStamp(currentAbsIdx,
+                                          completionCycleTimer);
     }
     if (deltaConsumed > 0) {
         controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);
@@ -301,19 +343,37 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
 
-        // Copy quadlets to OMI descriptor (Descriptor 0)
-        auto* desc0 = slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket);
-        desc0->branchWord = meta.immediateHeader[0];
-        desc0->statusWord = meta.immediateHeader[1];
+        // Linux queue_iso_transmit() writes this pair through (__le32 *)&d[1]:
+        // offsets 0x10/0x14 after the OMI command descriptor. Offsets 0x08/0x0c
+        // are the cycle-loss skip address and command status, not transmitted
+        // data. Cross-validated with Linux: firewire/ohci.c:3373-3383.
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket));
+        immDesc->immediateData[0] = meta.immediateHeader[0];
+        immDesc->immediateData[1] = meta.immediateHeader[1];
 
         // Update OL descriptor (Descriptor 2) reqCount
         auto* desc2 = slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket + 2);
+        const uint64_t packetIOVA =
+            payloadIOVA + static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
+        if (packetIOVA > 0xFFFFFFFFULL ||
+            meta.payloadLength > controlBlock->maxPacketBytes) {
+            counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
+            out.ok = false;
+            return out;
+        }
+        desc2->dataAddress = static_cast<uint32_t>(packetIOVA);
         desc2->control = (desc2->control & 0xFFFF0000u) | (meta.payloadLength & 0xFFFFu);
         AR_init_status(*desc2, meta.payloadLength);
 
-        // Flush descriptor changes to device
+        // Publish the shared producer slot before exposing descriptor changes.
         if (dmaMemory_) {
-            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc0), sizeof(OHCIDescriptorImmediate));
+            const auto* payloadSlot =
+                reinterpret_cast<const std::byte*>(
+                    payloadBase + static_cast<size_t>(pktSlot) * controlBlock->slotStrideBytes);
+            dmaMemory_->PublishToDevice(payloadSlot, meta.payloadLength);
+            dmaMemory_->PublishBarrier();
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
         }
 
@@ -390,11 +450,9 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
     }
 
     const uint32_t descBaseIOVA = static_cast<uint32_t>(desc.deviceBase);
-    const uint32_t bufBaseIOVA = static_cast<uint32_t>(slab_.PayloadRegion().deviceBase);
-
-    ASFW_LOG(Isoch, "IT: DescRing Dump pkts %u-%u (total=%u pages=%u) DescBase=0x%08x BufBase=0x%08x Z=%u",
+    ASFW_LOG(Isoch, "IT: DescRing Dump pkts %u-%u (total=%u pages=%u) DescBase=0x%08x Z=%u",
              startPacket, startPacket + numPackets - 1, totalPackets, Layout::kTotalPages,
-             descBaseIOVA, bufBaseIOVA, Layout::kBlocksPerPacket);
+             descBaseIOVA, Layout::kBlocksPerPacket);
 
     for (uint32_t pktIdx = startPacket; pktIdx < startPacket + numPackets; ++pktIdx) {
         const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;

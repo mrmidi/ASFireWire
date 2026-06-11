@@ -1,7 +1,7 @@
 // IsochTxLayout.hpp
 // ASFW - Isochronous Transmit (IT) layout constants
 //
-// This file centralizes the IT descriptor/payload layout used by IsochTransmitContext.
+// This file centralizes the IT descriptor layout used by IsochTransmitContext.
 // The layout follows Linux-style OHCI page padding constraints (prefetch safety).
 //
 
@@ -37,11 +37,6 @@ struct Layout final {
         (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;  // 3
 
     static constexpr size_t kDescriptorRingSize = kTotalPages * kOHCIPageSize;  // 12288
-
-    // Worst-case packet size we reserve per slot (kept simple: fixed stride per packet).
-    static constexpr uint32_t kMaxPacketSize = 4096;
-    static constexpr size_t kPayloadBufferSize =
-        static_cast<size_t>(kNumPackets) * static_cast<size_t>(kMaxPacketSize);
 
     // The command-pointer slot and the next four packets are treated as
     // hardware-owned. Payload preparation uses a much earlier deadline so the

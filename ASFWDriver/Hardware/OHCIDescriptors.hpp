@@ -115,6 +115,10 @@ static_assert(OHCIDescriptor::kZShift == 0,
 
 struct alignas(16) OHCIDescriptorImmediate {
     OHCIDescriptor common;
+    // For OHCI IT OUTPUT_MORE-Immediate, reqCount=8 and these first two
+    // quadlets form the controller-specific transmit header. Linux programs
+    // the same bytes through (__le32 *)&d[1].
+    // Cross-validated with Linux: firewire/ohci.c:3364-3375.
     uint32_t immediateData[4]{};
 };
 static_assert(sizeof(OHCIDescriptorImmediate) == 32, "OHCIDescriptorImmediate must be 32 bytes per OHCI");
@@ -157,8 +161,10 @@ struct IsochHeader {
 
 struct ITDescriptorBuilder {
     struct OutputMoreImmediateParams {
-        uint32_t isochHeaderLE{0};
-        uint32_t cipQ0LE{0};
+        uint32_t itHeaderQ0LE{0};
+        uint32_t itHeaderQ1LE{0};
+        uint32_t skipIOVA{0};
+        uint8_t zValue{0};
         uint8_t interruptBits{OHCIDescriptor::kIntNever};
     };
 
@@ -171,12 +177,16 @@ struct ITDescriptorBuilder {
     };
 
     // OUTPUT_MORE-Immediate (32 bytes)
-    // - Control: cmd=0, key=2 (Immediate), b=0, i=0/3, reqCount=4 (CIP Q0 only)
-    // - Immediate[0]: IsochHeader (Framing - NOT payload) - Mapped to branchWord offset
-    // - Immediate[1]: CIP Q0 (First 4 bytes of payload)   - Mapped to statusWord offset
+    // - Control: cmd=0, key=2 (Immediate), b=0, i=0/3, reqCount=8
+    // - common.branchWord: cycle-loss skip address
+    // - immediateData[0]: IT Q0 (speed/tag/channel/tcode/sy)
+    // - immediateData[1]: IT Q1 (data length in bits 31:16)
+    // Cross-validated with Linux: firewire/ohci.c:3364-3383 and
+    // firewire/ohci.h:277-288.
     static void BuildOutputMoreImmediate(OHCIDescriptorImmediate& desc,
                                          const OutputMoreImmediateParams& params) {
-        constexpr uint16_t kReqCount = 4; // CIP Q0 only (IsochHeader is not payload)
+        constexpr uint16_t kReqCount = 8;
+        desc = {};
         desc.common.control = OHCIDescriptor::BuildControl({
             .reqCount = kReqCount,
             .command = OHCIDescriptor::kCmdOutputMore,
@@ -184,20 +194,9 @@ struct ITDescriptorBuilder {
             .interruptBits = params.interruptBits,
             .branchBits = OHCIDescriptor::kBranchNever,
         });
-        
-        // CRITICAL FIX: For OUTPUT_MORE-Immediate, the first 16 bytes contain Imm0 and Imm1.
-        // In the generic OHCIDescriptor struct, these map to:
-        // offset 0x08 (branchWord) -> Imm0 (IsochHeader)
-        // offset 0x0C (statusWord) -> Imm1 (CIP Q0)
-        desc.common.dataAddress = 0; // Skip (offset 0x04)
-        desc.common.branchWord = params.isochHeaderLE;
-        desc.common.statusWord = params.cipQ0LE;
-
-        // Second 16-byte block is unused for this specific format
-        desc.immediateData[0] = 0;
-        desc.immediateData[1] = 0;
-        desc.immediateData[2] = 0;
-        desc.immediateData[3] = 0;
+        desc.common.branchWord = MakeBranchWordAT(params.skipIOVA, params.zValue);
+        desc.immediateData[0] = params.itHeaderQ0LE;
+        desc.immediateData[1] = params.itHeaderQ1LE;
     }
 
     // OUTPUT_LAST (16 bytes)

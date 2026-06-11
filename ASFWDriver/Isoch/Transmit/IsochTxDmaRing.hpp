@@ -85,7 +85,9 @@ public:
 
     void DebugFillDescriptorSlab(uint8_t pattern) noexcept { slab_.DebugFillDescriptorSlab(pattern); }
 
-    [[nodiscard]] PrimeStats Prime() noexcept;
+    [[nodiscard]] PrimeStats Prime(uint64_t payloadIOVA,
+                                   uint32_t numSlots,
+                                   uint32_t slotStrideBytes) noexcept;
 
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
                                        uint8_t contextIndex,

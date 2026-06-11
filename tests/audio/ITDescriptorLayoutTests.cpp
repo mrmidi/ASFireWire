@@ -33,35 +33,36 @@ TEST(ITDescriptorLayoutTests, IsochHeaderBuild) {
 TEST(ITDescriptorLayoutTests, BuildOutputMoreImmediate) {
     OHCIDescriptorImmediate desc{};
     ITDescriptorBuilder::OutputMoreImmediateParams params{};
-    params.isochHeaderLE = 0x11223344u;
-    params.cipQ0LE = 0x55667788u;
+    params.itHeaderQ0LE = 0x11223344u;
+    params.itHeaderQ1LE = 0x55667788u;
+    params.skipIOVA = 0x12345000u;
+    params.zValue = 3;
     params.interruptBits = OHCIDescriptor::kIntAlways;
 
     ITDescriptorBuilder::BuildOutputMoreImmediate(desc, params);
 
     // Control word checks:
-    // reqCount = 4
+    // reqCount = 8
     // cmd = OutputMore (0x0)
     // key = Immediate (0x2)
     // interruptBits = kIntAlways (3)
     // branchBits = kBranchNever (0)
     // BuildControl uses:
     // high = (0x0 << 12) | (0x2 << 8) | (0x3 << 4) | (0x0 << 2) = 0x0230
-    // control = (0x0230 << 16) | 4 = 0x02300004
-    EXPECT_EQ(desc.common.control, 0x02300004u);
+    // control = (0x0230 << 16) | 8 = 0x02300008
+    EXPECT_EQ(desc.common.control, 0x02300008u);
 
     // dataAddress should be cleared
     EXPECT_EQ(desc.common.dataAddress, 0u);
 
-    // branchWord maps to Imm0 (IsochHeader)
-    EXPECT_EQ(desc.common.branchWord, 0x11223344u);
+    // branchWord is the cycle-loss skip pointer, not immediate data.
+    EXPECT_EQ(desc.common.branchWord, 0x12345003u);
 
-    // statusWord maps to Imm1 (CIP Q0)
-    EXPECT_EQ(desc.common.statusWord, 0x55667788u);
+    EXPECT_EQ(desc.common.statusWord, 0u);
 
-    // Unused immediateData quadlets (0 to 3) should be zero
-    EXPECT_EQ(desc.immediateData[0], 0u);
-    EXPECT_EQ(desc.immediateData[1], 0u);
+    // Cross-validated with Linux: firewire/ohci.c:3375-3383.
+    EXPECT_EQ(desc.immediateData[0], 0x11223344u);
+    EXPECT_EQ(desc.immediateData[1], 0x55667788u);
     EXPECT_EQ(desc.immediateData[2], 0u);
     EXPECT_EQ(desc.immediateData[3], 0u);
 }
