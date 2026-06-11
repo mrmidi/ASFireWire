@@ -51,7 +51,7 @@ TEST_F(CSRContractVerifierTests, ValidMaps_Ok) {
     topo.physical.nodes.resize(1);
     topo.physical.nodes[0].linkActive = true;
     
-    topologyMap_.Start();
+    ASSERT_TRUE(topologyMap_.Start());
     topologyMap_.Rebuild(topo);
     speedMap_.PublishFromTopology(topo);
     
@@ -67,7 +67,7 @@ TEST_F(CSRContractVerifierTests, TopologyMapUsesBusGeneration) {
     topo.nodeCount = 1;
     topo.graphStatus = TopologyGraphStatus::Valid;
 
-    topologyMap_.Start();
+    ASSERT_TRUE(topologyMap_.Start());
     topologyMap_.Rebuild(topo);
     EXPECT_EQ(topologyMap_.GetGeneration(), 7u);
 
@@ -88,7 +88,7 @@ TEST_F(CSRContractVerifierTests, ReportsStaleSpeedMapGenerationButDoesNotFailVer
     topo.physical.nodes.resize(1);
     topo.physical.nodes[0].linkActive = true;
 
-    topologyMap_.Start();
+    ASSERT_TRUE(topologyMap_.Start());
     topologyMap_.Rebuild(topo);
     topo.generation = 8;
     speedMap_.PublishFromTopology(topo);

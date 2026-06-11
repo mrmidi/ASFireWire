@@ -41,7 +41,6 @@ using ASFW::Audio::DICE::GeneralSections;
 using ASFW::Audio::DICE::Focusrite::SPro24DspProtocol;
 using ASFW::Audio::DICE::Focusrite::kEffectGeneralOffset;
 using ASFW::Audio::DICE::TCAT::DICETcatProtocol;
-using ASFW::Audio::DICE::TCAT::TryGetKnownDICEProfile;
 using ASFW::FW::FwSpeed;
 using ASFW::FW::Generation;
 using ASFW::FW::LockOp;
@@ -345,42 +344,6 @@ TEST(SPro24DspProtocolTests, VendorCallLoadsExtensionsLazily) {
     EXPECT_EQ(*callbackStatus, kIOReturnSuccess);
     EXPECT_EQ(bus.extensionReadCount, 1);
     EXPECT_EQ(bus.appQuadReadCount, 1);
-}
-
-TEST(DICEKnownProfilesTests, ReturnsKnownFocusriteProfiles) {
-    AudioStreamRuntimeCaps caps{};
-    EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000009U, caps));
-    EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 8U);
-    EXPECT_EQ(caps.hostOutputPcmChannels, 12U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 9U);
-    EXPECT_EQ(caps.hostToDeviceAm824Slots, 13U);
-
-    caps = {};
-    EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000007U, caps));
-    EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
-    EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
-    EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
-
-    caps = {};
-    EXPECT_TRUE(TryGetKnownDICEProfile(0x00130eU, 0x000008U, caps));
-    EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 16U);
-    EXPECT_EQ(caps.hostOutputPcmChannels, 8U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 17U);
-    EXPECT_EQ(caps.hostToDeviceAm824Slots, 9U);
-
-    caps = {};
-    EXPECT_TRUE(TryGetKnownDICEProfile(0x000595U, 0x000000U, caps));
-    EXPECT_EQ(caps.sampleRateHz, 48000U);
-    EXPECT_EQ(caps.hostInputPcmChannels, 12U);
-    EXPECT_EQ(caps.hostOutputPcmChannels, 2U);
-    EXPECT_EQ(caps.deviceToHostAm824Slots, 12U);
-    EXPECT_EQ(caps.hostToDeviceAm824Slots, 2U);
-    EXPECT_EQ(caps.deviceToHostIsoChannel, 1U);
-    EXPECT_EQ(caps.hostToDeviceIsoChannel, 0U);
 }
 
 } // namespace

@@ -213,27 +213,16 @@ public:
 
     kern_return_t StartTransmit(uint8_t channel,
                                 HardwareInterface&,
-                                uint8_t sourceId,
-                                uint32_t streamModeRaw,
-                                uint32_t pcmChannels,
-                                uint32_t dataBlockSize,
-                                ASFW::Encoding::AudioWireFormat wireFormat,
-                                ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource) noexcept override {
+                                uint8_t sourceId) noexcept override {
         log_.Add("host.start_transmit");
         lastTransmitChannel = channel;
         lastTransmitSourceId = sourceId;
-        lastTransmitMode = streamModeRaw;
-        lastTransmitPcmChannels = pcmChannels;
-        lastTransmitDataBlockSize = dataBlockSize;
-        lastTransmitWireFormat = wireFormat;
-        lastTransmitBindingSource = bindingSource;
         ++startTransmitCalls;
         return startTransmitStatus;
     }
 
-    kern_return_t StopDuplex(uint64_t guid, IRMClient*) noexcept override {
+    kern_return_t StopAll() noexcept override {
         log_.Add("host.stop");
-        lastGuid = guid;
         ++stopCalls;
         return stopStatus;
     }
