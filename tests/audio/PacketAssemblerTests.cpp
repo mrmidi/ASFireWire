@@ -6,7 +6,7 @@
 //
 
 #include <gtest/gtest.h>
-#include "AudioWire/AMDTP/PacketAssembler.hpp"
+#include "Audio/Wire/AMDTP/PacketAssembler.hpp"
 
 using namespace ASFW::Encoding;
 

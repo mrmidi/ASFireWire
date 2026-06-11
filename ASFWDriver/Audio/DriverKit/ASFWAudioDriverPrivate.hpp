@@ -7,8 +7,8 @@
 #include "Runtime/AudioGraphBinding.hpp"
 #include "Runtime/AudioTransportControlBlock.hpp"
 #include "Runtime/DirectAudioDebugSnapshot.hpp"
-#include "../../AudioEngine/Direct/FireWireAudioEngine.hpp"
-#include "../../Isoch/Config/AudioTxProfiles.hpp"
+#include "../../Audio/Engine/Direct/FireWireAudioEngine.hpp"
+#include "../Config/AudioTxProfiles.hpp"
 
 #include <AudioDriverKit/AudioDriverKit.h>
 #include <DriverKit/IOMemoryDescriptor.h>

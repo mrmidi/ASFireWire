@@ -1,8 +1,8 @@
 #include <AudioDriverKit/AudioDriverKit.h>
 
 #include "Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
-#include "AudioEngine/Direct/DirectOutputReader.hpp"
-#include "AudioEngine/Direct/Tx/DirectTxProbe.hpp"
+#include "Audio/Engine/Direct/DirectOutputReader.hpp"
+#include "Audio/Engine/Direct/Tx/DirectTxProbe.hpp"
 
 #include <gtest/gtest.h>
 

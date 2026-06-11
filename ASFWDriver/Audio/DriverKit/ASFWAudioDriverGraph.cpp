@@ -5,15 +5,18 @@
 // ADK graph construction/teardown for ASFWAudioDriver.
 //
 #include "ASFWAudioDriverPrivate.hpp"
-#include "../Runtime/TimingCursorPolicy.hpp"
-#include "../../AudioWire/AMDTP/TimingUtils.hpp"
+#include "Config/AudioProfileRegistry.hpp"
+#include "../Config/TimingCursorPolicy.hpp"
+#include "../../Common/TimingUtils.hpp"
 #include "../../Common/DriverKitOwnership.hpp"
-#include "../../Isoch/Config/AudioConstants.hpp"
+#include "../../Shared/Isoch/IsochAudioTransport.hpp"
+#include "../../Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSString.h>
 
+#include <algorithm>
 #include <cstring>
 #include <type_traits>
 #include <utility>

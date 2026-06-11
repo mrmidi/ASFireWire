@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
-#include "Protocols/Audio/DICE/Core/DICENotificationMailbox.hpp"
-#include "Protocols/Audio/DICE/Core/DICETransaction.hpp"
-#include "Protocols/Audio/DICE/Core/DICETypes.hpp"
-#include "Protocols/Audio/DICE/Focusrite/SaffireproCommon.hpp"
-#include "Protocols/Audio/DICE/Focusrite/SPro24DspRouting.hpp"
-#include "Protocols/Audio/DICE/Focusrite/SPro24DspTypes.hpp"
+#include "Audio/Protocols/DICE/Core/DICENotificationMailbox.hpp"
+#include "Audio/Protocols/DICE/Core/DICETransaction.hpp"
+#include "Audio/Protocols/DICE/Core/DICETypes.hpp"
+#include "Audio/Protocols/DICE/Focusrite/SaffireproCommon.hpp"
+#include "Audio/Protocols/DICE/Focusrite/SPro24DspRouting.hpp"
+#include "Audio/Protocols/DICE/Focusrite/SPro24DspTypes.hpp"
 #include "Common/WireFormat.hpp"
 
 #include <array>

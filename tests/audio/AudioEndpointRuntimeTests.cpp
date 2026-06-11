@@ -2,7 +2,7 @@
 
 #include "Testing/HostDriverKitStubs.hpp"
 #include "Audio/Core/AudioEndpointRuntime.hpp"
-#include "Isoch/Config/AudioConstants.hpp"
+#include "Audio/Config/AudioConstants.hpp"
 
 namespace {
 

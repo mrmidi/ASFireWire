@@ -6,7 +6,7 @@
 //
 
 #include <gtest/gtest.h>
-#include "AudioWire/CIP/CIPHeaderBuilder.hpp"
+#include "Audio/Wire/CIP/CIPHeaderBuilder.hpp"
 
 using namespace ASFW::Encoding;
 

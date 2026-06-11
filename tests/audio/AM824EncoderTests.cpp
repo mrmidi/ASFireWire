@@ -6,7 +6,7 @@
 //
 
 #include <gtest/gtest.h>
-#include "AudioWire/AM824/AM824Encoder.hpp"
+#include "Audio/Wire/AM824/AM824Encoder.hpp"
 
 using namespace ASFW::Encoding;
 

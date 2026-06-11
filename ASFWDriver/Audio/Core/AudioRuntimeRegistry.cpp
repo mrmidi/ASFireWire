@@ -5,11 +5,11 @@
 
 #include "AudioEndpointRuntime.hpp"
 #include "../../Logging/Logging.hpp"
-#include "../../Protocols/Audio/IDeviceProtocol.hpp"
+#include "../Protocols/IDeviceProtocol.hpp"
 #include "../../Discovery/DiscoveryTypes.hpp"
 
 #if !defined(ASFW_HOST_TEST)
-#include "../../Protocols/Audio/DeviceProtocolFactory.hpp"
+#include "../Protocols/DeviceProtocolFactory.hpp"
 #include "../../Protocols/Ports/FireWireBusPort.hpp"
 #endif
 

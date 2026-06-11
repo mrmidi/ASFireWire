@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "../ASFWDriver/AudioWire/AMDTP/SYTGenerator.hpp"
+#include "../ASFWDriver/Audio/Wire/AMDTP/SYTGenerator.hpp"
 
 namespace {
 constexpr int32_t kTickDomain = 16 * 3072;

@@ -8,7 +8,7 @@
 #include "IsochTransmitContext.hpp"
 #include "../../Hardware/OHCIConstants.hpp"
 #include "../../Logging/LogConfig.hpp"
-#include "../../AudioWire/AMDTP/TimingUtils.hpp"
+#include "../../Common/TimingUtils.hpp"
 
 #include <algorithm>
 #include <cstring>

@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "Protocols/Audio/DeviceProtocolFactory.hpp"
+#include "Audio/Protocols/DeviceProtocolFactory.hpp"
 
 namespace {
 

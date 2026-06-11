@@ -2,12 +2,11 @@
 // ASFW - Isochronous Service (orchestrator for IT/IR contexts)
 
 #include "IsochService.hpp"
-#include "../Audio/Core/AudioNubPublisher.hpp"
-#include "../Audio/DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../Logging/Logging.hpp"
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
 #include "Memory/IsochDMAMemoryManager.hpp"
+#include "../Shared/Isoch/IsochAudioTransport.hpp"
 
 namespace ASFW::Driver {
 

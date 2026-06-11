@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../AudioWire/AMDTP/TimingUtils.hpp"
+#include "../../Common/TimingUtils.hpp"
 
 #include <cstdint>
 

@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "Protocols/Audio/Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "Audio/Protocols/Oxford/Apogee/ApogeeDuetProtocol.hpp"
 
 namespace {
 

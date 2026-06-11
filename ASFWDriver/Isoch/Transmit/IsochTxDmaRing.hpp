@@ -12,6 +12,7 @@
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Common/BarrierUtils.hpp"
+#include "../../Shared/Isoch/IsochAudioTransport.hpp"
 
 #include <atomic>
 #include <array>

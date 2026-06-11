@@ -3,7 +3,8 @@
 
 #pragma once
 
-#include "../../Isoch/Config/AudioConstants.hpp"
+#include "../Config/AudioConstants.hpp"
+#include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 
 #include <DriverKit/IOLib.h>
 

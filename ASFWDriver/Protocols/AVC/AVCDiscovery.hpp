@@ -22,7 +22,7 @@
 #include "../../Discovery/FWUnit.hpp"
 #include "../../Discovery/FWDevice.hpp"
 #include "../../Audio/Core/IAVCAudioConfigListener.hpp"
-#include "../Audio/Oxford/Apogee/ApogeeTypes.hpp"
+#include "../../Audio/Protocols/Oxford/Apogee/ApogeeTypes.hpp"
 
 // Forward declarations
 namespace ASFW::Discovery { struct DeviceRecord; }
