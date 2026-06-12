@@ -27,7 +27,7 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
 
     const AudioGraphBinding binding{
         .guid = 0x1122334455667788ULL,

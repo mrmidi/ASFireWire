@@ -40,6 +40,7 @@ struct PacketTimelineSlot final {
 struct PacketSlotSnapshot final {
     const PacketTimelineSlot* slot{nullptr};
     uint32_t generation{0};
+    uint32_t packetIndex{0};
     uint8_t* packetBytes{nullptr};
     uint32_t packetSizeBytes{0};
     uint64_t firstAudioFrame{0};

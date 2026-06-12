@@ -319,7 +319,7 @@ private:
             return;
         }
 
-        directOutputBase_ = reinterpret_cast<const int32_t*>(
+        directOutputBase_ = reinterpret_cast<const float*>(
             static_cast<uintptr_t>(directOutputMap_->GetAddress()));
         directOutputBytes_ = directOutputMap_->GetLength();
         directInputBase_ = reinterpret_cast<int32_t*>(
@@ -431,7 +431,7 @@ private:
 
         ReleaseDirectAudioMemoryLocked();
 
-        const uint64_t outputBytes = static_cast<uint64_t>(outputFrames) * outputChannels * sizeof(int32_t);
+        const uint64_t outputBytes = static_cast<uint64_t>(outputFrames) * outputChannels * sizeof(float);
         const uint64_t inputBytes = static_cast<uint64_t>(inputFrames) * inputChannels * sizeof(int32_t);
         const uint64_t controlBytes = sizeof(Runtime::AudioTransportControlBlock);
 
@@ -503,7 +503,7 @@ private:
     IOMemoryMap* directOutputMap_{nullptr};
     IOMemoryMap* directInputMap_{nullptr};
     IOMemoryMap* directControlMap_{nullptr};
-    const int32_t* directOutputBase_{nullptr};
+    const float* directOutputBase_{nullptr};
     uint64_t directOutputBytes_{0};
     uint32_t directOutputCapacityFrames_{0};
     uint32_t directOutputChannels_{0};

@@ -46,7 +46,7 @@ struct AmdtpTxPolicy final {
 };
 
 struct HostAudioBufferView final {
-    const int32_t* interleavedInt32{nullptr};
+    const float* interleavedFloat32{nullptr};
 
     uint64_t firstFrame{0};
     uint32_t frameCount{0};

@@ -131,9 +131,19 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txPreparationWakeDispatches,
              snapshot.txPreparationWakeCoalesced,
              snapshot.txPreparationDrainPasses);
+    const int64_t transferDelayTicks =
+        runtime.txTimingModel.GetConfig().xmitTransferDelayTicks;
+    const int64_t wireLeadMinimum =
+        snapshot.txMinimumLeadTicks == std::numeric_limits<int64_t>::max()
+            ? std::numeric_limits<int64_t>::max()
+            : snapshot.txMinimumLeadTicks + transferDelayTicks;
+    const int64_t wireLeadMaximum =
+        snapshot.txMaximumLeadTicks == std::numeric_limits<int64_t>::min()
+            ? std::numeric_limits<int64_t>::min()
+            : snapshot.txMaximumLeadTicks + transferDelayTicks;
     ASFW_LOG(
         DirectAudio,
-        "ADK timing anchor(frame=%llu updates=%llu mirrors=%llu stale=%llu depth=%llu overflow=%llu notify=%llu coalesced=%llu) txLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu)",
+        "ADK timing anchor(frame=%llu updates=%llu mirrors=%llu stale=%llu depth=%llu overflow=%llu notify=%llu coalesced=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu)",
         snapshot.hostAnchorFrame,
         snapshot.hostAnchorUpdates,
         snapshot.hostAnchorMirrorPublications,
@@ -145,11 +155,28 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         snapshot.txLastLeadTicks,
         snapshot.txMinimumLeadTicks,
         snapshot.txMaximumLeadTicks,
+        snapshot.txLastLeadTicks + transferDelayTicks,
+        wireLeadMinimum,
+        wireLeadMaximum,
         snapshot.txDataPackets,
         snapshot.txNoDataPackets,
         snapshot.txPostLockNoDataPackets,
         snapshot.txLastPreparationLatencyTicks,
         snapshot.txMaxPreparationLatencyTicks);
+
+    const auto& pw = runtime.txStreamEngine.PayloadWriterCounters();
+    ASFW_LOG(
+        DirectAudio,
+        "ADK writer/visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu racedReuse=%llu wroteIntoTx=%llu nonZero=%llu slotsNZ=%llu maxAbs=%u",
+        pw.framesVisited.load(std::memory_order_relaxed),
+        pw.framesWritten.load(std::memory_order_relaxed),
+        pw.framesWithoutPacket.load(std::memory_order_relaxed),
+        pw.framesOutsidePacket.load(std::memory_order_relaxed),
+        pw.framesRacedReuse.load(std::memory_order_relaxed),
+        pw.framesWroteIntoTransmitted.load(std::memory_order_relaxed),
+        pw.framesNonZero.load(std::memory_order_relaxed),
+        pw.slotsNonZero.load(std::memory_order_relaxed),
+        pw.maxAbsSampleBits.load(std::memory_order_relaxed));
 }
 
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
@@ -270,12 +297,12 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
         .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
             .inputBase = reinterpret_cast<int32_t*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
-            .outputBase = reinterpret_cast<const int32_t*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
+            .outputBase = reinterpret_cast<const float*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
             .inputFrameCapacity = inputFrameCapacity,
             .outputFrameCapacity = outputFrameCapacity,
             .inputChannels = ivars.device.inputChannelCount,
             .outputChannels = ivars.device.outputChannelCount,
-            .storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native,
+            .storage = ASFW::Audio::Runtime::AudioSampleStorage::kFloat32Native,
         },
         .control = control,
         .deviceToHostAm824Slots = ivars.device.inputChannelCount,

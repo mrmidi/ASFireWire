@@ -25,7 +25,7 @@ TEST(AudioStreamMemoryTests, InputFrameWrapsByFrameCapacityAndUsesChannelStride)
 }
 
 TEST(AudioStreamMemoryTests, OutputFrameWrapsByFrameCapacityAndUsesChannelStride) {
-    std::array<int32_t, 12> output{};
+    std::array<float, 12> output{};
 
     const AudioStreamMemory memory{
         .outputBase = output.data(),
@@ -51,7 +51,7 @@ TEST(AudioStreamMemoryTests, MissingBuffersReturnNullAndReportInvalidDirections)
 
 TEST(AudioStreamMemoryTests, MemoryIsValidWithEitherDirection) {
     std::array<int32_t, 2> input{};
-    std::array<int32_t, 2> output{};
+    std::array<float, 2> output{};
 
     const AudioStreamMemory inputOnly{
         .inputBase = input.data(),

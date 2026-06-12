@@ -105,11 +105,12 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     AmdtpPayloadWriter writer{};
     writer.Configure(config, AmdtpTxPolicy{});
     writer.BindTimeline(&timeline);
-    std::array<int32_t, 16> mappedRing{};
-    mappedRing[0] = INT32_MAX;
-    mappedRing[1] = INT32_MIN;
-    writer.WriteInt32Interleaved(
-        {mappedRing.data(), 0, 8, 8, 2});
+    std::array<float, 16> mappedRing{};
+    mappedRing[0] = 1.0f;
+    mappedRing[1] = -1.0f;
+    // completionCursor 0: no packet counts as already transmitted here.
+    writer.WriteFloat32Interleaved(
+        {mappedRing.data(), 0, 8, 8, 2}, 0);
 
     EXPECT_EQ(dataBytes[8], 0x40);
     EXPECT_EQ(dataBytes[9], 0x7F);
@@ -118,7 +119,46 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     EXPECT_EQ(dataBytes[12], 0x40);
     EXPECT_EQ(dataBytes[13], 0x80);
     EXPECT_EQ(dataBytes[14], 0x00);
-    EXPECT_EQ(dataBytes[15], 0x00);
+    EXPECT_EQ(dataBytes[15], 0x01);
+}
+
+TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {
+    AmdtpTxPacketizer packetizer{};
+
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(timelineSlots.data(), timelineSlots.size()));
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), AmdtpTxPolicy{}));
+    EXPECT_TRUE(packetizer.AlignFrameCursorOnce(960U));
+    EXPECT_FALSE(packetizer.AlignFrameCursorOnce(2000U));
+
+    std::array<std::array<uint8_t, 128>, 3> bytes{};
+    PreparedTxPacket packet{};
+    AmdtpTimingState timing{};
+    timing.txClockValid = true;
+    timing.disposition = AmdtpPacketDisposition::Data;
+    timing.nextDataSyt = 0x1234;
+
+    // Packet index 0: not data in cadence
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes[0].data(), bytes[0].size()}, timing, packet));
+    EXPECT_FALSE(packet.isData);
+
+    // Packet index 1: data in cadence
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {1, bytes[1].data(), bytes[1].size()}, timing, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.firstAudioFrame, 960U);
+
+    // Packet index 2: data in cadence
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {2, bytes[2].data(), bytes[2].size()}, timing, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.firstAudioFrame, 968U);
+
+    packetizer.Reset(0, 0);
+    EXPECT_TRUE(packetizer.AlignFrameCursorOnce(3000U));
 }
 
 } // namespace

@@ -62,6 +62,10 @@ void DiceTxStreamEngine::ResetForStart(uint8_t initialDbc,
     packetizer_.Reset(initialDbc, initialAudioFrame);
 }
 
+bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
+    return packetizer_.AlignFrameCursorOnce(frameIndex);
+}
+
 bool DiceTxStreamEngine::PrepareNextTransmitSlot(
     uint32_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
     if (slotProvider_ == nullptr) {
@@ -94,9 +98,10 @@ bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
     return packetizer_.NextPacketWouldCarryData();
 }
 
-void DiceTxStreamEngine::WriteHostOutputInt32(
-    const AMDTP::HostAudioBufferView& hostBuffer) noexcept {
-    payloadWriter_.WriteInt32Interleaved(hostBuffer);
+void DiceTxStreamEngine::WriteHostOutputFloat32(
+    const AMDTP::HostAudioBufferView& hostBuffer,
+    uint64_t completionCursor) noexcept {
+    payloadWriter_.WriteFloat32Interleaved(hostBuffer, completionCursor);
 }
 
 AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() noexcept {

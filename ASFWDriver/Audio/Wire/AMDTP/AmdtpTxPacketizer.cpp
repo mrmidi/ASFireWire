@@ -88,9 +88,19 @@ void AmdtpTxPacketizer::Reset(uint8_t initialDbc,
                               uint64_t initialAudioFrame) noexcept {
     dbcCounter_.Reset(initialDbc);
     nextAudioFrame_ = initialAudioFrame;
+    frameCursorAligned_ = false;
     if (cadence_ != nullptr) {
         cadence_->Reset();
     }
+}
+
+bool AmdtpTxPacketizer::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
+    if (frameCursorAligned_) {
+        return false;
+    }
+    nextAudioFrame_ = frameIndex;
+    frameCursorAligned_ = true;
+    return true;
 }
 
 bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,

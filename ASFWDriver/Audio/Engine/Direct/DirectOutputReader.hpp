@@ -24,7 +24,7 @@ public:
         return binding_ != nullptr && binding_->HasOutput();
     }
 
-    [[nodiscard]] const int32_t* Frame(uint64_t absoluteFrame) const noexcept {
+    [[nodiscard]] const float* Frame(uint64_t absoluteFrame) const noexcept {
         if (!IsBound()) {
             return nullptr;
         }

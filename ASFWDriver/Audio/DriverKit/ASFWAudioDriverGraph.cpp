@@ -453,7 +453,9 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     driver.SetTransportType(IOUserAudioTransportType::FireWire);
     ivars.audioDevice->SetTransportType(IOUserAudioTransportType::FireWire);
     // Should test IIR clock algorithm as well and make it configurable later
-    ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::TwelvePtMovingWindowAverage);
+    // RAW for testing the seed is correctly converted from Cycle time to host time in the driver
+    // TODO: revert it to filtered zts once we have confidence in the conversion and stability of the clock
+    ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::Raw);
     ivars.audioDevice->SetClockIsStable(true);
     ivars.audioDevice->SetClockDomain(1);
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();

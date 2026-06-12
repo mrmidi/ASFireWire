@@ -18,7 +18,7 @@ using ASFW::Audio::Runtime::AudioWireFormat;
 AudioGraphBinding MakeBinding(AudioTransportControlBlock* control,
                               IOUserAudioDevice* audioDevice,
                               int32_t* input,
-                              const int32_t* output) {
+                              const float* output) {
     return AudioGraphBinding{
         .guid = 0x1122334455667788ULL,
         .sampleRateHz = 48000,
@@ -94,7 +94,7 @@ TEST(AudioGraphBindingTests, ValidWithInputOnly) {
 TEST(AudioGraphBindingTests, ValidWithOutputOnly) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
 
     const auto binding = MakeBinding(&control, &audioDevice, nullptr, output.data());
 
@@ -107,7 +107,7 @@ TEST(AudioGraphBindingTests, ValidWithDuplex) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
 
     const auto binding = MakeBinding(&control, &audioDevice, input.data(), output.data());
 

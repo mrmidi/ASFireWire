@@ -3,6 +3,7 @@
 #include "PcmSlotCodec.hpp"
 
 #include <atomic>
+#include <cstring>
 namespace ASFW::Protocols::Audio::AMDTP {
 
 // Design decisions (see ../../../README.md, Step 4):
@@ -24,7 +25,7 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    evicted by ring reuse, or mid-rewrite when the seqlock snapshot was
 //    taken (framesOutsidePacket — writer arrived late).
 // 4. The host view is a window into a ring of frameCapacity frames;
-//    interleavedInt32 points at the mapped HAL ring base and reads wrap
+//    interleavedFloat32 points at the mapped HAL ring base and reads wrap
 //    modulo frameCapacity.
 //    frameCapacity == 0 degrades to a flat (non-ring) buffer.
 // 5. The codec returns logical quadlet values; the writer serializes them
@@ -68,20 +69,25 @@ void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
     timeline_ = timeline;
 }
 
-void AmdtpPayloadWriter::WriteInt32Interleaved(
-    const HostAudioBufferView& hostBuffer) noexcept {
-    if (timeline_ == nullptr || hostBuffer.interleavedInt32 == nullptr ||
+void AmdtpPayloadWriter::WriteFloat32Interleaved(
+    const HostAudioBufferView& hostBuffer,
+    uint64_t completionCursor) noexcept {
+    if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0) {
         return; // invalid view: nothing visited, nothing counted
     }
+
+    const uint32_t retiredCursor =
+        static_cast<uint32_t>(completionCursor);
 
     uint64_t written = 0;
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
     uint64_t racedReuse = 0;
+    uint64_t wroteIntoTransmitted = 0;
     uint64_t nonZeroFrames = 0;
     uint64_t nonZeroSlots = 0;
-    uint32_t localMaxAbs = 0;
+    float localMaxAbs = 0.0f;
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -100,8 +106,8 @@ void AmdtpPayloadWriter::WriteInt32Interleaved(
             hostBuffer.frameCapacity != 0
                 ? absoluteFrame % hostBuffer.frameCapacity
                 : i;
-        const int32_t* source =
-            hostBuffer.interleavedInt32 +
+        const float* source =
+            hostBuffer.interleavedFloat32 +
             sourceFrame * hostBuffer.channels;
 
         // The snapshot's range check guarantees firstAudioFrame <=
@@ -117,19 +123,15 @@ void AmdtpPayloadWriter::WriteInt32Interleaved(
                                       : snap.dbs;
         bool frameNonZero = false;
         for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
-            const int32_t sample =
-                (ch < hostBuffer.channels) ? source[ch] : 0;
+            const float sample =
+                (ch < hostBuffer.channels) ? source[ch] : 0.0f;
             WriteBE32(dest + ch * kBytesPerSlot,
-                      PcmSlotCodec::EncodeInt32(
+                      PcmSlotCodec::EncodeFloat32(
                           sample, txPolicy_.hostToDevicePcmEncoding));
-            if (sample != 0) {
+            if (sample != 0.0f) {
                 frameNonZero = true;
                 ++nonZeroSlots;
-                const uint32_t absSample =
-                    sample == INT32_MIN
-                        ? static_cast<uint32_t>(INT32_MAX) + 1u
-                        : static_cast<uint32_t>(
-                              sample < 0 ? -sample : sample);
+                const float absSample = (sample >= 0.0f) ? sample : -sample;
                 if (absSample > localMaxAbs) {
                     localMaxAbs = absSample;
                 }
@@ -139,6 +141,10 @@ void AmdtpPayloadWriter::WriteInt32Interleaved(
             ++nonZeroFrames;
         }
         ++written;
+
+        if (snap.packetIndex < retiredCursor) {
+            ++wroteIntoTransmitted;
+        }
 
         std::atomic_thread_fence(std::memory_order_acquire);
         if (snap.slot->generation.load(std::memory_order_relaxed) !=
@@ -156,12 +162,18 @@ void AmdtpPayloadWriter::WriteInt32Interleaved(
                                             std::memory_order_relaxed);
     counters_.framesRacedReuse.fetch_add(racedReuse,
                                          std::memory_order_relaxed);
+    counters_.framesWroteIntoTransmitted.fetch_add(wroteIntoTransmitted,
+                                                    std::memory_order_relaxed);
     counters_.framesNonZero.fetch_add(nonZeroFrames,
                                       std::memory_order_relaxed);
     counters_.slotsNonZero.fetch_add(nonZeroSlots,
                                      std::memory_order_relaxed);
-    if (localMaxAbs != 0) {
-        const uint32_t desired = localMaxAbs;
+    // IEEE 754 float32: for non-negative values, the uint32 bit pattern is
+    // monotonically increasing, so a simple max on the bit representation
+    // is correct. Only one RT writer thread exists, so the CAS never contends.
+    if (localMaxAbs > 0.0f) {
+        uint32_t desired;
+        std::memcpy(&desired, &localMaxAbs, sizeof(desired));
         uint32_t expected =
             counters_.maxAbsSampleBits.load(std::memory_order_relaxed);
         while (desired > expected) {

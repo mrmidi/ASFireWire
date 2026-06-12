@@ -224,13 +224,17 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     driverIvars->runtime.directAudioGraph.memory;
                 if (memory.outputBase && channels > 0) {
                     ASFW::Protocols::Audio::AMDTP::HostAudioBufferView hostBuffer{};
-                    hostBuffer.interleavedInt32 = memory.outputBase;
+                    hostBuffer.interleavedFloat32 = memory.outputBase;
                     hostBuffer.firstFrame = sampleTime;
                     hostBuffer.frameCount = ioBufferFrameSize;
                     hostBuffer.frameCapacity = memory.outputFrameCapacity;
                     hostBuffer.channels = channels;
 
-                    driverIvars->runtime.txStreamEngine.WriteHostOutputInt32(hostBuffer);
+                    driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(
+                        hostBuffer,
+                        driverIvars->runtime.txSlotProvider.controlBlock
+                            ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
+                            : 0);
                     control->playbackRingReadFrame.store(sampleTime + ioBufferFrameSize, std::memory_order_release);
                 }
 

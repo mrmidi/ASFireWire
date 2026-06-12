@@ -152,7 +152,7 @@ public:
         out.inputBase = reinterpret_cast<int32_t*>(0x1234);
         out.inputFrames = 512;
         out.inputChannels = 8;
-        out.outputBase = reinterpret_cast<const int32_t*>(0x5678);
+        out.outputBase = reinterpret_cast<const float*>(0x5678);
         out.outputFrames = 512;
         out.outputChannels = 8;
         out.control = reinterpret_cast<ASFW::Audio::Runtime::AudioTransportControlBlock*>(0x9abc);

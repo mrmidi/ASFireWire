@@ -23,6 +23,11 @@ public:
     void Reset(uint8_t initialDbc = 0,
                uint64_t initialAudioFrame = 0) noexcept;
 
+    // Timing may reacquire during a running stream. Content-frame ownership
+    // must not reacquire with it, so alignment is accepted only once after
+    // Reset().
+    [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
+
     bool PrepareNextPacket(TxPacketSlotView slot,
                            const AmdtpTimingState& timing,
                            PreparedTxPacket& outPacket) noexcept;
@@ -55,6 +60,7 @@ private:
     AmdtpPacketTimeline* timeline_{nullptr};
 
     uint64_t nextAudioFrame_{0};
+    bool frameCursorAligned_{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

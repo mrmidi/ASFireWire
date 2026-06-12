@@ -14,7 +14,7 @@ struct DirectAudioBindingSnapshot {
     uint32_t inputFrames{0};
     uint32_t inputChannels{0};
 
-    const int32_t* outputBase{nullptr};
+    const float* outputBase{nullptr};
     uint64_t outputBytes{0};
     uint32_t outputFrames{0};
     uint32_t outputChannels{0};

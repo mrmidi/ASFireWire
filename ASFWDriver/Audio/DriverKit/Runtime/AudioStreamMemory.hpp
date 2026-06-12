@@ -7,11 +7,12 @@ namespace ASFW::Audio::Runtime {
 enum class AudioSampleStorage : uint32_t {
     kUnknown = 0,
     kInt32Native = 1,
+    kFloat32Native = 2,
 };
 
 struct AudioStreamMemory final {
     int32_t* inputBase{nullptr};
-    const int32_t* outputBase{nullptr};
+    const float* outputBase{nullptr};
 
     uint32_t inputFrameCapacity{0};
     uint32_t outputFrameCapacity{0};
@@ -19,7 +20,7 @@ struct AudioStreamMemory final {
     uint32_t inputChannels{0};
     uint32_t outputChannels{0};
 
-    AudioSampleStorage storage{AudioSampleStorage::kInt32Native};
+    AudioSampleStorage storage{AudioSampleStorage::kFloat32Native};
 
     [[nodiscard]] bool HasInput() const noexcept {
         return inputBase != nullptr &&
@@ -46,7 +47,7 @@ struct AudioStreamMemory final {
         return inputBase + (frameIndex * inputChannels);
     }
 
-    [[nodiscard]] const int32_t* OutputFrame(uint64_t absoluteFrame) const noexcept {
+    [[nodiscard]] const float* OutputFrame(uint64_t absoluteFrame) const noexcept {
         if (!HasOutput()) {
             return nullptr;
         }

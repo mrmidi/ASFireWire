@@ -36,11 +36,14 @@ public:
     void ResetForStart(uint8_t initialDbc,
                        uint64_t initialAudioFrame) noexcept;
 
+    [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
+
     bool PrepareNextTransmitSlot(uint32_t packetIndex,
                                  const AMDTP::AmdtpTimingState& timing) noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
-    void WriteHostOutputInt32(const AMDTP::HostAudioBufferView& hostBuffer) noexcept;
+    void WriteHostOutputFloat32(const AMDTP::HostAudioBufferView& hostBuffer,
+                                uint64_t completionCursor) noexcept;
 
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;

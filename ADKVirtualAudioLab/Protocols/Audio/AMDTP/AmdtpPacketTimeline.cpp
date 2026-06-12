@@ -172,6 +172,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
 
         const PacketSlotState state = slot.state.load(std::memory_order_relaxed);
         const bool isData = slot.isData;
+        const uint32_t pktIdx = slot.packetIndex;
         uint8_t* packetBytes = slot.packetBytes;
         const uint32_t packetSizeBytes = slot.packetSizeBytes;
         const uint64_t firstAudioFrame = slot.firstAudioFrame;
@@ -196,6 +197,7 @@ bool AmdtpPacketTimeline::SnapshotSlotForAudioFrame(
 
         out.slot = &slot;
         out.generation = gen;
+        out.packetIndex = pktIdx;
         out.packetBytes = packetBytes;
         out.packetSizeBytes = packetSizeBytes;
         out.firstAudioFrame = firstAudioFrame;

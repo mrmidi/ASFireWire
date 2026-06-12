@@ -71,11 +71,15 @@ void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
 }
 
 void AmdtpPayloadWriter::WriteFloat32Interleaved(
-    const HostAudioBufferView& hostBuffer) noexcept {
+    const HostAudioBufferView& hostBuffer,
+    uint64_t completionCursor) noexcept {
     if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0) {
         return; // invalid view: nothing visited, nothing counted
     }
+
+    const uint32_t retiredCursor =
+        static_cast<uint32_t>(completionCursor);
 
     const uint64_t windowOffset =
         (hostBuffer.frameCapacity != 0)
@@ -86,6 +90,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t withoutPacket = 0;
     uint64_t outsidePacket = 0;
     uint64_t racedReuse = 0;
+    uint64_t wroteIntoTransmitted = 0;
     uint64_t nonZeroFrames = 0;
     uint64_t nonZeroSlots = 0;
     float localMaxAbs = 0.0f;
@@ -145,6 +150,10 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         }
         ++written;
 
+        if (snap.packetIndex < retiredCursor) {
+            ++wroteIntoTransmitted;
+        }
+
         std::atomic_thread_fence(std::memory_order_acquire);
         if (snap.slot->generation.load(std::memory_order_relaxed) !=
             snap.generation) {
@@ -161,6 +170,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                             std::memory_order_relaxed);
     counters_.framesRacedReuse.fetch_add(racedReuse,
                                          std::memory_order_relaxed);
+    counters_.framesWroteIntoTransmitted.fetch_add(wroteIntoTransmitted,
+                                                    std::memory_order_relaxed);
     counters_.framesNonZero.fetch_add(nonZeroFrames,
                                       std::memory_order_relaxed);
     counters_.slotsNonZero.fetch_add(nonZeroSlots,

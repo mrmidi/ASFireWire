@@ -17,6 +17,10 @@ struct AmdtpPayloadWriterCounters final {
     // framesWritten whose slot was reused while the payload was being
     // written (detected by the post-write generation recheck).
     std::atomic<uint64_t> framesRacedReuse{0};
+    // Frames whose packetIndex was already retired by hardware (≤
+    // completionCursor) at write time — these writes land in the past and
+    // never reach the wire.
+    std::atomic<uint64_t> framesWroteIntoTransmitted{0};
     std::atomic<uint64_t> framesNonZero{0};
     std::atomic<uint64_t> slotsNonZero{0};
     std::atomic<uint32_t> maxAbsSampleBits{0}; // IEEE 754 float32 bit pattern
@@ -31,7 +35,8 @@ public:
 
     void BindTimeline(AmdtpPacketTimeline* timeline) noexcept;
 
-    void WriteFloat32Interleaved(const HostAudioBufferView& hostBuffer) noexcept;
+    void WriteFloat32Interleaved(const HostAudioBufferView& hostBuffer,
+                                  uint64_t completionCursor = 0) noexcept;
 
     [[nodiscard]] const AmdtpPayloadWriterCounters& Counters() const noexcept;
 

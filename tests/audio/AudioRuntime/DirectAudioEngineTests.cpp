@@ -22,7 +22,7 @@ using ASFW::AudioEngine::Direct::FireWireAudioEngine;
 AudioGraphBinding MakeDuplexBinding(AudioTransportControlBlock& control,
                                     IOUserAudioDevice& audioDevice,
                                     int32_t* input,
-                                    const int32_t* output) {
+                                    const float* output) {
     return AudioGraphBinding{
         .guid = 0x1122334455667788ULL,
         .sampleRateHz = 48000,
@@ -56,7 +56,7 @@ TEST(DirectAudioEngineTests, BindValidGraphBindsSubcomponents) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
     const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
@@ -73,7 +73,7 @@ TEST(DirectAudioEngineTests, BindInvalidGraphClearsState) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
     const auto valid = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
@@ -92,7 +92,7 @@ TEST(DirectAudioEngineTests, UnbindClearsState) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
     const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
@@ -109,7 +109,7 @@ TEST(DirectAudioEngineTests, OutputReaderUsesPlaybackRingCursorAvailability) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
     const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
@@ -127,7 +127,7 @@ TEST(DirectAudioEngineTests, OutputReaderRejectsOverflowingFrameRange) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
     std::array<int32_t, 16> input{};
-    std::array<int32_t, 16> output{};
+    std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
     const auto binding = MakeDuplexBinding(control, audioDevice, input.data(), output.data());
