@@ -240,8 +240,6 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
-[[nodiscard]] bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept;
-
 // Prepares transmit slots [startPacketIndex, targetPacketIndex) into the shared
 // metadata ring, committing each slot's generation so the IT DMA refill never
 // observes an uncommitted slot. Returns the number of slots prepared. Shared by

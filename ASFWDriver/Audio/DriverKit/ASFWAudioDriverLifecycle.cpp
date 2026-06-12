@@ -11,7 +11,7 @@
 #include <DriverKit/DriverKit.h>
 
 using ASFW::Audio::DriverKit::BuildAudioGraph;
-using ASFW::Audio::DriverKit::PrimeSharedZeroTimestampToHAL;
+using ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL;
 using ASFW::Audio::DriverKit::TearDownAudioGraph;
 
 kern_return_t IMPL(ASFWAudioDriver, Start)
@@ -401,14 +401,19 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
              policySnap.inputPacketLeadFrames,
              policySnap.ztsPeriodFrames);
 
-    if (!PrimeSharedZeroTimestampToHAL(*ivars)) {
-        ASFW_LOG(DirectAudio,
-                 "ADK WARN ZTS mirror prime_timeout guid=0x%016llx rxZts=%llu rxAdk=%llu",
-                 ivars->device.guid,
-                 control ? control->counters.ztsRxPublished.load(std::memory_order_relaxed) : 0,
-                 control ? control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed) : 0);
-        return failStartDevice(kIOReturnNotReady, "PrimeSharedZeroTimestampToHAL");
-    }
+    // Saffire choreography: start never blocks or fails waiting for clock
+    // qualification. ReadFirewireBuffers seeds takeTimeStamp only once the
+    // 512-entry SYT delta history is established (~85 ms of data packets,
+    // plus however long the device takes to ramp its stream) and nothing
+    // times out in the meantime — the engine simply produces no timestamps
+    // yet and HAL holds off IO cycles. Our first real anchor reaches HAL via
+    // ZtsAnchorReady; here we only drain anything already queued.
+    (void)PublishSharedZeroTimestampToHAL(*ivars, "start-drain", true);
+    ASFW_LOG(DirectAudio,
+             "ADK DBG ZTS start returns before first anchor guid=0x%016llx rxZts=%llu rxAdk=%llu",
+             ivars->device.guid,
+             control ? control->counters.ztsRxPublished.load(std::memory_order_relaxed) : 0,
+             control ? control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed) : 0);
 
     if (!ivars->runtime.directAudioGraph.audioDevice) {
         ASFW_LOG(DirectAudio,

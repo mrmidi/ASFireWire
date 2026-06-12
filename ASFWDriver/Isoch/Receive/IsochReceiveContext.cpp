@@ -295,23 +295,35 @@ uint32_t IsochReceiveContext::Poll() {
                     }
                 }
 
+                // Two clocks, never conflated (Saffire ReadFirewireBuffers):
+                // the SYT delta history recovers the DEVICE clock and feeds
+                // TX phase only; the HAL zero timestamp below is pure HOST
+                // receive time (IR drain uptime back-corrected per packet).
+                // SYT upkeep happens on SYT-bearing packets; anchor
+                // publication is gated only on the history being established,
+                // not on the current packet carrying a SYT.
                 bool rxClockEstablished = false;
                 int64_t sytLeadTicks = 0;
-                uint64_t packetPresentationHostTicks = 0;
-                if (result.hasValidCip &&
-                    result.syt != 0xFFFF &&
-                    hasHardwareTimestamp &&
-                    directInputView_.control) {
-                    const bool cadenceAccepted =
-                        directInputView_.control->rxSytCadence.Observe(
+                if (hasHardwareTimestamp && directInputView_.control) {
+                    if (result.hasValidCip && result.syt != 0xFFFF) {
+                        (void)directInputView_.control->rxSytCadence.Observe(
                             result.syt, rxTimestamp.cycleTimer);
+                        const int64_t receiveTicks =
+                            ASFW::Timing::encodedTstampToOffsets(
+                                rxTimestamp.cycleTimer);
+                        const int64_t presentationTicks =
+                            ASFW::Timing::extendTstampFromCycleTimer(
+                                rxTimestamp.cycleTimer, result.syt);
+                        sytLeadTicks = ASFW::Timing::extOffsetDiff(
+                            presentationTicks, receiveTicks);
+                    }
+
                     ASFW::Driver::RxSytCadence::Snapshot cadence{};
-                    if (cadenceAccepted &&
-                        directInputView_.control->rxSytCadence.TrySnapshot(
-                            cadence)) {
-                        rxClockEstablished = cadence.established;
-                        if (cadence.established &&
-                            !rxCadenceEstablishedLogged_) {
+                    if (directInputView_.control->rxSytCadence.TrySnapshot(
+                            cadence) &&
+                        cadence.established) {
+                        rxClockEstablished = true;
+                        if (!rxCadenceEstablishedLogged_) {
                             const uint16_t delayedReadIndex =
                                 static_cast<uint16_t>(
                                     (cadence.writeIndex +
@@ -333,25 +345,6 @@ uint32_t IsochReceiveContext::Poll() {
                                 result.receiveCycleTimestamp);
                             rxCadenceEstablishedLogged_ = true;
                         }
-
-                        const int64_t receiveTicks =
-                            ASFW::Timing::encodedTstampToOffsets(
-                                rxTimestamp.cycleTimer);
-                        const int64_t presentationTicks =
-                            ASFW::Timing::extendTstampFromCycleTimer(
-                                rxTimestamp.cycleTimer, result.syt);
-                        sytLeadTicks = ASFW::Timing::extOffsetDiff(
-                            presentationTicks, receiveTicks);
-                        if (sytLeadTicks >= 0) {
-                            packetPresentationHostTicks =
-                                packetReceiveHostTicks +
-                                ASFW::Timing::nanosToHostTicks(
-                                    Rx::FireWireTicksToNanos(
-                                        static_cast<uint64_t>(
-                                            sytLeadTicks)));
-                        } else {
-                            rxClockEstablished = false;
-                        }
                     }
                 }
 
@@ -363,7 +356,7 @@ uint32_t IsochReceiveContext::Poll() {
                     ASFW::IsochTransport::AudioTimingGeometry::
                         kHalZeroTimestampPeriodFrames;
                 if (rxClockEstablished &&
-                    packetPresentationHostTicks != 0 &&
+                    packetReceiveHostTicks != 0 &&
                     result.framesDecoded != 0 &&
                     clockPublisher_.IsBound() &&
                     directInputView_.sampleRateHz != 0) {
@@ -383,7 +376,7 @@ uint32_t IsochReceiveContext::Poll() {
                                  hostNanosPerSampleQ8)) >>
                             8;
                         const uint64_t gridHostTicks =
-                            packetPresentationHostTicks +
+                            packetReceiveHostTicks +
                             ASFW::Timing::nanosToHostTicks(
                                 gridDeltaNanos);
 
