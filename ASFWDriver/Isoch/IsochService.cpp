@@ -3,8 +3,10 @@
 
 #include "IsochService.hpp"
 #include "../Logging/Logging.hpp"
+#ifndef ASFW_HOST_TEST
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
+#endif
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "../Shared/Isoch/IsochAudioTransport.hpp"
 
@@ -93,6 +95,8 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
             ASFW_LOG(Isoch, "IsochService: Failed to create IT context");
             return kIOReturnNoMemory;
         }
+        isochTransmitContext_->SetTxPreparationCallback(
+            txPreparationCallback_);
     }
 
     const kern_return_t kr = isochTransmitContext_->Configure(channel, sid);

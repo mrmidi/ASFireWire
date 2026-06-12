@@ -418,6 +418,5 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             requested, now);
     }
 
-    txControl->preparationHandledGeneration.store(
-        requested, std::memory_order_release);
+    txControl->MarkPreparationHandled(requested);
 }

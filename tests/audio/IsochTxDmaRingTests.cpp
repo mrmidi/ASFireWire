@@ -268,6 +268,18 @@ TEST_F(IsochTxDmaRingTest, CompletionNotificationCoalescesUntilHandled) {
     EXPECT_EQ(next.preparationRequestGeneration, 2U);
 }
 
+TEST_F(IsochTxDmaRingTest, PreparationAcknowledgementNeverMovesBackward) {
+    TxStreamControl controlBlock{};
+
+    controlBlock.MarkPreparationHandled(2);
+    controlBlock.MarkPreparationHandled(1);
+
+    EXPECT_EQ(
+        controlBlock.preparationHandledGeneration.load(
+            std::memory_order_acquire),
+        2U);
+}
+
 TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots) {
     std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     (void)ring_.Prime(
@@ -338,6 +350,208 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
               0x11000000u + Layout::kNumPackets);
     EXPECT_EQ(wrappedImmediate->immediateData[1],
               0x22000000u + Layout::kNumPackets);
+}
+
+TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    for (uint32_t packetIndex = 0;
+         packetIndex < kSharedPayloadSlots;
+         ++packetIndex) {
+        auto& meta = metadataRing[packetIndex];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGen.store(1, std::memory_order_release);
+    }
+
+    const auto prime = ring_.Prime(
+        kSharedPayloadIOVA,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        kSharedPayloadSlots);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+    ring_.SeedCycleTracking(hardware_);
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto refillTo = [&](uint32_t hardwarePacketIndex) {
+        const uint32_t iova = ring_.Slab().GetDescriptorIOVA(
+            hardwarePacketIndex * Layout::kBlocksPerPacket);
+        hardware_.SetTestRegister(
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitCommandPtr(0)),
+            iova | Layout::kBlocksPerPacket);
+        return ring_.Refill(
+            hardware_,
+            0,
+            metadataRing.data(),
+            &controlBlock,
+            kSharedPayloadSlots,
+            sharedPayload_.data(),
+            kSharedPayloadIOVA);
+    };
+
+    for (uint32_t refill = 1; refill <= 10; ++refill) {
+        const uint32_t hardwarePacketIndex =
+            (refill * 32) % Layout::kNumPackets;
+        ASSERT_TRUE(refillTo(hardwarePacketIndex).ok);
+    }
+
+    const auto firstSecondLapRefill = refillTo(160);
+    EXPECT_FALSE(firstSecondLapRefill.ok);
+    EXPECT_EQ(controlBlock.statusWord.load(std::memory_order_acquire),
+              TxStreamStatus::kUnderrunFatal);
+}
+
+TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    for (uint32_t packetIndex = 0;
+         packetIndex < kSharedPayloadSlots;
+         ++packetIndex) {
+        auto& meta = metadataRing[packetIndex];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGen.store(1, std::memory_order_release);
+    }
+
+    const auto prime = ring_.Prime(
+        kSharedPayloadIOVA,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        kSharedPayloadSlots);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+    ring_.SeedCycleTracking(hardware_);
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto refillTo = [&](uint32_t hardwarePacketIndex) {
+        const uint32_t iova = ring_.Slab().GetDescriptorIOVA(
+            hardwarePacketIndex * Layout::kBlocksPerPacket);
+        hardware_.SetTestRegister(
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitCommandPtr(0)),
+            iova | Layout::kBlocksPerPacket);
+        return ring_.Refill(
+            hardware_,
+            0,
+            metadataRing.data(),
+            &controlBlock,
+            kSharedPayloadSlots,
+            sharedPayload_.data(),
+            kSharedPayloadIOVA);
+    };
+
+    for (uint32_t refill = 1; refill <= 10; ++refill) {
+        const uint32_t hardwarePacketIndex =
+            (refill * 32) % Layout::kNumPackets;
+        ASSERT_TRUE(refillTo(hardwarePacketIndex).ok);
+    }
+
+    for (uint64_t packetIndex = kSharedPayloadSlots;
+         packetIndex < kSharedPayloadSlots + 32;
+         ++packetIndex) {
+        auto& meta = metadataRing[packetIndex % kSharedPayloadSlots];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGen.store(
+            ExpectedCommitGen(packetIndex, kSharedPayloadSlots),
+            std::memory_order_release);
+    }
+
+    const auto firstSecondLapRefill = refillTo(160);
+    EXPECT_TRUE(firstSecondLapRefill.ok);
+    EXPECT_EQ(firstSecondLapRefill.packetsFilled, 32U);
+    EXPECT_EQ(metadataRing[0].packetIndex, kSharedPayloadSlots);
+    EXPECT_EQ(metadataRing[0].commitGen.load(std::memory_order_acquire), 2U);
+}
+
+TEST_F(IsochTxDmaRingTest, PreparationSlackToleratesOneDelayedCompletionWake) {
+    using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    for (uint32_t packetIndex = 0;
+         packetIndex < kSharedPayloadSlots;
+         ++packetIndex) {
+        auto& meta = metadataRing[packetIndex];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGen.store(1, std::memory_order_release);
+    }
+
+    const auto prime = ring_.Prime(
+        kSharedPayloadIOVA,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        kSharedPayloadSlots);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+    ring_.SeedCycleTracking(hardware_);
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto refillTo = [&](uint32_t hardwarePacketIndex) {
+        const uint32_t iova = ring_.Slab().GetDescriptorIOVA(
+            hardwarePacketIndex * Layout::kBlocksPerPacket);
+        hardware_.SetTestRegister(
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitCommandPtr(0)),
+            iova | Layout::kBlocksPerPacket);
+        return ring_.Refill(
+            hardware_,
+            0,
+            metadataRing.data(),
+            &controlBlock,
+            kSharedPayloadSlots,
+            sharedPayload_.data(),
+            kSharedPayloadIOVA);
+    };
+
+    for (uint32_t refill = 1; refill <= 10; ++refill) {
+        const uint32_t hardwarePacketIndex =
+            (refill * Geometry::kTxPacketsPerGroup) %
+            Layout::kNumPackets;
+        ASSERT_TRUE(refillTo(hardwarePacketIndex).ok);
+    }
+
+    // The previous successful preparation pass committed two groups beyond
+    // the hardware ring. Skip the next wake entirely: both groups must still
+    // be refillable before the producer is required again.
+    for (uint64_t packetIndex = kSharedPayloadSlots;
+         packetIndex <
+         kSharedPayloadSlots + Geometry::kTxPreparationSlackPackets;
+         ++packetIndex) {
+        auto& meta = metadataRing[packetIndex % kSharedPayloadSlots];
+        meta.packetIndex = packetIndex;
+        meta.payloadLength = 8;
+        meta.commitGen.store(
+            ExpectedCommitGen(packetIndex, kSharedPayloadSlots),
+            std::memory_order_release);
+    }
+
+    EXPECT_TRUE(refillTo(160).ok);
+    EXPECT_TRUE(refillTo(0).ok);
 }
 
 TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {

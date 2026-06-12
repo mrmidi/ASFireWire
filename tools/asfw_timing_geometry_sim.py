@@ -7,7 +7,8 @@ Validates:
 2. CoreAudio ADK IOOperationHandler callback scheduling under jitter,
    enforcing safety offsets, and utilizing an interval-based generational
    FrameRing model to detect capture starvations and playback overwrites.
-3. Candidate geometry searching to discover optimal buffer settings.
+3. TX metadata-ring preparation lead across asynchronous wake delays.
+4. Candidate geometry searching to discover optimal buffer settings.
 """
 
 from __future__ import annotations
@@ -100,6 +101,134 @@ class SimResult:
     ring_overwrites: int
     min_tx_lead_frames: int
     max_tx_lead_frames: int
+
+
+# -----------------------------------------------------------------------------
+# TX Metadata-Ring Preparation Simulator
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class TxPreparationGeometry:
+    name: str
+    shared_slots: int = 512
+    hardware_packets: int = 192
+    irq_packets: int = 32
+    preparation_lead_packets: int = 256
+    groups_to_simulate: int = 164
+    delayed_request_group: int | None = None
+    delayed_groups: int = 0
+
+
+@dataclass
+class TxPreparationResult:
+    geometry: TxPreparationGeometry
+    fatal_fill_abs_idx: int | None
+    expected_generation: int | None
+    committed_generation: int | None
+    completion_cursor: int
+    expose_cursor: int
+    request_generation: int
+    handled_generation: int
+    coalesced_requests: int
+
+
+def expected_commit_generation(packet_index: int, slot_count: int) -> int:
+    return packet_index // slot_count + 1
+
+
+def simulate_tx_preparation(g: TxPreparationGeometry) -> TxPreparationResult:
+    """
+    Model the packet-domain contract between IsochTxDmaRing::Refill and
+    TxPreparationReady.
+
+    Each completion group first refills the hardware ring, then the async
+    preparation action may run. A delayed action leaves its request pending,
+    so the following completion coalesces rather than dispatching another
+    action. The callback catches up from the current completion cursor when it
+    eventually runs, matching ASFWAudioDriver::TxPreparationReady.
+    """
+    if min(g.shared_slots, g.hardware_packets, g.irq_packets,
+           g.preparation_lead_packets, g.groups_to_simulate) <= 0:
+        raise ValueError("TX preparation geometry values must be positive")
+    if g.hardware_packets % g.irq_packets != 0:
+        raise ValueError("hardware_packets must be an IRQ-group multiple")
+    if g.shared_slots % g.irq_packets != 0:
+        raise ValueError("shared_slots must be an IRQ-group multiple")
+    if g.preparation_lead_packets > g.shared_slots - g.irq_packets:
+        raise ValueError("preparation lead can overwrite an uncompleted group")
+    if g.delayed_groups < 0:
+        raise ValueError("delayed_groups must not be negative")
+
+    committed_generation = [1] * g.shared_slots
+    completion_cursor = 0
+    expose_cursor = g.shared_slots  # startup prefill commits the entire ring
+    fill_abs_idx = g.hardware_packets
+    request_generation = 0
+    handled_generation = 0
+    pending_action_due_group: int | None = None
+    coalesced_requests = 0
+
+    for group in range(1, g.groups_to_simulate + 1):
+        completion_cursor += g.irq_packets
+
+        if request_generation == handled_generation:
+            request_generation += 1
+            delay = (
+                g.delayed_groups
+                if group == g.delayed_request_group
+                else 0
+            )
+            pending_action_due_group = group + delay
+        else:
+            coalesced_requests += 1
+
+        # Core refill happens before the newly dispatched async preparation
+        # action can publish more shared slots.
+        for packet_index in range(fill_abs_idx,
+                                  fill_abs_idx + g.irq_packets):
+            slot = packet_index % g.shared_slots
+            expected = expected_commit_generation(
+                packet_index, g.shared_slots)
+            committed = committed_generation[slot]
+            if committed != expected:
+                return TxPreparationResult(
+                    geometry=g,
+                    fatal_fill_abs_idx=packet_index,
+                    expected_generation=expected,
+                    committed_generation=committed,
+                    completion_cursor=completion_cursor,
+                    expose_cursor=expose_cursor,
+                    request_generation=request_generation,
+                    handled_generation=handled_generation,
+                    coalesced_requests=coalesced_requests,
+                )
+        fill_abs_idx += g.irq_packets
+
+        if (pending_action_due_group is not None and
+                group >= pending_action_due_group):
+            target_packet_index = (
+                completion_cursor + g.preparation_lead_packets)
+            max_target = expose_cursor + g.preparation_lead_packets
+            target_packet_index = min(target_packet_index, max_target)
+            while expose_cursor < target_packet_index:
+                slot = expose_cursor % g.shared_slots
+                committed_generation[slot] = expected_commit_generation(
+                    expose_cursor, g.shared_slots)
+                expose_cursor += 1
+
+            handled_generation = request_generation
+            pending_action_due_group = None
+
+    return TxPreparationResult(
+        geometry=g,
+        fatal_fill_abs_idx=None,
+        expected_generation=None,
+        committed_generation=None,
+        completion_cursor=completion_cursor,
+        expose_cursor=expose_cursor,
+        request_generation=request_generation,
+        handled_generation=handled_generation,
+        coalesced_requests=coalesced_requests,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -417,6 +546,31 @@ def print_result(r: SimResult) -> None:
     print()
 
 
+def print_tx_preparation_result(r: TxPreparationResult) -> None:
+    g = r.geometry
+    print("=" * 88)
+    print(g.name)
+    print("=" * 88)
+    print(f"Shared slots:          {g.shared_slots}")
+    print(f"Hardware packets:      {g.hardware_packets}")
+    print(f"IRQ packets:           {g.irq_packets}")
+    print(f"Preparation lead:      {g.preparation_lead_packets}")
+    print(f"Delayed request group: {g.delayed_request_group}")
+    print(f"Delay:                 {g.delayed_groups} group(s)")
+    if r.fatal_fill_abs_idx is None:
+        print("Result:                PASS")
+    else:
+        print("Result:                FATAL UNDERRUN")
+        print(f"fillAbsIdx:            {r.fatal_fill_abs_idx}")
+        print(f"expectedGen:           {r.expected_generation}")
+        print(f"commitGen:             {r.committed_generation}")
+    print(f"Completion cursor:     {r.completion_cursor}")
+    print(f"Expose cursor:         {r.expose_cursor}")
+    print(f"Request/handled:       {r.request_generation}/{r.handled_generation}")
+    print(f"Coalesced requests:    {r.coalesced_requests}")
+    print()
+
+
 # -----------------------------------------------------------------------------
 # Assertion-based Testing
 # -----------------------------------------------------------------------------
@@ -570,10 +724,56 @@ def run_tests() -> None:
         assert not res_phase.errors
         assert res_phase.geometry.frames_per_irq == 192, f"Phase {phase} broke 192-frame group advance"
 
+    # 9. Cross-validate the hardware FATAL at fillAbsIdx=5280. With only one
+    #    32-packet group beyond the 192-packet hardware ring, delaying request
+    #    group 159 by one group leaves slot 160 on generation 10 when absolute
+    #    packet 5280 requires generation 11.
+    old_tx_lead = TxPreparationGeometry(
+        name="OLD TX LEAD: 224 packets, one delayed preparation wake",
+        preparation_lead_packets=224,
+        delayed_request_group=159,
+        delayed_groups=1,
+    )
+    old_tx_result = simulate_tx_preparation(old_tx_lead)
+    assert old_tx_result.fatal_fill_abs_idx == 5280, old_tx_result
+    assert old_tx_result.expected_generation == 11, old_tx_result
+    assert old_tx_result.committed_generation == 10, old_tx_result
+
+    # 10. Two completion groups beyond the hardware ring prepare that same
+    #     absolute range one group earlier, so the identical delayed wake is
+    #     absorbed and the pending request catches up afterward.
+    fixed_tx_lead = TxPreparationGeometry(
+        name="FIXED TX LEAD: 256 packets, one delayed preparation wake",
+        preparation_lead_packets=256,
+        delayed_request_group=159,
+        delayed_groups=1,
+    )
+    fixed_tx_result = simulate_tx_preparation(fixed_tx_lead)
+    assert fixed_tx_result.fatal_fill_abs_idx is None, fixed_tx_result
+    assert fixed_tx_result.request_generation == fixed_tx_result.handled_generation
+    assert fixed_tx_result.coalesced_requests == 1, fixed_tx_result
+
     print("All simulator validation checks passed successfully!\n")
 
 
 def run_all() -> None:
+    print_tx_preparation_result(simulate_tx_preparation(
+        TxPreparationGeometry(
+            name="OLD TX LEAD CROSS-VALIDATION: 224 packets",
+            preparation_lead_packets=224,
+            delayed_request_group=159,
+            delayed_groups=1,
+        )
+    ))
+    print_tx_preparation_result(simulate_tx_preparation(
+        TxPreparationGeometry(
+            name="FIXED TX LEAD CROSS-VALIDATION: 256 packets",
+            preparation_lead_packets=256,
+            delayed_request_group=159,
+            delayed_groups=1,
+        )
+    ))
+
     cases = [
         Geometry(
             name="BAD OLD MIX: 8 packets (48 frames) IRQ / 48 ZTS / 512 ring",

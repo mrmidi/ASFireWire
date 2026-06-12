@@ -289,6 +289,13 @@ public:
 class IOMemoryDescriptor : public OSObject {
 public:
     virtual kern_return_t GetAddressRange(IOAddressSegment* range) = 0;
+    virtual void GetLength(uint64_t* length) = 0;
+    virtual kern_return_t CreateMapping(uint64_t options,
+                                        uint64_t address,
+                                        uint64_t offset,
+                                        uint64_t length,
+                                        uint64_t alignment,
+                                        IOMemoryMap** map) = 0;
 };
 
 class IOBufferMemoryDescriptor : public IOMemoryDescriptor {
@@ -322,6 +329,12 @@ public:
         range->length = length_;
         return kIOReturnSuccess;
     }
+
+    void GetLength(uint64_t* length) override {
+        if (length) {
+            *length = length_;
+        }
+    }
     
     kern_return_t SetLength(uint64_t len) {
         if (len > length_) return kIOReturnNoSpace;
@@ -329,7 +342,12 @@ public:
         return kIOReturnSuccess;
     }
 
-    kern_return_t CreateMapping(uint64_t options, uint64_t address, uint64_t offset, uint64_t length, uint64_t alignment, IOMemoryMap** map) {
+    kern_return_t CreateMapping(uint64_t options,
+                                uint64_t address,
+                                uint64_t offset,
+                                uint64_t length,
+                                uint64_t alignment,
+                                IOMemoryMap** map) override {
         if (!map) return kIOReturnBadArgument;
         auto* m = new IOMemoryMap();
         // In stub, buffer_ is the pointer. 'address' arg to CreateMapping is usually 0 (offset in descriptor).
@@ -349,7 +367,13 @@ public:
     }
     void FullBarrier() {}
     kern_return_t CompleteDMA(uint64_t options) { return kIOReturnSuccess; }
-    kern_return_t PrepareForDMA(uint64_t options, IOBufferMemoryDescriptor* buffer, uint64_t offset, uint64_t length, uint64_t* flags, uint32_t* segments, IOAddressSegment* segmentOut) {
+    kern_return_t PrepareForDMA(uint64_t options,
+                                IOMemoryDescriptor* buffer,
+                                uint64_t offset,
+                                uint64_t length,
+                                uint64_t* flags,
+                                uint32_t* segments,
+                                IOAddressSegment* segmentOut) {
         if (!segmentOut) return kIOReturnBadArgument;
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);

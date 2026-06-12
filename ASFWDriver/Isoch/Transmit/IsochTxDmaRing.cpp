@@ -367,8 +367,25 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         // Check if committed
         if (commitGen != expectedGen) {
             // Fatal Underrun!
-            ASFW_LOG(Isoch, "IT FATAL UNDERRUN: fillAbsIdx=%llu expectedGen=%llu commitGen=%llu",
-                     fillAbsIdx, expectedGen, commitGen);
+            const uint64_t exposeCursor =
+                controlBlock->exposeCursor.load(std::memory_order_acquire);
+            const uint64_t requestGeneration =
+                controlBlock->preparationRequestGeneration.load(
+                    std::memory_order_acquire);
+            const uint64_t handledGeneration =
+                controlBlock->preparationHandledGeneration.load(
+                    std::memory_order_acquire);
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL UNDERRUN: fillAbsIdx=%llu expectedGen=%llu commitGen=%llu completion=%llu expose=%llu delta=%u request=%llu handled=%llu",
+                fillAbsIdx,
+                expectedGen,
+                commitGen,
+                completedAbsIdx + deltaConsumed,
+                exposeCursor,
+                deltaConsumed,
+                requestGeneration,
+                handledGeneration);
             controlBlock->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal, std::memory_order_release);
             controlBlock->streamGeneration.fetch_add(1, std::memory_order_release);
 

@@ -347,6 +347,9 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     // the prefilled NO-DATA ring drained. Catch up now instead of waiting
     // for the next completion wake.
     {
+        const uint64_t requestedGeneration =
+            txControl->preparationRequestGeneration.load(
+                std::memory_order_acquire);
         const uint64_t completionCursor =
             txControl->completionCursor.load(std::memory_order_acquire);
         const uint64_t exposeCursor =
@@ -366,6 +369,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                      "ASFWAudioDriver: bring-up TX catch-up prepared=%u expose=%llu target=%llu",
                      prepared, exposeCursor, targetPacketIndex);
         }
+        txControl->MarkPreparationHandled(requestedGeneration);
     }
 
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();

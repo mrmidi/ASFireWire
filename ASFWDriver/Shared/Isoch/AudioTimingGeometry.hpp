@@ -62,8 +62,15 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kTxSharedSlotPackets = 512;
 
     static constexpr uint32_t kTxHardwareRingPackets = 192;
+    // Keep two completion groups prepared beyond the hardware-owned ring.
+    // One group is consumed by the normal refill itself; the second gives
+    // the cross-driver preparation action one full additional period to run.
+    // At 48 kHz this is 64 packets / 384 frames / 8 ms, matching the output
+    // preparation deadline declared by TimingCursorPolicy.
+    static constexpr uint32_t kTxPreparationSlackPackets =
+        2 * kTxPacketsPerGroup;
     static constexpr uint32_t kTxPreparationLeadPackets =
-        kTxHardwareRingPackets + kTxPacketsPerGroup;
+        kTxHardwareRingPackets + kTxPreparationSlackPackets;
 };
 
 static_assert(AudioTimingGeometry::kTimingGroupPackets %
@@ -103,6 +110,13 @@ static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
               AudioTimingGeometry::kTxPreparationLeadPackets,
               "TX shared slot ring must hold the full preparation lead");
+static_assert(AudioTimingGeometry::kTxPreparationSlackPackets >=
+                  2 * AudioTimingGeometry::kTxPacketsPerGroup,
+              "TX preparation must tolerate one delayed completion wake");
+static_assert(AudioTimingGeometry::kTxPreparationLeadPackets <=
+                  AudioTimingGeometry::kTxSharedSlotPackets -
+                      AudioTimingGeometry::kTxPacketsPerGroup,
+              "TX preparation must not overwrite the next uncompleted group");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
                   AudioTimingGeometry::kTxPacketsPerGroup ==
               0,

@@ -182,6 +182,18 @@ struct TxStreamControl final {
     std::atomic<uint64_t> exposeCursor{0};  ///< Count of committed packets
                                             ///< (end-exclusive absolute index).
 
+    void MarkPreparationHandled(uint64_t generation) noexcept {
+        uint64_t handled =
+            preparationHandledGeneration.load(std::memory_order_relaxed);
+        while (handled < generation &&
+               !preparationHandledGeneration.compare_exchange_weak(
+                   handled,
+                   generation,
+                   std::memory_order_release,
+                   std::memory_order_relaxed)) {
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Completion-stamp ring access (writer = core ISR, reader = audio pump).
     // -------------------------------------------------------------------------
