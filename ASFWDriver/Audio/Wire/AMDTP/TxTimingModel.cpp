@@ -72,14 +72,22 @@ TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
             (RxSytCadence::kEntryCount - 1));
     }
 
-    decision.syt = SytForPhase(phaseTicks_);
+    // Wire SYT = fill phase + IEC 61883-6 TRANSFER_DELAY (Linux compute_syt,
+    // amdtp-stream.c:1019). The lead/health gate below stays on the raw
+    // phase: it is the Saffire fill-vs-execution governor, a different
+    // quantity from the receiver-facing presentation time.
+    decision.syt =
+        SytForPhase(phaseTicks_ + config_.xmitTransferDelayTicks);
     decision.leadTicks =
         ASFW::Timing::extOffsetDiff(phaseTicks_, packetAnchorTicks);
+    decision.wireLeadTicks =
+        decision.leadTicks + config_.xmitTransferDelayTicks;
     decision.health = HealthForLead(decision.leadTicks);
 
-    // Saffire's 0xc9c2/0xe778 path still ships negative and tight leads with a
-    // warning. Only the upper lead-time gate suppresses this packet and forces
-    // phase reacquisition.
+    // Keep the original upper Saffire governor gate. wireLeadTicks is
+    // diagnostic only: the 2026-06-12 bench showed that treating a one-cycle
+    // receiver margin as a reset condition caused repeated timing reseeds
+    // without stabilizing DICE ARX1.
     if (decision.health == LeadHealth::kGate ||
         decision.health == LeadHealth::kEscalate) {
         phaseTicks_ = 0;
@@ -116,9 +124,11 @@ int64_t TxTimingModel::AdjustOutputPhase(
     int64_t executionPhaseTicks,
     int64_t candidatePhaseTicks,
     const RxSytCadence::Snapshot& rx) noexcept {
+    const int64_t rxRecoveredPhaseTicksDelayFree =
+        ASFW::Timing::normalizeOffsetDomain(rx.recoveredPhaseTicks - config_.xmitTransferDelayTicks);
     const int64_t phaseError =
         ASFW::Timing::extOffsetDiff(candidatePhaseTicks,
-                                   rx.recoveredPhaseTicks);
+                                   rxRecoveredPhaseTicksDelayFree);
     const int64_t cadenceScale =
         static_cast<int64_t>(config_.sytIntervalFrames) << 8;
     if (cadenceScale == 0 || rx.rollingCadenceTicks == 0) {

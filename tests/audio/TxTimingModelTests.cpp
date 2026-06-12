@@ -121,7 +121,11 @@ TEST(TxTimingModelTests, FirstLockedPacketMatchesRecoveredRxPhase) {
     EXPECT_TRUE(decision.seededThisCall);
     EXPECT_EQ(decision.health, LeadHealth::kTightWarn);
     EXPECT_EQ(decision.leadTicks, 0);
-    EXPECT_EQ(decision.syt, SytFromTicks(recovered));
+    // The fill phase pins to the recovered RX lattice; the wire SYT is that
+    // phase pushed out by the IEC 61883-6 transfer delay.
+    EXPECT_EQ(decision.syt,
+              SytFromTicks(recovered +
+                           TxTimingModel::Config{}.xmitTransferDelayTicks));
 }
 
 TEST(TxTimingModelTests, GoldCaptureKeepsTxOnRecoveredRxSyt) {
@@ -141,7 +145,12 @@ TEST(TxTimingModelTests, GoldCaptureKeepsTxOnRecoveredRxSyt) {
     model.Configure(TxTimingModel::Config{});
 
     const auto decision = model.PeekNextDataSyt(recovered, cadence);
-    EXPECT_EQ(decision.syt, 0x92B0);
+    // Phase = recovered (lead 0); wire SYT = phase + 12800-tick transfer
+    // delay = +4 cycles +0x200 sub-cycle: 0x92B0 -> 0xD4B0.
+    EXPECT_EQ(decision.syt, 0xD4B0);
+    EXPECT_EQ(decision.syt,
+              SytFromTicks(recovered +
+                           TxTimingModel::Config{}.xmitTransferDelayTicks));
     EXPECT_EQ(decision.leadTicks, 0);
 }
 
@@ -158,8 +167,11 @@ TEST(TxTimingModelTests, AdvancesByDelayedObservedCadenceEntry) {
     ASSERT_NE(first.syt, 0xFFFF);
     model.CommitDataPacket();
 
+    // Compare in the wire domain: both sides carry the same constant
+    // transfer-delay addend, so the per-packet advance is the cadence step.
+    const int64_t delay = TxTimingModel::Config{}.xmitTransferDelayTicks;
     EXPECT_EQ(Timing::SYTDiffInOffsets(
-                  SytFromTicks(model.OutputPhaseTicks()), first.syt),
+                  SytFromTicks(model.OutputPhaseTicks() + delay), first.syt),
               Timing::kSytPacketStepTicks48k);
 }
 
@@ -273,6 +285,69 @@ TEST(TxTimingModelTests, SeedLeadIsIndependentOfRxStartupHistory) {
             EXPECT_EQ(phaseVsRecovered, expectedPhaseVsRecovered);
         }
     }
+}
+
+TEST(TxTimingModelTests, WireSytCarriesTransferDelayWhileGateMeasuresRawPhase) {
+    // IEC 61883-6: SYT = event time + TRANSFER_DELAY (blocking @48 k =
+    // 12,800 ticks, Linux amdtp-stream.c parity — see
+    // TRANSFER_DELAY_AND_OTHER.md §2). The delay is an encode-time addend
+    // only: the lead/health gate keeps measuring the raw fill phase against
+    // the execution anchor, so the Saffire governor band is unchanged.
+    RxSytCadence cadence{};
+    cadence.Reset();
+    const int64_t recovered = FillCadenceToLock(cadence);
+
+    TxTimingModel::Config config{};
+    ASSERT_EQ(config.xmitTransferDelayTicks, 12800);
+
+    TxTimingModel model{};
+    model.Configure(config);
+
+    const auto decision = model.PeekNextDataSyt(recovered, cadence);
+    ASSERT_NE(decision.syt, 0xFFFF);
+
+    // Gate quantity: raw phase vs anchor — no transfer delay folded in.
+    EXPECT_EQ(decision.leadTicks,
+              Timing::extOffsetDiff(model.OutputPhaseTicks(), recovered));
+    // Wire quantity: presentation = phase + transfer delay, i.e. the SYT
+    // leads the raw phase by exactly the configured delay.
+    EXPECT_EQ(decision.syt,
+              SytFromTicks(model.OutputPhaseTicks() +
+                           config.xmitTransferDelayTicks));
+    EXPECT_EQ(Timing::SYTDiffInOffsets(
+                  decision.syt, SytFromTicks(model.OutputPhaseTicks())),
+              config.xmitTransferDelayTicks);
+
+    // Rate ladder: the power-of-two families collapse to the same 4096-tick
+    // accumulation term (static_asserted in the header); the 44.1 k family
+    // and 32 k differ.
+    EXPECT_EQ(TxTimingModel::XmitTransferDelayTicksForRate(8, 44100), 13162);
+    EXPECT_EQ(TxTimingModel::XmitTransferDelayTicksForRate(8, 32000), 14848);
+}
+
+TEST(TxTimingModelTests, ReportsWireLeadWithoutUsingItAsAResetPolicy) {
+    RxSytCadence cadence{};
+    cadence.Reset();
+    const int64_t recovered = FillCadenceToLock(cadence);
+
+    TxTimingModel model{};
+    const TxTimingModel::Config config{};
+    model.Configure(config);
+
+    ASSERT_NE(model.PeekNextDataSyt(recovered, cadence).syt, 0xFFFF);
+    model.CommitDataPacket();
+
+    const int64_t phase = model.OutputPhaseTicks();
+    const int64_t lateRawLead = -(config.xmitTransferDelayTicks + 1024);
+    const int64_t anchor =
+        Timing::normalizeOffsetDomain(phase - lateRawLead);
+    const auto decision = model.PeekNextDataSyt(anchor, cadence);
+
+    EXPECT_EQ(decision.health, LeadHealth::kLate);
+    EXPECT_EQ(decision.leadTicks, lateRawLead);
+    EXPECT_EQ(decision.wireLeadTicks, -1024);
+    EXPECT_NE(decision.syt, 0xFFFF);
+    EXPECT_TRUE(model.IsSeeded());
 }
 
 TEST(TxTimingModelTests, SeedPinsLeadWithinOneCorrectionGridForAnyAnchor) {

@@ -15,13 +15,23 @@ public:
         int64_t tightLeadTicks{3072};   // below: near-underrun warning
         int64_t acceptLeadTicks{7620};  // at/above: device rejects (gate)
         int64_t escalateLeadTicks{12287}; // advisory log-escalation only
+        // IEC 61883-6 TRANSFER_DELAY, added to the wire SYT at encode time
+        // only. The lead fields above keep governing the raw fill phase
+        // against the execution anchor (the Saffire FillFirewireBuffers
+        // band); the receiver-facing presentation time is that phase plus
+        // this delay. Default = Linux amdtp-stream.c parity for 48 kHz
+        // blocking: (0x2E00 spec default - one cycle, which the SYT cycle
+        // arithmetic contributes) + SYT_INTERVAL accumulation time
+        // (TICKS_PER_SECOND * sytInterval / rate). See
+        // TRANSFER_DELAY_AND_OTHER.md section 2.
+        int64_t xmitTransferDelayTicks{12800};
     };
 
     enum class LeadHealth : uint8_t {
         kNotSeeded = 0,
         kAccepted,     // tight < lead < accept: the safe operating range
         kTightWarn,    // 0 <= lead <= tight: shipping while thin
-        kLate,         // lead < 0: shipped by Saffire, but worth diagnosing
+        kLate,         // raw lead < 0: shipped, with wire lead diagnosed
         kGate,         // accept <= lead < escalate: device would reject
         kEscalate,     // lead >= escalate: drifted very far (advisory)
     };
@@ -29,6 +39,7 @@ public:
     struct Decision final {
         uint16_t syt{0xFFFF};
         int64_t leadTicks{0};
+        int64_t wireLeadTicks{0};
         LeadHealth health{LeadHealth::kNotSeeded};
         bool seededThisCall{false};
     };
@@ -37,6 +48,24 @@ public:
     static constexpr int64_t kTicksPerFrame48k = 512;
     static constexpr int64_t kPacketStepTicks = 4096;  // 8 frames x 512
     static constexpr int64_t kSytDomainTicks = 49152;  // 16 cycles
+    static constexpr int64_t kTicksPerSecond = 24576000;
+
+    // IEC 61883-6 TRANSFER_DELAY for blocking transmission, in bus ticks.
+    // 8704 = spec DEFAULT_TRANSFER_DELAY 0x2E00 (479.17 us) minus one cycle
+    // (Linux amdtp-stream.c:303 keeps the same split because compute_syt's
+    // cycle arithmetic supplies the +1-cycle term); the second term is the
+    // SYT_INTERVAL event-accumulation time the blocking transmitter spends
+    // filling a packet (amdtp-stream.c:307).
+    [[nodiscard]] static constexpr int64_t XmitTransferDelayTicksForRate(
+        uint32_t sytIntervalFrames, uint32_t sampleRateHz) noexcept {
+        constexpr int64_t kDelayLessCycleTicks = 0x2E00 - kTicksPerCycle;
+        if (sampleRateHz == 0) {
+            return kDelayLessCycleTicks;
+        }
+        return kDelayLessCycleTicks +
+               ((kTicksPerSecond * static_cast<int64_t>(sytIntervalFrames)) /
+                static_cast<int64_t>(sampleRateHz));
+    }
 
     TxTimingModel() noexcept = default;
 
@@ -77,5 +106,18 @@ private:
     uint16_t cadenceReadIndex_{RxSytCadence::kNoInfo};
     uint16_t pendingCadenceTicks_{0};
 };
+
+// The blocking accumulation term is a clean 4096 ticks at the power-of-two
+// rates (SYT_INTERVAL doubles with the rate family), so the Config default
+// must equal the ladder for the 48 kHz bring-up configuration.
+static_assert(TxTimingModel::XmitTransferDelayTicksForRate(8, 48000) == 12800,
+              "48 kHz blocking transfer delay must match the Config default");
+static_assert(TxTimingModel::XmitTransferDelayTicksForRate(16, 96000) == 12800,
+              "96 kHz blocking transfer delay (SYT_INTERVAL 16)");
+static_assert(TxTimingModel::XmitTransferDelayTicksForRate(32, 192000) == 12800,
+              "192 kHz blocking transfer delay (SYT_INTERVAL 32)");
+static_assert(TxTimingModel::Config{}.xmitTransferDelayTicks ==
+                  TxTimingModel::XmitTransferDelayTicksForRate(8, 48000),
+              "Config default and rate ladder must agree");
 
 } // namespace ASFW::Driver

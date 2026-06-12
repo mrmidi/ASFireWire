@@ -247,11 +247,13 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 // observes an uncommitted slot. Returns the number of slots prepared. Shared by
 // the steady-state ZTS pump and the pre-RUN prefill; with an unseeded transmit
 // clock the normal AMDTP cadence is preserved but every packet carries NO_INFO
-// (SYT=0xffff), matching the reference Saffire seed behavior.
+// (SYT=0xffff), matching the reference Saffire seed behavior. Set
+// allowRecoveredClock only after HAL has accepted the first real RX anchor.
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t startPacketIndex,
                               uint64_t targetPacketIndex,
-                              uint32_t maxToPrepare) noexcept;
+                              uint32_t maxToPrepare,
+                              bool allowRecoveredClock) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets
 // before the IT DMA context starts, so the first refill finds committed slots.
