@@ -20,16 +20,15 @@ static_assert(kMaxPcmChannels <= kMaxAmdtpDbs,
 // Shared queue / buffer sizing.
 inline constexpr uint32_t kTxQueueCapacityFrames = 4096;
 inline constexpr uint32_t kRxQueueCapacityFrames = 4096;
-// Aligned with the zero timestamp period (512 frames) to prevent wrap mismatch
-// with the HAL's stream read boundaries.
+// Frame ring: an exact integer number of ZTS periods and max HAL IO periods
+// (asserted in AudioTimingGeometry.hpp) so anchor grid, IO chunks, and ring
+// wrap can never drift out of phase.
 inline constexpr uint32_t kAudioRingBufferFrames =
     ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
 inline constexpr uint32_t kAudioIoPeriodFrames =
     ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames;
 
-// Output (TX/playback) shared ring depth. Aligned directly with the zero
-// timestamp period (512 frames) to avoid a wrap mismatch where the driver reads
-// unwritten/silent regions because the HAL wraps writes at the ZTS period.
+// Output (TX/playback) shared ring depth — same geometry as the input ring.
 inline constexpr uint32_t kAudioOutputRingFrames =
     ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
 
@@ -43,10 +42,12 @@ static_assert(kTxQueueCapacityFrames != 0 && ((kTxQueueCapacityFrames & (kTxQueu
               "TX queue capacity must be power-of-two");
 static_assert(kRxQueueCapacityFrames != 0 && ((kRxQueueCapacityFrames & (kRxQueueCapacityFrames - 1)) == 0),
               "RX queue capacity must be power-of-two");
-static_assert(kAudioRingBufferFrames != 0 && ((kAudioRingBufferFrames & (kAudioRingBufferFrames - 1)) == 0),
-              "Audio ring buffer frame count must be power-of-two");
-static_assert(kAudioOutputRingFrames != 0 && ((kAudioOutputRingFrames & (kAudioOutputRingFrames - 1)) == 0),
-              "Output ring frame count must be power-of-two");
+// Note: the frame rings are NOT required to be powers of two. The blocking
+// cadence advances 24 frames per 4-packet block, so any ring that is an
+// integer number of interrupt groups has a factor of 3 — indexing must use
+// modulo, never bitmasks.
+static_assert(kAudioRingBufferFrames != 0, "Audio ring must be non-empty");
+static_assert(kAudioOutputRingFrames != 0, "Output ring must be non-empty");
 static_assert(kAudioRingBufferFrames == kAudioOutputRingFrames,
               "Input and output must share one frame-ring geometry");
 static_assert((kAudioRingBufferFrames % kAudioIoPeriodFrames) == 0,

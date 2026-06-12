@@ -36,14 +36,29 @@ TEST(AmdtpRateGeometryTests, StandardRatesKeepNominalAndSytIntervalDistinct) {
 TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     using Geometry =
         ASFW::IsochTransport::AudioTimingGeometry;
-    EXPECT_EQ(Geometry::kFrameRingFrames, 512U);
+    EXPECT_EQ(Geometry::kFrameRingFrames, 1536U);
     EXPECT_EQ(Geometry::kHalIoPeriodFrames, 512U);
-    EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames, 512U);
+    EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames, 192U);
     EXPECT_EQ(Geometry::kFrameAlignment, 32U);
-    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 8U);
-    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 32U);
+    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 32U);
+    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 192U);
+    EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 256U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 512U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 192U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 200U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 224U);
+
+    // The load-bearing relationships behind the values above.
+    // ZTS grid aligned 1:1 with the DMA interrupt program: the interrupt IS
+    // the ZTS callback.
+    EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames,
+              Geometry::kNominalFramesPerTimingGroup);
+    EXPECT_EQ(Geometry::kFrameRingFrames %
+                  Geometry::kHalZeroTimestampPeriodFrames, 0U);
+    EXPECT_EQ(Geometry::kFrameRingFrames %
+                  Geometry::kHalIoPeriodFrames, 0U);
+    EXPECT_EQ(Geometry::kTimingGroupPackets %
+                  Geometry::kCadenceBlockPackets, 0U);
 }
 
 } // namespace

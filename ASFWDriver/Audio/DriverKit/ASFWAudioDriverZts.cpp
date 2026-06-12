@@ -41,11 +41,19 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
             const uint64_t lastHostTicks =
                 ivars.runtime.lastHalZeroTimestampHostTicks.load(
                     std::memory_order_relaxed);
+            // Anchors must sit on the declared P grid and advance
+            // monotonically. The step may be any positive multiple of P:
+            // SYT qualification can complete several periods after the
+            // synthetic frame-0 prime, and a mid-stream relock can skip
+            // grid points. Requiring exactly last+P here would reject the
+            // first post-gap anchor and then every later one (each compares
+            // against the stale lastSampleFrame), permanently starving the
+            // HAL of real timestamps.
             if (anchor.hostTicks == 0 ||
                 anchor.hostNanosPerSampleQ8 == 0 ||
                 (anchor.sampleFrame % P) != 0 ||
                 (lastHostTicks != 0 &&
-                 (anchor.sampleFrame != lastSampleFrame + P ||
+                 (anchor.sampleFrame <= lastSampleFrame ||
                   anchor.hostTicks <= lastHostTicks))) {
                 ASFW_LOG(
                     DirectAudio,
@@ -253,10 +261,18 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         return;
     }
 
-    // Seed the shared metadata ring with the pump's full lead before the IT DMA
-    // context is started, so the first refill interrupt never meets an
-    // uncommitted slot (which would fatally stop the context — channel never
+    // Seed the ENTIRE shared metadata ring with NO-DATA before the IT DMA
+    // context is started, so no refill interrupt during bring-up can meet an
+    // uncommitted slot (which fatally stops the context — channel never
     // reaches the wire).
+    //
+    // The full ring (not just the pump's runtime lead) is required: the pump
+    // (TxPreparationReady) is gated on isRunning, which StartDevice only sets
+    // after StartStreaming + geometry validation — tens of ms after IT RUN.
+    // Seeding kTxSharedSlotPackets (512 pkts = 64 ms) gives bring-up a
+    // ~(512−192)·125 µs ≈ 40 ms budget before the refill reaches lap 2;
+    // seeding only the 224-packet lead gave 8 ms (2026-06-12 hardware FATAL
+    // UNDERRUN at fillAbsIdx=224).
     //
     // Critically, this runs before RX cadence acquisition and before any
     // OUTPUT_LAST completion can provide a packet execution anchor. Saffire's
@@ -273,7 +289,7 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     uint32_t prepared = 0;
     constexpr uint32_t kPreparationLeadPackets =
         ASFW::IsochTransport::AudioTimingGeometry::
-            kTxPreparationLeadPackets;
+            kTxSharedSlotPackets;
     for (uint64_t packetIndex = 0;
          packetIndex < kPreparationLeadPackets;
          ++packetIndex) {

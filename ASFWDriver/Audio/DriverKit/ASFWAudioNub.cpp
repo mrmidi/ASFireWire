@@ -562,36 +562,6 @@ kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
     return ctx->isoch.FreeTxIsochResources();
 }
 
-// Starts the low-level FireWire transmit DMA stream on the specified channel and speed.
-kern_return_t IMPL(ASFWAudioNub, StartTxStream)
-{
-    if (!ivars) {
-        return kIOReturnNotReady;
-    }
-    ASFWDriver* parent = GetParentASFWDriver(ivars);
-    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
-    if (!ctx || !ctx->deps.hardware) {
-        return kIOReturnNotReady;
-    }
-
-    return ctx->isoch.StartTxStream(channel, speed, *ctx->deps.hardware);
-}
-
-// Stops the low-level FireWire transmit DMA stream context.
-kern_return_t IMPL(ASFWAudioNub, StopTxStream)
-{
-    if (!ivars) {
-        return kIOReturnNotReady;
-    }
-    ASFWDriver* parent = GetParentASFWDriver(ivars);
-    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
-    if (!ctx) {
-        return kIOReturnNotReady;
-    }
-
-    return ctx->isoch.StopTxStream();
-}
-
 void ASFWAudioNub::SetChannelCount(uint32_t channels)
 {
     if (!ivars) return;

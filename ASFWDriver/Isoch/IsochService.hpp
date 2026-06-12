@@ -89,19 +89,6 @@ public:
     kern_return_t FreeTxIsochResources();
 
     /**
-     * @brief Configure, initialize, and start the transmit DMA context stream.
-     * @param channel The FireWire channel number (0-63).
-     * @param speed The transmission speed code (S100, S200, S400).
-     * @param hardware Reference to the low-level MMIO hardware interface.
-     */
-    kern_return_t StartTxStream(uint32_t channel, uint32_t speed, HardwareInterface& hardware);
-
-    /**
-     * @brief Stop the transmit DMA context stream.
-     */
-    kern_return_t StopTxStream();
-
-    /**
      * @brief Query the current host time and FireWire cycle timer snapshot.
      * @param outHostTimeMid Monotonic host system time in ticks.
      * @param outCycleTimer Raw FireWire cycle timer value from hardware.

@@ -196,6 +196,7 @@ def simulate(g: Geometry, callback_sizes: Sequence[int] | None = None) -> SimRes
     # Primary variables for tracking callbacks
     cb_index = 0
     next_client_wakeup_us = Fraction(0)
+    pending_wakeup_us: Fraction | None = None
     
     # Group frames accumulator for correct frame advance reporting
     accumulated_group_frames = 0
@@ -257,6 +258,10 @@ def simulate(g: Geometry, callback_sizes: Sequence[int] | None = None) -> SimRes
             accumulated_group_frames = 0
 
         # 4. CoreAudio Callback Scheduler
+        # Each wakeup gets exactly ONE jitter draw, fixed when the wakeup is
+        # armed. (Re-drawing per packet while waiting and clamping monotonic
+        # ratcheted the wake time up by max-of-draws plus 10 µs per packet —
+        # an artifact that fabricated underruns for large IO periods.)
         callbacks_this_packet = 0
         while True:
             # Resolve next callback size
@@ -265,22 +270,23 @@ def simulate(g: Geometry, callback_sizes: Sequence[int] | None = None) -> SimRes
             else:
                 current_cb_size = g.io_period_frames
 
-            # Wakeup calculation
-            latest_anchor_frame, latest_anchor_host = zts_anchors[-1]
-            
-            ideal_playback_time_us = latest_anchor_host + Fraction(
-                (client_sample_time - latest_anchor_frame) * 1_000_000, SAMPLE_RATE
-            )
-            
-            # Target wakeup time
-            jitter_us = Fraction(random.gauss(0.0, g.jitter_std_us))
-            wakeup_host_us = ideal_playback_time_us - output_safety_us + jitter_us
-            
-            # Clamp to prevent scheduling going backwards
-            wakeup_host_us = max(wakeup_host_us, next_client_wakeup_us + Fraction(10))
+            if pending_wakeup_us is None:
+                # Arm the next wakeup: ideal time from the latest anchor,
+                # one jitter draw, never earlier than the previous wakeup.
+                latest_anchor_frame, latest_anchor_host = zts_anchors[-1]
+                ideal_playback_time_us = latest_anchor_host + Fraction(
+                    (client_sample_time - latest_anchor_frame) * 1_000_000, SAMPLE_RATE
+                )
+                jitter_us = Fraction(random.gauss(0.0, g.jitter_std_us))
+                pending_wakeup_us = max(
+                    ideal_playback_time_us - output_safety_us + jitter_us,
+                    next_client_wakeup_us + Fraction(10),
+                )
+            wakeup_host_us = pending_wakeup_us
 
             # Check if this wakeup falls in the current packet interval [time_us, time_us + PACKET_US)
             if wakeup_host_us < (time_us + PACKET_US):
+                pending_wakeup_us = None
                 callbacks_this_packet += 1
                 if callbacks_this_packet > 4:
                     errors.append("scheduler runaway")
@@ -312,7 +318,6 @@ def simulate(g: Geometry, callback_sizes: Sequence[int] | None = None) -> SimRes
                 cb_index += 1
                 next_client_wakeup_us = wakeup_host_us
             else:
-                next_client_wakeup_us = wakeup_host_us
                 break
                 
         if errors:
@@ -506,7 +511,50 @@ def run_tests() -> None:
     assert res_saffire.playback_underruns == 0
     assert res_saffire.capture_starvations == 0
 
-    # 7. Cadence phase testing: phase 1, 2, 3 must yield same aligned advances for 32-packet groups
+    # 7. ASFW TARGET geometry (AudioTimingGeometry.hpp): 32-packet IRQ groups,
+    #    ZTS 192 == per-interrupt advance (aligned 1:1, the interrupt IS the
+    #    ZTS callback), ring 1536 (divisible by 192 and by max IO 512).
+    #    7a. Worst-case client (512-frame IO):
+    #        in_safety = out(48) + io(512) + 64 per the duplex equation.
+    asfw_target_max_io = Geometry(
+        name="ASFW TARGET (max IO): 32 packets / 192 ZTS / 512 IO / 1536 ring",
+        irq_packets=32,
+        zts_period_frames=192,
+        io_period_frames=512,
+        ring_frames=1536,
+        output_safety_frames=48,
+        input_safety_frames=624,
+    )
+    res_target = simulate(asfw_target_max_io)
+    assert not res_target.errors, f"ASFW target (max IO) failed: {res_target.errors}"
+    # ZTS == frames/IRQ (aligned); the only acceptable warning is the client's
+    # own IO size differing from the ZTS period.
+    assert not any("crossed-grid" in w for w in res_target.warnings), res_target.warnings
+    assert res_target.playback_underruns == 0
+    assert res_target.capture_starvations == 0
+    assert res_target.ring_overwrites == 0
+
+    #    7b. Typical pro-audio client (64-frame IO) with the declared driver
+    #        offsets: out = 48 (Saffire profile), in = 256 (driver floor: one
+    #        interrupt group 192 + 64 jitter; profile's 128 assumed Saffire's
+    #        own 1.5 ms groups).
+    asfw_target_typical = Geometry(
+        name="ASFW TARGET (typical 64-frame client): 32 packets / 192 ZTS / 1536 ring",
+        irq_packets=32,
+        zts_period_frames=192,
+        io_period_frames=64,
+        ring_frames=1536,
+        output_safety_frames=48,
+        input_safety_frames=256,
+        jitter_std_us=100.0,
+    )
+    res_typical = simulate(asfw_target_typical)
+    assert not res_typical.errors, f"ASFW target (typical) failed: {res_typical.errors}"
+    assert res_typical.playback_underruns == 0
+    assert res_typical.capture_starvations == 0
+    assert res_typical.ring_overwrites == 0
+
+    # 8. Cadence phase testing: phase 1, 2, 3 must yield same aligned advances for 32-packet groups
     for phase in (1, 2, 3):
         aligned_phase = Geometry(
             name=f"CLEAN ALIGNED PHASE {phase}: 32 packets / 192 ZTS / 768 ring",
@@ -580,6 +628,25 @@ def run_all() -> None:
             ring_frames=768,
             output_safety_frames=48,
             input_safety_frames=128,
+            jitter_std_us=100.0,
+        ),
+        Geometry(
+            name="ASFW TARGET (AudioTimingGeometry.hpp): 32 packets / 192 ZTS / 1536 ring, 512-frame client",
+            irq_packets=32,
+            zts_period_frames=192,
+            io_period_frames=512,
+            ring_frames=1536,
+            output_safety_frames=48,
+            input_safety_frames=624,
+        ),
+        Geometry(
+            name="ASFW TARGET (AudioTimingGeometry.hpp): 32 packets / 192 ZTS / 1536 ring, 64-frame client",
+            irq_packets=32,
+            zts_period_frames=192,
+            io_period_frames=64,
+            ring_frames=1536,
+            output_safety_frames=48,
+            input_safety_frames=256,
             jitter_std_us=100.0,
         ),
     ]

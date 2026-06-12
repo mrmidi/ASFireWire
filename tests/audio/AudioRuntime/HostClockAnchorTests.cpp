@@ -8,6 +8,10 @@ using ASFW::Audio::Runtime::AudioTransportControlBlock;
 using ASFW::Audio::Runtime::HostClockAnchorSample;
 using ASFW::Audio::Runtime::HostClockAnchorState;
 
+constexpr uint64_t kAnchorPeriod =
+    ASFW::IsochTransport::AudioTimingGeometry::
+        kHalZeroTimestampPeriodFrames;
+
 TEST(HostClockAnchorTests, ResetState) {
     HostClockAnchorState state{};
     state.producerCursor.store(5);
@@ -42,33 +46,33 @@ TEST(HostClockAnchorTests, QueuesMonotonicRxHostAnchorsInOrder) {
     control.ResetForStart();
 
     const auto first =
-        control.PublishHostClockAnchor(512, 200, 300);
+        control.PublishHostClockAnchor(kAnchorPeriod, 200, 300);
     EXPECT_TRUE(first.accepted);
     EXPECT_TRUE(first.notifyConsumer);
-    EXPECT_EQ(control.hostClockAnchor.sampleFrame.load(), 512U);
+    EXPECT_EQ(control.hostClockAnchor.sampleFrame.load(), kAnchorPeriod);
     EXPECT_EQ(control.hostClockAnchor.hostTicks.load(), 200U);
     EXPECT_EQ(control.hostClockAnchor.hostNanosPerSampleQ8.load(), 300U);
     EXPECT_EQ(control.hostClockAnchor.anchorUpdates.load(), 1U);
 
     const auto second =
-        control.PublishHostClockAnchor(1024, 400, 300);
+        control.PublishHostClockAnchor(2 * kAnchorPeriod, 400, 300);
     EXPECT_TRUE(second.accepted);
     EXPECT_FALSE(second.notifyConsumer);
     EXPECT_EQ(control.hostClockAnchor.generation.load(), 2U);
 
     HostClockAnchorSample anchor{};
     ASSERT_TRUE(control.hostClockAnchor.TryPop(anchor));
-    EXPECT_EQ(anchor.sampleFrame, 512U);
+    EXPECT_EQ(anchor.sampleFrame, kAnchorPeriod);
     EXPECT_EQ(anchor.hostTicks, 200U);
     ASSERT_TRUE(control.hostClockAnchor.TryPop(anchor));
-    EXPECT_EQ(anchor.sampleFrame, 1024U);
+    EXPECT_EQ(anchor.sampleFrame, 2 * kAnchorPeriod);
     EXPECT_EQ(anchor.hostTicks, 400U);
     EXPECT_FALSE(control.hostClockAnchor.TryPop(anchor));
     EXPECT_FALSE(
         control.hostClockAnchor.FinishDrainAndNeedsAnotherPass());
 
     EXPECT_FALSE(
-        control.PublishHostClockAnchor(1536, 0, 300).accepted);
+        control.PublishHostClockAnchor(3 * kAnchorPeriod, 0, 300).accepted);
     EXPECT_EQ(control.hostClockAnchor.staleUpdates.load(), 1U);
 }
 
@@ -77,11 +81,11 @@ TEST(HostClockAnchorTests, RejectsForwardSampleBackwardHost) {
     control.ResetForStart();
 
     EXPECT_TRUE(control.PublishHostClockAnchor(
-        512, 5528585432680ULL, 256).accepted);
+        kAnchorPeriod, 5528585432680ULL, 256).accepted);
     EXPECT_FALSE(control.PublishHostClockAnchor(
-        1024, 5528585408482ULL, 256).accepted);
+        2 * kAnchorPeriod, 5528585408482ULL, 256).accepted);
 
-    EXPECT_EQ(control.hostClockAnchor.sampleFrame.load(), 512U);
+    EXPECT_EQ(control.hostClockAnchor.sampleFrame.load(), kAnchorPeriod);
     EXPECT_EQ(control.hostClockAnchor.hostTicks.load(), 5528585432680ULL);
     EXPECT_EQ(control.hostClockAnchor.staleUpdates.load(), 1U);
 }
@@ -91,9 +95,9 @@ TEST(HostClockAnchorTests, RejectsSkippedGridPoint) {
     control.ResetForStart();
 
     EXPECT_TRUE(
-        control.PublishHostClockAnchor(512, 100, 300).accepted);
+        control.PublishHostClockAnchor(kAnchorPeriod, 100, 300).accepted);
     EXPECT_FALSE(
-        control.PublishHostClockAnchor(1536, 200, 300).accepted);
+        control.PublishHostClockAnchor(3 * kAnchorPeriod, 200, 300).accepted);
     EXPECT_EQ(control.hostClockAnchor.staleUpdates.load(), 1U);
 }
 
@@ -102,19 +106,19 @@ TEST(HostClockAnchorTests, ConsumerRechecksAfterCoalescedPublish) {
     control.ResetForStart();
 
     EXPECT_TRUE(
-        control.PublishHostClockAnchor(512, 100, 300)
+        control.PublishHostClockAnchor(kAnchorPeriod, 100, 300)
             .notifyConsumer);
 
     HostClockAnchorSample anchor{};
     ASSERT_TRUE(control.hostClockAnchor.TryPop(anchor));
     EXPECT_FALSE(
-        control.PublishHostClockAnchor(1024, 200, 300)
+        control.PublishHostClockAnchor(2 * kAnchorPeriod, 200, 300)
             .notifyConsumer);
 
     EXPECT_TRUE(
         control.hostClockAnchor.FinishDrainAndNeedsAnotherPass());
     ASSERT_TRUE(control.hostClockAnchor.TryPop(anchor));
-    EXPECT_EQ(anchor.sampleFrame, 1024U);
+    EXPECT_EQ(anchor.sampleFrame, 2 * kAnchorPeriod);
     EXPECT_FALSE(
         control.hostClockAnchor.FinishDrainAndNeedsAnotherPass());
 }
@@ -124,11 +128,14 @@ TEST(HostClockAnchorTests, RejectsOffGridPublications) {
     control.ResetForStart();
 
     EXPECT_FALSE(
-        control.PublishHostClockAnchor(48, 100, 300).accepted);
+        control.PublishHostClockAnchor(
+            kAnchorPeriod / 2, 100, 300).accepted);
     EXPECT_FALSE(
-        control.PublishHostClockAnchor(511, 200, 300).accepted);
+        control.PublishHostClockAnchor(
+            kAnchorPeriod - 1, 200, 300).accepted);
     EXPECT_TRUE(
-        control.PublishHostClockAnchor(512, 300, 300).accepted);
+        control.PublishHostClockAnchor(
+            kAnchorPeriod, 300, 300).accepted);
     EXPECT_EQ(control.hostClockAnchor.anchorUpdates.load(), 1U);
 }
 
@@ -140,11 +147,11 @@ TEST(HostClockAnchorTests, RejectsPublicationWhenQueueIsFull) {
          index <= HostClockAnchorState::kQueueCapacity;
          ++index) {
         EXPECT_TRUE(control.PublishHostClockAnchor(
-            index * 512, index * 100, 300).accepted);
+            index * kAnchorPeriod, index * 100, 300).accepted);
     }
 
     EXPECT_FALSE(control.PublishHostClockAnchor(
-        (HostClockAnchorState::kQueueCapacity + 1) * 512,
+        (HostClockAnchorState::kQueueCapacity + 1) * kAnchorPeriod,
         (HostClockAnchorState::kQueueCapacity + 1) * 100,
         300).accepted);
     EXPECT_EQ(control.hostClockAnchor.queueOverflows.load(), 1U);

@@ -107,7 +107,7 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
             txMetadataRing_.get(),
             txControlBlock_.get(),
             interruptInterval_,
-            512);
+            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
         if (memKr != kIOReturnSuccess) {
             ASFW_LOG(Isoch,
                      "IsochService: IT shared-memory setup failed: 0x%08x",
@@ -296,65 +296,6 @@ kern_return_t IsochService::FreeTxIsochResources()
     txMetadataRing_ = nullptr;
     txControlBlock_ = nullptr;
     ASFW_LOG(Isoch, "IsochService: Freed Tx isoch resources");
-    return kIOReturnSuccess;
-}
-
-kern_return_t IsochService::StartTxStream(uint32_t channel, uint32_t speed, HardwareInterface& hardware) {
-    if (!isochTransmitContext_) {
-        ASFW::Isoch::Memory::IsochMemoryConfig config;
-        config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
-        config.packetSizeBytes = 0;
-        config.descriptorAlignment = ASFW::Isoch::Tx::Layout::kOHCIPageSize;
-        config.payloadPageAlignment = 16384;
-        config.allocatePayloadSlab = false;
-
-        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
-        if (!isochMem) {
-            ASFW_LOG(Isoch, "IsochService: Failed to create TX DMA memory manager");
-            return kIOReturnNoMemory;
-        }
-
-        if (!isochMem->Initialize(hardware)) {
-            ASFW_LOG(Isoch, "IsochService: Failed to initialize TX DMA memory");
-            return kIOReturnNoMemory;
-        }
-
-        isochTransmitContext_ = IsochTransmitContext::Create(&hardware, isochMem);
-        if (!isochTransmitContext_) {
-            ASFW_LOG(Isoch, "IsochService: Failed to create IT context");
-            return kIOReturnNoMemory;
-        }
-    }
-    isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
-
-    const kern_return_t kr = isochTransmitContext_->Configure(channel, 0);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Isoch, "IsochService: StartTxStream: IT Configure failed: 0x%08x", kr);
-        return kr;
-    }
-
-    // Set memory regions on the transmit context if they were allocated
-    if (txPayloadSlab_ && txMetadataRing_ && txControlBlock_) {
-        const kern_return_t memKr = isochTransmitContext_->SetSharedMemoryDescriptors(
-            txPayloadSlab_.get(),
-            txMetadataRing_.get(),
-            txControlBlock_.get(),
-            interruptInterval_,
-            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
-        if (memKr != kIOReturnSuccess) {
-            ASFW_LOG(Isoch, "IsochService: StartTxStream: SetSharedMemoryDescriptors failed: 0x%08x", memKr);
-            return memKr;
-        }
-    }
-
-    ASFW_LOG(Isoch, "IsochService: Starting IT stream on channel %u speed %u", channel, speed);
-    return isochTransmitContext_->Start();
-}
-
-kern_return_t IsochService::StopTxStream() {
-    if (isochTransmitContext_) {
-        isochTransmitContext_->Stop();
-    }
     return kIOReturnSuccess;
 }
 

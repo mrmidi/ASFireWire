@@ -239,7 +239,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
 
         const uint32_t numSlots =
             ASFW::IsochTransport::AudioTimingGeometry::
-                kFrameRingFrames;
+                kTxSharedSlotPackets;
         const uint32_t maxPacketBytes = 512;
         const uint32_t interruptInterval =
             ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
@@ -323,7 +323,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
             ASFW::IsochTransport::kTransportAbiVersion ||
         txControl->numSlots !=
             ASFW::IsochTransport::AudioTimingGeometry::
-                kFrameRingFrames ||
+                kTxSharedSlotPackets ||
         txControl->interruptInterval !=
             ASFW::IsochTransport::AudioTimingGeometry::
                 kTxPacketsPerGroup ||
@@ -341,6 +341,32 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
             kIOReturnUnsupported, "ValidateTxTransportGeometry");
     }
     ivars->runtime.isRunning.store(true, std::memory_order_release);
+
+    // The pump (TxPreparationReady) is gated on isRunning, so preparation
+    // requests raised by TX completions during bring-up were dropped while
+    // the prefilled NO-DATA ring drained. Catch up now instead of waiting
+    // for the next completion wake.
+    {
+        const uint64_t completionCursor =
+            txControl->completionCursor.load(std::memory_order_acquire);
+        const uint64_t exposeCursor =
+            txControl->exposeCursor.load(std::memory_order_acquire);
+        const uint64_t targetPacketIndex =
+            completionCursor +
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kTxPreparationLeadPackets;
+        if (targetPacketIndex > exposeCursor) {
+            const uint32_t prepared = ASFW::Audio::DriverKit::PrepareTransmitSlots(
+                *ivars,
+                exposeCursor,
+                targetPacketIndex,
+                ASFW::IsochTransport::AudioTimingGeometry::
+                    kTxPreparationLeadPackets);
+            ASFW_LOG(Audio,
+                     "ASFWAudioDriver: bring-up TX catch-up prepared=%u expose=%llu target=%llu",
+                     prepared, exposeCursor, targetPacketIndex);
+        }
+    }
 
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const auto policySnap = policy.Snapshot();

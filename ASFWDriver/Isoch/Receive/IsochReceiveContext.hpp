@@ -17,6 +17,7 @@
 #include "../Memory/IIsochDMAMemory.hpp"
 
 #include "IsochRxDmaRing.hpp"
+#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../../Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "../../Audio/Engine/Direct/AudioClockPublisher.hpp"
 #include "../../Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
@@ -76,6 +77,12 @@ public:
 
     static constexpr size_t kNumDescriptors = 512;
     static constexpr size_t kMaxPacketSize = 4096;
+    static_assert(kNumDescriptors %
+                      ASFW::IsochTransport::AudioTimingGeometry::
+                          kTimingGroupPackets ==
+                  0,
+                  "IR descriptor ring must be an integer number of interrupt "
+                  "groups or the interrupt cadence breaks at the ring wrap");
 
     kern_return_t Configure(uint8_t channel,
                             uint8_t contextIndex,

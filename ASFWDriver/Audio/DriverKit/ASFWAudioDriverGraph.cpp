@@ -220,12 +220,16 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNoMemory;
     }
 
+    // The Create argument is the declared zero-timestamp period (the sample
+    // grid the HAL predicts anchors on), NOT the IO chunk size. These used to
+    // be the same constant; they are independent now.
     ivars.audioDevice = IOUserAudioDevice::Create(&driver,
                                                   false,
                                                   deviceUID.get(),
                                                   modelUID.get(),
                                                   manufacturerUID.get(),
-                                                  ASFW::IsochTransport::kAudioIoPeriodFrames);
+                                                  ASFW::IsochTransport::AudioTimingGeometry::
+                                                      kHalZeroTimestampPeriodFrames);
     if (!ivars.audioDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
         return kIOReturnNoMemory;
@@ -472,6 +476,19 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         inLatency = policy.ReportedLatencyFrames(ASFW::Audio::AudioDirection::Input);
         outSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Output);
         inSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input);
+    }
+
+    // Captured input lands in the HAL ring only at the IR group drain, so the
+    // declared input safety must cover one interrupt group plus jitter even if
+    // the device profile (sized for the vendor driver's own interrupt cadence)
+    // declares less.
+    constexpr uint32_t kInputSafetyFloor =
+        ASFW::IsochTransport::AudioTimingGeometry::kInputSafetyFloorFrames;
+    if (inSafety < kInputSafetyFloor) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: raising input safety %u -> %u (one interrupt group + jitter)",
+                 inSafety, kInputSafetyFloor);
+        inSafety = kInputSafetyFloor;
     }
 
     ivars.audioDevice->SetOutputLatency(outLatency);
