@@ -58,8 +58,8 @@ struct AudioTimingGeometry final {
 
     // TX shared packet rings (payload slab + metadata), packet domain.
     // Independent of the frame ring: sized to hold the full preparation lead
-    // with headroom. 512 packets = 64 ms @ 8000 pkt/s.
-    static constexpr uint32_t kTxSharedSlotPackets = 512;
+    // with headroom. 1024 packets = 128 ms @ 8000 pkt/s.
+    static constexpr uint32_t kTxSharedSlotPackets = 1024;
 
     static constexpr uint32_t kTxHardwareRingPackets = 192;
     // Keep six completion groups prepared beyond the hardware-owned ring.

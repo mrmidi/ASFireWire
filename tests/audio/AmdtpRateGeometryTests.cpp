@@ -44,7 +44,7 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kTxPacketsPerGroup, 32U);
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 192U);
     EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 256U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 512U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1024U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 192U);
     EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 192U);
     EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 384U);
