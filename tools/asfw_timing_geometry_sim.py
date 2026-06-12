@@ -290,7 +290,7 @@ def simulate(g: Geometry, callback_sizes: Sequence[int] | None = None) -> SimRes
                 
                 # --- IOOperationHandler::BeginRead ---
                 # Client reads input span
-                target_read_start = client_sample_time - g.input_safety_frames + g.io_period_frames
+                target_read_start = client_sample_time - g.input_safety_frames
                 if target_read_start >= 0:
                     if not rx_ring.check_readable(target_read_start, current_cb_size):
                         capture_starvations += 1
@@ -424,7 +424,7 @@ def run_tests() -> None:
         io_period_frames=192,
         ring_frames=768,
         output_safety_frames=192,
-        input_safety_frames=640, # output_safety (192) + 2 * io_period (384) + jitter margin (64)
+        input_safety_frames=448, # output_safety (192) + io_period (192) + jitter margin (64)
     )
     res = simulate(aligned_192)
     assert not res.errors, f"Aligned 192 failed with errors: {res.errors}"
@@ -440,7 +440,7 @@ def run_tests() -> None:
         io_period_frames=96,
         ring_frames=768,
         output_safety_frames=96,
-        input_safety_frames=320, # output_safety (96) + 2 * io_period (192) + jitter margin (32)
+        input_safety_frames=224, # output_safety (96) + io_period (96) + jitter margin (32)
     )
     res = simulate(low_latency_96)
     assert not res.errors, f"Low latency 96 failed with errors: {res.errors}"
@@ -456,7 +456,7 @@ def run_tests() -> None:
         io_period_frames=48,
         ring_frames=512,
         output_safety_frames=48,
-        input_safety_frames=176,
+        input_safety_frames=128,
     )
     res = simulate(bad_old_mix)
     assert len(res.errors) > 0, "Bad Old Mix did not report divisibility errors"
@@ -469,7 +469,7 @@ def run_tests() -> None:
         io_period_frames=512,
         ring_frames=512,
         output_safety_frames=512,
-        input_safety_frames=1600,
+        input_safety_frames=1088,
     )
     res = simulate(safe_baseline)
     assert not res.errors
@@ -483,14 +483,30 @@ def run_tests() -> None:
         io_period_frames=192,
         ring_frames=768,
         output_safety_frames=192,
-        input_safety_frames=768, # Increased to prevent starvation with 288-frame max callback size
+        input_safety_frames=544, # output_safety (192) + max_cb_size (288) + jitter margin (64)
     )
     res_var = simulate(var_geom, callback_sizes=[96, 192, 288])
     assert not res_var.errors
     assert res_var.playback_underruns == 0
     assert res_var.capture_starvations == 0
 
-    # 6. Cadence phase testing: phase 1, 2, 3 must yield same aligned advances for 32-packet groups
+    # 6. Saffire profile test case (Decompiled kext properties): 1.33 ms (64 frames) period, 48 frames out safety, 128 frames in safety
+    saffire_64 = Geometry(
+        name="Saffire Profile (64 frames period): 8 packets / 48 ZTS / 768 ring",
+        irq_packets=8,
+        zts_period_frames=48,
+        io_period_frames=64,
+        ring_frames=768,
+        output_safety_frames=48,
+        input_safety_frames=128,
+        jitter_std_us=100.0,
+    )
+    res_saffire = simulate(saffire_64)
+    assert not res_saffire.errors
+    assert res_saffire.playback_underruns == 0
+    assert res_saffire.capture_starvations == 0
+
+    # 7. Cadence phase testing: phase 1, 2, 3 must yield same aligned advances for 32-packet groups
     for phase in (1, 2, 3):
         aligned_phase = Geometry(
             name=f"CLEAN ALIGNED PHASE {phase}: 32 packets / 192 ZTS / 768 ring",
@@ -499,7 +515,7 @@ def run_tests() -> None:
             io_period_frames=192,
             ring_frames=768,
             output_safety_frames=192,
-            input_safety_frames=640,
+            input_safety_frames=448,
             cadence_phase=phase
         )
         res_phase = simulate(aligned_phase)
@@ -518,7 +534,7 @@ def run_all() -> None:
             io_period_frames=48,
             ring_frames=512,
             output_safety_frames=48,
-            input_safety_frames=176, # output_safety (48) + 2 * io_period (96) + jitter margin (32)
+            input_safety_frames=128, # output_safety (48) + io_period (48) + jitter margin (32)
         ),
         Geometry(
             name="SAFE BASELINE: 8 packets (48 frames) IRQ / 512 ZTS / 512 ring",
@@ -527,7 +543,7 @@ def run_all() -> None:
             io_period_frames=512,
             ring_frames=512,
             output_safety_frames=512,
-            input_safety_frames=1600, # output_safety (512) + 2 * io_period (1024) + jitter margin (64)
+            input_safety_frames=1088, # output_safety (512) + io_period (512) + jitter margin (64)
         ),
         Geometry(
             name="CLEAN ALIGNED: 32 packets (192 frames) IRQ / 192 ZTS / 768 ring",
@@ -536,7 +552,7 @@ def run_all() -> None:
             io_period_frames=192,
             ring_frames=768,
             output_safety_frames=192,
-            input_safety_frames=640, # output_safety (192) + 2 * io_period (384) + jitter margin (64)
+            input_safety_frames=448, # output_safety (192) + io_period (192) + jitter margin (64)
         ),
         Geometry(
             name="CLEAN CONSERVATIVE: 64 packets (384 frames) IRQ / 384 ZTS / 768 ring",
@@ -545,7 +561,7 @@ def run_all() -> None:
             io_period_frames=384,
             ring_frames=768,
             output_safety_frames=384,
-            input_safety_frames=1248, # output_safety (384) + 2 * io_period (768) + jitter margin (96)
+            input_safety_frames=832, # output_safety (384) + io_period (384) + jitter margin (64)
         ),
         Geometry(
             name="EXPERIMENTAL LOW-LATENCY: 16 packets (96 frames) IRQ / 96 ZTS / 768 ring",
@@ -554,7 +570,17 @@ def run_all() -> None:
             io_period_frames=96,
             ring_frames=768,
             output_safety_frames=96,
-            input_safety_frames=320, # output_safety (96) + 2 * io_period (192) + jitter margin (32)
+            input_safety_frames=224, # output_safety (96) + io_period (96) + jitter margin (32)
+        ),
+        Geometry(
+            name="Saffire Profile (64 frames period): 8 packets / 48 ZTS / 768 ring",
+            irq_packets=8,
+            zts_period_frames=48,
+            io_period_frames=64,
+            ring_frames=768,
+            output_safety_frames=48,
+            input_safety_frames=128,
+            jitter_std_us=100.0,
         ),
     ]
 
@@ -575,7 +601,7 @@ def run_all() -> None:
         io_period_frames=192,
         ring_frames=768,
         output_safety_frames=192,
-        input_safety_frames=768,
+        input_safety_frames=544,
     )
     print("========================================================================")
     print(" VARIABLE CALLBACK SIZE SIMULATION (SAFE SAFETY): [96, 192, 288] frames")
