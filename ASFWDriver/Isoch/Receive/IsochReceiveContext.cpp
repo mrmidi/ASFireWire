@@ -120,10 +120,10 @@ kern_return_t IsochReceiveContext::Start() {
     absoluteFrameCursor_ = 0;
     cursorInitialized_ = false;
     rxZtsPublishCount_ = 0;
-    sytConsecutiveValid_ = 0;
+    rxTimestampValidCount_ = 0;
+    rxTimestampInvalidCount_ = 0;
     rxCadenceEstablishedLogged_ = false;
     (void)ASFW::Timing::initializeHostTimebase();
-    rxCycleHostTicks_ = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
 
     rxLock_.clear(std::memory_order_release);
     return kIOReturnSuccess;
@@ -219,19 +219,18 @@ uint32_t IsochReceiveContext::Poll() {
         }
     }
 
-    const uint64_t drainHostTicks = mach_absolute_time();
-    const uint32_t drainCycleTimer =
-        hardware_ ? hardware_->ReadCycleTime() : 0;
-    uint64_t cycleHostTicks = rxCycleHostTicks_;
-    if (cycleHostTicks == 0 && ASFW::Timing::initializeHostTimebase()) {
-        cycleHostTicks = ASFW::Timing::nanosToHostTicks(ASFW::Timing::kNanosPerCycle);
-        rxCycleHostTicks_ = cycleHostTicks;
-    }
+    const auto cycleHostPair =
+        hardware_
+            ? hardware_->ReadCycleTimeAndUpTime()
+            : std::pair<uint32_t, uint64_t>{0, mach_absolute_time()};
+    const uint32_t drainCycleTimer = cycleHostPair.first;
+    const uint64_t drainHostTicks = cycleHostPair.second;
 
     const uint32_t processed = rxRing_.DrainCompleted(
         *dmaMemory_,
-        [this, drainHostTicks, drainCycleTimer, cycleHostTicks](
+        [this, drainHostTicks, drainCycleTimer](
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
+        uint64_t callbackTimestamp = 0;
         if (pkt.payload) {
             const uint32_t channels = directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
@@ -250,75 +249,110 @@ uint32_t IsochReceiveContext::Poll() {
                     cursorInitialized_ = true;
                 }
 
-                const uint32_t kRxTimingGroupPackets = Core::TimingGroupPacketCount48k();
-                const uint8_t packetInGroup =
-                    static_cast<uint8_t>(pkt.descriptorIndex % kRxTimingGroupPackets);
-                const uint64_t packetBackTicks =
-                    cycleHostTicks * static_cast<uint64_t>((kRxTimingGroupPackets - 1u) - packetInGroup);
-                const uint64_t packetHostTicks =
-                    (drainHostTicks > packetBackTicks) ? (drainHostTicks - packetBackTicks) : drainHostTicks;
-                const auto drainCycle =
-                    ASFW::Timing::decodeCycleTimer(drainCycleTimer);
-                int64_t packetCycleTicks =
-                    ASFW::Timing::tstampToOffsets(drainCycle) -
-                    static_cast<int64_t>((kRxTimingGroupPackets - 1u) -
-                                         packetInGroup) *
-                        static_cast<int64_t>(ASFW::Timing::kTicksPerCycle);
-                constexpr int64_t kCycleTimerDomainTicks =
-                    static_cast<int64_t>(ASFW::Timing::kFWTimeWrapSeconds) *
-                    static_cast<int64_t>(ASFW::Timing::kTicksPerSecond);
-                packetCycleTicks %= kCycleTimerDomainTicks;
-                if (packetCycleTicks < 0) {
-                    packetCycleTicks += kCycleTimerDomainTicks;
+                Rx::ExpandedReceiveTimestamp rxTimestamp{};
+                const bool hasHardwareTimestamp =
+                    result.hasReceiveCycleTimestamp &&
+                    Rx::ExpandReceiveTimestamp(
+                        result.receiveCycleTimestamp,
+                        drainCycleTimer,
+                        rxTimestamp);
+                uint64_t packetReceiveHostTicks = 0;
+                if (hasHardwareTimestamp) {
+                    ++rxTimestampValidCount_;
+                    if (rxTimestamp.ageTicks >= 0) {
+                        const uint64_t ageHostTicks =
+                            ASFW::Timing::nanosToHostTicks(
+                                Rx::FireWireTicksToNanos(
+                                    static_cast<uint64_t>(
+                                        rxTimestamp.ageTicks)));
+                        packetReceiveHostTicks =
+                            drainHostTicks > ageHostTicks
+                                ? drainHostTicks - ageHostTicks
+                                : drainHostTicks;
+                    } else {
+                        const uint64_t advanceHostTicks =
+                            ASFW::Timing::nanosToHostTicks(
+                                Rx::FireWireTicksToNanos(
+                                    static_cast<uint64_t>(
+                                        -rxTimestamp.ageTicks)));
+                        packetReceiveHostTicks =
+                            drainHostTicks + advanceHostTicks;
+                    }
+                    callbackTimestamp = rxTimestamp.cycleTimer;
+                } else {
+                    ++rxTimestampInvalidCount_;
+                    if (rxTimestampInvalidCount_ <= 8 ||
+                        (rxTimestampInvalidCount_ % 128) == 0) {
+                        ASFW_LOG(
+                            Isoch,
+                            "IR RX timestamp invalid count=%llu desc=%u hasRaw=%d raw=0x%04x drainCycle=0x%08x len=%u",
+                            rxTimestampInvalidCount_,
+                            pkt.descriptorIndex,
+                            result.hasReceiveCycleTimestamp,
+                            result.receiveCycleTimestamp,
+                            drainCycleTimer,
+                            pkt.actualLength);
+                    }
                 }
-                const uint32_t packetSeconds = static_cast<uint32_t>(
-                    packetCycleTicks / ASFW::Timing::kTicksPerSecond);
-                const int64_t packetSecondTicks =
-                    packetCycleTicks % ASFW::Timing::kTicksPerSecond;
-                const uint32_t packetCycle = static_cast<uint32_t>(
-                    packetSecondTicks / ASFW::Timing::kTicksPerCycle);
-                const uint32_t packetOffset = static_cast<uint32_t>(
-                    packetSecondTicks % ASFW::Timing::kTicksPerCycle);
-                const uint32_t packetCycleTimer =
-                    (packetSeconds << ASFW::Timing::kCycleTimerSecondsShift) |
-                    (packetCycle << ASFW::Timing::kCycleTimerCyclesShift) |
-                    packetOffset;
+
                 bool rxClockEstablished = false;
-                if (result.hasValidCip) {
-                    if (result.syt != 0xFFFF) {
-                        if (directInputView_.control) {
-                            const bool cadenceAccepted =
-                                directInputView_.control->rxSytCadence.Observe(
-                                result.syt, packetCycleTimer);
-                            if (cadenceAccepted && !rxCadenceEstablishedLogged_) {
-                                ASFW::Driver::RxSytCadence::Snapshot cadence{};
-                                if (directInputView_.control->rxSytCadence.TrySnapshot(cadence) &&
-                                    cadence.established) {
-                                    // Saffire's TX reader trails the RX writer by
-                                    // 256 entries in the shared 512-entry ring.
-                                    const uint16_t delayedReadIndex =
-                                        static_cast<uint16_t>(
-                                            (cadence.writeIndex +
-                                             ASFW::Driver::RxSytCadence::kReadDelay) &
-                                            (ASFW::Driver::RxSytCadence::kEntryCount - 1));
-                                    ASFW_LOG(Isoch,
-                                             "IR RX CADENCE ESTABLISHED updates=%u rollingTicks=%u readIndex=%u",
-                                             cadence.validUpdates,
-                                             cadence.rollingCadenceTicks,
-                                             delayedReadIndex);
-                                    rxCadenceEstablishedLogged_ = true;
-                                }
-                            }
+                int64_t sytLeadTicks = 0;
+                uint64_t packetPresentationHostTicks = 0;
+                if (result.hasValidCip &&
+                    result.syt != 0xFFFF &&
+                    hasHardwareTimestamp &&
+                    directInputView_.control) {
+                    const bool cadenceAccepted =
+                        directInputView_.control->rxSytCadence.Observe(
+                            result.syt, rxTimestamp.cycleTimer);
+                    ASFW::Driver::RxSytCadence::Snapshot cadence{};
+                    if (cadenceAccepted &&
+                        directInputView_.control->rxSytCadence.TrySnapshot(
+                            cadence)) {
+                        rxClockEstablished = cadence.established;
+                        if (cadence.established &&
+                            !rxCadenceEstablishedLogged_) {
+                            const uint16_t delayedReadIndex =
+                                static_cast<uint16_t>(
+                                    (cadence.writeIndex +
+                                     ASFW::Driver::RxSytCadence::kReadDelay) &
+                                    (ASFW::Driver::RxSytCadence::kEntryCount -
+                                     1));
+                            ASFW_LOG(
+                                Isoch,
+                                "IR RX CADENCE ESTABLISHED updates=%u rollingTicks=%u readIndex=%u",
+                                cadence.validUpdates,
+                                cadence.rollingCadenceTicks,
+                                delayedReadIndex);
+                            ASFW_LOG(
+                                Isoch,
+                                "IR SYT ZTS QUALIFIED syt=0x%04x fdf=0x%02x dbs=%u rawRxTs=0x%04x",
+                                result.syt,
+                                result.fdf,
+                                result.dbs,
+                                result.receiveCycleTimestamp);
+                            rxCadenceEstablishedLogged_ = true;
                         }
-                        if (sytConsecutiveValid_ < 16) {
-                            ++sytConsecutiveValid_;
-                            if (sytConsecutiveValid_ == 16) {
-                                ASFW_LOG(Isoch, "IR SYT ZTS QUALIFIED syt=0x%04x fdf=0x%02x dbs=%u",
-                                         result.syt, result.fdf, result.dbs);
-                            }
+
+                        const int64_t receiveTicks =
+                            ASFW::Timing::encodedTstampToOffsets(
+                                rxTimestamp.cycleTimer);
+                        const int64_t presentationTicks =
+                            ASFW::Timing::extendTstampFromCycleTimer(
+                                rxTimestamp.cycleTimer, result.syt);
+                        sytLeadTicks = ASFW::Timing::extOffsetDiff(
+                            presentationTicks, receiveTicks);
+                        if (sytLeadTicks >= 0) {
+                            packetPresentationHostTicks =
+                                packetReceiveHostTicks +
+                                ASFW::Timing::nanosToHostTicks(
+                                    Rx::FireWireTicksToNanos(
+                                        static_cast<uint64_t>(
+                                            sytLeadTicks)));
+                        } else {
+                            rxClockEstablished = false;
                         }
                     }
-                    rxClockEstablished = (sytConsecutiveValid_ >= 16);
                 }
 
                 const uint64_t packetFirstFrame = absoluteFrameCursor_;
@@ -329,6 +363,7 @@ uint32_t IsochReceiveContext::Poll() {
                     ASFW::IsochTransport::AudioTimingGeometry::
                         kHalZeroTimestampPeriodFrames;
                 if (rxClockEstablished &&
+                    packetPresentationHostTicks != 0 &&
                     result.framesDecoded != 0 &&
                     clockPublisher_.IsBound() &&
                     directInputView_.sampleRateHz != 0) {
@@ -348,7 +383,7 @@ uint32_t IsochReceiveContext::Poll() {
                                  hostNanosPerSampleQ8)) >>
                             8;
                         const uint64_t gridHostTicks =
-                            packetHostTicks +
+                            packetPresentationHostTicks +
                             ASFW::Timing::nanosToHostTicks(
                                 gridDeltaNanos);
 
@@ -375,6 +410,16 @@ uint32_t IsochReceiveContext::Poll() {
                                     gridHostTicks,
                                     kZtsPeriodFrames,
                                     directInputView_.sampleRateHz);
+                                ASFW_LOG(
+                                    Isoch,
+                                    "ZTS source desc=%u rawRxTs=0x%04x rxCycle=0x%08x drainCycle=0x%08x ageTicks=%lld syt=0x%04x sytLeadTicks=%lld",
+                                    pkt.descriptorIndex,
+                                    result.receiveCycleTimestamp,
+                                    rxTimestamp.cycleTimer,
+                                    drainCycleTimer,
+                                    rxTimestamp.ageTicks,
+                                    result.syt,
+                                    sytLeadTicks);
                             }
                         }
                         gridFrame += kZtsPeriodFrames;
@@ -386,7 +431,9 @@ uint32_t IsochReceiveContext::Poll() {
 
         if (callback_) {
             const auto span = std::span<const uint8_t>(pkt.payload, pkt.actualLength);
-            callback_(span, static_cast<uint32_t>(pkt.xferStatus), 0);
+            callback_(span,
+                      static_cast<uint32_t>(pkt.xferStatus),
+                      callbackTimestamp);
         }
     });
 

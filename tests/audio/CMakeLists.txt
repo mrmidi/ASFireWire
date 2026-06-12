@@ -13,6 +13,7 @@ endmacro()
 add_executable(IsochReceiveContextTests
     IsochReceiveContextTests.cpp
     IsochRxDmaRingTests.cpp
+    IsochRxTimingTests.cpp
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochReceiveContext.cpp"
     "${ASFW_DRIVER_DIR}/Isoch/Receive/IsochRxDmaRing.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Engine/Direct/AudioClockPublisher.cpp"

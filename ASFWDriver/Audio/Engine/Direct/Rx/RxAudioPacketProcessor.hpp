@@ -13,6 +13,8 @@ struct RxAudioPacketProcessorResult final {
     DirectRxWriteStatus status{DirectRxWriteStatus::kUnavailable};
     uint32_t framesDecoded{0};
     bool hasValidCip{false};
+    bool hasReceiveCycleTimestamp{false};
+    uint16_t receiveCycleTimestamp{0};
     uint16_t syt{0xFFFF};
     uint8_t fdf{0};
     uint8_t dbs{0};

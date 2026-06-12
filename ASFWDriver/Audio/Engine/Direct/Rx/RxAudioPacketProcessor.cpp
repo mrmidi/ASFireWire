@@ -1,6 +1,7 @@
 #include "RxAudioPacketProcessor.hpp"
 #include "DirectRxPacketDecoder.hpp"
 #include "../../../Wire/CIP/CIPHeader.hpp"
+#include "../../../../Isoch/Receive/IsochRxTiming.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -21,6 +22,10 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
         result.status = DirectRxWriteStatus::kInvalidRange;
         return result;
     }
+
+    result.hasReceiveCycleTimestamp =
+        ASFW::Isoch::Rx::DecodeReceiveTimestamp(
+            payload, length, result.receiveCycleTimestamp);
 
     const uint8_t* cipStart = payload + kIsochHeaderSize;
     const auto* quadlets = reinterpret_cast<const uint32_t*>(cipStart);

@@ -17,6 +17,7 @@
 #include "../Memory/IIsochDMAMemory.hpp"
 
 #include "IsochRxDmaRing.hpp"
+#include "IsochRxTiming.hpp"
 #include "../../Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../../Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "../../Audio/Engine/Direct/AudioClockPublisher.hpp"
@@ -139,9 +140,9 @@ private:
     uint64_t absoluteFrameCursor_{0};
     bool cursorInitialized_{false};
     uint64_t rxZtsPublishCount_{0};
-    uint64_t rxCycleHostTicks_{0};
+    uint64_t rxTimestampValidCount_{0};
+    uint64_t rxTimestampInvalidCount_{0};
 
-    uint32_t sytConsecutiveValid_{0};
     bool rxCadenceEstablishedLogged_{false};
     TimingLossCallback timingLossCallback_{nullptr};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{nullptr};
