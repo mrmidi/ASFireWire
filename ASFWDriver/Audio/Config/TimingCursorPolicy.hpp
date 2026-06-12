@@ -50,11 +50,11 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t HalIoPeriodFrames() const noexcept {
-        return 512;
+        return 48;
     }
 
     [[nodiscard]] constexpr uint32_t HalZeroTimestampPeriodFrames() const noexcept {
-        return 512;
+        return 48;
     }
 
     [[nodiscard]] constexpr uint32_t CursorOffsetFrames(AudioDirection direction) const noexcept {

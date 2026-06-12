@@ -33,7 +33,7 @@ inline constexpr uint32_t kTransportAbiVersion = 1;
 // =============================================================================
 
 inline constexpr uint32_t kAudioRingBufferFrames = 512;
-inline constexpr uint32_t kAudioIoPeriodFrames = 512;
+inline constexpr uint32_t kAudioIoPeriodFrames = 48;
 
 /// Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
 inline constexpr uint32_t kOutputConsumerLeadFrames = 384;  ///< ~0.75 period (~8ms @48k)

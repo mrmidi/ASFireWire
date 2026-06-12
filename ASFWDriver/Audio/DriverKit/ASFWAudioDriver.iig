@@ -35,9 +35,7 @@ public:
     virtual kern_return_t StopDevice(IOUserAudioObjectID in_object_id,
                                      IOUserAudioStartStopFlags in_flags) override;
 
-    virtual void ZtsMirrorTimerFired(OSAction* action,
-                                     uint64_t time)
-        TYPE(IOTimerDispatchSource::TimerOccurred);
+
 
     // Protocol-backed boolean control bridge (used by custom control subclass).
     kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,

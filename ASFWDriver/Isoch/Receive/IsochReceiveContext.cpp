@@ -322,31 +322,6 @@ uint32_t IsochReceiveContext::Poll() {
                 }
 
                 const uint64_t nextFrameCursor = absoluteFrameCursor_ + result.framesDecoded;
-                if (result.hasValidCip &&
-                    result.syt != 0xFFFF &&
-                    result.framesDecoded > 0 &&
-                    directInputView_.sampleRateHz != 0 &&
-                    clockPublisher_.IsBound() &&
-                    rxClockEstablished) {
-                    const uint32_t hostNanosPerSampleQ8 =
-                        static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
-                    clockPublisher_.Publish(nextFrameCursor, packetHostTicks, hostNanosPerSampleQ8);
-
-                    ++rxZtsPublishCount_;
-                    if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 1024) == 0) {
-                        ASFW_LOG(Isoch,
-                                 "ZTS publish source=rx count=%llu frame=%llu host=%llu syt=0x%04x desc=%u packetInGroup=%u clockEstablished=%d bound=%d",
-                                 rxZtsPublishCount_,
-                                 nextFrameCursor,
-                                 packetHostTicks,
-                                 result.syt,
-                                 pkt.descriptorIndex,
-                                 packetInGroup,
-                                 rxClockEstablished,
-                                 clockPublisher_.IsBound());
-                    }
-                }
-
                 absoluteFrameCursor_ = nextFrameCursor;
             }
         }
@@ -356,6 +331,22 @@ uint32_t IsochReceiveContext::Poll() {
             callback_(span, static_cast<uint32_t>(pkt.xferStatus), 0);
         }
     });
+
+    if (processed > 0 && clockPublisher_.IsBound() && sytConsecutiveValid_ >= 16 && directInputView_.sampleRateHz != 0) {
+        const uint32_t hostNanosPerSampleQ8 =
+            static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
+        clockPublisher_.Publish(absoluteFrameCursor_, drainHostTicks, hostNanosPerSampleQ8);
+
+        ++rxZtsPublishCount_;
+        if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 128) == 0) {
+            ASFW_LOG(Isoch,
+                     "ZTS publish group count=%llu frame=%llu host=%llu rate=%u",
+                     rxZtsPublishCount_,
+                     absoluteFrameCursor_,
+                     drainHostTicks,
+                     directInputView_.sampleRateHz);
+        }
+    }
 
     rxLock_.clear(std::memory_order_release);
     return processed;

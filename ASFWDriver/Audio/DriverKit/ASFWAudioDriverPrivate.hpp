@@ -32,7 +32,7 @@ static constexpr uint64_t kZtsMirrorPumpPeriodUsec = 1000;
 // Packets the transmit pump keeps committed ahead of the hardware completion
 // cursor. Also the count seeded into the ring before the IT DMA is started, so
 // the first refill interrupt (~8 packets in) never observes an uncommitted slot.
-static constexpr uint64_t kTxPumpLeadPackets = 256;
+static constexpr uint64_t kTxPumpLeadPackets = 512;
 
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
@@ -208,9 +208,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txMetadataMap;
     OSSharedPtr<IOMemoryMap> txControlMap;
 
-    OSSharedPtr<IOTimerDispatchSource> ztsMirrorTimer;
-    OSSharedPtr<OSAction> ztsMirrorAction;
-    std::atomic<uint64_t> ztsMirrorTimerTicks{0};
+
 
     AudioDriverDeviceState device;
     AudioDriverRuntimeState runtime;
@@ -266,8 +264,6 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 // before the IT DMA context starts, so the first refill finds committed slots.
 void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
 
-void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
-void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
-bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
+
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;
 } // namespace ASFW::Audio::DriverKit

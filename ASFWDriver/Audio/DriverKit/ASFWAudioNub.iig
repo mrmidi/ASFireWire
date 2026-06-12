@@ -86,6 +86,14 @@ public:
      */
     virtual kern_return_t StopTxStream();
 
+    /**
+     * @brief Query the current host time and FireWire cycle timer snapshot.
+     * Captures a synchronized pair from the hardware for clock seeding.
+     * @param outHostTimeMid Monotonic host system time in ticks.
+     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
+     */
+    virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 

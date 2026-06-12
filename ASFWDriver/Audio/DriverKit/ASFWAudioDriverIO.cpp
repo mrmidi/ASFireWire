@@ -281,6 +281,15 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                          sampleTime,
                          hostTime);
             }
+
+            const auto* txControl = driverIvars->runtime.txSlotProvider.controlBlock;
+            if (txControl) {
+                const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
+                const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
+                const uint64_t targetPacketIndex = completionCursor + kTxPumpLeadPackets;
+                constexpr uint32_t kMaxPreparePerCall = 64;
+                (void)PrepareTransmitSlots(*driverIvars, exposeCursor, targetPacketIndex, kMaxPreparePerCall);
+            }
         } else {
             if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
                 ASFW_LOG(DirectAudio,

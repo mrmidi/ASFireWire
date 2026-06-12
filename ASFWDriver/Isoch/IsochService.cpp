@@ -333,4 +333,17 @@ kern_return_t IsochService::StopTxStream() {
     return kIOReturnSuccess;
 }
 
+kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware) {
+    if (!outHostTimeMid || !outCycleTimer) {
+        return kIOReturnBadArgument;
+    }
+
+    const uint32_t cycleTimer = hardware.Read(static_cast<Register32>(Register32::kCycleTimer));
+    const uint64_t hostTime = mach_absolute_time();
+
+    *outHostTimeMid = hostTime;
+    *outCycleTimer = cycleTimer;
+    return kIOReturnSuccess;
+}
+
 } // namespace ASFW::Driver

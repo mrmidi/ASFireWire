@@ -235,8 +235,9 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
 
+    const uint64_t preFillCount = controlBlock_->exposeCursor.load(std::memory_order_relaxed);
     const auto primeStats =
-        ring_.Prime(payloadIOVA_, controlBlock_->numSlots, controlBlock_->slotStrideBytes);
+        ring_.Prime(payloadIOVA_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
     if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
         ASFW_LOG(Isoch, "IT: Failed to prime descriptor ring against shared payload slab");
         return kIOReturnInternalError;

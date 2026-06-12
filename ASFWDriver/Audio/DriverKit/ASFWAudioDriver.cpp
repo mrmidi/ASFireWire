@@ -39,9 +39,6 @@ void ASFWAudioDriver::free()
     ASFW_LOG(Audio, "ASFWAudioDriver: free()");
 
     if (ivars) {
-        ASFW::Audio::DriverKit::StopZtsMirrorTimer(*ivars);
-        ivars->ztsMirrorAction.reset();
-        ivars->ztsMirrorTimer.reset();
         ASFW::Audio::DriverKit::UnbindDirectAudioSkeleton(*ivars);
 
         ivars->device.audioNub = nullptr;

@@ -54,8 +54,9 @@ protected:
 };
 
 TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     auto stats = ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
+        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     EXPECT_EQ(stats.packetsAssembled, Layout::kNumPackets);
 
     // Verify a few static descriptors in the slab
@@ -107,19 +108,21 @@ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
 }
 
 TEST_F(IsochTxDmaRingTest, PrimeRejectsMissingSharedPayloadGeometry) {
-    EXPECT_EQ(ring_.Prime(0, kSharedPayloadSlots, kSharedPayloadStride).packetsAssembled, 0u);
-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, 0, kSharedPayloadStride).packetsAssembled, 0u);
-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, 0).packetsAssembled, 0u);
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    EXPECT_EQ(ring_.Prime(0, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
+    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, 0, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
+    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, 0, metadataRing.data(), 0).packetsAssembled, 0u);
+    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, nullptr, 0).packetsAssembled, 0u);
 }
 
 TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
+        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
     // Allocate host buffers for metadata ring and control block
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     TxStreamControl controlBlock{};
 
     const uint32_t numSlots = kSharedPayloadSlots;
@@ -202,12 +205,12 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
 }
 
 TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
+        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     TxStreamControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
@@ -274,12 +277,12 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
 }
 
 TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
+        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     TxStreamControl controlBlock{};
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
@@ -304,12 +307,12 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
 }
 
 TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
+        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
     TxStreamControl controlBlock{};
 
     const uint32_t numSlots = kSharedPayloadSlots;

@@ -220,4 +220,98 @@ TEST(TxTimingModelTests, PhaseCorrectionRemovesHalfSampleLatticeError) {
     EXPECT_LT(model.OutputPhaseTicks(), kEightSecondTicks);
 }
 
+TEST(TxTimingModelTests, SeedLeadIsIndependentOfRxStartupHistory) {
+    // Regression for the duplex-epoch bug (DICE bring-up, 2026-06-11): a seed
+    // derived from RX-local frame counters imported the startup-dependent
+    // RX/TX cursor origin skew, freezing a different ch0-vs-ch1 SYT offset on
+    // the wire each run (48/15/24 frames across captures; modeled in
+    // tools/syt_duplex_epoch_sim.py). The absolute lead must derive from the
+    // packet execution anchor only: sessions that joined the device stream at
+    // wildly different points, with different post-lock histories, must seed
+    // the exact same anchor-relative phase.
+    struct Session final {
+        int64_t firstPhase;
+        uint32_t extraObserves;
+    };
+    constexpr int64_t kStep = Timing::kSytPacketStepTicks48k;
+    constexpr Session kSessions[] = {
+        {40'000, 0},
+        {40'000 + 3'000 * kStep, 137},      // joined ~3000 packets later
+        {40'000 + 30'017 * kStep + 7, 41},  // off-lattice device origin
+    };
+    constexpr int64_t kAnchorAfterRecovered = 2 * Timing::kTicksPerCycle + 333;
+
+    bool haveExpected = false;
+    int64_t expectedLead = 0;
+    int64_t expectedPhaseVsRecovered = 0;
+    for (const auto& session : kSessions) {
+        RxSytCadence cadence{};
+        cadence.Reset();
+        int64_t recovered = FillCadenceToLock(cadence, session.firstPhase);
+        for (uint32_t i = 0; i < session.extraObserves; ++i) {
+            recovered = Timing::normalizeOffsetDomain(recovered + kStep);
+            EXPECT_TRUE(cadence.Observe(
+                SytFromTicks(recovered),
+                CycleTimerFromTicks(recovered - Timing::kTicksPerCycle)));
+        }
+
+        TxTimingModel model{};
+        model.Configure(TxTimingModel::Config{});
+        const int64_t anchor =
+            Timing::normalizeOffsetDomain(recovered + kAnchorAfterRecovered);
+        const auto decision = model.PeekNextDataSyt(anchor, cadence);
+        ASSERT_NE(decision.syt, 0xFFFF);
+
+        const int64_t phaseVsRecovered =
+            Timing::extOffsetDiff(model.OutputPhaseTicks(), recovered);
+        if (!haveExpected) {
+            haveExpected = true;
+            expectedLead = decision.leadTicks;
+            expectedPhaseVsRecovered = phaseVsRecovered;
+        } else {
+            EXPECT_EQ(decision.leadTicks, expectedLead);
+            EXPECT_EQ(phaseVsRecovered, expectedPhaseVsRecovered);
+        }
+    }
+}
+
+TEST(TxTimingModelTests, SeedPinsLeadWithinOneCorrectionGridForAnyAnchor) {
+    // Companion invariant to SeedLeadIsIndependentOfRxStartupHistory: the
+    // forced seed correction may only add the sub-grid snap to the execution
+    // anchor, so the absolute lead stays within one cadence correction grid
+    // (rollingCadence / (sytInterval << 8); the aging index trails the writer
+    // by 256 entries, so the rolling sum spans 256 packets and the grid is
+    // exactly one frame, 512 ticks at 48 kHz) and the corrected phase lands
+    // on the recovered RX frame lattice. The frame-mapped experiment violated
+    // this with leads millions of ticks in the past that only the
+    // mod-16-cycle SYT field made look plausible on the wire.
+    RxSytCadence cadence{};
+    cadence.Reset();
+    const int64_t recovered = FillCadenceToLock(cadence);
+
+    RxSytCadence::Snapshot snapshot{};
+    ASSERT_TRUE(cadence.TrySnapshot(snapshot));
+    const TxTimingModel::Config config{};
+    const int64_t grid = static_cast<int64_t>(snapshot.rollingCadenceTicks) /
+                         (static_cast<int64_t>(config.sytIntervalFrames) << 8);
+    ASSERT_EQ(grid, Timing::kTicksPerSample48k);
+
+    constexpr int64_t kAnchorOffsets[] = {0, 1, 333, 1023, 4095, 100'000,
+                                          -5'000};
+    for (const int64_t anchorOffset : kAnchorOffsets) {
+        TxTimingModel model{};
+        model.Configure(config);
+        const int64_t anchor =
+            Timing::normalizeOffsetDomain(recovered + anchorOffset);
+        const auto decision = model.PeekNextDataSyt(anchor, cadence);
+        ASSERT_NE(decision.syt, 0xFFFF);
+        EXPECT_GE(decision.leadTicks, 0);
+        EXPECT_LT(decision.leadTicks, grid);
+        const int64_t latticeError =
+            ((Timing::extOffsetDiff(model.OutputPhaseTicks(), recovered) %
+              grid) + grid) % grid;
+        EXPECT_EQ(latticeError, 0);
+    }
+}
+
 } // namespace ASFW::Testing

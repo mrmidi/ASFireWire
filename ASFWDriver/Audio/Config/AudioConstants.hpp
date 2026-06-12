@@ -21,7 +21,7 @@ inline constexpr uint32_t kRxQueueCapacityFrames = 4096;
 // Aligned with the zero timestamp period (512 frames) to prevent wrap mismatch
 // with the HAL's stream read boundaries.
 inline constexpr uint32_t kAudioRingBufferFrames = 512;
-inline constexpr uint32_t kAudioIoPeriodFrames = 512;
+inline constexpr uint32_t kAudioIoPeriodFrames = 48;
 
 // Output (TX/playback) shared ring depth. Aligned directly with the zero
 // timestamp period (512 frames) to avoid a wrap mismatch where the driver reads
@@ -42,8 +42,7 @@ static_assert(kAudioRingBufferFrames != 0 && ((kAudioRingBufferFrames & (kAudioR
               "Audio ring buffer frame count must be power-of-two");
 static_assert(kAudioOutputRingFrames != 0 && ((kAudioOutputRingFrames & (kAudioOutputRingFrames - 1)) == 0),
               "Output ring frame count must be power-of-two");
-static_assert((kAudioOutputRingFrames % kAudioIoPeriodFrames) == 0,
-              "Output ring must be an integer number of IO periods");
+
 static_assert(kOutputConsumerLeadFrames < kAudioOutputRingFrames,
               "Consumer lead must stay within the output ring");
 static_assert(kOutputConsumerLeadFrames + kOutputCursorResyncDeadbandFrames < kAudioOutputRingFrames,

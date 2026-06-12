@@ -125,9 +125,15 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
 }
 
 bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept {
-    // Isoch is already running here. Allow RX SYT/ZTS establishment to happen
-    // asynchronously without making it a prerequisite for starting IR or IT.
-    constexpr uint32_t kAttempts = 1000;
+    auto* control = ivars.runtime.directAudioGraph.control;
+    if (control && control->ztsState.sourceGeneration.load(std::memory_order_relaxed) == 0) {
+        const double rate = ivars.device.currentSampleRate > 0 ? ivars.device.currentSampleRate : 48000.0;
+        const uint32_t defaultNanosQ8 = static_cast<uint32_t>((1000000000ULL << 8) / rate);
+        control->ztsState.selectedSource.store(ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock, std::memory_order_relaxed);
+        control->UpdateAuthoritativeZtsFromRx(0, mach_absolute_time(), defaultNanosQ8);
+    }
+
+    constexpr uint32_t kAttempts = 100;
     constexpr uint32_t kDelayUsec = 1000;
     for (uint32_t attempt = 0; attempt < kAttempts; ++attempt) {
         if (PublishSharedZeroTimestampToHAL(ivars, "prime", true) == ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published) {
@@ -136,77 +142,6 @@ bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept {
         IODelay(kDelayUsec);
     }
     return false;
-}
-
-void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept {
-    if (!ivars.ztsMirrorTimer ||
-        !ivars.runtime.isRunning.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    const uint64_t delta = MicrosecondsToMachTicks(kZtsMirrorPumpPeriodUsec);
-    if (delta == 0) {
-        return;
-    }
-    (void)ivars.ztsMirrorTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
-                                           mach_absolute_time() + delta,
-                                           0);
-}
-
-void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept {
-    if (ivars.ztsMirrorTimer) {
-        (void)ivars.ztsMirrorTimer->SetEnableWithCompletion(false, nullptr);
-    }
-}
-
-bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver,
-                          ASFWAudioDriver_IVars& ivars) noexcept {
-    if (ivars.ztsMirrorTimer && ivars.ztsMirrorAction) {
-        const kern_return_t kr = ivars.ztsMirrorTimer->SetEnableWithCompletion(true, nullptr);
-        if (kr != kIOReturnSuccess) {
-            ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror reenable failed kr=0x%x", kr);
-            return false;
-        }
-        return true;
-    }
-    if (!ivars.workQueue) {
-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror missing_work_queue");
-        return false;
-    }
-
-    IOTimerDispatchSource* timer = nullptr;
-    kern_return_t kr = IOTimerDispatchSource::Create(ivars.workQueue.get(), &timer);
-    if (kr != kIOReturnSuccess || !timer) {
-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror timer_create failed kr=0x%x", kr);
-        return false;
-    }
-    ivars.ztsMirrorTimer = OSSharedPtr(timer, OSNoRetain);
-
-    OSAction* action = nullptr;
-    kr = driver.CreateActionZtsMirrorTimerFired(0, &action);
-    if (kr != kIOReturnSuccess || !action) {
-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror action_create failed kr=0x%x", kr);
-        ivars.ztsMirrorTimer.reset();
-        return false;
-    }
-    ivars.ztsMirrorAction = OSSharedPtr(action, OSNoRetain);
-
-    kr = ivars.ztsMirrorTimer->SetHandler(ivars.ztsMirrorAction.get());
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror set_handler failed kr=0x%x", kr);
-        ivars.ztsMirrorAction.reset();
-        ivars.ztsMirrorTimer.reset();
-        return false;
-    }
-
-    kr = ivars.ztsMirrorTimer->SetEnableWithCompletion(true, nullptr);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror enable failed kr=0x%x", kr);
-        ivars.ztsMirrorAction.reset();
-        ivars.ztsMirrorTimer.reset();
-        return false;
-    }
-    return true;
 }
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
@@ -294,67 +229,4 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
 
 } // namespace ASFW::Audio::DriverKit
 
-void ASFWAudioDriver::ZtsMirrorTimerFired_Impl(ASFWAudioDriver_ZtsMirrorTimerFired_Args)
-{
-    if (!ivars || !ivars->runtime.isRunning.load(std::memory_order_acquire)) {
-        return;
-    }
 
-    const auto* control = ivars->runtime.directAudioGraph.control;
-    if (control) {
-        const auto fatal = control->fatalReason.load(std::memory_order_acquire);
-        if (fatal != ASFW::Audio::Runtime::FatalStreamReason::None) {
-            ASFW_LOG(DirectAudio, "ADK FATAL: teardown requested by isoch path, reason=%u", static_cast<uint32_t>(fatal));
-            ASFW::Audio::DriverKit::PerformLoudTeardown(*ivars, "Isoch path fatal error");
-            return;
-        }
-
-        // Run the transmit pump to keep the timeline exposed ahead of the hardware
-        const auto* txControl = ivars->runtime.txSlotProvider.controlBlock;
-        if (txControl) {
-            const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
-            const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
-            const uint64_t targetPacketIndex = completionCursor + kTxPumpLeadPackets;
-            constexpr uint32_t kMaxPreparePerCall = 64;
-            (void)ASFW::Audio::DriverKit::PrepareTransmitSlots(
-                *ivars, exposeCursor, targetPacketIndex, kMaxPreparePerCall);
-        }
-    }
-
-    const auto result = ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(*ivars, "pump", false);
-    const bool published = (result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published);
-
-    bool shouldTeardown = false;
-    if (result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidAuthority ||
-        result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidTimeline) {
-        shouldTeardown = true;
-    } else if (result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::NotReady &&
-               ivars->runtime.ztsTimelineInitialized.load(std::memory_order_acquire)) {
-        shouldTeardown = true;
-    }
-
-    if (shouldTeardown) {
-        ASFW::Audio::DriverKit::PerformLoudTeardown(*ivars, "ZTS mirror pump failed/authority lost");
-        return;
-    }
-
-    const uint64_t tick = ivars->ztsMirrorTimerTicks.fetch_add(1, std::memory_order_relaxed) + 1;
-    const uint64_t beginReadCount =
-        control ? control->counters.ioBeginReadCount.load(std::memory_order_relaxed) : 0;
-    const uint64_t writeEndCount =
-        control ? control->counters.ioWriteEndCount.load(std::memory_order_relaxed) : 0;
-
-    if (published && (beginReadCount == 0 || writeEndCount == 0) &&
-        (tick <= 8 || (tick % 1024) == 0)) {
-        ASFW_LOG(DirectAudio,
-                 "ADK DBG ZTS mirror pump tick=%llu guid=0x%016llx beginRead=%llu writeEnd=%llu rxZts=%llu rxAdk=%llu",
-                 tick,
-                 ivars->device.guid,
-                 beginReadCount,
-                 writeEndCount,
-                 control ? control->counters.ztsRxPublished.load(std::memory_order_relaxed) : 0,
-                 control ? control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed) : 0);
-    }
-
-    ASFW::Audio::DriverKit::ScheduleZtsMirrorTimer(*ivars);
-}

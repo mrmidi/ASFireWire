@@ -118,17 +118,19 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
 IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     const uint64_t payloadIOVA,
     const uint32_t numSlots,
-    const uint32_t slotStrideBytes) noexcept {
+    const uint32_t slotStrideBytes,
+    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+    const uint64_t preFillCount) noexcept {
     PrimeStats stats{};
     if (!slab_.IsValid()) {
         ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
         return stats;
     }
     if (payloadIOVA == 0 || payloadIOVA > 0xFFFFFFFFULL ||
-        numSlots == 0 || slotStrideBytes == 0) {
+        numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr) {
         ASFW_LOG(Isoch,
-                 "IT: Prime failed - invalid shared payload geometry iova=0x%llx slots=%u stride=%u",
-                 payloadIOVA, numSlots, slotStrideBytes);
+                 "IT: Prime failed - invalid shared payload contract iova=0x%llx slots=%u stride=%u meta=%p",
+                 payloadIOVA, numSlots, slotStrideBytes, metadataRing);
         return stats;
     }
 
@@ -140,6 +142,10 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         auto* desc0 = slab_.GetDescriptorPtr(descBase);
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
 
+        // Fetch pre-filled metadata for this slot.
+        const uint32_t producerSlot = pktIdx % numSlots;
+        const auto& meta = metadataRing[producerSlot];
+
         // Prime the OMI descriptor structure (Descriptor 0 and 1)
         std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
         immDesc->common.control = OHCIDescriptor::BuildControl({
@@ -149,9 +155,13 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             .interruptBits = OHCIDescriptor::kIntNever,
             .branchBits = OHCIDescriptor::kBranchNever,
         });
+
+        // Set the immediate isochronous headers from metadata.
+        immDesc->immediateData[0] = meta.immediateHeader[0];
+        immDesc->immediateData[1] = meta.immediateHeader[1];
+
         // Linux queue_iso_transmit() self-links the skip address so a lost
         // cycle/FIFO overrun skips one cycle without dropping this packet.
-        // Cross-validated with Linux: firewire/ohci.c:3364-3373.
         immDesc->common.branchWord =
             MakeBranchWordAT(slab_.GetDescriptorIOVA(descBase), Layout::kBlocksPerPacket);
 
@@ -163,7 +173,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         const uint32_t nextDescIOVA = slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
 
         desc2->control = OHCIDescriptor::BuildControl({
-            .reqCount = 0, // Set during refill
+            .reqCount = static_cast<uint16_t>(meta.payloadLength),
             .command = OHCIDescriptor::kCmdOutputLast,
             .key = OHCIDescriptor::kKeyStandard,
             .interruptBits = ((pktIdx + 1) % 8 == 0) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever,
@@ -173,7 +183,6 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         // Set status update bit (s=1)
         desc2->control |= (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
 
-        const uint32_t producerSlot = pktIdx % numSlots;
         const uint64_t packetIOVA =
             static_cast<uint64_t>(payloadBaseIOVA) +
             static_cast<uint64_t>(producerSlot) * slotStrideBytes;
@@ -191,8 +200,16 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         dmaMemory_->PublishToDevice(slab_.DescriptorRegion().virtualBase, slab_.DescriptorRegion().size);
     }
 
+    // Since we've primed the ring with the pre-filled data, advance the
+    // software tracking state to match the primed count (the hardware capacity).
+    // This stops the first refill ISR from immediately trying to "refill" what
+    // we just primed, ensuring it fetches the next packet in the sequence.
+    softwareFillAbsIdx_ = numPackets;
+    ringPacketsAhead_ = numPackets;
+
     stats.packetsAssembled = numPackets;
-    ASFW_LOG(Isoch, "IT: Static descriptor ring primed. numPackets=%u", numPackets);
+    ASFW_LOG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",
+             numPackets, softwareFillAbsIdx_);
     return stats;
 }
 

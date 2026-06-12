@@ -513,7 +513,6 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
                         ASFWAudioDriver_IVars& ivars,
                         AudioGraphStartState* state) noexcept {
     ivars.runtime.isRunning.store(false, std::memory_order_release);
-    StopZtsMirrorTimer(ivars);
     UnbindDirectAudioSkeleton(ivars);
 
     if (ivars.audioDevice && state) {

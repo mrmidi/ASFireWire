@@ -87,7 +87,9 @@ public:
 
     [[nodiscard]] PrimeStats Prime(uint64_t payloadIOVA,
                                    uint32_t numSlots,
-                                   uint32_t slotStrideBytes) noexcept;
+                                   uint32_t slotStrideBytes,
+                                   const ASFW::IsochTransport::TxPacketMeta* metadataRing,
+                                   uint64_t preFillCount) noexcept;
 
     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
                                        uint8_t contextIndex,
