@@ -73,6 +73,12 @@ public:
     kern_return_t StartIsochReceive(uint8_t channel, uint32_t wireFormatRaw, uint32_t am824Slots) LOCALONLY;
     kern_return_t StopIsochReceive() LOCALONLY;
     void* GetIsochReceiveContext() const LOCALONLY;
+
+    // DV capture (raw DIF stream to shared ring, no audio nub required)
+    kern_return_t StartDVCapture(uint8_t channel) LOCALONLY;
+    kern_return_t StopDVCapture() LOCALONLY;
+    kern_return_t CopyDVCaptureMemory(uint64_t* options,
+                                      IOMemoryDescriptor** memory) const LOCALONLY;
     
     // Isochronous Transmit Control
     kern_return_t StartIsochTransmit(uint8_t channel) LOCALONLY;

@@ -42,6 +42,7 @@ struct ModernContentView: View {
         case topology = "Topology & Self-ID"
         case romExplorer = "ROM Explorer"
         case metrics = "Isoch Metrics"
+        case dvCapture = "DV Capture"
         case busReset = "Bus Reset History"
         case logs = "System Logs"
         case loggingSettings = "Logging Settings"
@@ -64,6 +65,7 @@ struct ModernContentView: View {
             case .topology: return "network"
             case .romExplorer: return "memorychip"
             case .metrics: return "chart.bar.xaxis"
+            case .dvCapture: return "video.fill"
             case .busReset: return "bolt.horizontal.circle"
             case .logs: return "doc.text"
             case .loggingSettings: return "slider.horizontal.3"
@@ -111,6 +113,8 @@ struct ModernContentView: View {
                     ROMExplorerView(viewModel: romExplorerVM)
                 case .metrics:
                     MetricsView(connector: debugVM.connector)
+                case .dvCapture:
+                    DVCaptureView(viewModel: debugVM)
                 case .busReset:
                     BusResetHistoryView(viewModel: debugVM)
                 case .logs:

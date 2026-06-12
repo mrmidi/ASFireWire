@@ -71,6 +71,10 @@ public:
         // Isocho Stream Control
         kMethodStartIsochReceive       = 32,
         kMethodStopIsochReceive        = 33,
+
+        // DV capture (raw DIF stream via shared ring, memory type 1)
+        kMethodStartDVCapture          = 50,
+        kMethodStopDVCapture           = 51,
     };
 
     kern_return_t

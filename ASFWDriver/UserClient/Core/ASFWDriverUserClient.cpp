@@ -81,6 +81,10 @@ enum {
     // Isoch Transmit Control (IT DMA allocation only - no CMP)
     kMethodStartIsochTransmit = 36,
     kMethodStopIsochTransmit = 37,
+
+    // DV capture (raw DIF stream via shared ring, memory type 1)
+    kMethodStartDVCapture = 50,
+    kMethodStopDVCapture = 51,
 };
 
 namespace {
@@ -349,6 +353,10 @@ MethodDispatchResult DispatchIsochMethods(ASFW::UserClient::UserClientRuntimeSta
         return runtimeState.Isoch().StartIsochTransmit(arguments);
     case kMethodStopIsochTransmit:
         return runtimeState.Isoch().StopIsochTransmit(arguments);
+    case kMethodStartDVCapture:
+        return runtimeState.Isoch().StartDVCapture(arguments);
+    case kMethodStopDVCapture:
+        return runtimeState.Isoch().StopDVCapture(arguments);
     default:
         return std::nullopt;
     }
@@ -712,12 +720,14 @@ kern_return_t IMPL(ASFWDriverUserClient, CopyClientMemoryForType) {
         return kIOReturnNotReady;
     }
 
-    // Only support kSharedStatusMemoryType = 0
-    if (type != 0) {
-        return kIOReturnUnsupported;
+    // Type 0: shared status memory. Type 1: DV capture ring.
+    if (type == 0) {
+        return ivars->driver->CopySharedStatusMemory(options, memory);
     }
-
-    return ivars->driver->CopySharedStatusMemory(options, memory);
+    if (type == 1) {
+        return ivars->driver->CopyDVCaptureMemory(options, memory);
+    }
+    return kIOReturnUnsupported;
 }
 
 // Note: GetDiscoveredDevices is handled in ExternalMethod (selector 16), no stub needed
