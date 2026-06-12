@@ -41,6 +41,8 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
             return kIOReturnNoMemory;
         }
         RefreshReceiveTimingLossCallback();
+        isochReceiveContext_->SetZtsAnchorReadyCallback(
+            ztsAnchorReadyCallback_);
     }
 
     isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
@@ -166,6 +168,24 @@ void IsochService::StopAll() {
 
 void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
+}
+
+void IsochService::SetTxPreparationCallback(
+    TxPreparationCallback callback) noexcept {
+    txPreparationCallback_ = std::move(callback);
+    if (isochTransmitContext_) {
+        isochTransmitContext_->SetTxPreparationCallback(
+            txPreparationCallback_);
+    }
+}
+
+void IsochService::SetZtsAnchorReadyCallback(
+    ZtsAnchorReadyCallback callback) noexcept {
+    ztsAnchorReadyCallback_ = std::move(callback);
+    if (isochReceiveContext_) {
+        isochReceiveContext_->SetZtsAnchorReadyCallback(
+            ztsAnchorReadyCallback_);
+    }
 }
 
 kern_return_t IsochService::ClaimDuplexGuid(uint64_t guid) {
@@ -305,6 +325,7 @@ kern_return_t IsochService::StartTxStream(uint32_t channel, uint32_t speed, Hard
             return kIOReturnNoMemory;
         }
     }
+    isochTransmitContext_->SetTxPreparationCallback(txPreparationCallback_);
 
     const kern_return_t kr = isochTransmitContext_->Configure(channel, 0);
     if (kr != kIOReturnSuccess) {
@@ -315,7 +336,11 @@ kern_return_t IsochService::StartTxStream(uint32_t channel, uint32_t speed, Hard
     // Set memory regions on the transmit context if they were allocated
     if (txPayloadSlab_ && txMetadataRing_ && txControlBlock_) {
         const kern_return_t memKr = isochTransmitContext_->SetSharedMemoryDescriptors(
-            txPayloadSlab_.get(), txMetadataRing_.get(), txControlBlock_.get(), interruptInterval_, 512);
+            txPayloadSlab_.get(),
+            txMetadataRing_.get(),
+            txControlBlock_.get(),
+            interruptInterval_,
+            ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames);
         if (memKr != kIOReturnSuccess) {
             ASFW_LOG(Isoch, "IsochService: StartTxStream: SetSharedMemoryDescriptors failed: 0x%08x", memKr);
             return memKr;

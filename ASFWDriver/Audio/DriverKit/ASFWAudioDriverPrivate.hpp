@@ -27,13 +27,6 @@
 static constexpr uint32_t kReportedDeviceLatencyFrames = 24;
 static constexpr uint32_t kReportedSafetyOffsetFrames =
     ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
-static constexpr uint64_t kZtsMirrorPumpPeriodUsec = 1000;
-
-// Packets the transmit pump keeps committed ahead of the hardware completion
-// cursor. Also the count seeded into the ring before the IT DMA is started, so
-// the first refill interrupt (~8 packets in) never observes an uncommitted slot.
-static constexpr uint64_t kTxPumpLeadPackets = 512;
-
 struct AudioDriverDeviceState {
     ASFWAudioNub* audioNub{nullptr};
     uint64_t guid{0};
@@ -168,6 +161,8 @@ struct AudioDriverRuntimeState {
     uint64_t hostTicksPerBuffer{0};
     std::atomic<bool> isRunning{false};
     std::atomic<uint64_t> lastHalZeroTimestampGeneration{0};
+    std::atomic<uint64_t> lastHalZeroTimestampSampleFrame{0};
+    std::atomic<uint64_t> lastHalZeroTimestampHostTicks{0};
 
     uint64_t metricsLogCounter{0};
     bool rxStartupDrained{false};
@@ -178,15 +173,11 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
-    std::atomic<bool> ztsTimelineInitialized{false};
-    std::atomic<uint64_t> nextExpectedZtsFrame{0};
-    std::atomic<bool> txPreparationNotificationScheduled{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Driver::TxTimingModel txTimingModel;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;
-    float* txFloatScratchBuffer{nullptr};
 };
 
 struct ASFWAudioDriver_IVars {
@@ -207,6 +198,8 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txPayloadMap;
     OSSharedPtr<IOMemoryMap> txMetadataMap;
     OSSharedPtr<IOMemoryMap> txControlMap;
+    OSSharedPtr<OSAction> txPreparationAction;
+    OSSharedPtr<OSAction> ztsAnchorAction;
 
 
 

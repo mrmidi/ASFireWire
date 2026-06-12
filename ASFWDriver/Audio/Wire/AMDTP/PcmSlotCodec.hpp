@@ -12,6 +12,8 @@ public:
 
     [[nodiscard]] static uint32_t EncodeFloat32(float sample,
                                                 PcmSlotEncoding encoding) noexcept;
+    [[nodiscard]] static uint32_t EncodeInt32(int32_t sample,
+                                              PcmSlotEncoding encoding) noexcept;
 
     static void EncodeInterleavedFloat32Frame(const float* sourceFrame,
                                               uint32_t sourceChannels,
@@ -24,6 +26,7 @@ private:
     [[nodiscard]] static uint32_t EncodeAm824MBLA(float sample) noexcept;
     [[nodiscard]] static uint32_t EncodeRawSigned24In32BE(float sample) noexcept;
     [[nodiscard]] static uint32_t EncodeRawSigned24In32LE(float sample) noexcept;
+    [[nodiscard]] static int32_t NormalizeSigned24(int32_t sample) noexcept;
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

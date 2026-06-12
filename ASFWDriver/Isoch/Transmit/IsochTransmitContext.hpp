@@ -51,6 +51,7 @@ enum class ITState {
 class IsochTransmitContext final {
 public:
     using State = ITState;
+    using TxPreparationCallback = std::function<void(uint64_t generation)>;
 
     // ==========================================================================
     // Public interface
@@ -85,6 +86,7 @@ public:
     
     void Poll() noexcept;
     void HandleInterrupt() noexcept;
+    void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
 
     State GetState() const noexcept { return state_; }
     
@@ -126,6 +128,7 @@ private:
     std::atomic<uint64_t> latencyBucket3_{0};
     std::atomic<uint32_t> maxRefillLatencyUs_{0};
     std::atomic<uint64_t> irqWatchdogKicks_{0};
+    TxPreparationCallback txPreparationCallback_{};
 
     // Shared transport memory regions
     OSSharedPtr<IOMemoryMap> payloadMap_{nullptr};

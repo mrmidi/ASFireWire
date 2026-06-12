@@ -131,6 +131,25 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txPreparationWakeDispatches,
              snapshot.txPreparationWakeCoalesced,
              snapshot.txPreparationDrainPasses);
+    ASFW_LOG(
+        DirectAudio,
+        "ADK timing anchor(frame=%llu updates=%llu mirrors=%llu stale=%llu depth=%llu overflow=%llu notify=%llu coalesced=%llu) txLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu)",
+        snapshot.hostAnchorFrame,
+        snapshot.hostAnchorUpdates,
+        snapshot.hostAnchorMirrorPublications,
+        snapshot.hostAnchorStaleUpdates,
+        snapshot.hostAnchorQueueDepth,
+        snapshot.hostAnchorQueueOverflows,
+        snapshot.hostAnchorNotificationDispatches,
+        snapshot.hostAnchorNotificationCoalesced,
+        snapshot.txLastLeadTicks,
+        snapshot.txMinimumLeadTicks,
+        snapshot.txMaximumLeadTicks,
+        snapshot.txDataPackets,
+        snapshot.txNoDataPackets,
+        snapshot.txPostLockNoDataPackets,
+        snapshot.txLastPreparationLatencyTicks,
+        snapshot.txMaxPreparationLatencyTicks);
 }
 
 void ForceLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime, const char* context) noexcept {
@@ -268,6 +287,8 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
 
     ivars.runtime.directAudioDebugLog.Reset();
     ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
+    ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
+    ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
     ivars.runtime.directAudioSkeletonBound.store(true, std::memory_order_release);
     ASFW_LOG(DirectAudio,
              "ADK DBG BIND skeleton %s outBase=%p outFrames=%u outCh=%u inBase=%p inFrames=%u inCh=%u control=%p audioDevice=%p rate=%u",
@@ -287,8 +308,9 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
 void UnbindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
     ivars.runtime.directAudioSkeletonBound.store(false, std::memory_order_release);
     ivars.runtime.directAudioGraph = {};
-    ivars.runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
     ivars.runtime.lastHalZeroTimestampGeneration.store(0, std::memory_order_release);
+    ivars.runtime.lastHalZeroTimestampSampleFrame.store(0, std::memory_order_release);
+    ivars.runtime.lastHalZeroTimestampHostTicks.store(0, std::memory_order_release);
 }
 
 } // namespace ASFW::Audio::DriverKit

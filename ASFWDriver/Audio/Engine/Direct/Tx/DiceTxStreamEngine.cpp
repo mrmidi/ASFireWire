@@ -90,9 +90,13 @@ bool DiceTxStreamEngine::PrepareNextTransmitSlot(
     return true;
 }
 
-void DiceTxStreamEngine::WriteHostOutputFloat32(
+bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {
+    return packetizer_.NextPacketWouldCarryData();
+}
+
+void DiceTxStreamEngine::WriteHostOutputInt32(
     const AMDTP::HostAudioBufferView& hostBuffer) noexcept {
-    payloadWriter_.WriteFloat32Interleaved(hostBuffer);
+    payloadWriter_.WriteInt32Interleaved(hostBuffer);
 }
 
 AMDTP::AmdtpPacketTimeline& DiceTxStreamEngine::Timeline() noexcept {

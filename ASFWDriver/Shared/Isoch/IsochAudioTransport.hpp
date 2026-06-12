@@ -19,21 +19,25 @@
 
 #pragma once
 
+#include "AudioTimingGeometry.hpp"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 
 namespace ASFW::IsochTransport {
 
-inline constexpr uint32_t kTransportAbiVersion = 1;
+inline constexpr uint32_t kTransportAbiVersion = 3;
 
 // =============================================================================
 // Shared queue / buffer sizing (ADK §3.3 / §6.4).
 // These constants are the "Iron Rule" ground truth for both sides.
 // =============================================================================
 
-inline constexpr uint32_t kAudioRingBufferFrames = 512;
-inline constexpr uint32_t kAudioIoPeriodFrames = 48;
+inline constexpr uint32_t kAudioRingBufferFrames =
+    AudioTimingGeometry::kFrameRingFrames;
+inline constexpr uint32_t kAudioIoPeriodFrames =
+    AudioTimingGeometry::kHalIoPeriodFrames;
 
 /// Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
 inline constexpr uint32_t kOutputConsumerLeadFrames = 384;  ///< ~0.75 period (~8ms @48k)
@@ -168,6 +172,11 @@ struct TxStreamControl final {
                                                     ///< (end-exclusive absolute index).
     std::atomic<uint64_t> completionStampCount{0};  ///< Total stamps ever written.
     CompletionStamp completionStamps[kCompletionStampSlots]{};
+    std::atomic<uint64_t> preparationRequestGeneration{0};
+    std::atomic<uint64_t> preparationHandledGeneration{0};
+    std::atomic<uint64_t> preparationRequestHostTicks{0};
+    std::atomic<uint64_t> preparationRequestCount{0};
+    std::atomic<uint64_t> preparationCoalescedCount{0};
 
     // --- audio → core ---
     std::atomic<uint64_t> exposeCursor{0};  ///< Count of committed packets
@@ -225,7 +234,6 @@ enum class TxSytMode : uint8_t {
     /// RX-recovered device cadence, disciplined against completed OHCI IT
     /// packet execution anchors (Saffire.kext full-duplex timing model).
     kRxRecoveredDeviceClock = 0,
-    kFreeRunning = 1,
 };
 
 struct StreamDescriptor final {

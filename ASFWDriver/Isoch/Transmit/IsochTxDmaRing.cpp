@@ -176,7 +176,10 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
             .reqCount = static_cast<uint16_t>(meta.payloadLength),
             .command = OHCIDescriptor::kCmdOutputLast,
             .key = OHCIDescriptor::kKeyStandard,
-            .interruptBits = ((pktIdx + 1) % 8 == 0) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever,
+            .interruptBits =
+                Core::IsTimingGroupBoundary(pktIdx)
+                    ? OHCIDescriptor::kIntAlways
+                    : OHCIDescriptor::kIntNever,
             .branchBits = OHCIDescriptor::kBranchAlways,
         });
 
@@ -324,6 +327,26 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     }
     if (deltaConsumed > 0) {
         controlBlock->completionCursor.store(completedAbsIdx + deltaConsumed, std::memory_order_release);
+
+        const uint64_t requested =
+            controlBlock->preparationRequestGeneration.load(
+                std::memory_order_relaxed);
+        const uint64_t handled =
+            controlBlock->preparationHandledGeneration.load(
+                std::memory_order_acquire);
+        if (requested == handled) {
+            const uint64_t generation = requested + 1;
+            controlBlock->preparationRequestHostTicks.store(
+                mach_absolute_time(), std::memory_order_relaxed);
+            controlBlock->preparationRequestGeneration.store(
+                generation, std::memory_order_release);
+            controlBlock->preparationRequestCount.fetch_add(
+                1, std::memory_order_relaxed);
+            out.preparationRequestGeneration = generation;
+        } else {
+            controlBlock->preparationCoalescedCount.fetch_add(
+                1, std::memory_order_relaxed);
+        }
     }
 
     // 4. Refill batch: try to fill deltaConsumed slots

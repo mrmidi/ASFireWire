@@ -38,8 +38,9 @@ public:
 
     bool PrepareNextTransmitSlot(uint32_t packetIndex,
                                  const AMDTP::AmdtpTimingState& timing) noexcept;
+    [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
-    void WriteHostOutputFloat32(const AMDTP::HostAudioBufferView& hostBuffer) noexcept;
+    void WriteHostOutputInt32(const AMDTP::HostAudioBufferView& hostBuffer) noexcept;
 
     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;

@@ -3,8 +3,9 @@
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
-#include "../../Runtime/ZtsAuthority.hpp"
+#include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
+#include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 
 #include <atomic>
@@ -91,7 +92,7 @@ struct AudioTransportControlBlock final {
     AudioClientCursor client{};
     DeviceTimeline device{};
     AudioRtCounters counters{};
-    ZtsAuthorityState ztsState{};
+    HostClockAnchorState hostClockAnchor{};
     ASFW::Driver::RxSytCadence rxSytCadence{};
 
     std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
@@ -117,73 +118,31 @@ struct AudioTransportControlBlock final {
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
     std::atomic<uint64_t> txLastPreparationLatencyTicks{0};
     std::atomic<uint64_t> txMaxPreparationLatencyTicks{0};
+    std::atomic<int64_t> txLastLeadTicks{0};
+    std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
+    std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
 
     std::atomic<uint64_t> captureRingWriteFrame{0};
     std::atomic<uint64_t> captureRingReadFrame{0};
     std::atomic<uint64_t> captureRingOverruns{0};
     std::atomic<uint64_t> captureRingStarvations{0};
 
-    bool UpdateAuthoritativeZtsFromRx(uint64_t sampleFrame,
-                                      uint64_t hostTicks,
-                                      uint32_t hostNanosPerSampleQ8) noexcept {
-        if (ztsState.selectedSource.load(std::memory_order_relaxed) != ZtsAuthoritySource::RxClock) {
-            ztsState.rejectedRxUpdates.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        if (hostTicks == 0 || hostNanosPerSampleQ8 == 0) {
-            ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        const uint64_t prevSample = ztsState.authoritativeSampleFrame.load(std::memory_order_relaxed);
-        const uint64_t prevHost = ztsState.authoritativeHostTicks.load(std::memory_order_relaxed);
-        if (sampleFrame >= prevSample && hostTicks < prevHost) {
-            ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        ztsState.authoritativeSampleFrame.store(sampleFrame, std::memory_order_relaxed);
-        ztsState.authoritativeHostTicks.store(hostTicks, std::memory_order_relaxed);
-        ztsState.hostNanosPerSampleQ8.store(hostNanosPerSampleQ8, std::memory_order_relaxed);
-        ztsState.rxSourceUpdates.fetch_add(1, std::memory_order_relaxed);
-        ztsState.sourceGeneration.fetch_add(1, std::memory_order_release);
-        return true;
-    }
-
-    bool UpdateAuthoritativeZtsFromTx(uint64_t sampleFrame,
-                                      uint64_t hostTicks,
-                                      uint32_t hostNanosPerSampleQ8) noexcept {
-        if (ztsState.selectedSource.load(std::memory_order_relaxed) != ZtsAuthoritySource::TxClock) {
-            ztsState.rejectedTxUpdates.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        if (hostTicks == 0 || hostNanosPerSampleQ8 == 0) {
-            ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        const uint64_t prevSample = ztsState.authoritativeSampleFrame.load(std::memory_order_relaxed);
-        const uint64_t prevHost = ztsState.authoritativeHostTicks.load(std::memory_order_relaxed);
-        if (sampleFrame >= prevSample && hostTicks < prevHost) {
-            ztsState.staleSourceUpdates.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-
-        ztsState.authoritativeSampleFrame.store(sampleFrame, std::memory_order_relaxed);
-        ztsState.authoritativeHostTicks.store(hostTicks, std::memory_order_relaxed);
-        ztsState.hostNanosPerSampleQ8.store(hostNanosPerSampleQ8, std::memory_order_relaxed);
-        ztsState.txSourceUpdates.fetch_add(1, std::memory_order_relaxed);
-        ztsState.sourceGeneration.fetch_add(1, std::memory_order_release);
-        return true;
+    [[nodiscard]] HostClockAnchorPublishResult PublishHostClockAnchor(
+        uint64_t sampleFrame,
+        uint64_t hostTicks,
+        uint32_t hostNanosPerSampleQ8) noexcept {
+        const uint64_t period =
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kHalZeroTimestampPeriodFrames;
+        return hostClockAnchor.Publish(
+            sampleFrame, hostTicks, hostNanosPerSampleQ8, period);
     }
 
     void ResetForStart() noexcept {
         client.Reset();
         device.Reset();
         counters.Reset();
-        ztsState.Reset();
+        hostClockAnchor.Reset();
         rxSytCadence.Reset();
 
         fatalReason.store(FatalStreamReason::None, std::memory_order_release);
@@ -209,6 +168,9 @@ struct AudioTransportControlBlock final {
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_release);
         txLastPreparationLatencyTicks.store(0, std::memory_order_release);
         txMaxPreparationLatencyTicks.store(0, std::memory_order_release);
+        txLastLeadTicks.store(0, std::memory_order_release);
+        txMinimumLeadTicks.store(INT64_MAX, std::memory_order_release);
+        txMaximumLeadTicks.store(INT64_MIN, std::memory_order_release);
 
         captureRingWriteFrame.store(0, std::memory_order_release);
         captureRingReadFrame.store(0, std::memory_order_release);

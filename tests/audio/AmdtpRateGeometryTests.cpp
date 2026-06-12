@@ -1,4 +1,5 @@
 #include "Audio/Wire/AMDTP/AmdtpRateGeometry.hpp"
+#include "Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <gtest/gtest.h>
 
@@ -30,6 +31,19 @@ TEST(AmdtpRateGeometryTests, StandardRatesKeepNominalAndSytIntervalDistinct) {
         EXPECT_EQ(geometry->sytIntervalFrames, value.interval);
     }
     EXPECT_FALSE(ASFW::Encoding::AmdtpRateGeometryForSampleRate(96001).has_value());
+}
+
+TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
+    using Geometry =
+        ASFW::IsochTransport::AudioTimingGeometry;
+    EXPECT_EQ(Geometry::kFrameRingFrames, 512U);
+    EXPECT_EQ(Geometry::kHalIoPeriodFrames, 512U);
+    EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames, 512U);
+    EXPECT_EQ(Geometry::kFrameAlignment, 32U);
+    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 8U);
+    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 192U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 200U);
 }
 
 } // namespace

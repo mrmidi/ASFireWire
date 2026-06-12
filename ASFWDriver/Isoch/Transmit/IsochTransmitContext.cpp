@@ -188,6 +188,16 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kStopped, std::memory_order_relaxed);
     controlBlock_->completionCursor.store(0, std::memory_order_relaxed);
     controlBlock_->completionStampCount.store(0, std::memory_order_relaxed);
+    controlBlock_->preparationRequestGeneration.store(
+        0, std::memory_order_relaxed);
+    controlBlock_->preparationHandledGeneration.store(
+        0, std::memory_order_relaxed);
+    controlBlock_->preparationRequestHostTicks.store(
+        0, std::memory_order_relaxed);
+    controlBlock_->preparationRequestCount.store(
+        0, std::memory_order_relaxed);
+    controlBlock_->preparationCoalescedCount.store(
+        0, std::memory_order_relaxed);
 
     ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadIOVA=0x%llx metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
              payloadIOVA_, metadataRing_, controlBlock_, numSlots, maxPacketBytes);
@@ -337,7 +347,16 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         if (outcome.packetsFilled > 0) {
             ring_.WakeHardwareIfIdle(*hardware_, contextIndex_);
         }
+        if (outcome.preparationRequestGeneration != 0 &&
+            txPreparationCallback_) {
+            txPreparationCallback_(outcome.preparationRequestGeneration);
+        }
     }
+}
+
+void IsochTransmitContext::SetTxPreparationCallback(
+    TxPreparationCallback callback) noexcept {
+    txPreparationCallback_ = std::move(callback);
 }
 
 void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {

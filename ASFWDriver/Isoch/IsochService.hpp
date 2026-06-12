@@ -31,6 +31,8 @@ class HardwareInterface;
 class IsochService {
 public:
     using TimingLossCallback = std::function<void(uint64_t guid)>;
+    using TxPreparationCallback = std::function<void(uint64_t generation)>;
+    using ZtsAnchorReadyCallback = std::function<void(uint64_t generation)>;
 
     IsochService() = default;
     ~IsochService() = default;
@@ -61,6 +63,8 @@ public:
 
     void StopAll();
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
+    void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
+    void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
 
     /**
      * @brief Allocates the shared payload slab, metadata ring, and control block.
@@ -122,6 +126,8 @@ private:
 
     uint64_t activeGuid_{0};
     TimingLossCallback timingLossCallback_{};
+    TxPreparationCallback txPreparationCallback_{};
+    ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
     uint32_t interruptInterval_{8};
 
     struct ReservedDuplexResources {

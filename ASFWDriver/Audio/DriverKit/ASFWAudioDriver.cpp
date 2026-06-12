@@ -41,6 +41,12 @@ void ASFWAudioDriver::free()
     if (ivars) {
         ASFW::Audio::DriverKit::UnbindDirectAudioSkeleton(*ivars);
 
+        if (ivars->device.audioNub) {
+            (void)ivars->device.audioNub->RegisterTxPreparationAction(
+                nullptr);
+            (void)ivars->device.audioNub->RegisterZtsAnchorAction(
+                nullptr);
+        }
         ivars->device.audioNub = nullptr;
         ivars->device.boolControlCount = 0;
         ASFW::Isoch::Audio::ResetBoolControlSlots(ivars->device.boolControls,
@@ -55,6 +61,8 @@ void ASFWAudioDriver::free()
         ivars->inputBuffer.reset();
         ivars->controlBuffer.reset();
         ivars->audioDevice.reset();
+        ivars->txPreparationAction.reset();
+        ivars->ztsAnchorAction.reset();
         ivars->workQueue.reset();
         ivars->~ASFWAudioDriver_IVars();
         IOSafeDeleteNULL(ivars, ASFWAudioDriver_IVars, 1);

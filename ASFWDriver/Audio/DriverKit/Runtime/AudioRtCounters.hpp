@@ -47,6 +47,7 @@ struct AudioRtCounters final {
     std::atomic<uint64_t> txCompletedPcmSlots{0};
     std::atomic<uint64_t> txCompletedStartupSilenceSlots{0};
     std::atomic<uint64_t> txPayloadMismatchFaults{0};
+    std::atomic<uint64_t> txPostLockNoDataPackets{0};
 
     std::atomic<uint64_t> rxPackets{0};
     std::atomic<uint64_t> rxDecodedFrames{0};
@@ -97,6 +98,7 @@ struct AudioRtCounters final {
         txCompletedPcmSlots.store(0, std::memory_order_relaxed);
         txCompletedStartupSilenceSlots.store(0, std::memory_order_relaxed);
         txPayloadMismatchFaults.store(0, std::memory_order_relaxed);
+        txPostLockNoDataPackets.store(0, std::memory_order_relaxed);
 
         rxPackets.store(0, std::memory_order_relaxed);
         rxDecodedFrames.store(0, std::memory_order_relaxed);

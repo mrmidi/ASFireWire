@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+
 #include <cstdint>
 
 namespace ASFW::Isoch::Config {
@@ -20,13 +22,16 @@ inline constexpr uint32_t kTxQueueCapacityFrames = 4096;
 inline constexpr uint32_t kRxQueueCapacityFrames = 4096;
 // Aligned with the zero timestamp period (512 frames) to prevent wrap mismatch
 // with the HAL's stream read boundaries.
-inline constexpr uint32_t kAudioRingBufferFrames = 512;
-inline constexpr uint32_t kAudioIoPeriodFrames = 48;
+inline constexpr uint32_t kAudioRingBufferFrames =
+    ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
+inline constexpr uint32_t kAudioIoPeriodFrames =
+    ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames;
 
 // Output (TX/playback) shared ring depth. Aligned directly with the zero
 // timestamp period (512 frames) to avoid a wrap mismatch where the driver reads
 // unwritten/silent regions because the HAL wraps writes at the ZTS period.
-inline constexpr uint32_t kAudioOutputRingFrames = 512;
+inline constexpr uint32_t kAudioOutputRingFrames =
+    ASFW::IsochTransport::AudioTimingGeometry::kFrameRingFrames;
 
 // Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
 inline constexpr uint32_t kOutputConsumerLeadFrames = 384; // ~0.75 period (~8ms @48k)
@@ -42,6 +47,13 @@ static_assert(kAudioRingBufferFrames != 0 && ((kAudioRingBufferFrames & (kAudioR
               "Audio ring buffer frame count must be power-of-two");
 static_assert(kAudioOutputRingFrames != 0 && ((kAudioOutputRingFrames & (kAudioOutputRingFrames - 1)) == 0),
               "Output ring frame count must be power-of-two");
+static_assert(kAudioRingBufferFrames == kAudioOutputRingFrames,
+              "Input and output must share one frame-ring geometry");
+static_assert((kAudioRingBufferFrames % kAudioIoPeriodFrames) == 0,
+              "Frame ring must be an integer number of IO periods");
+static_assert((kAudioRingBufferFrames %
+               ASFW::IsochTransport::AudioTimingGeometry::kFrameAlignment) == 0,
+              "Frame ring must be divisible by 32 frames");
 
 static_assert(kOutputConsumerLeadFrames < kAudioOutputRingFrames,
               "Consumer lead must stay within the output ring");
@@ -49,4 +61,3 @@ static_assert(kOutputConsumerLeadFrames + kOutputCursorResyncDeadbandFrames < kA
               "Lead plus deadband must stay within the output ring");
 
 } // namespace ASFW::Isoch::Config
-

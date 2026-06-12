@@ -200,7 +200,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                    sampleTime,
                                                    ioBufferFrameSize);
                 control->counters.CountBeginRead();
-                (void)PublishSharedZeroTimestampToHAL(*driverIvars, "io", false);
                 const uint64_t beginCount =
                     control->counters.ioBeginReadCount.load(std::memory_order_relaxed);
                 if (beginCount <= 8 || (beginCount % 1024) == 0) {
@@ -220,35 +219,21 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
 
-                // Convert int32_t output samples to float32 interleaved in scratch buffer
                 const uint32_t channels = driverIvars->runtime.directAudioGraph.memory.outputChannels;
-                float* scratch = driverIvars->runtime.txFloatScratchBuffer;
-                if (scratch && channels > 0 && (ioBufferFrameSize * channels <= 32768)) {
-                    for (uint32_t f = 0; f < ioBufferFrameSize; ++f) {
-                        const int32_t* frameData = driverIvars->runtime.directAudioGraph.memory.OutputFrame(sampleTime + f);
-                        if (frameData) {
-                            for (uint32_t ch = 0; ch < channels; ++ch) {
-                                scratch[f * channels + ch] = static_cast<float>(frameData[ch]) / 2147483648.0f;
-                            }
-                        } else {
-                            for (uint32_t ch = 0; ch < channels; ++ch) {
-                                scratch[f * channels + ch] = 0.0f;
-                            }
-                        }
-                    }
-
+                const auto& memory =
+                    driverIvars->runtime.directAudioGraph.memory;
+                if (memory.outputBase && channels > 0) {
                     ASFW::Protocols::Audio::AMDTP::HostAudioBufferView hostBuffer{};
-                    hostBuffer.interleavedFloat32 = scratch;
+                    hostBuffer.interleavedInt32 = memory.outputBase;
                     hostBuffer.firstFrame = sampleTime;
                     hostBuffer.frameCount = ioBufferFrameSize;
-                    hostBuffer.frameCapacity = 0;
+                    hostBuffer.frameCapacity = memory.outputFrameCapacity;
                     hostBuffer.channels = channels;
 
-                    driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(hostBuffer);
+                    driverIvars->runtime.txStreamEngine.WriteHostOutputInt32(hostBuffer);
                 }
 
                 control->counters.CountWriteEnd();
-                (void)PublishSharedZeroTimestampToHAL(*driverIvars, "io", false);
                 const uint64_t writeCount =
                     control->counters.ioWriteEndCount.load(std::memory_order_relaxed);
                 const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
@@ -282,14 +267,6 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                          hostTime);
             }
 
-            const auto* txControl = driverIvars->runtime.txSlotProvider.controlBlock;
-            if (txControl) {
-                const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
-                const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
-                const uint64_t targetPacketIndex = completionCursor + kTxPumpLeadPackets;
-                constexpr uint32_t kMaxPreparePerCall = 64;
-                (void)PrepareTransmitSlots(*driverIvars, exposeCursor, targetPacketIndex, kMaxPreparePerCall);
-            }
         } else {
             if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
                 ASFW_LOG(DirectAudio,

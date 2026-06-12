@@ -100,8 +100,11 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         return false;
     }
 
-    const bool isData = cadence_->CurrentCycleIsData();
-    const uint8_t frames = cadence_->CurrentCycleDataFrames();
+    const bool isData =
+        cadence_->CurrentCycleIsData() &&
+        timing.disposition == AmdtpPacketDisposition::Data;
+    const uint8_t frames =
+        isData ? cadence_->CurrentCycleDataFrames() : 0;
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
     const uint32_t byteCount =
@@ -123,8 +126,9 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     outPacket.framesInPacket = isData ? frames : 0;
 
     if (isData) {
-        outPacket.syt = timing.txClockValid ? timing.nextDataSyt
-                                            : IEC61883::SytFormatter::kNoInfo;
+        outPacket.syt = timing.txClockValid
+                            ? timing.nextDataSyt
+                            : IEC61883::SytFormatter::kNoInfo;
 
         WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
@@ -156,6 +160,10 @@ const AmdtpStreamConfig& AmdtpTxPacketizer::StreamConfig() const noexcept {
 
 const AmdtpTxPolicy& AmdtpTxPacketizer::TxPolicy() const noexcept {
     return txPolicy_;
+}
+
+bool AmdtpTxPacketizer::NextPacketWouldCarryData() const noexcept {
+    return cadence_ != nullptr && cadence_->CurrentCycleIsData();
 }
 
 void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,

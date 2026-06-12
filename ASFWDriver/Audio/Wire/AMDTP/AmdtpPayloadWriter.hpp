@@ -19,7 +19,7 @@ struct AmdtpPayloadWriterCounters final {
     std::atomic<uint64_t> framesRacedReuse{0};
     std::atomic<uint64_t> framesNonZero{0};
     std::atomic<uint64_t> slotsNonZero{0};
-    std::atomic<uint32_t> maxAbsSampleBits{0}; // IEEE 754 float32 bit pattern
+    std::atomic<uint32_t> maxAbsSampleBits{0}; // Absolute int32 sample magnitude
 };
 
 class AmdtpPayloadWriter final {
@@ -31,7 +31,7 @@ public:
 
     void BindTimeline(AmdtpPacketTimeline* timeline) noexcept;
 
-    void WriteFloat32Interleaved(const HostAudioBufferView& hostBuffer) noexcept;
+    void WriteInt32Interleaved(const HostAudioBufferView& hostBuffer) noexcept;
 
     [[nodiscard]] const AmdtpPayloadWriterCounters& Counters() const noexcept;
 

@@ -19,6 +19,7 @@
 #include <DriverKit/IOMemoryMap.iig>
 #include <DriverKit/OSString.iig>
 #include <DriverKit/OSArray.iig>
+#include <DriverKit/OSAction.iig>
 #include <atomic>
 #include <cstdint>
 
@@ -94,6 +95,16 @@ public:
      */
     virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
 
+    virtual void TxPreparationReady(OSAction* action TARGET,
+                                    uint64_t generation);
+    virtual kern_return_t RegisterTxPreparationAction(
+        OSAction* action TYPE(TxPreparationReady));
+
+    virtual void ZtsAnchorReady(OSAction* action TARGET,
+                                uint64_t generation);
+    virtual kern_return_t RegisterZtsAnchorAction(
+        OSAction* action TYPE(ZtsAnchorReady));
+
     // LOCALONLY methods for ASFWDriver-side access (same process)
     ASFWDriver* GetParentDriver() const LOCALONLY;
 
@@ -134,6 +145,8 @@ struct ASFWAudioNub_IVars {
     uint32_t outputChannelCount{2};      // Host playback channels (host->device PCM)
     uint32_t currentSampleRateHz{48000};
     uint32_t streamModeRaw{0};             // 0=non-blocking, 1=blocking
+    OSAction* txPreparationAction{nullptr};
+    OSAction* ztsAnchorAction{nullptr};
 };
 
 #endif /* ASFWAudioNub_h */

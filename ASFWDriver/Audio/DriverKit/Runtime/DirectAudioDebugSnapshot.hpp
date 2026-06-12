@@ -53,6 +53,12 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txMinimumPreparationDistance{UINT32_MAX};
     uint64_t txLastPreparationLatencyTicks{0};
     uint64_t txMaxPreparationLatencyTicks{0};
+    int64_t txLastLeadTicks{0};
+    int64_t txMinimumLeadTicks{INT64_MAX};
+    int64_t txMaximumLeadTicks{INT64_MIN};
+    uint64_t txDataPackets{0};
+    uint64_t txNoDataPackets{0};
+    uint64_t txPostLockNoDataPackets{0};
     uint64_t txPhaseRebases{0};
     uint64_t txSilenceFallback{0};
     uint64_t txStaleOverwrittenReads{0};
@@ -97,6 +103,14 @@ struct DirectAudioDebugSnapshot final {
     uint64_t captureRingOverruns{0};
     uint64_t captureRingStarvations{0};
     uint64_t rxDecodedFrames{0};
+    uint64_t hostAnchorFrame{0};
+    uint64_t hostAnchorUpdates{0};
+    uint64_t hostAnchorMirrorPublications{0};
+    uint64_t hostAnchorStaleUpdates{0};
+    uint64_t hostAnchorQueueDepth{0};
+    uint64_t hostAnchorQueueOverflows{0};
+    uint64_t hostAnchorNotificationDispatches{0};
+    uint64_t hostAnchorNotificationCoalesced{0};
 
     // Phase A counters
     uint64_t txValidPhasePcmPackets{0};
@@ -198,6 +212,19 @@ struct DirectAudioDebugLogState final {
         control.txLastPreparationLatencyTicks.load(std::memory_order_relaxed);
     snapshot.txMaxPreparationLatencyTicks =
         control.txMaxPreparationLatencyTicks.load(std::memory_order_relaxed);
+    snapshot.txLastLeadTicks =
+        control.txLastLeadTicks.load(std::memory_order_relaxed);
+    snapshot.txMinimumLeadTicks =
+        control.txMinimumLeadTicks.load(std::memory_order_relaxed);
+    snapshot.txMaximumLeadTicks =
+        control.txMaximumLeadTicks.load(std::memory_order_relaxed);
+    snapshot.txDataPackets =
+        control.counters.txDataPackets.load(std::memory_order_relaxed);
+    snapshot.txNoDataPackets =
+        control.counters.txNoDataPackets.load(std::memory_order_relaxed);
+    snapshot.txPostLockNoDataPackets =
+        control.counters.txPostLockNoDataPackets.load(
+            std::memory_order_relaxed);
     snapshot.txPhaseRebases =
         control.counters.txPhaseRebases.load(std::memory_order_relaxed);
     snapshot.txSilenceFallback =
@@ -250,6 +277,35 @@ struct DirectAudioDebugLogState final {
         control.counters.txCompletedStartupSilenceSlots.load(std::memory_order_relaxed);
     snapshot.txPayloadMismatchFaults =
         control.counters.txPayloadMismatchFaults.load(std::memory_order_relaxed);
+    snapshot.hostAnchorFrame =
+        control.hostClockAnchor.sampleFrame.load(
+            std::memory_order_relaxed);
+    snapshot.hostAnchorUpdates =
+        control.hostClockAnchor.anchorUpdates.load(
+            std::memory_order_relaxed);
+    snapshot.hostAnchorMirrorPublications =
+        control.hostClockAnchor.mirrorPublications.load(
+            std::memory_order_relaxed);
+    snapshot.hostAnchorStaleUpdates =
+        control.hostClockAnchor.staleUpdates.load(
+            std::memory_order_relaxed);
+    const uint64_t anchorWrite =
+        control.hostClockAnchor.producerCursor.load(
+            std::memory_order_acquire);
+    const uint64_t anchorRead =
+        control.hostClockAnchor.consumerCursor.load(
+            std::memory_order_acquire);
+    snapshot.hostAnchorQueueDepth =
+        anchorWrite >= anchorRead ? anchorWrite - anchorRead : 0;
+    snapshot.hostAnchorQueueOverflows =
+        control.hostClockAnchor.queueOverflows.load(
+            std::memory_order_relaxed);
+    snapshot.hostAnchorNotificationDispatches =
+        control.hostClockAnchor.notificationDispatches.load(
+            std::memory_order_relaxed);
+    snapshot.hostAnchorNotificationCoalesced =
+        control.hostClockAnchor.notificationCoalesced.load(
+            std::memory_order_relaxed);
     snapshot.fatalReason = control.fatalReason.load(std::memory_order_acquire);
     snapshot.fatalGeneration = control.fatalGeneration.load(std::memory_order_acquire);
     snapshot.fatalPacketIndex =

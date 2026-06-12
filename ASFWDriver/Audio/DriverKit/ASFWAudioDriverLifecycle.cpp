@@ -40,6 +40,12 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
                  "ASFWAudioDriver: Start() failed at %{public}s kr=0x%x - unwinding partial ADK graph",
                  stage ? stage : "unknown",
                  result);
+        if (ivars->device.audioNub) {
+            (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
+            (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
+        }
+        ivars->ztsAnchorAction.reset();
+        ivars->txPreparationAction.reset();
         TearDownAudioGraph(*this, *ivars, &graphState);
         (void)Stop(provider, SUPERDISPATCH);
         return result;
@@ -48,6 +54,40 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     error = BuildAudioGraph(*this, provider, *ivars, graphState);
     if (error != kIOReturnSuccess) {
         return failStart(error, "BuildAudioGraph");
+    }
+
+    OSAction* rawTxPreparationAction = nullptr;
+    error = CreateActionTxPreparationReady(
+        0, &rawTxPreparationAction);
+    if (error != kIOReturnSuccess || !rawTxPreparationAction) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateActionTxPreparationReady");
+    }
+    ivars->txPreparationAction =
+        ASFW::Common::AdoptRetained(rawTxPreparationAction);
+    error = ivars->device.audioNub->RegisterTxPreparationAction(
+        ivars->txPreparationAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->txPreparationAction.reset();
+        return failStart(error, "RegisterTxPreparationAction");
+    }
+
+    OSAction* rawZtsAnchorAction = nullptr;
+    error = CreateActionZtsAnchorReady(
+        0, &rawZtsAnchorAction);
+    if (error != kIOReturnSuccess || !rawZtsAnchorAction) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateActionZtsAnchorReady");
+    }
+    ivars->ztsAnchorAction =
+        ASFW::Common::AdoptRetained(rawZtsAnchorAction);
+    error = ivars->device.audioNub->RegisterZtsAnchorAction(
+        ivars->ztsAnchorAction.get());
+    if (error != kIOReturnSuccess) {
+        ivars->ztsAnchorAction.reset();
+        return failStart(error, "RegisterZtsAnchorAction");
     }
 
     return kIOReturnSuccess;
@@ -59,16 +99,16 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
 
     if (ivars) {
         ivars->runtime.isRunning.store(false, std::memory_order_release);
-        ivars->runtime.txPreparationNotificationScheduled.store(
-            false, std::memory_order_release);
-        ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
-
         if (ivars->device.audioNub) {
             kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
             if (stopKr != kIOReturnSuccess) {
                 ASFW_LOG(Audio, "ASFWAudioDriver: StopAudioStreaming failed in Stop(): 0x%x", stopKr);
             }
+            (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
+            (void)ivars->device.audioNub->RegisterZtsAnchorAction(nullptr);
         }
+        ivars->txPreparationAction.reset();
+        ivars->ztsAnchorAction.reset();
         ivars->device.audioNub = nullptr;
     }
 
@@ -124,20 +164,17 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
              ivars->outputStream ? ivars->outputStream->GetObjectID() : 0);
 
     ivars->runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
-    ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
     ivars->runtime.isRunning.store(false, std::memory_order_release);
-    ivars->runtime.txPreparationNotificationScheduled.store(
-        false, std::memory_order_release);
     ASFW_LOG(DirectAudio, "ADK DBG IO running=0 while arming transport");
 
     auto* control = ivars->runtime.directAudioGraph.control;
-    if (control) {
-        // Select RX before transport startup so the first usable RX SYT/ZTS
-        // publication is accepted while IR is coming online.
-        control->ztsState.selectedSource.store(
-            ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock,
-            std::memory_order_release);
-    }
+    control->ResetForStart();
+    ivars->runtime.lastHalZeroTimestampGeneration.store(
+        0, std::memory_order_release);
+    ivars->runtime.lastHalZeroTimestampSampleFrame.store(
+        0, std::memory_order_release);
+    ivars->runtime.lastHalZeroTimestampHostTicks.store(
+        0, std::memory_order_release);
 
     const kern_return_t superStartKr = super::StartDevice(in_object_id, in_flags);
     if (superStartKr != kIOReturnSuccess) {
@@ -150,9 +187,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     const auto failStartDevice = [&](kern_return_t status, const char* stage) -> kern_return_t {
         const kern_return_t result = (status == kIOReturnSuccess) ? kIOReturnError : status;
         ivars->runtime.isRunning.store(false, std::memory_order_release);
-        ivars->runtime.txPreparationNotificationScheduled.store(
-            false, std::memory_order_release);
-        ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
         if (streamingStarted && ivars->device.audioNub) {
             const kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
             if (stopKr != kIOReturnSuccess) {
@@ -168,10 +202,11 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         ivars->txPayloadBuffer = nullptr;
         ivars->txMetadataBuffer = nullptr;
         ivars->txControlBuffer = nullptr;
-        if (ivars->runtime.txFloatScratchBuffer) {
-            delete[] ivars->runtime.txFloatScratchBuffer;
-            ivars->runtime.txFloatScratchBuffer = nullptr;
-        }
+        ivars->runtime.txSlotProvider.payloadBase = nullptr;
+        ivars->runtime.txSlotProvider.metadataRing = nullptr;
+        ivars->runtime.txSlotProvider.controlBlock = nullptr;
+        ivars->runtime.txSlotProvider.numSlots = 0;
+        ivars->runtime.txExecutionTimeline.controlBlock = nullptr;
         if (ivars->device.audioNub) {
             ivars->device.audioNub->FreeTxIsochResources();
         }
@@ -202,9 +237,12 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
             return failStartDevice(kIOReturnError, "BuildDefaultTxStreamConfig");
         }
 
-        const uint32_t numSlots = 512;
+        const uint32_t numSlots =
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kFrameRingFrames;
         const uint32_t maxPacketBytes = 512;
-        const uint32_t interruptInterval = 8;
+        const uint32_t interruptInterval =
+            ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 
         IOMemoryDescriptor* rawPayload = nullptr;
         IOMemoryDescriptor* rawMetadata = nullptr;
@@ -263,8 +301,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         ASFW::Driver::TxTimingModel::Config timeConfig{};
         ivars->runtime.txTimingModel.Configure(timeConfig);
 
-        ivars->runtime.txFloatScratchBuffer = new float[32768]();
-
         ASFW_LOG(Audio, "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u", txConfig.sid);
     }
 
@@ -280,6 +316,31 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(startKr, "StartAudioStreaming");
     }
     streamingStarted = true;
+
+    auto* txControl = ivars->runtime.txSlotProvider.controlBlock;
+    if (!txControl ||
+        txControl->abiVersion !=
+            ASFW::IsochTransport::kTransportAbiVersion ||
+        txControl->numSlots !=
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kFrameRingFrames ||
+        txControl->interruptInterval !=
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kTxPacketsPerGroup ||
+        txControl->ztsPeriodFrames !=
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kHalZeroTimestampPeriodFrames) {
+        ASFW_LOG(
+            Audio,
+            "ASFWAudioDriver: TX geometry/ABI mismatch abi=%u slots=%u group=%u zts=%u",
+            txControl ? txControl->abiVersion : 0,
+            txControl ? txControl->numSlots : 0,
+            txControl ? txControl->interruptInterval : 0,
+            txControl ? txControl->ztsPeriodFrames : 0);
+        return failStartDevice(
+            kIOReturnUnsupported, "ValidateTxTransportGeometry");
+    }
+    ivars->runtime.isRunning.store(true, std::memory_order_release);
 
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const auto policySnap = policy.Snapshot();
@@ -316,14 +377,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                  ivars->runtime.directAudioGraph.HasOutput());
         return failStartDevice(kIOReturnNotReady, "direct graph audioDevice");
     }
-    ivars->runtime.isRunning.store(true, std::memory_order_release);
-    ivars->runtime.txPreparationNotificationScheduled.store(
-        false, std::memory_order_release);
     ASFW_LOG(DirectAudio, "ADK DBG IO running=1 after transport ready");
-    ASFW_LOG(DirectAudio,
-             "ADK DBG ZTS mirror pump started guid=0x%016llx periodUsec=%llu",
-             ivars->device.guid,
-             kZtsMirrorPumpPeriodUsec);
     ASFW_LOG(DirectAudio,
              "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu",
              ivars->device.guid,
@@ -353,9 +407,6 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
     ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
     if (ivars) {
         ivars->runtime.isRunning.store(false, std::memory_order_release);
-        ivars->runtime.txPreparationNotificationScheduled.store(
-            false, std::memory_order_release);
-        ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
     }
     if (ivars && ivars->runtime.directAudioGraph.control) {
         const auto* control = ivars->runtime.directAudioGraph.control;
@@ -387,10 +438,11 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
         ivars->txPayloadBuffer = nullptr;
         ivars->txMetadataBuffer = nullptr;
         ivars->txControlBuffer = nullptr;
-        if (ivars->runtime.txFloatScratchBuffer) {
-            delete[] ivars->runtime.txFloatScratchBuffer;
-            ivars->runtime.txFloatScratchBuffer = nullptr;
-        }
+        ivars->runtime.txSlotProvider.payloadBase = nullptr;
+        ivars->runtime.txSlotProvider.metadataRing = nullptr;
+        ivars->runtime.txSlotProvider.controlBlock = nullptr;
+        ivars->runtime.txSlotProvider.numSlots = 0;
+        ivars->runtime.txExecutionTimeline.controlBlock = nullptr;
         if (ivars->device.audioNub) {
             ivars->device.audioNub->FreeTxIsochResources();
         }
@@ -409,9 +461,6 @@ namespace ASFW::Audio::DriverKit {
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept {
     // 1. Immediately clear isRunning to stop pump and block further IO
     ivars.runtime.isRunning.store(false, std::memory_order_release);
-    ivars.runtime.txPreparationNotificationScheduled.store(
-        false, std::memory_order_release);
-    ivars.runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
 
     ASFW_LOG(Audio, "ADK FATAL: TEARDOWN DUPLEX STREAM DUE TO: %{public}s", reason);
 
@@ -428,10 +477,11 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
         ivars.txPayloadBuffer = nullptr;
         ivars.txMetadataBuffer = nullptr;
         ivars.txControlBuffer = nullptr;
-        if (ivars.runtime.txFloatScratchBuffer) {
-            delete[] ivars.runtime.txFloatScratchBuffer;
-            ivars.runtime.txFloatScratchBuffer = nullptr;
-        }
+        ivars.runtime.txSlotProvider.payloadBase = nullptr;
+        ivars.runtime.txSlotProvider.metadataRing = nullptr;
+        ivars.runtime.txSlotProvider.controlBlock = nullptr;
+        ivars.runtime.txSlotProvider.numSlots = 0;
+        ivars.runtime.txExecutionTimeline.controlBlock = nullptr;
         ivars.device.audioNub->FreeTxIsochResources();
     }
 

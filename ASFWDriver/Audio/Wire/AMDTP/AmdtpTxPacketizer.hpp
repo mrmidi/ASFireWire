@@ -29,6 +29,7 @@ public:
 
     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
+    [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
 private:
     void WriteDataPacketDefaults(uint8_t* packetBytes,

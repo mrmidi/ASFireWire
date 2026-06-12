@@ -27,15 +27,17 @@ The goal is to provide a generic framework for building isochronous DMA programs
 ```mermaid
 graph TD
     subgraph "Core Audio Space"
-        CA["Core Audio Engine"] --> |"PCM S32"| ARB["AudioRingBuffer"]
+        CA["Core Audio Engine"] --> |"PCM S32"| HAL["Mapped HAL output ring"]
     end
 
     subgraph "Encoding Layer (AMDTP)"
-        ARB --> PA["PacketAssembler"]
-        BC["BlockingCadence48k"] --> PA
-        SYT["SYTGenerator"] --> PA
-        ENC["AM824Encoder"] --> PA
-        PA --> |"CIP + AM824"| TXC["IsochTransmitContext"]
+        HAL --> PW["AmdtpPayloadWriter"]
+        BC["Shared 8-packet cadence"] --> PZ["AmdtpTxPacketizer"]
+        RX["RX recovered cadence"] --> TM["TxTimingModel"]
+        FB["OHCI OUTPUT completion"] --> TM
+        TM --> PZ
+        PZ --> |"CIP DATA / NO-DATA"| TXC["IsochTransmitContext"]
+        PW --> TXC
     end
 
     subgraph "Hardware Layer (OHCI)"
@@ -162,31 +164,13 @@ The Isoch stack is organized into functional layers:
     *   **Role**: Protocol Type Definitions.
     *   **Responsibilities**: Defines high-level protocol enums like `SampleRate`, `SampleRateFamily` (44.1k vs 48k base), and SYT interval constants. Differentiated from the root `IsochTypes.hpp` which is hardware-focused.
 
-### Encoding/
-*   [AM824Encoder.hpp](Encoding/AM824Encoder.hpp)
-    *   **Role**: IEC 61883-6 Audio Encoder.
-    *   **Responsibilities**: Packs 24-bit PCM samples into 32-bit AM824 quadlets (**A**udio/**M**usic, **8**-bit label, **24**-bit data), applying the Multi-Bit Linear Audio (MBLA) label (`0x40`) and handling endianness.
-*   [AudioRingBuffer.hpp](Encoding/AudioRingBuffer.hpp)
-    *   **Role**: Lock-Free Ring Buffer.
-    *   **Responsibilities**: A high-performance Single-Producer Single-Consumer (SPSC) ring buffer. Safely transfers audio data from the high-priority audio callback thread to the isochronous transmit thread without locking.
-*   [BlockingCadence48k.hpp](Encoding/BlockingCadence48k.hpp)
-    *   **Role**: Transmission Cadence Generator.
-    *   **Responsibilities**: Implements the strict N-D-D-D blocking pattern required for 48kHz audio streams. Determines whether the current isochronous cycle sends a DATA packet (8 samples) or a NO-DATA packet (empty CIP only).
-*   [BlockingDbcGenerator.hpp](Encoding/BlockingDbcGenerator.hpp)
-    *   **Role**: Data Block Counter (DBC) Tracker.
-    *   **Responsibilities**: Maintains DBC continuity across DATA and NO-DATA packets, ensuring compliance with the IEC 61883-1 blocking transmission specification.
-*   [CIPHeaderBuilder.hpp](Encoding/CIPHeaderBuilder.hpp)
-    *   **Role**: CIP Header Factory.
-    *   **Responsibilities**: Constructs valid 8-byte CIP headers for outgoing packets, populating fields like SID, DBS, FN, QPC, SPH, and DBC/SYT.
-*   [PacketAssembler.hpp](Encoding/PacketAssembler.hpp)
-    *   **Role**: Transmit orchestrator.
-    *   **Responsibilities**: The central hub for the transmit path. Pulls data from the ring buffer, consults the Cadence and DBC generators, encodes samples, and builds the final packet payload for the DMA engine.
-*   [SYTGenerator.cpp](Encoding/SYTGenerator.cpp) / [SYTGenerator.hpp](Encoding/SYTGenerator.hpp)
-    *   **Role**: Timestamp (SYT) Engine.
-    *   **Responsibilities**: Generates precise presentation timestamps (SYT) for outgoing packets. Correlates host time with the FireWire cycle timer, implementing a smoothing algorithm to prevent jitter.
-*   [TimingUtils.hpp](Encoding/TimingUtils.hpp)
-    *   **Role**: Timing Constants & Helpers.
-    *   **Responsibilities**: Provides conversion utilities for FireWire time units (ticks, cycles, seconds) and defines constants for the 24.576 MHz cycle clock.
+### Audio/Wire/AMDTP/
+*   `AmdtpTxPacketizer`
+    *   **Role**: Owns blocking cadence, DBC continuity, explicit DATA/NO-DATA disposition, and CIP headers.
+*   `AmdtpPayloadWriter`
+    *   **Role**: Encodes mapped HAL `int32` playback frames directly into exposed packet payloads.
+*   `TxTimingModel`
+    *   **Role**: Combines OHCI OUTPUT completion timestamps with delayed RX-recovered cadence to produce TX SYT.
 
 ### Memory/
 

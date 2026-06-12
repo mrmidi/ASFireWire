@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+
 #include <cstdint>
 
 namespace ASFW::Isoch::Core {
@@ -25,9 +27,8 @@ struct IsochEventGroup final {
     }
 };
 
-// TODO(DICE): Unify timing group packet count (currently 8) with Transmit Layout (kTimingGroupPackets) in a single place
 [[nodiscard]] constexpr uint32_t TimingGroupPacketCount48k() noexcept {
-    return 8;
+    return ASFW::IsochTransport::AudioTimingGeometry::kTimingGroupPackets;
 }
 
 [[nodiscard]] constexpr bool IsTimingGroupBoundary(uint32_t packetIndex) noexcept {

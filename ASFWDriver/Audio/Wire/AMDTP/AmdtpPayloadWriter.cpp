@@ -3,8 +3,6 @@
 #include "PcmSlotCodec.hpp"
 
 #include <atomic>
-#include <cstring>
-
 namespace ASFW::Protocols::Audio::AMDTP {
 
 // Design decisions (see ../../../README.md, Step 4):
@@ -26,8 +24,8 @@ namespace ASFW::Protocols::Audio::AMDTP {
 //    evicted by ring reuse, or mid-rewrite when the seqlock snapshot was
 //    taken (framesOutsidePacket — writer arrived late).
 // 4. The host view is a window into a ring of frameCapacity frames;
-//    interleavedFloat32 points at the window start, which sits at ring
-//    offset firstFrame % frameCapacity, and reads wrap modulo the capacity.
+//    interleavedInt32 points at the mapped HAL ring base and reads wrap
+//    modulo frameCapacity.
 //    frameCapacity == 0 degrades to a flat (non-ring) buffer.
 // 5. The codec returns logical quadlet values; the writer serializes them
 //    big-endian into the packet image (the LE encoding pre-swaps so that BE
@@ -70,17 +68,12 @@ void AmdtpPayloadWriter::BindTimeline(AmdtpPacketTimeline* timeline) noexcept {
     timeline_ = timeline;
 }
 
-void AmdtpPayloadWriter::WriteFloat32Interleaved(
+void AmdtpPayloadWriter::WriteInt32Interleaved(
     const HostAudioBufferView& hostBuffer) noexcept {
-    if (timeline_ == nullptr || hostBuffer.interleavedFloat32 == nullptr ||
+    if (timeline_ == nullptr || hostBuffer.interleavedInt32 == nullptr ||
         hostBuffer.channels == 0 || hostBuffer.frameCount == 0) {
         return; // invalid view: nothing visited, nothing counted
     }
-
-    const uint64_t windowOffset =
-        (hostBuffer.frameCapacity != 0)
-            ? hostBuffer.firstFrame % hostBuffer.frameCapacity
-            : 0;
 
     uint64_t written = 0;
     uint64_t withoutPacket = 0;
@@ -88,7 +81,7 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
     uint64_t racedReuse = 0;
     uint64_t nonZeroFrames = 0;
     uint64_t nonZeroSlots = 0;
-    float localMaxAbs = 0.0f;
+    uint32_t localMaxAbs = 0;
 
     for (uint32_t i = 0; i < hostBuffer.frameCount; ++i) {
         const uint64_t absoluteFrame = hostBuffer.firstFrame + i;
@@ -103,16 +96,13 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
             continue;
         }
 
-        const float* source = hostBuffer.interleavedFloat32;
-        if (hostBuffer.frameCapacity != 0) {
-            const uint64_t ringFrame =
-                (windowOffset + i) % hostBuffer.frameCapacity;
-            source += (static_cast<int64_t>(ringFrame) -
-                       static_cast<int64_t>(windowOffset)) *
-                      static_cast<int64_t>(hostBuffer.channels);
-        } else {
-            source += static_cast<uint64_t>(i) * hostBuffer.channels;
-        }
+        const uint64_t sourceFrame =
+            hostBuffer.frameCapacity != 0
+                ? absoluteFrame % hostBuffer.frameCapacity
+                : i;
+        const int32_t* source =
+            hostBuffer.interleavedInt32 +
+            sourceFrame * hostBuffer.channels;
 
         // The snapshot's range check guarantees firstAudioFrame <=
         // absoluteFrame < firstAudioFrame + framesInPacket on a consistent
@@ -127,14 +117,19 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                       : snap.dbs;
         bool frameNonZero = false;
         for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
-            const float sample = (ch < hostBuffer.channels) ? source[ch] : 0.0f;
+            const int32_t sample =
+                (ch < hostBuffer.channels) ? source[ch] : 0;
             WriteBE32(dest + ch * kBytesPerSlot,
-                      PcmSlotCodec::EncodeFloat32(
+                      PcmSlotCodec::EncodeInt32(
                           sample, txPolicy_.hostToDevicePcmEncoding));
-            if (sample != 0.0f) {
+            if (sample != 0) {
                 frameNonZero = true;
                 ++nonZeroSlots;
-                const float absSample = (sample >= 0.0f) ? sample : -sample;
+                const uint32_t absSample =
+                    sample == INT32_MIN
+                        ? static_cast<uint32_t>(INT32_MAX) + 1u
+                        : static_cast<uint32_t>(
+                              sample < 0 ? -sample : sample);
                 if (absSample > localMaxAbs) {
                     localMaxAbs = absSample;
                 }
@@ -165,13 +160,8 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
                                       std::memory_order_relaxed);
     counters_.slotsNonZero.fetch_add(nonZeroSlots,
                                      std::memory_order_relaxed);
-    // IEEE 754 float32: for non-negative values, the uint32 bit pattern is
-    // monotonically increasing, so a simple max on the bit representation
-    // is correct. Only one RT writer thread exists, so the CAS never
-    // contends.
-    if (localMaxAbs > 0.0f) {
-        uint32_t desired;
-        std::memcpy(&desired, &localMaxAbs, sizeof(desired));
+    if (localMaxAbs != 0) {
+        const uint32_t desired = localMaxAbs;
         uint32_t expected =
             counters_.maxAbsSampleBits.load(std::memory_order_relaxed);
         while (desired > expected) {

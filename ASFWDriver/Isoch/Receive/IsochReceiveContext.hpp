@@ -91,6 +91,8 @@ public:
     
     using TimingLossCallback = std::function<void()>;
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
+    using ZtsAnchorReadyCallback = std::function<void(uint64_t)>;
+    void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
 
     void LogHardwareState();
 
@@ -135,6 +137,7 @@ private:
     uint32_t sytConsecutiveValid_{0};
     bool rxCadenceEstablishedLogged_{false};
     TimingLossCallback timingLossCallback_{nullptr};
+    ZtsAnchorReadyCallback ztsAnchorReadyCallback_{nullptr};
 
     Registers GetRegisters(uint8_t index) const;
 };

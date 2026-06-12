@@ -56,6 +56,9 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.txMinimumPreparationDistance.store(70, std::memory_order_relaxed);
     control.txLastPreparationLatencyTicks.store(20, std::memory_order_relaxed);
     control.txMaxPreparationLatencyTicks.store(30, std::memory_order_relaxed);
+    control.txLastLeadTicks.store(40, std::memory_order_relaxed);
+    control.txMinimumLeadTicks.store(10, std::memory_order_relaxed);
+    control.txMaximumLeadTicks.store(70, std::memory_order_relaxed);
     control.counters.txPhaseRebases.store(1, std::memory_order_relaxed);
     control.counters.txSilenceFallback.store(2, std::memory_order_relaxed);
     control.counters.txStaleOverwrittenReads.store(3, std::memory_order_relaxed);
@@ -70,6 +73,7 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.counters.txCompletedPayloadHashMatches.store(4, std::memory_order_relaxed);
     control.counters.txCompletedPayloadHashMismatches.store(5, std::memory_order_relaxed);
     control.counters.txPayloadMismatchFaults.store(6, std::memory_order_relaxed);
+    control.counters.txPostLockNoDataPackets.store(8, std::memory_order_relaxed);
     control.txFatalSnapshot.packetIndex.store(12, std::memory_order_relaxed);
     control.fatalGeneration.store(13, std::memory_order_relaxed);
     control.fatalReason.store(FatalStreamReason::TxReadAhead, std::memory_order_relaxed);
@@ -113,6 +117,11 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
               UINT32_MAX);
     EXPECT_EQ(control.txLastPreparationLatencyTicks.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txMaxPreparationLatencyTicks.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txLastLeadTicks.load(std::memory_order_acquire), 0);
+    EXPECT_EQ(control.txMinimumLeadTicks.load(std::memory_order_acquire),
+              INT64_MAX);
+    EXPECT_EQ(control.txMaximumLeadTicks.load(std::memory_order_acquire),
+              INT64_MIN);
     EXPECT_EQ(control.counters.txPhaseRebases.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txSilenceFallback.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(control.counters.txStaleOverwrittenReads.load(std::memory_order_relaxed), 0U);
@@ -135,6 +144,9 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
                   std::memory_order_relaxed),
               0U);
     EXPECT_EQ(control.counters.txPayloadMismatchFaults.load(
+                  std::memory_order_relaxed),
+              0U);
+    EXPECT_EQ(control.counters.txPostLockNoDataPackets.load(
                   std::memory_order_relaxed),
               0U);
     EXPECT_EQ(control.txFatalSnapshot.packetIndex.load(std::memory_order_relaxed), 0U);

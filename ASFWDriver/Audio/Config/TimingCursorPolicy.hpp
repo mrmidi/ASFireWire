@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../Shared/Isoch/AudioTimingGeometry.hpp"
+
 #include <cstdint>
 
 namespace ASFW::Audio {
@@ -38,11 +40,11 @@ public:
     constexpr explicit TimingCursorPolicy(AudioTimingMode mode) noexcept : mode_(mode) {}
 
     [[nodiscard]] constexpr uint32_t SampleRateHz() const noexcept {
-        return 48000;
+        return ASFW::IsochTransport::AudioTimingGeometry::kSampleRateHz;
     }
 
     [[nodiscard]] constexpr uint32_t FramesPerPacketMax() const noexcept {
-        return 8;
+        return ASFW::IsochTransport::AudioTimingGeometry::kFramesPerDataPacket;
     }
 
     [[nodiscard]] constexpr uint32_t RxAuthorityUpdatePeriodFrames() const noexcept {
@@ -50,11 +52,11 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t HalIoPeriodFrames() const noexcept {
-        return 48;
+        return ASFW::IsochTransport::AudioTimingGeometry::kHalIoPeriodFrames;
     }
 
     [[nodiscard]] constexpr uint32_t HalZeroTimestampPeriodFrames() const noexcept {
-        return 48;
+        return ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     }
 
     [[nodiscard]] constexpr uint32_t CursorOffsetFrames(AudioDirection direction) const noexcept {
@@ -87,7 +89,7 @@ public:
     }
 
     [[nodiscard]] constexpr uint32_t ZtsPeriodFrames() const noexcept {
-        return 8; // publication period matches frames per packet
+        return ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     }
 
     [[nodiscard]] constexpr uint64_t HardwareOutputFrameToReportedFrame(uint64_t hardwareFrame) const noexcept {

@@ -46,7 +46,7 @@ struct AmdtpTxPolicy final {
 };
 
 struct HostAudioBufferView final {
-    const float* interleavedFloat32{nullptr};
+    const int32_t* interleavedInt32{nullptr};
 
     uint64_t firstFrame{0};
     uint32_t frameCount{0};
@@ -73,11 +73,18 @@ struct PreparedTxPacket final {
     uint32_t dbs{0};
 };
 
+enum class AmdtpPacketDisposition : uint8_t {
+    NoData = 0,
+    Data = 1,
+};
+
 struct AmdtpTimingState final {
     int64_t timelineEpochTicks{0};
     int64_t nowTicks{0};
 
     bool txClockValid{false};
+    AmdtpPacketDisposition disposition{
+        AmdtpPacketDisposition::NoData};
     uint16_t nextDataSyt{0xFFFF};
     uint64_t nextAudioFrame{0};
 };
@@ -97,4 +104,3 @@ enum class AudioWireFormat : uint8_t {
 };
 
 } // namespace ASFW::Encoding
-

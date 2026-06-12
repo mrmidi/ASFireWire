@@ -87,7 +87,10 @@ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
         // Descriptor 2 (OL)
         auto* desc2 = ring_.Slab().GetDescriptorPtr(descBase + 2);
         
-        const uint8_t expectedInterrupt = ((pktIdx + 1) % 8 == 0) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever;
+        const uint8_t expectedInterrupt =
+            ASFW::Isoch::Core::IsTimingGroupBoundary(pktIdx)
+                ? OHCIDescriptor::kIntAlways
+                : OHCIDescriptor::kIntNever;
         const uint32_t expectedControl2 = OHCIDescriptor::BuildControl({
             .reqCount = 0,
             .command = OHCIDescriptor::kCmdOutputLast,
@@ -174,6 +177,11 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
     // Verify completed stamps
     EXPECT_EQ(controlBlock.completionStampCount.load(), 8);
     EXPECT_EQ(controlBlock.completionCursor.load(), 8);
+    EXPECT_EQ(outcome.preparationRequestGeneration, 1U);
+    EXPECT_EQ(
+        controlBlock.preparationRequestGeneration.load(
+            std::memory_order_acquire),
+        1U);
     for (uint32_t i = 0; i < 8; ++i) {
         uint64_t pktIdx = 0;
         uint32_t ts = 0;
@@ -202,6 +210,62 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
         EXPECT_EQ(desc2->dataAddress,
                   kSharedPayloadIOVA + i * kSharedPayloadStride);
     }
+}
+
+TEST_F(IsochTxDmaRingTest, CompletionNotificationCoalescesUntilHandled) {
+    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    (void)ring_.Prime(
+        kSharedPayloadIOVA,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        0);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    for (uint32_t i = 0; i < 24; ++i) {
+        metadataRing[i].payloadLength = 8;
+        metadataRing[i].commitGen.store(1, std::memory_order_release);
+    }
+    hardware_.SetTestRegister(
+        static_cast<Register32>(
+            DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto refillTo = [&](uint32_t packetIndex) {
+        const uint32_t iova = ring_.Slab().GetDescriptorIOVA(
+            packetIndex * Layout::kBlocksPerPacket);
+        hardware_.SetTestRegister(
+            static_cast<Register32>(
+                DMAContextHelpers::IsoXmitCommandPtr(0)),
+            iova | Layout::kBlocksPerPacket);
+        return ring_.Refill(
+            hardware_,
+            0,
+            metadataRing.data(),
+            &controlBlock,
+            kSharedPayloadSlots,
+            sharedPayload_.data(),
+            kSharedPayloadIOVA);
+    };
+
+    const auto first = refillTo(8);
+    ASSERT_TRUE(first.ok);
+    EXPECT_EQ(first.preparationRequestGeneration, 1U);
+
+    const auto coalesced = refillTo(16);
+    ASSERT_TRUE(coalesced.ok);
+    EXPECT_EQ(coalesced.preparationRequestGeneration, 0U);
+
+    controlBlock.preparationHandledGeneration.store(
+        1, std::memory_order_release);
+    const auto next = refillTo(24);
+    ASSERT_TRUE(next.ok);
+    EXPECT_EQ(next.preparationRequestGeneration, 2U);
 }
 
 TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots) {

@@ -242,6 +242,14 @@ void ASFWAudioNub::free()
 {
     ASFW_LOG(Audio, "ASFWAudioNub: free()");
     if (ivars) {
+        if (ivars->txPreparationAction) {
+            ivars->txPreparationAction->release();
+            ivars->txPreparationAction = nullptr;
+        }
+        if (ivars->ztsAnchorAction) {
+            ivars->ztsAnchorAction->release();
+            ivars->ztsAnchorAction = nullptr;
+        }
         IOSafeDeleteNULL(ivars, ASFWAudioNub_IVars, 1);
     }
     super::free();
@@ -277,6 +285,23 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
 {
     ASFW_LOG(Audio, "ASFWAudioNub: Stop()");
     if (ivars) {
+        ASFWDriver* parent = GetParentASFWDriver(ivars);
+        auto* ctx =
+            parent
+                ? static_cast<ServiceContext*>(parent->GetServiceContext())
+                : nullptr;
+        if (ctx) {
+            ctx->isoch.SetTxPreparationCallback({});
+            ctx->isoch.SetZtsAnchorReadyCallback({});
+        }
+        if (ivars->txPreparationAction) {
+            ivars->txPreparationAction->release();
+            ivars->txPreparationAction = nullptr;
+        }
+        if (ivars->ztsAnchorAction) {
+            ivars->ztsAnchorAction->release();
+            ivars->ztsAnchorAction = nullptr;
+        }
         ivars->parentDriver = nullptr;
     }
     return Stop(provider, SUPERDISPATCH);
@@ -303,6 +328,94 @@ kern_return_t IMPL(ASFWAudioNub, GetCycleTimePair)
     }
 
     return ctx->isoch.GetCycleTimePair(outHostTimeMid, outCycleTimer, *ctx->deps.hardware);
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterTxPreparationAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx =
+        parent ? static_cast<ServiceContext*>(parent->GetServiceContext())
+               : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->txPreparationAction;
+    ivars->txPreparationAction = action;
+
+    if (action) {
+        ctx->isoch.SetTxPreparationCallback(
+            [this](uint64_t generation) {
+                if (ivars && ivars->txPreparationAction) {
+                    TxPreparationReady(
+                        ivars->txPreparationAction, generation);
+                }
+            });
+    } else {
+        ctx->isoch.SetTxPreparationCallback({});
+    }
+
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioNub, TxPreparationReady)
+{
+    (void)action;
+    (void)generation;
+}
+
+kern_return_t IMPL(ASFWAudioNub, RegisterZtsAnchorAction)
+{
+    if (!ivars) {
+        return kIOReturnNotReady;
+    }
+
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx =
+        parent ? static_cast<ServiceContext*>(parent->GetServiceContext())
+               : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    if (action) {
+        action->retain();
+    }
+    OSAction* oldAction = ivars->ztsAnchorAction;
+    ivars->ztsAnchorAction = action;
+
+    if (action) {
+        ctx->isoch.SetZtsAnchorReadyCallback(
+            [this](uint64_t generation) {
+                if (ivars && ivars->ztsAnchorAction) {
+                    ZtsAnchorReady(
+                        ivars->ztsAnchorAction, generation);
+                }
+            });
+    } else {
+        ctx->isoch.SetZtsAnchorReadyCallback({});
+    }
+
+    if (oldAction) {
+        oldAction->release();
+    }
+    return kIOReturnSuccess;
+}
+
+void IMPL(ASFWAudioNub, ZtsAnchorReady)
+{
+    (void)action;
+    (void)generation;
 }
 
 ASFWDriver* ASFWAudioNub::GetParentDriver() const

@@ -5,7 +5,6 @@
 
 #include "../DriverKit/Runtime/DirectAudioBindingSource.hpp"
 #include "../Model/ASFWAudioDevice.hpp"
-#include "../Runtime/AudioSampleRing.hpp"
 #include "../../Shared/Isoch/IsochAudioTransport.hpp"
 #include "../Wire/AMDTP/AmdtpRateGeometry.hpp"
 #include "../../Logging/Logging.hpp"
@@ -258,8 +257,8 @@ private:
         if (channels == 0) {
             return 0;
         }
-        return (channels > ASFW::Isoch::Config::kMaxPcmChannels)
-            ? ASFW::Isoch::Config::kMaxPcmChannels
+        return (channels > ASFW::Encoding::kMaxPcmChannels)
+            ? ASFW::Encoding::kMaxPcmChannels
             : channels;
     }
 
@@ -347,8 +346,6 @@ private:
     }
 
     void ReleaseDirectAudioMemoryLocked() noexcept {
-        playbackRing_.Unbind();
-        captureRing_.Unbind();
         directOutputBase_ = nullptr;
         directOutputBytes_ = 0;
         directOutputCapacityFrames_ = 0;
@@ -490,30 +487,6 @@ private:
         control->ResetForStart();
 
         PublishDirectAudioBindingFromMappedMemoryLocked();
-        playbackRing_.Unbind();
-        captureRing_.Unbind();
-        (void)playbackRing_.BindExternal(
-            const_cast<int32_t*>(directOutputBase_),
-            directOutputCapacityFrames_,
-            directOutputChannels_,
-            &directControl_->playbackRingWriteFrame,
-            &directControl_->playbackRingReadFrame,
-            Runtime::AudioSampleRingCounters{
-                .underruns = &directControl_->playbackRingUnderruns,
-                .overruns = &directControl_->playbackRingOverruns,
-                .starvations = nullptr,
-            });
-        (void)captureRing_.BindExternal(
-            directInputBase_,
-            directInputCapacityFrames_,
-            directInputChannels_,
-            &directControl_->captureRingWriteFrame,
-            &directControl_->captureRingReadFrame,
-            Runtime::AudioSampleRingCounters{
-                .underruns = nullptr,
-                .overruns = &directControl_->captureRingOverruns,
-                .starvations = &directControl_->captureRingStarvations,
-            });
         return HasCompleteDirectAudioMemoryLocked() ? kIOReturnSuccess : kIOReturnNotReady;
     }
 
@@ -540,8 +513,6 @@ private:
     uint32_t directInputChannels_{0};
     Runtime::AudioTransportControlBlock* directControl_{nullptr};
     uint32_t directSampleRateHz_{0};
-    Runtime::AudioSampleRing playbackRing_{};
-    Runtime::AudioSampleRing captureRing_{};
 };
 
 } // namespace ASFW::Audio

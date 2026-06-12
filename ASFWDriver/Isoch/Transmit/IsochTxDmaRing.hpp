@@ -66,6 +66,7 @@ public:
         uint32_t firstRefillPacket{0};
         uint32_t refillPacketCount{0};
         uint64_t packetsFilled{0};
+        uint64_t preparationRequestGeneration{0};
     };
 
     IsochTxDmaRing() noexcept = default;

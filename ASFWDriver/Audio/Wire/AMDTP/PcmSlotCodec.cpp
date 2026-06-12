@@ -63,6 +63,27 @@ uint32_t PcmSlotCodec::EncodeFloat32(float sample, PcmSlotEncoding encoding) noe
     return EncodeAm824MBLA(sample);
 }
 
+int32_t PcmSlotCodec::NormalizeSigned24(int32_t sample) noexcept {
+    // Preserve the old int32 -> float -> signed24 full-scale mapping without
+    // allocating a float scratch buffer.
+    return sample >> 8;
+}
+
+uint32_t PcmSlotCodec::EncodeInt32(
+    int32_t sample, PcmSlotEncoding encoding) noexcept {
+    const int32_t signed24 = NormalizeSigned24(sample);
+    switch (encoding) {
+    case PcmSlotEncoding::RawSigned24In32BE:
+        return static_cast<uint32_t>(signed24);
+    case PcmSlotEncoding::RawSigned24In32LE:
+        return ByteSwap32(static_cast<uint32_t>(signed24));
+    case PcmSlotEncoding::Am824MBLA:
+        break;
+    }
+    return 0x40000000u |
+           (static_cast<uint32_t>(signed24) & 0x00FFFFFFu);
+}
+
 void PcmSlotCodec::EncodeInterleavedFloat32Frame(const float* sourceFrame,
                                                  uint32_t sourceChannels,
                                                  uint32_t* destinationSlots,

@@ -321,7 +321,65 @@ uint32_t IsochReceiveContext::Poll() {
                     rxClockEstablished = (sytConsecutiveValid_ >= 16);
                 }
 
-                const uint64_t nextFrameCursor = absoluteFrameCursor_ + result.framesDecoded;
+                const uint64_t packetFirstFrame = absoluteFrameCursor_;
+                const uint64_t nextFrameCursor =
+                    packetFirstFrame + result.framesDecoded;
+
+                constexpr uint64_t kZtsPeriodFrames =
+                    ASFW::IsochTransport::AudioTimingGeometry::
+                        kHalZeroTimestampPeriodFrames;
+                if (rxClockEstablished &&
+                    result.framesDecoded != 0 &&
+                    clockPublisher_.IsBound() &&
+                    directInputView_.sampleRateHz != 0) {
+                    const uint32_t hostNanosPerSampleQ8 =
+                        static_cast<uint32_t>(
+                            (1000000000ULL << 8) /
+                            directInputView_.sampleRateHz);
+                    uint64_t gridFrame =
+                        ((packetFirstFrame / kZtsPeriodFrames) + 1u) *
+                        kZtsPeriodFrames;
+                    while (gridFrame <= nextFrameCursor) {
+                        const uint64_t framesFromPacketStart =
+                            gridFrame - packetFirstFrame;
+                        const uint64_t gridDeltaNanos =
+                            (framesFromPacketStart *
+                             static_cast<uint64_t>(
+                                 hostNanosPerSampleQ8)) >>
+                            8;
+                        const uint64_t gridHostTicks =
+                            packetHostTicks +
+                            ASFW::Timing::nanosToHostTicks(
+                                gridDeltaNanos);
+
+                        const auto publishResult =
+                            clockPublisher_.Publish(
+                                gridFrame,
+                                gridHostTicks,
+                                hostNanosPerSampleQ8);
+                        if (publishResult.accepted) {
+                            ++rxZtsPublishCount_;
+                            if (publishResult.notifyConsumer &&
+                                ztsAnchorReadyCallback_) {
+                                ztsAnchorReadyCallback_(
+                                    publishResult
+                                        .notificationGeneration);
+                            }
+                            if (rxZtsPublishCount_ <= 8 ||
+                                (rxZtsPublishCount_ % 128) == 0) {
+                                ASFW_LOG(
+                                    Isoch,
+                                    "ZTS publish grid count=%llu frame=%llu host=%llu period=%llu rate=%u",
+                                    rxZtsPublishCount_,
+                                    gridFrame,
+                                    gridHostTicks,
+                                    kZtsPeriodFrames,
+                                    directInputView_.sampleRateHz);
+                            }
+                        }
+                        gridFrame += kZtsPeriodFrames;
+                    }
+                }
                 absoluteFrameCursor_ = nextFrameCursor;
             }
         }
@@ -331,22 +389,6 @@ uint32_t IsochReceiveContext::Poll() {
             callback_(span, static_cast<uint32_t>(pkt.xferStatus), 0);
         }
     });
-
-    if (processed > 0 && clockPublisher_.IsBound() && sytConsecutiveValid_ >= 16 && directInputView_.sampleRateHz != 0) {
-        const uint32_t hostNanosPerSampleQ8 =
-            static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
-        clockPublisher_.Publish(absoluteFrameCursor_, drainHostTicks, hostNanosPerSampleQ8);
-
-        ++rxZtsPublishCount_;
-        if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 128) == 0) {
-            ASFW_LOG(Isoch,
-                     "ZTS publish group count=%llu frame=%llu host=%llu rate=%u",
-                     rxZtsPublishCount_,
-                     absoluteFrameCursor_,
-                     drainHostTicks,
-                     directInputView_.sampleRateHz);
-        }
-    }
 
     rxLock_.clear(std::memory_order_release);
     return processed;
@@ -361,6 +403,11 @@ void IsochReceiveContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDir
 
 void IsochReceiveContext::SetTimingLossCallback(TimingLossCallback callback) noexcept {
     timingLossCallback_ = std::move(callback);
+}
+
+void IsochReceiveContext::SetZtsAnchorReadyCallback(
+    ZtsAnchorReadyCallback callback) noexcept {
+    ztsAnchorReadyCallback_ = std::move(callback);
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
