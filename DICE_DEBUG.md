@@ -11,6 +11,14 @@ _Branch: `DICE` · Snapshot: 2026-06-06 · Device: Focusrite **Saffire PRO 24 DS
 > the `ISOCH_AUDIO_ADK.md` rebuild (slab depth independent of ZTS period, §6.4;
 > see `ISOCH_AUDIO_CLEANUP_PREP.md` §1). The analysis below is kept as history.
 
+> **FW-53 ZTS delivery (2026-06-12):** the 512-frame ADK grid is produced by the
+> IR path from interrupt-derived host times and transferred through a bounded
+> shared SPSC queue. A coalesced Nub `OSAction` drains anchors on the
+> AudioDriverKit side; IO callbacks are no longer the steady-state timestamp
+> pump. The 8-packet blocking group advances 48 frames, so this deliberately
+> uses fixed-grid interpolation rather than declaring an invalid 48-frame
+> period for the 512-frame ring.
+
 ---
 
 ## UPDATE 2026-06-07 (later) — TX timeline offset fix + Saffire output-lead RE
@@ -313,3 +321,25 @@ For per-packet `src=[hex] wire=[hex]` (Tier 2), set Info.plist
 - Align geometry tests to the real 128-frame WriteEnd cadence.
 - Decide (with reference confirmation) whether to ack/clear `GLOBAL_NOTIFICATION`.
 - `ProbeDuplexHealth` clang-tidy cognitive-complexity is 29 (>25) after the decode logging — optional extract-helper cleanup.
+
+## Timing-path replacement implementation (2026-06-12)
+
+FW-46 through FW-52 source changes replace the temporary timing path described
+above:
+
+- geometry is 512/512 with 32-frame alignment and matching 8-packet groups;
+- the 5120-frame compensation path is no longer part of TX scheduling;
+- TX replacement preparation is driven by coalesced OHCI OUTPUT completion
+  notifications, one 192-packet hardware-ring lap ahead with the current
+  8-packet hardware-visible group retained;
+- TX phase uses delayed RX cadence plus completion timestamps and the existing
+  3072-tick seed/deadband/7620-tick gate;
+- startup, missing feedback, missing lock, and gated lead emit real 8-byte
+  CIP-only NO-DATA packets;
+- mapped HAL `int32` output is encoded directly into the packet payload ring.
+
+Verification status: source inspection only. No build or hardware command was
+run because builds freeze the development system. The next manual rig pass must
+confirm compile/test results, ARX1 lock, N-D-D-D cadence, DBC hold across
+NO-DATA, `SYT=0xFFFF` packet length 8, restart behavior, and the two-hour duplex
+soak.

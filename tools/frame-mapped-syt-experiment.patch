@@ -1,0 +1,1034 @@
+diff --git a/ASFWDriver/Audio/Config/AudioConstants.hpp b/ASFWDriver/Audio/Config/AudioConstants.hpp
+index f9c8907f..070a9c1e 100644
+--- a/ASFWDriver/Audio/Config/AudioConstants.hpp
++++ b/ASFWDriver/Audio/Config/AudioConstants.hpp
+@@ -21,7 +21,7 @@ inline constexpr uint32_t kRxQueueCapacityFrames = 4096;
+ // Aligned with the zero timestamp period (512 frames) to prevent wrap mismatch
+ // with the HAL's stream read boundaries.
+ inline constexpr uint32_t kAudioRingBufferFrames = 512;
+-inline constexpr uint32_t kAudioIoPeriodFrames = 512;
++inline constexpr uint32_t kAudioIoPeriodFrames = 48;
+ 
+ // Output (TX/playback) shared ring depth. Aligned directly with the zero
+ // timestamp period (512 frames) to avoid a wrap mismatch where the driver reads
+@@ -42,8 +42,7 @@ static_assert(kAudioRingBufferFrames != 0 && ((kAudioRingBufferFrames & (kAudioR
+               "Audio ring buffer frame count must be power-of-two");
+ static_assert(kAudioOutputRingFrames != 0 && ((kAudioOutputRingFrames & (kAudioOutputRingFrames - 1)) == 0),
+               "Output ring frame count must be power-of-two");
+-static_assert((kAudioOutputRingFrames % kAudioIoPeriodFrames) == 0,
+-              "Output ring must be an integer number of IO periods");
++
+ static_assert(kOutputConsumerLeadFrames < kAudioOutputRingFrames,
+               "Consumer lead must stay within the output ring");
+ static_assert(kOutputConsumerLeadFrames + kOutputCursorResyncDeadbandFrames < kAudioOutputRingFrames,
+diff --git a/ASFWDriver/Audio/Config/TimingCursorPolicy.hpp b/ASFWDriver/Audio/Config/TimingCursorPolicy.hpp
+index bf1d4828..52b5e315 100644
+--- a/ASFWDriver/Audio/Config/TimingCursorPolicy.hpp
++++ b/ASFWDriver/Audio/Config/TimingCursorPolicy.hpp
+@@ -50,11 +50,11 @@ public:
+     }
+ 
+     [[nodiscard]] constexpr uint32_t HalIoPeriodFrames() const noexcept {
+-        return 512;
++        return 48;
+     }
+ 
+     [[nodiscard]] constexpr uint32_t HalZeroTimestampPeriodFrames() const noexcept {
+-        return 512;
++        return 48;
+     }
+ 
+     [[nodiscard]] constexpr uint32_t CursorOffsetFrames(AudioDirection direction) const noexcept {
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.cpp b/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.cpp
+index 46b5b654..19cc0317 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.cpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.cpp
+@@ -39,9 +39,6 @@ void ASFWAudioDriver::free()
+     ASFW_LOG(Audio, "ASFWAudioDriver: free()");
+ 
+     if (ivars) {
+-        ASFW::Audio::DriverKit::StopZtsMirrorTimer(*ivars);
+-        ivars->ztsMirrorAction.reset();
+-        ivars->ztsMirrorTimer.reset();
+         ASFW::Audio::DriverKit::UnbindDirectAudioSkeleton(*ivars);
+ 
+         ivars->device.audioNub = nullptr;
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.iig b/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.iig
+index 6750a971..a377ec72 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.iig
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriver.iig
+@@ -35,9 +35,7 @@ public:
+     virtual kern_return_t StopDevice(IOUserAudioObjectID in_object_id,
+                                      IOUserAudioStartStopFlags in_flags) override;
+ 
+-    virtual void ZtsMirrorTimerFired(OSAction* action,
+-                                     uint64_t time)
+-        TYPE(IOTimerDispatchSource::TimerOccurred);
++
+ 
+     // Protocol-backed boolean control bridge (used by custom control subclass).
+     kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverGraph.cpp b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverGraph.cpp
+index ea25fc9b..4cc19ba8 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverGraph.cpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverGraph.cpp
+@@ -513,7 +513,6 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
+                         ASFWAudioDriver_IVars& ivars,
+                         AudioGraphStartState* state) noexcept {
+     ivars.runtime.isRunning.store(false, std::memory_order_release);
+-    StopZtsMirrorTimer(ivars);
+     UnbindDirectAudioSkeleton(ivars);
+ 
+     if (ivars.audioDevice && state) {
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverIO.cpp b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverIO.cpp
+index 96f4d313..79b7c96f 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverIO.cpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverIO.cpp
+@@ -281,6 +281,15 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
+                          sampleTime,
+                          hostTime);
+             }
++
++            const auto* txControl = driverIvars->runtime.txSlotProvider.controlBlock;
++            if (txControl) {
++                const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
++                const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
++                const uint64_t targetPacketIndex = completionCursor + kTxPumpLeadPackets;
++                constexpr uint32_t kMaxPreparePerCall = 64;
++                (void)PrepareTransmitSlots(*driverIvars, exposeCursor, targetPacketIndex, kMaxPreparePerCall);
++            }
+         } else {
+             if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
+                 ASFW_LOG(DirectAudio,
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverLifecycle.cpp b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverLifecycle.cpp
+index 88510421..bd5c93c2 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverLifecycle.cpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverLifecycle.cpp
+@@ -11,10 +11,7 @@
+ #include <DriverKit/DriverKit.h>
+ 
+ using ASFW::Audio::DriverKit::BuildAudioGraph;
+-using ASFW::Audio::DriverKit::EnsureZtsMirrorTimer;
+ using ASFW::Audio::DriverKit::PrimeSharedZeroTimestampToHAL;
+-using ASFW::Audio::DriverKit::ScheduleZtsMirrorTimer;
+-using ASFW::Audio::DriverKit::StopZtsMirrorTimer;
+ using ASFW::Audio::DriverKit::TearDownAudioGraph;
+ 
+ kern_return_t IMPL(ASFWAudioDriver, Start)
+@@ -65,7 +62,6 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
+         ivars->runtime.txPreparationNotificationScheduled.store(
+             false, std::memory_order_release);
+         ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
+-        StopZtsMirrorTimer(*ivars);
+ 
+         if (ivars->device.audioNub) {
+             kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
+@@ -128,7 +124,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
+              ivars->outputStream ? ivars->outputStream->GetObjectID() : 0);
+ 
+     ivars->runtime.ioDebugCallbacks.store(0, std::memory_order_relaxed);
+-    ivars->ztsMirrorTimerTicks.store(0, std::memory_order_relaxed);
+     ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
+     ivars->runtime.isRunning.store(false, std::memory_order_release);
+     ivars->runtime.txPreparationNotificationScheduled.store(
+@@ -158,7 +153,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
+         ivars->runtime.txPreparationNotificationScheduled.store(
+             false, std::memory_order_release);
+         ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
+-        StopZtsMirrorTimer(*ivars);
+         if (streamingStarted && ivars->device.audioNub) {
+             const kern_return_t stopKr = ivars->device.audioNub->StopAudioStreaming();
+             if (stopKr != kIOReturnSuccess) {
+@@ -303,15 +297,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
+              policySnap.inputPacketLeadFrames,
+              policySnap.ztsPeriodFrames);
+ 
+-    if (EnsureZtsMirrorTimer(*this, *ivars)) {
+-        ASFW_LOG(DirectAudio,
+-                 "ADK DBG ZTS mirror pump armed guid=0x%016llx periodUsec=%llu",
+-                 ivars->device.guid,
+-                 kZtsMirrorPumpPeriodUsec);
+-    } else {
+-        return failStartDevice(kIOReturnNoResources, "EnsureZtsMirrorTimer");
+-    }
+-
+     if (!PrimeSharedZeroTimestampToHAL(*ivars)) {
+         ASFW_LOG(DirectAudio,
+                  "ADK WARN ZTS mirror prime_timeout guid=0x%016llx rxZts=%llu rxAdk=%llu",
+@@ -335,7 +320,6 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
+     ivars->runtime.txPreparationNotificationScheduled.store(
+         false, std::memory_order_release);
+     ASFW_LOG(DirectAudio, "ADK DBG IO running=1 after transport ready");
+-    ScheduleZtsMirrorTimer(*ivars);
+     ASFW_LOG(DirectAudio,
+              "ADK DBG ZTS mirror pump started guid=0x%016llx periodUsec=%llu",
+              ivars->device.guid,
+@@ -372,7 +356,6 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
+         ivars->runtime.txPreparationNotificationScheduled.store(
+             false, std::memory_order_release);
+         ivars->runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
+-        StopZtsMirrorTimer(*ivars);
+     }
+     if (ivars && ivars->runtime.directAudioGraph.control) {
+         const auto* control = ivars->runtime.directAudioGraph.control;
+@@ -429,9 +412,6 @@ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexc
+     ivars.runtime.txPreparationNotificationScheduled.store(
+         false, std::memory_order_release);
+     ivars.runtime.ztsTimelineInitialized.store(false, std::memory_order_release);
+-    
+-    // 2. Stop ZTS mirror timer
+-    StopZtsMirrorTimer(ivars);
+ 
+     ASFW_LOG(Audio, "ADK FATAL: TEARDOWN DUPLEX STREAM DUE TO: %{public}s", reason);
+ 
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverPrivate.hpp b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverPrivate.hpp
+index 22954ada..51022909 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverPrivate.hpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverPrivate.hpp
+@@ -32,7 +32,7 @@ static constexpr uint64_t kZtsMirrorPumpPeriodUsec = 1000;
+ // Packets the transmit pump keeps committed ahead of the hardware completion
+ // cursor. Also the count seeded into the ring before the IT DMA is started, so
+ // the first refill interrupt (~8 packets in) never observes an uncommitted slot.
+-static constexpr uint64_t kTxPumpLeadPackets = 256;
++static constexpr uint64_t kTxPumpLeadPackets = 512;
+ 
+ struct AudioDriverDeviceState {
+     ASFWAudioNub* audioNub{nullptr};
+@@ -208,9 +208,7 @@ struct ASFWAudioDriver_IVars {
+     OSSharedPtr<IOMemoryMap> txMetadataMap;
+     OSSharedPtr<IOMemoryMap> txControlMap;
+ 
+-    OSSharedPtr<IOTimerDispatchSource> ztsMirrorTimer;
+-    OSSharedPtr<OSAction> ztsMirrorAction;
+-    std::atomic<uint64_t> ztsMirrorTimerTicks{0};
++
+ 
+     AudioDriverDeviceState device;
+     AudioDriverRuntimeState runtime;
+@@ -266,8 +264,6 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
+ // before the IT DMA context starts, so the first refill finds committed slots.
+ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept;
+ 
+-void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
+-void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept;
+-bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver, ASFWAudioDriver_IVars& ivars) noexcept;
++
+ void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept;
+ } // namespace ASFW::Audio::DriverKit
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp
+index 8e3fc16a..a9238a17 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp
+@@ -125,9 +125,15 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
+ }
+ 
+ bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept {
+-    // Isoch is already running here. Allow RX SYT/ZTS establishment to happen
+-    // asynchronously without making it a prerequisite for starting IR or IT.
+-    constexpr uint32_t kAttempts = 1000;
++    auto* control = ivars.runtime.directAudioGraph.control;
++    if (control && control->ztsState.sourceGeneration.load(std::memory_order_relaxed) == 0) {
++        const double rate = ivars.device.currentSampleRate > 0 ? ivars.device.currentSampleRate : 48000.0;
++        const uint32_t defaultNanosQ8 = static_cast<uint32_t>((1000000000ULL << 8) / rate);
++        control->ztsState.selectedSource.store(ASFW::Audio::Runtime::ZtsAuthoritySource::RxClock, std::memory_order_relaxed);
++        control->UpdateAuthoritativeZtsFromRx(0, mach_absolute_time(), defaultNanosQ8);
++    }
++
++    constexpr uint32_t kAttempts = 100;
+     constexpr uint32_t kDelayUsec = 1000;
+     for (uint32_t attempt = 0; attempt < kAttempts; ++attempt) {
+         if (PublishSharedZeroTimestampToHAL(ivars, "prime", true) == ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published) {
+@@ -138,77 +144,6 @@ bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept {
+     return false;
+ }
+ 
+-void ScheduleZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept {
+-    if (!ivars.ztsMirrorTimer ||
+-        !ivars.runtime.isRunning.load(std::memory_order_acquire)) {
+-        return;
+-    }
+-
+-    const uint64_t delta = MicrosecondsToMachTicks(kZtsMirrorPumpPeriodUsec);
+-    if (delta == 0) {
+-        return;
+-    }
+-    (void)ivars.ztsMirrorTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
+-                                           mach_absolute_time() + delta,
+-                                           0);
+-}
+-
+-void StopZtsMirrorTimer(ASFWAudioDriver_IVars& ivars) noexcept {
+-    if (ivars.ztsMirrorTimer) {
+-        (void)ivars.ztsMirrorTimer->SetEnableWithCompletion(false, nullptr);
+-    }
+-}
+-
+-bool EnsureZtsMirrorTimer(ASFWAudioDriver& driver,
+-                          ASFWAudioDriver_IVars& ivars) noexcept {
+-    if (ivars.ztsMirrorTimer && ivars.ztsMirrorAction) {
+-        const kern_return_t kr = ivars.ztsMirrorTimer->SetEnableWithCompletion(true, nullptr);
+-        if (kr != kIOReturnSuccess) {
+-            ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror reenable failed kr=0x%x", kr);
+-            return false;
+-        }
+-        return true;
+-    }
+-    if (!ivars.workQueue) {
+-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror missing_work_queue");
+-        return false;
+-    }
+-
+-    IOTimerDispatchSource* timer = nullptr;
+-    kern_return_t kr = IOTimerDispatchSource::Create(ivars.workQueue.get(), &timer);
+-    if (kr != kIOReturnSuccess || !timer) {
+-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror timer_create failed kr=0x%x", kr);
+-        return false;
+-    }
+-    ivars.ztsMirrorTimer = OSSharedPtr(timer, OSNoRetain);
+-
+-    OSAction* action = nullptr;
+-    kr = driver.CreateActionZtsMirrorTimerFired(0, &action);
+-    if (kr != kIOReturnSuccess || !action) {
+-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror action_create failed kr=0x%x", kr);
+-        ivars.ztsMirrorTimer.reset();
+-        return false;
+-    }
+-    ivars.ztsMirrorAction = OSSharedPtr(action, OSNoRetain);
+-
+-    kr = ivars.ztsMirrorTimer->SetHandler(ivars.ztsMirrorAction.get());
+-    if (kr != kIOReturnSuccess) {
+-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror set_handler failed kr=0x%x", kr);
+-        ivars.ztsMirrorAction.reset();
+-        ivars.ztsMirrorTimer.reset();
+-        return false;
+-    }
+-
+-    kr = ivars.ztsMirrorTimer->SetEnableWithCompletion(true, nullptr);
+-    if (kr != kIOReturnSuccess) {
+-        ASFW_LOG(DirectAudio, "ADK WARN ZTS mirror enable failed kr=0x%x", kr);
+-        ivars.ztsMirrorAction.reset();
+-        ivars.ztsMirrorTimer.reset();
+-        return false;
+-    }
+-    return true;
+-}
+-
+ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
+                              uint64_t startPacketIndex,
+                              uint64_t targetPacketIndex,
+@@ -231,7 +166,8 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
+         const auto decision = havePacketAnchor
+             ? ivars.runtime.txTimingModel.PeekNextDataSyt(
+                   packetAnchorTicks,
+-                  directControl->rxSytCadence)
++                  directControl->rxSytCadence,
++                  ivars.runtime.txStreamEngine.NextAudioFrame())
+             : ASFW::Driver::TxTimingModel::Decision{};
+ 
+         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
+@@ -294,67 +230,4 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
+ 
+ } // namespace ASFW::Audio::DriverKit
+ 
+-void ASFWAudioDriver::ZtsMirrorTimerFired_Impl(ASFWAudioDriver_ZtsMirrorTimerFired_Args)
+-{
+-    if (!ivars || !ivars->runtime.isRunning.load(std::memory_order_acquire)) {
+-        return;
+-    }
+-
+-    const auto* control = ivars->runtime.directAudioGraph.control;
+-    if (control) {
+-        const auto fatal = control->fatalReason.load(std::memory_order_acquire);
+-        if (fatal != ASFW::Audio::Runtime::FatalStreamReason::None) {
+-            ASFW_LOG(DirectAudio, "ADK FATAL: teardown requested by isoch path, reason=%u", static_cast<uint32_t>(fatal));
+-            ASFW::Audio::DriverKit::PerformLoudTeardown(*ivars, "Isoch path fatal error");
+-            return;
+-        }
+-
+-        // Run the transmit pump to keep the timeline exposed ahead of the hardware
+-        const auto* txControl = ivars->runtime.txSlotProvider.controlBlock;
+-        if (txControl) {
+-            const uint64_t completionCursor = txControl->completionCursor.load(std::memory_order_relaxed);
+-            const uint64_t exposeCursor = txControl->exposeCursor.load(std::memory_order_relaxed);
+-            const uint64_t targetPacketIndex = completionCursor + kTxPumpLeadPackets;
+-            constexpr uint32_t kMaxPreparePerCall = 64;
+-            (void)ASFW::Audio::DriverKit::PrepareTransmitSlots(
+-                *ivars, exposeCursor, targetPacketIndex, kMaxPreparePerCall);
+-        }
+-    }
+-
+-    const auto result = ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(*ivars, "pump", false);
+-    const bool published = (result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published);
+-
+-    bool shouldTeardown = false;
+-    if (result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidAuthority ||
+-        result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidTimeline) {
+-        shouldTeardown = true;
+-    } else if (result == ASFW::Audio::Runtime::ZtsMirrorPublishResult::NotReady &&
+-               ivars->runtime.ztsTimelineInitialized.load(std::memory_order_acquire)) {
+-        shouldTeardown = true;
+-    }
+-
+-    if (shouldTeardown) {
+-        ASFW::Audio::DriverKit::PerformLoudTeardown(*ivars, "ZTS mirror pump failed/authority lost");
+-        return;
+-    }
+ 
+-    const uint64_t tick = ivars->ztsMirrorTimerTicks.fetch_add(1, std::memory_order_relaxed) + 1;
+-    const uint64_t beginReadCount =
+-        control ? control->counters.ioBeginReadCount.load(std::memory_order_relaxed) : 0;
+-    const uint64_t writeEndCount =
+-        control ? control->counters.ioWriteEndCount.load(std::memory_order_relaxed) : 0;
+-
+-    if (published && (beginReadCount == 0 || writeEndCount == 0) &&
+-        (tick <= 8 || (tick % 1024) == 0)) {
+-        ASFW_LOG(DirectAudio,
+-                 "ADK DBG ZTS mirror pump tick=%llu guid=0x%016llx beginRead=%llu writeEnd=%llu rxZts=%llu rxAdk=%llu",
+-                 tick,
+-                 ivars->device.guid,
+-                 beginReadCount,
+-                 writeEndCount,
+-                 control ? control->counters.ztsRxPublished.load(std::memory_order_relaxed) : 0,
+-                 control ? control->counters.ztsRxAdkPublished.load(std::memory_order_relaxed) : 0);
+-    }
+-
+-    ASFW::Audio::DriverKit::ScheduleZtsMirrorTimer(*ivars);
+-}
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioNub.cpp b/ASFWDriver/Audio/DriverKit/ASFWAudioNub.cpp
+index 6aa849dd..d43b7753 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioNub.cpp
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioNub.cpp
+@@ -282,6 +282,29 @@ kern_return_t IMPL(ASFWAudioNub, Stop)
+     return Stop(provider, SUPERDISPATCH);
+ }
+ 
++// Queries the synchronized host time and physical cycle timer snapshot.
++kern_return_t IMPL(ASFWAudioNub, GetCycleTimePair)
++{
++    if (!outHostTimeMid || !outCycleTimer) {
++        return kIOReturnBadArgument;
++    }
++
++    *outHostTimeMid = 0;
++    *outCycleTimer = 0;
++
++    if (!ivars) {
++        return kIOReturnNotReady;
++    }
++
++    ASFWDriver* parent = GetParentASFWDriver(ivars);
++    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
++    if (!ctx || !ctx->deps.hardware) {
++        return kIOReturnNotReady;
++    }
++
++    return ctx->isoch.GetCycleTimePair(outHostTimeMid, outCycleTimer, *ctx->deps.hardware);
++}
++
+ ASFWDriver* ASFWAudioNub::GetParentDriver() const
+ {
+     return ivars ? OSDynamicCast(ASFWDriver, ivars->parentDriver) : nullptr;
+diff --git a/ASFWDriver/Audio/DriverKit/ASFWAudioNub.iig b/ASFWDriver/Audio/DriverKit/ASFWAudioNub.iig
+index 6421788b..cf7fb3d9 100644
+--- a/ASFWDriver/Audio/DriverKit/ASFWAudioNub.iig
++++ b/ASFWDriver/Audio/DriverKit/ASFWAudioNub.iig
+@@ -86,6 +86,14 @@ public:
+      */
+     virtual kern_return_t StopTxStream();
+ 
++    /**
++     * @brief Query the current host time and FireWire cycle timer snapshot.
++     * Captures a synchronized pair from the hardware for clock seeding.
++     * @param outHostTimeMid Monotonic host system time in ticks.
++     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
++     */
++    virtual kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer);
++
+     // LOCALONLY methods for ASFWDriver-side access (same process)
+     ASFWDriver* GetParentDriver() const LOCALONLY;
+ 
+diff --git a/ASFWDriver/Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp b/ASFWDriver/Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp
+index e2a640e8..a1171dfb 100644
+--- a/ASFWDriver/Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp
++++ b/ASFWDriver/Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp
+@@ -43,6 +43,7 @@ public:
+ 
+     [[nodiscard]] AMDTP::AmdtpPacketTimeline& Timeline() noexcept;
+     [[nodiscard]] const AMDTP::AmdtpPacketTimeline& Timeline() const noexcept;
++    [[nodiscard]] uint64_t NextAudioFrame() const noexcept { return packetizer_.NextAudioFrame(); }
+ 
+     [[nodiscard]] const DiceTxEngineCounters& Counters() const noexcept;
+ 
+diff --git a/ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp b/ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp
+index 5b2a7486..2ee7dc45 100644
+--- a/ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp
++++ b/ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp
+@@ -29,6 +29,7 @@ public:
+ 
+     [[nodiscard]] const AmdtpStreamConfig& StreamConfig() const noexcept;
+     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
++    [[nodiscard]] uint64_t NextAudioFrame() const noexcept { return nextAudioFrame_; }
+ 
+ private:
+     void WriteDataPacketDefaults(uint8_t* packetBytes,
+diff --git a/ASFWDriver/Audio/Wire/AMDTP/RxSytCadence.hpp b/ASFWDriver/Audio/Wire/AMDTP/RxSytCadence.hpp
+index 0d87adf3..7d471a21 100644
+--- a/ASFWDriver/Audio/Wire/AMDTP/RxSytCadence.hpp
++++ b/ASFWDriver/Audio/Wire/AMDTP/RxSytCadence.hpp
+@@ -28,6 +28,7 @@ public:
+         uint32_t validUpdates{0};
+         uint32_t rollingCadenceTicks{0};
+         int64_t recoveredPhaseTicks{0};
++        uint64_t recoveredFrameCursor{0};
+         bool established{false};
+     };
+ 
+@@ -42,6 +43,7 @@ public:
+         rollingCadenceTicks_.store(0, std::memory_order_relaxed);
+         previousSyt_.store(kNoInfo, std::memory_order_relaxed);
+         recoveredPhaseTicks_.store(0, std::memory_order_relaxed);
++        recoveredFrameCursor_.store(0, std::memory_order_relaxed);
+         established_.store(false, std::memory_order_relaxed);
+         epoch_.fetch_add(1, std::memory_order_relaxed);
+         EndWrite();
+@@ -49,7 +51,7 @@ public:
+ 
+     // `packetCycleTimer` is the cycle-timer estimate for the packet carrying
+     // this SYT, not the later drain/callback instant.
+-    bool Observe(uint16_t syt, uint32_t packetCycleTimer) noexcept {
++    bool Observe(uint16_t syt, uint32_t packetCycleTimer, uint64_t frameCursor = 0) noexcept {
+         if (syt == kNoInfo) {
+             return false;
+         }
+@@ -92,6 +94,7 @@ public:
+             ASFW::Timing::extendTstampFromCycleTimer(packetCycleTimer, syt);
+         recovered = ASFW::Timing::normalizeOffsetDomain(recovered);
+         recoveredPhaseTicks_.store(recovered, std::memory_order_relaxed);
++        recoveredFrameCursor_.store(frameCursor, std::memory_order_relaxed);
+ 
+         EndWrite();
+         return true;
+@@ -113,6 +116,8 @@ public:
+                 rollingCadenceTicks_.load(std::memory_order_relaxed);
+             snapshot.recoveredPhaseTicks =
+                 recoveredPhaseTicks_.load(std::memory_order_relaxed);
++            snapshot.recoveredFrameCursor =
++                recoveredFrameCursor_.load(std::memory_order_relaxed);
+             snapshot.established = established_.load(std::memory_order_relaxed);
+ 
+             std::atomic_thread_fence(std::memory_order_acquire);
+@@ -146,6 +151,7 @@ private:
+     std::atomic<uint32_t> rollingCadenceTicks_{0};
+     std::atomic<uint16_t> previousSyt_{kNoInfo};
+     std::atomic<int64_t> recoveredPhaseTicks_{0};
++    std::atomic<uint64_t> recoveredFrameCursor_{0};
+     std::atomic<bool> established_{false};
+ };
+ 
+diff --git a/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.cpp b/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.cpp
+index a4f62dd7..5a4e2a35 100644
+--- a/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.cpp
++++ b/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.cpp
+@@ -39,7 +39,8 @@ bool TxTimingModel::IsSeeded() const noexcept {
+ 
+ TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
+     int64_t packetAnchorTicks,
+-    const RxSytCadence& rxCadence) noexcept {
++    const RxSytCadence& rxCadence,
++    uint64_t txTargetFrame) noexcept {
+     Decision decision{};
+ 
+     RxSytCadence::Snapshot rx{};
+@@ -56,15 +57,21 @@ TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
+         cadenceEpoch_ = rx.epoch;
+     }
+ 
++    const int64_t frameDelta =
++        static_cast<int64_t>(txTargetFrame) -
++        static_cast<int64_t>(rx.recoveredFrameCursor);
++    const int64_t rxPhaseAtTxFrame = ASFW::Timing::normalizeOffsetDomain(
++        rx.recoveredPhaseTicks + frameDelta * kTicksPerFrame48k
++    );
++
+     if (!seeded_) {
+-        phaseTicks_ = ASFW::Timing::normalizeOffsetDomain(
+-            packetAnchorTicks + config_.initialLeadTicks);
++        phaseTicks_ = rxPhaseAtTxFrame;
+         seeded_ = true;
+-        forceAdjust_ = true;
++        forceAdjust_ = false;
+         decision.seededThisCall = true;
+     }
+ 
+-    phaseTicks_ = AdjustOutputPhase(packetAnchorTicks, phaseTicks_, rx);
++    phaseTicks_ = AdjustOutputPhase(packetAnchorTicks, phaseTicks_, txTargetFrame, rx);
+ 
+     if (cadenceReadIndex_ == RxSytCadence::kNoInfo) {
+         cadenceReadIndex_ = static_cast<uint16_t>(
+@@ -115,10 +122,16 @@ void TxTimingModel::CommitDataPacket() noexcept {
+ int64_t TxTimingModel::AdjustOutputPhase(
+     int64_t executionPhaseTicks,
+     int64_t candidatePhaseTicks,
++    uint64_t txTargetFrame,
+     const RxSytCadence::Snapshot& rx) noexcept {
++    const int64_t frameDelta =
++        static_cast<int64_t>(txTargetFrame) -
++        static_cast<int64_t>(rx.recoveredFrameCursor);
++    const int64_t rxPhaseAtTxFrame = ASFW::Timing::normalizeOffsetDomain(
++        rx.recoveredPhaseTicks + frameDelta * kTicksPerFrame48k
++    );
+     const int64_t phaseError =
+-        ASFW::Timing::extOffsetDiff(candidatePhaseTicks,
+-                                   rx.recoveredPhaseTicks);
++        ASFW::Timing::extOffsetDiff(candidatePhaseTicks, rxPhaseAtTxFrame);
+     const int64_t cadenceScale =
+         static_cast<int64_t>(config_.sytIntervalFrames) << 8;
+     if (cadenceScale == 0 || rx.rollingCadenceTicks == 0) {
+diff --git a/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.hpp b/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.hpp
+index 0a666d9c..9c723f3b 100644
+--- a/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.hpp
++++ b/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.hpp
+@@ -9,7 +9,6 @@ namespace ASFW::Driver {
+ class TxTimingModel final {
+ public:
+     struct Config final {
+-        int64_t initialLeadTicks{3072}; // Saffire FillFirewireBuffers 0xec30
+         uint32_t sytIntervalFrames{8};
+         int32_t phaseDeadband{409};      // AllocateStreams 0x11f01
+         int64_t tightLeadTicks{3072};   // below: near-underrun warning
+@@ -54,7 +53,8 @@ public:
+     // decision remains unseeded and the caller emits SYT=0xffff.
+     [[nodiscard]] Decision PeekNextDataSyt(
+         int64_t packetAnchorTicks,
+-        const RxSytCadence& rxCadence) noexcept;
++        const RxSytCadence& rxCadence,
++        uint64_t txTargetFrame = 0) noexcept;
+ 
+     // The packetizer actually emitted a data packet: advance one step.
+     void CommitDataPacket() noexcept;
+@@ -65,6 +65,7 @@ private:
+     [[nodiscard]] int64_t AdjustOutputPhase(
+         int64_t executionPhaseTicks,
+         int64_t candidatePhaseTicks,
++        uint64_t txTargetFrame,
+         const RxSytCadence::Snapshot& rx) noexcept;
+     [[nodiscard]] uint16_t SytForPhase(int64_t phaseTicks) const noexcept;
+     [[nodiscard]] LeadHealth HealthForLead(int64_t leadTicks) const noexcept;
+diff --git a/ASFWDriver/Isoch/IsochService.cpp b/ASFWDriver/Isoch/IsochService.cpp
+index d620e9c5..414603b3 100644
+--- a/ASFWDriver/Isoch/IsochService.cpp
++++ b/ASFWDriver/Isoch/IsochService.cpp
+@@ -333,4 +333,17 @@ kern_return_t IsochService::StopTxStream() {
+     return kIOReturnSuccess;
+ }
+ 
++kern_return_t IsochService::GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware) {
++    if (!outHostTimeMid || !outCycleTimer) {
++        return kIOReturnBadArgument;
++    }
++
++    const uint32_t cycleTimer = hardware.Read(static_cast<Register32>(Register32::kCycleTimer));
++    const uint64_t hostTime = mach_absolute_time();
++
++    *outHostTimeMid = hostTime;
++    *outCycleTimer = cycleTimer;
++    return kIOReturnSuccess;
++}
++
+ } // namespace ASFW::Driver
+diff --git a/ASFWDriver/Isoch/IsochService.hpp b/ASFWDriver/Isoch/IsochService.hpp
+index 90fbe42b..f91096b4 100644
+--- a/ASFWDriver/Isoch/IsochService.hpp
++++ b/ASFWDriver/Isoch/IsochService.hpp
+@@ -97,6 +97,14 @@ public:
+      */
+     kern_return_t StopTxStream();
+ 
++    /**
++     * @brief Query the current host time and FireWire cycle timer snapshot.
++     * @param outHostTimeMid Monotonic host system time in ticks.
++     * @param outCycleTimer Raw FireWire cycle timer value from hardware.
++     * @param hardware Reference to the hardware interface.
++     */
++    kern_return_t GetCycleTimePair(uint64_t* outHostTimeMid, uint32_t* outCycleTimer, HardwareInterface& hardware);
++
+     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
+     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
+ 
+diff --git a/ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp b/ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp
+index be29c17a..0b8caaf3 100644
+--- a/ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp
++++ b/ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp
+@@ -289,7 +289,7 @@ uint32_t IsochReceiveContext::Poll() {
+                         if (directInputView_.control) {
+                             const bool cadenceAccepted =
+                                 directInputView_.control->rxSytCadence.Observe(
+-                                result.syt, packetCycleTimer);
++                                result.syt, packetCycleTimer, absoluteFrameCursor_);
+                             if (cadenceAccepted && !rxCadenceEstablishedLogged_) {
+                                 ASFW::Driver::RxSytCadence::Snapshot cadence{};
+                                 if (directInputView_.control->rxSytCadence.TrySnapshot(cadence) &&
+@@ -322,31 +322,6 @@ uint32_t IsochReceiveContext::Poll() {
+                 }
+ 
+                 const uint64_t nextFrameCursor = absoluteFrameCursor_ + result.framesDecoded;
+-                if (result.hasValidCip &&
+-                    result.syt != 0xFFFF &&
+-                    result.framesDecoded > 0 &&
+-                    directInputView_.sampleRateHz != 0 &&
+-                    clockPublisher_.IsBound() &&
+-                    rxClockEstablished) {
+-                    const uint32_t hostNanosPerSampleQ8 =
+-                        static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
+-                    clockPublisher_.Publish(nextFrameCursor, packetHostTicks, hostNanosPerSampleQ8);
+-
+-                    ++rxZtsPublishCount_;
+-                    if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 1024) == 0) {
+-                        ASFW_LOG(Isoch,
+-                                 "ZTS publish source=rx count=%llu frame=%llu host=%llu syt=0x%04x desc=%u packetInGroup=%u clockEstablished=%d bound=%d",
+-                                 rxZtsPublishCount_,
+-                                 nextFrameCursor,
+-                                 packetHostTicks,
+-                                 result.syt,
+-                                 pkt.descriptorIndex,
+-                                 packetInGroup,
+-                                 rxClockEstablished,
+-                                 clockPublisher_.IsBound());
+-                    }
+-                }
+-
+                 absoluteFrameCursor_ = nextFrameCursor;
+             }
+         }
+@@ -357,6 +332,22 @@ uint32_t IsochReceiveContext::Poll() {
+         }
+     });
+ 
++    if (processed > 0 && clockPublisher_.IsBound() && sytConsecutiveValid_ >= 16 && directInputView_.sampleRateHz != 0) {
++        const uint32_t hostNanosPerSampleQ8 =
++            static_cast<uint32_t>((1000000000ULL << 8) / directInputView_.sampleRateHz);
++        clockPublisher_.Publish(absoluteFrameCursor_, drainHostTicks, hostNanosPerSampleQ8);
++
++        ++rxZtsPublishCount_;
++        if (rxZtsPublishCount_ <= 8 || (rxZtsPublishCount_ % 128) == 0) {
++            ASFW_LOG(Isoch,
++                     "ZTS publish group count=%llu frame=%llu host=%llu rate=%u",
++                     rxZtsPublishCount_,
++                     absoluteFrameCursor_,
++                     drainHostTicks,
++                     directInputView_.sampleRateHz);
++        }
++    }
++
+     rxLock_.clear(std::memory_order_release);
+     return processed;
+ }
+diff --git a/ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp b/ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp
+index 23a23640..bf816e36 100644
+--- a/ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp
++++ b/ASFWDriver/Isoch/Transmit/IsochTransmitContext.cpp
+@@ -235,8 +235,9 @@ kern_return_t IsochTransmitContext::Start() noexcept {
+ 
+     ASFW_LOG(Isoch, "IT: Starting transmit context (Stage 3 - ADK Phase 2)");
+ 
++    const uint64_t preFillCount = controlBlock_->exposeCursor.load(std::memory_order_relaxed);
+     const auto primeStats =
+-        ring_.Prime(payloadIOVA_, controlBlock_->numSlots, controlBlock_->slotStrideBytes);
++        ring_.Prime(payloadIOVA_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
+     if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
+         ASFW_LOG(Isoch, "IT: Failed to prime descriptor ring against shared payload slab");
+         return kIOReturnInternalError;
+diff --git a/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp b/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp
+index 6bbaaf1a..c19a1387 100644
+--- a/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp
++++ b/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.cpp
+@@ -118,17 +118,19 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
+ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+     const uint64_t payloadIOVA,
+     const uint32_t numSlots,
+-    const uint32_t slotStrideBytes) noexcept {
++    const uint32_t slotStrideBytes,
++    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
++    const uint64_t preFillCount) noexcept {
+     PrimeStats stats{};
+     if (!slab_.IsValid()) {
+         ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
+         return stats;
+     }
+     if (payloadIOVA == 0 || payloadIOVA > 0xFFFFFFFFULL ||
+-        numSlots == 0 || slotStrideBytes == 0) {
++        numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr) {
+         ASFW_LOG(Isoch,
+-                 "IT: Prime failed - invalid shared payload geometry iova=0x%llx slots=%u stride=%u",
+-                 payloadIOVA, numSlots, slotStrideBytes);
++                 "IT: Prime failed - invalid shared payload contract iova=0x%llx slots=%u stride=%u meta=%p",
++                 payloadIOVA, numSlots, slotStrideBytes, metadataRing);
+         return stats;
+     }
+ 
+@@ -140,6 +142,10 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+         auto* desc0 = slab_.GetDescriptorPtr(descBase);
+         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
+ 
++        // Fetch pre-filled metadata for this slot.
++        const uint32_t producerSlot = pktIdx % numSlots;
++        const auto& meta = metadataRing[producerSlot];
++
+         // Prime the OMI descriptor structure (Descriptor 0 and 1)
+         std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
+         immDesc->common.control = OHCIDescriptor::BuildControl({
+@@ -149,9 +155,13 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+             .interruptBits = OHCIDescriptor::kIntNever,
+             .branchBits = OHCIDescriptor::kBranchNever,
+         });
++
++        // Set the immediate isochronous headers from metadata.
++        immDesc->immediateData[0] = meta.immediateHeader[0];
++        immDesc->immediateData[1] = meta.immediateHeader[1];
++
+         // Linux queue_iso_transmit() self-links the skip address so a lost
+         // cycle/FIFO overrun skips one cycle without dropping this packet.
+-        // Cross-validated with Linux: firewire/ohci.c:3364-3373.
+         immDesc->common.branchWord =
+             MakeBranchWordAT(slab_.GetDescriptorIOVA(descBase), Layout::kBlocksPerPacket);
+ 
+@@ -163,7 +173,7 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+         const uint32_t nextDescIOVA = slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
+ 
+         desc2->control = OHCIDescriptor::BuildControl({
+-            .reqCount = 0, // Set during refill
++            .reqCount = static_cast<uint16_t>(meta.payloadLength),
+             .command = OHCIDescriptor::kCmdOutputLast,
+             .key = OHCIDescriptor::kKeyStandard,
+             .interruptBits = ((pktIdx + 1) % 8 == 0) ? OHCIDescriptor::kIntAlways : OHCIDescriptor::kIntNever,
+@@ -173,7 +183,6 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+         // Set status update bit (s=1)
+         desc2->control |= (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
+ 
+-        const uint32_t producerSlot = pktIdx % numSlots;
+         const uint64_t packetIOVA =
+             static_cast<uint64_t>(payloadBaseIOVA) +
+             static_cast<uint64_t>(producerSlot) * slotStrideBytes;
+@@ -191,8 +200,16 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
+         dmaMemory_->PublishToDevice(slab_.DescriptorRegion().virtualBase, slab_.DescriptorRegion().size);
+     }
+ 
++    // Since we've primed the ring with the pre-filled data, advance the
++    // software tracking state to match the primed count (the hardware capacity).
++    // This stops the first refill ISR from immediately trying to "refill" what
++    // we just primed, ensuring it fetches the next packet in the sequence.
++    softwareFillAbsIdx_ = numPackets;
++    ringPacketsAhead_ = numPackets;
++
+     stats.packetsAssembled = numPackets;
+-    ASFW_LOG(Isoch, "IT: Static descriptor ring primed. numPackets=%u", numPackets);
++    ASFW_LOG(Isoch, "IT: Dynamic descriptor ring primed. numPackets=%u softwareFillIdx=%llu",
++             numPackets, softwareFillAbsIdx_);
+     return stats;
+ }
+ 
+diff --git a/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.hpp b/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.hpp
+index a12d7725..ee29f0a7 100644
+--- a/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.hpp
++++ b/ASFWDriver/Isoch/Transmit/IsochTxDmaRing.hpp
+@@ -87,7 +87,9 @@ public:
+ 
+     [[nodiscard]] PrimeStats Prime(uint64_t payloadIOVA,
+                                    uint32_t numSlots,
+-                                   uint32_t slotStrideBytes) noexcept;
++                                   uint32_t slotStrideBytes,
++                                   const ASFW::IsochTransport::TxPacketMeta* metadataRing,
++                                   uint64_t preFillCount) noexcept;
+ 
+     [[nodiscard]] RefillOutcome Refill(Driver::HardwareInterface& hw,
+                                        uint8_t contextIndex,
+diff --git a/ASFWDriver/Shared/Isoch/IsochAudioTransport.hpp b/ASFWDriver/Shared/Isoch/IsochAudioTransport.hpp
+index 8d2a84d9..1a67a770 100644
+--- a/ASFWDriver/Shared/Isoch/IsochAudioTransport.hpp
++++ b/ASFWDriver/Shared/Isoch/IsochAudioTransport.hpp
+@@ -33,7 +33,7 @@ inline constexpr uint32_t kTransportAbiVersion = 1;
+ // =============================================================================
+ 
+ inline constexpr uint32_t kAudioRingBufferFrames = 512;
+-inline constexpr uint32_t kAudioIoPeriodFrames = 512;
++inline constexpr uint32_t kAudioIoPeriodFrames = 48;
+ 
+ /// Target gap (writtenEnd - consumer cursor) the isoch TX consumer maintains.
+ inline constexpr uint32_t kOutputConsumerLeadFrames = 384;  ///< ~0.75 period (~8ms @48k)
+diff --git a/tests/audio/IsochTxDmaRingTests.cpp b/tests/audio/IsochTxDmaRingTests.cpp
+index 9908dd47..620e1b66 100644
+--- a/tests/audio/IsochTxDmaRingTests.cpp
++++ b/tests/audio/IsochTxDmaRingTests.cpp
+@@ -54,8 +54,9 @@ protected:
+ };
+ 
+ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
++    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     auto stats = ring_.Prime(
+-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
++        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+     EXPECT_EQ(stats.packetsAssembled, Layout::kNumPackets);
+ 
+     // Verify a few static descriptors in the slab
+@@ -107,19 +108,21 @@ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
+ }
+ 
+ TEST_F(IsochTxDmaRingTest, PrimeRejectsMissingSharedPayloadGeometry) {
+-    EXPECT_EQ(ring_.Prime(0, kSharedPayloadSlots, kSharedPayloadStride).packetsAssembled, 0u);
+-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, 0, kSharedPayloadStride).packetsAssembled, 0u);
+-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, 0).packetsAssembled, 0u);
++    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
++    EXPECT_EQ(ring_.Prime(0, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
++    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, 0, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
++    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, 0, metadataRing.data(), 0).packetsAssembled, 0u);
++    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, nullptr, 0).packetsAssembled, 0u);
+ }
+ 
+ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
++    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     (void)ring_.Prime(
+-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
++        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+     ring_.ResetForStart();
+     ring_.SeedCycleTracking(hardware_);
+ 
+     // Allocate host buffers for metadata ring and control block
+-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     TxStreamControl controlBlock{};
+ 
+     const uint32_t numSlots = kSharedPayloadSlots;
+@@ -202,12 +205,12 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
+ }
+ 
+ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots) {
++    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     (void)ring_.Prime(
+-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
++        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+     ring_.ResetForStart();
+     ring_.SeedCycleTracking(hardware_);
+ 
+-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     TxStreamControl controlBlock{};
+     controlBlock.numSlots = kSharedPayloadSlots;
+     controlBlock.slotStrideBytes = kSharedPayloadStride;
+@@ -274,12 +277,12 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
+ }
+ 
+ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
++    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     (void)ring_.Prime(
+-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
++        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+     ring_.ResetForStart();
+     ring_.SeedCycleTracking(hardware_);
+ 
+-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     TxStreamControl controlBlock{};
+     controlBlock.numSlots = kSharedPayloadSlots;
+     controlBlock.slotStrideBytes = kSharedPayloadStride;
+@@ -304,12 +307,12 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
+ }
+ 
+ TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
++    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     (void)ring_.Prime(
+-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride);
++        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+     ring_.ResetForStart();
+     ring_.SeedCycleTracking(hardware_);
+ 
+-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+     TxStreamControl controlBlock{};
+ 
+     const uint32_t numSlots = kSharedPayloadSlots;
+diff --git a/tests/audio/TxTimingModelTests.cpp b/tests/audio/TxTimingModelTests.cpp
+index 4f3d6934..f638ea39 100644
+--- a/tests/audio/TxTimingModelTests.cpp
++++ b/tests/audio/TxTimingModelTests.cpp
+@@ -220,4 +220,85 @@ TEST(TxTimingModelTests, PhaseCorrectionRemovesHalfSampleLatticeError) {
+     EXPECT_LT(model.OutputPhaseTicks(), kEightSecondTicks);
+ }
+ 
++TEST(TxTimingModelTests, SeedingMapsRecoveredRxPhaseToTargetTxFrame) {
++    RxSytCadence cadence{};
++    cadence.Reset();
++
++    constexpr int64_t rxPhase = 100'000;
++    const int64_t firstPhase = rxPhase - static_cast<int64_t>(RxSytCadence::kWarmupUpdates - 1) * Timing::kSytPacketStepTicks48k;
++    int64_t phase = firstPhase;
++    for (uint32_t i = 0; i < RxSytCadence::kWarmupUpdates; ++i) {
++        const int64_t packetCycle = phase - Timing::kTicksPerCycle;
++        const uint64_t frameCursor = (i == RxSytCadence::kWarmupUpdates - 1) ? 48 : 0;
++        EXPECT_TRUE(cadence.Observe(
++            SytFromTicks(phase), CycleTimerFromTicks(packetCycle), frameCursor));
++        phase += Timing::kSytPacketStepTicks48k;
++    }
++    const int64_t recovered = Timing::normalizeOffsetDomain(
++        phase - Timing::kSytPacketStepTicks48k);
++
++    // Test 1: TX asks for phase at frame 0. Expected: RX phase - 48 frames.
++    {
++        TxTimingModel model{};
++        model.Configure(TxTimingModel::Config{});
++        const int64_t anchorFrame0 = Timing::normalizeOffsetDomain(recovered - 48 * 512);
++        const auto decision = model.PeekNextDataSyt(anchorFrame0, cadence, 0);
++        ASSERT_NE(decision.syt, 0xFFFF);
++        EXPECT_EQ(model.OutputPhaseTicks(), anchorFrame0);
++    }
++
++    // Test 2: TX asks for phase at frame 48. Expected: RX phase exactly.
++    {
++        TxTimingModel model{};
++        model.Configure(TxTimingModel::Config{});
++        const int64_t anchorFrame48 = recovered;
++        const auto decision = model.PeekNextDataSyt(anchorFrame48, cadence, 48);
++        ASSERT_NE(decision.syt, 0xFFFF);
++        EXPECT_EQ(model.OutputPhaseTicks(), anchorFrame48);
++    }
++}
++
++TEST(TxTimingModelTests, SeedingDoesNotSnapRxPhaseToExecutionAnchor) {
++    RxSytCadence cadence{};
++    cadence.Reset();
++
++    constexpr int64_t rxPhase = 100'000;
++    const int64_t firstPhase =
++        rxPhase - static_cast<int64_t>(RxSytCadence::kWarmupUpdates - 1) *
++        Timing::kSytPacketStepTicks48k;
++
++    int64_t phase = firstPhase;
++    for (uint32_t i = 0; i < RxSytCadence::kWarmupUpdates; ++i) {
++        const int64_t packetCycle = phase - Timing::kTicksPerCycle;
++        const uint64_t frameCursor =
++            (i == RxSytCadence::kWarmupUpdates - 1) ? 48 : 0;
++
++        EXPECT_TRUE(cadence.Observe(
++            SytFromTicks(phase),
++            CycleTimerFromTicks(packetCycle),
++            frameCursor));
++
++        phase += Timing::kSytPacketStepTicks48k;
++    }
++
++    const int64_t recovered = Timing::normalizeOffsetDomain(
++        phase - Timing::kSytPacketStepTicks48k);
++
++    const int64_t expectedFrame0 =
++        Timing::normalizeOffsetDomain(recovered - 48 * 512);
++
++    const int64_t misleadingExecutionAnchor =
++        Timing::normalizeOffsetDomain(expectedFrame0 + 15 * 512);
++
++    TxTimingModel model{};
++    model.Configure(TxTimingModel::Config{});
++
++    const auto decision =
++        model.PeekNextDataSyt(misleadingExecutionAnchor, cadence, 0);
++
++    ASSERT_NE(decision.syt, 0xFFFF);
++
++    EXPECT_EQ(model.OutputPhaseTicks(), expectedFrame0);
++}
++
+ } // namespace ASFW::Testing
