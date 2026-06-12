@@ -763,6 +763,36 @@ void* ASFWDriver::GetIsochReceiveContext() const {
 }
 
 // =============================================================================
+// MARK: - DV Capture (no audio nub required)
+// =============================================================================
+
+kern_return_t ASFWDriver::StartDVCapture(uint8_t channel) {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    auto& ctx = *ivars->context;
+    if (!ctx.deps.hardware) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartDVCapture: hardware not ready");
+        return kIOReturnNotReady;
+    }
+    return ctx.isoch.StartDVCapture(channel, *ctx.deps.hardware);
+}
+
+kern_return_t ASFWDriver::StopDVCapture() {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    return ivars->context->isoch.StopDVCapture();
+}
+
+kern_return_t ASFWDriver::CopyDVCaptureMemory(uint64_t* options, IOMemoryDescriptor** memory) const {
+    if (!ivars || !ivars->context) {
+        return kIOReturnNotReady;
+    }
+    return ivars->context->isoch.CopyDVCaptureMemory(options, memory);
+}
+
+// =============================================================================
 // MARK: - Isochronous Transmit
 // =============================================================================
 

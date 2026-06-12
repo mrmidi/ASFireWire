@@ -13,6 +13,7 @@
 #endif
 
 #include "IsochReceiveContext.hpp"
+#include "Receive/DVCaptureSink.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 
@@ -41,9 +42,17 @@ public:
                                HardwareInterface& hardware,
                                ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
                                ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-                               uint32_t am824Slots = 0);
+                               uint32_t am824Slots = 0,
+                               ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
 
     kern_return_t StopReceive();
+
+    // Minimal DV (IEC 61883-2) capture tap: starts IR on the given channel with
+    // no audio binding and streams raw DIF chunks into a shared ring the app
+    // maps via CopyClientMemoryForType(type=1).
+    kern_return_t StartDVCapture(uint8_t channel, HardwareInterface& hardware);
+    kern_return_t StopDVCapture();
+    kern_return_t CopyDVCaptureMemory(uint64_t* options, IOMemoryDescriptor** memory) const;
 
     kern_return_t StartTransmit(uint8_t channel,
                                 HardwareInterface& hardware,
@@ -106,6 +115,27 @@ private:
 
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
+
+    // DV capture shared ring (see Receive/DVCaptureSink.hpp)
+    struct DVRingMapping {
+        OSSharedPtr<IOBufferMemoryDescriptor> memory{};
+        OSSharedPtr<IOMemoryMap> map{};
+        uint64_t bytes{0};
+
+        void Reset() noexcept {
+            map.reset();
+            memory.reset();
+            bytes = 0;
+        }
+
+        [[nodiscard]] void* BaseAddress() const noexcept {
+            return map ? reinterpret_cast<void*>(static_cast<uintptr_t>(map->GetAddress())) : nullptr;
+        }
+    };
+
+    DVRingMapping dvRing_{};
+    ASFW::Isoch::Rx::DVCaptureSink dvSink_{};
+    bool dvCaptureActive_{false};
 
     OSSharedPtr<IOBufferMemoryDescriptor> txPayloadSlab_{nullptr};
     OSSharedPtr<IOBufferMemoryDescriptor> txMetadataRing_{nullptr};

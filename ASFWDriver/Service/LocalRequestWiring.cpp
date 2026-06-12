@@ -26,7 +26,9 @@
 #include "../Protocols/Ports/FireWireRxPort.hpp"
 #include "../Protocols/SBP2/AddressSpaceManager.hpp"
 
+#include <array>
 #include <memory>
+#include <span>
 
 namespace ASFW::Service {
 
@@ -79,20 +81,51 @@ private:
     ASFW::Bus::CSRResponder* csr_;
 };
 
-// --- FCP: AV/C command/response block writes -----------------------------------
+// --- FCP: AV/C command/response writes ------------------------------------------
+// Both block writes and quadlet writes must be handled: short AV/C responses
+// (e.g. the 4-byte ACCEPTED a camcorder returns for a tape transport command)
+// arrive as quadlet writes (tCode 0x0) to the FCP response register. Dropping
+// them makes every short AV/C command time out on the response path.
 class FcpLocalHandler final : public ILocalAddressHandler {
 public:
     explicit FcpLocalHandler(ASFW::Protocols::AVC::FCPResponseRouter* fcp) noexcept : fcp_(fcp) {}
     [[nodiscard]] const char* Name() const noexcept override { return "FCP"; }
 
     [[nodiscard]] LocalRequestResult HandleLocalRequest(const LocalRequestContext& ctx) override {
-        if (fcp_ == nullptr || ctx.tCode != AReq::kTcodeWriteBlock || ctx.writePayload.empty()) {
+        if (fcp_ == nullptr) {
             return LocalRequestResult::NotMine();
         }
+
+        if (ctx.tCode == AReq::kTcodeWriteBlock) {
+            if (ctx.writePayload.empty()) {
+                return LocalRequestResult::NotMine();
+            }
+            return Route(ctx, ctx.writePayload);
+        }
+
+        if (ctx.tCode == AReq::kTcodeWriteQuad) {
+            // ctx.writePayload points at the little-endian AR header storage;
+            // rebuild wire (big-endian) byte order from the host-order value
+            // so the FCP frame reads as [ctype, subunit, opcode, operand].
+            const std::array<uint8_t, 4> frame{
+                static_cast<uint8_t>(ctx.quadletData >> 24),
+                static_cast<uint8_t>(ctx.quadletData >> 16),
+                static_cast<uint8_t>(ctx.quadletData >> 8),
+                static_cast<uint8_t>(ctx.quadletData),
+            };
+            return Route(ctx, std::span<const uint8_t>(frame.data(), frame.size()));
+        }
+
+        return LocalRequestResult::NotMine();
+    }
+
+private:
+    [[nodiscard]] LocalRequestResult Route(const LocalRequestContext& ctx,
+                                           std::span<const uint8_t> payload) {
         const ASFW::Protocols::Ports::BlockWriteRequestView request{
             .sourceID = ctx.sourceID,
             .destOffset = ctx.destOffset,
-            .payload = ctx.writePayload,
+            .payload = payload,
         };
         const auto disposition = fcp_->RouteBlockWrite(request);
         if (disposition == ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
@@ -101,7 +134,6 @@ public:
         return LocalRequestResult::Write(ResponseCode::Complete);
     }
 
-private:
     ASFW::Protocols::AVC::FCPResponseRouter* fcp_;
 };
 

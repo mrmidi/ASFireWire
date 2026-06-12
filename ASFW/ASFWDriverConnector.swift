@@ -53,6 +53,9 @@ final class ASFWDriverConnector: ObservableObject {
         case setIsochVerbosity = 40
         case asyncBlockRead = 44
         case asyncBlockWrite = 45
+        // DV capture (raw DIF stream via shared ring, memory type 1)
+        case startDVCapture = 50
+        case stopDVCapture = 51
     }
 
     // MARK: - Re-exported Models

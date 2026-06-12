@@ -298,6 +298,27 @@ kern_return_t IsochHandler::StopIsochReceive(IOUserClientMethodArguments* args) 
 }
 
 // ============================================================================
+// DV Capture Control
+// ============================================================================
+
+kern_return_t IsochHandler::StartDVCapture(IOUserClientMethodArguments* args) {
+    // Arguments: [0] = channel (DV camcorders broadcast on 63 by default)
+    if (args->scalarInputCount < 1)
+        return kIOReturnBadArgument;
+    const uint64_t channel = args->scalarInput[0];
+    if (channel > 63)
+        return kIOReturnBadArgument;
+
+    ASFW_LOG(UserClient, "StartDVCapture called for channel %llu", channel);
+    return driver_->StartDVCapture(static_cast<uint8_t>(channel));
+}
+
+kern_return_t IsochHandler::StopDVCapture(IOUserClientMethodArguments* args) {
+    ASFW_LOG(UserClient, "StopDVCapture called");
+    return driver_->StopDVCapture();
+}
+
+// ============================================================================
 // Isoch Metrics
 // ============================================================================
 
