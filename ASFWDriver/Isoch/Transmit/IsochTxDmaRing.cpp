@@ -21,6 +21,95 @@ void IsochTxDmaRing::ResetForStart() noexcept {
 
     counters_.lastDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
     counters_.minDmaGapPackets.store(Layout::kNumPackets, std::memory_order_relaxed);
+
+    counters_.wireDataPackets.store(0, std::memory_order_relaxed);
+    counters_.wireZeroPcmPackets.store(0, std::memory_order_relaxed);
+    counters_.wireInfoQuads.store(0, std::memory_order_relaxed);
+    counters_.wirePcmDropouts.store(0, std::memory_order_relaxed);
+    counters_.wireMaxAbs24.store(0, std::memory_order_relaxed);
+    counters_.wireLastInfoQuad.store(0, std::memory_order_relaxed);
+    counters_.wireFirstInfoAbsIdx.store(0, std::memory_order_relaxed);
+    wireLastPacketHadInfo_ = false;
+    wireFirstInfoLogged_ = false;
+}
+
+void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
+                                      const uint8_t* packetBytes,
+                                      uint32_t payloadLength) noexcept {
+    constexpr uint32_t kCipHeaderBytes = 8;
+    constexpr uint32_t kIdleSlotWord = 0x80000000u; // AM824 no-info / idle MIDI
+    if (payloadLength <= kCipHeaderBytes) {
+        return; // NO-DATA packet: CIP header only
+    }
+
+    const uint64_t dataPackets =
+        counters_.wireDataPackets.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((dataPackets % 8192) == 0) {
+        ASFW_LOG(Isoch,
+                 "IT WIRE gauge data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x",
+                 dataPackets,
+                 counters_.wireZeroPcmPackets.load(std::memory_order_relaxed),
+                 counters_.wireInfoQuads.load(std::memory_order_relaxed),
+                 counters_.wirePcmDropouts.load(std::memory_order_relaxed),
+                 counters_.wireMaxAbs24.load(std::memory_order_relaxed),
+                 counters_.wireLastInfoQuad.load(std::memory_order_relaxed));
+    }
+
+    const uint32_t quadCount = (payloadLength - kCipHeaderBytes) / 4;
+    const uint8_t* quadBytes = packetBytes + kCipHeaderBytes;
+    uint32_t infoQuads = 0;
+    uint32_t lastInfoQuad = 0;
+    uint32_t maxAbs24 = 0;
+    for (uint32_t i = 0; i < quadCount; ++i, quadBytes += 4) {
+        // Payload is stored in bus (big-endian) byte order.
+        const uint32_t quad = (static_cast<uint32_t>(quadBytes[0]) << 24) |
+                              (static_cast<uint32_t>(quadBytes[1]) << 16) |
+                              (static_cast<uint32_t>(quadBytes[2]) << 8) |
+                              static_cast<uint32_t>(quadBytes[3]);
+        if (quad == 0 || quad == kIdleSlotWord) {
+            continue;
+        }
+        ++infoQuads;
+        lastInfoQuad = quad;
+        // 24-bit two's-complement magnitude, label-agnostic (works for both
+        // raw sign-extended 24-in-32 and 0x40-labelled AM824 MBLA slots).
+        const int32_t sample24 = static_cast<int32_t>(quad << 8) >> 8;
+        const uint32_t abs24 = static_cast<uint32_t>(
+            sample24 < 0 ? -static_cast<int64_t>(sample24) : sample24);
+        if (abs24 > maxAbs24) {
+            maxAbs24 = abs24;
+        }
+    }
+
+    if (infoQuads == 0) {
+        counters_.wireZeroPcmPackets.fetch_add(1, std::memory_order_relaxed);
+        if (wireLastPacketHadInfo_) {
+            const uint64_t dropouts =
+                counters_.wirePcmDropouts.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (dropouts <= 8 || (dropouts % 64) == 0) {
+                ASFW_LOG(Isoch,
+                         "IT WIRE PCM dropout #%llu at absIdx=%llu (nonzero->zero)",
+                         dropouts, fillAbsIdx);
+            }
+        }
+        wireLastPacketHadInfo_ = false;
+        return;
+    }
+
+    counters_.wireInfoQuads.fetch_add(infoQuads, std::memory_order_relaxed);
+    counters_.wireLastInfoQuad.store(lastInfoQuad, std::memory_order_relaxed);
+    uint32_t previousMax = counters_.wireMaxAbs24.load(std::memory_order_relaxed);
+    if (maxAbs24 > previousMax) {
+        counters_.wireMaxAbs24.store(maxAbs24, std::memory_order_relaxed);
+    }
+    if (!wireFirstInfoLogged_) {
+        counters_.wireFirstInfoAbsIdx.store(fillAbsIdx, std::memory_order_relaxed);
+        ASFW_LOG(Isoch,
+                 "IT WIRE first nonzero PCM absIdx=%llu infoQuads=%u/%u lastQuad=0x%08x maxAbs24=%u",
+                 fillAbsIdx, infoQuads, quadCount, lastInfoQuad, maxAbs24);
+        wireFirstInfoLogged_ = true;
+    }
+    wireLastPacketHadInfo_ = true;
 }
 
 void IsochTxDmaRing::SeedCycleTracking(Driver::HardwareInterface& hw) noexcept {
@@ -443,6 +532,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         }
         const uint64_t payloadOffset =
             static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
+        if (payloadBase) {
+            GaugeWirePayload(fillAbsIdx,
+                             payloadBase + payloadOffset,
+                             meta.payloadLength);
+        }
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
         if (!payloadDmaMap.ResolveTwoFragments(
                 payloadOffset, meta.payloadLength, payloadFragments)) {

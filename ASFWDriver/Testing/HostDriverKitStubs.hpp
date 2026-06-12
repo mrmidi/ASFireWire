@@ -404,6 +404,7 @@ static constexpr kern_return_t kIOReturnUnsupported = static_cast<kern_return_t>
 static constexpr uint64_t kIOMemoryDirectionInOut = 0;
 static constexpr uint64_t kIOMemoryDirectionIn = 1;
 static constexpr uint64_t kIOMemoryDirectionOut = 2;
+static constexpr uint64_t kIOMemoryDirectionOutIn = 3;
 static constexpr uint64_t kIODMACommandCreateNoOptions = 0;
 static constexpr uint64_t kIODMACommandPrepareForDMANoOptions = 0;
 static constexpr uint64_t kIODMACommandCompleteDMANoOptions = 0;

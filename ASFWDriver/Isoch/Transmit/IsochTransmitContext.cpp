@@ -361,6 +361,16 @@ void IsochTransmitContext::Stop() noexcept {
         refillInProgress_.clear(std::memory_order_release);
         ASFW_LOG(Isoch, "IT: Stopped. Stats: %llu pkts IRQs=%llu",
                  packetsAssembled_, interruptCount_.load(std::memory_order_relaxed));
+        const auto& rc = ring_.RTCounters();
+        ASFW_LOG(Isoch,
+                 "IT WIRE final data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x firstInfoAbsIdx=%llu",
+                 rc.wireDataPackets.load(std::memory_order_relaxed),
+                 rc.wireZeroPcmPackets.load(std::memory_order_relaxed),
+                 rc.wireInfoQuads.load(std::memory_order_relaxed),
+                 rc.wirePcmDropouts.load(std::memory_order_relaxed),
+                 rc.wireMaxAbs24.load(std::memory_order_relaxed),
+                 rc.wireLastInfoQuad.load(std::memory_order_relaxed),
+                 rc.wireFirstInfoAbsIdx.load(std::memory_order_relaxed));
     }
 
     if (state_ == State::Configured) {

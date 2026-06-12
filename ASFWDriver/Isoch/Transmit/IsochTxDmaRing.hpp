@@ -48,6 +48,19 @@ public:
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint32_t> minDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint64_t> criticalGapEvents{0};
+
+        // Wire-truth payload gauges, sampled at refill time — the last point
+        // software sees the bytes the DMA engine will ship, after the
+        // producer's commit. Independent of writer-side claims. An "info"
+        // quadlet is any AM824 payload quadlet other than 0x00000000 and the
+        // 0x80000000 idle MIDI/no-info slot word.
+        std::atomic<uint64_t> wireDataPackets{0};
+        std::atomic<uint64_t> wireZeroPcmPackets{0};
+        std::atomic<uint64_t> wireInfoQuads{0};
+        std::atomic<uint64_t> wirePcmDropouts{0};
+        std::atomic<uint32_t> wireMaxAbs24{0};
+        std::atomic<uint32_t> wireLastInfoQuad{0};
+        std::atomic<uint64_t> wireFirstInfoAbsIdx{0};
     };
 
     struct PrimeStats {
@@ -128,6 +141,9 @@ private:
                                                  uint8_t contextIndex,
                                                  uint32_t& outPacketIndex,
                                                  uint32_t& outCmdPtr) noexcept;
+    void GaugeWirePayload(uint64_t fillAbsIdx,
+                          const uint8_t* packetBytes,
+                          uint32_t payloadLength) noexcept;
 
     uint8_t channel_{0};
     IsochTxDescriptorSlab slab_{};
@@ -142,6 +158,10 @@ private:
     uint32_t nextTransmitCycle_{0};
     bool cycleTrackingValid_{false};
     uint32_t lastHwTimestamp_{0};
+
+    // Wire-truth gauge state (refill is single-threaded)
+    bool wireLastPacketHadInfo_{false};
+    bool wireFirstInfoLogged_{false};
 
     Counters counters_{};
 };
