@@ -138,14 +138,37 @@ public:
             return;
         }
 
-        // Consumer DV camcorders (Linux dv1394-compatible) send SPH=0: the
-        // payload after the CIP is plain 480-byte DIF blocks, timestamp lives
-        // in CIP.SYT. Devices that set SPH=1 prefix each block with a 4-byte
-        // source packet header instead.
+        const size_t dataBytes = length - kDriverPrefixBytes - kCipHeaderBytes;
+
+        // SD-DVCR carries DBS=120 quadlets (480 bytes per block); the ring
+        // records are fixed at that size. Reject other DV variants (e.g.
+        // DVCPRO50) instead of mis-slicing them. Empty (CIP-only) packets
+        // pass through with zero blocks regardless.
+        if (dataBytes > 0 && cip->dataBlockSize != kRecordBytes / 4) {
+            hdr_->nonDvPackets++;
+            hdr_->lastRejectLen = static_cast<uint32_t>(length);
+            hdr_->lastRejectQ0 = q0;
+            hdr_->lastRejectQ1 = q1;
+            return;
+        }
+
+        // Consumer DV camcorders (Linux dv1394-compatible, matching Apple's
+        // AVCVideoServices DVReceiver) send SPH=0: the payload after the CIP
+        // is plain 480-byte DIF blocks, timestamp lives in CIP.SYT. Devices
+        // that set SPH=1 prefix each block with a 4-byte source packet header.
         const size_t skip = cip->sourcePacketHeader ? kSphBytes : 0;
         const size_t blockBytes = kRecordBytes + skip;
 
-        const size_t dataBytes = length - kDriverPrefixBytes - kCipHeaderBytes;
+        // Sanity: payload must be a whole number of blocks (Apple validates
+        // expected packet size the same way; truncated DMA = corrupt packet).
+        if (dataBytes % blockBytes != 0) {
+            hdr_->nonDvPackets++;
+            hdr_->lastRejectLen = static_cast<uint32_t>(length);
+            hdr_->lastRejectQ0 = q0;
+            hdr_->lastRejectQ1 = q1;
+            return;
+        }
+
         const size_t blocks = dataBytes / blockBytes;  // 0 for empty (CIP-only) packets
 
         for (size_t i = 0; i < blocks; ++i) {

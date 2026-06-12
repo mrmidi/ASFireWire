@@ -100,9 +100,11 @@ final class DVCaptureController: ObservableObject {
         guard let ring else { return }
 
         ring.drain { chunk in
-            // Frame header chunk: first DIF block is the header section
-            // (bytes 0x1F 0x07 0x00).
-            let isFrameStart = chunk[0] == 0x1F && chunk[1] == 0x07 && chunk[2] == 0x00
+            // Frame start: first DIF block is a header-section block (SCT=0)
+            // with sequence number 0. Masked comparison per Apple's
+            // AVCVideoServices DVReceiver ((u16 & 0xE0FC) == 0x0004) - the
+            // unmasked bits are reserved/arbitrary and vary between devices.
+            let isFrameStart = (chunk[0] & 0xE0) == 0x00 && (chunk[1] & 0xFC) == 0x04
             if isFrameStart {
                 flushCurrentFrame()
                 inFrame = true
