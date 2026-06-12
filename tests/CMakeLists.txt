@@ -44,7 +44,7 @@ if (NOT GTest_FOUND)
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.15.0
+    GIT_TAG v1.16.0
   )
   FetchContent_MakeAvailable(googletest)
 endif()
@@ -56,6 +56,10 @@ add_library(asfw_test_common_interface INTERFACE)
 target_include_directories(asfw_test_common_interface INTERFACE ${ASFW_COMMON_INCLUDES})
 target_compile_definitions(asfw_test_common_interface INTERFACE ASFW_HOST_TEST)
 target_compile_features(asfw_test_common_interface INTERFACE cxx_std_23)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+  target_compile_options(asfw_test_common_interface INTERFACE -Wno-character-conversion)
+endif()
 
 # Define shared static libraries used by tests
 # 1. Shared Test support library (universal stubs ONLY)

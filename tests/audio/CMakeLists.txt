@@ -66,11 +66,6 @@ add_audio_test(NonBlockingCadenceTests
 )
 
 
-# Audio Ring Buffer Tests
-add_audio_test(AudioRingBufferTests
-    AudioRingBufferTests.cpp
-)
-
 # Audio Driver config policy tests
 add_audio_test(AudioDriverConfigPolicyTests
     AudioDriverConfigPolicyTests.cpp
@@ -87,9 +82,7 @@ add_audio_test(AudioDirectRuntimeTests
     AudioRuntime/AudioGraphBindingTests.cpp
     AudioRuntime/DirectAudioEngineTests.cpp
     AudioRuntime/DirectAudioDebugSnapshotTests.cpp
-    AudioRuntime/AudioSampleRingTests.cpp
-    AudioRuntime/ZtsAuthorityTests.cpp
-    AudioRuntime/ZtsTimelineCalculatorTests.cpp
+    AudioRuntime/HostClockAnchorTests.cpp
     AudioRuntime/PlaybackRingRangeTests.cpp
 )
 
@@ -116,6 +109,17 @@ add_audio_test(TxTimingModelTests
     TxTimingModelTests.cpp
     "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/TxTimingModel.cpp"
     "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/Syt.cpp"
+)
+
+add_audio_test(AmdtpDirectTxTests
+    AmdtpDirectTxTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpCadence.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPacketTimeline.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpPayloadWriter.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/PcmSlotCodec.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/CipHeader.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/DbcCounter.cpp"
 )
 
 
@@ -149,7 +153,3 @@ add_audio_test(DiceProfileTests
 add_audio_test(ITDescriptorLayoutTests
     ITDescriptorLayoutTests.cpp
 )
-
-
-
-
