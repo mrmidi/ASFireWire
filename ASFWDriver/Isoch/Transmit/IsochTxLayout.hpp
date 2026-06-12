@@ -23,8 +23,17 @@ struct Layout final {
     static constexpr size_t kOHCIPrefetchSize = 32;
     static constexpr size_t kUsablePerPage = kOHCIPageSize - kOHCIPrefetchSize;  // 4064
 
-    // We program packets as: OUTPUT_MORE_IMMEDIATE (Isoch header) + OUTPUT_LAST.
-    static constexpr uint32_t kBlocksPerPacket = 3;
+    // Packet program:
+    //   blocks 0-1: OUTPUT_MORE_IMMEDIATE
+    //   block 2:    OUTPUT_MORE payload fragment
+    //   block 3:    OUTPUT_LAST payload fragment
+    //
+    // A single contiguous payload is deliberately split between blocks 2 and 3
+    // so command pointers and branches always use Z=4. A payload crossing one
+    // DMA segment boundary uses the two natural fragments.
+    static constexpr uint32_t kBlocksPerPacket = 4;
+    static constexpr uint32_t kFirstPayloadBlock = 2;
+    static constexpr uint32_t kCompletionBlock = 3;
     static constexpr uint32_t kNumPackets =
         ASFW::IsochTransport::AudioTimingGeometry::
             kTxHardwareRingPackets;  // ~24ms @ 8000 pkts/sec
@@ -37,9 +46,9 @@ struct Layout final {
         (kDescriptorsPerPageRaw / kBlocksPerPacket) * kBlocksPerPacket;  // 252
 
     static constexpr uint32_t kTotalPages =
-        (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;  // 3
+        (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;  // 4
 
-    static constexpr size_t kDescriptorRingSize = kTotalPages * kOHCIPageSize;  // 12288
+    static constexpr size_t kDescriptorRingSize = kTotalPages * kOHCIPageSize;  // 16384
 
     // The command-pointer slot and the next four packets are treated as
     // hardware-owned. Payload preparation uses a much earlier deadline so the
@@ -61,7 +70,7 @@ struct Layout final {
     static_assert((kDescriptorsPerPage % kBlocksPerPacket) == 0, "Keep packets within a page");
     static_assert((static_cast<size_t>(kDescriptorsPerPage) * kDescriptorStride) <= kUsablePerPage,
                   "Must fit in usable space");
-    static_assert(kBlocksPerPacket == 3, "Z must be 3 for OMI(2)+OL(1)");
+    static_assert(kBlocksPerPacket == 4, "Z must be 4 for OMI(2)+OM(1)+OL(1)");
     static_assert(sizeof(Async::HW::OHCIDescriptor) == 16, "OHCI descriptor must be 16 bytes");
     static_assert(kDescriptorStride == sizeof(Async::HW::OHCIDescriptor), "Stride must match descriptor size");
 };

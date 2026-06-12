@@ -96,6 +96,7 @@ TEST(IsochServiceTxPreparation,
             DMAContextHelpers::IsoXmitCommandPtr(0));
     const uint32_t initialCommandPtr =
         hardware.GetTestRegister(commandPtrRegister);
+    EXPECT_EQ(initialCommandPtr & 0xfU, Layout::kBlocksPerPacket);
     const uint32_t descriptorBase = initialCommandPtr & 0xfffffff0U;
     const uint32_t completedPackets =
         AudioTimingGeometry::kTxPacketsPerGroup;

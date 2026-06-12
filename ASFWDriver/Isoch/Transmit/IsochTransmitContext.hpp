@@ -139,7 +139,7 @@ private:
     ASFW::IsochTransport::TxPacketMeta* metadataRing_{nullptr};
     ASFW::IsochTransport::TxStreamControl* controlBlock_{nullptr};
 
-    uint64_t payloadIOVA_{0};
+    Tx::TxPayloadDmaMap payloadDmaMap_{};
     OSSharedPtr<IODMACommand> payloadDmaCmd_{nullptr};
 };
 

@@ -374,7 +374,12 @@ public:
                                 uint64_t* flags,
                                 uint32_t* segments,
                                 IOAddressSegment* segmentOut) {
-        if (!segmentOut) return kIOReturnBadArgument;
+        if (!segmentOut || !segments || *segments == 0) {
+            return kIOReturnBadArgument;
+        }
+        if (*segments > 32) {
+            return kIOReturnOverrun;
+        }
         IOAddressSegment seg;
         buffer->GetAddressRange(&seg);
         static std::atomic<uint32_t> sMockIOVA{0x10000000u};

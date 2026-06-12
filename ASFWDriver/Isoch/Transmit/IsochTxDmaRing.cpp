@@ -82,7 +82,9 @@ void IsochTxDmaRing::ResyncCycleTracking(Driver::HardwareInterface& hw,
     const uint32_t lastProcessedPkt = (hwPacketIndex + Layout::kNumPackets - 1) % Layout::kNumPackets;
     out.completedPacketIndex = lastProcessedPkt;
     out.completedPacketCount = deltaConsumed;
-    auto* processedOL = slab_.GetDescriptorPtr(lastProcessedPkt * Layout::kBlocksPerPacket + 2);
+    auto* processedOL = slab_.GetDescriptorPtr(
+        lastProcessedPkt * Layout::kBlocksPerPacket +
+        Layout::kCompletionBlock);
 
     if (dmaMemory_) {
         dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(processedOL), sizeof(*processedOL));
@@ -116,7 +118,7 @@ void IsochTxDmaRing::CommitRefill(const uint32_t toFill) noexcept {
 }
 
 IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
-    const uint64_t payloadIOVA,
+    const TxPayloadDmaMap& payloadDmaMap,
     const uint32_t numSlots,
     const uint32_t slotStrideBytes,
     const ASFW::IsochTransport::TxPacketMeta* metadataRing,
@@ -126,16 +128,15 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         ASFW_LOG(Isoch, "IT: Prime failed - descriptor slab is invalid");
         return stats;
     }
-    if (payloadIOVA == 0 || payloadIOVA > 0xFFFFFFFFULL ||
+    if (!payloadDmaMap.IsValid() ||
         numSlots == 0 || slotStrideBytes == 0 || metadataRing == nullptr) {
         ASFW_LOG(Isoch,
-                 "IT: Prime failed - invalid shared payload contract iova=0x%llx slots=%u stride=%u meta=%p",
-                 payloadIOVA, numSlots, slotStrideBytes, metadataRing);
+                 "IT: Prime failed - invalid shared payload contract segments=%zu slots=%u stride=%u meta=%p",
+                 payloadDmaMap.SegmentCount(), numSlots, slotStrideBytes, metadataRing);
         return stats;
     }
 
     const uint32_t numPackets = Layout::kNumPackets;
-    const uint32_t payloadBaseIOVA = static_cast<uint32_t>(payloadIOVA);
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
         const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
@@ -145,6 +146,32 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         // Fetch pre-filled metadata for this slot.
         const uint32_t producerSlot = pktIdx % numSlots;
         const auto& meta = metadataRing[producerSlot];
+        if (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Prime failed - invalid payload length packet=%u slot=%u len=%u stride=%u",
+                pktIdx,
+                producerSlot,
+                meta.payloadLength,
+                slotStrideBytes);
+            return stats;
+        }
+
+        std::array<TxPayloadDmaFragment, 2> payloadFragments{};
+        const uint64_t payloadOffset =
+            static_cast<uint64_t>(producerSlot) * slotStrideBytes;
+        if (!payloadDmaMap.ResolveTwoFragments(
+                payloadOffset, meta.payloadLength, payloadFragments)) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Prime payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
+                pktIdx,
+                producerSlot,
+                payloadOffset,
+                meta.payloadLength,
+                payloadDmaMap.SegmentCount());
+            return stats;
+        }
 
         // Prime the OMI descriptor structure (Descriptor 0 and 1)
         std::memset(immDesc, 0, sizeof(OHCIDescriptorImmediate));
@@ -165,15 +192,25 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         immDesc->common.branchWord =
             MakeBranchWordAT(slab_.GetDescriptorIOVA(descBase), Layout::kBlocksPerPacket);
 
-        // Prime the OL descriptor (Descriptor 2)
-        auto* desc2 = slab_.GetDescriptorPtr(descBase + 2);
+        // Standard OUTPUT_MORE for the first payload fragment.
+        auto* desc2 =
+            slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
         std::memset(desc2, 0, sizeof(OHCIDescriptor));
-
-        const uint32_t nextPktIdx = (pktIdx + 1) % numPackets;
-        const uint32_t nextDescIOVA = slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
-
         desc2->control = OHCIDescriptor::BuildControl({
-            .reqCount = static_cast<uint16_t>(meta.payloadLength),
+            .reqCount = static_cast<uint16_t>(payloadFragments[0].length),
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+        desc2->dataAddress = payloadFragments[0].deviceAddress;
+
+        // OUTPUT_LAST owns status, interrupt, and the branch to the next packet.
+        auto* desc3 =
+            slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        std::memset(desc3, 0, sizeof(OHCIDescriptor));
+        desc3->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
             .command = OHCIDescriptor::kCmdOutputLast,
             .key = OHCIDescriptor::kKeyStandard,
             .interruptBits =
@@ -182,21 +219,17 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
                     : OHCIDescriptor::kIntNever,
             .branchBits = OHCIDescriptor::kBranchAlways,
         });
+        desc3->control |=
+            (1u << (OHCIDescriptor::kStatusShift +
+                    OHCIDescriptor::kControlHighShift));
+        desc3->dataAddress = payloadFragments[1].deviceAddress;
 
-        // Set status update bit (s=1)
-        desc2->control |= (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
-
-        const uint64_t packetIOVA =
-            static_cast<uint64_t>(payloadBaseIOVA) +
-            static_cast<uint64_t>(producerSlot) * slotStrideBytes;
-        if (packetIOVA > 0xFFFFFFFFULL) {
-            ASFW_LOG(Isoch, "IT: Prime failed - packet payload IOVA overflow slot=%u iova=0x%llx",
-                     producerSlot, packetIOVA);
-            return stats;
-        }
-        desc2->dataAddress = static_cast<uint32_t>(packetIOVA);
-        desc2->branchWord = MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket);
-        AR_init_status(*desc2, 0);
+        const uint32_t nextPktIdx = (pktIdx + 1) % numPackets;
+        const uint32_t nextDescIOVA =
+            slab_.GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
+        desc3->branchWord =
+            MakeBranchWordAT(nextDescIOVA, Layout::kBlocksPerPacket);
+        AR_init_status(*desc3, 0);
     }
 
     if (dmaMemory_) {
@@ -241,13 +274,13 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     ASFW::IsochTransport::TxStreamControl* controlBlock,
     uint32_t numSlots,
     uint8_t* payloadBase,
-    uint64_t payloadIOVA) noexcept
+    const TxPayloadDmaMap& payloadDmaMap) noexcept
 {
     counters_.calls.fetch_add(1, std::memory_order_relaxed);
     RefillOutcome out{};
 
     if (!metadataRing || !controlBlock || !payloadBase ||
-        payloadIOVA == 0 || payloadIOVA > 0xFFFFFFFFULL ||
+        !payloadDmaMap.IsValid() ||
         numSlots == 0 || numSlots != controlBlock->numSlots ||
         controlBlock->slotStrideBytes == 0 ||
         controlBlock->maxPacketBytes == 0 ||
@@ -305,7 +338,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint64_t currentAbsIdx = completedAbsIdx + i;
         const uint32_t completedPktSlot = static_cast<uint32_t>(currentAbsIdx % Layout::kNumPackets);
 
-        auto* desc2 = slab_.GetDescriptorPtr(completedPktSlot * Layout::kBlocksPerPacket + 2);
+        auto* desc2 = slab_.GetDescriptorPtr(
+            completedPktSlot * Layout::kBlocksPerPacket +
+            Layout::kCompletionBlock);
         if (dmaMemory_) {
             dmaMemory_->FetchFromDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(*desc2));
         }
@@ -400,28 +435,78 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
 
         const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
 
-        // Linux queue_iso_transmit() writes this pair through (__le32 *)&d[1]:
-        // offsets 0x10/0x14 after the OMI command descriptor. Offsets 0x08/0x0c
-        // are the cycle-loss skip address and command status, not transmitted
-        // data. Cross-validated with Linux: firewire/ohci.c:3373-3383.
-        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
-            slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket));
-        immDesc->immediateData[0] = meta.immediateHeader[0];
-        immDesc->immediateData[1] = meta.immediateHeader[1];
-
-        // Update OL descriptor (Descriptor 2) reqCount
-        auto* desc2 = slab_.GetDescriptorPtr(hwSlot * Layout::kBlocksPerPacket + 2);
-        const uint64_t packetIOVA =
-            payloadIOVA + static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
-        if (packetIOVA > 0xFFFFFFFFULL ||
+        if (meta.payloadLength < 2 ||
             meta.payloadLength > controlBlock->maxPacketBytes) {
             counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
             out.ok = false;
             return out;
         }
-        desc2->dataAddress = static_cast<uint32_t>(packetIOVA);
-        desc2->control = (desc2->control & 0xFFFF0000u) | (meta.payloadLength & 0xFFFFu);
-        AR_init_status(*desc2, meta.payloadLength);
+        const uint64_t payloadOffset =
+            static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
+        std::array<TxPayloadDmaFragment, 2> payloadFragments{};
+        if (!payloadDmaMap.ResolveTwoFragments(
+                payloadOffset, meta.payloadLength, payloadFragments)) {
+            counters_.fatalPayloadMapping.fetch_add(1, std::memory_order_relaxed);
+            ASFW_LOG(
+                Isoch,
+                "IT: Refill payload mapping failed packet=%u slot=%u offset=%llu len=%u segments=%zu",
+                hwSlot,
+                pktSlot,
+                payloadOffset,
+                meta.payloadLength,
+                payloadDmaMap.SegmentCount());
+            out.ok = false;
+            return out;
+        }
+
+        // Linux queue_iso_transmit() writes this pair through (__le32 *)&d[1]:
+        // offsets 0x10/0x14 after the OMI command descriptor. Offsets 0x08/0x0c
+        // are the cycle-loss skip address and command status, not transmitted
+        // data. Cross-validated with Linux: firewire/ohci.c:3373-3383.
+        const uint32_t descBase = hwSlot * Layout::kBlocksPerPacket;
+        auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
+            slab_.GetDescriptorPtr(descBase));
+        immDesc->immediateData[0] = meta.immediateHeader[0];
+        immDesc->immediateData[1] = meta.immediateHeader[1];
+        immDesc->common.branchWord = MakeBranchWordAT(
+            slab_.GetDescriptorIOVA(descBase),
+            Layout::kBlocksPerPacket);
+
+        auto* desc2 =
+            slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
+        desc2->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[0].length),
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+        desc2->dataAddress = payloadFragments[0].deviceAddress;
+        desc2->branchWord = 0;
+        desc2->statusWord = 0;
+
+        auto* desc3 =
+            slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        desc3->control = OHCIDescriptor::BuildControl({
+            .reqCount = static_cast<uint16_t>(payloadFragments[1].length),
+            .command = OHCIDescriptor::kCmdOutputLast,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits =
+                Core::IsTimingGroupBoundary(hwSlot)
+                    ? OHCIDescriptor::kIntAlways
+                    : OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchAlways,
+        });
+        desc3->control |=
+            (1u << (OHCIDescriptor::kStatusShift +
+                    OHCIDescriptor::kControlHighShift));
+        desc3->dataAddress = payloadFragments[1].deviceAddress;
+        const uint32_t nextHwSlot = (hwSlot + 1) % Layout::kNumPackets;
+        desc3->branchWord = MakeBranchWordAT(
+            slab_.GetDescriptorIOVA(nextHwSlot * Layout::kBlocksPerPacket),
+            Layout::kBlocksPerPacket);
+        AR_init_status(
+            *desc3, static_cast<uint16_t>(payloadFragments[1].length));
 
         // Publish the shared producer slot before exposing descriptor changes.
         if (dmaMemory_) {
@@ -432,6 +517,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             dmaMemory_->PublishBarrier();
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
+            dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc3), sizeof(OHCIDescriptor));
         }
 
         packetsFilled++;
@@ -532,14 +618,21 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
         const uint32_t sy = itQ0 & 0xF;
         const uint32_t dataLen = (itQ1 >> 16) & 0xFFFF;
 
-        auto* desc2 = slab_.GetDescriptorPtr(descBase + 2);
+        auto* desc2 =
+            slab_.GetDescriptorPtr(descBase + Layout::kFirstPayloadBlock);
         const uint32_t ctl1 = desc2->control;
-        const uint32_t i1 = (ctl1 >> 18) & 0x3;
-        const uint32_t b1 = (ctl1 >> 16) & 0x3;
         const uint32_t reqCount1 = ctl1 & 0xFFFF;
-        const uint32_t branchAddr = desc2->branchWord & 0xFFFFFFF0u;
-        const uint32_t branchZ = desc2->branchWord & 0xF;
-        const uint16_t xferStatus = static_cast<uint16_t>(desc2->statusWord >> 16);
+
+        auto* desc3 =
+            slab_.GetDescriptorPtr(descBase + Layout::kCompletionBlock);
+        const uint32_t ctl2 = desc3->control;
+        const uint32_t i2 = (ctl2 >> 18) & 0x3;
+        const uint32_t b2 = (ctl2 >> 16) & 0x3;
+        const uint32_t reqCount2 = ctl2 & 0xFFFF;
+        const uint32_t branchAddr = desc3->branchWord & 0xFFFFFFF0u;
+        const uint32_t branchZ = desc3->branchWord & 0xF;
+        const uint16_t xferStatus =
+            static_cast<uint16_t>(desc3->statusWord >> 16);
 
         const uint32_t computedIOVA = slab_.GetDescriptorIOVA(descBase);
 
@@ -547,8 +640,21 @@ void IsochTxDmaRing::DumpDescriptorRing(uint32_t startPacket, uint32_t numPacket
                  pktIdx, descBase, computedIOVA, ctl0, i0, b0, skipAddr, skipZ,
                  itQ0, spd, tag, chan, tcode, sy,
                  itQ1, dataLen);
-        ASFW_LOG(Isoch, "         OL:  ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u st=0x%04x",
-                 ctl1, i1, b1, reqCount1, desc2->dataAddress, branchAddr, branchZ, xferStatus);
+        ASFW_LOG(Isoch,
+                 "         OM:  ctl=0x%08x req=%u data=0x%08x",
+                 ctl1,
+                 reqCount1,
+                 desc2->dataAddress);
+        ASFW_LOG(Isoch,
+                 "         OL:  ctl=0x%08x i=%u b=%u req=%u data=0x%08x br=0x%08x|%u st=0x%04x",
+                 ctl2,
+                 i2,
+                 b2,
+                 reqCount2,
+                 desc3->dataAddress,
+                 branchAddr,
+                 branchZ,
+                 xferStatus);
     }
 }
 

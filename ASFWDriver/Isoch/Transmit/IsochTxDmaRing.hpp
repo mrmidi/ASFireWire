@@ -5,6 +5,7 @@
 
 #include "IsochTxDescriptorSlab.hpp"
 #include "IsochTxLayout.hpp"
+#include "TxPayloadDmaMap.hpp"
 
 #include "../Core/IsochEventGroup.hpp"
 #include "../../Hardware/HardwareInterface.hpp"
@@ -40,6 +41,7 @@ public:
         std::atomic<uint64_t> refills{0};
         std::atomic<uint64_t> packetsRefilled{0};
         std::atomic<uint64_t> fatalPacketSize{0};
+        std::atomic<uint64_t> fatalPayloadMapping{0};
         std::atomic<uint64_t> fatalDescriptorBounds{0};
 
         // DMA ring gap monitoring
@@ -86,7 +88,7 @@ public:
 
     void DebugFillDescriptorSlab(uint8_t pattern) noexcept { slab_.DebugFillDescriptorSlab(pattern); }
 
-    [[nodiscard]] PrimeStats Prime(uint64_t payloadIOVA,
+    [[nodiscard]] PrimeStats Prime(const TxPayloadDmaMap& payloadDmaMap,
                                    uint32_t numSlots,
                                    uint32_t slotStrideBytes,
                                    const ASFW::IsochTransport::TxPacketMeta* metadataRing,
@@ -98,7 +100,7 @@ public:
                                        ASFW::IsochTransport::TxStreamControl* controlBlock,
                                        uint32_t numSlots,
                                        uint8_t* payloadBase,
-                                       uint64_t payloadIOVA) noexcept;
+                                       const TxPayloadDmaMap& payloadDmaMap) noexcept;
 
     void WakeHardwareIfIdle(Driver::HardwareInterface& hw, uint8_t contextIndex) noexcept;
 

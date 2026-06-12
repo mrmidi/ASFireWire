@@ -97,7 +97,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         payloadDmaCmd_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
         payloadDmaCmd_ = nullptr;
     }
-    payloadIOVA_ = 0;
+    payloadDmaMap_.Reset();
 
     // 1. Map Payload Slab
     IOMemoryMap* pMap = nullptr;
@@ -117,27 +117,71 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
             return kIOReturnNoMemory;
         }
 
-        IOAddressSegment segments[1];
-        uint32_t segmentCount = 1;
+        // CRITICAL / DriverKit RPC Limit:
+        // IODMACommand::PrepareForDMA has a fixed signature of:
+        //   PrepareForDMA(..., IOAddressSegment segments[32])
+        // If we initialize segmentCount to segments.size() (64) and pass it, the DriverKit
+        // user-kernel RPC serialization stub flags the count > 32 as an array bounds/overrun violation
+        // and immediately aborts the syscall returning kIOReturnOverrun (0xe00002e8).
+        //
+        // Thus, segmentCount MUST be initialized to at most 32. Since the 256KB payload slab is
+        // only 16 pages under Apple Silicon's 16KB page layout, it easily fits in 32 segments.
+        std::array<IOAddressSegment, 32> segments{};
+        uint32_t segmentCount = std::min<uint32_t>(segments.size(), 32);
         uint64_t flags = 0;
         uint64_t slabLen = 0;
         payloadSlab->GetLength(&slabLen);
 
         kr = dmaCmd->PrepareForDMA(kIODMACommandPrepareForDMANoOptions, payloadSlab, 0, slabLen, &flags,
-                                    &segmentCount, segments);
+                                    &segmentCount, segments.data());
         if (kr != kIOReturnSuccess) {
             ASFW_LOG(Isoch, "IT: PrepareForDMA failed for payload slab: 0x%08x", kr);
             return kr;
         }
-        payloadDmaCmd_ = std::move(dmaCmd);
-        payloadIOVA_ = segments[0].address;
 
-        if (payloadIOVA_ > 0xFFFFFFFFULL) {
-            ASFW_LOG(Isoch, "IT: Payload slab IOVA 0x%llx exceeds 32-bit range", payloadIOVA_);
-            payloadDmaCmd_->CompleteDMA(kIODMACommandCompleteDMANoOptions);
-            payloadDmaCmd_ = nullptr;
-            payloadIOVA_ = 0;
+        std::array<Tx::TxPayloadDmaSegment, Tx::TxPayloadDmaMap::kMaxSegments>
+            payloadSegments{};
+        if (segmentCount == 0 || segmentCount > payloadSegments.size()) {
+            ASFW_LOG(Isoch,
+                     "IT: Payload DMA returned invalid segment count=%u capacity=%zu",
+                     segmentCount,
+                     payloadSegments.size());
+            dmaCmd->CompleteDMA(kIODMACommandCompleteDMANoOptions);
             return kIOReturnInternalError;
+        }
+        for (uint32_t i = 0; i < segmentCount; ++i) {
+            payloadSegments[i] = Tx::TxPayloadDmaSegment{
+                .deviceAddress = segments[i].address,
+                .length = segments[i].length,
+            };
+        }
+
+        if (!payloadDmaMap_.Configure(
+                std::span<const Tx::TxPayloadDmaSegment>(
+                    payloadSegments.data(), segmentCount),
+                slabLen)) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Payload DMA map does not provide complete 32-bit slab coverage bytes=%llu segments=%u",
+                slabLen,
+                segmentCount);
+            dmaCmd->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+            return kIOReturnInternalError;
+        }
+
+        payloadDmaCmd_ = std::move(dmaCmd);
+        ASFW_LOG(Isoch,
+                 "IT: Payload DMA mapped bytes=%llu segments=%zu",
+                 payloadDmaMap_.SlabLength(),
+                 payloadDmaMap_.SegmentCount());
+        for (std::size_t i = 0; i < payloadDmaMap_.SegmentCount(); ++i) {
+            const auto* segment = payloadDmaMap_.SegmentAt(i);
+            ASFW_LOG(Isoch,
+                     "IT: Payload DMA segment[%zu] slabOffset=%llu iova=0x%llx length=%llu",
+                     i,
+                     segment->slabOffset,
+                     segment->deviceAddress,
+                     segment->length);
         }
     }
 
@@ -199,8 +243,8 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
     controlBlock_->preparationCoalescedCount.store(
         0, std::memory_order_relaxed);
 
-    ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadIOVA=0x%llx metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
-             payloadIOVA_, metadataRing_, controlBlock_, numSlots, maxPacketBytes);
+    ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadSegments=%zu metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
+             payloadDmaMap_.SegmentCount(), metadataRing_, controlBlock_, numSlots, maxPacketBytes);
     return kIOReturnSuccess;
 }
 
@@ -219,7 +263,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
         ASFW_LOG(Isoch, "IT: Cannot start - no DMA ring");
         return kIOReturnNoResources;
     }
-    if (!payloadBase_ || payloadIOVA_ == 0 || !metadataRing_ || !controlBlock_ ||
+    if (!payloadBase_ || !payloadDmaMap_.IsValid() || !metadataRing_ || !controlBlock_ ||
         controlBlock_->numSlots == 0 || controlBlock_->slotStrideBytes == 0 ||
         controlBlock_->maxPacketBytes == 0) {
         ASFW_LOG(Isoch, "IT: Cannot start - shared TX payload contract is incomplete");
@@ -247,7 +291,7 @@ kern_return_t IsochTransmitContext::Start() noexcept {
 
     const uint64_t preFillCount = controlBlock_->exposeCursor.load(std::memory_order_relaxed);
     const auto primeStats =
-        ring_.Prime(payloadIOVA_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
+        ring_.Prime(payloadDmaMap_, controlBlock_->numSlots, controlBlock_->slotStrideBytes, metadataRing_, preFillCount);
     if (primeStats.packetsAssembled != Tx::Layout::kNumPackets) {
         ASFW_LOG(Isoch, "IT: Failed to prime descriptor ring against shared payload slab");
         return kIOReturnInternalError;
@@ -338,7 +382,14 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
 
     const uint32_t numSlots = controlBlock_->numSlots;
 
-    auto outcome = ring_.Refill(*hardware_, contextIndex_, metadataRing_, controlBlock_, numSlots, payloadBase_, payloadIOVA_);
+    auto outcome = ring_.Refill(
+        *hardware_,
+        contextIndex_,
+        metadataRing_,
+        controlBlock_,
+        numSlots,
+        payloadBase_,
+        payloadDmaMap_);
     if (!outcome.ok) {
         ASFW_LOG(Isoch, "IT: Refill failed - stopping immediately");
         StopImmediatelyForTxFault();

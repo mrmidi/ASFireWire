@@ -2,6 +2,7 @@
 // ASFW - Host-safe unit tests for IT DMA ring engine
 
 #include <gtest/gtest.h>
+#include <array>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -14,6 +15,8 @@
 
 using ASFW::Isoch::Tx::IsochTxDmaRing;
 using ASFW::Isoch::Tx::Layout;
+using ASFW::Isoch::Tx::TxPayloadDmaMap;
+using ASFW::Isoch::Tx::TxPayloadDmaSegment;
 using ASFW::Isoch::Memory::IsochDMAMemoryManager;
 using ASFW::Isoch::Memory::IsochMemoryConfig;
 using ASFW::IsochTransport::TxPacketMeta;
@@ -33,8 +36,17 @@ protected:
     ASFW::Driver::HardwareInterface hardware_;
     std::shared_ptr<IsochDMAMemoryManager> dmaMemory_;
     IsochTxDmaRing ring_;
+    TxPayloadDmaMap payloadDmaMap_;
     std::vector<uint8_t> sharedPayload_ =
         std::vector<uint8_t>(kSharedPayloadSlots * kSharedPayloadStride);
+
+    [[nodiscard]] static std::vector<TxPacketMeta> MakeMetadataRing() {
+        std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+        for (auto& meta : metadataRing) {
+            meta.payloadLength = 8;
+        }
+        return metadataRing;
+    }
 
     void SetUp() override {
         IsochMemoryConfig config;
@@ -50,13 +62,21 @@ protected:
 
         ring_.SetChannel(1);
         ASSERT_EQ(ring_.SetupRings(*dmaMemory_), kIOReturnSuccess);
+
+        const TxPayloadDmaSegment payloadSegment{
+            .deviceAddress = kSharedPayloadIOVA,
+            .length = sharedPayload_.size(),
+        };
+        ASSERT_TRUE(payloadDmaMap_.Configure(
+            std::span<const TxPayloadDmaSegment>(&payloadSegment, 1),
+            sharedPayload_.size()));
     }
 };
 
 TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     auto stats = ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     EXPECT_EQ(stats.packetsAssembled, Layout::kNumPackets);
 
     // Verify a few static descriptors in the slab
@@ -84,44 +104,269 @@ TEST_F(IsochTxDmaRingTest, PrimeInitializesStaticDescriptorChain) {
         EXPECT_EQ(immDesc->immediateData[0], 0u);
         EXPECT_EQ(immDesc->immediateData[1], 0u);
 
-        // Descriptor 2 (OL)
-        auto* desc2 = ring_.Slab().GetDescriptorPtr(descBase + 2);
-        
+        // Descriptor 2 (standard OUTPUT_MORE, first half of payload)
+        auto* desc2 = ring_.Slab().GetDescriptorPtr(
+            descBase + Layout::kFirstPayloadBlock);
+        const uint32_t expectedControl2 = OHCIDescriptor::BuildControl({
+            .reqCount = 4,
+            .command = OHCIDescriptor::kCmdOutputMore,
+            .key = OHCIDescriptor::kKeyStandard,
+            .interruptBits = OHCIDescriptor::kIntNever,
+            .branchBits = OHCIDescriptor::kBranchNever,
+        });
+        EXPECT_EQ(desc2->control, expectedControl2);
+        EXPECT_EQ(desc2->dataAddress,
+                  kSharedPayloadIOVA +
+                      (pktIdx % kSharedPayloadSlots) * kSharedPayloadStride);
+        EXPECT_EQ(desc2->branchWord, 0u);
+        EXPECT_EQ(desc2->statusWord, 0u);
+
+        // Descriptor 3 (OUTPUT_LAST, second half of payload)
+        auto* desc3 = ring_.Slab().GetDescriptorPtr(
+            descBase + Layout::kCompletionBlock);
         const uint8_t expectedInterrupt =
             ASFW::Isoch::Core::IsTimingGroupBoundary(pktIdx)
                 ? OHCIDescriptor::kIntAlways
                 : OHCIDescriptor::kIntNever;
-        const uint32_t expectedControl2 = OHCIDescriptor::BuildControl({
-            .reqCount = 0,
+        const uint32_t expectedControl3 = OHCIDescriptor::BuildControl({
+            .reqCount = 4,
             .command = OHCIDescriptor::kCmdOutputLast,
             .key = OHCIDescriptor::kKeyStandard,
             .interruptBits = expectedInterrupt,
             .branchBits = OHCIDescriptor::kBranchAlways,
         }) | (1u << (OHCIDescriptor::kStatusShift + OHCIDescriptor::kControlHighShift));
         
-        EXPECT_EQ(desc2->control, expectedControl2);
-        EXPECT_EQ(desc2->dataAddress,
+        EXPECT_EQ(desc3->control, expectedControl3);
+        EXPECT_EQ(desc3->dataAddress,
                   kSharedPayloadIOVA +
-                      (pktIdx % kSharedPayloadSlots) * kSharedPayloadStride);
+                      (pktIdx % kSharedPayloadSlots) * kSharedPayloadStride +
+                      4);
 
         const uint32_t nextPktIdx = (pktIdx + 1) % Layout::kNumPackets;
         const uint32_t nextDescIOVA = ring_.Slab().GetDescriptorIOVA(nextPktIdx * Layout::kBlocksPerPacket);
-        EXPECT_EQ(desc2->branchWord, (nextDescIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket);
+        EXPECT_EQ(desc3->branchWord, (nextDescIOVA & 0xFFFFFFF0u) | Layout::kBlocksPerPacket);
     }
 }
 
 TEST_F(IsochTxDmaRingTest, PrimeRejectsMissingSharedPayloadGeometry) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
-    EXPECT_EQ(ring_.Prime(0, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, 0, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, 0, metadataRing.data(), 0).packetsAssembled, 0u);
-    EXPECT_EQ(ring_.Prime(kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, nullptr, 0).packetsAssembled, 0u);
+    auto metadataRing = MakeMetadataRing();
+    TxPayloadDmaMap invalidMap;
+    EXPECT_EQ(ring_.Prime(invalidMap, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
+    EXPECT_EQ(ring_.Prime(payloadDmaMap_, 0, kSharedPayloadStride, metadataRing.data(), 0).packetsAssembled, 0u);
+    EXPECT_EQ(ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, 0, metadataRing.data(), 0).packetsAssembled, 0u);
+    EXPECT_EQ(ring_.Prime(payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, nullptr, 0).packetsAssembled, 0u);
+}
+
+TEST_F(IsochTxDmaRingTest, PrimeUsesMappedIOVAOnBothSidesOfPageBoundary) {
+    constexpr uint64_t kFirstPageIOVA = 0x71000000u;
+    constexpr uint64_t kRemainingPagesIOVA = 0x72000000u;
+    constexpr uint64_t kPageBytes = 4096;
+    const std::array<TxPayloadDmaSegment, 2> segments{{
+        {.deviceAddress = kFirstPageIOVA, .length = kPageBytes},
+        {
+            .deviceAddress = kRemainingPagesIOVA,
+            .length = sharedPayload_.size() - kPageBytes,
+        },
+    }};
+    TxPayloadDmaMap segmentedMap;
+    ASSERT_TRUE(segmentedMap.Configure(segments, sharedPayload_.size()));
+
+    auto metadataRing = MakeMetadataRing();
+    for (auto& meta : metadataRing) {
+        meta.payloadLength = 296;
+    }
+
+    const auto prime = ring_.Prime(
+        segmentedMap,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        0);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+
+    const auto* lastPacketOnFirstPage =
+        ring_.Slab().GetDescriptorPtr(
+            7 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    const auto* firstPacketOnSecondPage =
+        ring_.Slab().GetDescriptorPtr(
+            8 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    EXPECT_EQ(lastPacketOnFirstPage->dataAddress,
+              kFirstPageIOVA + 7 * kSharedPayloadStride);
+    EXPECT_EQ(firstPacketOnSecondPage->dataAddress, kRemainingPagesIOVA);
+}
+
+TEST_F(IsochTxDmaRingTest, PrimeProgramsPayloadCrossingDmaSegment) {
+    constexpr uint64_t kBoundaryOffset = 3840;
+    const std::array<TxPayloadDmaSegment, 2> segments{{
+        {.deviceAddress = 0x73000000u, .length = kBoundaryOffset},
+        {
+            .deviceAddress = 0x74000000u,
+            .length = sharedPayload_.size() - kBoundaryOffset,
+        },
+    }};
+    TxPayloadDmaMap segmentedMap;
+    ASSERT_TRUE(segmentedMap.Configure(segments, sharedPayload_.size()));
+
+    auto metadataRing = MakeMetadataRing();
+    metadataRing[7].payloadLength = 296;
+
+    const auto prime = ring_.Prime(
+        segmentedMap,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        0);
+    ASSERT_EQ(prime.packetsAssembled, Layout::kNumPackets);
+
+    const uint32_t descBase = 7 * Layout::kBlocksPerPacket;
+    const auto* desc2 = ring_.Slab().GetDescriptorPtr(
+        descBase + Layout::kFirstPayloadBlock);
+    const auto* desc3 = ring_.Slab().GetDescriptorPtr(
+        descBase + Layout::kCompletionBlock);
+    EXPECT_EQ(desc2->control & 0xffffu, 256u);
+    EXPECT_EQ(desc2->dataAddress, 0x73000000u + 7 * kSharedPayloadStride);
+    EXPECT_EQ(desc3->control & 0xffffu, 40u);
+    EXPECT_EQ(desc3->dataAddress, 0x74000000u);
+}
+
+TEST_F(IsochTxDmaRingTest, PrimeRejectsPayloadSpanningThreeDmaSegments) {
+    const std::array<TxPayloadDmaSegment, 3> segments{{
+        {.deviceAddress = 0x74100000u, .length = 100},
+        {.deviceAddress = 0x74200000u, .length = 100},
+        {
+            .deviceAddress = 0x74300000u,
+            .length = sharedPayload_.size() - 200,
+        },
+    }};
+    TxPayloadDmaMap segmentedMap;
+    ASSERT_TRUE(segmentedMap.Configure(segments, sharedPayload_.size()));
+
+    auto metadataRing = MakeMetadataRing();
+    metadataRing[0].payloadLength = 296;
+
+    const auto prime = ring_.Prime(
+        segmentedMap,
+        kSharedPayloadSlots,
+        kSharedPayloadStride,
+        metadataRing.data(),
+        0);
+    EXPECT_EQ(prime.packetsAssembled, 0u);
+}
+
+TEST_F(IsochTxDmaRingTest, RefillUsesMappedIOVAAfterPageBoundary) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+
+    constexpr uint64_t kFirstPageIOVA = 0x75000000u;
+    constexpr uint64_t kRemainingPagesIOVA = 0x76000000u;
+    constexpr uint64_t kPageBytes = 4096;
+    const std::array<TxPayloadDmaSegment, 2> segments{{
+        {.deviceAddress = kFirstPageIOVA, .length = kPageBytes},
+        {
+            .deviceAddress = kRemainingPagesIOVA,
+            .length = sharedPayload_.size() - kPageBytes,
+        },
+    }};
+    TxPayloadDmaMap segmentedMap;
+    ASSERT_TRUE(segmentedMap.Configure(segments, sharedPayload_.size()));
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    for (uint32_t i = 0; i < 9; ++i) {
+        metadataRing[i].payloadLength = 296;
+        metadataRing[i].commitGen.store(1, std::memory_order_release);
+    }
+
+    const uint32_t nextPacketIOVA =
+        ring_.Slab().GetDescriptorIOVA(9 * Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        nextPacketIOVA | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto outcome = ring_.Refill(
+        hardware_,
+        0,
+        metadataRing.data(),
+        &controlBlock,
+        kSharedPayloadSlots,
+        sharedPayload_.data(),
+        segmentedMap);
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_EQ(outcome.packetsFilled, 9u);
+
+    const auto* firstPacketOnSecondPage =
+        ring_.Slab().GetDescriptorPtr(
+            8 * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+    EXPECT_EQ(firstPacketOnSecondPage->dataAddress, kRemainingPagesIOVA);
+}
+
+TEST_F(IsochTxDmaRingTest, RefillProgramsPayloadCrossingDmaSegment) {
+    auto metadataRing = MakeMetadataRing();
+    (void)ring_.Prime(
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+    ring_.ResetForStart();
+    ring_.SeedCycleTracking(hardware_);
+
+    const std::array<TxPayloadDmaSegment, 2> segments{{
+        {.deviceAddress = 0x77000000u, .length = 128},
+        {
+            .deviceAddress = 0x78000000u,
+            .length = sharedPayload_.size() - 128,
+        },
+    }};
+    TxPayloadDmaMap crossingMap;
+    ASSERT_TRUE(crossingMap.Configure(segments, sharedPayload_.size()));
+
+    TxStreamControl controlBlock{};
+    controlBlock.numSlots = kSharedPayloadSlots;
+    controlBlock.slotStrideBytes = kSharedPayloadStride;
+    controlBlock.maxPacketBytes = kSharedPayloadStride;
+    metadataRing[0].payloadLength = 296;
+    metadataRing[0].commitGen.store(1, std::memory_order_release);
+
+    const uint32_t nextPacketIOVA =
+        ring_.Slab().GetDescriptorIOVA(Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)),
+        nextPacketIOVA | Layout::kBlocksPerPacket);
+    hardware_.SetTestRegister(
+        static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(0)),
+        0);
+
+    const auto outcome = ring_.Refill(
+        hardware_,
+        0,
+        metadataRing.data(),
+        &controlBlock,
+        kSharedPayloadSlots,
+        sharedPayload_.data(),
+        crossingMap);
+
+    ASSERT_TRUE(outcome.ok);
+    ASSERT_EQ(outcome.packetsFilled, 1u);
+
+    const auto* desc2 = ring_.Slab().GetDescriptorPtr(
+        Layout::kFirstPayloadBlock);
+    const auto* desc3 = ring_.Slab().GetDescriptorPtr(
+        Layout::kCompletionBlock);
+    EXPECT_EQ(desc2->control & 0xffffu, 128u);
+    EXPECT_EQ(desc2->dataAddress, 0x77000000u);
+    EXPECT_EQ(desc3->control & 0xffffu, 168u);
+    EXPECT_EQ(desc3->dataAddress, 0x78000000u);
 }
 
 TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
@@ -130,7 +375,6 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
 
     const uint32_t numSlots = kSharedPayloadSlots;
     uint8_t* payloadBase = sharedPayload_.data();
-    const uint64_t payloadIOVA = kSharedPayloadIOVA;
 
     // Pre-populate metadata ring for first lap (8 packets)
     for (uint32_t i = 0; i < 8; ++i) {
@@ -161,14 +405,17 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
 
     // Write mock hw timestamp values into retired OL status words
     for (uint32_t i = 0; i < 8; ++i) {
-        auto* desc2 = ring_.Slab().GetDescriptorPtr(i * Layout::kBlocksPerPacket + 2);
+        auto* desc2 = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
         const uint16_t timestamp =
             static_cast<uint16_t>((3u << 13) | (3000u + i));
         desc2->statusWord = (0x8000u << 16) | timestamp;
     }
 
     // Run Refill
-    auto outcome = ring_.Refill(hardware_, 0, metadataRing.data(), &controlBlock, numSlots, payloadBase, payloadIOVA);
+    auto outcome = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock, numSlots,
+        payloadBase, payloadDmaMap_);
 
     EXPECT_TRUE(outcome.ok);
     EXPECT_EQ(outcome.packetsFilled, 8);
@@ -205,17 +452,25 @@ TEST_F(IsochTxDmaRingTest, RefillConsumesMetadataAndPushesStamps) {
         EXPECT_EQ(immDesc->immediateData[0], 0x11110000 + i);
         EXPECT_EQ(immDesc->immediateData[1], 0x22220000 + i);
 
-        auto* desc2 = ring_.Slab().GetDescriptorPtr(i * Layout::kBlocksPerPacket + 2);
-        EXPECT_EQ(desc2->control & 0xFFFF, 100 + i * 4);
+        auto* desc2 = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kFirstPayloadBlock);
+        auto* desc3 = ring_.Slab().GetDescriptorPtr(
+            i * Layout::kBlocksPerPacket + Layout::kCompletionBlock);
+        const uint32_t firstLength = (100 + i * 4) / 2;
+        EXPECT_EQ(desc2->control & 0xFFFF, firstLength);
         EXPECT_EQ(desc2->dataAddress,
                   kSharedPayloadIOVA + i * kSharedPayloadStride);
+        EXPECT_EQ(desc3->control & 0xFFFF, firstLength);
+        EXPECT_EQ(desc3->dataAddress,
+                  kSharedPayloadIOVA + i * kSharedPayloadStride +
+                      firstLength);
     }
 }
 
 TEST_F(IsochTxDmaRingTest, CompletionNotificationCoalescesUntilHandled) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
-        kSharedPayloadIOVA,
+        payloadDmaMap_,
         kSharedPayloadSlots,
         kSharedPayloadStride,
         metadataRing.data(),
@@ -250,7 +505,7 @@ TEST_F(IsochTxDmaRingTest, CompletionNotificationCoalescesUntilHandled) {
             &controlBlock,
             kSharedPayloadSlots,
             sharedPayload_.data(),
-            kSharedPayloadIOVA);
+            payloadDmaMap_);
     };
 
     const auto first = refillTo(8);
@@ -281,9 +536,9 @@ TEST_F(IsochTxDmaRingTest, PreparationAcknowledgementNeverMovesBackward) {
 }
 
 TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
@@ -318,7 +573,7 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
         beforeWrapIOVA | Layout::kBlocksPerPacket);
     const auto beforeWrap = ring_.Refill(
         hardware_, 0, metadataRing.data(), &controlBlock,
-        kSharedPayloadSlots, sharedPayload_.data(), kSharedPayloadIOVA);
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
     ASSERT_TRUE(beforeWrap.ok);
     ASSERT_EQ(beforeWrap.packetsFilled, Layout::kNumPackets - 1);
 
@@ -331,7 +586,7 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
         afterWrapIOVA | Layout::kBlocksPerPacket);
     const auto afterWrap = ring_.Refill(
         hardware_, 0, metadataRing.data(), &controlBlock,
-        kSharedPayloadSlots, sharedPayload_.data(), kSharedPayloadIOVA);
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
     ASSERT_TRUE(afterWrap.ok);
     ASSERT_EQ(afterWrap.packetsFilled, 8u);
 
@@ -353,7 +608,7 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
 }
 
 TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     for (uint32_t packetIndex = 0;
          packetIndex < kSharedPayloadSlots;
          ++packetIndex) {
@@ -364,7 +619,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
     }
 
     const auto prime = ring_.Prime(
-        kSharedPayloadIOVA,
+        payloadDmaMap_,
         kSharedPayloadSlots,
         kSharedPayloadStride,
         metadataRing.data(),
@@ -395,7 +650,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
             &controlBlock,
             kSharedPayloadSlots,
             sharedPayload_.data(),
-            kSharedPayloadIOVA);
+            payloadDmaMap_);
     };
 
     for (uint32_t refill = 1; refill <= 10; ++refill) {
@@ -411,7 +666,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
 }
 
 TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     for (uint32_t packetIndex = 0;
          packetIndex < kSharedPayloadSlots;
          ++packetIndex) {
@@ -422,7 +677,7 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
     }
 
     const auto prime = ring_.Prime(
-        kSharedPayloadIOVA,
+        payloadDmaMap_,
         kSharedPayloadSlots,
         kSharedPayloadStride,
         metadataRing.data(),
@@ -453,7 +708,7 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
             &controlBlock,
             kSharedPayloadSlots,
             sharedPayload_.data(),
-            kSharedPayloadIOVA);
+            payloadDmaMap_);
     };
 
     for (uint32_t refill = 1; refill <= 10; ++refill) {
@@ -483,7 +738,7 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
 TEST_F(IsochTxDmaRingTest, PreparationSlackToleratesOneDelayedCompletionWake) {
     using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
 
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     for (uint32_t packetIndex = 0;
          packetIndex < kSharedPayloadSlots;
          ++packetIndex) {
@@ -494,7 +749,7 @@ TEST_F(IsochTxDmaRingTest, PreparationSlackToleratesOneDelayedCompletionWake) {
     }
 
     const auto prime = ring_.Prime(
-        kSharedPayloadIOVA,
+        payloadDmaMap_,
         kSharedPayloadSlots,
         kSharedPayloadStride,
         metadataRing.data(),
@@ -525,7 +780,7 @@ TEST_F(IsochTxDmaRingTest, PreparationSlackToleratesOneDelayedCompletionWake) {
             &controlBlock,
             kSharedPayloadSlots,
             sharedPayload_.data(),
-            kSharedPayloadIOVA);
+            payloadDmaMap_);
     };
 
     for (uint32_t refill = 1; refill <= 10; ++refill) {
@@ -555,9 +810,9 @@ TEST_F(IsochTxDmaRingTest, PreparationSlackToleratesOneDelayedCompletionWake) {
 }
 
 TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
@@ -578,16 +833,16 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
 
     const auto outcome = ring_.Refill(
         hardware_, 0, metadataRing.data(), &controlBlock,
-        kSharedPayloadSlots, sharedPayload_.data(), kSharedPayloadIOVA);
+        kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
 
     EXPECT_FALSE(outcome.ok);
     EXPECT_EQ(ring_.RTCounters().fatalPacketSize.load(std::memory_order_relaxed), 1u);
 }
 
 TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
-    std::vector<TxPacketMeta> metadataRing(kSharedPayloadSlots);
+    auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
-        kSharedPayloadIOVA, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
+        payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
     ring_.ResetForStart();
     ring_.SeedCycleTracking(hardware_);
 
@@ -595,7 +850,6 @@ TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
 
     const uint32_t numSlots = kSharedPayloadSlots;
     uint8_t* payloadBase = sharedPayload_.data();
-    const uint64_t payloadIOVA = kSharedPayloadIOVA;
 
     // Pre-populate metadata ring for first 7 packets, leave 8th uncommitted
     for (uint32_t i = 0; i < 7; ++i) {
@@ -614,7 +868,9 @@ TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
     hardware_.SetTestRegister(static_cast<Register32>(DMAContextHelpers::IsoXmitCommandPtr(0)), nextPktDescIOVA | Layout::kBlocksPerPacket);
 
     // Run Refill
-    auto outcome = ring_.Refill(hardware_, 0, metadataRing.data(), &controlBlock, numSlots, payloadBase, payloadIOVA);
+    auto outcome = ring_.Refill(
+        hardware_, 0, metadataRing.data(), &controlBlock, numSlots,
+        payloadBase, payloadDmaMap_);
 
     // Refill should fail because packet 7 is not committed
     EXPECT_FALSE(outcome.ok);

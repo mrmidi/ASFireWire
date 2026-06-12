@@ -126,15 +126,21 @@ void IsochTxDescriptorSlab::ValidateDescriptorLayout() const noexcept {
         }
     }
 
-    // Verify packet alignment: each packet's 3 descriptors must be in same page.
+    // Verify packet alignment: each packet program must stay in one page.
     for (uint32_t pkt = 0; pkt < Layout::kNumPackets; ++pkt) {
         const uint32_t base = pkt * Layout::kBlocksPerPacket;
-        const uint32_t page0 = GetDescriptorIOVA(base) / Layout::kOHCIPageSize;
-        const uint32_t page1 = GetDescriptorIOVA(base + 1) / Layout::kOHCIPageSize;
-        const uint32_t page2 = GetDescriptorIOVA(base + 2) / Layout::kOHCIPageSize;
-        if (page0 != page1 || page1 != page2) {
-            ASFW_LOG(Isoch, "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u,%u]",
-                     pkt, base, page0, page1, page2);
+        const uint32_t firstPage =
+            GetDescriptorIOVA(base) / Layout::kOHCIPageSize;
+        const uint32_t lastPage =
+            GetDescriptorIOVA(base + Layout::kBlocksPerPacket - 1) /
+            Layout::kOHCIPageSize;
+        if (firstPage != lastPage) {
+            ASFW_LOG(Isoch,
+                     "❌ IT: Packet %u spans pages! descBase=%u pages=[%u,%u]",
+                     pkt,
+                     base,
+                     firstPage,
+                     lastPage);
         }
     }
 #endif
