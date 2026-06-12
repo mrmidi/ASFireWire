@@ -260,12 +260,84 @@ Recommendations based on experience:
 
 ## Project structure
 
-The project is organized into several components:
+The repository is organized into these top-level components:
 
-- **ASFW** — Control app and installer for the driver, plus debugging utilities. Written in Swift/SwiftUI. This app is the supported method to install DriverKit-based drivers on macOS.
-- **ASFWDriver** — The main DriverKit-based FireWire driver implementation.
+- **ASFW/** — Control app and installer (Swift/SwiftUI). The supported method to install DriverKit-based drivers on macOS.
+- **ASFWDriver/** — Main DriverKit-based FireWire driver (detailed below).
+- **ASFWTests/** — DriverKit-independent unit and integration tests.
+- **tests/** — Additional test fixtures and test infrastructure.
+- **ADKVirtualAudioLab/** — AudioDriverKit virtual audio lab for testing audio paths without hardware.
+- **documentation/** — Public project documentation and implementation guides.
+- **diagrams/** — Architecture and design diagrams.
+- **tools/** — Build and development utilities.
 
-More detailed documentation for ASFWDriver is planned: [ASFWDriver README](https://github.com/mrmidi/ASFireWire/ASFWDriver/README.md).
+### ASFWDriver structure
+
+The driver is organized into functional subsystems:
+
+**Core components:**
+
+- **Hardware/** — OHCI register definitions, hardware interface abstraction, interrupt management.
+- **Controller/** — Controller state machine, initialization, lifecycle, discovery integration.
+- **Bus/** — Bus manager, Self-ID capture and decoding, topology management, bus reset coordination, gap count optimization, generation tracking, IRM (Isochronous Resource Manager), CSR space.
+- **ConfigROM/** — Config ROM building, staging, parsing, scanning, local/remote ROM storage.
+- **Discovery/** — Device enumeration, device manager, device registry, speed negotiation.
+- **Phy/** — PHY packet encoding and decoding (type-safe, constexpr).
+
+**Async subsystem:**
+
+- **Async/** — Asynchronous packet transmission and reception.
+  - **Commands/** — High-level async operations: Read, Write, Lock, PHY.
+  - **Contexts/** — OHCI DMA context wrappers (AT/AR Request/Response).
+  - **Core/** — Transaction management, DMA memory, payload handling.
+  - **Engine/** — Context managers and DMA engine coordination.
+  - **Rx/** — Packet parsing and routing.
+  - **Tx/** — Descriptor building, packet submission.
+  - **Track/** — Transaction tracking, label allocation, completion queues.
+  - **Interfaces/** — Abstract interfaces for testability (IDMAMemory, IFireWireBus).
+
+**Isochronous subsystem:**
+
+- **Isoch/** — Isochronous packet transmission and reception.
+  - **Transmit/** — Transmit context, DMA ring, descriptor slab.
+  - **Receive/** — Receive context, DMA ring.
+  - **Memory/** — Isochronous DMA memory management.
+  - **Config/** — Isochronous configuration and timing.
+  - **Core/** — Isochronous service orchestration.
+
+**Audio:**
+
+- **Audio/** — FireWire audio stack.
+  - **Protocols/** — Device-specific audio protocols.
+    - **DICE/** — DICE/TCAT protocol: core transaction layer, Focusrite-specific bring-up (Saffire Pro 24 DSP), generic TCAT backend.
+    - **Oxford/** — Oxford/Apogee protocol (Duet FireWire).
+    - **Backends/** — Audio backend implementations (AVC-driven and DICE-driven).
+  - **Engine/Direct/** — Direct audio engine: clock publisher, output reader, input writer, DICE TX stream engine, RX packet processor.
+  - **DriverKit/** — AudioDriverKit nub and driver (ASFWAudioDriver, ASFWAudioNub), controls, lifecycle, ZTS support.
+  - **Core/** — Audio coordinator, nub publisher, runtime registry.
+  - **Wire/** — Wire format layers: AM824, AMDTP, CIP, IEC 61883, Raw PCM 24-in-32.
+  - **Config/** — Audio constants, RX/TX profiles, timing cursor policy.
+  - **Ports/** — Audio port interfaces (TX slot provider, cycle timeline, diag sink).
+  - **Model/** — Audio device model and property keys.
+  - **Runtime/** — Host clock anchor, playback ring range.
+
+**Protocols:**
+
+- **Protocols/AVC/** — Audio/Video Control protocol: FCP transport, CMP plug connection, PCR space, AVC unit management, discovery, signal/stream format commands, descriptors.
+- **Protocols/SBP2/** — SBP-2 (storage) protocol: command ORBs, management ORBs, address space management, page tables.
+- **Protocols/Ports/** — Protocol port abstractions (FireWire bus port, RX port, register I/O).
+
+**Supporting subsystems:**
+
+- **DeviceProfiles/** — Device identity and audio profile registry. Vendor-specific profiles for Focusrite, Apogee, and Alesis.
+- **Diagnostics/** — Runtime diagnostics, controller metrics, status publishing, signposts.
+- **Logging/** — Structured logging system.
+- **Debug/** — Packet capture and async trace tools.
+- **Scheduling/** — Scheduler and watchdog coordinator.
+- **Snapshot/** — System state snapshots for debugging.
+- **Shared/** — Shared data models, completion helpers, memory abstractions, ring buffers.
+- **Common/** — Utilities: wire format helpers, barrier utilities, timing, type definitions.
+- **Testing/** — Test hooks and DriverKit stubs for offline testing.
 
 ## Building
 

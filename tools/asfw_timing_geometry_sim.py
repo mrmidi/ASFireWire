@@ -753,6 +753,30 @@ def run_tests() -> None:
     assert fixed_tx_result.request_generation == fixed_tx_result.handled_generation
     assert fixed_tx_result.coalesced_requests == 1, fixed_tx_result
 
+    # 11. Target TX Lead (384 packets / 6 groups slack):
+    #     Tolerates up to 5 delayed groups of preparation wake delay.
+    target_tx_lead_ok = TxPreparationGeometry(
+        name="TARGET TX LEAD: 384 packets, 5 delayed groups",
+        preparation_lead_packets=384,
+        delayed_request_group=159,
+        delayed_groups=5,
+    )
+    target_tx_ok_result = simulate_tx_preparation(target_tx_lead_ok)
+    assert target_tx_ok_result.fatal_fill_abs_idx is None, target_tx_ok_result
+
+    # 12. Target TX Lead (384 packets / 6 groups slack) with 6 delayed groups:
+    #     Must fail (fatal underrun) because the delay matches/exceeds the 6-group slack.
+    #     Requires groups_to_simulate >= 165 to hit the underrun boundary.
+    target_tx_lead_fail = TxPreparationGeometry(
+        name="TARGET TX LEAD: 384 packets, 6 delayed groups (Failure expected)",
+        preparation_lead_packets=384,
+        delayed_request_group=159,
+        delayed_groups=6,
+        groups_to_simulate=300,
+    )
+    target_tx_fail_result = simulate_tx_preparation(target_tx_lead_fail)
+    assert target_tx_fail_result.fatal_fill_abs_idx is not None, target_tx_fail_result
+
     print("All simulator validation checks passed successfully!\n")
 
 
@@ -771,6 +795,24 @@ def run_all() -> None:
             preparation_lead_packets=256,
             delayed_request_group=159,
             delayed_groups=1,
+        )
+    ))
+    print_tx_preparation_result(simulate_tx_preparation(
+        TxPreparationGeometry(
+            name="TARGET TX LEAD CROSS-VALIDATION: 384 packets, 5 delayed groups",
+            preparation_lead_packets=384,
+            delayed_request_group=159,
+            delayed_groups=5,
+            groups_to_simulate=300,
+        )
+    ))
+    print_tx_preparation_result(simulate_tx_preparation(
+        TxPreparationGeometry(
+            name="TARGET TX LEAD CROSS-VALIDATION: 384 packets, 6 delayed groups (FAIL)",
+            preparation_lead_packets=384,
+            delayed_request_group=159,
+            delayed_groups=6,
+            groups_to_simulate=300,
         )
     ))
 
