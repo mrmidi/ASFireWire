@@ -62,13 +62,14 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kTxSharedSlotPackets = 512;
 
     static constexpr uint32_t kTxHardwareRingPackets = 192;
-    // Keep two completion groups prepared beyond the hardware-owned ring.
-    // One group is consumed by the normal refill itself; the second gives
-    // the cross-driver preparation action one full additional period to run.
-    // At 48 kHz this is 64 packets / 384 frames / 8 ms, matching the output
-    // preparation deadline declared by TimingCursorPolicy.
+    // Keep six completion groups prepared beyond the hardware-owned ring.
+    // This value is experimental and should be tuned if required.
+    // One group is consumed by the normal refill itself; the additional groups
+    // give the cross-driver preparation action extra periods to run to tolerate
+    // scheduling jitter from DriverKit user-space execution.
+    // At 48 kHz this is 192 packets / 1152 frames / 24 ms.
     static constexpr uint32_t kTxPreparationSlackPackets =
-        2 * kTxPacketsPerGroup;
+        6 * kTxPacketsPerGroup;
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
 };

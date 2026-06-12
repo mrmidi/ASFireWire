@@ -46,8 +46,8 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 256U);
     EXPECT_EQ(Geometry::kTxSharedSlotPackets, 512U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 192U);
-    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 64U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 256U);
+    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 192U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 384U);
 
     // The load-bearing relationships behind the values above.
     // ZTS grid aligned 1:1 with the DMA interrupt program: the interrupt IS

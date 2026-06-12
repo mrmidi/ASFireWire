@@ -231,6 +231,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     hostBuffer.channels = channels;
 
                     driverIvars->runtime.txStreamEngine.WriteHostOutputInt32(hostBuffer);
+                    control->playbackRingReadFrame.store(sampleTime + ioBufferFrameSize, std::memory_order_release);
                 }
 
                 control->counters.CountWriteEnd();
