@@ -109,53 +109,126 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
 bool PrimeSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;
     auto* audioDevice = ivars.audioDevice.get();
-    if (!control || !audioDevice) {
+    auto* txControl = ivars.runtime.txSlotProvider.controlBlock;
+    if (!control || !audioDevice || !txControl) {
         return false;
     }
 
-    const auto queuedResult =
-        PublishSharedZeroTimestampToHAL(ivars, "prime-real", true);
-    if (queuedResult ==
-        ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published) {
-        return true;
+    constexpr uint32_t kRealAnchorTimeoutMs = 1000;
+    uint64_t startupPrepared = 0;
+    uint32_t startupPreparationPasses = 0;
+    for (uint32_t elapsedMs = 0;
+         elapsedMs <= kRealAnchorTimeoutMs;
+         ++elapsedMs) {
+        // StartDevice and TxPreparationReady share a serialized DriverKit
+        // action path. While this synchronous wait owns that path, service the
+        // producer lead directly or the 512-slot prefill reaches lap two before
+        // the first real RX anchor is qualified. Keep these startup additions
+        // as NO_INFO; the normal action seeds RX-recovered TX timing after HAL
+        // has accepted the real anchor.
+        const auto txStatus =
+            txControl->statusWord.load(std::memory_order_acquire);
+        if (txStatus !=
+            ASFW::IsochTransport::TxStreamStatus::kRunning) {
+            ASFW_LOG(
+                DirectAudio,
+                "ADK FATAL ZTS wait lost TX status=%u completion=%llu expose=%llu prepared=%llu passes=%u",
+                static_cast<uint32_t>(txStatus),
+                txControl->completionCursor.load(
+                    std::memory_order_relaxed),
+                txControl->exposeCursor.load(
+                    std::memory_order_relaxed),
+                startupPrepared,
+                startupPreparationPasses);
+            return false;
+        }
+
+        const uint64_t completionCursor =
+            txControl->completionCursor.load(std::memory_order_acquire);
+        const uint64_t exposeCursor =
+            txControl->exposeCursor.load(std::memory_order_acquire);
+        const uint64_t targetPacketIndex =
+            completionCursor +
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kTxPreparationLeadPackets;
+        if (targetPacketIndex > exposeCursor) {
+            const uint32_t prepared = PrepareTransmitSlots(
+                ivars,
+                exposeCursor,
+                targetPacketIndex,
+                ASFW::IsochTransport::AudioTimingGeometry::
+                    kTxPreparationLeadPackets,
+                false);
+            startupPrepared += prepared;
+            ++startupPreparationPasses;
+        }
+        txControl->MarkPreparationHandled(
+            txControl->preparationRequestGeneration.load(
+                std::memory_order_acquire));
+
+        const auto queuedResult =
+            PublishSharedZeroTimestampToHAL(
+                ivars, "prime-real", true);
+        if (queuedResult ==
+            ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published) {
+            ASFW_LOG(
+                DirectAudio,
+                "ADK DBG ZTS wait maintained TX prepared=%llu passes=%u completion=%llu expose=%llu",
+                startupPrepared,
+                startupPreparationPasses,
+                txControl->completionCursor.load(
+                    std::memory_order_relaxed),
+                txControl->exposeCursor.load(
+                    std::memory_order_relaxed));
+            return true;
+        }
+
+        // ZtsAnchorReady may have drained the queue concurrently. A non-zero
+        // generation proves that a real RX-derived anchor already reached HAL.
+        if (ivars.runtime.lastHalZeroTimestampGeneration.load(
+                std::memory_order_acquire) != 0) {
+            ASFW_LOG(
+                DirectAudio,
+                "ADK DBG ZTS prime observed already-published real anchor sample=%llu host=%llu",
+                ivars.runtime.lastHalZeroTimestampSampleFrame.load(
+                    std::memory_order_relaxed),
+                ivars.runtime.lastHalZeroTimestampHostTicks.load(
+                    std::memory_order_relaxed));
+            return true;
+        }
+
+        if (elapsedMs != kRealAnchorTimeoutMs) {
+            IOSleep(1);
+        }
     }
 
-    const uint32_t P =
-        ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking()
-            .HalZeroTimestampPeriodFrames();
-    if (P == 0) {
-        return false;
-    }
-    const double rate =
-        ivars.device.currentSampleRate > 0
-            ? ivars.device.currentSampleRate
-            : 48000.0;
-    const uint32_t nanosPerSampleQ8 =
-        static_cast<uint32_t>((1000000000ULL << 8) / rate);
-    const uint64_t periodNanos =
-        (static_cast<uint64_t>(P) * nanosPerSampleQ8) >> 8;
-    const uint64_t periodTicks =
-        ASFW::Timing::nanosToHostTicks(periodNanos);
-    const uint64_t now = mach_absolute_time();
-    const uint64_t hostTicks =
-        now > periodTicks ? now - periodTicks : now;
-    audioDevice->UpdateCurrentZeroTimestamp(0, hostTicks);
-    ivars.runtime.lastHalZeroTimestampSampleFrame.store(
-        0, std::memory_order_relaxed);
-    ivars.runtime.lastHalZeroTimestampHostTicks.store(
-        hostTicks, std::memory_order_relaxed);
+    ASFW::Driver::RxSytCadence::Snapshot cadence{};
+    const bool haveCadence =
+        control->rxSytCadence.TrySnapshot(cadence);
     ASFW_LOG(
         DirectAudio,
-        "ADK DBG ZTS publish reason=prime-synthetic sample=0 host=%llu period=%u",
-        hostTicks,
-        P);
-    return true;
+        "ADK FATAL ZTS no real RX anchor after %u ms cadenceSnapshot=%d established=%d updates=%u rollingTicks=%u queueWrite=%llu queueRead=%llu stale=%llu overflow=%llu",
+        kRealAnchorTimeoutMs,
+        haveCadence,
+        haveCadence ? cadence.established : false,
+        haveCadence ? cadence.validUpdates : 0,
+        haveCadence ? cadence.rollingCadenceTicks : 0,
+        control->hostClockAnchor.producerCursor.load(
+            std::memory_order_relaxed),
+        control->hostClockAnchor.consumerCursor.load(
+            std::memory_order_relaxed),
+        control->hostClockAnchor.staleUpdates.load(
+            std::memory_order_relaxed),
+        control->hostClockAnchor.queueOverflows.load(
+            std::memory_order_relaxed));
+    return false;
 }
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
                              uint64_t targetPacketIndex,
-                             uint32_t maxToPrepare) noexcept {
+                             uint32_t maxToPrepare,
+                             bool allowRecoveredClock) noexcept {
     const uint32_t numSlots = ivars.runtime.txSlotProvider.numSlots;
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
     auto* directControl = ivars.runtime.directAudioGraph.control;
@@ -172,7 +245,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             ivars.runtime.txTimingModel.IsSeeded();
         const bool cadenceWouldCarryData =
             ivars.runtime.txStreamEngine.NextPacketWouldCarryData();
-        if (cadenceWouldCarryData) {
+        if (allowRecoveredClock && cadenceWouldCarryData) {
             int64_t packetAnchorTicks = 0;
             if (ivars.runtime.txExecutionTimeline.AnchorForPacket(
                     nextPacketToPrepare, packetAnchorTicks)) {
@@ -180,6 +253,43 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                     ivars.runtime.txTimingModel.PeekNextDataSyt(
                         packetAnchorTicks,
                         directControl->rxSytCadence);
+                if (decision.seededThisCall && decision.syt != 0xFFFF) {
+                    ASFW::Driver::RxSytCadence::Snapshot rx{};
+                    if (directControl->rxSytCadence.TrySnapshot(rx) &&
+                        rx.established) {
+                        const int64_t phaseTicks =
+                            ivars.runtime.txTimingModel.OutputPhaseTicks();
+                        const int64_t rxRecoveredPhaseTicksDelayFree =
+                            ASFW::Timing::normalizeOffsetDomain(
+                                rx.recoveredPhaseTicks -
+                                ivars.runtime.txTimingModel.GetConfig()
+                                    .xmitTransferDelayTicks);
+                        const int64_t deltaTicks =
+                            ASFW::Timing::extOffsetDiff(
+                                phaseTicks, rxRecoveredPhaseTicksDelayFree);
+                        const int64_t deltaFrames = deltaTicks / 512;
+                        const uint64_t lastZtsFrame =
+                            ivars.runtime.lastHalZeroTimestampSampleFrame.load(
+                                std::memory_order_relaxed);
+                        constexpr uint32_t kFpp =
+                            ASFW::IsochTransport::AudioTimingGeometry::
+                                kFramesPerDataPacket;
+                        const uint64_t alignedFrame =
+                            ((lastZtsFrame + deltaFrames) / kFpp) * kFpp;
+                        if (ivars.runtime.txStreamEngine.AlignFrameCursorOnce(
+                                alignedFrame)) {
+                            ASFW_LOG(
+                                DirectAudio,
+                                "ADK DBG TX timeline initially aligned: phaseTicks=%lld rxPhase=%lld deltaTicks=%lld deltaFrames=%lld lastZtsFrame=%llu alignedFrame=%llu",
+                                phaseTicks,
+                                rxRecoveredPhaseTicksDelayFree,
+                                deltaTicks,
+                                deltaFrames,
+                                lastZtsFrame,
+                                alignedFrame);
+                        }
+                    }
+                }
             }
         }
 
@@ -356,7 +466,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         exposeCursor,
         targetPacketIndex,
         ASFW::IsochTransport::AudioTimingGeometry::
-            kTxPreparationLeadPackets);
+            kTxPreparationLeadPackets,
+        true);
 
     if (auto* directControl =
             ivars->runtime.directAudioGraph.control) {

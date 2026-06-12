@@ -299,9 +299,21 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         ivars->runtime.txStreamEngine.ResetForStart(0, 0);
 
         ASFW::Driver::TxTimingModel::Config timeConfig{};
+        const uint32_t timingRateHz =
+            ivars->device.currentSampleRate > 0
+                ? static_cast<uint32_t>(ivars->device.currentSampleRate)
+                : 48000u;
+        timeConfig.xmitTransferDelayTicks =
+            ASFW::Driver::TxTimingModel::XmitTransferDelayTicksForRate(
+                timeConfig.sytIntervalFrames, timingRateHz);
         ivars->runtime.txTimingModel.Configure(timeConfig);
 
-        ASFW_LOG(Audio, "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u", txConfig.sid);
+        ASFW_LOG(Audio,
+                 "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u xmitTransferDelayTicks=%lld (rate=%u sytInterval=%u)",
+                 txConfig.sid,
+                 timeConfig.xmitTransferDelayTicks,
+                 timingRateHz,
+                 timeConfig.sytIntervalFrames);
     }
 
     // Seed the transmit ring with cadence-correct NO_INFO packets before
@@ -364,7 +376,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                 exposeCursor,
                 targetPacketIndex,
                 ASFW::IsochTransport::AudioTimingGeometry::
-                    kTxPreparationLeadPackets);
+                    kTxPreparationLeadPackets,
+                false);
             ASFW_LOG(Audio,
                      "ASFWAudioDriver: bring-up TX catch-up prepared=%u expose=%llu target=%llu",
                      prepared, exposeCursor, targetPacketIndex);

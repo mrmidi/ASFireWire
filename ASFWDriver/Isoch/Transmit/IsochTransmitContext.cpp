@@ -422,7 +422,10 @@ void IsochTransmitContext::StopImmediatelyForTxFault() noexcept {
         hardware_->Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex_));
     }
     if (controlBlock_) {
-        controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+        const auto currentStatus = controlBlock_->statusWord.load(std::memory_order_acquire);
+        if (currentStatus != ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal) {
+            controlBlock_->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
+        }
     }
     state_ = State::Stopped;
     ASFW_LOG(Isoch, "IT FATAL STOP: RUN cleared and interrupt masked");
