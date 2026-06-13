@@ -231,7 +231,10 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         }
 
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-        timing.txClockValid = decision.syt != 0xFFFFu;
+        timing.txClockValid =
+            decision.syt != 0xFFFFu &&
+            decision.health !=
+                ASFW::Driver::TxTimingModel::LeadHealth::kLate;
         timing.disposition =
             timing.txClockValid
                 ? ASFW::Protocols::Audio::AMDTP::
