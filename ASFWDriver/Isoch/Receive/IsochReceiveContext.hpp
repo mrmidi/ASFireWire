@@ -18,6 +18,7 @@
 
 #include "IsochRxDmaRing.hpp"
 #include "IsochRxTiming.hpp"
+#include "ZtsTelemetry.hpp"
 #include "../../Shared/Isoch/AudioTimingGeometry.hpp"
 #include "../../Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "../../Audio/Engine/Direct/AudioClockPublisher.hpp"
@@ -104,6 +105,17 @@ public:
 
     void LogHardwareState();
 
+    // Off-hot-path drain of the ZTS clock telemetry captured in Poll(). Called
+    // by the watchdog; formats up to `maxRecords` evenly-strided records (plus
+    // any seed) into the Zts log category. Never call from the interrupt path.
+    void DrainZtsTelemetry(uint32_t maxRecords);
+
+    // Off-hot-path drain of the Isoch-Transmit SYT resync telemetry, captured by
+    // the audio driver into the shared AudioTransportControlBlock. Formats up to
+    // `maxRecords` strided records (plus every seed/reseed) into the TxSyt log
+    // category. Called by the watchdog; the producer runs on the audio queue.
+    void DrainTxSytTelemetry(uint32_t maxRecords);
+
 private:
     struct Registers {
         ::ASFW::Driver::Register32 CommandPtr;
@@ -144,6 +156,7 @@ private:
     uint64_t rxTimestampInvalidCount_{0};
 
     bool rxCadenceEstablishedLogged_{false};
+    Rx::ZtsTelemetryRing ztsTelemetry_{};
     TimingLossCallback timingLossCallback_{nullptr};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{nullptr};
 

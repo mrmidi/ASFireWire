@@ -32,5 +32,7 @@ os_log_t Isoch()      { static os_log_t log = MakeCategory("isoch");      return
 os_log_t Audio()      { static os_log_t log = MakeCategory("audio");      return log; }
 os_log_t DirectAudio() { static os_log_t log = MakeCategory("directaudio"); return log; }
 os_log_t DICE()       { static os_log_t log = MakeCategory("dice");       return log; }
+os_log_t Zts()        { static os_log_t log = MakeCategory("zts");        return log; }
+os_log_t TxSyt()      { static os_log_t log = MakeCategory("txsyt");      return log; }
 
 } // namespace ASFW::Driver::Logging

@@ -99,6 +99,8 @@ os_log_t Isoch();
 os_log_t Audio();
 os_log_t DirectAudio();
 os_log_t DICE();
+os_log_t Zts();
+os_log_t TxSyt();
 } // namespace ASFW::Driver::Logging
 
 // ----- time helpers (header-only, safe in DriverKit) -----

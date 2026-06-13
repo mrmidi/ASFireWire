@@ -5,6 +5,7 @@
 #include "DeviceTimeline.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
+#include "TxSytTelemetry.hpp"
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 
@@ -94,6 +95,7 @@ struct AudioTransportControlBlock final {
     AudioRtCounters counters{};
     HostClockAnchorState hostClockAnchor{};
     ASFW::Driver::RxSytCadence rxSytCadence{};
+    TxSytTelemetryRing txSytTelemetry{};
 
     std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
     std::atomic<uint64_t> fatalGeneration{0};
@@ -144,6 +146,7 @@ struct AudioTransportControlBlock final {
         counters.Reset();
         hostClockAnchor.Reset();
         rxSytCadence.Reset();
+        txSytTelemetry.Reset();
 
         fatalReason.store(FatalStreamReason::None, std::memory_order_release);
         fatalGeneration.store(0, std::memory_order_release);

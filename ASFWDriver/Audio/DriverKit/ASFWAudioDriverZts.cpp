@@ -271,6 +271,38 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         directControl->counters.txPackets.fetch_add(
             1, std::memory_order_relaxed);
 
+        // [TxSyt] resync telemetry: capture the full servo operand set whenever
+        // the timing model produced a real decision this packet. POD store only
+        // (no IO); the main-driver watchdog drains the shared ring off this path.
+        if (decision.health !=
+            ASFW::Driver::TxTimingModel::LeadHealth::kNotSeeded) {
+            ASFW::Audio::Runtime::TxSytTelemetryRecord rec{};
+            rec.packetIndex = nextPacketToPrepare;
+            rec.packetAnchorTicks = decision.packetAnchorTicks;
+            rec.phaseTicksPre = decision.phaseTicksPre;
+            rec.phaseTicksPost = decision.phaseTicksPost;
+            rec.recoveredPhaseTicks = decision.recoveredPhaseTicks;
+            rec.rxPhaseDelayFree = decision.rxPhaseDelayFree;
+            rec.phaseError = decision.phaseError;
+            rec.frameError = decision.frameError;
+            rec.correctionTicks = decision.correctionTicks;
+            rec.leadTicks = decision.leadTicks;
+            rec.wireLeadTicks = decision.wireLeadTicks;
+            rec.rollingCadenceTicks = decision.rollingCadenceTicks;
+            rec.pendingCadenceTicks = decision.pendingCadenceTicks;
+            rec.cadenceReadIndex = decision.cadenceReadIndex;
+            rec.syt = decision.syt;
+            rec.health = static_cast<uint8_t>(decision.health);
+            namespace TxFlags = ASFW::Audio::Runtime::TxSytFlags;
+            uint8_t flags = 0;
+            if (decision.seededThisCall) flags |= TxFlags::kSeeded;
+            if (decision.forceAdjustFired) flags |= TxFlags::kForceAdjust;
+            if (decision.reseeded) flags |= TxFlags::kReseeded;
+            if (meta.payloadLength > 8) flags |= TxFlags::kCommitted;
+            rec.flags = flags;
+            directControl->txSytTelemetry.Record(rec);
+        }
+
         nextPacketToPrepare++;
         preparedCount++;
     }

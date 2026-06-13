@@ -123,6 +123,7 @@ kern_return_t IsochReceiveContext::Start() {
     rxTimestampValidCount_ = 0;
     rxTimestampInvalidCount_ = 0;
     rxCadenceEstablishedLogged_ = false;
+    ztsTelemetry_.Reset();
     (void)ASFW::Timing::initializeHostTimebase();
 
     rxLock_.clear(std::memory_order_release);
@@ -304,6 +305,8 @@ uint32_t IsochReceiveContext::Poll() {
                 // not on the current packet carrying a SYT.
                 bool rxClockEstablished = false;
                 int64_t sytLeadTicks = 0;
+                uint32_t rxRollingCadenceTicks = 0;
+                int64_t rxRecoveredPhaseTicks = 0;
                 if (hasHardwareTimestamp && directInputView_.control) {
                     if (result.hasValidCip && result.syt != 0xFFFF) {
                         (void)directInputView_.control->rxSytCadence.Observe(
@@ -323,6 +326,8 @@ uint32_t IsochReceiveContext::Poll() {
                             cadence) &&
                         cadence.established) {
                         rxClockEstablished = true;
+                        rxRollingCadenceTicks = cadence.rollingCadenceTicks;
+                        rxRecoveredPhaseTicks = cadence.recoveredPhaseTicks;
                         if (!rxCadenceEstablishedLogged_) {
                             const uint16_t delayedReadIndex =
                                 static_cast<uint16_t>(
@@ -393,27 +398,31 @@ uint32_t IsochReceiveContext::Poll() {
                                     publishResult
                                         .notificationGeneration);
                             }
-                            if (rxZtsPublishCount_ <= 8 ||
-                                (rxZtsPublishCount_ % 128) == 0) {
-                                ASFW_LOG(
-                                    Isoch,
-                                    "ZTS publish grid count=%llu frame=%llu host=%llu period=%llu rate=%u",
-                                    rxZtsPublishCount_,
-                                    gridFrame,
-                                    gridHostTicks,
-                                    kZtsPeriodFrames,
-                                    directInputView_.sampleRateHz);
-                                ASFW_LOG(
-                                    Isoch,
-                                    "ZTS source desc=%u rawRxTs=0x%04x rxCycle=0x%08x drainCycle=0x%08x ageTicks=%lld syt=0x%04x sytLeadTicks=%lld",
-                                    pkt.descriptorIndex,
-                                    result.receiveCycleTimestamp,
-                                    rxTimestamp.cycleTimer,
-                                    drainCycleTimer,
-                                    rxTimestamp.ageTicks,
-                                    result.syt,
-                                    sytLeadTicks);
-                            }
+                            // Capture only (no IO): Poll() runs in the
+                            // interrupt hot path, so logging here would perturb
+                            // the timing we are measuring. The watchdog drains
+                            // and formats these off the hot path.
+                            Rx::ZtsTelemetryRecord rec{};
+                            rec.publishCount = rxZtsPublishCount_;
+                            rec.sampleFrame = gridFrame;
+                            rec.hostTicks = gridHostTicks;
+                            rec.rawHostTicks = packetReceiveHostTicks;
+                            rec.drainHostTicks = drainHostTicks;
+                            rec.ageTicks = rxTimestamp.ageTicks;
+                            rec.sytLeadTicks = sytLeadTicks;
+                            rec.recoveredPhaseTicks = rxRecoveredPhaseTicks;
+                            rec.rollingCadenceTicks = rxRollingCadenceTicks;
+                            rec.drainCycleTimer = drainCycleTimer;
+                            rec.rxCycleTimer = rxTimestamp.cycleTimer;
+                            rec.descriptorIndex = pkt.descriptorIndex;
+                            rec.framesDecoded = result.framesDecoded;
+                            rec.rawRxTs = result.receiveCycleTimestamp;
+                            rec.syt = result.syt;
+                            rec.kind = static_cast<uint8_t>(
+                                rxZtsPublishCount_ == 1
+                                    ? Rx::ZtsEventKind::kSeed
+                                    : Rx::ZtsEventKind::kUpdate);
+                            ztsTelemetry_.Record(rec);
                         }
                         gridFrame += kZtsPeriodFrames;
                     }
@@ -455,6 +464,96 @@ void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
 }
 
 void IsochReceiveContext::LogHardwareState() {
+}
+
+void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
+    constexpr uint64_t kZtsPeriodFrames =
+        ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    const uint32_t rate = directInputView_.sampleRateHz;
+
+    const uint64_t dropped = ztsTelemetry_.Drain(
+        maxRecords, [&](const Rx::ZtsTelemetryRecord& rec) {
+            // Three clocks side by side so drift between them is visible:
+            //   host monotonic (host = published grid value, rawHost =
+            //     back-corrected packet receive, drainHost = batch-drain read),
+            //   FireWire bus cycle timer (drainCycle = host OHCI read,
+            //     rxCycle = RX DMA descriptor), and the sample-frame grid;
+            //   plus the recovered device-SYT cadence (sytLead/rollCad/recPhase).
+            ASFW_LOG(
+                Zts,
+                "%{public}s count=%llu frame=%llu host=%llu rawHost=%llu "
+                "drainHost=%llu drainCycle=0x%08x rxCycle=0x%08x age=%lld "
+                "rawRxTs=0x%04x syt=0x%04x sytLead=%lld rollCad=%u recPhase=%lld "
+                "desc=%u dec=%u period=%llu rate=%u",
+                rec.kind == static_cast<uint8_t>(Rx::ZtsEventKind::kSeed)
+                    ? "SEED"
+                    : "UPD",
+                rec.publishCount,
+                rec.sampleFrame,
+                rec.hostTicks,
+                rec.rawHostTicks,
+                rec.drainHostTicks,
+                rec.drainCycleTimer,
+                rec.rxCycleTimer,
+                rec.ageTicks,
+                rec.rawRxTs,
+                rec.syt,
+                rec.sytLeadTicks,
+                rec.rollingCadenceTicks,
+                rec.recoveredPhaseTicks,
+                rec.descriptorIndex,
+                rec.framesDecoded,
+                kZtsPeriodFrames,
+                rate);
+        });
+
+    if (dropped != 0) {
+        ASFW_LOG(Zts,
+                 "drain overflow: dropped=%llu (capacity=%u — raise watchdog "
+                 "drain cadence or maxRecords)",
+                 dropped, Rx::ZtsTelemetryRing::kCapacity);
+    }
+}
+
+void IsochReceiveContext::DrainTxSytTelemetry(uint32_t maxRecords) {
+    auto* control = directInputView_.control;
+    if (control == nullptr) {
+        return;
+    }
+
+    const uint64_t dropped = control->txSytTelemetry.Drain(
+        maxRecords, [](const ASFW::Audio::Runtime::TxSytTelemetryRecord& r) {
+            // Full servo operand set per data-packet decision. flags bits:
+            // 0x1 seeded, 0x2 forceAdjust, 0x4 reseeded, 0x8 committed(data).
+            ASFW_LOG(
+                TxSyt,
+                "pkt=%llu flags=0x%02x health=%u anchor=%lld phasePre=%lld "
+                "phasePost=%lld recPhase=%lld rxFree=%lld pErr=%lld fErr=%lld "
+                "corr=%lld lead=%lld wire=%lld rollCad=%u pend=%u ridx=%u syt=0x%04x",
+                r.packetIndex,
+                static_cast<unsigned>(r.flags),
+                static_cast<unsigned>(r.health),
+                r.packetAnchorTicks,
+                r.phaseTicksPre,
+                r.phaseTicksPost,
+                r.recoveredPhaseTicks,
+                r.rxPhaseDelayFree,
+                r.phaseError,
+                r.frameError,
+                r.correctionTicks,
+                r.leadTicks,
+                r.wireLeadTicks,
+                r.rollingCadenceTicks,
+                static_cast<unsigned>(r.pendingCadenceTicks),
+                static_cast<unsigned>(r.cadenceReadIndex),
+                static_cast<unsigned>(r.syt));
+        });
+
+    if (dropped != 0) {
+        ASFW_LOG(TxSyt,
+                 "drain overflow: dropped=%llu (capacity=%u)",
+                 dropped, ASFW::Audio::Runtime::TxSytTelemetryRing::kCapacity);
+    }
 }
 
 } // namespace ASFW::Isoch

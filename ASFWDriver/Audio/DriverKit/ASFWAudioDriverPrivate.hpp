@@ -79,7 +79,7 @@ public:
         // Linux consumes OHCI's 16-bit OUTPUT_LAST status timestamp at
         // firewire/ohci.c:3055. The core expands that stamp at publication
         // with the same refill's CYCLE_TIMER subcycle, yielding the full
-        // timestamp Saffire's DCL path passes to tstampToOffsets() at 0xe9bf.
+        // timestamp Saffire's transmit path passes to tstampToOffsets() at 0xe9bf.
         const auto completed = ASFW::Timing::decodeCycleTimer(timestamp);
         const uint64_t packetDistance = packetIndex - completedPacketIndex;
 

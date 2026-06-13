@@ -53,6 +53,8 @@ class WatchdogCoordinator {
     OSSharedPtr<OSAction> action_;
     uint32_t isochLogDivider_{0};
     uint32_t itLogDivider_{0};
+    uint32_t ztsLogDivider_{0};
+    uint32_t txSytLogDivider_{0};
 };
 
 } // namespace ASFW::Driver

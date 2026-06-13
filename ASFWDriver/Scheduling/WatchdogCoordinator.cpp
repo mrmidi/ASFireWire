@@ -13,6 +13,18 @@
 
 namespace ASFW::Driver {
 namespace {
+// ZTS telemetry drain cadence. The watchdog ticks every 1 ms; draining every
+// 100 ticks (~100 ms) and emitting up to 8 evenly-strided records keeps the
+// off-hot-path os_log volume bounded (~tens of lines/s) while still resolving
+// host-vs-bus-cycle drift. Seed records are always emitted (see ZtsTelemetryRing).
+constexpr uint32_t kZtsDrainIntervalTicks = 100;
+constexpr uint32_t kZtsRecordsPerDrain = 8;
+// TX SYT decisions arrive ~6000/s, so drain more often and emit a consecutive
+// burst (replayable phase chain) rather than a wide stride. 50 ms keeps the
+// 512-record ring well clear of overflow.
+constexpr uint32_t kTxSytDrainIntervalTicks = 50;
+constexpr uint32_t kTxSytRecordsPerDrain = 16;
+
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
     if (timebase.denom == 0) {
@@ -81,6 +93,8 @@ void WatchdogCoordinator::Reset() {
     timer_.reset();
     isochLogDivider_ = 0;
     itLogDivider_ = 0;
+    ztsLogDivider_ = 0;
+    txSytLogDivider_ = 0;
 }
 
 void WatchdogCoordinator::Schedule(uint64_t delayUsec) {
@@ -128,6 +142,23 @@ void WatchdogCoordinator::TickIsochReceive(
         isochReceiveContext->GetState() == ASFW::Isoch::IRPolicy::State::Running;
     if (isRunning) {
         isochReceiveContext->Poll();
+    }
+
+    // ZTS clock telemetry is captured lock-free inside Poll() (which runs in
+    // the interrupt hot path); format it here, off the hot path, on a ~100 ms
+    // cadence (tick = 1 ms). Gated by the DirectAudio verbosity so it shares
+    // the direct-audio diagnostics kill switch (default on). The drain emits an
+    // evenly-strided sample so the host/bus-cycle drift stays visible without
+    // flooding os_log from the real-time path.
+    if (isRunning && ::ASFW::LogConfig::Shared().GetDirectAudioVerbosity() >= 1) {
+        if (++ztsLogDivider_ >= kZtsDrainIntervalTicks) {
+            ztsLogDivider_ = 0;
+            isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
+        }
+        if (++txSytLogDivider_ >= kTxSytDrainIntervalTicks) {
+            txSytLogDivider_ = 0;
+            isochReceiveContext->DrainTxSytTelemetry(kTxSytRecordsPerDrain);
+        }
     }
 
     if (++isochLogDivider_ < 500) {
