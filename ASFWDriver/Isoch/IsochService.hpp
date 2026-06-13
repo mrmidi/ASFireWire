@@ -44,6 +44,13 @@ public:
                                ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
                                uint32_t am824Slots = 0,
                                ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
+    kern_return_t PrepareReceive(uint8_t channel,
+                                 HardwareInterface& hardware,
+                                 ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+                                 ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
+                                 uint32_t am824Slots = 0,
+                                 ASFW::Isoch::IsochReceiveCallback packetCallback = nullptr);
+    kern_return_t StartPreparedReceive();
 
     kern_return_t StopReceive();
 
@@ -57,6 +64,10 @@ public:
     kern_return_t StartTransmit(uint8_t channel,
                                 HardwareInterface& hardware,
                                 uint8_t sid);
+    kern_return_t PrepareTransmit(uint8_t channel,
+                                  HardwareInterface& hardware,
+                                  uint8_t sid);
+    kern_return_t StartPreparedTransmit();
 
     kern_return_t StopTransmit();
 

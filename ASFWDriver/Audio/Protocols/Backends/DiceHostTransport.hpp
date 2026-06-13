@@ -34,16 +34,18 @@ public:
                                                                 ::ASFW::IRM::IRMClient& irmClient,
                                                                 uint8_t channel,
                                                                 uint32_t bandwidthUnits) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t StartReceive(
+    [[nodiscard]] virtual kern_return_t PrepareReceive(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0) noexcept = 0;
-    [[nodiscard]] virtual kern_return_t StartTransmit(
+    [[nodiscard]] virtual kern_return_t PrepareTransmit(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
         uint8_t sourceId) noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StartPreparedReceive() noexcept = 0;
+    [[nodiscard]] virtual kern_return_t StartPreparedTransmit() noexcept = 0;
     [[nodiscard]] virtual kern_return_t StopAll() noexcept = 0;
 };
 
@@ -63,16 +65,18 @@ public:
                                                         ::ASFW::IRM::IRMClient& irmClient,
                                                         uint8_t channel,
                                                         uint32_t bandwidthUnits) noexcept override;
-    [[nodiscard]] kern_return_t StartReceive(
+    [[nodiscard]] kern_return_t PrepareReceive(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
         ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
         Encoding::AudioWireFormat wireFormat = Encoding::AudioWireFormat::kAM824,
         uint32_t am824Slots = 0) noexcept override;
-    [[nodiscard]] kern_return_t StartTransmit(
+    [[nodiscard]] kern_return_t PrepareTransmit(
         uint8_t channel,
         Driver::HardwareInterface& hardware,
         uint8_t sourceId) noexcept override;
+    [[nodiscard]] kern_return_t StartPreparedReceive() noexcept override;
+    [[nodiscard]] kern_return_t StartPreparedTransmit() noexcept override;
     [[nodiscard]] kern_return_t StopAll() noexcept override;
 
 private:

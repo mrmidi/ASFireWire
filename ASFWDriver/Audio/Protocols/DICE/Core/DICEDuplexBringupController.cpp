@@ -1134,6 +1134,24 @@ void DICEDuplexBringupController::DoPollSourceLock(
                                                                             return;
                                                                         }
 
+                                                                        const bool channelsMatch =
+                                                                            runtimeCaps_.deviceToHostIsoChannel ==
+                                                                                restartSession_.channels.deviceToHostIsoChannel &&
+                                                                            runtimeCaps_.hostToDeviceIsoChannel ==
+                                                                                restartSession_.channels.hostToDeviceIsoChannel;
+                                                                        if (!channelsMatch) {
+                                                                            ASFW_LOG_ERROR(
+                                                                                DICE,
+                                                                                "ConfirmDuplex48kStart: stream channel readback mismatch expected d2h=%u h2d=%u actual d2h=%u h2d=%u",
+                                                                                restartSession_.channels.deviceToHostIsoChannel,
+                                                                                restartSession_.channels.hostToDeviceIsoChannel,
+                                                                                runtimeCaps_.deviceToHostIsoChannel,
+                                                                                runtimeCaps_.hostToDeviceIsoChannel);
+                                                                            (void)StopDuplex();
+                                                                            cb(kIOReturnNotReady);
+                                                                            return;
+                                                                        }
+
                                                                         restartSession_.deviceRunning = true;
                                                                         restartSession_.phase = DiceRestartPhase::kRunning;
                                                                         restartSession_.appliedClock = restartSession_.desiredClock;

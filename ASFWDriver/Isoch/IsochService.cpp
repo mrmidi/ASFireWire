@@ -20,6 +20,26 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
                                          ASFW::Encoding::AudioWireFormat wireFormat,
                                          uint32_t am824Slots,
                                          ASFW::Isoch::IsochReceiveCallback packetCallback) {
+    const kern_return_t prepareKr =
+        PrepareReceive(channel,
+                       hardware,
+                       bindingSource,
+                       wireFormat,
+                       am824Slots,
+                       std::move(packetCallback));
+    if (prepareKr != kIOReturnSuccess) {
+        return prepareKr;
+    }
+    return StartPreparedReceive();
+}
+
+kern_return_t IsochService::PrepareReceive(
+    uint8_t channel,
+    HardwareInterface& hardware,
+    ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+    ASFW::Encoding::AudioWireFormat wireFormat,
+    uint32_t am824Slots,
+    ASFW::Isoch::IsochReceiveCallback packetCallback) {
     if (!isochReceiveContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochReceiveContext::kNumDescriptors;
@@ -60,9 +80,16 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
     // races a std::function assignment.
     isochReceiveContext_->SetCallback(std::move(packetCallback));
 
-    ASFW_LOG(Isoch, "IsochService: Starting IR on channel %u (Direct-Only)", channel);
-    const kern_return_t startKr = isochReceiveContext_->Start();
-    return startKr;
+    ASFW_LOG(Isoch, "IsochService: Prepared IR on channel %u (Direct-Only)", channel);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochService::StartPreparedReceive() {
+    if (!isochReceiveContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch, "IsochService: Starting prepared IR (Direct-Only)");
+    return isochReceiveContext_->Start();
 }
 
 kern_return_t IsochService::StopReceive() {
@@ -176,6 +203,16 @@ kern_return_t IsochService::CopyDVCaptureMemory(uint64_t* options, IOMemoryDescr
 kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           HardwareInterface& hardware,
                                           uint8_t sid) {
+    const kern_return_t prepareKr = PrepareTransmit(channel, hardware, sid);
+    if (prepareKr != kIOReturnSuccess) {
+        return prepareKr;
+    }
+    return StartPreparedTransmit();
+}
+
+kern_return_t IsochService::PrepareTransmit(uint8_t channel,
+                                            HardwareInterface& hardware,
+                                            uint8_t sid) {
     if (!isochTransmitContext_) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::Tx::Layout::kRingBlocks;
@@ -225,7 +262,15 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         }
     }
 
-    ASFW_LOG(Isoch, "IsochService: Starting IT on channel %u (Direct-Only)", channel);
+    ASFW_LOG(Isoch, "IsochService: Prepared IT on channel %u (Direct-Only)", channel);
+    return kIOReturnSuccess;
+}
+
+kern_return_t IsochService::StartPreparedTransmit() {
+    if (!isochTransmitContext_) {
+        return kIOReturnNotReady;
+    }
+    ASFW_LOG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
     return isochTransmitContext_->Start();
 }
 

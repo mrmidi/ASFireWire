@@ -1363,6 +1363,98 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     session.hostPlaybackReserved = true;
     StoreSession(session);
 
+    const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
+        guid,
+        *irmClient,
+        channels.deviceToHostIsoChannel,
+        kCaptureBandwidthUnits);
+    if (reserveCaptureStatus != kIOReturnSuccess) {
+        return rollbackToFailure(reserveCaptureStatus,
+                                 DiceRestartPhase::kReservingCaptureResources,
+                                 DiceRestartFailureCause::kReserveCapture);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kReservingCaptureResources,
+                                      DiceRestartFailureCause::kReserveCapture);
+    }
+    SetSessionPhase(session, DiceRestartPhase::kReservingCaptureResources);
+    session.hostCaptureReserved = true;
+    StoreSession(session);
+
+    Encoding::AudioWireFormat rxWireFormat = Encoding::AudioWireFormat::kAM824;
+    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
+        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
+        session.runtimeCaps.hostInputPcmChannels == 8 &&
+        session.runtimeCaps.deviceToHostAm824Slots == 9) {
+        rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
+    }
+    const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
+    const Encoding::AudioWireFormat wireFormat =
+        ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
+
+    ASFW_LOG(Audio,
+             "DICE DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u mode=blocking rxFmt=%u txFmt=%u",
+             guid,
+             channels.deviceToHostIsoChannel,
+             channels.hostToDeviceIsoChannel,
+             session.runtimeCaps.hostInputPcmChannels,
+             session.runtimeCaps.hostOutputPcmChannels,
+             session.runtimeCaps.deviceToHostAm824Slots,
+             session.runtimeCaps.hostToDeviceAm824Slots,
+             static_cast<uint32_t>(rxWireFormat),
+             static_cast<uint32_t>(wireFormat));
+
+    // Saffire.kext allocates every local/remote isoch port before it reports
+    // the assigned channels to DICE. Keep the expensive DMA setup on the
+    // disabled side of GLOBAL_ENABLE as well.
+    const kern_return_t prepareReceiveStatus = hostTransport_.PrepareReceive(
+        channels.deviceToHostIsoChannel,
+        hardware_,
+        bindingSource,
+        rxWireFormat,
+        rxAm824Slots);
+    if (prepareReceiveStatus != kIOReturnSuccess) {
+        return rollbackToFailure(prepareReceiveStatus,
+                                 DiceRestartPhase::kStartingHostReceive,
+                                 DiceRestartFailureCause::kStartReceive);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kStartingHostReceive,
+                                      DiceRestartFailureCause::kStartReceive);
+    }
+
+    const kern_return_t prepareTransmitStatus = hostTransport_.PrepareTransmit(
+        channels.hostToDeviceIsoChannel,
+        hardware_,
+        ReadLocalSid(hardware_));
+    if (prepareTransmitStatus != kIOReturnSuccess) {
+        return rollbackToFailure(prepareTransmitStatus,
+                                 DiceRestartPhase::kStartingHostTransmit,
+                                 DiceRestartFailureCause::kStartTransmit);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kStartingHostTransmit,
+                                      DiceRestartFailureCause::kStartTransmit);
+    }
+
+    SetSessionPhase(session, DiceRestartPhase::kWaitingGlobalClock);
+    StoreSession(session);
+    const IOReturn clockLockStatus =
+        WaitForStableGlobalClock(diceProtocol, topologyGeneration, desiredClock);
+    if (clockLockStatus != kIOReturnSuccess) {
+        return rollbackToFailure(clockLockStatus,
+                                 DiceRestartPhase::kWaitingGlobalClock,
+                                 DiceRestartFailureCause::kGlobalClockLock);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kWaitingGlobalClock,
+                                      DiceRestartFailureCause::kGlobalClockLock);
+    }
+
     const auto programRx = WaitForAsyncResult<DiceDuplexStageResult>(
         [&](auto callback) { diceProtocol.ProgramRx(std::move(callback)); },
         kSyncBridgeTimeoutMs,
@@ -1384,25 +1476,6 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         ? programRx.value.runtimeCaps
         : session.runtimeCaps;
     SetSessionPhase(session, DiceRestartPhase::kDeviceRxProgrammed);
-    StoreSession(session);
-
-    const kern_return_t reserveCaptureStatus = hostTransport_.ReserveCaptureResources(
-        guid,
-        *irmClient,
-        channels.deviceToHostIsoChannel,
-        kCaptureBandwidthUnits);
-    if (reserveCaptureStatus != kIOReturnSuccess) {
-        return rollbackToFailure(reserveCaptureStatus,
-                                 DiceRestartPhase::kReservingCaptureResources,
-                                 DiceRestartFailureCause::kReserveCapture);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kReservingCaptureResources,
-                                      DiceRestartFailureCause::kReserveCapture);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kReservingCaptureResources);
-    session.hostCaptureReserved = true;
     StoreSession(session);
 
     const auto programTx = WaitForAsyncResult<DiceDuplexStageResult>(
@@ -1428,68 +1501,12 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     SetSessionPhase(session, DiceRestartPhase::kDeviceTxArmed);
     StoreSession(session);
 
-    SetSessionPhase(session, DiceRestartPhase::kWaitingGlobalClock);
-    StoreSession(session);
-    const IOReturn clockLockStatus =
-        WaitForStableGlobalClock(diceProtocol, topologyGeneration, desiredClock);
-    if (clockLockStatus != kIOReturnSuccess) {
-        return rollbackToFailure(clockLockStatus,
-                                 DiceRestartPhase::kWaitingGlobalClock,
-                                 DiceRestartFailureCause::kGlobalClockLock);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kWaitingGlobalClock,
-                                      DiceRestartFailureCause::kGlobalClockLock);
-    }
+    // Saffire::StartStreams waits 2 ms after GLOBAL_ENABLE before starting
+    // the already-allocated host isoch channels.
+    IOSleep(2);
 
-    Encoding::AudioWireFormat rxWireFormat = Encoding::AudioWireFormat::kAM824;
-    if (record.vendorId == DeviceProtocolFactory::kFocusriteVendorId &&
-        record.modelId == DeviceProtocolFactory::kSPro24DspModelId &&
-        session.runtimeCaps.hostInputPcmChannels == 8 &&
-        session.runtimeCaps.deviceToHostAm824Slots == 9) {
-        rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
-    }
-    const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
-    const Encoding::AudioWireFormat wireFormat =
-        ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
-
-    ASFW_LOG(Audio,
-             "DICE DUPLEX START guid=0x%016llx ir=%u it=%u inCh=%u outCh=%u inSlots=%u outSlots=%u mode=blocking rxFmt=%u txFmt=%u",
-             guid,
-             channels.deviceToHostIsoChannel,
-             channels.hostToDeviceIsoChannel,
-             session.runtimeCaps.hostInputPcmChannels,
-             session.runtimeCaps.hostOutputPcmChannels,
-             session.runtimeCaps.deviceToHostAm824Slots,
-             session.runtimeCaps.hostToDeviceAm824Slots,
-             static_cast<uint32_t>(rxWireFormat),
-             static_cast<uint32_t>(wireFormat));
-
-    const kern_return_t startReceiveStatus = hostTransport_.StartReceive(
-        channels.deviceToHostIsoChannel,
-        hardware_,
-        bindingSource,
-        rxWireFormat,
-        rxAm824Slots);
-    if (startReceiveStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startReceiveStatus,
-                                 DiceRestartPhase::kStartingHostReceive,
-                                 DiceRestartFailureCause::kStartReceive);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostReceive,
-                                      DiceRestartFailureCause::kStartReceive);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
-    session.hostReceiveStarted = true;
-    StoreSession(session);
-
-    const kern_return_t startTransmitStatus = hostTransport_.StartTransmit(
-        channels.hostToDeviceIsoChannel,
-        hardware_,
-        ReadLocalSid(hardware_));
+    const kern_return_t startTransmitStatus =
+        hostTransport_.StartPreparedTransmit();
     if (startTransmitStatus != kIOReturnSuccess) {
         return rollbackToFailure(startTransmitStatus,
                                  DiceRestartPhase::kStartingHostTransmit,
@@ -1502,6 +1519,22 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     }
     SetSessionPhase(session, DiceRestartPhase::kStartingHostTransmit);
     session.hostTransmitStarted = true;
+    StoreSession(session);
+
+    const kern_return_t startReceiveStatus =
+        hostTransport_.StartPreparedReceive();
+    if (startReceiveStatus != kIOReturnSuccess) {
+        return rollbackToFailure(startReceiveStatus,
+                                 DiceRestartPhase::kStartingHostReceive,
+                                 DiceRestartFailureCause::kStartReceive);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kStartingHostReceive,
+                                      DiceRestartFailureCause::kStartReceive);
+    }
+    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
+    session.hostReceiveStarted = true;
     StoreSession(session);
 
     const auto confirm = WaitForAsyncResult<DiceDuplexConfirmResult>(

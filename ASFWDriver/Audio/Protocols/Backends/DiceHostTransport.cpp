@@ -33,22 +33,29 @@ kern_return_t DiceIsochHostTransport::ReserveCaptureResources(uint64_t guid,
     return isoch_.ReserveCaptureResources(guid, irmClient, channel, bandwidthUnits);
 }
 
-kern_return_t DiceIsochHostTransport::StartReceive(
+kern_return_t DiceIsochHostTransport::PrepareReceive(
     uint8_t channel,
     Driver::HardwareInterface& hardware,
     ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
     Encoding::AudioWireFormat wireFormat,
     uint32_t am824Slots) noexcept {
-    return isoch_.StartReceive(channel, hardware, bindingSource, wireFormat, am824Slots);
+    return isoch_.PrepareReceive(
+        channel, hardware, bindingSource, wireFormat, am824Slots);
 }
 
-kern_return_t DiceIsochHostTransport::StartTransmit(
+kern_return_t DiceIsochHostTransport::PrepareTransmit(
     uint8_t channel,
     Driver::HardwareInterface& hardware,
     uint8_t sourceId) noexcept {
-    return isoch_.StartTransmit(channel,
-                                hardware,
-                                sourceId);
+    return isoch_.PrepareTransmit(channel, hardware, sourceId);
+}
+
+kern_return_t DiceIsochHostTransport::StartPreparedReceive() noexcept {
+    return isoch_.StartPreparedReceive();
+}
+
+kern_return_t DiceIsochHostTransport::StartPreparedTransmit() noexcept {
+    return isoch_.StartPreparedTransmit();
 }
 
 kern_return_t DiceIsochHostTransport::StopAll() noexcept {

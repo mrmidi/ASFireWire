@@ -360,6 +360,11 @@ public:
         channelsAvailable63_32_ = channelsAvailable63_32;
     }
 
+    void SetStreamIsoChannels(uint32_t txIso, uint32_t rxIso) {
+        txIso_ = txIso;
+        rxIso_ = rxIso;
+    }
+
     void PublishClockAccepted(uint32_t bits = NotifyBits::kClockAccepted) {
         ApplyClockAcceptedState(bits, true);
     }
@@ -472,6 +477,17 @@ private:
             return bytes;
         }
 
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00001A4U) {
+            auto bytes = BuildTxStreamBlock();
+            bytes.resize(length);
+            return bytes;
+        }
+        if (address.addressHi == 0xFFFF && address.addressLo == 0xE00003DCU) {
+            auto bytes = BuildRxStreamBlock();
+            bytes.resize(length);
+            return bytes;
+        }
+
         if (address.addressHi == 0xFFFF && address.addressLo == 0xE00001BCU && length == 256) {
             return std::vector<uint8_t>(txNames_.begin(), txNames_.end());
         }
@@ -544,6 +560,30 @@ private:
         PutBe32(bytes.data() + GlobalOffset::kSampleRate, sampleRate_);
         PutBe32(bytes.data() + GlobalOffset::kVersion, version_);
         PutBe32(bytes.data() + GlobalOffset::kClockCaps, clockCaps_);
+        return bytes;
+    }
+
+    std::vector<uint8_t> BuildTxStreamBlock() const {
+        std::vector<uint8_t> bytes(kTxEntryQuadlets * 4, 0);
+        PutBe32(bytes.data(), txNum_);
+        PutBe32(bytes.data() + 4, txSize_);
+        PutBe32(bytes.data() + 8, txIso_);
+        PutBe32(bytes.data() + 12, txAudio_);
+        PutBe32(bytes.data() + 16, txMidi_);
+        PutBe32(bytes.data() + 20, txSpeed_);
+        std::copy(txNames_.begin(), txNames_.end(), bytes.begin() + 24);
+        return bytes;
+    }
+
+    std::vector<uint8_t> BuildRxStreamBlock() const {
+        std::vector<uint8_t> bytes(kRxEntryQuadlets * 4, 0);
+        PutBe32(bytes.data(), rxNum_);
+        PutBe32(bytes.data() + 4, rxSize_);
+        PutBe32(bytes.data() + 8, rxIso_);
+        PutBe32(bytes.data() + 12, rxSeq_);
+        PutBe32(bytes.data() + 16, rxAudio_);
+        PutBe32(bytes.data() + 20, rxMidi_);
+        std::copy(rxNames_.begin(), rxNames_.end(), bytes.begin() + 24);
         return bytes;
     }
 
@@ -1142,6 +1182,50 @@ TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBri
     EXPECT_FALSE(rig.controller.IsOwnerClaimed());
     EXPECT_FALSE(rig.controller.IsPrepared());
     EXPECT_FALSE(rig.controller.IsArmed());
+    EXPECT_FALSE(rig.controller.IsRunning());
+}
+
+TEST(DICEDuplexBringupControllerTests,
+     ConfirmRejectsDisabledStreamChannelReadback) {
+    DuplexRig rig;
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+
+    std::optional<IOReturn> prepareStatus;
+    rig.controller.PrepareDuplex(
+        channels,
+        {.sampleRateHz = 48000U, .clockSelect = kClockSelect48kInternal},
+        [&prepareStatus](IOReturn status, DiceDuplexPrepareResult) {
+            prepareStatus = status;
+        });
+    ASSERT_EQ(prepareStatus, kIOReturnSuccess);
+
+    std::optional<IOReturn> rxStatus;
+    rig.controller.ProgramRx(
+        [&rxStatus](IOReturn status, DiceDuplexStageResult) {
+            rxStatus = status;
+        });
+    ASSERT_EQ(rxStatus, kIOReturnSuccess);
+
+    std::optional<IOReturn> txStatus;
+    rig.controller.ProgramTxAndEnableDuplex(
+        [&txStatus](IOReturn status, DiceDuplexStageResult) {
+            txStatus = status;
+        });
+    ASSERT_EQ(txStatus, kIOReturnSuccess);
+
+    rig.bus.SetStreamIsoChannels(0xFFFFFFFFU, 0xFFFFFFFFU);
+
+    std::optional<IOReturn> confirmStatus;
+    rig.controller.ConfirmDuplexStart(
+        [&confirmStatus](IOReturn status, DiceDuplexConfirmResult) {
+            confirmStatus = status;
+        });
+
+    ASSERT_TRUE(confirmStatus.has_value());
+    EXPECT_EQ(*confirmStatus, kIOReturnNotReady);
     EXPECT_FALSE(rig.controller.IsRunning());
 }
 

@@ -197,26 +197,40 @@ public:
         return reserveCaptureStatus;
     }
 
-    kern_return_t StartReceive(uint8_t channel,
-                               HardwareInterface&,
-                               ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
-                               ASFW::Encoding::AudioWireFormat wireFormat = ASFW::Encoding::AudioWireFormat::kAM824,
-                               uint32_t am824Slots = 0) noexcept override {
-        log_.Add("host.start_receive");
+    kern_return_t PrepareReceive(
+        uint8_t channel,
+        HardwareInterface&,
+        ASFW::Audio::Runtime::IDirectAudioBindingSource* bindingSource,
+        ASFW::Encoding::AudioWireFormat wireFormat =
+            ASFW::Encoding::AudioWireFormat::kAM824,
+        uint32_t am824Slots = 0) noexcept override {
+        log_.Add("host.prepare_receive");
         lastReceiveChannel = channel;
         lastReceiveBindingSource = bindingSource;
         lastReceiveWireFormat = wireFormat;
         lastReceiveAm824Slots = am824Slots;
+        ++prepareReceiveCalls;
+        return prepareReceiveStatus;
+    }
+
+    kern_return_t PrepareTransmit(uint8_t channel,
+                                  HardwareInterface&,
+                                  uint8_t sourceId) noexcept override {
+        log_.Add("host.prepare_transmit");
+        lastTransmitChannel = channel;
+        lastTransmitSourceId = sourceId;
+        ++prepareTransmitCalls;
+        return prepareTransmitStatus;
+    }
+
+    kern_return_t StartPreparedReceive() noexcept override {
+        log_.Add("host.start_receive");
         ++startReceiveCalls;
         return startReceiveStatus;
     }
 
-    kern_return_t StartTransmit(uint8_t channel,
-                                HardwareInterface&,
-                                uint8_t sourceId) noexcept override {
+    kern_return_t StartPreparedTransmit() noexcept override {
         log_.Add("host.start_transmit");
-        lastTransmitChannel = channel;
-        lastTransmitSourceId = sourceId;
         ++startTransmitCalls;
         return startTransmitStatus;
     }
@@ -230,6 +244,8 @@ public:
     kern_return_t beginStatus{kIOReturnSuccess};
     kern_return_t reservePlaybackStatus{kIOReturnSuccess};
     kern_return_t reserveCaptureStatus{kIOReturnSuccess};
+    kern_return_t prepareReceiveStatus{kIOReturnSuccess};
+    kern_return_t prepareTransmitStatus{kIOReturnSuccess};
     kern_return_t startReceiveStatus{kIOReturnSuccess};
     kern_return_t startTransmitStatus{kIOReturnSuccess};
     kern_return_t stopStatus{kIOReturnSuccess};
@@ -255,6 +271,8 @@ public:
     int beginCalls{0};
     int reservePlaybackCalls{0};
     int reserveCaptureCalls{0};
+    int prepareReceiveCalls{0};
+    int prepareTransmitCalls{0};
     int startReceiveCalls{0};
     int startTransmitCalls{0};
     int stopCalls{0};
@@ -557,6 +575,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
     EXPECT_EQ(session->runtimeCaps.hostOutputPcmChannels, kDefaultRuntimeCaps.hostOutputPcmChannels);
     EXPECT_EQ(hostTransport_.reservePlaybackCalls, 1);
     EXPECT_EQ(hostTransport_.reserveCaptureCalls, 1);
+    EXPECT_EQ(hostTransport_.prepareReceiveCalls, 1);
+    EXPECT_EQ(hostTransport_.prepareTransmitCalls, 1);
     EXPECT_EQ(hostTransport_.startReceiveCalls, 1);
     EXPECT_EQ(hostTransport_.startTransmitCalls, 1);
     EXPECT_EQ(protocol_->prepareCalls, 1);
@@ -565,13 +585,24 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
     EXPECT_EQ(protocol_->healthReadCalls, 3);
     EXPECT_EQ(protocol_->confirmCalls, 1);
 
-    const auto calls = LogSnapshot();
-    const auto programTx = std::find(calls.begin(), calls.end(), "device.program_tx");
-    const auto startReceive =
-        std::find(calls.begin(), calls.end(), "host.start_receive");
-    ASSERT_NE(programTx, calls.end());
-    ASSERT_NE(startReceive, calls.end());
-    EXPECT_EQ(std::count(programTx + 1, startReceive, "device.health"), 3);
+    EXPECT_EQ(
+        LogSnapshot(),
+        (std::vector<std::string>{
+            "host.begin",
+            "device.prepare",
+            "host.reserve_playback",
+            "host.reserve_capture",
+            "host.prepare_receive",
+            "host.prepare_transmit",
+            "device.health",
+            "device.health",
+            "device.health",
+            "device.program_rx",
+            "device.program_tx",
+            "host.start_transmit",
+            "host.start_receive",
+            "device.confirm",
+        }));
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests,
@@ -950,6 +981,12 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ProgramRxFailureRollsBackHostAndDevice
                   "host.begin",
                   "device.prepare",
                   "host.reserve_playback",
+                  "host.reserve_capture",
+                  "host.prepare_receive",
+                  "host.prepare_transmit",
+                  "device.health",
+                  "device.health",
+                  "device.health",
                   "device.program_rx",
                   "host.stop",
                   "device.stop",
