@@ -58,6 +58,10 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
         {0, bytes[0].data(), bytes[0].size()}, allowData, first));
     EXPECT_FALSE(first.isData);
     EXPECT_EQ(first.byteCount, 8U);
+    EXPECT_EQ(bytes[0][4], 0x90);
+    EXPECT_EQ(bytes[0][5], 0xFF);
+    EXPECT_EQ(bytes[0][6], 0xFF);
+    EXPECT_EQ(bytes[0][7], 0xFF);
 
     AmdtpTimingState noData{};
     noData.disposition = AmdtpPacketDisposition::NoData;
@@ -75,6 +79,33 @@ TEST(AmdtpDirectTxTests, ForcedNoDataHoldsDbcAndAudioFrame) {
     EXPECT_EQ(data.firstAudioFrame, 0U);
     EXPECT_EQ(data.framesInPacket, 8U);
     EXPECT_EQ(data.syt, 0x1234U);
+}
+
+TEST(AmdtpDirectTxTests, NoDataFdfCanUseSaffireCompatibilityQuirk) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(
+        timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPolicy policy{};
+    policy.preserveFdfInNoDataPackets = true;
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(BlockingStereoConfig(), policy));
+
+    std::array<uint8_t, 128> bytes{};
+    AmdtpTimingState timing{};
+    timing.disposition = AmdtpPacketDisposition::NoData;
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes.data(), bytes.size()}, timing, packet));
+
+    ASSERT_FALSE(packet.isData);
+    EXPECT_EQ(bytes[4], 0x90);
+    EXPECT_EQ(bytes[5], 0x02);
+    EXPECT_EQ(bytes[6], 0xFF);
+    EXPECT_EQ(bytes[7], 0xFF);
 }
 
 TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {

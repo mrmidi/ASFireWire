@@ -70,6 +70,8 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipConfig.sph = false;
     cipConfig.fmt = config.fmt;
     cipConfig.fdf = config.fdf;
+    cipConfig.noDataFdf =
+        txPolicy.preserveFdfInNoDataPackets ? config.fdf : 0xFF;
     cipBuilder_.Configure(cipConfig);
 
     cadence_ = (config.streamMode == StreamMode::Blocking)

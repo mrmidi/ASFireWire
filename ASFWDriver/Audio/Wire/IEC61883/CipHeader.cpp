@@ -9,13 +9,13 @@ namespace ASFW::Protocols::Audio::IEC61883 {
 //       [10]=SPH    [9:8]=reserved  [7:0]=DBC
 //   Q1: [31:30]=10 (EOH)  [29:24]=FMT  [23:16]=FDF  [15:0]=SYT
 //
-// No-data packets (verified in both references): FDF=0xFF, SYT=0xFFFF,
-// DBS keeps the stream value, DBC carried unchanged. Values returned are
-// logical quadlet values; bus byte order is applied at serialization time.
+// No-data packets normally use FDF=0xFF and SYT=0xFFFF. Device profiles may
+// override the no-data FDF for hardware-specific compatibility. DBS keeps the
+// stream value and DBC is carried unchanged. Values returned are logical
+// quadlet values; bus byte order is applied at serialization time.
 
 namespace {
 constexpr uint32_t kEoh1 = 0x80000000u;
-constexpr uint8_t kFdfNoData = 0xFF;
 constexpr uint16_t kSytNoInfo = 0xFFFF;
 } // namespace
 
@@ -55,7 +55,7 @@ CipHeaderWords CipHeaderBuilder::BuildNoData(uint8_t dbc) const noexcept {
                static_cast<uint32_t>(dbc);
     words.q1 = kEoh1 |
                (static_cast<uint32_t>(config_.fmt & 0x3F) << 24) |
-               (static_cast<uint32_t>(kFdfNoData) << 16) |
+               (static_cast<uint32_t>(config_.noDataFdf) << 16) |
                static_cast<uint32_t>(kSytNoInfo);
     return words;
 }

@@ -17,6 +17,7 @@ struct CipHeaderConfig final {
     bool sph{false};
     uint8_t fmt{0x10};
     uint8_t fdf{0x02};
+    uint8_t noDataFdf{0xFF};
 };
 
 class CipHeaderBuilder final {

@@ -43,6 +43,7 @@ struct AmdtpTxPolicy final {
     uint32_t defaultNonAudioSlotWord{0x80000000};
     bool clearPayloadBeforeExposure{true};
     bool initializeNonAudioSlots{true};
+    bool preserveFdfInNoDataPackets{false};
 };
 
 struct HostAudioBufferView final {

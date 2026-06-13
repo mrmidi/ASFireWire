@@ -27,6 +27,7 @@ struct DiceTxQuirks final {
 
     uint32_t defaultNonAudioSlotWord{0x80000000};
     bool initializeNonAudioSlots{true};
+    bool preserveFdfInNoDataPackets{false};
 };
 
 struct DiceRxQuirks final {

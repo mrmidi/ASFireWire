@@ -132,6 +132,8 @@ AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
                        : AMDTP::DbsPolicy::Constant;
     policy.defaultNonAudioSlotWord = quirks.tx.defaultNonAudioSlotWord;
     policy.initializeNonAudioSlots = quirks.tx.initializeNonAudioSlots;
+    policy.preserveFdfInNoDataPackets =
+        quirks.tx.preserveFdfInNoDataPackets;
     policy.clearPayloadBeforeExposure = true;
     return policy;
 }

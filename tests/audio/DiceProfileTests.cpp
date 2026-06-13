@@ -32,6 +32,10 @@ TEST(DiceProfileTests, ResolvesFocusriteSaffireProfileByVendor) {
     EXPECT_EQ(profile->RxMidiSlots(), 1);
     EXPECT_EQ(profile->TxDbs(), 9);
     EXPECT_EQ(profile->RxDbs(), 17);
+
+    const auto* diceProfile =
+        static_cast<const IDiceDeviceProfile*>(profile);
+    EXPECT_TRUE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
 }
 
 TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
@@ -46,6 +50,10 @@ TEST(DiceProfileTests, ResolvesGenericDiceProfileForUnknownDevices) {
     EXPECT_EQ(profile->RxChannelCount(), 2);
     EXPECT_EQ(profile->TxMidiSlots(), 0);
     EXPECT_EQ(profile->RxMidiSlots(), 0);
+
+    const auto* diceProfile =
+        static_cast<const IDiceDeviceProfile*>(profile);
+    EXPECT_FALSE(diceProfile->Quirks().tx.preserveFdfInNoDataPackets);
 }
 
 TEST(DiceProfileTests, FocusriteAsymmetricSafetyOffsetsAndLatencies) {
