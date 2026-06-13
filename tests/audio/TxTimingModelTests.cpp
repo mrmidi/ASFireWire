@@ -154,6 +154,37 @@ TEST(TxTimingModelTests, GoldCaptureKeepsTxOnRecoveredRxSyt) {
     EXPECT_EQ(decision.leadTicks, 0);
 }
 
+TEST(TxTimingModelTests, SkippedDataSlotReacquiresFromExecutionAnchor) {
+    RxSytCadence cadence{};
+    cadence.Reset();
+    const int64_t recovered = FillCadenceToLock(cadence);
+
+    const TxTimingModel::Config config{};
+    TxTimingModel model{};
+    model.Configure(config);
+
+    const auto first = model.PeekNextDataSyt(recovered, cadence);
+    ASSERT_NE(first.syt, 0xFFFF);
+    model.CommitDataPacket();
+    const int64_t stalePhase = model.OutputPhaseTicks();
+
+    model.RearmAfterSkippedDataSlot();
+    EXPECT_FALSE(model.IsSeeded());
+
+    const int64_t nextAnchor =
+        Timing::normalizeOffsetDomain(recovered + 20 * Timing::kTicksPerCycle);
+    const auto reacquired = model.PeekNextDataSyt(nextAnchor, cadence);
+
+    ASSERT_TRUE(reacquired.seededThisCall);
+    ASSERT_NE(reacquired.syt, 0xFFFF);
+    EXPECT_NE(model.OutputPhaseTicks(), stalePhase);
+    EXPECT_EQ(reacquired.syt,
+              SytFromTicks(model.OutputPhaseTicks() +
+                           config.xmitTransferDelayTicks));
+    EXPECT_GE(reacquired.leadTicks, 0);
+    EXPECT_LT(reacquired.leadTicks, Timing::kTicksPerSample48k);
+}
+
 TEST(TxTimingModelTests, AdvancesByDelayedObservedCadenceEntry) {
     RxSytCadence cadence{};
     cadence.Reset();

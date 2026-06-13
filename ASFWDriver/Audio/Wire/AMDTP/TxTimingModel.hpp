@@ -42,6 +42,23 @@ public:
         int64_t wireLeadTicks{0};
         LeadHealth health{LeadHealth::kNotSeeded};
         bool seededThisCall{false};
+
+        // Resync diagnostics (for [TxSyt] telemetry / offline replay). Filled by
+        // PeekNextDataSyt + AdjustOutputPhase so the caller can record the full
+        // servo operand set without reaching into TxTimingModel internals.
+        int64_t packetAnchorTicks{0};   // OHCI execution cycle for this packet
+        int64_t phaseTicksPre{0};       // carried phase before AdjustOutputPhase
+        int64_t phaseTicksPost{0};      // carried phase after AdjustOutputPhase
+        int64_t recoveredPhaseTicks{0}; // rx.recoveredPhaseTicks (raw)
+        int64_t rxPhaseDelayFree{0};    // servo target: recovered - transferDelay
+        int64_t phaseError{0};
+        int64_t frameError{0};
+        int64_t correctionTicks{0};
+        uint32_t rollingCadenceTicks{0};
+        uint16_t pendingCadenceTicks{0}; // per-entry SYT delta the next commit applies
+        uint16_t cadenceReadIndex{0};
+        bool forceAdjustFired{false};   // correction path taken (not deadbanded)
+        bool reseeded{false};           // gate/escalate un-seeded the model this call
     };
 
     static constexpr int64_t kTicksPerCycle = 3072;
@@ -75,6 +92,11 @@ public:
     // Un-seeds and re-arms the transmit anchor (call on stream start).
     void Reset() noexcept;
 
+    // A cadence DATA opportunity could not be emitted after lock. Continuing
+    // the carried phase would leave every later SYT one event behind, so the
+    // next valid execution anchor must perform a fresh coarse acquisition.
+    void RearmAfterSkippedDataSlot() noexcept;
+
     [[nodiscard]] bool IsSeeded() const noexcept;
 
     // The SYT the NEXT data packet would carry. `packetAnchorTicks` is the
@@ -94,7 +116,8 @@ private:
     [[nodiscard]] int64_t AdjustOutputPhase(
         int64_t executionPhaseTicks,
         int64_t candidatePhaseTicks,
-        const RxSytCadence::Snapshot& rx) noexcept;
+        const RxSytCadence::Snapshot& rx,
+        Decision& decision) noexcept;
     [[nodiscard]] uint16_t SytForPhase(int64_t phaseTicks) const noexcept;
     [[nodiscard]] LeadHealth HealthForLead(int64_t leadTicks) const noexcept;
 

@@ -33,6 +33,10 @@ void TxTimingModel::Reset() noexcept {
     pendingCadenceTicks_ = 0;
 }
 
+void TxTimingModel::RearmAfterSkippedDataSlot() noexcept {
+    Reset();
+}
+
 bool TxTimingModel::IsSeeded() const noexcept {
     return seeded_;
 }
@@ -50,6 +54,9 @@ TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
 
     packetAnchorTicks =
         ASFW::Timing::normalizeOffsetDomain(packetAnchorTicks);
+    decision.packetAnchorTicks = packetAnchorTicks;
+    decision.recoveredPhaseTicks = rx.recoveredPhaseTicks;
+    decision.rollingCadenceTicks = rx.rollingCadenceTicks;
 
     if (cadenceEpoch_ != rx.epoch) {
         Reset();
@@ -64,7 +71,9 @@ TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
         decision.seededThisCall = true;
     }
 
-    phaseTicks_ = AdjustOutputPhase(packetAnchorTicks, phaseTicks_, rx);
+    decision.phaseTicksPre = phaseTicks_;
+    phaseTicks_ = AdjustOutputPhase(packetAnchorTicks, phaseTicks_, rx, decision);
+    decision.phaseTicksPost = phaseTicks_;
 
     if (cadenceReadIndex_ == RxSytCadence::kNoInfo) {
         cadenceReadIndex_ = static_cast<uint16_t>(
@@ -95,11 +104,14 @@ TxTimingModel::Decision TxTimingModel::PeekNextDataSyt(
         forceAdjust_ = true;
         cadenceReadIndex_ = RxSytCadence::kNoInfo;
         pendingCadenceTicks_ = 0;
+        decision.reseeded = true;
         decision.syt = SytFormatter::kNoInfo;
         return decision;
     }
 
     pendingCadenceTicks_ = rxCadence.ReadEntry(cadenceReadIndex_);
+    decision.pendingCadenceTicks = pendingCadenceTicks_;
+    decision.cadenceReadIndex = cadenceReadIndex_;
     if (pendingCadenceTicks_ == 0) {
         phaseTicks_ = 0;
         seeded_ = false;
@@ -123,12 +135,15 @@ void TxTimingModel::CommitDataPacket() noexcept {
 int64_t TxTimingModel::AdjustOutputPhase(
     int64_t executionPhaseTicks,
     int64_t candidatePhaseTicks,
-    const RxSytCadence::Snapshot& rx) noexcept {
+    const RxSytCadence::Snapshot& rx,
+    Decision& decision) noexcept {
     const int64_t rxRecoveredPhaseTicksDelayFree =
         ASFW::Timing::normalizeOffsetDomain(rx.recoveredPhaseTicks - config_.xmitTransferDelayTicks);
     const int64_t phaseError =
         ASFW::Timing::extOffsetDiff(candidatePhaseTicks,
                                    rxRecoveredPhaseTicksDelayFree);
+    decision.rxPhaseDelayFree = rxRecoveredPhaseTicksDelayFree;
+    decision.phaseError = phaseError;
     const int64_t cadenceScale =
         static_cast<int64_t>(config_.sytIntervalFrames) << 8;
     if (cadenceScale == 0 || rx.rollingCadenceTicks == 0) {
@@ -156,6 +171,8 @@ int64_t TxTimingModel::AdjustOutputPhase(
         }
         frameError = signedRemainder / cadenceScale;
     }
+    decision.frameError = frameError;
+    decision.correctionTicks = correctionTicks;
 
     if (!forceAdjust_ &&
         std::abs(frameError) <= config_.phaseDeadband) {
@@ -163,8 +180,9 @@ int64_t TxTimingModel::AdjustOutputPhase(
     }
 
     forceAdjust_ = false;
+    decision.forceAdjustFired = true;
     // Exact Saffire behavior at 0xcd4c-0xcd63: forced correction is based on
-    // argument 3 (the current output-DCL execution phase), not argument 4 (the
+    // argument 3 (the current transmit anchor phase), not argument 4 (the
     // carried/seeded output phase). The deadband path above is the only path
     // that returns the carried candidate unchanged.
     return ASFW::Timing::normalizeOffsetDomain(

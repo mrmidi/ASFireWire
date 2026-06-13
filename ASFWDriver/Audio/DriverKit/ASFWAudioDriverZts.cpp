@@ -261,6 +261,11 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             if (wasTimingSeeded && cadenceWouldCarryData) {
                 directControl->counters.txPostLockNoDataPackets.fetch_add(
                     1, std::memory_order_relaxed);
+                // Saffire invalidates its carried output phase when the transmit
+                // stream has a discontinuity. Do the same for a
+                // post-lock DATA hole: otherwise the next packet resumes with
+                // the old SYT and freezes an additional 8-frame duplex offset.
+                ivars.runtime.txTimingModel.RearmAfterSkippedDataSlot();
             }
         }
         directControl->counters.txPackets.fetch_add(
