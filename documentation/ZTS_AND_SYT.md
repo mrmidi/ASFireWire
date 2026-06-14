@@ -144,14 +144,32 @@ arrival timestamp. Its precision is limited by the descriptor's omission of
 
 #### Step 5: Grid Projection to ZTS Frame Boundary
 CoreAudio requires ZTS anchors to align exactly to the ZTS period boundary (typically $P = 192\text{ frames}$).
+
 1.  Calculate the next grid sample frame:
-    $$\text{gridFrame} = \left(\frac{\text{packetFirstFrame}}{P} + 1\right) \times P$$
+
+```math
+\mathrm{gridFrame} = \left(\frac{\mathrm{packetFirstFrame}}{P} + 1\right) \times P
+```
+
 2.  Calculate the frame difference:
-    $$\Delta\text{frames} = \text{gridFrame} - \text{packetFirstFrame}$$
+
+```math
+\Delta\mathrm{frames} = \mathrm{gridFrame} - \mathrm{packetFirstFrame}
+```
+
 3.  Project the host time forward to this boundary:
-    $$\Delta\text{nanos} = \Delta\text{frames} \times \frac{1,000,000,000}{\text{sampleRateHz}}$$
-    $$\Delta\text{hostTicks} = \Delta\text{nanos} \times \frac{\text{denom}}{\text{numer}}$$
-    $$\text{gridHostTicks} = \text{packetReceiveHostTicks} + \Delta\text{hostTicks}$$
+
+```math
+\Delta\mathrm{nanos} = \Delta\mathrm{frames} \times \frac{1{,}000{,}000{,}000}{\mathrm{sampleRateHz}}
+```
+
+```math
+\Delta\mathrm{hostTicks} = \Delta\mathrm{nanos} \times \frac{\mathrm{denom}}{\mathrm{numer}}
+```
+
+```math
+\mathrm{gridHostTicks} = \mathrm{packetReceiveHostTicks} + \Delta\mathrm{hostTicks}
+```
 
 The pair `(gridFrame, gridHostTicks)` is then published to CoreAudio.
 
@@ -190,22 +208,55 @@ int64_t TxTimingModel::AdjustOutputPhase(
 ```
 
 #### The Servo Algorithm:
+
 1.  **Calculate Phase Error**: Compare the proposed phase candidate against the recovered delay-free phase from the receiver.
-    $$\text{phaseError} = \text{candidatePhaseTicks} - (\text{rx.recoveredPhaseTicks} - \text{transferDelay})$$
+
+```math
+\mathrm{phaseError} = \mathrm{candidatePhaseTicks} - (\mathrm{rx.recoveredPhaseTicks} - \mathrm{transferDelay})
+```
+
 2.  **Divide by Cadence Scale**: The scale is determined by the SYT interval (8 frames for blocking mode).
-    $$\text{cadenceScale} = \text{sytIntervalFrames} \ll 8 = 2048$$
+
+```math
+\mathrm{cadenceScale} = \mathrm{sytIntervalFrames} \ll 8 = 2048
+```
+
 3.  **Compute Remainder and Complement**:
-    *   If $\text{phaseError} \ge 0$:
-        $$\text{remainder} = (\text{phaseError} \times \text{cadenceScale}) \pmod{\text{rollingCadenceTicks}}$$
-        $$\text{complement} = \text{rollingCadenceTicks} - \text{remainder}$$
-    *   If $\text{phaseError} < 0$:
-        $$\text{remainder} = (-\text{phaseError} \times \text{cadenceScale}) \pmod{\text{rollingCadenceTicks}}$$
-        $$\text{complement} = \text{remainder}$$
+    *   If $\mathrm{phaseError} \ge 0$:
+
+```math
+\mathrm{remainder} = (\mathrm{phaseError} \times \mathrm{cadenceScale}) \pmod{\mathrm{rollingCadenceTicks}}
+```
+
+```math
+\mathrm{complement} = \mathrm{rollingCadenceTicks} - \mathrm{remainder}
+```
+
+    *   If $\mathrm{phaseError} < 0$:
+
+```math
+\mathrm{remainder} = (-\mathrm{phaseError} \times \mathrm{cadenceScale}) \pmod{\mathrm{rollingCadenceTicks}}
+```
+
+```math
+\mathrm{complement} = \mathrm{remainder}
+```
+
 4.  **Determine Frame Error and Correction**:
-    If $\text{remainder} \ne 0$:
-    $$\text{correctionTicks} = \frac{\text{complement}}{\text{cadenceScale}}$$
-    $$\text{signedRemainder} = \text{remainder} > \frac{\text{rollingCadenceTicks}}{2} \ ? \ (\text{remainder} - \text{rollingCadenceTicks}) : \text{remainder}$$
-    $$\text{frameError} = \frac{\text{signedRemainder}}{\text{cadenceScale}}$$
+    If $\mathrm{remainder} \ne 0$:
+
+```math
+\mathrm{correctionTicks} = \frac{\mathrm{complement}}{\mathrm{cadenceScale}}
+```
+
+```math
+\mathrm{signedRemainder} = \mathrm{remainder} > \frac{\mathrm{rollingCadenceTicks}}{2} \ ? \ (\mathrm{remainder} - \mathrm{rollingCadenceTicks}) : \mathrm{remainder}
+```
+
+```math
+\mathrm{frameError} = \frac{\mathrm{signedRemainder}}{\mathrm{cadenceScale}}
+```
+
 5.  **Apply Deadband (Hold-and-Nudge)**:
     To prevent jitter under normal micro-fluctuations, the model will **hold** the phase unchanged unless the `frameError` exceeds the deadband configuration threshold (typically `409`) or `forceAdjust` is armed:
     ```cpp
@@ -412,20 +463,35 @@ the exact sub-cycle instant at which the packet reached the link or converter.
 
 #### 5. Calculating Decoded Frames (`dec`)
 The raw frames decoded is calculated by taking the packet's payload size and dividing it by the data block size (DBS):
-$$\text{dec} = \frac{\text{packetLength} - 16}{\text{dataBlockSize} \times 4}$$
+
+```math
+\mathrm{dec} = \frac{\mathrm{packetLength} - 16}{\mathrm{dataBlockSize} \times 4}
+```
+
 *   Overhead is $16\text{ bytes}$ ($8\text{ bytes}$ for OHCI context/isoch headers + $8\text{ bytes}$ for CIP header).
-*   For blocking 48 kHz mode, $\text{dataBlockSize} = 8$ and the packet carries $8\text{ audio frames}$.
-*   $$\text{dec} = \frac{272 - 16}{8 \times 4} = \frac{256}{32} = 8\text{ frames}$$
+*   For blocking 48 kHz mode, $\mathrm{dataBlockSize} = 8$ and the packet carries $8\text{ audio frames}$.
+
+```math
+\mathrm{dec} = \frac{272 - 16}{8 \times 4} = \frac{256}{32} = 8\text{ frames}
+```
+
 This matches `dec=8` logged.
 
 #### 6. Calculating the Published Host Time Grid Anchor
 CoreAudio requires the anchor to align to the grid boundary (e.g. $4224$, which is a multiple of $192$):
-*   $\text{packetFirstFrame} = 4216$ (since $4224 - 8 = 4216$, which is $8\text{ frames}$ behind the grid frame).
-*   $\Delta\text{frames} = 4224 - 4216 = 8\text{ frames}$
-*   Converting $\Delta\text{frames}$ to nanoseconds:
-    $$\Delta\text{ns} = 8 \times \frac{1,000,000,000}{48,000} \approx 166,666.67\text{ ns}$$
-*   Converting $\Delta\text{ns}$ to host ticks:
-    $$\Delta\text{hostTicks} = 166,666.67 \times \frac{3}{125} = 4000\text{ host ticks}$$
+*   $\mathrm{packetFirstFrame} = 4216$ (since $4224 - 8 = 4216$, which is $8\text{ frames}$ behind the grid frame).
+*   $\Delta\mathrm{frames} = 4224 - 4216 = 8\text{ frames}$
+*   Converting $\Delta\mathrm{frames}$ to nanoseconds:
+
+```math
+\Delta\mathrm{ns} = 8 \times \frac{1{,}000{,}000{,}000}{48{,}000} \approx 166{,}666.67\text{ ns}
+```
+
+*   Converting $\Delta\mathrm{ns}$ to host ticks:
+
+```math
+\Delta\mathrm{hostTicks} = 166{,}666.67 \times \frac{3}{125} = 4000\text{ host ticks}
+```
 *   $$\text{host} = \text{rawHost} + \Delta\text{hostTicks} = 239100150045 + 4000 = 239100154045\text{ ticks}$$
 (The actual log shows `239100154044` due to sub-nanosecond integer rounding in the exact timebase conversions).
 
@@ -483,11 +549,22 @@ initial phase directly from `rx.recoveredPhaseTicks` rather than from the
 host-paced `packetAnchorTicks`.
 
 1. **Calculate the physical distance** between the scheduling anchor and the recovered receive phase:
-   $$\text{distanceTicks} = \text{extOffsetDiff}(\text{packetAnchorTicks}, \text{rx.recoveredPhaseTicks})$$
-2. **Round this distance** to the nearest multiple of the 16-cycle SYT epoch ($49,152\text{ ticks}$):
-   $$\text{alignedDistance} = \text{round}\left(\frac{\text{distanceTicks}}{49,152}\right) \times 49,152$$
+
+```math
+\mathrm{distanceTicks} = \mathrm{extOffsetDiff}(\mathrm{packetAnchorTicks},\ \mathrm{rx.recoveredPhaseTicks})
+```
+
+2. **Round this distance** to the nearest multiple of the 16-cycle SYT epoch ($49{,}152\text{ ticks}$):
+
+```math
+\mathrm{alignedDistance} = \mathrm{round}\left(\frac{\mathrm{distanceTicks}}{49{,}152}\right) \times 49{,}152
+```
+
 3. **Initialize the phase** using the receiver phase plus the aligned distance and the safety lead:
-   $$\text{phaseTicks\_} = \text{rx.recoveredPhaseTicks} + \text{alignedDistance} + \text{initialLeadTicks}$$
+
+```math
+\mathrm{phaseTicks\_} = \mathrm{rx.recoveredPhaseTicks} + \mathrm{alignedDistance} + \mathrm{initialLeadTicks}
+```
 
 Because `alignedDistance` is a multiple of $16\text{ cycles}$ ($0\pmod{16}$),
 the cycle offset between the transmit and receive timelines is a whole
@@ -722,23 +799,75 @@ Unlike Apple's driver, which enforces a hardcoded static DCL ring size (100 grou
 
 #### 1. Linux ALSA DMA Geometry (`amdtp-stream.c`)
 *   **Queue Size (DMA Buffer Depth)**: The total number of packets queued in the context is dynamically calculated from the ALSA buffer size:
-    $$\text{queue\_size} = \text{DIV\_ROUND\_UP}\left(\text{CYCLES\_PER\_SECOND} \times \frac{\text{events\_per\_buffer}}{\text{sample\_rate}}\right)$$
-    Where $\text{CYCLES\_PER\_SECOND} = 8000$ packets/s. For a buffer size of 192 frames (3 periods of 64 frames) at 48 kHz:
-    $$\text{queue\_size} = \text{DIV\_ROUND\_UP}\left(8000 \times \frac{192}{48000}\right) = 32\text{ packets}$$
+
+```math
+\mathrm{queue\_size}
+=
+\mathrm{DIV\_ROUND\_UP}
+\left(
+\mathrm{CYCLES\_PER\_SECOND}
+\times
+\frac{\mathrm{events\_per\_buffer}}{\mathrm{sample\_rate}}
+\right)
+```
+
+Where $\mathrm{CYCLES\_PER\_SECOND} = 8000$ packets/s. For a buffer size of 192 frames (3 periods of 64 frames) at 48 kHz:
+
+```math
+\mathrm{queue\_size}
+=
+\mathrm{DIV\_ROUND\_UP}
+\left(
+8000 \times \frac{192}{48000}
+\right)
+= 32\text{ packets}
+```
+
 *   **Interrupt Interval (`idle_irq_interval`)**: The hardware interrupt cadence is determined by the ALSA period size:
-    $$\text{idle\_irq\_interval} = \text{DIV\_ROUND\_UP}\left(\text{CYCLES\_PER\_SECOND} \times \frac{\text{events\_per\_period}}{\text{sample\_rate}}\right)$$
-    For a 64-frame period at 48 kHz:
-    $$\text{idle\_irq\_interval} = \text{DIV\_ROUND\_UP}\left(8000 \times \frac{64}{48000}\right) = 11\text{ packets} \approx 1.375\text{ ms}$$
-    For a 32-frame period:
-    $$\text{idle\_irq\_interval} = 6\text{ packets} = 0.75\text{ ms}$$
+
+```math
+\mathrm{idle\_irq\_interval}
+=
+\mathrm{DIV\_ROUND\_UP}
+\left(
+\mathrm{CYCLES\_PER\_SECOND}
+\times
+\frac{\mathrm{events\_per\_period}}{\mathrm{sample\_rate}}
+\right)
+```
+
+For a 64-frame period at 48 kHz:
+
+```math
+\mathrm{idle\_irq\_interval}
+=
+\mathrm{DIV\_ROUND\_UP}
+\left(
+8000 \times \frac{64}{48000}
+\right)
+= 11\text{ packets} \approx 1.375\text{ ms}
+```
+
+For a 32-frame period:
+
+```math
+\mathrm{idle\_irq\_interval} = 6\text{ packets} = 0.75\text{ ms}
+```
+
 *   **Minimum Cadence Limit**: In blocking mode, ALSA enforces a minimum period time of **250 microseconds** (2 cycles). Thus, the absolute minimum hardware interrupt interval under Linux is **2 packets (0.25 ms)**.
 
 #### 2. libffado User-Space DMA Geometry (`IsoHandlerManager.cpp`)
 *   **Buffers (Queue size)**: Configured using a maximum buffer limit (`max_nb_buffers_recv` or `max_nb_buffers_xmit`).
 *   **Interrupt Cadence (`irq_interval`)**: Dynamically computed from the user's ALSA period size (`packets_per_period`) and target minimum interrupts per period:
-    $$\text{irq\_interval} = \frac{\text{packets\_per\_period} - 1}{\text{min\_interrupts\_per\_period}}$$
-    It is capped at `buffers / 2` to ensure at least two interrupts per wrap.
-    For a 64-frame period (1.33 ms) at 48 kHz, this produces a hardware interrupt interval of **4 to 8 packets (0.5 ms to 1.0 ms)** depending on configuration.
+
+```math
+\mathrm{irq\_interval}
+=
+\frac{\mathrm{packets\_per\_period} - 1}{\mathrm{min\_interrupts\_per\_period}}
+```
+
+It is capped at `buffers / 2` to ensure at least two interrupts per wrap.
+For a 64-frame period (1.33 ms) at 48 kHz, this produces a hardware interrupt interval of **4 to 8 packets (0.5 ms to 1.0 ms)** depending on configuration.
 
 ### E. Major Takeaways for ASFW
 * **Hardware-Domain Lock**: Both reference drivers avoid absolute host time pacing for wire presentation. They calculate offsets and phases entirely in the physical 1394 cycle-timer/tick domain.
@@ -862,8 +991,12 @@ When the driver initializes, `AM824DCLWrite::Init` sets the default DMA ring str
 
 For a **48 kHz** sample rate, the selector `SetupSendBuffer` delegates to `SetupSendBufferFor8NkHz`.
 *   The average transport rate is:
-    $$\text{averageFramesPerCycle} = \frac{48000\text{ Hz}}{8000\text{ cycles/s}} = 6\text{ frames/cycle}$$
-    In IEC 61883-6 blocking mode this does not mean every packet contains six
+
+```math
+\mathrm{averageFramesPerCycle} = \frac{48{,}000\text{ Hz}}{8{,}000\text{ cycles/s}} = 6\text{ frames/cycle}
+```
+
+In IEC 61883-6 blocking mode this does not mean every packet contains six
     frames. The cadence is represented by DATA packets carrying the SYT
     interval (8 frames at 48 kHz) interspersed with NO-DATA packets. For the
     observed eight-cycle group, six DATA packets and two NO-DATA packets carry
@@ -874,8 +1007,12 @@ For a **48 kHz** sample rate, the selector `SetupSendBuffer` delegates to `Setup
     `CheckSYT` appears gated to `groupIndex == 0`. If `groupIndex` spans the
     full 100-group ring in this mode, that implies one correction per ring
     wrap:
-    $$\text{Servo Update Period} = 100\text{ groups} \times 8\text{ packets/group} \times 125\ \mu\text{s} = 100\text{ milliseconds}$$
-    This is a reverse-engineering observation, not a general requirement.
+
+```math
+\mathrm{Servo\ Update\ Period} = 100\text{ groups} \times 8\text{ packets/group} \times 125\ \mu\text{s} = 100\text{ milliseconds}
+```
+
+This is a reverse-engineering observation, not a general requirement.
     Other modes or callback paths may use different gating.
 
 ### F. Historical Short-Group Interpretation

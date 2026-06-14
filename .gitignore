@@ -61,6 +61,9 @@ opencode.json
 # Local Codex scratch builds
 build-codex/
 
+# Node modules (for lint-math tooling)
+node_modules/
+
 # Xcode generated projects
 ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
 
