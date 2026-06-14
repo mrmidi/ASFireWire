@@ -54,7 +54,7 @@ Owns the status-FIFO address range and its remote-write callback (lifetime-guard
 | `EnableUnsolicitedStatus`, `OnUnsolicitedStatusEnableComplete` |
 | `WriteBusyTimeout`, `OnBusyTimeoutComplete` |
 
-> **Open design point:** the status FIFO is shared between login completion and unsolicited/command status. Decision: `UnsolicitedStatusSink` *owns* the range and exposes a routing callback; `LoginOrbExchange` registers a "waiting for login status" handler with it rather than owning a second range. Confirm during impl.
+> **Resolved (approved):** the status FIFO is shared between login completion and unsolicited/command status. `UnsolicitedStatusSink` **owns** the single range and exposes a routing callback; `LoginOrbExchange` and `FetchAgent` register handlers with it rather than owning duplicate ranges. The range backing is an `IOBufferMemoryDescriptor` (+`IODMACommand`/`CreateMapping`) obtained **through `AddressSpaceManager`** — never a raw `std::vector` posing as device memory (see §7).
 
 ---
 
@@ -136,11 +136,62 @@ Each gets a unit test in `tests/protocols/SBP2ORBTests.cpp` (which already exist
 
 ## 6. Build/test order within FW-56 (each green before next)
 
+0. `ISessionScheduler` interface + fake (virtual-clock) host-test backing (§7a). No production timer wiring yet — that lands in FW-58 against `IOTimerDispatchSource`+`OSAction`.
 1. CommandORB foundation additions (§5) + tests → `SBP2ORBTests` green.
 2. `SessionRecord` slim type + `SessionRegistry` (identity/lifecycle) → port `SBP2SessionRegistryTests` (registry half).
-3. `LoginSession` core + `LoginOrbExchange` → port `SBP2LoginSessionTests`.
+3. `LoginSession` core + `LoginOrbExchange` (uses scheduler from step 0) → port `SBP2LoginSessionTests`.
 4. `FetchAgent` + `UnsolicitedStatusSink`.
 5. `CommandExecutor` → remaining `SBP2SessionRegistryTests` (command half).
 6. `tests/CMakeLists` targets registered; full host suite green; checkpoint commit.
 
 > Tests come from #19 but were written against #19's API — adapt assertions to the decomposed components and DICE call shapes as each piece lands.
+
+---
+
+## 7. DriverKit primitives — use native, not hand-rolled
+
+Guidance (approved): lean on DriverKit's own facilities rather than reinventing them.
+
+### 7a. Timers → `IOTimerDispatchSource` + `OSAction` (not the IOSleep hack)
+
+The current `SBP2DelayedDispatch::DispatchAfterCompat` schedules a timeout as
+`queue->DispatchAsync(^{ IOSleep(delayMs); work(); })`. That **blocks the queue
+thread for the whole delay** — on the dext's single `Default` queue, every armed
+timeout stalls the queue. Do **not** propagate this into the four new components.
+
+The dext already has the correct idiom: `Scheduling/WatchdogCoordinator` uses
+`IOTimerDispatchSource::Create(queue, &timer)` driven by an `OSAction`
+(`AsyncWatchdogTimerFired`, `TYPE()`-declared in `ASFWDriver.iig`). Follow it.
+
+**Constraint:** an `OSAction` target must be an IIG `TYPE()`-declared method on a
+DriverKit class. The SBP-2 session components are plain C++ (POCO), not
+`IOService`s, so they cannot host `OSAction` callbacks directly. Therefore:
+
+- Components depend on an **injected scheduler interface** — e.g.
+  `ISessionScheduler { CancelableToken ScheduleAfter(uint64_t ns, fn); void Cancel(token); }`
+  — never on `DispatchAfterCompat` directly.
+- **Production** backing: an `IOTimerDispatchSource`+`OSAction` owned at the
+  driver/controller level, routing fires back into the component (wired in FW-58).
+  The generation-counter + `weak_from_this()` guards still apply per fire.
+- **Host tests**: a fake scheduler with a manually-advanced virtual clock — makes
+  the timeout/reconnect/busy-replay paths deterministically testable (no real time).
+
+This keeps the POCO components testable *and* gets real, non-blocking DriverKit
+timers in production. The `SBP2DelayedDispatch` shim stays only as the host-test
+fallback path if convenient; production goes through the scheduler interface.
+
+### 7b. Memory → `IOBufferMemoryDescriptor` via `AddressSpaceManager`
+
+Every SBP-2 address range (login/response/status-FIFO/reconnect/logout ORBs,
+command ORB, page table) is allocated through `AddressSpaceManager`, which already
+backs each range with `OSSharedPtr<IOBufferMemoryDescriptor>` +
+`OSSharedPtr<IODMACommand>` + `CreateMapping`. Components hold **handles**, not
+buffers; they never allocate device-visible memory by hand. `OSSharedPtr` /
+`OSAction` lifetimes are RAII-managed.
+
+### 7c. Async transactions → existing bus async API
+
+Login/reconnect/logout writes, fetch-agent writes, and doorbell rings go through
+the established `Async::IFireWireBus` async write API (as #19 does), whose
+completions are already `OSAction`-driven inside `AsyncSubsystem`. No new
+transport primitive is introduced at the SBP-2 layer.
