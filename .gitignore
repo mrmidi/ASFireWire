@@ -78,3 +78,10 @@ ADKVirtualAudioLab/ADKVirtualAudioLab.xcodeproj/
 /validation_data.json
 __pycache__/
 /ZTS_BUFFERS_AND_IRS.md
+
+# Log dumps
+/tools/*.txt
+/tools/*.log
+
+# mimo
+.mimocode
