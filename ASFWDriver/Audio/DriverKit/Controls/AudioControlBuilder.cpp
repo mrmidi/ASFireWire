@@ -44,12 +44,13 @@ void ResetBoolControlSlots(BoolControlSlot* slots, uint32_t count) {
     }
 }
 
-void AddBooleanControlsToDevice(ASFWAudioDriver& driver,
-                                IOUserAudioDevice& audioDevice,
-                                BoolControlSlot* slots,
-                                uint32_t slotCount) {
+[[nodiscard]] kern_return_t AddBooleanControlsToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    BoolControlSlot* slots,
+    uint32_t slotCount) {
     if (!slots) {
-        return;
+        return slotCount == 0 ? kIOReturnSuccess : kIOReturnBadArgument;
     }
 
     for (uint32_t index = 0; index < slotCount; ++index) {
@@ -88,15 +89,31 @@ void AddBooleanControlsToDevice(ASFWAudioDriver& driver,
                      slot.descriptor.classIdFourCC,
                      slot.descriptor.element);
             slot.valid = false;
-            continue;
+            return kIOReturnNoMemory;
         }
 
         char controlName[96] = {};
         BuildControlName(slot.descriptor, controlName);
 
         auto controlNameString = OSSharedPtr(OSString::withCString(controlName), OSNoRetain);
-        if (controlNameString) {
+        if (!controlNameString) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDriver: Failed to allocate bool control name class=0x%08x element=%u",
+                     slot.descriptor.classIdFourCC,
+                     slot.descriptor.element);
+            slot.valid = false;
+            return kIOReturnNoMemory;
+        }
+        const kern_return_t nameStatus =
             control->SetName(controlNameString.get());
+        if (nameStatus != kIOReturnSuccess) {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDriver: bool control SetName failed class=0x%08x element=%u kr=0x%x",
+                     slot.descriptor.classIdFourCC,
+                     slot.descriptor.element,
+                     nameStatus);
+            slot.valid = false;
+            return nameStatus;
         }
 
         kern_return_t status = audioDevice.AddControl(control.get());
@@ -107,7 +124,7 @@ void AddBooleanControlsToDevice(ASFWAudioDriver& driver,
                      slot.descriptor.element,
                      status);
             slot.valid = false;
-            continue;
+            return status;
         }
 
         slot.control = control;
@@ -118,6 +135,8 @@ void AddBooleanControlsToDevice(ASFWAudioDriver& driver,
                  slot.descriptor.element,
                  controlValue ? 1u : 0u);
     }
+
+    return kIOReturnSuccess;
 }
 
 } // namespace ASFW::Isoch::Audio

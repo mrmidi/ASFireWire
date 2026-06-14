@@ -196,15 +196,15 @@ TEST(RxDrivenTimingTests, ReplayCannotEstablishWithoutHalfRingHistory) {
     EXPECT_FALSE(replay.IsEstablished());
 }
 
-TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndFortyEightSixtyTx) {
+TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 6U);
     EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 6U);
     EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 40U);
-    EXPECT_EQ(AudioTimingGeometry::kHalZeroTimestampPeriodFrames, 192U);
+    EXPECT_EQ(AudioTimingGeometry::kHalZeroTimestampPeriodFrames, 1536U);
     EXPECT_EQ(AudioTimingGeometry::kRxDescriptorPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 12U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 60U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 36U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 84U);
     EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 192U);
 }
 

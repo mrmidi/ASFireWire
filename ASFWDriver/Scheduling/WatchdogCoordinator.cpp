@@ -166,7 +166,6 @@ void WatchdogCoordinator::TickIsochReceive(
         }
         if (++payloadWriterLogDivider_ >= kPayloadWriterDrainIntervalTicks) {
             payloadWriterLogDivider_ = 0;
-            ASFW_LOG(DirectAudio, "[PayloadWriter] Heartbeat: watchdog draining telemetry");
             isochReceiveContext->DrainPayloadWriterTelemetry(kPayloadWriterRecordsPerDrain);
         }
     }

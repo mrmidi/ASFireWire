@@ -50,6 +50,11 @@ public:
         writeSeq_.store(seq + 1, std::memory_order_release);
     }
 
+    [[nodiscard]] uint64_t PendingCount() const noexcept {
+        const uint64_t writeSeq = writeSeq_.load(std::memory_order_acquire);
+        return writeSeq >= readSeq_ ? writeSeq - readSeq_ : 0;
+    }
+
     template <typename EmitFn>
     uint64_t Drain(uint32_t maxEmit, EmitFn&& emit) noexcept {
         const uint64_t writeSeq = writeSeq_.load(std::memory_order_acquire);

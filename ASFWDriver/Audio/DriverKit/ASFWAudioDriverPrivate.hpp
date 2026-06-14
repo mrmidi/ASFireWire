@@ -17,6 +17,8 @@
 
 #include <AudioDriverKit/AudioDriverKit.h>
 #include <DriverKit/IOMemoryDescriptor.h>
+
+class ASFWAudioDevice;
 #include <DriverKit/IOMemoryMap.h>
 #include <DriverKit/IOTimerDispatchSource.h>
 #include <DriverKit/OSAction.h>
@@ -202,6 +204,7 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
+    std::atomic<uint64_t> ioCallbacksOutsideRun{0};
     std::atomic<bool> txActive{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
@@ -214,7 +217,7 @@ struct AudioDriverRuntimeState {
 
 struct ASFWAudioDriver_IVars {
     OSSharedPtr<IODispatchQueue> workQueue;
-    OSSharedPtr<IOUserAudioDevice> audioDevice;
+    OSSharedPtr<ASFWAudioDevice> audioDevice;
     OSSharedPtr<IOUserAudioStream> inputStream;
     OSSharedPtr<IOUserAudioStream> outputStream;
     OSSharedPtr<IOMemoryDescriptor> inputBuffer;
@@ -231,6 +234,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txMetadataMap;
     OSSharedPtr<IOMemoryMap> txControlMap;
     OSSharedPtr<OSAction> txPreparationAction;
+    OSSharedPtr<IODispatchQueue> txPreparationQueue;
     OSSharedPtr<OSAction> ztsAnchorAction;
     OSSharedPtr<IODispatchQueue> ztsQueue;
 

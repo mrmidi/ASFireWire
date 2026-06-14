@@ -25,9 +25,17 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kNominalFramesPerTimingGroup =
         36;
 
-    // The HAL clock contract remains a strict 192-frame sample-time grid.
-    // RX publishes only when its decoded-frame cursor crosses this boundary.
-    static constexpr uint32_t kHalZeroTimestampPeriodFrames = 192;
+    // HAL-facing PCM frame ring (one per direction, directly mapped).
+    // AudioDriverKit's sample allocates one complete ring per declared zero
+    // timestamp period. Keep those values identical so the host and driver
+    // agree on the stream-buffer wrap point.
+    static constexpr uint32_t kFrameRingFrames = 1536;
+
+    // The declared HAL clock period is also the mapped stream-ring length.
+    // RX still runs at the shorter DMA cadence and publishes only when its
+    // decoded-frame cursor crosses this grid.
+    static constexpr uint32_t kHalZeroTimestampPeriodFrames =
+        kFrameRingFrames;
 
     // The graph applies the complete profile/output/client-IO formula. This is
     // only the interrupt-batch component of that calculation.
@@ -36,14 +44,6 @@ struct AudioTimingGeometry final {
 
     // Upper bound on a single HAL IO transfer (client buffer size).
     static constexpr uint32_t kHalIoPeriodFrames = 512;
-
-    // HAL-facing PCM frame ring (one per direction, directly mapped).
-    // Must be an integer multiple of the ZTS period, the max IO period, and
-    // the nominal group advance, and must exceed max IO + output safety so a
-    // full-size client write can never lap the hardware cursor (the old
-    // ring == max IO == 512 geometry had zero output headroom). Ring size
-    // does not add latency — the safety offsets govern that.
-    static constexpr uint32_t kFrameRingFrames = 1536;
 
     static constexpr uint32_t kFrameAlignment = 32;
 
@@ -94,14 +94,16 @@ static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kHalZeroTimestampPeriodFrames ==
               0,
               "Frame ring must be an integer number of ZTS periods");
+static_assert(AudioTimingGeometry::kFrameRingFrames ==
+                  AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
+              "AudioDriverKit stream ring must equal the declared ZTS period");
 static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kFrameAlignment ==
               0,
               "Frame ring must satisfy the 32-frame alignment contract");
 static_assert(AudioTimingGeometry::kFrameRingFrames >=
-              AudioTimingGeometry::kHalIoPeriodFrames +
-                  AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
-              "Frame ring needs headroom beyond one max IO transfer");
+                  AudioTimingGeometry::kHalIoPeriodFrames,
+              "Frame ring must hold one maximum HAL IO transfer");
 static_assert(AudioTimingGeometry::kTimingGroupPackets != 0,
               "Timing group packet count must be non-zero");
 static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==

@@ -6,11 +6,12 @@
 // Decides whether the IT underrun ("slot N not committed, commitGen one lap
 // behind") is a refill RANGE/GENERATION-coverage problem or merely a scheduling
 // margin race. It models the exact producer/consumer generation contract from
-// IsochTxDmaRing::Refill + PrepareTransmitSlots, with NO timing — the producer
-// always runs between refills (field [TxPrep] telemetry shows <100 us latency,
-// so this best-case ordering is the realistic one).
+// IsochTxDmaRing::Refill + PrepareTransmitSlots. Steady-state coverage is
+// modeled without timing, while startup separately permits a delayed first
+// producer action.
 //
-// Faithful model of the shipped code:
+// Faithful model of the shipped steady-state code, plus the separate startup
+// full-ring prefill:
 //   * Consumer refill checks slots [completion + ringAhead, +deltaConsumed),
 //     where ringAhead == kTxHardwareRingPackets steady-state, and requires
 //     commitGen[slot] == ExpectedCommitGen(absPacket) (IsochTxDmaRing.cpp:503).
@@ -59,6 +60,16 @@ public:
     // Producer tops the committed cursor to completion + lead (one wake).
     void RunProducer() {
         const uint64_t target = completion_ + lead_;
+        CommitThrough(target);
+    }
+
+    // Startup seeds one complete shared-ring lap to cover delayed delivery of
+    // the first producer action.
+    void PrefillFullSharedRing() {
+        CommitThrough(numSlots_);
+    }
+
+    void CommitThrough(uint64_t target) {
         for (uint64_t abs = expose_; abs < target; ++abs) {
             commitGen_[abs % numSlots_] = ExpectedCommitGen(abs, numSlots_);
         }
@@ -142,6 +153,26 @@ TEST(TxRefillCoverage, SingleRefillSafeIffDeltaWithinLeadMinusRing) {
 TEST(TxRefillCoverage, NominalSingleGroupNeverHolesOverThousands) {
     // 6 packets/refill for >> one ring lap. 8000 refills = 48000 packets.
     EXPECT_EQ(DriveSteady(kLead, kHwRing, kGroup, /*cycles=*/8000), kNoMiss);
+}
+
+TEST(TxRefillCoverage, FullRingPrefillCoversDelayedStartupProducer) {
+    RefillSim sim(kNumSlots, kLead, kHwRing);
+    sim.PrefillFullSharedRing();
+
+    // Captured failure: seven six-packet groups completed before the producer
+    // action ran. The former lead-only prefill failed at packet 84.
+    for (uint32_t group = 0; group < 7; ++group) {
+        EXPECT_EQ(sim.Refill(kGroup), kNoMiss) << "group=" << group;
+    }
+    EXPECT_EQ(sim.Completion(), 42U);
+    EXPECT_EQ(sim.Expose(), kNumSlots);
+
+    // Once the producer starts, the normal completion+lead target takes over
+    // and preserves generation coverage across subsequent ring laps.
+    for (uint32_t group = 0; group < 4000; ++group) {
+        sim.RunProducer();
+        ASSERT_EQ(sim.Refill(kGroup), kNoMiss) << "group=" << group;
+    }
 }
 
 TEST(TxRefillCoverage, TwoGroupCoalesceCoveredAtOldLead) {

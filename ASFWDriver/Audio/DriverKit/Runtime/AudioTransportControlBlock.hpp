@@ -99,6 +99,26 @@ struct AudioTransportControlBlock final {
     HostClockAnchorState hostClockAnchor{};
     std::atomic<uint64_t> discontinuities{0};
 
+    // Latest ADK IO callback, successful or not. The real-time callback only
+    // stores atomics; the watchdog formats the state off the RT thread.
+    std::atomic<uint64_t> ioCallbackGeneration{0};
+    std::atomic<uint32_t> ioLastOperation{0};
+    std::atomic<uint32_t> ioLastFrameCount{0};
+    std::atomic<uint32_t> ioLastObjectId{0};
+    std::atomic<uint64_t> ioLastSampleTime{0};
+    std::atomic<uint64_t> ioLastHostTime{0};
+
+    // Real-time IO callback failures are captured atomically and formatted by
+    // the watchdog. Do not call os_log from the ADK real-time callback.
+    std::atomic<uint64_t> ioCallbackErrorGeneration{0};
+    std::atomic<uint64_t> ioCallbackErrorReportedGeneration{0};
+    std::atomic<uint32_t> ioLastError{0};
+    std::atomic<uint32_t> ioLastErrorOperation{0};
+    std::atomic<uint32_t> ioLastErrorFrameCount{0};
+    std::atomic<uint32_t> ioLastErrorObjectId{0};
+    std::atomic<uint64_t> ioLastErrorSampleTime{0};
+    std::atomic<uint64_t> ioLastErrorHostTime{0};
+
     std::atomic<FatalStreamReason> fatalReason{FatalStreamReason::None};
     std::atomic<uint64_t> fatalGeneration{0};
 
@@ -168,6 +188,22 @@ struct AudioTransportControlBlock final {
         device.Reset();
         counters.Reset();
         hostClockAnchor.Reset();
+
+        ioCallbackGeneration.store(0, std::memory_order_relaxed);
+        ioLastOperation.store(0, std::memory_order_relaxed);
+        ioLastFrameCount.store(0, std::memory_order_relaxed);
+        ioLastObjectId.store(0, std::memory_order_relaxed);
+        ioLastSampleTime.store(0, std::memory_order_relaxed);
+        ioLastHostTime.store(0, std::memory_order_relaxed);
+
+        ioCallbackErrorGeneration.store(0, std::memory_order_relaxed);
+        ioCallbackErrorReportedGeneration.store(0, std::memory_order_relaxed);
+        ioLastError.store(0, std::memory_order_relaxed);
+        ioLastErrorOperation.store(0, std::memory_order_relaxed);
+        ioLastErrorFrameCount.store(0, std::memory_order_relaxed);
+        ioLastErrorObjectId.store(0, std::memory_order_relaxed);
+        ioLastErrorSampleTime.store(0, std::memory_order_relaxed);
+        ioLastErrorHostTime.store(0, std::memory_order_relaxed);
 
         fatalReason.store(FatalStreamReason::None, std::memory_order_release);
         fatalGeneration.store(0, std::memory_order_release);

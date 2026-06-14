@@ -547,7 +547,7 @@ Capacity is not latency. The historical error was exposing mutable,
 not-yet-owned DATA slots and treating their zero contents as valid future
 audio. It was not proved merely by the number 384.
 
-The adopted design resolves this by:
+The FW-53 design at that time resolved this by:
 
 1.  Giving every exposed packet an explicit committed disposition and
     generation.
@@ -569,7 +569,7 @@ The adopted design resolves this by:
 5.  Sizing the backing packet ring independently from the active preparation
     lead.
 
-The current 384-packet preparation lead is therefore a different mechanism
+That 384-packet preparation lead was therefore a different mechanism
 from the historical 384-packet fill-in-place bridge. It comprises the
 192-packet hardware ring plus 192 packets of DriverKit scheduling slack. Its
 correctness depends on immutable committed packet ownership, not on later
@@ -967,7 +967,7 @@ couplings were architecturally wrong:
 The research-stage replacement direction was:
 
 *   consider interrupting and refilling on a short packet cadence;
-*   keep the 192-frame ZTS grid independent and publish only on cursor
+*   keep the HAL ZTS grid independent and publish only on cursor
     crossings;
 *   use the packet's OHCI cycle stamp to project each crossed ZTS boundary;
 *   reduce active TX preparation to a small bounded near-wire window;
@@ -977,8 +977,9 @@ The research-stage replacement direction was:
     notification path.
 
 The current implementation retained the clock-domain and ownership
-corrections while adopting a 32-packet group for deterministic blocking
-cadence geometry.
+corrections while adopting a six-packet interrupt group. Because six is not a
+complete four-packet cadence multiple, a group advances by either 32 or 40
+frames depending on cadence phase.
 
 ---
 
@@ -994,10 +995,10 @@ requirements is the source of several apparent contradictions:
     retained while the HAL IO size, frame ring, and ZTS period were made
     512 frames. ZTS grid points had to be reconstructed inside a sequence of
     48-frame nominal group advances.
-3.  **Current FW-53+ adopted state:** the transport uses 32-packet timing
-    groups, a nominal 192-frame group advance, a 192-frame ZTS period, and a
-    1536-frame HAL ring. Packet-ring ownership and startup prefill are separate
-    from the HAL frame-ring geometry.
+3.  **Current adopted state:** the transport uses six-packet timing groups,
+    a phase-dependent 32/40-frame group advance, and a 1536-frame ADK ZTS
+    period equal to the 1536-frame HAL ring. Packet-ring ownership and startup
+    prefill remain separate from the HAL frame-ring geometry.
 
 Reference-driver sections describe evidence, not configuration inheritance.
 Apple's eight-packet groups, Linux's period-derived queues, and FFADO's
@@ -1019,18 +1020,18 @@ live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
 | Blocking cadence block | 4 packets | D/D/D/N, phase may rotate |
 | Frames per DATA packet | 8 | AMDTP SYT interval at 48 kHz |
 | Frames per cadence block | 24 | Three DATA packets |
-| RX/TX timing group | 32 packets | Eight complete cadence blocks, 4 ms |
-| Nominal group advance | 192 frames | $8 \times 24$ |
-| ADK ZTS period | 192 frames | Nominally one grid point per group |
+| RX/TX timing group | 6 packets | 0.75 ms interrupt target |
+| Group advance | 32 or 40 frames | Depends on D/D/D/N starting phase; 36 average |
+| ADK ZTS period | 1536 frames | Equal to the mapped ADK stream-ring length |
 | Maximum HAL IO transfer | 512 frames | Client-transfer upper bound |
-| HAL frame ring | 1536 frames | Eight ZTS periods, three max IO transfers |
+| HAL frame ring | 1536 frames | One ZTS period, three max IO transfers |
 | Frame alignment | 32 frames | Shared alignment contract |
-| IR descriptor ring | 512 packets | Packet-domain receive storage |
-| TX hardware ring | 192 packets | OHCI-owned transmit program |
-| TX preparation slack | 192 packets | Six additional timing groups |
-| TX preparation lead | 384 packets | Hardware ring plus scheduling slack |
-| TX shared packet ring | 1024 packets | Packet-domain backing capacity |
-| Input safety floor | 256 frames | One timing group plus 64-frame jitter floor |
+| IR descriptor ring | 504 packets | Packet-domain receive storage |
+| TX hardware ring | 48 packets | OHCI-owned transmit program |
+| TX preparation slack | 36 packets | Six additional timing groups |
+| TX preparation lead | 84 packets | Hardware ring plus scheduling slack |
+| TX shared packet ring | 192 packets | Packet-domain backing capacity |
+| Input safety floor | 104 frames | Maximum 40-frame group plus 64-frame jitter floor |
 
 The HAL has one frame-domain sample ring per direction. Packet-domain IR
 descriptor buffers and TX payload/metadata slots also exist, but they do not
@@ -1038,45 +1039,48 @@ define HAL frame-wrap timing.
 
 ### B. Load-Bearing Invariants
 
-The design requires divisibility, not equality between every period:
+The design requires the following relationships:
 
 ```text
-timingGroupPackets % cadenceBlockPackets == 0
-frameRing % ztsPeriod == 0
+rxDescriptorPackets % cadenceBlockPackets == 0
+rxDescriptorPackets % timingGroupPackets == 0
+frameRing == ztsPeriod
 frameRing % maxIO == 0
-frameRing % timingGroupFrames == 0
 frameRing % frameAlignment == 0
+txSharedSlots % timingGroupPackets == 0
+txHardwarePackets % timingGroupPackets == 0
 ```
 
 For the adopted values:
 
 ```text
-32 / 4    = 8 complete cadence blocks
-1536 / 192 = 8 ZTS periods
+504 / 4    = 126 complete cadence blocks
+504 / 6    = 84 interrupt groups
+1536       = 1536-frame ZTS period
 1536 / 512 = 3 maximum IO transfers
 1536 / 32  = 48 alignment quanta
+192 / 6    = 32 shared-ring groups
+48 / 6     = 8 hardware-ring groups
 ```
 
-The frame ring therefore does not equal the ZTS period or client IO size. It
-is an integer multiple of all three relevant frame-domain quantities.
+The frame ring equals the declared ZTS period because AudioDriverKit wraps the
+mapped stream buffer on that contract. The six-packet DMA cadence remains
+independent from the frame-domain ZTS grid.
 
 ### C. ZTS Publication
 
-Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. Nominally, one
-32-packet timing group advances exactly 192 frames and produces one 192-frame
-anchor. The interrupt is therefore the nominal ZTS callback point.
-
-That 1:1 relationship is not used as an unchecked assumption. The receive path
-still advances by the decoded data-block count and publishes in a
-grid-crossing loop. A device crystal slip, cadence relock, delayed drain, or
-multi-group drain can therefore cross zero, one, or several 192-frame grid
-points without publishing an off-grid sample time.
+Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. A six-packet group
+advances by 32 or 40 decoded frames, so many receive drains occur between
+1536-frame anchors. The receive path advances by decoded data-block count and
+publishes in a grid-crossing loop. A device crystal slip, cadence relock,
+delayed drain, or multi-group drain can therefore cross zero, one, or several
+1536-frame grid points without publishing an off-grid sample time.
 
 Each packet's eight-byte receive prefix is decoded for its own OHCI timestamp
 and isochronous header. The single cycle-timer/host-time pair captured at drain
 entry is only the expansion reference. This per-packet timestamp correlation
-is essential with four-millisecond groups: assigning one group's timestamp to
-all packets would make a coalesced drain several milliseconds stale.
+is essential during coalesced drains: assigning one drain timestamp to all
+packets would make older packets stale.
 
 **Verification priority: high after the first stable duplex run.** Exercise
 multi-group and wraparound drains and confirm that every published anchor uses
@@ -1090,12 +1094,14 @@ must not advance merely because a NO-DATA packet occupied a bus cycle. For
 Saffire, the gap carries the cadence-appropriate already-advanced DBC and the
 following DATA packet repeats it.
 
-Before IT RUN, the packetizer seeds the entire 1024-slot shared TX ring with
-committed NO-DATA packets. This is 128 ms of valid packet-domain backing
-capacity, not a promise that the first 128 ms visible on the wire must be
-NO-DATA. DATA may appear earlier as the live pump replaces future slots; until
-then, every unreplaced slot is a valid profile-generated CIP-only NO-DATA
-packet.
+Before IT RUN, the packetizer seeds the entire 192-slot shared TX ring with
+committed NO-DATA packets. This is 24 ms of valid packet-domain backing. It is
+deliberately larger than the steady-state 84-packet preparation lead because
+action delivery and the startup handoff can be delayed. `TxPreparationReady`
+uses a dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait
+for the first hardware ZTS does not starve the producer. Once the action runs,
+the normal producer target remains `completion + 84`; it prepares later
+generations before the consumer reaches them.
 
 The DMA layer must not invent fallback CIP state by copying an arbitrary
 previous Q0. Forced fallback is a packetizer/profile transition and must
@@ -1107,7 +1113,7 @@ The implemented input safety rule currently raises the selected device-profile
 value to at least:
 
 ```text
-timingGroupFrames + jitterMargin = 192 + 64 = 256 frames
+maximumTimingGroupFrames + jitterMargin = 40 + 64 = 104 frames
 ```
 
 For general client IO sizes, the required runtime rule is:
@@ -1119,22 +1125,23 @@ inputSafetyFrames =
         timingGroupFrames + jitterMargin)
 ```
 
-Thus 256 frames is a floor, not a universally sufficient value for a
+Thus 104 frames is a floor, not a universally sufficient value for a
 512-frame client transfer. Runtime/profile logic must raise it when the active
 client IO geometry requires more headroom.
 
 This rule must be enforced when the device profile is activated and whenever
-the HAL client IO size changes. A runtime assertion or focused test must reject
-any configuration in which the registered input safety is below the computed
-requirement; documentation alone is not protection against a stale hardcoded
-256-frame value.
+the HAL client IO size changes. The current 48-frame output safety and
+512-frame maximum client transfer raise the registered input safety to 624
+frames. A runtime assertion or focused test must reject any configuration in
+which the registered input safety is below the computed requirement;
+documentation alone is not protection against a stale hardcoded floor.
 
 ### F. Current Residual Work
 
 1.  Validate per-packet timestamp/grid correlation during coalesced
     multi-group drains and cycle-timer wraparound.
 2.  Enforce and test the dynamic input-safety rule at profile activation and
-    HAL client-buffer-size changes; do not treat the 256-frame floor as the
+    HAL client-buffer-size changes; do not treat the 104-frame floor as the
     final value.
 3.  Remove any DMA-owned generic NO-DATA synthesis that copies a previous CIP
     header. Prefill and underrun packets must come from the packetizer/profile.

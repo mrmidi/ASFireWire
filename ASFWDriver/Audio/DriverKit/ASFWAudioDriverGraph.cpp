@@ -4,6 +4,9 @@
 //
 // ADK graph construction/teardown for ASFWAudioDriver.
 //
+#include <new>
+
+#include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../Config/InputSafetyPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
@@ -16,6 +19,7 @@
 
 #include <DriverKit/OSDictionary.h>
 #include <DriverKit/OSString.h>
+#include <AudioDriverKit/IOUserAudioUtils.h>
 
 #include <algorithm>
 #include <cstring>
@@ -94,6 +98,20 @@ void FillPcm24Format(IOUserAudioStreamBasicDescription& fmt,
     fmt.mBytesPerFrame = sizeof(int32_t) * channels;
     fmt.mChannelsPerFrame = channels;
     fmt.mBitsPerChannel = 24;
+}
+
+void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
+                       double sampleRate,
+                       uint32_t channels) noexcept {
+    fmt.mSampleRate = sampleRate;
+    fmt.mFormatID = IOUserAudioFormatID::LinearPCM;
+    fmt.mFormatFlags =
+        IOUserAudioFormatFlags::FormatFlagsNativeFloatPacked;
+    fmt.mBytesPerPacket = sizeof(float) * channels;
+    fmt.mFramesPerPacket = 1;
+    fmt.mBytesPerFrame = sizeof(float) * channels;
+    fmt.mChannelsPerFrame = channels;
+    fmt.mBitsPerChannel = 32;
 }
 
 } // namespace
@@ -181,6 +199,28 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     if (error != kIOReturnSuccess) {
         return error;
     }
+    const auto requireAdkSuccess =
+        [&](const char* operation, kern_return_t status) noexcept -> bool {
+        FailIfError(
+            status,
+            {
+                error = status;
+                ASFW_LOG(Audio,
+                         "ADK FATAL GRAPH op=%{public}s kr=0x%x",
+                         operation ? operation : "unknown",
+                         status);
+            },
+            Failure,
+            "AudioDriverKit graph operation failed");
+        ASFW_LOG(Audio,
+                 "ADK GRAPH op=%{public}s kr=0x%x",
+                 operation ? operation : "unknown",
+                 status);
+        return true;
+
+    Failure:
+        return false;
+    };
 
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Device GUID=0x%016llx vendor=0x%06x model=0x%06x boolControls=%u",
@@ -202,7 +242,8 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ivars.device.streamModeRaw == std::to_underlying(ASFW::Isoch::Audio::StreamMode::kBlocking)
              ? "blocking" : "non-blocking");
 
-    ASFW_LOG(Audio, "ASFWAudioDriver: Forcing single advertised format: 48kHz / 24-bit");
+    ASFW_LOG(Audio,
+             "ASFWAudioDriver: Forcing single advertised format: input=24-bit integer output=Float32");
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
              ivars.device.inputChannelCount,
@@ -221,22 +262,24 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNoMemory;
     }
 
-    // The Create argument is the declared zero-timestamp period (the sample
-    // grid the HAL predicts anchors on), NOT the IO chunk size. These used to
-    // be the same constant; they are independent now.
+    // The init argument is the declared zero-timestamp period: the sample grid
+    // the HAL predicts anchors on and, for ADK stream buffers, the ring wrap.
+    // The maximum individual client IO transfer remains independently bounded.
     const uint32_t target_period = ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
     ASFW_LOG(Audio, "ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: %u frames", target_period);
 
-    ivars.audioDevice = IOUserAudioDevice::Create(&driver,
-                                                  false,
-                                                  deviceUID.get(),
-                                                  modelUID.get(),
-                                                  manufacturerUID.get(),
-                                                  target_period);
+    ivars.audioDevice = OSSharedPtr(OSTypeAlloc(ASFWAudioDevice), OSNoRetain);
     if (!ivars.audioDevice) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
+        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to allocate ASFWAudioDevice");
         return kIOReturnNoMemory;
     }
+    if (!ivars.audioDevice->init(&driver, false,
+                                 deviceUID.get(), modelUID.get(),
+                                 manufacturerUID.get(), target_period)) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: ASFWAudioDevice::init failed");
+        return kIOReturnNoMemory;
+    }
+    ivars.audioDevice->SetDriverIvars(&ivars);
 
     const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
     ASFW_LOG(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
@@ -244,20 +287,29 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              "ASFWAudioDriver: ADK object ids device=%u",
              ivars.audioDevice->GetObjectID());
 
-    error = InstallIOOperationHandler(*ivars.audioDevice, ivars);
-    if (error != kIOReturnSuccess) {
-        return error;
-    }
-    ASFW_LOG(Audio, "ASFWAudioDriver: IO operation handler installed");
-
     auto name = OSSharedPtr(OSString::withCString(ivars.device.deviceName), OSNoRetain);
     if (!name) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create device name string");
         return kIOReturnNoMemory;
     }
-    ivars.audioDevice->SetName(name.get());
-    ivars.audioDevice->SetAvailableSampleRates(ivars.device.sampleRates, ivars.device.sampleRateCount);
-    ivars.audioDevice->SetSampleRate(ivars.device.currentSampleRate);
+    if (!requireAdkSuccess(
+            "device.SetName",
+            ivars.audioDevice->SetName(name.get()))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetAvailableSampleRates",
+            ivars.audioDevice->SetAvailableSampleRates(
+                ivars.device.sampleRates,
+                ivars.device.sampleRateCount))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetSampleRate",
+            ivars.audioDevice->SetSampleRate(
+                ivars.device.currentSampleRate))) {
+        return error;
+    }
     ASFW_LOG(Audio, "ASFWAudioDriver: Initial sample rate set to %.0f Hz", ivars.device.currentSampleRate);
 
     IOUserAudioStreamBasicDescription inputFormats[8] = {};
@@ -265,11 +317,11 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     const uint32_t formatCount = ivars.device.sampleRateCount > 8 ? 8 : ivars.device.sampleRateCount;
     for (uint32_t i = 0; i < formatCount; i++) {
         FillPcm24Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
-        FillPcm24Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
+        FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
     }
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Created %u stream formats (24-bit) in=%u out=%u channels",
+             "ASFWAudioDriver: Created %u stream formats input=int24/%u ch output=float32/%u ch",
              formatCount,
              ivars.device.inputChannelCount,
              ivars.device.outputChannelCount);
@@ -332,6 +384,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                  static_cast<uint32_t>(ivars.device.currentSampleRate));
         return kIOReturnBadArgument;
     }
+    if (directOutputFrames != target_period ||
+        directInputFrames != target_period) {
+        ASFW_LOG(
+            Audio,
+            "ADK FATAL MEM ring/ZTS mismatch outFrames=%u inFrames=%u ztsPeriod=%u",
+            directOutputFrames,
+            directInputFrames,
+            target_period);
+        return kIOReturnBadArgument;
+    }
+    ASFW_LOG(
+        Audio,
+        "ADK GRAPH state=stream-ring/ZTS outFrames=%u inFrames=%u ztsPeriod=%u",
+        directOutputFrames,
+        directInputFrames,
+        target_period);
 
     error = ASFW::Common::CreateSharedMapping(ivars.outputBuffer, ivars.outputMap);
     if (error != kIOReturnSuccess) {
@@ -381,9 +449,23 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create input stream name");
         return kIOReturnNoMemory;
     }
-    ivars.inputStream->SetName(inputName.get());
-    ivars.inputStream->SetAvailableStreamFormats(inputFormats, formatCount);
-    ivars.inputStream->SetCurrentStreamFormat(&inputFormats[0]);
+    if (!requireAdkSuccess(
+            "inputStream.SetName",
+            ivars.inputStream->SetName(inputName.get()))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "inputStream.SetAvailableStreamFormats",
+            ivars.inputStream->SetAvailableStreamFormats(
+                inputFormats, formatCount))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "inputStream.SetCurrentStreamFormat",
+            ivars.inputStream->SetCurrentStreamFormat(
+                &inputFormats[0]))) {
+        return error;
+    }
 
     ivars.outputStream = IOUserAudioStream::Create(&driver,
                                                    IOUserAudioStreamDirection::Output,
@@ -402,9 +484,23 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create output stream name");
         return kIOReturnNoMemory;
     }
-    ivars.outputStream->SetName(outputName.get());
-    ivars.outputStream->SetAvailableStreamFormats(outputFormats, formatCount);
-    ivars.outputStream->SetCurrentStreamFormat(&outputFormats[0]);
+    if (!requireAdkSuccess(
+            "outputStream.SetName",
+            ivars.outputStream->SetName(outputName.get()))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "outputStream.SetAvailableStreamFormats",
+            ivars.outputStream->SetAvailableStreamFormats(
+                outputFormats, formatCount))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "outputStream.SetCurrentStreamFormat",
+            ivars.outputStream->SetCurrentStreamFormat(
+                &outputFormats[0]))) {
+        return error;
+    }
 
     ASFW_LOG(Audio,
              "ASFWAudioDriver: ADK streams fully created. deviceId=%u inputStream=%u outputStream=%u",
@@ -420,44 +516,95 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNotReady;
     }
 
-    ivars.outputStream->SetLatency(0);
-    ivars.inputStream->SetLatency(0);
+    if (!requireAdkSuccess(
+            "outputStream.SetLatency",
+            ivars.outputStream->SetLatency(0))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "inputStream.SetLatency",
+            ivars.inputStream->SetLatency(0))) {
+        return error;
+    }
 
     error = ivars.audioDevice->AddStream(ivars.inputStream.get());
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to add input stream: %d", error);
+    if (!requireAdkSuccess("device.AddStream(input)", error)) {
         return error;
     }
     state.inputStreamAdded = true;
 
     error = ivars.audioDevice->AddStream(ivars.outputStream.get());
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to add output stream: %d", error);
+    if (!requireAdkSuccess("device.AddStream(output)", error)) {
         return error;
     }
     state.outputStreamAdded = true;
 
+    // Install the RT handler only after both streams are fully configured and
+    // attached to the device. This mirrors the working AudioDriverKit lab and
+    // ensures registration observes the complete IO graph.
+    error = InstallIOOperationHandler(*ivars.audioDevice, ivars);
+    if (!requireAdkSuccess("device.SetIOOperationHandler", error)) {
+        return error;
+    }
+    ASFW_LOG(Audio, "ASFWAudioDriver: IO operation handler installed");
+
     for (uint32_t ch = 1; ch <= ivars.device.outputChannelCount && ch <= 8; ch++) {
         auto outChName = OSSharedPtr(OSString::withCString(ivars.device.outputChannelNames[ch - 1]), OSNoRetain);
         if (outChName) {
-            ivars.audioDevice->SetElementName(ch, IOUserAudioObjectPropertyScope::Output, outChName.get());
+            const kern_return_t status =
+                ivars.audioDevice->SetElementName(
+                    ch,
+                    IOUserAudioObjectPropertyScope::Output,
+                    outChName.get());
+            ASFW_LOG(Audio,
+                     "ADK GRAPH op=device.SetElementName(output) channel=%u kr=0x%x",
+                     ch,
+                     status);
+            if (status != kIOReturnSuccess) {
+                return status;
+            }
         }
     }
     for (uint32_t ch = 1; ch <= ivars.device.inputChannelCount && ch <= 8; ch++) {
         auto inChName = OSSharedPtr(OSString::withCString(ivars.device.inputChannelNames[ch - 1]), OSNoRetain);
         if (inChName) {
-            ivars.audioDevice->SetElementName(ch, IOUserAudioObjectPropertyScope::Input, inChName.get());
+            const kern_return_t status =
+                ivars.audioDevice->SetElementName(
+                    ch,
+                    IOUserAudioObjectPropertyScope::Input,
+                    inChName.get());
+            ASFW_LOG(Audio,
+                     "ADK GRAPH op=device.SetElementName(input) channel=%u kr=0x%x",
+                     ch,
+                     status);
+            if (status != kIOReturnSuccess) {
+                return status;
+            }
         }
     }
 
-    ASFW::Isoch::Audio::AddBooleanControlsToDevice(driver,
-                                                   *ivars.audioDevice,
-                                                   ivars.device.boolControls,
-                                                   ivars.device.boolControlCount);
+    error = ASFW::Isoch::Audio::AddBooleanControlsToDevice(
+        driver,
+        *ivars.audioDevice,
+        ivars.device.boolControls,
+        ivars.device.boolControlCount);
+    if (!requireAdkSuccess("device.AddBooleanControls", error)) {
+        return error;
+    }
 
     ivars.audioDevice->SetWantsControlsRestored(true);
-    driver.SetTransportType(IOUserAudioTransportType::FireWire);
-    ivars.audioDevice->SetTransportType(IOUserAudioTransportType::FireWire);
+    if (!requireAdkSuccess(
+            "driver.SetTransportType",
+            driver.SetTransportType(
+                IOUserAudioTransportType::FireWire))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetTransportType",
+            ivars.audioDevice->SetTransportType(
+                IOUserAudioTransportType::FireWire))) {
+        return error;
+    }
     // Let the HAL clock algorithm absorb the residual jitter in the anchor
     // stream. The ZTS anchors are self-timestamped (sampleFrame, hostTicks)
     // pairs computed at the IR interrupt and back-interpolated, so cross-queue
@@ -469,9 +616,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // documented design ("HAL smooths via IOUserAudioClockAlgorithm"). Switch to
     // TwelvePtMovingWindowAverage if heavier smoothing of bursty delivery is
     // wanted (at the cost of slower rate-change tracking).
-    ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::SimpleIIR);
-    ivars.audioDevice->SetClockIsStable(true);
-    ivars.audioDevice->SetClockDomain(1);
+    if (!requireAdkSuccess(
+            "device.SetClockAlgorithm",
+            ivars.audioDevice->SetClockAlgorithm(
+                IOUserAudioClockAlgorithm::SimpleIIR))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetClockIsStable",
+            ivars.audioDevice->SetClockIsStable(true))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetClockDomain",
+            ivars.audioDevice->SetClockDomain(1))) {
+        return error;
+    }
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const double currentSampleRate = ivars.device.currentSampleRate;
     const auto* profile = ASFW::Isoch::Audio::AudioProfileRegistry::FindProfile(
@@ -519,29 +679,52 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         inSafety = requiredInputSafety;
     }
 
-    ivars.audioDevice->SetOutputLatency(outLatency);
-    ivars.audioDevice->SetInputLatency(inLatency);
-    ivars.audioDevice->SetOutputSafetyOffset(outSafety);
-    ivars.audioDevice->SetInputSafetyOffset(inSafety);
+    if (!requireAdkSuccess(
+            "device.SetOutputLatency",
+            ivars.audioDevice->SetOutputLatency(outLatency))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetInputLatency",
+            ivars.audioDevice->SetInputLatency(inLatency))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetOutputSafetyOffset",
+            ivars.audioDevice->SetOutputSafetyOffset(outSafety))) {
+        return error;
+    }
+    if (!requireAdkSuccess(
+            "device.SetInputSafetyOffset",
+            ivars.audioDevice->SetInputSafetyOffset(inSafety))) {
+        return error;
+    }
 
     ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out=%u/in=%u, safety out=%u/in=%u frames",
              outLatency, inLatency, outSafety, inSafety);
 
-    const kern_return_t ztsKr =
-        ivars.audioDevice->SetZeroTimeStampPeriod(policy.HalZeroTimestampPeriodFrames());
-    ASFW_LOG(Audio, "ASFWAudioDriver: SetZeroTimeStampPeriod(%u) kr=0x%x",
-             policy.HalZeroTimestampPeriodFrames(), ztsKr);
+    const uint32_t configuredZtsPeriod =
+        ivars.audioDevice->GetZeroTimestampPeriod();
+    if (configuredZtsPeriod != policy.HalZeroTimestampPeriodFrames()) {
+        ASFW_LOG(
+            Audio,
+            "ADK FATAL graph op=device.GetZeroTimestampPeriod expected=%u actual=%u",
+            policy.HalZeroTimestampPeriodFrames(),
+            configuredZtsPeriod);
+        return kIOReturnUnsupported;
+    }
+    ASFW_LOG(Audio,
+             "ADK GRAPH state=device.GetZeroTimestampPeriod value=%u",
+             configuredZtsPeriod);
 
     error = driver.AddObject(ivars.audioDevice.get());
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to add device: %d", error);
+    if (!requireAdkSuccess("driver.AddObject(device)", error)) {
         return error;
     }
     state.audioDeviceAdded = true;
 
     error = driver.RegisterService();
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: RegisterService() failed: %d", error);
+    if (!requireAdkSuccess("driver.RegisterService", error)) {
         return error;
     }
 

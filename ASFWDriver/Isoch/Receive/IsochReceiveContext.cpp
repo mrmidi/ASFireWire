@@ -806,6 +806,43 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
         return;
     }
 
+    const uint64_t errorGeneration =
+        control->ioCallbackErrorGeneration.load(std::memory_order_acquire);
+    const uint64_t reportedGeneration =
+        control->ioCallbackErrorReportedGeneration.load(
+            std::memory_order_relaxed);
+    if (errorGeneration != reportedGeneration) {
+        ASFW_LOG(
+            DirectAudio,
+            "[AudioIO] callback returned kr=0x%08x operation=%u objectId=%u "
+            "frameCount=%u sampleTime=%llu hostTime=%llu errors=%llu",
+            control->ioLastError.load(std::memory_order_relaxed),
+            control->ioLastErrorOperation.load(std::memory_order_relaxed),
+            control->ioLastErrorObjectId.load(std::memory_order_relaxed),
+            control->ioLastErrorFrameCount.load(std::memory_order_relaxed),
+            control->ioLastErrorSampleTime.load(std::memory_order_relaxed),
+            control->ioLastErrorHostTime.load(std::memory_order_relaxed),
+            errorGeneration);
+        control->ioCallbackErrorReportedGeneration.store(
+            errorGeneration, std::memory_order_release);
+    }
+
+    if (control->payloadWriterTelemetry.PendingCount() == 0) {
+        ASFW_LOG(
+            DirectAudio,
+            "[PayloadWriter] no pending records: callbacks=%llu lastOp=%u objectId=%u frameCount=%u sampleTime=%llu hostTime=%llu beginRead=%llu writeEnd=%llu playbackWrite=%llu",
+            control->ioCallbackGeneration.load(std::memory_order_acquire),
+            control->ioLastOperation.load(std::memory_order_relaxed),
+            control->ioLastObjectId.load(std::memory_order_relaxed),
+            control->ioLastFrameCount.load(std::memory_order_relaxed),
+            control->ioLastSampleTime.load(std::memory_order_relaxed),
+            control->ioLastHostTime.load(std::memory_order_relaxed),
+            control->counters.ioBeginReadCount.load(std::memory_order_relaxed),
+            control->counters.ioWriteEndCount.load(std::memory_order_relaxed),
+            control->playbackRingWriteFrame.load(std::memory_order_relaxed));
+        return;
+    }
+
     const uint64_t dropped = control->payloadWriterTelemetry.Drain(
         maxRecords, [](const ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& r) {
             const uint32_t cipQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[0]) << 24) |

@@ -7,6 +7,7 @@
 //
 
 #include "ASFWAudioDriverPrivate.hpp"
+#include "ASFWAudioDevice.h"
 #include "../../Logging/Logging.hpp"
 
 #include <DriverKit/DriverKit.h>
@@ -62,7 +63,9 @@ void ASFWAudioDriver::free()
         ivars->controlBuffer.reset();
         ivars->audioDevice.reset();
         ivars->txPreparationAction.reset();
+        ivars->txPreparationQueue.reset();
         ivars->ztsAnchorAction.reset();
+        ivars->ztsQueue.reset();
         ivars->workQueue.reset();
         ivars->~ASFWAudioDriver_IVars();
         IOSafeDeleteNULL(ivars, ASFWAudioDriver_IVars, 1);

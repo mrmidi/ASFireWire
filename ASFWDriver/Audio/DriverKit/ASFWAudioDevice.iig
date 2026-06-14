@@ -1,0 +1,37 @@
+//
+// ASFWAudioDevice.iig
+// ASFWDriver
+//
+// AudioDevice subclass with StartIO/StopIO overrides for transport lifecycle.
+//
+
+#ifndef ASFWAudioDevice_h
+#define ASFWAudioDevice_h
+
+#include <DriverKit/DriverKit.iig>
+#include <AudioDriverKit/IOUserAudioDevice.iig>
+
+using namespace AudioDriverKit;
+
+class IOUserAudioDriver;
+struct ASFWAudioDriver_IVars;
+
+class ASFWAudioDevice : public IOUserAudioDevice
+{
+public:
+    virtual bool init(IOUserAudioDriver* in_driver,
+                      bool in_supports_prewarming,
+                      OSString* in_device_uid,
+                      OSString* in_model_uid,
+                      OSString* in_manufacturer_uid,
+                      uint32_t in_zero_timestamp_period) override LOCALONLY;
+
+    virtual void free() override LOCALONLY;
+
+    virtual kern_return_t StartIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
+    virtual kern_return_t StopIO(IOUserAudioStartStopFlags in_flags) override LOCALONLY;
+
+    void SetDriverIvars(ASFWAudioDriver_IVars* ivars) LOCALONLY;
+};
+
+#endif /* ASFWAudioDevice_h */

@@ -5,6 +5,9 @@
 // Ordered zero-timestamp queue drain for ASFWAudioDriver.
 //
 
+#include <new>
+
+#include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
@@ -31,96 +34,92 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidTimeline;
     }
 
-    // Collapse the ring to its newest anchor and publish ONCE. The loop only
-    // drains (cursor hygiene so the lock-free ring can't back up); it does NOT
-    // call UpdateCurrentZeroTimestamp per entry. The HAL needs exactly one
-    // anchor — the freshest (sampleFrame, hostTicks) pair plus the declared
-    // period defines the whole timeline, and SimpleIIR wants one regular sample
-    // per wake, not a burst of N fired at this instant (the intermediate pairs
-    // lie on the same line and are immediately superseded). This is the Saffire
-    // reference shape: takeTimeStamp once per wake/wrap. By the time this
-    // OSAction runs the IR ISR already pushed and bumped the producer generation
-    // so there is nothing to gate on; `throughGeneration` is telemetry only.
+    // The declared ZTS period is a host contract: each successive sample time
+    // must advance by exactly P. Drain and publish every queued hardware anchor
+    // in order; collapsing to the newest anchor creates multi-period jumps that
+    // can prevent the HAL IO engine from establishing its cycle.
     (void)throughGeneration;
     bool published = false;
+    bool firstPublication = false;
     uint64_t drained = 0;
+    uint64_t publishedCount = 0;
     ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
-    ASFW::Audio::Runtime::HostClockAnchorSample newest{};
-    bool haveNewest = false;
+    ASFW::Audio::Runtime::HostClockAnchorSample newestPublished{};
+    uint64_t lastSampleFrame =
+        ivars.runtime.lastHalZeroTimestampSampleFrame.load(
+            std::memory_order_relaxed);
+    uint64_t lastHostTicks =
+        ivars.runtime.lastHalZeroTimestampHostTicks.load(
+            std::memory_order_relaxed);
+
     while (control->hostClockAnchor.TryPop(anchor)) {
         ++drained;
-        // Keep only a structurally usable anchor (on-grid, real timestamp). An
-        // unusable one is skipped, never fatal — the next wake re-anchors.
         if (anchor.hostTicks == 0 || anchor.hostNanosPerSampleQ8 == 0 ||
             (anchor.sampleFrame % P) != 0) {
             continue;
         }
-        newest = anchor;
-        haveNewest = true;
-    }
 
-    if (haveNewest) {
-        const uint64_t lastSampleFrame =
-            ivars.runtime.lastHalZeroTimestampSampleFrame.load(
-                std::memory_order_relaxed);
-        const uint64_t lastHostTicks =
-            ivars.runtime.lastHalZeroTimestampHostTicks.load(
-                std::memory_order_relaxed);
-        // Publish only if the newest anchor strictly advances the timeline.
-        // A non-monotonic newest (relock / discontinuity) is skipped and the
-        // next wake re-anchors — no stream kill, no TX poison. We deliberately
-        // do NOT require an exact +P step: collapsing the queue means the
-        // newest can be several periods ahead, which the HAL re-anchors from.
-        if (lastHostTicks == 0 ||
-            (newest.sampleFrame > lastSampleFrame &&
-             newest.hostTicks > lastHostTicks)) {
-            audioDevice->UpdateCurrentZeroTimestamp(
-                newest.sampleFrame, newest.hostTicks);
-            ivars.runtime.lastHalZeroTimestampSampleFrame.store(
-                newest.sampleFrame, std::memory_order_relaxed);
-            ivars.runtime.lastHalZeroTimestampHostTicks.store(
-                newest.hostTicks, std::memory_order_relaxed);
-            ivars.runtime.lastHalZeroTimestampGeneration.store(
-                control->hostClockAnchor.consumerCursor.load(
-                    std::memory_order_acquire),
-                std::memory_order_release);
-            control->hostClockAnchor.mirrorPublications.fetch_add(
-                1, std::memory_order_relaxed);
-            control->counters.CountRxAdkZtsPublished();
-            published = true;
+        const bool firstAnchor = lastHostTicks == 0;
+        const bool advancesExactly =
+            firstAnchor ||
+            (anchor.sampleFrame == lastSampleFrame + P &&
+             anchor.hostTicks > lastHostTicks);
+        if (!advancesExactly) {
             if (logSuccess) {
                 ASFW_LOG(
                     DirectAudio,
-                    "ADK ZTS publish reason=%{public}s sample=%llu host=%llu period=%u drained=%llu adkPeriod=%u",
-                    reason ? reason : "unknown",
-                    newest.sampleFrame,
-                    newest.hostTicks,
-                    P,
-                    drained,
-                    audioDevice->GetZeroTimestampPeriod());
+                    "ADK ZTS skip discontinuity sample=%llu host=%llu expectedSample=%llu lastHost=%llu",
+                    anchor.sampleFrame,
+                    anchor.hostTicks,
+                    lastSampleFrame + P,
+                    lastHostTicks);
             }
-        } else if (logSuccess) {
-            ASFW_LOG(
-                DirectAudio,
-                "ADK ZTS skip non-monotonic newest sample=%llu host=%llu lastSample=%llu lastHost=%llu drained=%llu",
-                newest.sampleFrame,
-                newest.hostTicks,
-                lastSampleFrame,
-                lastHostTicks,
-                drained);
+            continue;
         }
+
+        if (firstAnchor) {
+            firstPublication = true;
+        }
+        audioDevice->UpdateCurrentZeroTimestamp(
+            anchor.sampleFrame, anchor.hostTicks);
+        lastSampleFrame = anchor.sampleFrame;
+        lastHostTicks = anchor.hostTicks;
+        newestPublished = anchor;
+        ++publishedCount;
+        published = true;
+        control->hostClockAnchor.mirrorPublications.fetch_add(
+            1, std::memory_order_relaxed);
+        control->counters.CountRxAdkZtsPublished();
     }
 
     if (published) {
-        // Enable IO after first successful ZTS publish. CoreAudio IO callbacks
-        // and the TX preparation pump are gated on this flag.
-        if (!ivars.runtime.isRunning.load(std::memory_order_acquire)) {
-            ivars.runtime.isRunning.store(true, std::memory_order_release);
+        ivars.runtime.lastHalZeroTimestampSampleFrame.store(
+            lastSampleFrame, std::memory_order_relaxed);
+        ivars.runtime.lastHalZeroTimestampHostTicks.store(
+            lastHostTicks, std::memory_order_relaxed);
+        ivars.runtime.lastHalZeroTimestampGeneration.store(
+            control->hostClockAnchor.consumerCursor.load(
+                std::memory_order_acquire),
+            std::memory_order_release);
+        if (logSuccess) {
+            ASFW_LOG(
+                DirectAudio,
+                "ADK ZTS publish reason=%{public}s sample=%llu host=%llu period=%u drained=%llu published=%llu adkPeriod=%u",
+                reason ? reason : "unknown",
+                newestPublished.sampleFrame,
+                newestPublished.hostTicks,
+                P,
+                drained,
+                publishedCount,
+                audioDevice->GetZeroTimestampPeriod());
+        }
+
+        if (firstPublication) {
             ASFW_LOG(DirectAudio,
-                     "Starting core audio IO guid=0x%016llx sampleFrame=%llu hostTicks=%llu",
+                     "Core audio hardware ZTS ready guid=0x%016llx sampleFrame=%llu hostTicks=%llu",
                      ivars.device.guid,
-                     newest.sampleFrame,
-                     newest.hostTicks);
+                     newestPublished.sampleFrame,
+                     newestPublished.hostTicks);
         }
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published;
     }
@@ -331,9 +330,11 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
         return;
     }
 
-    // Commit exactly the transport lead before IT RUN. IR establishes the
-    // replay sequence before IT is allowed to start, and the completion pump
-    // is active during the 60-packet NO-DATA runway.
+    // Commit one complete shared-ring lap before IT RUN. TxPreparationReady
+    // has a dedicated queue, but action delivery and the startup handoff can
+    // still be delayed. A lead-only prefill can therefore be consumed before
+    // the producer gets its first turn. Steady state still targets completion
+    // + kTxPreparationLeadPackets.
     ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
     timing.replayValid = true;
     timing.txClockValid = false;
@@ -342,11 +343,8 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
             AmdtpPacketDisposition::NoData;
 
     uint32_t prepared = 0;
-    constexpr uint32_t kPreparationLeadPackets =
-        ASFW::IsochTransport::AudioTimingGeometry::
-            kTxPreparationLeadPackets;
     for (uint64_t packetIndex = 0;
-         packetIndex < kPreparationLeadPackets;
+         packetIndex < numSlots;
          ++packetIndex) {
         if (!ivars.runtime.txStreamEngine.PrepareNextTransmitSlot(
                 static_cast<uint32_t>(packetIndex), timing)) {
@@ -356,9 +354,11 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG TX prefill seeded %u NO_INFO packets before isoch start (lead=%llu, model left unseeded)",
+             "ADK DBG TX prefill seeded %u/%u committed NO-DATA packets before isoch start (steadyLead=%u)",
              prepared,
-             static_cast<uint64_t>(kPreparationLeadPackets));
+             numSlots,
+             ASFW::IsochTransport::AudioTimingGeometry::
+                 kTxPreparationLeadPackets);
 }
 
 } // namespace ASFW::Audio::DriverKit

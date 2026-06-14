@@ -39,7 +39,8 @@ public:
 
     virtual void TxPreparationReady(OSAction* action,
                                     uint64_t generation)
-        TYPE(ASFWAudioNub::TxPreparationReady);
+        TYPE(ASFWAudioNub::TxPreparationReady)
+        QUEUENAME(TxPreparation);
 
     virtual void ZtsAnchorReady(OSAction* action,
                                 uint64_t generation)

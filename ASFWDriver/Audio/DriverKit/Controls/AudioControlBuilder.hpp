@@ -17,9 +17,10 @@ struct BoolControlSlot {
 
 void ResetBoolControlSlots(BoolControlSlot* slots, uint32_t count);
 
-void AddBooleanControlsToDevice(ASFWAudioDriver& driver,
-                                IOUserAudioDevice& audioDevice,
-                                BoolControlSlot* slots,
-                                uint32_t slotCount);
+[[nodiscard]] kern_return_t AddBooleanControlsToDevice(
+    ASFWAudioDriver& driver,
+    IOUserAudioDevice& audioDevice,
+    BoolControlSlot* slots,
+    uint32_t slotCount);
 
 } // namespace ASFW::Isoch::Audio

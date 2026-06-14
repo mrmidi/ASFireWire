@@ -807,6 +807,10 @@ TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
 TEST_F(IsochTxDmaRingTest,
        SixtyCommittedPacketsFailOnThirdUnservicedCompletionGroup) {
     using Geometry = ASFW::IsochTransport::AudioTimingGeometry;
+    constexpr uint32_t kHistoricalCommittedPackets =
+        Geometry::kTxHardwareRingPackets +
+        2 * Geometry::kTxPacketsPerGroup;
+    static_assert(kHistoricalCommittedPackets == 60);
 
     auto metadataRing = MakeMetadataRing();
     for (uint32_t packetIndex = 0;
@@ -816,7 +820,7 @@ TEST_F(IsochTxDmaRingTest,
         meta.packetIndex = packetIndex;
         meta.payloadLength = 8;
         meta.commitGen.store(
-            packetIndex < Geometry::kTxPreparationLeadPackets ? 1U : 0U,
+            packetIndex < kHistoricalCommittedPackets ? 1U : 0U,
             std::memory_order_release);
     }
 

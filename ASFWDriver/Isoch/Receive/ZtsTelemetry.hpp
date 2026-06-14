@@ -58,7 +58,7 @@ struct ZtsTelemetryRecord final {
 // hand-off well defined and keeps the producer side a plain O(1) store.
 class ZtsTelemetryRing final {
 public:
-    static constexpr uint32_t kCapacity = 256;  // ~1 s of backlog at the 192-frame grid
+    static constexpr uint32_t kCapacity = 256;
     static_assert((kCapacity & (kCapacity - 1)) == 0, "capacity must be a power of two");
 
     void Reset() noexcept {

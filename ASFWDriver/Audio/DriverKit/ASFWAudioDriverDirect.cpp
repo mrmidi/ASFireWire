@@ -5,6 +5,9 @@
 // Direct endpoint-memory binding helpers for ASFWAudioDriver.
 //
 
+#include <new>
+
+#include "ASFWAudioDevice.h"
 #include "ASFWAudioDriverPrivate.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../../Logging/LogConfig.hpp"

@@ -110,24 +110,58 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             return kIOReturnNotReady;
         }
 
+        auto returnError = [&](kern_return_t kr) noexcept {
+            auto& diagnostics = driverIvars->runtime.directAudioControl;
+            diagnostics.ioLastError.store(
+                static_cast<uint32_t>(kr), std::memory_order_relaxed);
+            diagnostics.ioLastErrorOperation.store(
+                static_cast<uint32_t>(operation), std::memory_order_relaxed);
+            diagnostics.ioLastErrorFrameCount.store(
+                ioBufferFrameSize, std::memory_order_relaxed);
+            diagnostics.ioLastErrorObjectId.store(
+                objectID, std::memory_order_relaxed);
+            diagnostics.ioLastErrorSampleTime.store(
+                sampleTime, std::memory_order_relaxed);
+            diagnostics.ioLastErrorHostTime.store(
+                hostTime, std::memory_order_relaxed);
+            diagnostics.ioCallbackErrorGeneration.fetch_add(
+                1, std::memory_order_release);
+            return kr;
+        };
+
         (void)driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed);
+        auto& callbackState = driverIvars->runtime.directAudioControl;
+        callbackState.ioLastOperation.store(
+            static_cast<uint32_t>(operation), std::memory_order_relaxed);
+        callbackState.ioLastFrameCount.store(
+            ioBufferFrameSize, std::memory_order_relaxed);
+        callbackState.ioLastObjectId.store(
+            objectID, std::memory_order_relaxed);
+        callbackState.ioLastSampleTime.store(
+            sampleTime, std::memory_order_relaxed);
+        callbackState.ioLastHostTime.store(
+            hostTime, std::memory_order_relaxed);
+        callbackState.ioCallbackGeneration.fetch_add(
+            1, std::memory_order_release);
 
         const bool running = driverIvars->runtime.isRunning.load(std::memory_order_acquire);
         const bool skeletonBound =
             driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
 
         if (!running) {
-            return kIOReturnNotReady;
+            driverIvars->runtime.ioCallbacksOutsideRun.fetch_add(
+                1, std::memory_order_relaxed);
+            return kIOReturnSuccess;
         }
 
         if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
-            return kIOReturnBadArgument;
+            return returnError(kIOReturnBadArgument);
         }
 
         if (skeletonBound) {
             auto* control = driverIvars->runtime.directAudioGraph.control;
             if (!control) {
-                return kIOReturnNotReady;
+                return returnError(kIOReturnNotReady);
             }
 
             if (operation == IOUserAudioIOOperationBeginRead) {
@@ -203,7 +237,7 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 control->counters.CountWriteEnd();
             }
         } else {
-            return kIOReturnNotReady;
+            return returnError(kIOReturnNotReady);
         }
 
         return kIOReturnSuccess;
