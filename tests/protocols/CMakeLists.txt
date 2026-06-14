@@ -190,3 +190,10 @@ add_protocols_test(SBP2ORBTests
 add_protocols_test(SessionSchedulerTests
     SessionSchedulerTests.cpp
 )
+
+# SBP2 FetchAgent Tests (command-plane ORB submission/chaining/completion)
+add_protocols_test(FetchAgentTests
+    FetchAgentTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+)

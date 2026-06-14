@@ -54,6 +54,7 @@ public:
     void SetFlags(uint32_t flags) noexcept { flags_ = flags; }
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
     void SetTimeout(uint32_t ms) noexcept { timeoutDuration_ = ms; }
+    [[nodiscard]] uint32_t GetTimeout() const noexcept { return timeoutDuration_; }
     void SetCompletionCallback(CompletionCallback cb) noexcept { completionCallback_ = std::move(cb); }
 
     // Bind page table result from SBP2PageTable::Build.
