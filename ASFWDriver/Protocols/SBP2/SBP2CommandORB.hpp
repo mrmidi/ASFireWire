@@ -49,7 +49,8 @@ public:
     SBP2CommandORB& operator=(const SBP2CommandORB&) = delete;
 
     // Configuration (call before submit)
-    void SetCommandBlock(std::span<const uint8_t> cdb) noexcept;
+    // Returns false if the CDB exceeds maxCommandBlockSize_ (rejected, not truncated).
+    [[nodiscard]] bool SetCommandBlock(std::span<const uint8_t> cdb) noexcept;
     void SetFlags(uint32_t flags) noexcept { flags_ = flags; }
     void SetMaxPayloadSize(uint16_t bytes) noexcept { maxPayloadSize_ = bytes; }
     void SetTimeout(uint32_t ms) noexcept { timeoutDuration_ = ms; }
@@ -60,24 +61,29 @@ public:
         dataDescriptor_ = ptResult;
     }
 
-    // Internal: called by the session layer before submission.
-    void PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
-                             uint16_t maxPayloadLog) noexcept;
+    // Internal: called by the session layer before submission. Flushes the ORB to
+    // address space; returns the write status (kIOReturnNotReady if not allocated).
+    [[nodiscard]] kern_return_t PrepareForExecution(uint16_t localNodeID, FW::FwSpeed speed,
+                                                    uint16_t maxPayloadLog) noexcept;
 
     // Internal: ORB address for fetch agent / chaining.
     [[nodiscard]] Async::FWAddress GetORBAddress() const noexcept;
 
-    // Internal: set the next ORB pointer (big-endian values).
-    void SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
+    // Internal: set the next ORB pointer (big-endian values). Re-flushes the ORB.
+    [[nodiscard]] kern_return_t SetNextORBAddress(uint32_t hi, uint32_t lo) noexcept;
 
     // Set rq_fmt=3 (NOP dummy) so device skips this ORB if already fetched.
-    void SetToDummy() noexcept;
+    [[nodiscard]] kern_return_t SetToDummy() noexcept;
 
     // Internal: timer management.
     void StartTimer(IODispatchQueue* queue) noexcept;
     void CancelTimer() noexcept;
 
     // State tracking.
+    // True once the ORB's address-space backing was allocated successfully.
+    // The constructor swallows an allocation failure, so callers must check this
+    // before submitting a freshly-constructed ORB.
+    [[nodiscard]] bool IsValid() const noexcept { return orbHandle_ != 0; }
     [[nodiscard]] bool IsAppended() const noexcept { return isAppended_; }
     void SetAppended(bool state) noexcept { isAppended_ = state; }
 
@@ -90,7 +96,7 @@ public:
 private:
     bool AllocateResources() noexcept;
     void DeallocateResources() noexcept;
-    void WriteORBToAddressSpace() noexcept;
+    [[nodiscard]] kern_return_t WriteORBToAddressSpace() noexcept;
 
     AddressSpaceManager& addrMgr_;
     void* owner_;
