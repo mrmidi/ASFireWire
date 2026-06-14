@@ -10,53 +10,52 @@ This is a **re-implementation**, not a merge. #19's monoliths are decomposed the
 
 ---
 
-## 1. `SBP2LoginSession.cpp` (1847 lines, 60 methods) → 4 components
+## 1. `SBP2LoginSession.cpp` (1847 lines, 60 methods) → 2 components
 
 New directory: `Protocols/SBP2/Session/`.
 
-### 1a. `LoginSession` — orchestrator + state machine
-Owns `LoginState`, login/reconnect IDs, target info, and the three sub-components. Pure coordination; no wire I/O of its own.
+> **Decomposition correction (from reading the code):** an earlier draft proposed
+> 4 components (separate `LoginOrbExchange` + `UnsolicitedStatusSink`).
+> `OnStatusBlockRemoteWrite` switches on `LoginState` and routes directly into
+> login/reconnect/logout completion — all sharing `state_`, `loginGeneration_`,
+> and the timers. Splitting those out scatters shared mutable state across class
+> boundaries (worse, not better). The one genuinely clean seam is the post-login
+> **command plane** (`FetchAgent`). So the login side is **2 cohesive components**.
 
-| Method (from #19) | Notes |
-|---|---|
-| `Configure`, `Login`, `Logout`, `Reconnect`, `HandleBusReset` | public entry points |
-| `SetState`, `CommandBlockAgent`, `ReconnectHoldSeconds`, `TargetInfo` | state/accessors |
-| `SetWorkQueue` | keep; **`SetTimeoutQueue` dropped** (see §4) |
-
-### 1b. `LoginOrbExchange` — management plane
-The login/reconnect/logout management ORBs and the status-block that completes them. Produces a parsed `Wire::LoginResponse`.
+### 1a. `LoginSession` — login lifecycle state machine (management plane)
+Owns `LoginState`, login/reconnect IDs, target info, the login/reconnect/logout/
+status-FIFO address ranges, and status routing. Cohesive: every item below
+reads/writes `state_` + `loginGeneration_` + the timers.
 
 | Methods folded in |
 |---|
-| `AllocateLoginORBAddressSpace`, `AllocateLoginResponseAddressSpace`, `AllocateReconnectORBAddressSpace`, `AllocateLogoutORBAddressSpace`, `AllocateResources`/`DeallocateResources` (its share) |
-| `BuildLoginORB`, `BuildReconnectORB`, `BuildLogoutORB` |
-| `OnLoginWriteComplete`, `OnReconnectWriteComplete`, `OnLogoutWriteComplete` |
-| `OnLoginTimeout`, `OnReconnectTimeout`, `OnLogoutTimeout` |
-| `CompleteLoginFromStatusBlock`, `CompleteReconnectFromStatusBlock`, `CompleteLogoutFromStatusBlock`, `ProcessStatusBlock` |
-| timers: `StartLoginTimer`/`StartReconnectTimer`/`StartLogoutTimer`/`CancelLoginTimer` → collapse onto DICE `SBP2DelayedDispatch` (§4) |
+| `Configure`, `Login`, `Logout`, `Reconnect`, `HandleBusReset`, `SetState` |
+| ranges: `Allocate{Login,LoginResponse,StatusBlock,Reconnect,Logout}…`, `Allocate`/`DeallocateResources` |
+| `BuildLoginORB`, `BuildReconnectORB`, `BuildLogoutORB`, `RefreshCommandBlockAgentAddresses` |
+| `On{Login,Reconnect,Logout}WriteComplete`, `On{Login,Reconnect,Logout}Timeout` |
+| `OnStatusBlockRemoteWrite`, `ProcessStatusBlock`, `Complete{Login,Reconnect,Logout}FromStatusBlock` |
+| `EnableUnsolicitedStatus` + `OnUnsolicitedStatusEnableComplete`, `WriteBusyTimeout` + `OnBusyTimeoutComplete` |
+| accessors: `CommandBlockAgent`, `ReconnectHoldSeconds`, `TargetInfo`, `MaxPayloadSize`, `State`, `LoginID`, `Generation` |
+| timers via injected `ISessionScheduler` (§7a); **`SetTimeoutQueue` + owned-queue machinery deleted** (§4) |
 
-### 1c. `FetchAgent` — command plane (post-login ORB submission)
-Doorbell, ORB chaining, fetch-agent reset. This is the engine the `CommandExecutor` (§2b) drives.
+Owns the status-FIFO range (read by both login completion *and* unsolicited/command
+status — both are `LoginSession` transitions). Its remote-write callback captures
+`weak_from_this()`. Backing is an `IOBufferMemoryDescriptor` via
+`AddressSpaceManager`, never a raw buffer (§7).
+
+### 1b. `FetchAgent` — command plane (post-login ORB submission)
+Doorbell, ORB chaining, fetch-agent reset. The engine `CommandExecutor` (§2b)
+drives. Self-contained: depends only on `SBP2CommandORB` (✓ step 1), the bus, and
+the scheduler — `LoginSession` hands it the command-block-agent address +
+node/generation once login succeeds.
 
 | Methods folded in |
 |---|
 | `SubmitORB`, `AppendORB`, `AppendORBImmediate`, `RingDoorbell` |
 | `MakeORBKey` (×2), `ClearORBTracking`, `outstandingORBs_` / `chainTailORB_` state |
 | `StartSubmittedORBTimer`, `FailSubmittedORB`, `FailPendingImmediateORBs` |
-| `OnFetchAgentWriteComplete`, `OnDoorbellComplete` |
-| `ResetFetchAgent`, `OnAgentResetComplete` |
-| `SubmitManagementORB` (drives a `SBP2ManagementORB` for task-mgmt) |
-
-### 1d. `UnsolicitedStatusSink` — status FIFO + busy timeout
-Owns the status-FIFO address range and its remote-write callback (lifetime-guarded via the weak-ownership pattern; the callback captures `weak_from_this()`). Routes parsed status blocks back to `LoginOrbExchange` (login completion) and `FetchAgent` (command completion).
-
-| Methods folded in |
-|---|
-| `AllocateStatusBlockAddressSpace`, `OnStatusBlockRemoteWrite` (dispatch/route) |
-| `EnableUnsolicitedStatus`, `OnUnsolicitedStatusEnableComplete` |
-| `WriteBusyTimeout`, `OnBusyTimeoutComplete` |
-
-> **Resolved (approved):** the status FIFO is shared between login completion and unsolicited/command status. `UnsolicitedStatusSink` **owns** the single range and exposes a routing callback; `LoginOrbExchange` and `FetchAgent` register handlers with it rather than owning duplicate ranges. The range backing is an `IOBufferMemoryDescriptor` (+`IODMACommand`/`CreateMapping`) obtained **through `AddressSpaceManager`** — never a raw `std::vector` posing as device memory (see §7).
+| `OnFetchAgentWriteComplete`, `OnDoorbellComplete`, `ResetFetchAgent`, `OnAgentResetComplete` |
+| `SubmitManagementORB` (drives an `SBP2ManagementORB` for task-mgmt) |
 
 ---
 
@@ -138,12 +137,15 @@ Each gets a unit test in `tests/protocols/SBP2ORBTests.cpp` (which already exist
 
 ## 6. Build/test order within FW-56 (each green before next)
 
-0. `ISessionScheduler` interface + fake (virtual-clock) host-test backing (§7a). No production timer wiring yet — that lands in FW-58 against `IOTimerDispatchSource`+`OSAction`.
-1. CommandORB foundation additions (§5) + tests → `SBP2ORBTests` green.
-2. `SessionRecord` slim type + `SessionRegistry` (identity/lifecycle) → port `SBP2SessionRegistryTests` (registry half).
-3. `LoginSession` core + `LoginOrbExchange` (uses scheduler from step 0) → port `SBP2LoginSessionTests`.
-4. `FetchAgent` + `UnsolicitedStatusSink`.
-5. `CommandExecutor` → remaining `SBP2SessionRegistryTests` (command half).
+Revised to a dependency-correct **bottom-up** order (the registry constructs a
+`LoginSession`, so it cannot precede it):
+
+0. ✅ `ISessionScheduler` interface + virtual-clock fake (§7a). Production timer wiring (IOTimerDispatchSource+OSAction) lands in FW-58.
+1. ✅ CommandORB foundation additions (§5) → `SBP2ORBTests` green.
+2. `FetchAgent` (command plane; needs CommandORB ✓ + scheduler ✓ + bus) + focused tests.
+3. `LoginSession` (state machine + status routing; uses scheduler; drives FetchAgent) → port `SBP2LoginSessionTests`.
+4. `SessionRecord` slim type + `SessionRegistry` (identity/lifecycle; constructs `LoginSession`) → port registry half of `SBP2SessionRegistryTests`.
+5. `CommandExecutor` (drives FetchAgent; owns command ORB/page-table/inflight) → command half of `SBP2SessionRegistryTests`.
 6. `tests/CMakeLists` targets registered; full host suite green; checkpoint commit.
 
 > Tests come from #19 but were written against #19's API — adapt assertions to the decomposed components and DICE call shapes as each piece lands.
