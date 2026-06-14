@@ -41,6 +41,9 @@ struct TxSytTelemetryRecord final {
     uint16_t syt{0};
     uint8_t  health{0};
     uint8_t  flags{0};   // bit0 seeded, bit1 forceAdjust, bit2 reseeded, bit3 committed
+    int64_t  targetFromZts{0};    // lastZtsFrame + deltaFrames - contentLead
+    int64_t  targetFromDevice{0}; // rxDeviceFrame + deltaFrames - contentLead
+    int64_t  targetFrameDiff{0};  // targetFromZts - targetFromDevice
 };
 
 namespace TxSytFlags {

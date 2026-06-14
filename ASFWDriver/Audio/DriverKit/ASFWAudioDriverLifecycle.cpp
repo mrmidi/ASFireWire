@@ -323,8 +323,11 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
     // the ZTS pump produces its first packet, leaving the channel off the wire.
     ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(*ivars);
 
+    ivars->runtime.txActive.store(true, std::memory_order_release);
+
     const kern_return_t startKr = ivars->device.audioNub->StartAudioStreaming();
     if (startKr != kIOReturnSuccess) {
+        ivars->runtime.txActive.store(false, std::memory_order_release);
         return failStartDevice(startKr, "StartAudioStreaming");
     }
     streamingStarted = true;
@@ -352,7 +355,13 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(
             kIOReturnUnsupported, "ValidateTxTransportGeometry");
     }
-    ivars->runtime.isRunning.store(true, std::memory_order_release);
+    // Gate isRunning on ZTS availability. CoreAudio IO callbacks must not
+    // start until the first ZTS anchor is published (synchronous from Poll()
+    // after RX cadence establishes). The pump (TxPreparationReady) is also
+    // gated on isRunning — the prefill of NO_INFO packets is done before
+    // this flag is set, so the TX ring is ready when the pump starts.
+    // isRunning is set in PublishSharedZeroTimestampToHAL after the first
+    // successful ZTS publish.
 
     // The pump (TxPreparationReady) is gated on isRunning, so preparation
     // requests raised by TX completions during bring-up were dropped while
@@ -425,7 +434,9 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                  ivars->runtime.directAudioGraph.HasOutput());
         return failStartDevice(kIOReturnNotReady, "direct graph audioDevice");
     }
-    ASFW_LOG(DirectAudio, "ADK DBG IO running=1 after transport ready");
+    // isRunning is now gated on first ZTS publish (in PublishSharedZeroTimestampToHAL).
+    // TX ring prefill is complete; pump and IO callbacks start when ZTS is valid.
+    ASFW_LOG(DirectAudio, "ADK DBG transport ready, waiting for first ZTS to enable IO");
     ASFW_LOG(DirectAudio,
              "ADK DBG DUPLEX ready guid=0x%016llx rxStarted=1 txStarted=1 bindValid=%d hasIn=%d hasOut=%d audioDevice=%p zts=%llu rxZts=%llu rxAdk=%llu beginRead=%llu writeEnd=%llu writtenEndFrame=%llu",
              ivars->device.guid,
@@ -455,6 +466,7 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
     ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
     if (ivars) {
         ivars->runtime.isRunning.store(false, std::memory_order_release);
+        ivars->runtime.txActive.store(false, std::memory_order_release);
     }
     if (ivars && ivars->runtime.directAudioGraph.control) {
         const auto* control = ivars->runtime.directAudioGraph.control;
@@ -507,8 +519,9 @@ kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
 namespace ASFW::Audio::DriverKit {
 
 void PerformLoudTeardown(ASFWAudioDriver_IVars& ivars, const char* reason) noexcept {
-    // 1. Immediately clear isRunning to stop pump and block further IO
+    // 1. Immediately clear isRunning and txActive to stop pump and block further IO
     ivars.runtime.isRunning.store(false, std::memory_order_release);
+    ivars.runtime.txActive.store(false, std::memory_order_release);
 
     ASFW_LOG(Audio, "ADK FATAL: TEARDOWN DUPLEX STREAM DUE TO: %{public}s", reason);
 

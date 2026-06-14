@@ -160,6 +160,17 @@ private:
     TimingLossCallback timingLossCallback_{nullptr};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{nullptr};
 
+    // DBC tracking for device-domain frame count.
+    // Updated on every packet in Poll(), exposed via rxDbcFrameCount in ATCB.
+    uint8_t lastDbc_{0};
+    bool dbcInitialized_{false};
+
+    // Drain-only state for consecutive-anchor clock comparison.
+    // Not hot-path: only touched in DrainZtsTelemetry.
+    uint64_t prevAnchorFrame_{0};
+    uint64_t prevAnchorHostTicks_{0};
+    bool prevAnchorValid_{false};
+
     Registers GetRegisters(uint8_t index) const;
 };
 

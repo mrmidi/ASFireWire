@@ -599,8 +599,8 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
             "device.health",
             "device.program_rx",
             "device.program_tx",
-            "host.start_transmit",
             "host.start_receive",
+            "host.start_transmit",
             "device.confirm",
         }));
 }

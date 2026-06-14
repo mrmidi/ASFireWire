@@ -54,6 +54,10 @@
 #define ASFW_DEBUG_BUS_RESET_PACKET 0
 #endif
 
+#ifndef ASFW_DEBUG_TEMP_RX_TX
+#define ASFW_DEBUG_TEMP_RX_TX 0
+#endif
+
 #ifndef ASFW_DEBUG_CONFIG_ROM
 #define ASFW_DEBUG_CONFIG_ROM 0
 #endif

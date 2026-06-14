@@ -110,111 +110,33 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             return kIOReturnNotReady;
         }
 
-        const uint64_t callbackIndex =
-            driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed) + 1;
-
-        if (callbackIndex <= 64 || (callbackIndex % 1024) == 0) {
-            ASFW_LOG(DirectAudio,
-                     "ADK IO cb entry index=%llu op=%u object=%u sampleTime=%llu hostTime=%llu frameCount=%u running=%d skeleton=%d control=%p hasIn=%d hasOut=%d deviceId=%u inStreamId=%u outStreamId=%u",
-                     callbackIndex,
-                     static_cast<uint32_t>(operation),
-                     objectID,
-                     sampleTime,
-                     hostTime,
-                     ioBufferFrameSize,
-                     driverIvars->runtime.isRunning.load(std::memory_order_acquire),
-                     driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire),
-                     static_cast<void*>(driverIvars->runtime.directAudioGraph.control),
-                     driverIvars->runtime.directAudioGraph.HasInput(),
-                     driverIvars->runtime.directAudioGraph.HasOutput(),
-                     driverIvars->audioDevice ? driverIvars->audioDevice->GetObjectID() : 0,
-                     driverIvars->inputStream ? driverIvars->inputStream->GetObjectID() : 0,
-                     driverIvars->outputStream ? driverIvars->outputStream->GetObjectID() : 0);
-        }
+        (void)driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed);
 
         const bool running = driverIvars->runtime.isRunning.load(std::memory_order_acquire);
         const bool skeletonBound =
             driverIvars->runtime.directAudioSkeletonBound.load(std::memory_order_acquire);
-        if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG IO cb=%llu object=%u op=%u running=%d skeleton=%d frames=%u sample=%llu host=%llu period=%u outRing=%u inFrames=%u outFrames=%u",
-                     callbackIndex,
-                     objectID,
-                     static_cast<uint32_t>(operation),
-                     running,
-                     skeletonBound,
-                     ioBufferFrameSize,
-                     sampleTime,
-                     hostTime,
-                     ASFW::Isoch::Config::kAudioIoPeriodFrames,
-                     ASFW::Isoch::Config::kAudioOutputRingFrames,
-                     driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity,
-                     driverIvars->runtime.directAudioGraph.memory.outputFrameCapacity);
-        }
 
         if (!running) {
-            if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
-                ASFW_LOG(DirectAudio,
-                         "ADK DBG IO reject=not_running cb=%llu op=%u frames=%u sample=%llu",
-                         callbackIndex,
-                         static_cast<uint32_t>(operation),
-                         ioBufferFrameSize,
-                         sampleTime);
-            }
             return kIOReturnNotReady;
         }
 
         if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
-            ASFW_LOG(DirectAudio,
-                     "ADK DBG IO reject=bad_frames cb=%llu op=%u frames=%u periodMax=%u outRing=%u inFrames=%u outFrames=%u sample=%llu host=%llu",
-                     callbackIndex,
-                     static_cast<uint32_t>(operation),
-                     ioBufferFrameSize,
-                     ASFW::Isoch::Config::kAudioIoPeriodFrames,
-                     ASFW::Isoch::Config::kAudioOutputRingFrames,
-                     driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity,
-                     driverIvars->runtime.directAudioGraph.memory.outputFrameCapacity,
-                     sampleTime,
-                     hostTime);
             return kIOReturnBadArgument;
         }
 
         if (skeletonBound) {
             auto* control = driverIvars->runtime.directAudioGraph.control;
             if (!control) {
-                ASFW_LOG(DirectAudio,
-                         "ADK DBG IO reject=no_control cb=%llu op=%u frames=%u sample=%llu host=%llu",
-                         callbackIndex,
-                         static_cast<uint32_t>(operation),
-                         ioBufferFrameSize,
-                         sampleTime,
-                         hostTime);
                 return kIOReturnNotReady;
             }
 
             if (operation == IOUserAudioIOOperationBeginRead) {
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
-                const bool capturePrepared =
-                    PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
-                                                   *control,
-                                                   sampleTime,
-                                                   ioBufferFrameSize);
+                (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
+                                                     *control,
+                                                     sampleTime,
+                                                     ioBufferFrameSize);
                 control->counters.CountBeginRead();
-                const uint64_t beginCount =
-                    control->counters.ioBeginReadCount.load(std::memory_order_relaxed);
-                if (beginCount <= 8 || (beginCount % 1024) == 0) {
-                    ASFW_LOG(DirectAudio,
-                             "ADK DBG IO begin_read count=%llu cb=%llu frames=%u sample=%llu host=%llu capturePrepared=%d capWr=%llu capRd=%llu starve=%llu",
-                             beginCount,
-                             callbackIndex,
-                             ioBufferFrameSize,
-                             sampleTime,
-                             hostTime,
-                             capturePrepared,
-                             control->captureRingWriteFrame.load(std::memory_order_acquire),
-                             control->captureRingReadFrame.load(std::memory_order_acquire),
-                             control->captureRingStarvations.load(std::memory_order_relaxed));
-                }
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
@@ -239,49 +161,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
 
                 control->counters.CountWriteEnd();
-                const uint64_t writeCount =
-                    control->counters.ioWriteEndCount.load(std::memory_order_relaxed);
-                const uint64_t writtenEnd = control->client.OutputWrittenEndFrame();
-                if (writeCount <= 8 || (writeCount % 1024) == 0) {
-                    ASFW_LOG(DirectAudio,
-                             "ADK DBG IO write_end count=%llu cb=%llu frames=%u sample=%llu host=%llu writtenEnd=%llu playWr=%llu playRd=%llu overrun=%llu",
-                             writeCount,
-                             callbackIndex,
-                             ioBufferFrameSize,
-                             sampleTime,
-                             hostTime,
-                             writtenEnd,
-                             control->playbackRingWriteFrame.load(std::memory_order_acquire),
-                             control->playbackRingReadFrame.load(std::memory_order_acquire),
-                             control->playbackRingOverruns.load(std::memory_order_relaxed));
-                }
-                // Resurrected periodic TX/playback snapshot (pcmNZ/pcmZero,
-                // prepared/startup/retired, anchor, faults). Self-gated by
-                // statistics+verbosity and a 5 s throttle; the modulo only
-                // bounds capture cost on the real-time IO thread.
-                if ((writeCount % 256) == 0) {
-                    DirectDiagnostics::MaybeLogDirectAudioDebugSnapshot(driverIvars->runtime);
-                }
-            } else if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
-                ASFW_LOG(DirectAudio,
-                         "ADK DBG IO op_ignored cb=%llu op=%u frames=%u sample=%llu host=%llu",
-                         callbackIndex,
-                         static_cast<uint32_t>(operation),
-                         ioBufferFrameSize,
-                         sampleTime,
-                         hostTime);
             }
-
         } else {
-            if (callbackIndex <= 16 || (callbackIndex % 1024) == 0) {
-                ASFW_LOG(DirectAudio,
-                         "ADK DBG IO skeleton_unbound cb=%llu op=%u frames=%u sample=%llu host=%llu",
-                         callbackIndex,
-                         static_cast<uint32_t>(operation),
-                         ioBufferFrameSize,
-                         sampleTime,
-                         hostTime);
-            }
             return kIOReturnNotReady;
         }
 

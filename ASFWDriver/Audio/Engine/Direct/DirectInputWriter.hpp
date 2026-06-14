@@ -52,7 +52,7 @@ public:
         if (capacity != 0 && producedEndFrame > read &&
             (producedEndFrame - read) > capacity) {
             control->captureRingReadFrame.store(producedEndFrame - capacity,
-                                                std::memory_order_release);
+                                                 std::memory_order_release);
             control->captureRingOverruns.fetch_add(1, std::memory_order_relaxed);
         }
     }

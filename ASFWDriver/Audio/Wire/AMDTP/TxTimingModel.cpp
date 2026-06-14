@@ -181,12 +181,13 @@ int64_t TxTimingModel::AdjustOutputPhase(
 
     forceAdjust_ = false;
     decision.forceAdjustFired = true;
-    // Exact Saffire behavior at 0xcd4c-0xcd63: forced correction is based on
-    // argument 3 (the current transmit anchor phase), not argument 4 (the
-    // carried/seeded output phase). The deadband path above is the only path
-    // that returns the carried candidate unchanged.
+    // Decompiled Saffire adjustOutputPhase 0xcd4c-0xcd63: forced correction is
+    // based on argument 4 (the carried/seeded output phase candidate), not
+    // argument 3 (the current transmit anchor phase). The function returns
+    // a4 unchanged or a4 + v17, never a3 + v17. The deadband path above
+    // is the only path that returns the carried candidate unchanged.
     return ASFW::Timing::normalizeOffsetDomain(
-        executionPhaseTicks + correctionTicks);
+        candidatePhaseTicks + correctionTicks);
 }
 
 int64_t TxTimingModel::OutputPhaseTicks() const noexcept {

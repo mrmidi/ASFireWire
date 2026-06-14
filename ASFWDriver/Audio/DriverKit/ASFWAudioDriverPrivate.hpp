@@ -11,6 +11,7 @@
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
 #include "../Wire/AMDTP/TxTimingModel.hpp"
+#include "../Wire/AMDTP/TxAnchorTracker.hpp"
 #include "../../Shared/Isoch/IsochAudioTransport.hpp"
 #include "../../Common/TimingUtils.hpp"
 
@@ -55,6 +56,34 @@ struct AudioDriverDeviceState {
 class DextTxExecutionTimeline final {
 public:
     const ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
+
+    // Returns the raw callback phase from the most recent completion stamp,
+    // without projecting forward by packet distance. Used by TxAnchorTracker
+    // for Saffire-style continuity validation.
+    [[nodiscard]] bool RawCallbackPhase(uint64_t& outCompletedPacketIndex, int64_t& outPhase) const noexcept {
+        if (!controlBlock) {
+            return false;
+        }
+        const uint64_t count =
+            controlBlock->completionStampCount.load(std::memory_order_acquire);
+        if (count == 0) {
+            return false;
+        }
+        uint64_t completedPacketIndex = 0;
+        uint32_t timestamp = 0;
+        if (!controlBlock->ReadCompletionStamp(
+                count - 1, completedPacketIndex, timestamp)) {
+            return false;
+        }
+        outCompletedPacketIndex = completedPacketIndex;
+        const auto completed = ASFW::Timing::decodeCycleTimer(timestamp);
+        outPhase = ASFW::Timing::normalizeOffsetDomain(
+            ASFW::Timing::tstampToOffsets(completed.seconds,
+                                          completed.cycle %
+                                              ASFW::Timing::kCyclesPerSecond,
+                                          completed.offset));
+        return true;
+    }
 
     [[nodiscard]] bool AnchorForPacket(uint64_t packetIndex,
                                        int64_t& outTicks) const noexcept {
@@ -173,9 +202,11 @@ struct AudioDriverRuntimeState {
     ASFW::Audio::Runtime::DirectAudioDebugLogState directAudioDebugLog;
     std::atomic<bool> directAudioSkeletonBound{false};
     std::atomic<uint64_t> ioDebugCallbacks{0};
+    std::atomic<bool> txActive{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Driver::TxTimingModel txTimingModel;
+    ASFW::Driver::TxAnchorTracker txAnchorTracker;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;
 };

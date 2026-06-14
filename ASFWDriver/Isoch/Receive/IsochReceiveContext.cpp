@@ -250,6 +250,23 @@ uint32_t IsochReceiveContext::Poll() {
                     cursorInitialized_ = true;
                 }
 
+                // Track DBC delta for device-domain frame count.
+                // DBC is the device's own frame counter in the CIP header —
+                // authoritative regardless of sample rate, blocking mode, or
+                // CIP geometry. The 8-bit DBC wraps at 256; handle wrap.
+                if (result.hasValidCip) {
+                    if (dbcInitialized_) {
+                        const uint8_t dbcDelta =
+                            static_cast<uint8_t>(result.dbc - lastDbc_);
+                        if (directInputView_.control) {
+                            directInputView_.control->rxDbcFrameCount.fetch_add(
+                                dbcDelta, std::memory_order_relaxed);
+                        }
+                    }
+                    lastDbc_ = result.dbc;
+                    dbcInitialized_ = true;
+                }
+
                 Rx::ExpandedReceiveTimestamp rxTimestamp{};
                 const bool hasHardwareTimestamp =
                     result.hasReceiveCycleTimestamp &&
@@ -392,6 +409,7 @@ uint32_t IsochReceiveContext::Poll() {
                                 hostNanosPerSampleQ8);
                         if (publishResult.accepted) {
                             ++rxZtsPublishCount_;
+
                             if (publishResult.notifyConsumer &&
                                 ztsAnchorReadyCallback_) {
                                 ztsAnchorReadyCallback_(
@@ -416,6 +434,7 @@ uint32_t IsochReceiveContext::Poll() {
                             rec.rxCycleTimer = rxTimestamp.cycleTimer;
                             rec.descriptorIndex = pkt.descriptorIndex;
                             rec.framesDecoded = result.framesDecoded;
+                            rec.hostNanosPerSampleQ8 = hostNanosPerSampleQ8;
                             rec.rawRxTs = result.receiveCycleTimestamp;
                             rec.syt = result.syt;
                             rec.kind = static_cast<uint8_t>(
@@ -484,7 +503,7 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
                 "%{public}s count=%llu frame=%llu host=%llu rawHost=%llu "
                 "drainHost=%llu drainCycle=0x%08x rxCycle=0x%08x age=%lld "
                 "rawRxTs=0x%04x syt=0x%04x sytLead=%lld rollCad=%u recPhase=%lld "
-                "desc=%u dec=%u period=%llu rate=%u",
+                "desc=%u dec=%u period=%llu rate=%u rateQ8=%u",
                 rec.kind == static_cast<uint8_t>(Rx::ZtsEventKind::kSeed)
                     ? "SEED"
                     : "UPD",
@@ -504,7 +523,72 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
                 rec.descriptorIndex,
                 rec.framesDecoded,
                 kZtsPeriodFrames,
-                rate);
+                rate,
+                rec.hostNanosPerSampleQ8);
+
+            // Consecutive-anchor clock comparison: measure actual device frames
+            // per host second and compare against nominal 48 kHz. This reveals
+            // whether the ZTS anchors are host-clock-disciplined or device-derived.
+            if (prevAnchorValid_ && rate != 0) {
+                const int64_t frameDelta =
+                    static_cast<int64_t>(rec.sampleFrame) -
+                    static_cast<int64_t>(prevAnchorFrame_);
+                if (frameDelta > 0) {
+                    // Host time delta: convert mach ticks to nanoseconds.
+                    const uint64_t hostDeltaTicks =
+                        rec.hostTicks - prevAnchorHostTicks_;
+                    const uint64_t hostDeltaNs =
+                        ASFW::Timing::hostTicksToNanos(hostDeltaTicks);
+
+                    // Measured nanoseconds per frame (Q32 fixed-point).
+                    const int64_t measuredNsPerFrameQ32 =
+                        static_cast<int64_t>(
+                            (static_cast<__uint128_t>(hostDeltaNs) << 32) /
+                            static_cast<__uint128_t>(frameDelta));
+
+                    // Nominal nanoseconds per frame (Q32 fixed-point).
+                    const int64_t nominalNsPerFrameQ32 =
+                        static_cast<int64_t>(
+                            (static_cast<__uint128_t>(1'000'000'000ULL) << 32) /
+                            static_cast<__uint128_t>(rate));
+
+                    // PPM deviation (Q16 fixed-point).
+                    const int64_t ppmQ16 =
+                        (nominalNsPerFrameQ32 != 0)
+                            ? static_cast<int64_t>(
+                                  (static_cast<__uint128_t>(
+                                       measuredNsPerFrameQ32 -
+                                       nominalNsPerFrameQ32) *
+                                   static_cast<__uint128_t>(1'000'000) * (1U << 16)) /
+                                  static_cast<__uint128_t>(nominalNsPerFrameQ32))
+                            : 0;
+
+                    // Frame residual: how far nominal interpolation misses.
+                    const int64_t nominalExpectedFrame =
+                        static_cast<int64_t>(prevAnchorFrame_) +
+                        static_cast<int64_t>(
+                            (hostDeltaNs * static_cast<uint64_t>(rate)) /
+                            1'000'000'000ULL);
+                    const int64_t frameResidual =
+                        static_cast<int64_t>(rec.sampleFrame) -
+                        nominalExpectedFrame;
+
+                    ASFW_LOG(
+                        Zts,
+                        "CLKDELTA hostDeltaNs=%llu frameDelta=%lld "
+                        "measuredNsQ32=%lld nominalNsQ32=%lld "
+                        "ppm=%lld residual=%lld",
+                        hostDeltaNs,
+                        frameDelta,
+                        measuredNsPerFrameQ32,
+                        nominalNsPerFrameQ32,
+                        ppmQ16,
+                        frameResidual);
+                }
+            }
+            prevAnchorFrame_ = rec.sampleFrame;
+            prevAnchorHostTicks_ = rec.hostTicks;
+            prevAnchorValid_ = true;
         });
 
     if (dropped != 0) {
@@ -529,7 +613,8 @@ void IsochReceiveContext::DrainTxSytTelemetry(uint32_t maxRecords) {
                 TxSyt,
                 "pkt=%llu flags=0x%02x health=%u anchor=%lld phasePre=%lld "
                 "phasePost=%lld recPhase=%lld rxFree=%lld pErr=%lld fErr=%lld "
-                "corr=%lld lead=%lld wire=%lld rollCad=%u pend=%u ridx=%u syt=0x%04x",
+                "corr=%lld lead=%lld wire=%lld rollCad=%u pend=%u ridx=%u syt=0x%04x "
+                "tgtZts=%lld tgtDev=%lld tgtDiff=%lld",
                 r.packetIndex,
                 static_cast<unsigned>(r.flags),
                 static_cast<unsigned>(r.health),
@@ -546,7 +631,10 @@ void IsochReceiveContext::DrainTxSytTelemetry(uint32_t maxRecords) {
                 r.rollingCadenceTicks,
                 static_cast<unsigned>(r.pendingCadenceTicks),
                 static_cast<unsigned>(r.cadenceReadIndex),
-                static_cast<unsigned>(r.syt));
+                static_cast<unsigned>(r.syt),
+                r.targetFromZts,
+                r.targetFromDevice,
+                r.targetFrameDiff);
         });
 
     if (dropped != 0) {

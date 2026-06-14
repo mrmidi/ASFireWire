@@ -488,58 +488,57 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint64_t expectedGen = ASFW::IsochTransport::ExpectedCommitGen(fillAbsIdx, numSlots);
         const uint64_t commitGen = meta.commitGen.load(std::memory_order_acquire);
 
-        // Check if committed
-        if (commitGen != expectedGen) {
-            // Fatal Underrun!
-            const uint64_t exposeCursor =
-                controlBlock->exposeCursor.load(std::memory_order_acquire);
-            const uint64_t requestGeneration =
-                controlBlock->preparationRequestGeneration.load(
-                    std::memory_order_acquire);
-            const uint64_t handledGeneration =
-                controlBlock->preparationHandledGeneration.load(
-                    std::memory_order_acquire);
-            ASFW_LOG(
-                Isoch,
-                "IT FATAL UNDERRUN: fillAbsIdx=%llu expectedGen=%llu commitGen=%llu completion=%llu expose=%llu delta=%u request=%llu handled=%llu",
-                fillAbsIdx,
-                expectedGen,
-                commitGen,
-                completedAbsIdx + deltaConsumed,
-                exposeCursor,
-                deltaConsumed,
-                requestGeneration,
-                handledGeneration);
-            controlBlock->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal, std::memory_order_release);
-            controlBlock->streamGeneration.fetch_add(1, std::memory_order_release);
-
-            // Stop context immediately
-            const Register32 ctrlClrReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(contextIndex));
-            hw.Write(ctrlClrReg, Driver::ContextControl::kRun);
-            hw.Write(Register32::kIsoXmitIntMaskClear, (1u << contextIndex));
-
-            out.ok = false;
-            return out;
+        // Check if committed. If not, ship a silent NO-DATA packet (non-fatal, Saffire-style).
+        const bool isNoData = (commitGen != expectedGen);
+        if (isNoData) {
+            counters_.txUnderruns.fetch_add(1, std::memory_order_relaxed);
+            ASFW_LOG_RL(Isoch, "tx/underrun", 1000, OS_LOG_TYPE_DEFAULT,
+                        "IT Refill: slot %u not committed (commitGen=%llu expectedGen=%llu). Shipping NO-DATA.",
+                        pktSlot, commitGen, expectedGen);
         }
 
         const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
+        const uint64_t payloadOffset =
+            static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
 
-        if (meta.payloadLength < 2 ||
-            meta.payloadLength > controlBlock->maxPacketBytes) {
+        const uint32_t payloadLength = isNoData ? 8u : meta.payloadLength;
+
+        if (payloadLength < 2 ||
+            payloadLength > controlBlock->maxPacketBytes) {
             counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
             out.ok = false;
             return out;
         }
-        const uint64_t payloadOffset =
-            static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
-        if (payloadBase) {
+
+        if (isNoData && payloadBase) {
+            // Read the previous packet's CIP header from payloadBase of the previous slot
+            // to keep the stream configuration parameters (DBS, FMT, FDF, etc.) consistent.
+            const uint32_t prevSlot = static_cast<uint32_t>((fillAbsIdx - 1) % numSlots);
+            const uint64_t prevOffset = static_cast<uint64_t>(prevSlot) * controlBlock->slotStrideBytes;
+            uint32_t prevQ0 = 0;
+            uint32_t prevQ1 = 0;
+            std::memcpy(&prevQ0, payloadBase + prevOffset, 4);
+            std::memcpy(&prevQ1, payloadBase + prevOffset + 4, 4);
+
+            // NO-DATA CIP header: Q0 remains identical (DBC does not advance on empty cycles),
+            // and Q1 has its lower 16 bits set to 0xFFFF (SYT = 0xFFFF in big-endian).
+            const uint32_t noDataQ0 = prevQ0;
+            const uint32_t noDataQ1 = (prevQ1 & 0xFFFF0000u) | 0x0000FFFFu;
+
+            // Write the 8-byte CIP header into the current payload slot
+            std::memcpy(payloadBase + payloadOffset, &noDataQ0, 4);
+            std::memcpy(payloadBase + payloadOffset + 4, &noDataQ1, 4);
+        }
+
+        if (!isNoData && payloadBase) {
             GaugeWirePayload(fillAbsIdx,
                              payloadBase + payloadOffset,
-                             meta.payloadLength);
+                             payloadLength);
         }
+
         std::array<TxPayloadDmaFragment, 2> payloadFragments{};
         if (!payloadDmaMap.ResolveTwoFragments(
-                payloadOffset, meta.payloadLength, payloadFragments)) {
+                payloadOffset, payloadLength, payloadFragments)) {
             counters_.fatalPayloadMapping.fetch_add(1, std::memory_order_relaxed);
             ASFW_LOG(
                 Isoch,
@@ -561,7 +560,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
             slab_.GetDescriptorPtr(descBase));
         immDesc->immediateData[0] = meta.immediateHeader[0];
-        immDesc->immediateData[1] = meta.immediateHeader[1];
+        immDesc->immediateData[1] = isNoData ? OSSwapHostToLittleInt32(8u << 16) : meta.immediateHeader[1];
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),
             Layout::kBlocksPerPacket);
@@ -607,11 +606,16 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             const auto* payloadSlot =
                 reinterpret_cast<const std::byte*>(
                     payloadBase + static_cast<size_t>(pktSlot) * controlBlock->slotStrideBytes);
-            dmaMemory_->PublishToDevice(payloadSlot, meta.payloadLength);
+            dmaMemory_->PublishToDevice(payloadSlot, payloadLength);
             dmaMemory_->PublishBarrier();
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc3), sizeof(OHCIDescriptor));
+        }
+
+        // Force-commit this slot's generation to keep the ring states aligned.
+        if (isNoData) {
+            meta.commitGen.store(expectedGen, std::memory_order_release);
         }
 
         packetsFilled++;

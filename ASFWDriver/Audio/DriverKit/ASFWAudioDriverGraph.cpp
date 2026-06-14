@@ -223,17 +223,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     // The Create argument is the declared zero-timestamp period (the sample
     // grid the HAL predicts anchors on), NOT the IO chunk size. These used to
     // be the same constant; they are independent now.
+    const uint32_t target_period = ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    ASFW_LOG(Audio, "ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: %u frames", target_period);
+
     ivars.audioDevice = IOUserAudioDevice::Create(&driver,
                                                   false,
                                                   deviceUID.get(),
                                                   modelUID.get(),
                                                   manufacturerUID.get(),
-                                                  ASFW::IsochTransport::AudioTimingGeometry::
-                                                      kHalZeroTimestampPeriodFrames);
+                                                  target_period);
     if (!ivars.audioDevice) {
         ASFW_LOG(Audio, "ASFWAudioDriver: Failed to create IOUserAudioDevice");
         return kIOReturnNoMemory;
     }
+
+    const uint32_t current_period = ivars.audioDevice->GetZeroTimestampPeriod();
+    ASFW_LOG(Audio, "ASFWAudioDriver: IOUserAudioDevice created. GetZeroTimestampPeriod() confirmed: %u frames", current_period);
     ASFW_LOG(Audio,
              "ASFWAudioDriver: ADK object ids device=%u",
              ivars.audioDevice->GetObjectID());

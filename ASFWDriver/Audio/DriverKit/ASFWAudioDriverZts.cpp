@@ -88,17 +88,28 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASF
             if (logSuccess) {
                 ASFW_LOG(
                     DirectAudio,
-                    "ADK DBG ZTS publish reason=%{public}s sample=%llu host=%llu period=%u queueRead=%llu",
+                    "ADK DBG ZTS publish reason=%{public}s sample=%llu host=%llu period=%u queueRead=%llu adkPeriod=%u",
                     reason ? reason : "unknown",
                     anchor.sampleFrame,
                     anchor.hostTicks,
                     P,
-                    consumed);
+                    consumed,
+                    audioDevice->GetZeroTimestampPeriod());
             }
         }
     } while (control->hostClockAnchor.FinishDrainAndNeedsAnotherPass());
 
     if (published) {
+        // Enable IO after first successful ZTS publish. CoreAudio IO
+        // callbacks and the TX preparation pump are gated on this flag.
+        // The prefill of NO_INFO packets was done before StartDevice
+        // returned, so the TX ring is ready when the pump starts.
+        const bool wasRunning = ivars.runtime.isRunning.exchange(
+            true, std::memory_order_release);
+        if (!wasRunning) {
+            ASFW_LOG(DirectAudio,
+                     "ADK DBG IO running=1 after first ZTS publish");
+        }
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published;
     }
     return invalidTimeline
@@ -120,6 +131,29 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
     uint64_t nextPacketToPrepare = startPacketIndex;
     uint32_t preparedCount = 0;
+    uint32_t txTelemetryCounter_ = 0;
+
+    // Saffire-style continuity validation: once per PrepareTransmitSlots call,
+    // not per packet. The completion stamp doesn't advance within a single call.
+    if (allowRecoveredClock) {
+        uint64_t completedPacketIndex = 0;
+        int64_t rawCallbackPhase = 0;
+        if (ivars.runtime.txExecutionTimeline.RawCallbackPhase(
+                completedPacketIndex, rawCallbackPhase)) {
+            auto anchorResult =
+                ivars.runtime.txAnchorTracker.ObserveCallbackPhase(
+                    completedPacketIndex, rawCallbackPhase);
+            if (anchorResult.resetRequired) {
+                ivars.runtime.txTimingModel.Reset();
+                ASFW_LOG_RL(DirectAudio, "tx/discontinuity", 5000, OS_LOG_TYPE_DEFAULT,
+                            "ADK TX anchor discontinuity: diff=%lld expected=%lld "
+                            "actual=%lld — timing model reset",
+                            anchorResult.continuityDiffTicks,
+                            anchorResult.expectedPhaseTicks,
+                            anchorResult.callbackPhaseTicks);
+            }
+        }
+    }
 
     while (nextPacketToPrepare < targetPacketIndex && preparedCount < maxToPrepare) {
         ASFW::Driver::TxTimingModel::Decision decision{};
@@ -303,6 +337,26 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             if (decision.reseeded) flags |= TxFlags::kReseeded;
             if (meta.payloadLength > 8) flags |= TxFlags::kCommitted;
             rec.flags = flags;
+
+            // Clock-domain comparison: sample periodically (every 512 data
+            // packets ≈ 64 ms) to detect slow drift between the ZTS-derived
+            // frame cursor and the device-phase-derived frame estimate.
+            if ((txTelemetryCounter_++ & 0x1FFu) == 0u) {
+                constexpr int64_t kEightSecondFrames =
+                    8LL * static_cast<int64_t>(
+                              ASFW::Timing::kTicksPerSecond / 512);
+                const int64_t lastZtsFrameNorm =
+                    static_cast<int64_t>(
+                        ivars.runtime.lastHalZeroTimestampSampleFrame.load(
+                            std::memory_order_relaxed)) %
+                    kEightSecondFrames;
+                const int64_t rxDeviceFrameNorm =
+                    (decision.recoveredPhaseTicks / 512) % kEightSecondFrames;
+                rec.targetFromZts = lastZtsFrameNorm;
+                rec.targetFromDevice = rxDeviceFrameNorm;
+                rec.targetFrameDiff = lastZtsFrameNorm - rxDeviceFrameNorm;
+            }
+
             directControl->txSytTelemetry.Record(rec);
         }
 
@@ -383,7 +437,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
 {
     (void)action;
     if (!ivars ||
-        !ivars->runtime.isRunning.load(
+        !ivars->runtime.txActive.load(
             std::memory_order_acquire)) {
         return;
     }

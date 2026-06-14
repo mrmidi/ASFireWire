@@ -607,7 +607,7 @@ TEST_F(IsochTxDmaRingTest, RefillMapsWrappedHardwareSlotsToAbsoluteProducerSlots
               0x22000000u + Layout::kNumPackets);
 }
 
-TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
+TEST_F(IsochTxDmaRingTest, RefillFillsStaleGenerationAsNoDataAtFirstSharedRingWrap) {
     auto metadataRing = MakeMetadataRing();
     for (uint32_t packetIndex = 0;
          packetIndex < kSharedPayloadSlots;
@@ -659,10 +659,20 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsStaleGenerationAtFirstSharedRingWrap) {
         ASSERT_TRUE(refillTo(hardwarePacketIndex).ok);
     }
 
+    // Populate slot 7's payload so that slot 0 (which is filled next) has a valid previous slot to copy from
+    uint32_t* slot7Payload = reinterpret_cast<uint32_t*>(sharedPayload_.data() + 7 * kSharedPayloadStride);
+    slot7Payload[0] = 0x000240A0; // Q0
+    slot7Payload[1] = 0x82100034; // Q1
+
     const auto firstSecondLapRefill = refillTo(160);
-    EXPECT_FALSE(firstSecondLapRefill.ok);
-    EXPECT_EQ(controlBlock.statusWord.load(std::memory_order_acquire),
-              TxStreamStatus::kUnderrunFatal);
+    EXPECT_TRUE(firstSecondLapRefill.ok);
+    EXPECT_EQ(firstSecondLapRefill.packetsFilled, 32U);
+    EXPECT_EQ(metadataRing[0].commitGen.load(std::memory_order_acquire), 2U);
+    EXPECT_EQ(ring_.RTCounters().txUnderruns.load(std::memory_order_relaxed), 32U);
+
+    // Verify context was NOT stopped: run bit not cleared in IsoXmitContextControlClear
+    const uint32_t cleared = hardware_.GetTestRegister(static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(0)));
+    EXPECT_EQ((cleared & ASFW::Driver::ContextControl::kRun), 0);
 }
 
 TEST_F(IsochTxDmaRingTest, RefillAcceptsGenerationTwoAtFirstSharedRingWrap) {
@@ -839,7 +849,7 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
     EXPECT_EQ(ring_.RTCounters().fatalPacketSize.load(std::memory_order_relaxed), 1u);
 }
 
-TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
+TEST_F(IsochTxDmaRingTest, RefillUnderrunShipsNoDataAndDoesNotHaltContext) {
     auto metadataRing = MakeMetadataRing();
     (void)ring_.Prime(
         payloadDmaMap_, kSharedPayloadSlots, kSharedPayloadStride, metadataRing.data(), 0);
@@ -855,8 +865,15 @@ TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
     for (uint32_t i = 0; i < 7; ++i) {
         metadataRing[i].packetIndex = i;
         metadataRing[i].commitGen.store(1, std::memory_order_release);
+        metadataRing[i].immediateHeader[0] = 0x11110000 + i;
+        metadataRing[i].immediateHeader[1] = 0x22220000 + i;
     }
     // metadataRing[7] has commitGen = 0
+
+    // Populate slot 6's payload so that the NO-DATA fallback copies valid format parameters
+    uint32_t* slot6Payload = reinterpret_cast<uint32_t*>(payloadBase + 6 * kSharedPayloadStride);
+    slot6Payload[0] = 0x000240A0; // Q0
+    slot6Payload[1] = 0x82100034; // Q1 (syt = 0x34)
 
     controlBlock.numSlots = numSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
@@ -872,12 +889,26 @@ TEST_F(IsochTxDmaRingTest, RefillUnderrunHaltsContextAndFlagsFatal) {
         hardware_, 0, metadataRing.data(), &controlBlock, numSlots,
         payloadBase, payloadDmaMap_);
 
-    // Refill should fail because packet 7 is not committed
-    EXPECT_FALSE(outcome.ok);
-    EXPECT_EQ(controlBlock.statusWord.load(), TxStreamStatus::kUnderrunFatal);
-    EXPECT_EQ(controlBlock.streamGeneration.load(), 1);
+    // Refill should succeed and ship NO-DATA for the 8th packet (index 7)
+    EXPECT_TRUE(outcome.ok);
+    EXPECT_EQ(outcome.packetsFilled, 8);
+    EXPECT_EQ(controlBlock.statusWord.load(), TxStreamStatus::kStopped);
+    EXPECT_EQ(controlBlock.streamGeneration.load(), 0);
 
-    // Verify context was stopped: run bit cleared in IsoXmitContextControlClear
+    // Verify metadataRing[7] was force-committed to 1
+    EXPECT_EQ(metadataRing[7].commitGen.load(), 1);
+
+    // Verify descriptor 7 was patched for a NO-DATA packet (payload length = 8)
+    auto* desc0 = ring_.Slab().GetDescriptorPtr(7 * Layout::kBlocksPerPacket);
+    auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(desc0);
+    EXPECT_EQ(immDesc->immediateData[1], OSSwapHostToLittleInt32(8u << 16));
+
+    // Verify slot 7 payload has the NO-DATA CIP header (syt = 0xFFFF)
+    uint32_t* slot7Payload = reinterpret_cast<uint32_t*>(payloadBase + 7 * kSharedPayloadStride);
+    EXPECT_EQ(slot7Payload[0], 0x000240A0); // copied from slot 6
+    EXPECT_EQ(slot7Payload[1], 0x8210FFFF); // copied and set syt = 0xFFFF
+
+    // Verify context was NOT stopped: run bit not cleared in IsoXmitContextControlClear
     const uint32_t cleared = hardware_.GetTestRegister(static_cast<Register32>(DMAContextHelpers::IsoXmitContextControlClear(0)));
-    EXPECT_NE((cleared & ASFW::Driver::ContextControl::kRun), 0);
+    EXPECT_EQ((cleared & ASFW::Driver::ContextControl::kRun), 0);
 }

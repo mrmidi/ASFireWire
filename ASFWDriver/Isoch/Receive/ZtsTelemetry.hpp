@@ -43,6 +43,7 @@ struct ZtsTelemetryRecord final {
     uint32_t rxCycleTimer{0};         // RX DMA descriptor cycle timer ("dma cycle time from rx")
     uint32_t descriptorIndex{0};
     uint32_t framesDecoded{0};
+    uint32_t hostNanosPerSampleQ8{0}; // (1e9 << 8) / sampleRateHz — nominal rate scalar
     uint16_t rawRxTs{0};              // raw 16-bit descriptor SYT-domain timestamp
     uint16_t syt{0};                  // CIP SYT of the source packet
     uint8_t  kind{0};                 // ZtsEventKind

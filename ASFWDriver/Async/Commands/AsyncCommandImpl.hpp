@@ -91,7 +91,8 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
         const uint16_t headerAddrHi = static_cast<uint16_t>(q1 & 0xFFFFu);
 
         // TODO: Temporary topology/ROM triage log. Remove once Saffire init is understood.
-        ASFW_LOG(Async,
+#if ASFW_DEBUG_TEMP_RX_TX
+        ASFW_LOG_V4(Async,
                  "[TempTX] gen=%u handle=0x%08x src=0x%04x metaDst=0x%04x hdrDst=0x%04x tLabel=%u hdrTLabel=%u tCode=0x%x hdrTCode=0x%x ctxSpeed=%u hdrSpeed=%u addr=0x%04x_%08x len=%u strategy=%u q0=0x%08x q1=0x%08x q2=0x%08x",
                  meta.generation,
                  handle.value,
@@ -111,6 +112,7 @@ AsyncHandle AsyncCommand<Derived>::Submit(AsyncSubsystem& subsys) {
                  q0,
                  q1,
                  q2);
+#endif
     }
     
     // Step 6: Prepare DMA payload (if needed) - CRTP dispatch

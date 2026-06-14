@@ -43,6 +43,7 @@ public:
         std::atomic<uint64_t> fatalPacketSize{0};
         std::atomic<uint64_t> fatalPayloadMapping{0};
         std::atomic<uint64_t> fatalDescriptorBounds{0};
+        std::atomic<uint64_t> txUnderruns{0};
 
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};

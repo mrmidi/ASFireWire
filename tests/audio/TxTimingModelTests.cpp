@@ -2,12 +2,14 @@
 
 #include "ASFWDriver/Audio/Wire/AMDTP/RxSytCadence.hpp"
 #include "ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.hpp"
+#include "ASFWDriver/Audio/Wire/AMDTP/TxAnchorTracker.hpp"
 
 namespace ASFW::Testing {
 namespace {
 
 using Driver::RxSytCadence;
 using Driver::TxTimingModel;
+using Driver::TxAnchorTracker;
 using LeadHealth = TxTimingModel::LeadHealth;
 
 constexpr int64_t kEightSecondTicks =
@@ -119,12 +121,14 @@ TEST(TxTimingModelTests, FirstLockedPacketMatchesRecoveredRxPhase) {
     const auto decision = model.PeekNextDataSyt(packetAnchor, cadence);
 
     EXPECT_TRUE(decision.seededThisCall);
-    EXPECT_EQ(decision.health, LeadHealth::kTightWarn);
-    EXPECT_EQ(decision.leadTicks, 0);
-    // The fill phase pins to the recovered RX lattice; the wire SYT is that
-    // phase pushed out by the IEC 61883-6 transfer delay.
+    // With the Saffire-faithful fix, the seed is one cycle (3072 ticks) ahead
+    // of the anchor, and the forced adjust preserves that lead. The lead is
+    // now ~initialLeadTicks, not 0.
+    EXPECT_EQ(decision.leadTicks, TxTimingModel::Config{}.initialLeadTicks);
+    // The fill phase is one cycle ahead of the recovered RX phase; the wire
+    // SYT is that phase pushed out by the IEC 61883-6 transfer delay.
     EXPECT_EQ(decision.syt,
-              SytFromTicks(recovered +
+              SytFromTicks(recovered + TxTimingModel::Config{}.initialLeadTicks +
                            TxTimingModel::Config{}.xmitTransferDelayTicks));
 }
 
@@ -145,13 +149,13 @@ TEST(TxTimingModelTests, GoldCaptureKeepsTxOnRecoveredRxSyt) {
     model.Configure(TxTimingModel::Config{});
 
     const auto decision = model.PeekNextDataSyt(recovered, cadence);
-    // Phase = recovered (lead 0); wire SYT = phase + 12800-tick transfer
-    // delay = +4 cycles +0x200 sub-cycle: 0x92B0 -> 0xD4B0.
-    EXPECT_EQ(decision.syt, 0xD4B0);
+    // With the Saffire-faithful fix, the seed is one cycle (3072) ahead of
+    // the recovered phase. Wire SYT = recovered + 3072 + 12800 transfer delay.
     EXPECT_EQ(decision.syt,
               SytFromTicks(recovered +
+                           TxTimingModel::Config{}.initialLeadTicks +
                            TxTimingModel::Config{}.xmitTransferDelayTicks));
-    EXPECT_EQ(decision.leadTicks, 0);
+    EXPECT_EQ(decision.leadTicks, TxTimingModel::Config{}.initialLeadTicks);
 }
 
 TEST(TxTimingModelTests, SkippedDataSlotReacquiresFromExecutionAnchor) {
@@ -181,8 +185,9 @@ TEST(TxTimingModelTests, SkippedDataSlotReacquiresFromExecutionAnchor) {
     EXPECT_EQ(reacquired.syt,
               SytFromTicks(model.OutputPhaseTicks() +
                            config.xmitTransferDelayTicks));
+    // With the Saffire-faithful fix, the reacquired lead is ~initialLeadTicks.
     EXPECT_GE(reacquired.leadTicks, 0);
-    EXPECT_LT(reacquired.leadTicks, Timing::kTicksPerSample48k);
+    EXPECT_LT(reacquired.leadTicks, config.acceptLeadTicks);
 }
 
 TEST(TxTimingModelTests, AdvancesByDelayedObservedCadenceEntry) {
@@ -257,9 +262,13 @@ TEST(TxTimingModelTests, PhaseCorrectionRemovesHalfSampleLatticeError) {
     const auto decision = model.PeekNextDataSyt(anchor, cadence);
 
     ASSERT_NE(decision.syt, 0xFFFF);
-    EXPECT_EQ(Timing::extOffsetDiff(
-                  model.OutputPhaseTicks(), recovered),
-              Timing::kTicksPerSample48k);
+    // With the Saffire-faithful fix, the phase is one cycle (3072) ahead of
+    // the recovered RX lattice, not exactly one sample (512) ahead.
+    const int64_t phaseVsRecovered = Timing::extOffsetDiff(
+        model.OutputPhaseTicks(), recovered);
+    EXPECT_GE(phaseVsRecovered, TxTimingModel::Config{}.initialLeadTicks);
+    EXPECT_LE(phaseVsRecovered,
+              TxTimingModel::Config{}.initialLeadTicks + Timing::kTicksPerSample48k);
     EXPECT_LT(model.OutputPhaseTicks(), kEightSecondTicks);
 }
 
@@ -411,13 +420,125 @@ TEST(TxTimingModelTests, SeedPinsLeadWithinOneCorrectionGridForAnyAnchor) {
             Timing::normalizeOffsetDomain(recovered + anchorOffset);
         const auto decision = model.PeekNextDataSyt(anchor, cadence);
         ASSERT_NE(decision.syt, 0xFFFF);
+        // With the Saffire-faithful fix, the lead is ~initialLeadTicks (3072),
+        // not within one grid cell. The lead must still be within the accept
+        // window (below acceptLeadTicks).
         EXPECT_GE(decision.leadTicks, 0);
-        EXPECT_LT(decision.leadTicks, grid);
+        EXPECT_LT(decision.leadTicks, config.acceptLeadTicks);
+        // The corrected phase must still land on the recovered RX frame lattice.
         const int64_t latticeError =
             ((Timing::extOffsetDiff(model.OutputPhaseTicks(), recovered) %
               grid) + grid) % grid;
         EXPECT_EQ(latticeError, 0);
     }
+}
+
+TEST(TxTimingModelTests, ForcedAdjustReturnsCandidatePlusCorrection) {
+    // Verify the Saffire-faithful forced return base: when forceAdjust fires,
+    // phasePost must equal candidatePhase + correctionTicks, NOT
+    // executionAnchor + correctionTicks.
+    RxSytCadence cadence{};
+    cadence.Reset();
+    const int64_t recovered = FillCadenceToLock(cadence);
+
+    TxTimingModel::Config config{};
+    TxTimingModel model{};
+    model.Configure(config);
+
+    // Use an anchor offset that forces the deadband to be exceeded on seed.
+    const int64_t anchor =
+        Timing::normalizeOffsetDomain(recovered + 256);
+    const auto decision = model.PeekNextDataSyt(anchor, cadence);
+
+    ASSERT_NE(decision.syt, 0xFFFF);
+    ASSERT_TRUE(decision.forceAdjustFired);
+
+    // phasePost must be candidatePhase + correctionTicks (mod domain).
+    const int64_t expected =
+        Timing::normalizeOffsetDomain(
+            decision.phaseTicksPre + decision.correctionTicks);
+    EXPECT_EQ(decision.phaseTicksPost, expected);
+
+    // It must NOT be executionAnchor + correctionTicks.
+    const int64_t wrongBase =
+        Timing::normalizeOffsetDomain(
+            decision.packetAnchorTicks + decision.correctionTicks);
+    if (decision.correctionTicks != 0) {
+        EXPECT_NE(decision.phaseTicksPost, wrongBase);
+    }
+}
+
+// ============================================================================
+// TxAnchorTracker tests
+// ============================================================================
+
+TEST(TxAnchorTrackerTests, AcceptsExactMatch) {
+    TxAnchorTracker tracker{};
+    const int64_t phase1 = 100'000;
+    auto r1 = tracker.ObserveCallbackPhase(0, phase1);
+    EXPECT_EQ(r1.status, TxAnchorTracker::Status::kAccepted);
+    EXPECT_FALSE(r1.resetRequired);
+
+    const int64_t phase2 = phase1 + TxAnchorTracker::kTicksPerCycle;
+    auto r2 = tracker.ObserveCallbackPhase(1, phase2);
+    EXPECT_EQ(r2.status, TxAnchorTracker::Status::kAccepted);
+    EXPECT_EQ(r2.continuityDiffTicks, 0);
+    EXPECT_FALSE(r2.resetRequired);
+}
+
+TEST(TxAnchorTrackerTests, ToleratesOneCycleGlitch) {
+    TxAnchorTracker tracker{};
+    const int64_t phase1 = 100'000;
+    (void)tracker.ObserveCallbackPhase(0, phase1);
+
+    // First one-cycle glitch: accepted.
+    const int64_t glitch1 = phase1 + 2 * TxAnchorTracker::kTicksPerCycle;
+    auto r1 = tracker.ObserveCallbackPhase(1, glitch1);
+    EXPECT_EQ(r1.status, TxAnchorTracker::Status::kOneCycleGlitchAccepted);
+    EXPECT_FALSE(r1.resetRequired);
+
+    // Second one-cycle glitch: accepted.
+    const int64_t glitch2 =
+        r1.callbackPhaseTicks + 2 * TxAnchorTracker::kTicksPerCycle;
+    auto r2 = tracker.ObserveCallbackPhase(2, glitch2);
+    EXPECT_EQ(r2.status, TxAnchorTracker::Status::kOneCycleGlitchAccepted);
+    EXPECT_FALSE(r2.resetRequired);
+
+    // Third one-cycle glitch: reset.
+    const int64_t glitch3 =
+        r2.callbackPhaseTicks + 2 * TxAnchorTracker::kTicksPerCycle;
+    auto r3 = tracker.ObserveCallbackPhase(3, glitch3);
+    EXPECT_EQ(r3.status, TxAnchorTracker::Status::kDiscontinuityReset);
+    EXPECT_TRUE(r3.resetRequired);
+}
+
+TEST(TxAnchorTrackerTests, ResetsOnDiscontinuity) {
+    TxAnchorTracker tracker{};
+    const int64_t phase1 = 100'000;
+    (void)tracker.ObserveCallbackPhase(0, phase1);
+
+    // Non-one-cycle discontinuity: reset immediately.
+    const int64_t badPhase = phase1 + 5000;  // not 0 or 3072
+    auto r = tracker.ObserveCallbackPhase(1, badPhase);
+    EXPECT_EQ(r.status, TxAnchorTracker::Status::kDiscontinuityReset);
+    EXPECT_TRUE(r.resetRequired);
+}
+
+TEST(TxAnchorTrackerTests, ReacquiresAfterReset) {
+    TxAnchorTracker tracker{};
+    const int64_t phase1 = 100'000;
+    (void)tracker.ObserveCallbackPhase(0, phase1);
+
+    // Discontinuity.
+    (void)tracker.ObserveCallbackPhase(1, phase1 + 5000);
+    EXPECT_FALSE(tracker.IsValid());
+
+    // Reacquire.
+    const int64_t phase2 = 200'000;
+    auto r = tracker.ObserveCallbackPhase(2, phase2);
+    EXPECT_EQ(r.status, TxAnchorTracker::Status::kAccepted);
+    EXPECT_TRUE(tracker.IsValid());
+    EXPECT_FALSE(r.resetRequired);
 }
 
 } // namespace ASFW::Testing

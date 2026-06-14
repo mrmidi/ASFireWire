@@ -1505,22 +1505,9 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     // the already-allocated host isoch channels.
     IOSleep(2);
 
-    const kern_return_t startTransmitStatus =
-        hostTransport_.StartPreparedTransmit();
-    if (startTransmitStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startTransmitStatus,
-                                 DiceRestartPhase::kStartingHostTransmit,
-                                 DiceRestartFailureCause::kStartTransmit);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostTransmit,
-                                      DiceRestartFailureCause::kStartTransmit);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostTransmit);
-    session.hostTransmitStarted = true;
-    StoreSession(session);
-
+    // RX first: the device needs to be receiving before it can lock its TX
+    // clock. Starting IT before IR causes the DICE PLL to see TX without
+    // a valid RX reference, leading to timing instability.
     const kern_return_t startReceiveStatus =
         hostTransport_.StartPreparedReceive();
     if (startReceiveStatus != kIOReturnSuccess) {
@@ -1535,6 +1522,22 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     }
     SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
     session.hostReceiveStarted = true;
+    StoreSession(session);
+
+    const kern_return_t startTransmitStatus =
+        hostTransport_.StartPreparedTransmit();
+    if (startTransmitStatus != kIOReturnSuccess) {
+        return rollbackToFailure(startTransmitStatus,
+                                 DiceRestartPhase::kStartingHostTransmit,
+                                 DiceRestartFailureCause::kStartTransmit);
+    }
+    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+        return rollbackToInvalidation(kIOReturnAborted,
+                                      DiceRestartPhase::kStartingHostTransmit,
+                                      DiceRestartFailureCause::kStartTransmit);
+    }
+    SetSessionPhase(session, DiceRestartPhase::kStartingHostTransmit);
+    session.hostTransmitStarted = true;
     StoreSession(session);
 
     const auto confirm = WaitForAsyncResult<DiceDuplexConfirmResult>(
