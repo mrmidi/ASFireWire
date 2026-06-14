@@ -272,3 +272,45 @@ TEST(AddressSpaceManagerTests, AutoAllocationRejectsRequestLargerThanWindow) {
                                                &handle,
                                                nullptr));
 }
+
+// SetDebugLabel is a diagnostics-only annotation; its contract is that it never
+// disturbs range state and silently tolerates unknown/zero handles and null
+// labels. Used by the SBP-2 session layer to tag login/status/ORB ranges.
+TEST(AddressSpaceManagerTests, SetDebugLabelToleratesBadInputAndPreservesRange) {
+    ASFW::Protocols::SBP2::AddressSpaceManager manager(nullptr);
+
+    // No-ops on a fresh manager: zero handle, unknown handle.
+    manager.SetDebugLabel(0, "ignored");
+    manager.SetDebugLabel(0xDEAD'BEEF, "unknown");
+
+    uint64_t handle = 0;
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.AllocateAddressRange(reinterpret_cast<void*>(0x1),
+                                           0xFFFF,
+                                           0x0010'0000,
+                                           16,
+                                           &handle,
+                                           nullptr));
+
+    manager.SetDebugLabel(handle, nullptr);          // null label tolerated
+    manager.SetDebugLabel(handle, "sbp2-login-orb"); // normal labelling
+
+    // Labelling must not perturb the range: a write/read round trip still works.
+    const std::array<uint8_t, 4> payload{0xDE, 0xAD, 0xBE, 0xEF};
+    EXPECT_EQ(kIOReturnSuccess,
+              manager.WriteLocalData(reinterpret_cast<void*>(0x1),
+                                     handle,
+                                     0,
+                                     std::span<const uint8_t>(payload.data(), payload.size())));
+
+    std::vector<uint8_t> readback;
+    ASSERT_EQ(kIOReturnSuccess,
+              manager.ReadIncomingData(reinterpret_cast<void*>(0x1),
+                                       handle,
+                                       0,
+                                       4,
+                                       &readback));
+    ASSERT_EQ(4u, readback.size());
+    EXPECT_EQ(0xDE, readback[0]);
+    EXPECT_EQ(0xEF, readback[3]);
+}
