@@ -6,6 +6,8 @@
 
 This is a **re-implementation**, not a merge. #19's monoliths are decomposed the way DICE split `ConfigROM` (Builder/Stager/Reader/Scanner/Parser/Store). The session layer was written against #19's ORB API, which differs from DICE's — §3 maps every call.
 
+**Object model (decided):** components are plain modern-C++ classes (POCO), matching DICE's existing POCO foundation (`SBP2CommandORB`/`SBP2ManagementORB`/`AddressSpaceManager` are all plain classes, host-tested under `ASFW_HOST_TEST`). They are **not** IIG/`IOService` objects — that would break the gtest conformance oracle and diverge from the foundation. The only DriverKit-native surface is a single thin driver-level `IOTimerDispatchSource`+`OSAction` owner, injected into the POCO components as `ISessionScheduler` (§7a). "Modernize" is honored via C++ idioms + native primitives *behind* the interfaces, not by IOService-ifying every object.
+
 ---
 
 ## 1. `SBP2LoginSession.cpp` (1847 lines, 60 methods) → 4 components

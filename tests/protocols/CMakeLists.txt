@@ -185,3 +185,8 @@ add_protocols_test(SBP2ORBTests
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
 )
+
+# SBP2 Session Scheduler Tests (ISessionScheduler interface + virtual-clock fake)
+add_protocols_test(SessionSchedulerTests
+    SessionSchedulerTests.cpp
+)
