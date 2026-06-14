@@ -13,35 +13,26 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kCadenceBlockPackets = 4;
     static constexpr uint32_t kCadenceBlockFrames = 24;
 
-    // Hardware interrupt cadence: one IR/IT interrupt every 32 packets
-    // (4 ms @48k). 32 packets = 8 whole cadence blocks, so the nominal frame
-    // advance per interrupt is constant (192) and the ZTS grid is aligned
-    // 1:1 with the DMA interrupt program — one anchor per interrupt at the
-    // group boundary, no synthesized mid-group anchors.
-    static constexpr uint32_t kRxPacketsPerGroup = 32;
-    static constexpr uint32_t kTxPacketsPerGroup = 32;
+    // DMA completion cadence is deliberately independent from the HAL ZTS
+    // grid. Six FireWire cycles give 0.75 ms refill latency. Depending on the
+    // D/D/D/N starting phase, one interrupt carries 32 or 40 decoded frames.
+    static constexpr uint32_t kRxPacketsPerGroup = 6;
+    static constexpr uint32_t kTxPacketsPerGroup = 6;
     static constexpr uint32_t kTimingGroupPackets = kRxPacketsPerGroup;
 
-    // Nominal frame advance per interrupt group when the device tracks the
-    // bus rate exactly. Real device crystals drift (ppm), so an individual
-    // group occasionally advances one data packet more or less; the RX drain
-    // therefore publishes anchors when the cursor crosses the declared grid
-    // (which in the nominal cadence is exactly the interrupt boundary).
+    static constexpr uint32_t kMinimumNominalFramesPerInterrupt = 32;
+    static constexpr uint32_t kMaximumNominalFramesPerInterrupt = 40;
     static constexpr uint32_t kNominalFramesPerTimingGroup =
-        (kTimingGroupPackets / kCadenceBlockPackets) * kCadenceBlockFrames;
+        36;
 
-    // Zero-timestamp grid the HAL predicts against (ADK contract: next
-    // anchor sample time = previous + period). Equal to the per-interrupt
-    // frame advance: the interrupt IS the ZTS callback (doc §9.3 case 3).
-    static constexpr uint32_t kHalZeroTimestampPeriodFrames =
-        kNominalFramesPerTimingGroup;
+    // The HAL clock contract remains a strict 192-frame sample-time grid.
+    // RX publishes only when its decoded-frame cursor crosses this boundary.
+    static constexpr uint32_t kHalZeroTimestampPeriodFrames = 192;
 
-    // Captured input reaches the HAL-facing ring only at the IR drain, i.e.
-    // in one-group batches. The declared input safety offset must therefore
-    // cover one full group plus scheduling jitter, whatever the device
-    // profile says (Saffire's decompiled 128 assumed its 1.5 ms groups).
+    // The graph applies the complete profile/output/client-IO formula. This is
+    // only the interrupt-batch component of that calculation.
     static constexpr uint32_t kInputSafetyFloorFrames =
-        kNominalFramesPerTimingGroup + 64;
+        kMaximumNominalFramesPerInterrupt + 64;
 
     // Upper bound on a single HAL IO transfer (client buffer size).
     static constexpr uint32_t kHalIoPeriodFrames = 512;
@@ -56,33 +47,45 @@ struct AudioTimingGeometry final {
 
     static constexpr uint32_t kFrameAlignment = 32;
 
-    // TX shared packet rings (payload slab + metadata), packet domain.
-    // Independent of the frame ring: sized to hold the full preparation lead
-    // with headroom. 1024 packets = 128 ms @ 8000 pkt/s.
-    static constexpr uint32_t kTxSharedSlotPackets = 1024;
+    static constexpr uint32_t kRxDescriptorPackets = 504;
 
-    static constexpr uint32_t kTxHardwareRingPackets = 192;
-    // Keep six completion groups prepared beyond the hardware-owned ring.
-    // This value is experimental and should be tuned if required.
-    // One group is consumed by the normal refill itself; the additional groups
-    // give the cross-driver preparation action extra periods to run to tolerate
-    // scheduling jitter from DriverKit user-space execution.
-    // At 48 kHz this is 192 packets / 1152 frames / 24 ms.
+    // Packet-domain TX ownership: 48 descriptors on hardware, plus a committed
+    // preparation lead beyond the hardware ring.
+    //
+    // COVERAGE INVARIANT (hardware-confirmed). The IT refill ISR checks slots
+    //   [completion + hardwareRing, completion + hardwareRing + deltaConsumed)
+    // and FATALs if any is not yet committed. The producer stays `slack` packets
+    // ahead of the hardware ring (lead = hardwareRing + slack), so a single
+    // refill tolerates a coalesced completion of at most `slack` packets:
+    //   lead - hardwareRing == slack  >=  max(deltaConsumed)
+    // This is a COVERAGE bound, not a latency margin: producer wake latency was
+    // measured at <100 us ([TxPrep]) yet slack == 2*group (=12) still holed on a
+    // single deltaConsumed=13 coalesced IT completion (IT FATAL dump,
+    // fatalAbs=1332, slotLastPacketAbs one lap behind, exposeCursor at target).
+    // The IT refill ISR coalesces several completion groups under DriverKit
+    // scheduling (RX is observed coalescing up to 6 groups), so size the slack
+    // for the worst expected coalescing. 6*group == 36 covers a six-group
+    // coalesced completion; raise further if the maxDeltaConsumed high-water
+    // counter (counters_.maxDeltaConsumed) reports more. See
+    // documentation/ZTS_AND_SYT.md §13 and tests/audio/TxRefillCoverageTests.cpp.
+    static constexpr uint32_t kTxSharedSlotPackets = 192;
+    static constexpr uint32_t kTxHardwareRingPackets = 48;
     static constexpr uint32_t kTxPreparationSlackPackets =
         6 * kTxPacketsPerGroup;
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
+    // Largest single coalesced deltaConsumed a refill can absorb without holing.
+    static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =
+        kTxPreparationSlackPackets;
 };
 
-static_assert(AudioTimingGeometry::kTimingGroupPackets %
+static_assert(AudioTimingGeometry::kRxDescriptorPackets %
+                  AudioTimingGeometry::kTimingGroupPackets ==
+              0);
+static_assert(AudioTimingGeometry::kRxDescriptorPackets %
                   AudioTimingGeometry::kCadenceBlockPackets ==
-              0,
-              "Interrupt group must not cut through the D/D/D/N cadence block");
-static_assert(AudioTimingGeometry::kHalZeroTimestampPeriodFrames %
-                  AudioTimingGeometry::kNominalFramesPerTimingGroup ==
-              0,
-              "ZTS grid crossings must land on interrupt-group boundaries in "
-              "the nominal cadence (no mid-group anchor synthesis)");
+              0);
+static_assert(AudioTimingGeometry::kRxDescriptorPackets % 12 == 0);
 static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kHalIoPeriodFrames ==
               0,
@@ -91,10 +94,6 @@ static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kHalZeroTimestampPeriodFrames ==
               0,
               "Frame ring must be an integer number of ZTS periods");
-static_assert(AudioTimingGeometry::kFrameRingFrames %
-                  AudioTimingGeometry::kNominalFramesPerTimingGroup ==
-              0,
-              "Frame ring must be an integer number of interrupt groups");
 static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kFrameAlignment ==
               0,
@@ -111,9 +110,13 @@ static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
               AudioTimingGeometry::kTxPreparationLeadPackets,
               "TX shared slot ring must hold the full preparation lead");
-static_assert(AudioTimingGeometry::kTxPreparationSlackPackets >=
-                  2 * AudioTimingGeometry::kTxPacketsPerGroup,
-              "TX preparation must tolerate one delayed completion wake");
+// COVERAGE: a single refill absorbs a coalesced completion of at most `slack`
+// packets. Hardware showed deltaConsumed=13 holing slack==12, so require slack
+// to cover several groups of coalescing.
+static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets >=
+                  6 * AudioTimingGeometry::kTxPacketsPerGroup,
+              "TX preparation slack must cover the worst expected coalesced "
+              "IT completion (>= 6 groups); raise if maxDeltaConsumed exceeds it");
 static_assert(AudioTimingGeometry::kTxPreparationLeadPackets <=
                   AudioTimingGeometry::kTxSharedSlotPackets -
                       AudioTimingGeometry::kTxPacketsPerGroup,
@@ -126,5 +129,9 @@ static_assert(AudioTimingGeometry::kTxHardwareRingPackets %
                   AudioTimingGeometry::kTxPacketsPerGroup ==
               0,
               "TX hardware ring must be an integer number of groups");
+static_assert(AudioTimingGeometry::kTxHardwareRingPackets %
+                  AudioTimingGeometry::kCadenceBlockPackets ==
+              0,
+              "TX ring wrap must preserve blocking-cadence phase");
 
 } // namespace ASFW::IsochTransport

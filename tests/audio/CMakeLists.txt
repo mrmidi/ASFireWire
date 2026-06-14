@@ -147,6 +147,22 @@ add_audio_test(AmdtpRateGeometryTests
     AmdtpRateGeometryTests.cpp
 )
 
+add_audio_test(RxDrivenTimingTests
+    RxDrivenTimingTests.cpp
+)
+
+# IEC 61883-6 TRANSFER_DELAY math + profile-default regression
+add_audio_test(TransferDelayTests
+    TransferDelayTests.cpp
+    "${ASFW_DRIVER_DIR}/Audio/Wire/AMDTP/TxTimingModel.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/Wire/IEC61883/Syt.cpp"
+)
+
+# TX refill generation/range coverage (decides margin-race vs coverage bug)
+add_audio_test(TxRefillCoverageTests
+    TxRefillCoverageTests.cpp
+)
+
 # Endpoint runtime tests
 add_audio_test(AudioEndpointRuntimeTests
     AudioEndpointRuntimeTests.cpp

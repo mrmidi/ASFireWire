@@ -66,6 +66,9 @@ kern_return_t IsochService::PrepareReceive(
         RefreshReceiveTimingLossCallback();
         isochReceiveContext_->SetZtsAnchorReadyCallback(
             ztsAnchorReadyCallback_);
+        isochReceiveContext_->SetReplayReadyCallback([this]() {
+            StartDeferredTransmitIfReady();
+        });
     }
 
     isochReceiveContext_->SetDirectAudioBindingSource(bindingSource);
@@ -270,11 +273,23 @@ kern_return_t IsochService::StartPreparedTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;
     }
+    if (isochReceiveContext_ &&
+        isochReceiveContext_->GetState() ==
+            ASFW::Isoch::IRPolicy::State::Running &&
+        !isochReceiveContext_->IsReplayEstablished()) {
+        txStartPending_ = true;
+        ASFW_LOG(
+            Isoch,
+            "IsochService: IT RUN deferred until IR cadence/replay is established");
+        return kIOReturnSuccess;
+    }
+    txStartPending_ = false;
     ASFW_LOG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
     return isochTransmitContext_->Start();
 }
 
 kern_return_t IsochService::StopTransmit() {
+    txStartPending_ = false;
     if (isochTransmitContext_) {
         isochTransmitContext_->Stop();
     }
@@ -363,6 +378,27 @@ void IsochService::RefreshReceiveTimingLossCallback() noexcept {
 void IsochService::OnReceiveTimingLossDetected() noexcept {
     if (timingLossCallback_ && activeGuid_ != 0) {
         timingLossCallback_(activeGuid_);
+    }
+}
+
+void IsochService::StartDeferredTransmitIfReady() noexcept {
+    if (!txStartPending_ || !isochTransmitContext_ ||
+        !isochReceiveContext_ ||
+        !isochReceiveContext_->IsReplayEstablished()) {
+        return;
+    }
+
+    txStartPending_ = false;
+    ASFW_LOG(
+        Isoch,
+        "IsochService: IR replay established; starting deferred IT");
+    const kern_return_t status = isochTransmitContext_->Start();
+    if (status != kIOReturnSuccess) {
+        ASFW_LOG(
+            Isoch,
+            "IsochService: deferred IT start failed: 0x%08x",
+            status);
+        OnReceiveTimingLossDetected();
     }
 }
 

@@ -143,7 +143,7 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
             : snapshot.txMaximumLeadTicks + transferDelayTicks;
     ASFW_LOG(
         DirectAudio,
-        "ADK timing anchor(frame=%llu updates=%llu mirrors=%llu stale=%llu depth=%llu overflow=%llu notify=%llu coalesced=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu)",
+        "ADK timing anchor(frame=%llu updates=%llu mirrors=%llu stale=%llu depth=%llu overflow=%llu notify=%llu coalesced=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
         snapshot.hostAnchorFrame,
         snapshot.hostAnchorUpdates,
         snapshot.hostAnchorMirrorPublications,
@@ -162,7 +162,11 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
         snapshot.txNoDataPackets,
         snapshot.txPostLockNoDataPackets,
         snapshot.txLastPreparationLatencyTicks,
-        snapshot.txMaxPreparationLatencyTicks);
+        snapshot.txMaxPreparationLatencyTicks,
+        snapshot.txPreparationLatencySamples,
+        snapshot.txPreparationAtMost750Us,
+        snapshot.txPreparationAtLeast1500Us,
+        snapshot.txMinimumCommittedMarginPackets);
 
     const auto& pw = runtime.txStreamEngine.PayloadWriterCounters();
     ASFW_LOG(

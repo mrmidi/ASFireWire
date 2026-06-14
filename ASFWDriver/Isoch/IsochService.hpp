@@ -123,6 +123,7 @@ private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
     void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
+    void StartDeferredTransmitIfReady() noexcept;
 
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
@@ -156,6 +157,7 @@ private:
     TimingLossCallback timingLossCallback_{};
     TxPreparationCallback txPreparationCallback_{};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
+    bool txStartPending_{false};
     uint32_t interruptInterval_{8};
 
     struct ReservedDuplexResources {

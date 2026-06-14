@@ -118,11 +118,18 @@ kern_return_t IsochReceiveContext::Start() {
     Transition(IRPolicy::State::Running, 0, "Start");
     rxRing_.ResetForStart();
     absoluteFrameCursor_ = 0;
+    ztsProjector_.Reset(0);
     cursorInitialized_ = false;
+    dbcInitialized_ = false;
+    lastDbc_ = 0;
     rxZtsPublishCount_ = 0;
     rxTimestampValidCount_ = 0;
     rxTimestampInvalidCount_ = 0;
     rxCadenceEstablishedLogged_ = false;
+    replayReadyNotified_ = false;
+    replayResetForStart_ = false;
+    replayCycleInitialized_ = false;
+    lastReplayCycleOrdinal_ = 0;
     ztsTelemetry_.Reset();
     (void)ASFW::Timing::initializeHostTimebase();
 
@@ -191,6 +198,15 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.streamMode = ASFW::Audio::Runtime::AudioStreamMode::kUnknown;
                     directInputView_.hostToDeviceWireFormat = ASFW::Audio::Runtime::AudioWireFormat::kAM824;
 
+                    if (!replayResetForStart_ &&
+                        directInputView_.control) {
+                        directInputView_.control->rxSytCadence.Reset();
+                        directInputView_.control->rxSequenceReplay.Reset();
+                        directInputView_.control->rxReplayEpochResets.fetch_add(
+                            1, std::memory_order_relaxed);
+                        replayResetForStart_ = true;
+                    }
+
                     // Data plane (RX -> input buffer) and the controller-side clock
                     // publisher both arm. The clock publisher writes the shared
                     // timeline; the ADK side mirrors that timeline to HAL.
@@ -241,8 +257,16 @@ uint32_t IsochReceiveContext::Poll() {
                                                                channels,
                                                                slots,
                                                                wireFormat_);
-            if (result.status == AudioEngine::Direct::Rx::DirectRxWriteStatus::kAvailable ||
-                result.status == AudioEngine::Direct::Rx::DirectRxWriteStatus::kInvalidBinding) {
+            const bool packetAccepted =
+                result.status ==
+                    AudioEngine::Direct::Rx::
+                        DirectRxWriteStatus::kAvailable ||
+                result.status ==
+                    AudioEngine::Direct::Rx::
+                        DirectRxWriteStatus::kInvalidBinding;
+            if (!packetAccepted) {
+                ResetReplayEpochForDiscontinuity();
+            } else {
                 
                 if (!cursorInitialized_ && result.hasValidCip) {
                     // First valid CIP packet anchors the RX device cursor (starts at 0).
@@ -288,6 +312,32 @@ uint32_t IsochReceiveContext::Poll() {
                                 ? drainHostTicks - ageHostTicks
                                 : drainHostTicks;
                     } else {
+                        // Packet cycle stamp is ahead of the master drain read:
+                        // advance (not rewind) the receive host time. Small,
+                        // occasional negatives are fine; track magnitude so a
+                        // frequent/large pattern (bad expansion/pairing) shows.
+                        ++rxNegativeAgeCount_;
+                        const bool largeNegativeAge =
+                            -rxTimestamp.ageTicks >=
+                            static_cast<int64_t>(ASFW::Timing::kTicksPerCycle);
+                        if (largeNegativeAge) {
+                            ++rxLargeNegativeAgeCount_;
+                            if (rxLargeNegativeAgeCount_ <= 8 ||
+                                (rxLargeNegativeAgeCount_ % 64) == 0) {
+                                ASFW_LOG(
+                                    Isoch,
+                                    "IR negative age >= 1 cycle: age=%lld "
+                                    "desc=%u drainCycle=0x%08x rxCycle=0x%08x "
+                                    "largeNeg=%llu totalNeg=%llu valid=%llu",
+                                    rxTimestamp.ageTicks,
+                                    pkt.descriptorIndex,
+                                    drainCycleTimer,
+                                    rxTimestamp.cycleTimer,
+                                    rxLargeNegativeAgeCount_,
+                                    rxNegativeAgeCount_,
+                                    rxTimestampValidCount_);
+                            }
+                        }
                         const uint64_t advanceHostTicks =
                             ASFW::Timing::nanosToHostTicks(
                                 Rx::FireWireTicksToNanos(
@@ -299,6 +349,7 @@ uint32_t IsochReceiveContext::Poll() {
                     callbackTimestamp = rxTimestamp.cycleTimer;
                 } else {
                     ++rxTimestampInvalidCount_;
+                    ResetReplayEpochForDiscontinuity();
                     if (rxTimestampInvalidCount_ <= 8 ||
                         (rxTimestampInvalidCount_ % 128) == 0) {
                         ASFW_LOG(
@@ -325,9 +376,59 @@ uint32_t IsochReceiveContext::Poll() {
                 uint32_t rxRollingCadenceTicks = 0;
                 int64_t rxRecoveredPhaseTicks = 0;
                 if (hasHardwareTimestamp && directInputView_.control) {
+                    const auto cycleFields =
+                        ASFW::Timing::decodeCycleTimer(
+                            rxTimestamp.cycleTimer);
+                    const uint32_t cycleOrdinal =
+                        cycleFields.seconds *
+                            ASFW::Timing::kCyclesPerSecond +
+                        cycleFields.cycle;
+                    constexpr uint32_t kCycleDomain =
+                        ASFW::Timing::kFWTimeWrapSeconds *
+                        ASFW::Timing::kCyclesPerSecond;
+                    if (replayCycleInitialized_ &&
+                        cycleOrdinal !=
+                            (lastReplayCycleOrdinal_ + 1) %
+                                kCycleDomain) {
+                        ResetReplayEpochForDiscontinuity();
+                    }
+                    lastReplayCycleOrdinal_ = cycleOrdinal;
+                    replayCycleInitialized_ = true;
+
+                    ASFW::Audio::Runtime::RxSequenceEntry replayEntry{};
+                    replayEntry.firstAudioFrame =
+                        absoluteFrameCursor_;
+                    replayEntry.sourceCycleTimer = rxTimestamp.cycleTimer;
+                    replayEntry.dataBlocks =
+                        static_cast<uint16_t>(result.framesDecoded);
+                    replayEntry.dbc = result.dbc;
+                    if (result.hasValidCip) {
+                        replayEntry.flags |=
+                            ASFW::Audio::Runtime::RxSequenceFlags::
+                                kValidCip;
+                    }
                     if (result.hasValidCip && result.syt != 0xFFFF) {
-                        (void)directInputView_.control->rxSytCadence.Observe(
-                            result.syt, rxTimestamp.cycleTimer);
+                        const bool cadenceAccepted =
+                            directInputView_.control
+                                ->rxSytCadence.Observe(
+                                    result.syt,
+                                    rxTimestamp.cycleTimer);
+                        if (!cadenceAccepted &&
+                            directInputView_.control
+                                ->rxSequenceReplay.IsEstablished()) {
+                            ResetReplayEpochForDiscontinuity();
+                        }
+                        replayEntry.sytOffset =
+                            ASFW::Audio::Runtime::
+                                ComputeReplaySytOffset(
+                                    result.syt,
+                                    rxTimestamp.cycleTimer,
+                                    directInputView_.control
+                                        ->rxTransferDelayTicks.load(
+                                            std::memory_order_relaxed));
+                        replayEntry.flags |=
+                            ASFW::Audio::Runtime::RxSequenceFlags::
+                                kValidSyt;
                         const int64_t receiveTicks =
                             ASFW::Timing::encodedTstampToOffsets(
                                 rxTimestamp.cycleTimer);
@@ -337,6 +438,10 @@ uint32_t IsochReceiveContext::Poll() {
                         sytLeadTicks = ASFW::Timing::extOffsetDiff(
                             presentationTicks, receiveTicks);
                     }
+                    directInputView_.control->rxSequenceReplay.Publish(
+                        replayEntry);
+                    directInputView_.control->rxReplayEntries.fetch_add(
+                        1, std::memory_order_relaxed);
 
                     ASFW::Driver::RxSytCadence::Snapshot cadence{};
                     if (directInputView_.control->rxSytCadence.TrySnapshot(
@@ -345,6 +450,18 @@ uint32_t IsochReceiveContext::Poll() {
                         rxClockEstablished = true;
                         rxRollingCadenceTicks = cadence.rollingCadenceTicks;
                         rxRecoveredPhaseTicks = cadence.recoveredPhaseTicks;
+                        if (!directInputView_.control
+                                 ->rxSequenceReplay.IsEstablished()) {
+                            (void)directInputView_.control
+                                ->rxSequenceReplay.MarkEstablished();
+                        }
+                        if (directInputView_.control
+                                ->rxSequenceReplay.IsEstablished() &&
+                            !replayReadyNotified_ &&
+                            replayReadyCallback_) {
+                            replayReadyNotified_ = true;
+                            replayReadyCallback_();
+                        }
                         if (!rxCadenceEstablishedLogged_) {
                             const uint16_t delayedReadIndex =
                                 static_cast<uint16_t>(
@@ -370,32 +487,27 @@ uint32_t IsochReceiveContext::Poll() {
                     }
                 }
 
-                const uint64_t packetFirstFrame = absoluteFrameCursor_;
-                const uint64_t nextFrameCursor =
-                    packetFirstFrame + result.framesDecoded;
+                const uint32_t hostNanosPerSampleQ8 =
+                    directInputView_.sampleRateHz == 0
+                        ? 0
+                        : static_cast<uint32_t>(
+                              (1000000000ULL << 8) /
+                              directInputView_.sampleRateHz);
+                ztsProjector_.Advance(
+                    result.framesDecoded,
+                    [&](uint64_t gridFrame,
+                        uint32_t framesFromPacketStart) {
+                        if (!rxClockEstablished ||
+                            packetReceiveHostTicks == 0 ||
+                            !clockPublisher_.IsBound() ||
+                            hostNanosPerSampleQ8 == 0) {
+                            return;
+                        }
 
-                constexpr uint64_t kZtsPeriodFrames =
-                    ASFW::IsochTransport::AudioTimingGeometry::
-                        kHalZeroTimestampPeriodFrames;
-                if (rxClockEstablished &&
-                    packetReceiveHostTicks != 0 &&
-                    result.framesDecoded != 0 &&
-                    clockPublisher_.IsBound() &&
-                    directInputView_.sampleRateHz != 0) {
-                    const uint32_t hostNanosPerSampleQ8 =
-                        static_cast<uint32_t>(
-                            (1000000000ULL << 8) /
-                            directInputView_.sampleRateHz);
-                    uint64_t gridFrame =
-                        ((packetFirstFrame / kZtsPeriodFrames) + 1u) *
-                        kZtsPeriodFrames;
-                    while (gridFrame <= nextFrameCursor) {
-                        const uint64_t framesFromPacketStart =
-                            gridFrame - packetFirstFrame;
                         const uint64_t gridDeltaNanos =
-                            (framesFromPacketStart *
-                             static_cast<uint64_t>(
-                                 hostNanosPerSampleQ8)) >>
+                            (static_cast<uint64_t>(
+                                 framesFromPacketStart) *
+                             hostNanosPerSampleQ8) >>
                             8;
                         const uint64_t gridHostTicks =
                             packetReceiveHostTicks +
@@ -407,46 +519,48 @@ uint32_t IsochReceiveContext::Poll() {
                                 gridFrame,
                                 gridHostTicks,
                                 hostNanosPerSampleQ8);
-                        if (publishResult.accepted) {
-                            ++rxZtsPublishCount_;
-
-                            if (publishResult.notifyConsumer &&
-                                ztsAnchorReadyCallback_) {
-                                ztsAnchorReadyCallback_(
-                                    publishResult
-                                        .notificationGeneration);
-                            }
-                            // Capture only (no IO): Poll() runs in the
-                            // interrupt hot path, so logging here would perturb
-                            // the timing we are measuring. The watchdog drains
-                            // and formats these off the hot path.
-                            Rx::ZtsTelemetryRecord rec{};
-                            rec.publishCount = rxZtsPublishCount_;
-                            rec.sampleFrame = gridFrame;
-                            rec.hostTicks = gridHostTicks;
-                            rec.rawHostTicks = packetReceiveHostTicks;
-                            rec.drainHostTicks = drainHostTicks;
-                            rec.ageTicks = rxTimestamp.ageTicks;
-                            rec.sytLeadTicks = sytLeadTicks;
-                            rec.recoveredPhaseTicks = rxRecoveredPhaseTicks;
-                            rec.rollingCadenceTicks = rxRollingCadenceTicks;
-                            rec.drainCycleTimer = drainCycleTimer;
-                            rec.rxCycleTimer = rxTimestamp.cycleTimer;
-                            rec.descriptorIndex = pkt.descriptorIndex;
-                            rec.framesDecoded = result.framesDecoded;
-                            rec.hostNanosPerSampleQ8 = hostNanosPerSampleQ8;
-                            rec.rawRxTs = result.receiveCycleTimestamp;
-                            rec.syt = result.syt;
-                            rec.kind = static_cast<uint8_t>(
-                                rxZtsPublishCount_ == 1
-                                    ? Rx::ZtsEventKind::kSeed
-                                    : Rx::ZtsEventKind::kUpdate);
-                            ztsTelemetry_.Record(rec);
+                        if (!publishResult.accepted) {
+                            ResetReplayEpochForDiscontinuity();
+                            return;
                         }
-                        gridFrame += kZtsPeriodFrames;
-                    }
-                }
-                absoluteFrameCursor_ = nextFrameCursor;
+
+                        ++rxZtsPublishCount_;
+                        if (publishResult.notifyConsumer &&
+                            ztsAnchorReadyCallback_) {
+                            ztsAnchorReadyCallback_(
+                                publishResult
+                                    .notificationGeneration);
+                        }
+
+                        Rx::ZtsTelemetryRecord rec{};
+                        rec.publishCount = rxZtsPublishCount_;
+                        rec.sampleFrame = gridFrame;
+                        rec.hostTicks = gridHostTicks;
+                        rec.rawHostTicks = packetReceiveHostTicks;
+                        rec.drainHostTicks = drainHostTicks;
+                        rec.ageTicks = rxTimestamp.ageTicks;
+                        rec.sytLeadTicks = sytLeadTicks;
+                        rec.recoveredPhaseTicks =
+                            rxRecoveredPhaseTicks;
+                        rec.rollingCadenceTicks =
+                            rxRollingCadenceTicks;
+                        rec.drainCycleTimer = drainCycleTimer;
+                        rec.rxCycleTimer = rxTimestamp.cycleTimer;
+                        rec.descriptorIndex = pkt.descriptorIndex;
+                        rec.framesDecoded = result.framesDecoded;
+                        rec.hostNanosPerSampleQ8 =
+                            hostNanosPerSampleQ8;
+                        rec.rawRxTs =
+                            result.receiveCycleTimestamp;
+                        rec.syt = result.syt;
+                        rec.kind = static_cast<uint8_t>(
+                            rxZtsPublishCount_ == 1
+                                ? Rx::ZtsEventKind::kSeed
+                                : Rx::ZtsEventKind::kUpdate);
+                        ztsTelemetry_.Record(rec);
+                    });
+                absoluteFrameCursor_ =
+                    ztsProjector_.AbsoluteFrame();
             }
         }
 
@@ -460,6 +574,29 @@ uint32_t IsochReceiveContext::Poll() {
 
     rxLock_.clear(std::memory_order_release);
     return processed;
+}
+
+void IsochReceiveContext::ResetReplayEpochForDiscontinuity() noexcept {
+    auto* control = directInputView_.control;
+    if (!control || !replayResetForStart_) {
+        replayCycleInitialized_ = false;
+        return;
+    }
+
+    const bool wasEstablished =
+        control->rxSequenceReplay.IsEstablished();
+    control->rxSytCadence.Reset();
+    control->rxSequenceReplay.Reset();
+    control->rxReplayEpochResets.fetch_add(
+        1, std::memory_order_relaxed);
+    replayReadyNotified_ = false;
+    rxCadenceEstablishedLogged_ = false;
+    replayCycleInitialized_ = false;
+    dbcInitialized_ = false;
+
+    if (wasEstablished && timingLossCallback_) {
+        timingLossCallback_();
+    }
 }
 
 void IsochReceiveContext::SetDirectAudioBindingSource(ASFW::Audio::Runtime::IDirectAudioBindingSource* source) noexcept {
@@ -476,6 +613,16 @@ void IsochReceiveContext::SetTimingLossCallback(TimingLossCallback callback) noe
 void IsochReceiveContext::SetZtsAnchorReadyCallback(
     ZtsAnchorReadyCallback callback) noexcept {
     ztsAnchorReadyCallback_ = std::move(callback);
+}
+
+void IsochReceiveContext::SetReplayReadyCallback(
+    ReplayReadyCallback callback) noexcept {
+    replayReadyCallback_ = std::move(callback);
+}
+
+bool IsochReceiveContext::IsReplayEstablished() const noexcept {
+    return directInputView_.control &&
+           directInputView_.control->rxSequenceReplay.IsEstablished();
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
@@ -552,16 +699,24 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
                             (static_cast<__uint128_t>(1'000'000'000ULL) << 32) /
                             static_cast<__uint128_t>(rate));
 
-                    // PPM deviation (Q16 fixed-point).
+                    // PPM deviation (Q16 fixed-point). The measured-minus-
+                    // nominal difference is SIGNED: a slow device makes it
+                    // negative. The whole expression must therefore stay in
+                    // signed 128-bit arithmetic — the previous __uint128_t cast
+                    // underflowed a negative drift to ~7.9e18.
                     const int64_t ppmQ16 =
                         (nominalNsPerFrameQ32 != 0)
                             ? static_cast<int64_t>(
-                                  (static_cast<__uint128_t>(
+                                  (static_cast<__int128_t>(
                                        measuredNsPerFrameQ32 -
                                        nominalNsPerFrameQ32) *
-                                   static_cast<__uint128_t>(1'000'000) * (1U << 16)) /
-                                  static_cast<__uint128_t>(nominalNsPerFrameQ32))
+                                   static_cast<__int128_t>(1'000'000) *
+                                   (__int128_t{1} << 16)) /
+                                  static_cast<__int128_t>(nominalNsPerFrameQ32))
                             : 0;
+                    // Human-readable integer ppm (the log used to print the raw
+                    // Q16 value under a "ppm" label, ~65536x too large).
+                    const int64_t ppm = ppmQ16 / (1 << 16);
 
                     // Frame residual: how far nominal interpolation misses.
                     const int64_t nominalExpectedFrame =
@@ -577,11 +732,12 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
                         Zts,
                         "CLKDELTA hostDeltaNs=%llu frameDelta=%lld "
                         "measuredNsQ32=%lld nominalNsQ32=%lld "
-                        "ppm=%lld residual=%lld",
+                        "ppm=%lld ppmQ16=%lld residual=%lld",
                         hostDeltaNs,
                         frameDelta,
                         measuredNsPerFrameQ32,
                         nominalNsPerFrameQ32,
+                        ppm,
                         ppmQ16,
                         frameResidual);
                 }
@@ -641,6 +797,70 @@ void IsochReceiveContext::DrainTxSytTelemetry(uint32_t maxRecords) {
         ASFW_LOG(TxSyt,
                  "drain overflow: dropped=%llu (capacity=%u)",
                  dropped, ASFW::Audio::Runtime::TxSytTelemetryRing::kCapacity);
+    }
+}
+
+void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
+    auto* control = directInputView_.control;
+    if (control == nullptr) {
+        return;
+    }
+
+    const uint64_t dropped = control->payloadWriterTelemetry.Drain(
+        maxRecords, [](const ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& r) {
+            const uint32_t cipQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[0]) << 24) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[1]) << 16) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[2]) << 8) |
+                                   static_cast<uint32_t>(r.lastReadPacketBytes[3]);
+            const uint32_t cipQ1 = (static_cast<uint32_t>(r.lastReadPacketBytes[4]) << 24) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[5]) << 16) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[6]) << 8) |
+                                   static_cast<uint32_t>(r.lastReadPacketBytes[7]);
+            const uint32_t payQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[8]) << 24) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[9]) << 16) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[10]) << 8) |
+                                   static_cast<uint32_t>(r.lastReadPacketBytes[11]);
+            const uint32_t payQ1 = (static_cast<uint32_t>(r.lastReadPacketBytes[12]) << 24) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[13]) << 16) |
+                                   (static_cast<uint32_t>(r.lastReadPacketBytes[14]) << 8) |
+                                   static_cast<uint32_t>(r.lastReadPacketBytes[15]);
+
+            ASFW_LOG(
+                DirectAudio,
+                "[PayloadWriter] sampleTime=%llu frameCount=%u frameCapacity=%u completion=%llu exposedEnd=%llu "
+                "visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu raced=%llu legacyTrans=%llu nonZero=%llu maxAbs=%f "
+                "pbRead=%llu pbWrite=%llu outBase=0x%llx capRead=%llu capWrite=%llu inBase=0x%llx "
+                "lastReadPkt=%llu cip=%08x %08x pay=%08x %08x",
+                r.sampleTime,
+                r.frameCount,
+                r.frameCapacity,
+                r.completionCursor,
+                r.exposedFrameEnd,
+                r.visited,
+                r.written,
+                r.withoutPacket,
+                r.outsidePacket,
+                r.racedReuse,
+                r.wroteIntoTransmitted,
+                r.nonZeroFrames,
+                r.maxAbsSample,
+                r.playbackRingReadFrame,
+                r.playbackRingWriteFrame,
+                r.outputBaseAddr,
+                r.captureRingReadFrame,
+                r.captureRingWriteFrame,
+                r.inputBaseAddr,
+                r.lastReadPacketIndex,
+                cipQ0,
+                cipQ1,
+                payQ0,
+                payQ1);
+        });
+
+    if (dropped != 0) {
+        ASFW_LOG(DirectAudio,
+                 "[PayloadWriter] drain overflow: dropped=%llu (capacity=%u)",
+                 dropped, ASFW::Audio::Runtime::PayloadWriterTelemetryRing::kCapacity);
     }
 }
 

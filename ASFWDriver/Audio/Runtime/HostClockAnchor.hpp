@@ -136,16 +136,11 @@ struct HostClockAnchorState {
         generation.store(write + 1, std::memory_order_release);
         producerCursor.store(write + 1, std::memory_order_release);
 
-        const bool notify =
-            !notificationPending.exchange(true, std::memory_order_acq_rel);
-        if (notify) {
-            notificationDispatches.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            notificationCoalesced.fetch_add(1, std::memory_order_relaxed);
-        }
+        notificationDispatches.fetch_add(
+            1, std::memory_order_relaxed);
         return {
             .accepted = true,
-            .notifyConsumer = notify,
+            .notifyConsumer = true,
             .notificationGeneration = write + 1,
         };
     }
@@ -175,18 +170,7 @@ struct HostClockAnchorState {
     }
 
     [[nodiscard]] bool FinishDrainAndNeedsAnotherPass() noexcept {
-        notificationPending.store(false, std::memory_order_release);
-        std::atomic_thread_fence(std::memory_order_seq_cst);
-
-        const bool hasQueuedAnchors =
-            consumerCursor.load(std::memory_order_acquire) !=
-            producerCursor.load(std::memory_order_acquire);
-        if (!hasQueuedAnchors) {
-            return false;
-        }
-
-        return !notificationPending.exchange(
-            true, std::memory_order_acq_rel);
+        return false;
     }
 };
 

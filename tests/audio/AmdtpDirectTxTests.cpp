@@ -108,6 +108,42 @@ TEST(AmdtpDirectTxTests, NoDataFdfCanUseSaffireCompatibilityQuirk) {
     EXPECT_EQ(bytes[7], 0xFF);
 }
 
+TEST(AmdtpDirectTxTests, ReplayOverridesLocalCadencePerPhysicalCycle) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 8> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(
+        timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpTxPacketizer packetizer{};
+    packetizer.BindTimeline(&timeline);
+    ASSERT_TRUE(packetizer.Configure(
+        BlockingStereoConfig(), AmdtpTxPolicy{}));
+
+    std::array<std::array<uint8_t, 128>, 2> bytes{};
+    AmdtpTimingState data{};
+    data.txClockValid = true;
+    data.disposition = AmdtpPacketDisposition::Data;
+    data.nextDataSyt = 0x2345;
+    data.replayValid = true;
+    data.replayDataBlocks = 8;
+
+    PreparedTxPacket packet{};
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {0, bytes[0].data(), bytes[0].size()}, data, packet));
+    EXPECT_TRUE(packet.isData);
+    EXPECT_EQ(packet.framesInPacket, 8U);
+    EXPECT_EQ(packet.syt, 0x2345U);
+
+    AmdtpTimingState noData{};
+    noData.disposition = AmdtpPacketDisposition::NoData;
+    noData.replayValid = true;
+    ASSERT_TRUE(packetizer.PrepareNextPacket(
+        {1, bytes[1].data(), bytes[1].size()}, noData, packet));
+    EXPECT_FALSE(packet.isData);
+    EXPECT_EQ(packet.framesInPacket, 0U);
+    EXPECT_EQ(packet.dbc, 8U);
+}
+
 TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     AmdtpPacketTimeline timeline{};
     std::array<PacketTimelineSlot, 8> timelineSlots{};

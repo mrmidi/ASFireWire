@@ -23,6 +23,7 @@
 #include "../../Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "../../Audio/Engine/Direct/AudioClockPublisher.hpp"
 #include "../../Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
+#include "../../Audio/Engine/Direct/Rx/ZtsFrameProjector.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 
 namespace ASFW {
@@ -77,7 +78,8 @@ public:
     static OSSharedPtr<IsochReceiveContext> Create(::ASFW::Driver::HardwareInterface* hw,
                                                   std::shared_ptr<::ASFW::Isoch::Memory::IIsochDMAMemory> dmaMemory);
 
-    static constexpr size_t kNumDescriptors = 512;
+    static constexpr size_t kNumDescriptors =
+        ASFW::IsochTransport::AudioTimingGeometry::kRxDescriptorPackets;
     static constexpr size_t kMaxPacketSize = 4096;
     static_assert(kNumDescriptors %
                       ASFW::IsochTransport::AudioTimingGeometry::
@@ -102,6 +104,9 @@ public:
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     using ZtsAnchorReadyCallback = std::function<void(uint64_t)>;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
+    using ReplayReadyCallback = std::function<void()>;
+    void SetReplayReadyCallback(ReplayReadyCallback callback) noexcept;
+    [[nodiscard]] bool IsReplayEstablished() const noexcept;
 
     void LogHardwareState();
 
@@ -116,7 +121,15 @@ public:
     // category. Called by the watchdog; the producer runs on the audio queue.
     void DrainTxSytTelemetry(uint32_t maxRecords);
 
+    // Off-hot-path drain of the audio payload writer telemetry, captured by the
+    // audio driver into the shared AudioTransportControlBlock. Formats up to
+    // `maxRecords` strided records into the PayloadWriter log category.
+    // Called by the watchdog.
+    void DrainPayloadWriterTelemetry(uint32_t maxRecords);
+
 private:
+    void ResetReplayEpochForDiscontinuity() noexcept;
+
     struct Registers {
         ::ASFW::Driver::Register32 CommandPtr;
         ::ASFW::Driver::Register32 ContextControlSet;
@@ -150,15 +163,30 @@ private:
     uint32_t am824Slots_{0};
 
     uint64_t absoluteFrameCursor_{0};
+    ASFW::AudioEngine::Direct::Rx::ZtsFrameProjector ztsProjector_{
+        ASFW::IsochTransport::AudioTimingGeometry::
+            kHalZeroTimestampPeriodFrames};
     bool cursorInitialized_{false};
     uint64_t rxZtsPublishCount_{0};
     uint64_t rxTimestampValidCount_{0};
     uint64_t rxTimestampInvalidCount_{0};
+    // Negative age = the per-packet cycle stamp expanded to AFTER the master
+    // drain read. Occasional small negatives (< one bus cycle) are normal on
+    // coalesced multi-group drains and are handled (host time advances instead
+    // of rewinds). FREQUENT or LARGE (>= one cycle) negatives indicate the
+    // timestamp expansion / drain-pair reference is wrong — watch these.
+    uint64_t rxNegativeAgeCount_{0};
+    uint64_t rxLargeNegativeAgeCount_{0};
 
     bool rxCadenceEstablishedLogged_{false};
     Rx::ZtsTelemetryRing ztsTelemetry_{};
     TimingLossCallback timingLossCallback_{nullptr};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{nullptr};
+    ReplayReadyCallback replayReadyCallback_{nullptr};
+    bool replayReadyNotified_{false};
+    bool replayResetForStart_{false};
+    bool replayCycleInitialized_{false};
+    uint32_t lastReplayCycleOrdinal_{0};
 
     // DBC tracking for device-domain frame count.
     // Updated on every packet in Poll(), exposed via rxDbcFrameCount in ATCB.

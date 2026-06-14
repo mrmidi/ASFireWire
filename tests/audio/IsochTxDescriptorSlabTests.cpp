@@ -29,8 +29,8 @@ TEST(IsochTxDescriptorSlab, DecodeCmdAddrRoundTripsRepresentativeIndices) {
     const uint32_t reps[] = {
         0u,
         1u,
-        Layout::kDescriptorsPerPage - 1u,
-        Layout::kDescriptorsPerPage,
+        Layout::kRingBlocks / 2u,
+        Layout::kRingBlocks - 2u,
         Layout::kRingBlocks - 1u
     };
 
@@ -56,4 +56,3 @@ TEST(IsochTxDescriptorSlab, DecodeCmdAddrRejectsPaddingZoneAddresses) {
     uint32_t decoded = 0;
     EXPECT_FALSE(slab.DecodeCmdAddrToLogicalIndex(cmdAddr, decoded));
 }
-

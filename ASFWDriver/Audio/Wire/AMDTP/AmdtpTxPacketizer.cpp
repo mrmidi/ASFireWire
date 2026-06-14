@@ -112,11 +112,22 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
         return false;
     }
 
+    const bool cadenceData = cadence_->CurrentCycleIsData();
     const bool isData =
-        cadence_->CurrentCycleIsData() &&
-        timing.disposition == AmdtpPacketDisposition::Data;
+        timing.disposition == AmdtpPacketDisposition::Data &&
+        (timing.replayValid
+             ? timing.replayDataBlocks != 0
+             : cadenceData);
     const uint8_t frames =
-        isData ? cadence_->CurrentCycleDataFrames() : 0;
+        isData
+            ? static_cast<uint8_t>(
+                  timing.replayValid
+                      ? timing.replayDataBlocks
+                      : cadence_->CurrentCycleDataFrames())
+            : 0;
+    if (frames > streamConfig_.framesPerDataPacket) {
+        return false;
+    }
     const uint32_t payloadBytes =
         static_cast<uint32_t>(frames) * streamConfig_.dbs * kBytesPerSlot;
     const uint32_t byteCount =

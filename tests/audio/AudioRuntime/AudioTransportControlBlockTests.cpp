@@ -54,8 +54,13 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     control.txScheduledSampleFrame.store(456, std::memory_order_relaxed);
     control.txCompletedSampleFrame.store(400, std::memory_order_relaxed);
     control.txMinimumPreparationDistance.store(70, std::memory_order_relaxed);
+    control.txMinimumCommittedMarginPackets.store(
+        12, std::memory_order_relaxed);
     control.txLastPreparationLatencyTicks.store(20, std::memory_order_relaxed);
     control.txMaxPreparationLatencyTicks.store(30, std::memory_order_relaxed);
+    control.txPreparationLatencySamples.store(10, std::memory_order_relaxed);
+    control.txPreparationAtMost750Us.store(9, std::memory_order_relaxed);
+    control.txPreparationAtLeast1500Us.store(1, std::memory_order_relaxed);
     control.txLastLeadTicks.store(40, std::memory_order_relaxed);
     control.txMinimumLeadTicks.store(10, std::memory_order_relaxed);
     control.txMaximumLeadTicks.store(70, std::memory_order_relaxed);
@@ -115,8 +120,15 @@ TEST(AudioTransportControlBlockTests, ResetForStartClearsNestedStateAndIncrement
     EXPECT_EQ(control.txCompletedSampleFrame.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txMinimumPreparationDistance.load(std::memory_order_acquire),
               UINT32_MAX);
+    EXPECT_EQ(
+        control.txMinimumCommittedMarginPackets.load(
+            std::memory_order_acquire),
+        UINT32_MAX);
     EXPECT_EQ(control.txLastPreparationLatencyTicks.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txMaxPreparationLatencyTicks.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txPreparationLatencySamples.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txPreparationAtMost750Us.load(std::memory_order_acquire), 0U);
+    EXPECT_EQ(control.txPreparationAtLeast1500Us.load(std::memory_order_acquire), 0U);
     EXPECT_EQ(control.txLastLeadTicks.load(std::memory_order_acquire), 0);
     EXPECT_EQ(control.txMinimumLeadTicks.load(std::memory_order_acquire),
               INT64_MAX);

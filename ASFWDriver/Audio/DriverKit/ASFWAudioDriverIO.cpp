@@ -152,11 +152,51 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     hostBuffer.frameCapacity = memory.outputFrameCapacity;
                     hostBuffer.channels = channels;
 
+                    const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.controlBlock
+                        ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
+                        : 0;
+
                     driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(
                         hostBuffer,
-                        driverIvars->runtime.txSlotProvider.controlBlock
-                            ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
-                            : 0);
+                        completionCursor);
+
+                    const auto& cw = driverIvars->runtime.txStreamEngine.PayloadWriterCounters();
+                    ASFW::Audio::Runtime::PayloadWriterTelemetryRecord rec{};
+                    rec.sampleTime = sampleTime;
+                    rec.completionCursor = completionCursor;
+                    rec.exposedFrameEnd = driverIvars->runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+                    rec.frameCount = ioBufferFrameSize;
+                    rec.frameCapacity = memory.outputFrameCapacity;
+                    rec.visited = cw.framesVisited.load(std::memory_order_relaxed);
+                    rec.written = cw.framesWritten.load(std::memory_order_relaxed);
+                    rec.withoutPacket = cw.framesWithoutPacket.load(std::memory_order_relaxed);
+                    rec.outsidePacket = cw.framesOutsidePacket.load(std::memory_order_relaxed);
+                    rec.racedReuse = cw.framesRacedReuse.load(std::memory_order_relaxed);
+                    rec.wroteIntoTransmitted = cw.framesWroteIntoTransmitted.load(std::memory_order_relaxed);
+                    rec.nonZeroFrames = cw.framesNonZero.load(std::memory_order_relaxed);
+                    const uint32_t bits = cw.maxAbsSampleBits.load(std::memory_order_relaxed);
+                    std::memcpy(&rec.maxAbsSample, &bits, sizeof(bits));
+
+                    rec.playbackRingReadFrame = control->playbackRingReadFrame.load(std::memory_order_relaxed);
+                    rec.playbackRingWriteFrame = control->playbackRingWriteFrame.load(std::memory_order_relaxed);
+                    rec.outputBaseAddr = reinterpret_cast<uint64_t>(memory.outputBase);
+                    rec.captureRingReadFrame = control->captureRingReadFrame.load(std::memory_order_relaxed);
+                    rec.captureRingWriteFrame = control->captureRingWriteFrame.load(std::memory_order_relaxed);
+                    rec.inputBaseAddr = reinterpret_cast<uint64_t>(memory.inputBase);
+
+                    if (driverIvars->runtime.txSlotProvider.payloadBase &&
+                        driverIvars->runtime.txSlotProvider.numSlots > 0 &&
+                        completionCursor > 0) {
+                        const uint64_t packetIndex = completionCursor - 1;
+                        rec.lastReadPacketIndex = packetIndex;
+                        const uint32_t slotIdx = static_cast<uint32_t>(packetIndex % driverIvars->runtime.txSlotProvider.numSlots);
+                        const uint8_t* lastReadBytes = driverIvars->runtime.txSlotProvider.payloadBase +
+                                                       (slotIdx * driverIvars->runtime.txSlotProvider.slotStrideBytes);
+                        std::memcpy(rec.lastReadPacketBytes, lastReadBytes, 16);
+                    }
+
+                    control->payloadWriterTelemetry.Record(rec);
+
                     control->playbackRingReadFrame.store(sampleTime + ioBufferFrameSize, std::memory_order_release);
                 }
 

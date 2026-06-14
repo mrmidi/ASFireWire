@@ -36,7 +36,7 @@ struct Layout final {
     static constexpr uint32_t kCompletionBlock = 3;
     static constexpr uint32_t kNumPackets =
         ASFW::IsochTransport::AudioTimingGeometry::
-            kTxHardwareRingPackets;  // ~24ms @ 8000 pkts/sec
+            kTxHardwareRingPackets;  // 6 ms @ 8000 packets/sec
     static constexpr uint32_t kRingBlocks = kNumPackets * kBlocksPerPacket;
 
     static constexpr uint32_t kDescriptorStride = 16;
@@ -46,7 +46,7 @@ struct Layout final {
         (kDescriptorsPerPageRaw / kBlocksPerPacket) * kBlocksPerPacket;  // 252
 
     static constexpr uint32_t kTotalPages =
-        (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;  // 4
+        (kRingBlocks + kDescriptorsPerPage - 1) / kDescriptorsPerPage;  // 1
 
     static constexpr size_t kDescriptorRingSize = kTotalPages * kOHCIPageSize;  // 16384
 
@@ -54,13 +54,13 @@ struct Layout final {
     // hardware-owned. Payload preparation uses a much earlier deadline so the
     // controller cannot observe a packet while it is being patched.
     static constexpr uint32_t kHardwareOwnedGuardPackets = 4;
-    static constexpr uint32_t kPreparationDeadlinePackets = 64;
+    static constexpr uint32_t kPreparationDeadlinePackets = 12;
     static constexpr uint32_t kGuardBandPackets = kHardwareOwnedGuardPackets;
 
     // Metadata exposure window for inspecting recently refilled packet metadata/payloads.
-    static constexpr uint32_t kMetadataWriteAhead = 16;
+    static constexpr uint32_t kMetadataWriteAhead = 12;
     static constexpr uint32_t kMaxWriteAhead =
-        kNumPackets - kHardwareOwnedGuardPackets;  // 188
+        kNumPackets - kHardwareOwnedGuardPackets;  // 44
 
     static_assert(kPreparationDeadlinePackets > kHardwareOwnedGuardPackets);
     static_assert(kPreparationDeadlinePackets < kMaxWriteAhead);

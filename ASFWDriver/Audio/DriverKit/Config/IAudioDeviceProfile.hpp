@@ -58,6 +58,18 @@ public:
 
     /// Returns the reported receive latency in frames for a given sample rate.
     [[nodiscard]] virtual uint32_t RxReportedLatencyFrames(double sampleRate) const noexcept = 0;
+
+    /// IEC 61883-6 presentation delay removed from received SYT before replay.
+    [[nodiscard]] virtual uint32_t RxTransferDelayTicks(double sampleRate) const noexcept {
+        (void)sampleRate;
+        return 12800;
+    }
+
+    /// IEC 61883-6 presentation delay added when rebuilding transmit SYT.
+    [[nodiscard]] virtual uint32_t TxTransferDelayTicks(double sampleRate) const noexcept {
+        (void)sampleRate;
+        return 12800;
+    }
 };
 
 } // namespace ASFW::Isoch::Audio

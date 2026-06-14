@@ -11,7 +11,6 @@
 #include <DriverKit/DriverKit.h>
 
 using ASFW::Audio::DriverKit::BuildAudioGraph;
-using ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL;
 using ASFW::Audio::DriverKit::TearDownAudioGraph;
 
 kern_return_t IMPL(ASFWAudioDriver, Start)
@@ -45,6 +44,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
             (void)ivars->device.audioNub->RegisterTxPreparationAction(nullptr);
         }
         ivars->ztsAnchorAction.reset();
+        ivars->ztsQueue.reset();
         ivars->txPreparationAction.reset();
         TearDownAudioGraph(*this, *ivars, &graphState);
         (void)Stop(provider, SUPERDISPATCH);
@@ -71,6 +71,23 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     if (error != kIOReturnSuccess) {
         ivars->txPreparationAction.reset();
         return failStart(error, "RegisterTxPreparationAction");
+    }
+
+    IODispatchQueue* rawZtsQueue = nullptr;
+    error = IODispatchQueue::Create(
+        "com.asfw.audio.zts", 0, 0, &rawZtsQueue);
+    if (error != kIOReturnSuccess || !rawZtsQueue) {
+        return failStart(
+            error == kIOReturnSuccess ? kIOReturnNoMemory : error,
+            "CreateZtsDispatchQueue");
+    }
+    ivars->ztsQueue =
+        ASFW::Common::AdoptRetained(rawZtsQueue);
+    error = SetDispatchQueue(
+        "Zts", ivars->ztsQueue.get());
+    if (error != kIOReturnSuccess) {
+        ivars->ztsQueue.reset();
+        return failStart(error, "BindZtsDispatchQueue");
     }
 
     OSAction* rawZtsAnchorAction = nullptr;
@@ -109,6 +126,7 @@ kern_return_t IMPL(ASFWAudioDriver, Stop)
         }
         ivars->txPreparationAction.reset();
         ivars->ztsAnchorAction.reset();
+        ivars->ztsQueue.reset();
         ivars->device.audioNub = nullptr;
     }
 
@@ -297,6 +315,7 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         }
         ivars->runtime.txStreamEngine.BindSlotProvider(&ivars->runtime.txSlotProvider);
         ivars->runtime.txStreamEngine.ResetForStart(0, 0);
+        ivars->runtime.txReplayReader.Reset();
 
         ASFW::Driver::TxTimingModel::Config timeConfig{};
         const uint32_t timingRateHz =
@@ -307,21 +326,40 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
             ASFW::Driver::TxTimingModel::XmitTransferDelayTicksForRate(
                 timeConfig.sytIntervalFrames, timingRateHz);
         ivars->runtime.txTimingModel.Configure(timeConfig);
+        control->rxTransferDelayTicks.store(
+            profile->RxTransferDelayTicks(
+                ivars->device.currentSampleRate),
+            std::memory_order_relaxed);
+        control->txTransferDelayTicks.store(
+            profile->TxTransferDelayTicks(
+                ivars->device.currentSampleRate),
+            std::memory_order_relaxed);
 
         ASFW_LOG(Audio,
-                 "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u xmitTransferDelayTicks=%lld (rate=%u sytInterval=%u)",
+                 "ASFWAudioDriver: Allocated & configured TX isoch resources channel=%u rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
                  txConfig.sid,
-                 timeConfig.xmitTransferDelayTicks,
-                 timingRateHz,
-                 timeConfig.sytIntervalFrames);
+                 control->rxTransferDelayTicks.load(
+                     std::memory_order_relaxed),
+                 control->txTransferDelayTicks.load(
+                     std::memory_order_relaxed),
+                 timingRateHz);
     }
 
-    // Seed the transmit ring with cadence-correct NO_INFO packets before
-    // StartAudioStreaming
-    // raises the IT DMA RUN bit. Without this, the first refill interrupt
-    // (~8 packets in) observes commitGen=0 and fatally stops the context before
-    // the ZTS pump produces its first packet, leaving the channel off the wire.
+    // Commit the 60-packet profile-owned NO-DATA runway before IT RUN.
+    // The first 48 packets prime hardware and the remaining 12 packets cover
+    // two six-cycle completion groups while the preparation action starts.
     ASFW::Audio::DriverKit::PrefillTxRingBeforeStart(*ivars);
+
+    auto* prefillControl =
+        ivars->runtime.txSlotProvider.controlBlock;
+    if (!prefillControl ||
+        prefillControl->exposeCursor.load(
+            std::memory_order_acquire) !=
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kTxPreparationLeadPackets) {
+        return failStartDevice(
+            kIOReturnNotReady, "ValidateTxPrefill");
+    }
 
     ivars->runtime.txActive.store(true, std::memory_order_release);
 
@@ -355,44 +393,9 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return failStartDevice(
             kIOReturnUnsupported, "ValidateTxTransportGeometry");
     }
-    // Gate isRunning on ZTS availability. CoreAudio IO callbacks must not
-    // start until the first ZTS anchor is published (synchronous from Poll()
-    // after RX cadence establishes). The pump (TxPreparationReady) is also
-    // gated on isRunning — the prefill of NO_INFO packets is done before
-    // this flag is set, so the TX ring is ready when the pump starts.
-    // isRunning is set in PublishSharedZeroTimestampToHAL after the first
-    // successful ZTS publish.
-
-    // The pump (TxPreparationReady) is gated on isRunning, so preparation
-    // requests raised by TX completions during bring-up were dropped while
-    // the prefilled NO-DATA ring drained. Catch up now instead of waiting
-    // for the next completion wake.
-    {
-        const uint64_t requestedGeneration =
-            txControl->preparationRequestGeneration.load(
-                std::memory_order_acquire);
-        const uint64_t completionCursor =
-            txControl->completionCursor.load(std::memory_order_acquire);
-        const uint64_t exposeCursor =
-            txControl->exposeCursor.load(std::memory_order_acquire);
-        const uint64_t targetPacketIndex =
-            completionCursor +
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kTxPreparationLeadPackets;
-        if (targetPacketIndex > exposeCursor) {
-            const uint32_t prepared = ASFW::Audio::DriverKit::PrepareTransmitSlots(
-                *ivars,
-                exposeCursor,
-                targetPacketIndex,
-                ASFW::IsochTransport::AudioTimingGeometry::
-                    kTxPreparationLeadPackets,
-                false);
-            ASFW_LOG(Audio,
-                     "ASFWAudioDriver: bring-up TX catch-up prepared=%u expose=%llu target=%llu",
-                     prepared, exposeCursor, targetPacketIndex);
-        }
-        txControl->MarkPreparationHandled(requestedGeneration);
-    }
+    // CoreAudio IO remains gated until the first 192-frame ZTS anchor reaches
+    // HAL. TX preparation is independently driven by the first six-packet IT
+    // completion, which supplies the output-cycle anchor required for replay.
 
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
     const auto policySnap = policy.Snapshot();
@@ -410,14 +413,8 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
              policySnap.inputPacketLeadFrames,
              policySnap.ztsPeriodFrames);
 
-    // Saffire choreography: start never blocks or fails waiting for clock
-    // qualification. ReadFirewireBuffers seeds takeTimeStamp only once the
-    // 512-entry SYT delta history is established (~85 ms of data packets,
-    // plus however long the device takes to ramp its stream) and nothing
-    // times out in the meantime — the engine simply produces no timestamps
-    // yet and HAL holds off IO cycles. Our first real anchor reaches HAL via
-    // ZtsAnchorReady; here we only drain anything already queued.
-    (void)PublishSharedZeroTimestampToHAL(*ivars, "start-drain", true);
+    // ZTS publication is exclusively owned by the dedicated ZtsAnchorReady
+    // queue. StartDevice never mirrors an anchor on the default work queue.
     ASFW_LOG(DirectAudio,
              "ADK DBG ZTS start returns before first anchor guid=0x%016llx rxZts=%llu rxAdk=%llu",
              ivars->device.guid,

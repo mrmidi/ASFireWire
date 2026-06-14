@@ -57,7 +57,8 @@ TEST(HostClockAnchorTests, QueuesMonotonicRxHostAnchorsInOrder) {
     const auto second =
         control.PublishHostClockAnchor(2 * kAnchorPeriod, 400, 300);
     EXPECT_TRUE(second.accepted);
-    EXPECT_FALSE(second.notifyConsumer);
+    EXPECT_TRUE(second.notifyConsumer);
+    EXPECT_EQ(second.notificationGeneration, 2U);
     EXPECT_EQ(control.hostClockAnchor.generation.load(), 2U);
 
     HostClockAnchorSample anchor{};
@@ -101,22 +102,24 @@ TEST(HostClockAnchorTests, RejectsSkippedGridPoint) {
     EXPECT_EQ(control.hostClockAnchor.staleUpdates.load(), 1U);
 }
 
-TEST(HostClockAnchorTests, ConsumerRechecksAfterCoalescedPublish) {
+TEST(HostClockAnchorTests, EveryGridPointRequestsItsOwnNotification) {
     AudioTransportControlBlock control{};
     control.ResetForStart();
 
-    EXPECT_TRUE(
-        control.PublishHostClockAnchor(kAnchorPeriod, 100, 300)
-            .notifyConsumer);
+    const auto first =
+        control.PublishHostClockAnchor(kAnchorPeriod, 100, 300);
+    const auto second =
+        control.PublishHostClockAnchor(2 * kAnchorPeriod, 200, 300);
+    EXPECT_TRUE(first.notifyConsumer);
+    EXPECT_TRUE(second.notifyConsumer);
+    EXPECT_EQ(first.notificationGeneration, 1U);
+    EXPECT_EQ(second.notificationGeneration, 2U);
+    EXPECT_EQ(
+        control.hostClockAnchor.notificationDispatches.load(), 2U);
 
     HostClockAnchorSample anchor{};
     ASSERT_TRUE(control.hostClockAnchor.TryPop(anchor));
-    EXPECT_FALSE(
-        control.PublishHostClockAnchor(2 * kAnchorPeriod, 200, 300)
-            .notifyConsumer);
-
-    EXPECT_TRUE(
-        control.hostClockAnchor.FinishDrainAndNeedsAnotherPass());
+    EXPECT_EQ(anchor.sampleFrame, kAnchorPeriod);
     ASSERT_TRUE(control.hostClockAnchor.TryPop(anchor));
     EXPECT_EQ(anchor.sampleFrame, 2 * kAnchorPeriod);
     EXPECT_FALSE(

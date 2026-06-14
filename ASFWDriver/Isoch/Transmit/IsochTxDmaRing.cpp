@@ -226,6 +226,15 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
     }
 
     const uint32_t numPackets = Layout::kNumPackets;
+    if (preFillCount < numPackets || preFillCount > numSlots) {
+        ASFW_LOG(
+            Isoch,
+            "IT: Prime failed - committed prefill=%llu must cover %u descriptors within %u slots",
+            preFillCount,
+            numPackets,
+            numSlots);
+        return stats;
+    }
 
     for (uint32_t pktIdx = 0; pktIdx < numPackets; ++pktIdx) {
         const uint32_t descBase = pktIdx * Layout::kBlocksPerPacket;
@@ -235,6 +244,16 @@ IsochTxDmaRing::PrimeStats IsochTxDmaRing::Prime(
         // Fetch pre-filled metadata for this slot.
         const uint32_t producerSlot = pktIdx % numSlots;
         const auto& meta = metadataRing[producerSlot];
+        const uint64_t expectedGen =
+            ASFW::IsochTransport::ExpectedCommitGen(pktIdx, numSlots);
+        if (meta.commitGen.load(std::memory_order_acquire) != expectedGen) {
+            ASFW_LOG(
+                Isoch,
+                "IT: Prime failed - slot %u is not committed for packet %u",
+                producerSlot,
+                pktIdx);
+            return stats;
+        }
         if (meta.payloadLength < 2 || meta.payloadLength > slotStrideBytes) {
             ASFW_LOG(
                 Isoch,
@@ -402,6 +421,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         out.dead = true;
         return out;
     }
+    if (controlBlock->statusWord.load(std::memory_order_acquire) ==
+        ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal) {
+        out.ok = false;
+        return out;
+    }
 
     // 3. Decode hardware pointer and advance completed cursor
     uint32_t hwPacketIndex = 0;
@@ -421,6 +445,30 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     UpdateGapCounters(gap);
     ResyncCycleTracking(hw, hwPacketIndex, deltaConsumed, out);
 
+    // Track the worst single coalesced completion. The committed slack
+    // (kTxPreparationSlackPackets) must cover this; a new high-water at or above
+    // the slack is one phase-slip away from an underrun, so surface it.
+    {
+        uint32_t prevMax =
+            counters_.maxDeltaConsumed.load(std::memory_order_relaxed);
+        while (deltaConsumed > prevMax &&
+               !counters_.maxDeltaConsumed.compare_exchange_weak(
+                   prevMax, deltaConsumed, std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+        constexpr uint32_t kSlack =
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kTxPreparationSlackPackets;
+        if (deltaConsumed > prevMax && deltaConsumed * 2 >= kSlack) {
+            ASFW_LOG(
+                Isoch,
+                "IT deltaConsumed high-water=%u (slack budget=%u) — coalesced "
+                "completion approaching the coverage bound",
+                deltaConsumed,
+                kSlack);
+        }
+    }
+
     // Fetch and publish completed stamps
     const uint64_t completedAbsIdx = controlBlock->completionCursor.load(std::memory_order_relaxed);
     for (uint32_t i = 0; i < deltaConsumed; ++i) {
@@ -437,15 +485,11 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint16_t hwTimestamp =
             static_cast<uint16_t>(desc2->statusWord & 0xFFFF);
 
-        // OHCI OUTPUT_LAST reports only sec[2:0]:cycle[12:0]. Preserve those
-        // authoritative completion fields and add the lower 12-bit subcycle
-        // from this same refill's CYCLE_TIMER sample. This creates the full
-        // timestamp consumed by Saffire's tstampToOffsets() equivalent while
-        // keeping the stamp and its subcycle atomically paired.
+        // OHCI OUTPUT_LAST reports sec[2:0]:cycle[12:0] and omits the
+        // intra-cycle offset. Reconstruct the packet cycle at offset zero.
         const uint32_t completionCycleTimer =
             (static_cast<uint32_t>((hwTimestamp >> 13) & 0x7u) << 25) |
-            (static_cast<uint32_t>(hwTimestamp & 0x1FFFu) << 12) |
-            (refillCycleTimer & 0x0FFFu);
+            (static_cast<uint32_t>(hwTimestamp & 0x1FFFu) << 12);
         controlBlock->PushCompletionStamp(currentAbsIdx,
                                           completionCycleTimer);
     }
@@ -488,20 +532,52 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint64_t expectedGen = ASFW::IsochTransport::ExpectedCommitGen(fillAbsIdx, numSlots);
         const uint64_t commitGen = meta.commitGen.load(std::memory_order_acquire);
 
-        // Check if committed. If not, ship a silent NO-DATA packet (non-fatal, Saffire-style).
-        const bool isNoData = (commitGen != expectedGen);
-        if (isNoData) {
+        if (commitGen != expectedGen) {
             counters_.txUnderruns.fetch_add(1, std::memory_order_relaxed);
-            ASFW_LOG_RL(Isoch, "tx/underrun", 1000, OS_LOG_TYPE_DEFAULT,
-                        "IT Refill: slot %u not committed (commitGen=%llu expectedGen=%llu). Shipping NO-DATA.",
-                        pktSlot, commitGen, expectedGen);
+            controlBlock->statusWord.store(
+                ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal,
+                std::memory_order_release);
+            controlBlock->streamGeneration.fetch_add(
+                1, std::memory_order_release);
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL: slot %u not committed packet=%llu commitGen=%llu expectedGen=%llu",
+                pktSlot,
+                fillAbsIdx,
+                commitGen,
+                expectedGen);
+            // Refill-coverage post-mortem: was this absolute packet ever
+            // prepared into its slot, or does the slot still hold a previous
+            // lap's packet? meta.packetIndex == fillAbsIdx with a stale
+            // commitGen => commit/writeback ordering bug; meta.packetIndex one
+            // lap behind => the producer's exposeCursor never reached this
+            // packet (coverage/margin). The producer cursors localize it.
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL dump: fatalAbs=%llu slot=%u expectedGen=%llu commitGen=%llu "
+                "slotLastPacketAbs=%llu exposeCursor=%llu completionCursor=%llu "
+                "softwareFillAbs=%llu ringPacketsAhead=%u deltaConsumed=%u i=%u numSlots=%u",
+                fillAbsIdx,
+                pktSlot,
+                expectedGen,
+                commitGen,
+                meta.packetIndex,
+                controlBlock->exposeCursor.load(std::memory_order_acquire),
+                controlBlock->completionCursor.load(std::memory_order_acquire),
+                softwareFillAbsIdx_,
+                ringPacketsAhead_,
+                deltaConsumed,
+                i,
+                numSlots);
+            out.ok = false;
+            return out;
         }
 
         const uint32_t hwSlot = static_cast<uint32_t>(fillAbsIdx % Layout::kNumPackets);
         const uint64_t payloadOffset =
             static_cast<uint64_t>(pktSlot) * controlBlock->slotStrideBytes;
 
-        const uint32_t payloadLength = isNoData ? 8u : meta.payloadLength;
+        const uint32_t payloadLength = meta.payloadLength;
 
         if (payloadLength < 2 ||
             payloadLength > controlBlock->maxPacketBytes) {
@@ -510,27 +586,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             return out;
         }
 
-        if (isNoData && payloadBase) {
-            // Read the previous packet's CIP header from payloadBase of the previous slot
-            // to keep the stream configuration parameters (DBS, FMT, FDF, etc.) consistent.
-            const uint32_t prevSlot = static_cast<uint32_t>((fillAbsIdx - 1) % numSlots);
-            const uint64_t prevOffset = static_cast<uint64_t>(prevSlot) * controlBlock->slotStrideBytes;
-            uint32_t prevQ0 = 0;
-            uint32_t prevQ1 = 0;
-            std::memcpy(&prevQ0, payloadBase + prevOffset, 4);
-            std::memcpy(&prevQ1, payloadBase + prevOffset + 4, 4);
-
-            // NO-DATA CIP header: Q0 remains identical (DBC does not advance on empty cycles),
-            // and Q1 has its lower 16 bits set to 0xFFFF (SYT = 0xFFFF in big-endian).
-            const uint32_t noDataQ0 = prevQ0;
-            const uint32_t noDataQ1 = (prevQ1 & 0xFFFF0000u) | 0x0000FFFFu;
-
-            // Write the 8-byte CIP header into the current payload slot
-            std::memcpy(payloadBase + payloadOffset, &noDataQ0, 4);
-            std::memcpy(payloadBase + payloadOffset + 4, &noDataQ1, 4);
-        }
-
-        if (!isNoData && payloadBase) {
+        if (payloadBase) {
             GaugeWirePayload(fillAbsIdx,
                              payloadBase + payloadOffset,
                              payloadLength);
@@ -560,7 +616,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         auto* immDesc = reinterpret_cast<OHCIDescriptorImmediate*>(
             slab_.GetDescriptorPtr(descBase));
         immDesc->immediateData[0] = meta.immediateHeader[0];
-        immDesc->immediateData[1] = isNoData ? OSSwapHostToLittleInt32(8u << 16) : meta.immediateHeader[1];
+        immDesc->immediateData[1] = meta.immediateHeader[1];
         immDesc->common.branchWord = MakeBranchWordAT(
             slab_.GetDescriptorIOVA(descBase),
             Layout::kBlocksPerPacket);
@@ -611,11 +667,6 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(immDesc), sizeof(OHCIDescriptorImmediate));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc2), sizeof(OHCIDescriptor));
             dmaMemory_->PublishToDevice(reinterpret_cast<const std::byte*>(desc3), sizeof(OHCIDescriptor));
-        }
-
-        // Force-commit this slot's generation to keep the ring states aligned.
-        if (isNoData) {
-            meta.commitGen.store(expectedGen, std::memory_order_release);
         }
 
         packetsFilled++;

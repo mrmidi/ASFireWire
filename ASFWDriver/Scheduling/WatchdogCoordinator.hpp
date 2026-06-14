@@ -55,6 +55,7 @@ class WatchdogCoordinator {
     uint32_t itLogDivider_{0};
     uint32_t ztsLogDivider_{0};
     uint32_t txSytLogDivider_{0};
+    uint32_t payloadWriterLogDivider_{0};
 };
 
 } // namespace ASFW::Driver

@@ -40,25 +40,28 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kHalIoPeriodFrames, 512U);
     EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames, 192U);
     EXPECT_EQ(Geometry::kFrameAlignment, 32U);
-    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 32U);
-    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 32U);
-    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 192U);
-    EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 256U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 1024U);
-    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 192U);
-    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 192U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 384U);
+    EXPECT_EQ(Geometry::kRxPacketsPerGroup, 6U);
+    EXPECT_EQ(Geometry::kTxPacketsPerGroup, 6U);
+    EXPECT_EQ(Geometry::kMinimumNominalFramesPerInterrupt, 32U);
+    EXPECT_EQ(Geometry::kMaximumNominalFramesPerInterrupt, 40U);
+    EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
+    EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
+    EXPECT_EQ(Geometry::kRxDescriptorPackets, 504U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 192U);
+    EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
+    EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 12U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 60U);
 
-    // The load-bearing relationships behind the values above.
-    // ZTS grid aligned 1:1 with the DMA interrupt program: the interrupt IS
-    // the ZTS callback.
-    EXPECT_EQ(Geometry::kHalZeroTimestampPeriodFrames,
+    // DMA completion cadence and the ZTS grid are intentionally independent.
+    EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,
               Geometry::kNominalFramesPerTimingGroup);
     EXPECT_EQ(Geometry::kFrameRingFrames %
                   Geometry::kHalZeroTimestampPeriodFrames, 0U);
     EXPECT_EQ(Geometry::kFrameRingFrames %
                   Geometry::kHalIoPeriodFrames, 0U);
-    EXPECT_EQ(Geometry::kTimingGroupPackets %
+    EXPECT_EQ(Geometry::kRxDescriptorPackets %
+                  Geometry::kTimingGroupPackets, 0U);
+    EXPECT_EQ(Geometry::kRxDescriptorPackets %
                   Geometry::kCadenceBlockPackets, 0U);
     EXPECT_GE(Geometry::kTxPreparationSlackPackets,
               2U * Geometry::kTxPacketsPerGroup);

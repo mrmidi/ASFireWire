@@ -45,6 +45,11 @@ public:
         std::atomic<uint64_t> fatalDescriptorBounds{0};
         std::atomic<uint64_t> txUnderruns{0};
 
+        // High-water mark of a single refill's coalesced deltaConsumed. The
+        // committed lead (kTxPreparationSlackPackets) must cover this or the
+        // refill ISR holes (IT FATAL). Use it to size the slack empirically.
+        std::atomic<uint32_t> maxDeltaConsumed{0};
+
         // DMA ring gap monitoring
         std::atomic<uint32_t> lastDmaGapPackets{Layout::kNumPackets};
         std::atomic<uint32_t> minDmaGapPackets{Layout::kNumPackets};

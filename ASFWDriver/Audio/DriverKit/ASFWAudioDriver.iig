@@ -43,7 +43,8 @@ public:
 
     virtual void ZtsAnchorReady(OSAction* action,
                                 uint64_t generation)
-        TYPE(ASFWAudioNub::ZtsAnchorReady);
+        TYPE(ASFWAudioNub::ZtsAnchorReady)
+        QUEUENAME(Zts);
 
     // Protocol-backed boolean control bridge (used by custom control subclass).
     kern_return_t ApplyProtocolBooleanControl(uint32_t classIdFourCC,

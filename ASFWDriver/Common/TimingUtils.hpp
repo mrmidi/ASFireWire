@@ -76,12 +76,20 @@ constexpr uint32_t kCycleTimerCyclesMask = 0x01FFF000;   // bits 24:12
 constexpr uint32_t kCycleTimerCyclesShift = 12;
 constexpr uint32_t kCycleTimerOffsetMask = 0x00000FFF;   // bits 11:0
 
-[[nodiscard]] inline CycleTimerFields decodeCycleTimer(uint32_t cycleTimer) noexcept {
+[[nodiscard]] constexpr CycleTimerFields decodeCycleTimer(uint32_t cycleTimer) noexcept {
     return CycleTimerFields{
         .seconds = (cycleTimer & kCycleTimerSecondsMask) >> kCycleTimerSecondsShift,
         .cycle = (cycleTimer & kCycleTimerCyclesMask) >> kCycleTimerCyclesShift,
         .offset = cycleTimer & kCycleTimerOffsetMask,
     };
+}
+
+[[nodiscard]] constexpr uint32_t encodeCycleTimer(uint32_t seconds,
+                                                  uint32_t cycle,
+                                                  uint32_t offset) noexcept {
+    return ((seconds & 0x7Fu) << kCycleTimerSecondsShift) |
+           ((cycle & 0x1FFFu) << kCycleTimerCyclesShift) |
+           (offset & kCycleTimerOffsetMask);
 }
 
 /// Collapse an already-decoded FireWire cycle timer to the 24.576 MHz offset domain.

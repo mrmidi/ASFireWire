@@ -61,8 +61,13 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     control.txScheduledSampleFrame.store(4096, std::memory_order_relaxed);
     control.txCompletedSampleFrame.store(4000, std::memory_order_relaxed);
     control.txMinimumPreparationDistance.store(67, std::memory_order_relaxed);
+    control.txMinimumCommittedMarginPackets.store(
+        18, std::memory_order_relaxed);
     control.txLastPreparationLatencyTicks.store(12, std::memory_order_relaxed);
     control.txMaxPreparationLatencyTicks.store(34, std::memory_order_relaxed);
+    control.txPreparationLatencySamples.store(100, std::memory_order_relaxed);
+    control.txPreparationAtMost750Us.store(99, std::memory_order_relaxed);
+    control.txPreparationAtLeast1500Us.store(0, std::memory_order_relaxed);
     control.counters.txPhaseRebases.store(4, std::memory_order_relaxed);
     control.counters.txSilenceFallback.store(5, std::memory_order_relaxed);
     control.counters.txStaleOverwrittenReads.store(6, std::memory_order_relaxed);
@@ -144,8 +149,12 @@ TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     EXPECT_EQ(snapshot.txScheduledSampleFrame, 4096U);
     EXPECT_EQ(snapshot.txCompletedSampleFrame, 4000U);
     EXPECT_EQ(snapshot.txMinimumPreparationDistance, 67U);
+    EXPECT_EQ(snapshot.txMinimumCommittedMarginPackets, 18U);
     EXPECT_EQ(snapshot.txLastPreparationLatencyTicks, 12U);
     EXPECT_EQ(snapshot.txMaxPreparationLatencyTicks, 34U);
+    EXPECT_EQ(snapshot.txPreparationLatencySamples, 100U);
+    EXPECT_EQ(snapshot.txPreparationAtMost750Us, 99U);
+    EXPECT_EQ(snapshot.txPreparationAtLeast1500Us, 0U);
     EXPECT_EQ(snapshot.txPhaseRebases, 4U);
     EXPECT_EQ(snapshot.txSilenceFallback, 5U);
     EXPECT_EQ(snapshot.txStaleOverwrittenReads, 6U);

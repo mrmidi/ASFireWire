@@ -4,7 +4,9 @@
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
 #include "TxSytTelemetry.hpp"
+#include "PayloadWriterTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
+#include "../../Wire/AMDTP/RxSequenceReplay.hpp"
 #include "../../Wire/AMDTP/RxSytCadence.hpp"
 #include "../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
@@ -23,6 +25,8 @@ enum class FatalStreamReason : uint32_t {
     TxPreparationMissedDeadline,
     TxSlotInvariant,
     TxPayloadMismatch,
+    TxReplayUnavailable,
+    TxReplayInvalidSyt,
 };
 
 struct TxPreparationRequestState final {
@@ -100,6 +104,7 @@ struct AudioTransportControlBlock final {
 
     // TX control block members
     TxSytTelemetryRing txSytTelemetry{};
+    PayloadWriterTelemetryRing payloadWriterTelemetry{};
     TxPreparationRequestState txPreparationRequests{};
     TxFatalSnapshot txFatalSnapshot{};
 
@@ -115,14 +120,26 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> txScheduledSampleFrame{0};
     std::atomic<uint64_t> txCompletedSampleFrame{0};
     std::atomic<uint32_t> txMinimumPreparationDistance{UINT32_MAX};
+    std::atomic<uint32_t> txMinimumCommittedMarginPackets{UINT32_MAX};
     std::atomic<uint64_t> txLastPreparationLatencyTicks{0};
     std::atomic<uint64_t> txMaxPreparationLatencyTicks{0};
+    std::atomic<uint64_t> txPreparationLatencySamples{0};
+    std::atomic<uint64_t> txPreparationAtMost750Us{0};
+    std::atomic<uint64_t> txPreparationAtLeast1500Us{0};
     std::atomic<int64_t> txLastLeadTicks{0};
     std::atomic<int64_t> txMinimumLeadTicks{INT64_MAX};
     std::atomic<int64_t> txMaximumLeadTicks{INT64_MIN};
 
     // RX control block members
     ASFW::Driver::RxSytCadence rxSytCadence{};
+    RxSequenceReplayState rxSequenceReplay{};
+    std::atomic<uint32_t> rxTransferDelayTicks{12800};
+    std::atomic<uint32_t> txTransferDelayTicks{12800};
+    std::atomic<uint64_t> rxReplayEntries{0};
+    std::atomic<uint64_t> rxReplayEpochResets{0};
+    std::atomic<uint64_t> txReplayEntries{0};
+    std::atomic<uint64_t> txReplayUnderflows{0};
+    std::atomic<uint64_t> txReplayInvalidSyt{0};
 
     std::atomic<uint64_t> inputProducedEndFrame{0};
     std::atomic<uint64_t> inputOverruns{0};
@@ -159,6 +176,7 @@ struct AudioTransportControlBlock final {
 
         // Reset TX members
         txSytTelemetry.Reset();
+        payloadWriterTelemetry.Reset();
         txPreparationRequests.Reset();
         txFatalSnapshot.Reset();
 
@@ -174,14 +192,25 @@ struct AudioTransportControlBlock final {
         txScheduledSampleFrame.store(0, std::memory_order_relaxed);
         txCompletedSampleFrame.store(0, std::memory_order_relaxed);
         txMinimumPreparationDistance.store(UINT32_MAX, std::memory_order_relaxed);
+        txMinimumCommittedMarginPackets.store(
+            UINT32_MAX, std::memory_order_relaxed);
         txLastPreparationLatencyTicks.store(0, std::memory_order_relaxed);
         txMaxPreparationLatencyTicks.store(0, std::memory_order_relaxed);
+        txPreparationLatencySamples.store(0, std::memory_order_relaxed);
+        txPreparationAtMost750Us.store(0, std::memory_order_relaxed);
+        txPreparationAtLeast1500Us.store(0, std::memory_order_relaxed);
         txLastLeadTicks.store(0, std::memory_order_relaxed);
         txMinimumLeadTicks.store(INT64_MAX, std::memory_order_relaxed);
         txMaximumLeadTicks.store(INT64_MIN, std::memory_order_relaxed);
 
         // Reset RX members
         rxSytCadence.Reset();
+        rxSequenceReplay.Reset();
+        rxReplayEntries.store(0, std::memory_order_relaxed);
+        rxReplayEpochResets.store(0, std::memory_order_relaxed);
+        txReplayEntries.store(0, std::memory_order_relaxed);
+        txReplayUnderflows.store(0, std::memory_order_relaxed);
+        txReplayInvalidSyt.store(0, std::memory_order_relaxed);
 
         inputProducedEndFrame.store(0, std::memory_order_relaxed);
         inputOverruns.store(0, std::memory_order_relaxed);

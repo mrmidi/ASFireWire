@@ -5,6 +5,7 @@
 // ADK graph construction/teardown for ASFWAudioDriver.
 //
 #include "ASFWAudioDriverPrivate.hpp"
+#include "../Config/InputSafetyPolicy.hpp"
 #include "Config/AudioProfileRegistry.hpp"
 #include "../Config/TimingCursorPolicy.hpp"
 #include "../../Common/TimingUtils.hpp"
@@ -457,10 +458,18 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     ivars.audioDevice->SetWantsControlsRestored(true);
     driver.SetTransportType(IOUserAudioTransportType::FireWire);
     ivars.audioDevice->SetTransportType(IOUserAudioTransportType::FireWire);
-    // Should test IIR clock algorithm as well and make it configurable later
-    // RAW for testing the seed is correctly converted from Cycle time to host time in the driver
-    // TODO: revert it to filtered zts once we have confidence in the conversion and stability of the clock
-    ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::Raw);
+    // Let the HAL clock algorithm absorb the residual jitter in the anchor
+    // stream. The ZTS anchors are self-timestamped (sampleFrame, hostTicks)
+    // pairs computed at the IR interrupt and back-interpolated, so cross-queue
+    // delivery jitter (the OSAction wake + ring drain) does NOT corrupt the
+    // VALUES — it only affects freshness, which is exactly what the host clock
+    // filter is for. Raw was a bring-up setting to eyeball the raw cycle→host
+    // conversion (it forwards anchors un-filtered, so every coalesced-batch /
+    // sub-cycle wobble reaches CoreAudio); SimpleIIR is the ADK default and the
+    // documented design ("HAL smooths via IOUserAudioClockAlgorithm"). Switch to
+    // TwelvePtMovingWindowAverage if heavier smoothing of bursty delivery is
+    // wanted (at the cost of slower rate-change tracking).
+    ivars.audioDevice->SetClockAlgorithm(IOUserAudioClockAlgorithm::SimpleIIR);
     ivars.audioDevice->SetClockIsStable(true);
     ivars.audioDevice->SetClockDomain(1);
     const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
@@ -485,17 +494,29 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         inSafety = policy.SafetyOffsetFrames(ASFW::Audio::AudioDirection::Input);
     }
 
-    // Captured input lands in the HAL ring only at the IR group drain, so the
-    // declared input safety must cover one interrupt group plus jitter even if
-    // the device profile (sized for the vendor driver's own interrupt cadence)
-    // declares less.
-    constexpr uint32_t kInputSafetyFloor =
-        ASFW::IsochTransport::AudioTimingGeometry::kInputSafetyFloorFrames;
-    if (inSafety < kInputSafetyFloor) {
-        ASFW_LOG(Audio,
-                 "ASFWAudioDriver: raising input safety %u -> %u (one interrupt group + jitter)",
-                 inSafety, kInputSafetyFloor);
-        inSafety = kInputSafetyFloor;
+    constexpr uint32_t kSchedulingJitterFrames = 64;
+    const uint32_t requiredInputSafety =
+        ASFW::Audio::RequiredInputSafetyFrames(
+            inSafety,
+            outSafety,
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kHalIoPeriodFrames,
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kMaximumNominalFramesPerInterrupt,
+            kSchedulingJitterFrames);
+    if (inSafety != requiredInputSafety) {
+        ASFW_LOG(
+            Audio,
+            "ASFWAudioDriver: raising input safety %u -> %u (output=%u maxIO=%u maxIRQFrames=%u jitter=%u)",
+            inSafety,
+            requiredInputSafety,
+            outSafety,
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kHalIoPeriodFrames,
+            ASFW::IsochTransport::AudioTimingGeometry::
+                kMaximumNominalFramesPerInterrupt,
+            kSchedulingJitterFrames);
+        inSafety = requiredInputSafety;
     }
 
     ivars.audioDevice->SetOutputLatency(outLatency);

@@ -24,6 +24,10 @@ constexpr uint32_t kZtsRecordsPerDrain = 8;
 // 512-record ring well clear of overflow.
 constexpr uint32_t kTxSytDrainIntervalTicks = 50;
 constexpr uint32_t kTxSytRecordsPerDrain = 16;
+// Audio payload writer decisions arrive ~100/s, so drain every 100 ticks
+// (~100 ms) and emit up to 8 strided records.
+constexpr uint32_t kPayloadWriterDrainIntervalTicks = 100;
+constexpr uint32_t kPayloadWriterRecordsPerDrain = 8;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -95,6 +99,7 @@ void WatchdogCoordinator::Reset() {
     itLogDivider_ = 0;
     ztsLogDivider_ = 0;
     txSytLogDivider_ = 0;
+    payloadWriterLogDivider_ = 0;
 }
 
 void WatchdogCoordinator::Schedule(uint64_t delayUsec) {
@@ -158,6 +163,11 @@ void WatchdogCoordinator::TickIsochReceive(
         if (++txSytLogDivider_ >= kTxSytDrainIntervalTicks) {
             txSytLogDivider_ = 0;
             isochReceiveContext->DrainTxSytTelemetry(kTxSytRecordsPerDrain);
+        }
+        if (++payloadWriterLogDivider_ >= kPayloadWriterDrainIntervalTicks) {
+            payloadWriterLogDivider_ = 0;
+            ASFW_LOG(DirectAudio, "[PayloadWriter] Heartbeat: watchdog draining telemetry");
+            isochReceiveContext->DrainPayloadWriterTelemetry(kPayloadWriterRecordsPerDrain);
         }
     }
 

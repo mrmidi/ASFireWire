@@ -81,7 +81,7 @@ TEST(IsochServiceTxPreparation,
     auto* control =
         reinterpret_cast<TxStreamControl*>(controlRange.address);
     control->exposeCursor.store(
-        AudioTimingGeometry::kTxSharedSlotPackets,
+        AudioTimingGeometry::kTxPreparationLeadPackets,
         std::memory_order_release);
 
     ASSERT_EQ(service.StartTransmit(/*channel=*/3,

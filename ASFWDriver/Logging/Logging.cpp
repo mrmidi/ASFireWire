@@ -34,5 +34,6 @@ os_log_t DirectAudio() { static os_log_t log = MakeCategory("directaudio"); retu
 os_log_t DICE()       { static os_log_t log = MakeCategory("dice");       return log; }
 os_log_t Zts()        { static os_log_t log = MakeCategory("zts");        return log; }
 os_log_t TxSyt()      { static os_log_t log = MakeCategory("txsyt");      return log; }
+os_log_t PayloadWriter() { static os_log_t log = MakeCategory("payloadwriter"); return log; }
 
 } // namespace ASFW::Driver::Logging

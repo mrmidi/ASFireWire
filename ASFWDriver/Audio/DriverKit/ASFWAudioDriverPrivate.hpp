@@ -207,6 +207,7 @@ struct AudioDriverRuntimeState {
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
     ASFW::Driver::TxTimingModel txTimingModel;
     ASFW::Driver::TxAnchorTracker txAnchorTracker;
+    ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;
 };
@@ -231,6 +232,7 @@ struct ASFWAudioDriver_IVars {
     OSSharedPtr<IOMemoryMap> txControlMap;
     OSSharedPtr<OSAction> txPreparationAction;
     OSSharedPtr<OSAction> ztsAnchorAction;
+    OSSharedPtr<IODispatchQueue> ztsQueue;
 
 
 
@@ -269,6 +271,7 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
+                                                                                           uint64_t throughGeneration,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
 // Prepares transmit slots [startPacketIndex, targetPacketIndex) into the shared

@@ -87,6 +87,8 @@ struct AmdtpTimingState final {
     AmdtpPacketDisposition disposition{
         AmdtpPacketDisposition::NoData};
     uint16_t nextDataSyt{0xFFFF};
+    uint16_t replayDataBlocks{0};
+    bool replayValid{false};
     uint64_t nextAudioFrame{0};
 };
 

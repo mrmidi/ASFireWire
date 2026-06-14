@@ -51,8 +51,12 @@ struct DirectAudioDebugSnapshot final {
     uint64_t txScheduledSampleFrame{0};
     uint64_t txCompletedSampleFrame{0};
     uint64_t txMinimumPreparationDistance{UINT32_MAX};
+    uint64_t txMinimumCommittedMarginPackets{UINT32_MAX};
     uint64_t txLastPreparationLatencyTicks{0};
     uint64_t txMaxPreparationLatencyTicks{0};
+    uint64_t txPreparationLatencySamples{0};
+    uint64_t txPreparationAtMost750Us{0};
+    uint64_t txPreparationAtLeast1500Us{0};
     int64_t txLastLeadTicks{0};
     int64_t txMinimumLeadTicks{INT64_MAX};
     int64_t txMaximumLeadTicks{INT64_MIN};
@@ -208,10 +212,19 @@ struct DirectAudioDebugLogState final {
         control.txCompletedSampleFrame.load(std::memory_order_acquire);
     snapshot.txMinimumPreparationDistance =
         control.txMinimumPreparationDistance.load(std::memory_order_acquire);
+    snapshot.txMinimumCommittedMarginPackets =
+        control.txMinimumCommittedMarginPackets.load(
+            std::memory_order_acquire);
     snapshot.txLastPreparationLatencyTicks =
         control.txLastPreparationLatencyTicks.load(std::memory_order_relaxed);
     snapshot.txMaxPreparationLatencyTicks =
         control.txMaxPreparationLatencyTicks.load(std::memory_order_relaxed);
+    snapshot.txPreparationLatencySamples =
+        control.txPreparationLatencySamples.load(std::memory_order_relaxed);
+    snapshot.txPreparationAtMost750Us =
+        control.txPreparationAtMost750Us.load(std::memory_order_relaxed);
+    snapshot.txPreparationAtLeast1500Us =
+        control.txPreparationAtLeast1500Us.load(std::memory_order_relaxed);
     snapshot.txLastLeadTicks =
         control.txLastLeadTicks.load(std::memory_order_relaxed);
     snapshot.txMinimumLeadTicks =
