@@ -362,21 +362,31 @@ Using the values from the `SEED` log line above:
 
 #### 1. Decoding `drainCycle` (CYCLE_TIMER register)
 The register is split as:
-*   $\text{seconds} = (\text{0x8e9d89d7} \ \& \ \text{0xFE000000}) \gg 25 = \text{0x47} = 71\text{ s}$
-*   $\text{cycle} = (\text{0x8e9d89d7} \ \& \ \text{0x01FFF000}) \gg 12 = \text{0x09d8} = 2520\text{ cycles}$
-*   $\text{offset} = \text{0x8e9d89d7} \ \& \ \text{0x00000FFF} = \text{0x9d7} = 2519\text{ ticks}$
+
+```text
+seconds = ((0x8e9d89d7 & 0xFE000000) >> 25) = 0x47 = 71 s
+cycle   = ((0x8e9d89d7 & 0x01FFF000) >> 12) = 0x09d8 = 2520 cycles
+offset  =  (0x8e9d89d7 & 0x00000FFF)        = 0x9d7  = 2519 ticks
+```
 
 Collapsing this to 24.576 MHz ticks (where $1\text{ cycle} = 3072\text{ ticks}$):
 $$\text{referenceTicks} = 3072 \times (2520 + 8000 \times 71) + 2519 = 1,753,637,479\text{ ticks}$$
 
 #### 2. Decoding and Expanding `rawRxTs`
 The raw 16-bit timestamp $\text{0xe9d8}$ is decoded:
-*   $\text{timestampSeconds} = (\text{0xe9d8} \gg 13) \ \& \ 7 = 7\text{ s}$
-*   $\text{timestampCycle} = \text{0xe9d8} \ \& \ \text{0x1FFF} = 2520\text{ cycles}$
-*   $\text{timestampOffset} = 0\text{ ticks}$
+
+```text
+timestampSeconds = (0xe9d8 >> 13) & 7       = 7 s
+timestampCycle   =  0xe9d8       & 0x1FFF   = 2520 cycles
+timestampOffset  =  0                        ticks
+```
 
 Aligning the 3-bit seconds field with the reference seconds ($71$):
-*   $\text{candidateSeconds} = (71 \ \& \ \sim 7) \ | \ 7 = 64 \ | \ 7 = 71\text{ s}$
+
+```text
+candidateSeconds = (71 & ~7) | 7 = 64 | 7 = 71 s
+```
+
 *   $\text{candidateTicks} = 3072 \times (2520 + 8000 \times 71) + 0 = 1,753,634,960\text{ ticks}$
 
 #### 3. Calculating Age in FireWire Ticks
