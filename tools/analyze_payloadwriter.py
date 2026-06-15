@@ -188,6 +188,22 @@ def main() -> None:
           f"(~{worst/AVG_FRAMES_PER_PKT:.1f} packets).")
     print(f"   To kill withoutPkt the fix must push this margin >= 0 with cushion; "
           f"current min is {worst}.")
+    print()
+
+    # --- Validate added-lead choices against the MEASURED distribution ---
+    # Adding D frames of exposure lead shifts every observed E-W by +D (E and W
+    # are clock-locked, confirmed by the stable W-HWcompletion offset). So the
+    # residual dropout at a candidate lead is just the negative tail of the
+    # shifted empirical distribution -- pure data, no model.
+    n = len(margins)
+    print("Added-lead validation (shift MEASURED E-W by +delta; no model):")
+    print(f"  {'+delta(fr)':>10} {'+pkts':>6} {'neg calls':>11} {'% neg':>8} {'worst':>7}")
+    for delta in range(0, 121, 8):
+        neg = sum(1 for m in margins if m + delta < 0)
+        worstd = min(m + delta for m in margins)
+        pkts = round(delta / AVG_FRAMES_PER_PKT)
+        print(f"  {delta:>10} {pkts:>6} {neg:>11} {100*neg/n:>7.2f}% {worstd:>+7}")
+    print("  (first delta with 0 neg / worst>=0 = the lead the OBSERVED run needs)")
 
     if args.hist:
         print()

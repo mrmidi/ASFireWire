@@ -195,3 +195,67 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
               "shared packet ring must fit inside the timeline slot array");
 
 } // namespace ASFW::IsochTransport
+
+// =============================================================================
+// REFERENCE GEOMETRY -- external stacks at 48 kHz blocking (AM824/IEC 61883-6)
+//
+// A cross-check ceiling for the constants above, gathered 2026-06-15 from the
+// in-tree references. These are NOT requirements and NOT directly adopted --
+// they are the closest analogues (names may differ) from stacks that are
+// wire-correct against real hardware. Use them to sanity-check ours, never to
+// override measured behavior. Full prose: documentation/ZTS_AND_SYT.md
+// §9 (Linux/libffado) and §10 (Apple).
+//
+// Shared by all three AND us: 8000 cycles/s, 3072 ticks/cycle, 24'576'000
+// ticks/s; blocking SYT interval (frames per DATA packet) = 8 @48k / 16 @96k /
+// 32 @192k  (== our kFramesPerDataPacket and AudioGeometryPolicy::FramesPerPacket).
+//
+// --- Apple AppleFWAudio.kext  (AM824DCLWrite / AM824NuDCLWrite, x86 IDA) ------
+//   fNumBufferGroups          = 100        backing DCL ring depth (~100 ms)
+//   fNumPacketsPerBufferGroup = 8          => HW interrupt every 8 pkt = 1.0 ms
+//   48k cadence               = D,D,D,N    => 6 frames/cycle avg, 8-frame DATA
+//   CheckSYT target latency   = 2-3 cycles (~250-375 us) device presentation
+//                                          -- this is a SYT/presentation lead
+//                                          (cf. our TxTransferDelayTicks/SYT),
+//                                          NOT the CoreAudio safety offset.
+//   servo update              = gated groupIndex==0 => ~100 ms / ring wrap
+//                                          (100 groups * 8 pkt * 125 us)
+//   our analogues: 8-pkt group ~ kTimingGroupPackets(6, 0.75 ms); 100*8=800-pkt
+//     backing ring ~ kTxSharedSlotPackets / kTimelineSlots.
+//   *** CAVEAT (load-bearing) ***  This is OS 9 / early-OS-X lineage code: the
+//   buffer routines are literally the classic-Mac "DV" (Digital Video FireWire)
+//   streaming path -- DVAllocatePlayBufferGroup / DVCreatePlayBufferGroupUpdate-
+//   List, IOMallocAligned + fixed 100x8 rings, written ~2000-2003 and rarely
+//   touched since. Its constants were tuned for that era's low-performance CPUs
+//   and almost certainly for INTERRUPT-RATE / JITTER reduction (1 ms IRQ,
+//   once-per-wrap servo to minimize interrupt-context work), not for 2026
+//   latency. Take the ratios and the clock-domain discipline as the lesson, not
+//   the absolute counts.
+//
+// --- Linux ALSA  sound/firewire/amdtp-stream.c -------------------------------
+//   syt_interval @48k         = 8 frames/DATA packet
+//   idle_irq_interval         = 6 pkt (0.75 ms) @ 32-frame period;
+//                               11 pkt (1.375 ms) @ 64-frame period
+//   minimum period            = 250 us = 2 pkt (hard floor)
+//   transfer_delay base       = 0x2e00 ticks (11776); effective on-wire SYT lead
+//                               re-added at encode vs the transmit cycle works
+//                               out to ~12800 @48k (== our TxTransferDelayTicks).
+//   Period-derived IRQ, close to the wire; no fixed deep lead-ahead.
+//
+// --- libffado-2.5.0  (IsoHandlerManager.cpp, util/cip.h, libieee1394/cycletimer.h)
+//   syt_interval              = 8 / 16 / 32 @ 1x / 2x / 4x  (getSytInterval)
+//   CIP_TRANSFER_DELAY        = 9000 ticks
+//   MAX_XMIT/RECV_NB_BUFFERS  = 128         queue-depth ceiling
+//   MINIMUM_INTERRUPTS_PER_PERIOD = 2
+//   irq_interval = (packets_per_period-1)/min_interrupts, capped at buffers/2
+//                  => ~4-8 pkt (0.5-1.0 ms) for a 64-frame period
+//
+// TAKEAWAYS for our geometry:
+//   * Everyone services DMA far more often than a deep batch: 0.75-1.375 ms IRQ
+//     (6-11 pkt). Ours kTimingGroupPackets = 6 (0.75 ms) is in range.
+//   * Everyone keeps SYT/presentation in the 1394 tick domain, not host time.
+//   * Backing ring depth (Apple ~800 pkt, ffado 128) is decoupled from the
+//     active near-wire lead -- matches our capacity-is-not-latency rule. None of
+//     these exposes a direct AudioDriverKit ZTS analogue (see §9.F), so
+//     kTxExposureLeadFrames and the ZTS period are OURS to justify, not inherited.
+// =============================================================================
