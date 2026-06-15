@@ -2,14 +2,12 @@
 
 #include "ASFWDriver/Audio/Wire/AMDTP/RxSytCadence.hpp"
 #include "ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.hpp"
-#include "ASFWDriver/Audio/Wire/AMDTP/TxAnchorTracker.hpp"
 
 namespace ASFW::Testing {
 namespace {
 
 using Driver::RxSytCadence;
 using Driver::TxTimingModel;
-using Driver::TxAnchorTracker;
 using LeadHealth = TxTimingModel::LeadHealth;
 
 constexpr int64_t kEightSecondTicks =
@@ -466,79 +464,6 @@ TEST(TxTimingModelTests, ForcedAdjustReturnsCandidatePlusCorrection) {
     if (decision.correctionTicks != 0) {
         EXPECT_NE(decision.phaseTicksPost, wrongBase);
     }
-}
-
-// ============================================================================
-// TxAnchorTracker tests
-// ============================================================================
-
-TEST(TxAnchorTrackerTests, AcceptsExactMatch) {
-    TxAnchorTracker tracker{};
-    const int64_t phase1 = 100'000;
-    auto r1 = tracker.ObserveCallbackPhase(0, phase1);
-    EXPECT_EQ(r1.status, TxAnchorTracker::Status::kAccepted);
-    EXPECT_FALSE(r1.resetRequired);
-
-    const int64_t phase2 = phase1 + TxAnchorTracker::kTicksPerCycle;
-    auto r2 = tracker.ObserveCallbackPhase(1, phase2);
-    EXPECT_EQ(r2.status, TxAnchorTracker::Status::kAccepted);
-    EXPECT_EQ(r2.continuityDiffTicks, 0);
-    EXPECT_FALSE(r2.resetRequired);
-}
-
-TEST(TxAnchorTrackerTests, ToleratesOneCycleGlitch) {
-    TxAnchorTracker tracker{};
-    const int64_t phase1 = 100'000;
-    (void)tracker.ObserveCallbackPhase(0, phase1);
-
-    // First one-cycle glitch: accepted.
-    const int64_t glitch1 = phase1 + 2 * TxAnchorTracker::kTicksPerCycle;
-    auto r1 = tracker.ObserveCallbackPhase(1, glitch1);
-    EXPECT_EQ(r1.status, TxAnchorTracker::Status::kOneCycleGlitchAccepted);
-    EXPECT_FALSE(r1.resetRequired);
-
-    // Second one-cycle glitch: accepted.
-    const int64_t glitch2 =
-        r1.callbackPhaseTicks + 2 * TxAnchorTracker::kTicksPerCycle;
-    auto r2 = tracker.ObserveCallbackPhase(2, glitch2);
-    EXPECT_EQ(r2.status, TxAnchorTracker::Status::kOneCycleGlitchAccepted);
-    EXPECT_FALSE(r2.resetRequired);
-
-    // Third one-cycle glitch: reset.
-    const int64_t glitch3 =
-        r2.callbackPhaseTicks + 2 * TxAnchorTracker::kTicksPerCycle;
-    auto r3 = tracker.ObserveCallbackPhase(3, glitch3);
-    EXPECT_EQ(r3.status, TxAnchorTracker::Status::kDiscontinuityReset);
-    EXPECT_TRUE(r3.resetRequired);
-}
-
-TEST(TxAnchorTrackerTests, ResetsOnDiscontinuity) {
-    TxAnchorTracker tracker{};
-    const int64_t phase1 = 100'000;
-    (void)tracker.ObserveCallbackPhase(0, phase1);
-
-    // Non-one-cycle discontinuity: reset immediately.
-    const int64_t badPhase = phase1 + 5000;  // not 0 or 3072
-    auto r = tracker.ObserveCallbackPhase(1, badPhase);
-    EXPECT_EQ(r.status, TxAnchorTracker::Status::kDiscontinuityReset);
-    EXPECT_TRUE(r.resetRequired);
-}
-
-TEST(TxAnchorTrackerTests, ReacquiresAfterReset) {
-    TxAnchorTracker tracker{};
-    const int64_t phase1 = 100'000;
-    (void)tracker.ObserveCallbackPhase(0, phase1);
-
-    // Discontinuity.
-    (void)tracker.ObserveCallbackPhase(1, phase1 + 5000);
-    EXPECT_FALSE(tracker.IsValid());
-
-    // Reacquire.
-    const int64_t phase2 = 200'000;
-    auto r = tracker.ObserveCallbackPhase(2, phase2);
-    EXPECT_EQ(r.status, TxAnchorTracker::Status::kAccepted);
-    EXPECT_TRUE(tracker.IsValid());
-    EXPECT_FALSE(r.resetRequired);
 }
 
 } // namespace ASFW::Testing

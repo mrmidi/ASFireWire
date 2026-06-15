@@ -285,18 +285,13 @@ of one or more bus cycles.
 
 ## 4. Continuity & Safety Mechanisms
 
-### Dual-Layer Validation
-To prevent hardware clock drift from causing resets, but protect against severe dropouts, the timing system is separated into two layers:
+TX wire timing follows Linux-style sequence replay. RX supplies the captured
+data-block cadence and delay-free SYT offset; the latest completed TX packet
+supplies the output bus-cycle anchor. No separate callback-phase continuity
+tracker overrides or invalidates this replay timeline.
 
-1.  **Macro-Continuity (Layer 1)**: Handled by [TxAnchorTracker](file:///Volumes/SDExt/DEV/ASFireWire/ASFWDriver/Audio/Wire/AMDTP/TxAnchorTracker.hpp). Every interrupt, it observes the hardware callback arrival phase and validates it against the previous prediction. If a gross gap occurs (beyond one-cycle glitch tolerance), it triggers a timing reset.
-2.  **Micro-Slewing (Layer 2)**: Handled by [TxTimingModel](file:///Volumes/SDExt/DEV/ASFireWire/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.cpp). It runs the deadbanded software timing servo to align the outbound SYT values without resetting.
-
----
-
-### The DATA vs. NO-DATA Cadence Safety
-FireWire blocking mode uses a transmission cadence (e.g. 6 packets containing data, followed by 2 packets containing no data).
-*   **The Bug**: If the continuity tracker only counted packets containing data, the expected phase prediction would drift by 2 cycles ($6144$ ticks) every cadence group, causing false discontinuity resets.
-*   **The Solution**: The tracker relies on `completedPacketIndex`, which represents the absolute DMA ring descriptor slot. Because the DMA engine programs a descriptor for **every single isochronous cycle** (whether it contains audio data or is an empty NO-DATA packet), the packet index increments monotonically, matching the physical bus cycles.
+Actual failures remain explicit: missing execution anchor, unavailable replay
+entry, invalid SYT on a DATA packet, or packet preparation failure.
 
 ### NO-DATA, NO-INFO, and DBC Are Not Interchangeable
 
