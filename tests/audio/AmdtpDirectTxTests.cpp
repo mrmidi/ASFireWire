@@ -1,3 +1,5 @@
+#include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
+#include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
@@ -11,6 +13,39 @@
 namespace {
 
 using namespace ASFW::Protocols::Audio::AMDTP;
+using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
+using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
+
+class TestTxSlotProvider final : public IAmdtpTxSlotProvider {
+public:
+    bool allowAcquire{false};
+    bool allowPublish{false};
+    std::array<uint8_t, 128> bytes{};
+
+    bool AcquireWritableSlot(
+        uint32_t packetIndex,
+        TxPacketSlotView& outSlot) noexcept override {
+        if (!allowAcquire) {
+            return false;
+        }
+        outSlot = {
+            .packetIndex = packetIndex,
+            .bytes = bytes.data(),
+            .capacityBytes =
+                static_cast<uint32_t>(bytes.size()),
+        };
+        return true;
+    }
+
+    bool PublishSlot(
+        const PreparedTxPacket&) noexcept override {
+        return allowPublish;
+    }
+
+    uint32_t SlotCount() const noexcept override {
+        return 1;
+    }
+};
 
 AmdtpStreamConfig BlockingStereoConfig() {
     AmdtpStreamConfig config{};
@@ -226,6 +261,26 @@ TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {
 
     packetizer.Reset(0, 0);
     EXPECT_TRUE(packetizer.AlignFrameCursorOnce(3000U));
+}
+
+TEST(AmdtpDirectTxTests, TxEngineReportsPreparationFailureStage) {
+    DiceTxStreamEngine engine{};
+    AmdtpTimingState timing{};
+
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(192, timing),
+        TxSlotPrepareResult::kSlotProviderUnavailable);
+
+    TestTxSlotProvider provider{};
+    engine.BindSlotProvider(&provider);
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(192, timing),
+        TxSlotPrepareResult::kSlotAcquireFailed);
+
+    provider.allowAcquire = true;
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(192, timing),
+        TxSlotPrepareResult::kPacketizerRejected);
 }
 
 } // namespace

@@ -66,24 +66,26 @@ bool DiceTxStreamEngine::AlignFrameCursorOnce(uint64_t frameIndex) noexcept {
     return packetizer_.AlignFrameCursorOnce(frameIndex);
 }
 
-bool DiceTxStreamEngine::PrepareNextTransmitSlot(
+TxSlotPrepareResult DiceTxStreamEngine::PrepareNextTransmitSlot(
     uint32_t packetIndex, const AMDTP::AmdtpTimingState& timing) noexcept {
     if (slotProvider_ == nullptr) {
-        return false;
+        return TxSlotPrepareResult::kSlotProviderUnavailable;
     }
 
     AMDTP::TxPacketSlotView slot{};
     if (!slotProvider_->AcquireWritableSlot(packetIndex, slot)) {
         counters_.slotAcquireFailures.fetch_add(1, std::memory_order_relaxed);
-        return false;
+        return TxSlotPrepareResult::kSlotAcquireFailed;
     }
 
     AMDTP::PreparedTxPacket packet{};
     if (!packetizer_.PrepareNextPacket(slot, timing, packet)) {
-        return false;
+        return TxSlotPrepareResult::kPacketizerRejected;
     }
 
-    slotProvider_->PublishSlot(packet);
+    if (!slotProvider_->PublishSlot(packet)) {
+        return TxSlotPrepareResult::kSlotPublishFailed;
+    }
 
     counters_.packetsPrepared.fetch_add(1, std::memory_order_relaxed);
     if (packet.isData) {
@@ -91,7 +93,7 @@ bool DiceTxStreamEngine::PrepareNextTransmitSlot(
     } else {
         counters_.noDataPacketsPrepared.fetch_add(1, std::memory_order_relaxed);
     }
-    return true;
+    return TxSlotPrepareResult::kPrepared;
 }
 
 bool DiceTxStreamEngine::NextPacketWouldCarryData() const noexcept {

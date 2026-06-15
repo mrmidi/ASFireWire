@@ -27,7 +27,7 @@
 
 namespace ASFW::IsochTransport {
 
-inline constexpr uint32_t kTransportAbiVersion = 3;
+inline constexpr uint32_t kTransportAbiVersion = 4;
 
 // =============================================================================
 // Shared queue / buffer sizing (ADK §3.3 / §6.4).
@@ -141,14 +141,181 @@ struct CompletionStamp final {
 static_assert(sizeof(CompletionStamp) == 16);
 
 // =============================================================================
-// Stream control block v2 (ADK §3.3) — small, fixed, one writer per field.
+// Stream control block v4 (ADK §3.3) — small, fixed, one writer per field.
 // =============================================================================
 
 enum class TxStreamStatus : uint32_t {
     kStopped = 0,
     kRunning = 1,
-    kUnderrunFatal = 2,  ///< Refill ISR met an uncommitted slot (ADK §6.2).
+    kUnderrunFatal = 2,  ///< Producer aborted or refill met an uncommitted slot.
     kDeadContext = 3,    ///< OHCI context died / bus reset (ADK §6.3).
+};
+
+enum class TxProducerStage : uint32_t {
+    kNone = 0,
+    kPreflight,
+    kExecutionAnchor,
+    kReplayBegin,
+    kReplayRead,
+    kReplaySytValidation,
+    kSlotAcquire,
+    kPacketize,
+    kSlotPublish,
+};
+
+[[nodiscard]] inline const char* TxProducerStageName(
+    TxProducerStage stage) noexcept {
+    switch (stage) {
+        case TxProducerStage::kNone:                return "none";
+        case TxProducerStage::kPreflight:           return "preflight";
+        case TxProducerStage::kExecutionAnchor:     return "execution-anchor";
+        case TxProducerStage::kReplayBegin:         return "replay-begin";
+        case TxProducerStage::kReplayRead:          return "replay-read";
+        case TxProducerStage::kReplaySytValidation: return "replay-syt-validation";
+        case TxProducerStage::kSlotAcquire:         return "slot-acquire";
+        case TxProducerStage::kPacketize:           return "packetize";
+        case TxProducerStage::kSlotPublish:         return "slot-publish";
+    }
+    return "unknown";
+}
+
+enum class TxProducerFailureReason : uint32_t {
+    kNone = 0,
+    kInvalidTransport,
+    kReplayUnavailable,
+    kInvalidReplaySyt,
+    kSlotUnavailable,
+    kPacketizerRejected,
+    kSlotPublishFailed,
+};
+
+[[nodiscard]] inline const char* TxProducerFailureReasonName(
+    TxProducerFailureReason reason) noexcept {
+    switch (reason) {
+        case TxProducerFailureReason::kNone:               return "none";
+        case TxProducerFailureReason::kInvalidTransport:   return "invalid-transport";
+        case TxProducerFailureReason::kReplayUnavailable:  return "replay-unavailable";
+        case TxProducerFailureReason::kInvalidReplaySyt:   return "invalid-replay-syt";
+        case TxProducerFailureReason::kSlotUnavailable:    return "slot-unavailable";
+        case TxProducerFailureReason::kPacketizerRejected: return "packetizer-rejected";
+        case TxProducerFailureReason::kSlotPublishFailed:  return "slot-publish-failed";
+    }
+    return "unknown";
+}
+
+struct TxProducerFailureRecord final {
+    uint64_t generation{0};
+    TxProducerStage stage{TxProducerStage::kNone};
+    TxProducerFailureReason reason{TxProducerFailureReason::kNone};
+    uint64_t packetIndex{0};
+    uint64_t rangeStart{0};
+    uint64_t rangeTarget{0};
+    uint32_t preparedCount{0};
+    uint64_t completionCursor{0};
+    uint64_t exposeCursor{0};
+    uint64_t replayProducerCursor{0};
+    uint32_t replayEpoch{0};
+};
+
+// Producer writes all detail fields and release-publishes generation last.
+// The core observes statusWord with acquire ordering, then snapshots this
+// record to explain a producer-originated kUnderrunFatal.
+struct TxProducerFailureSnapshot final {
+    std::atomic<uint64_t> generation{0};
+    std::atomic<uint32_t> stage{
+        static_cast<uint32_t>(TxProducerStage::kNone)};
+    std::atomic<uint32_t> reason{
+        static_cast<uint32_t>(TxProducerFailureReason::kNone)};
+    std::atomic<uint64_t> packetIndex{0};
+    std::atomic<uint64_t> rangeStart{0};
+    std::atomic<uint64_t> rangeTarget{0};
+    std::atomic<uint32_t> preparedCount{0};
+    std::atomic<uint64_t> completionCursor{0};
+    std::atomic<uint64_t> exposeCursor{0};
+    std::atomic<uint64_t> replayProducerCursor{0};
+    std::atomic<uint32_t> replayEpoch{0};
+
+    void Reset() noexcept {
+        stage.store(
+            static_cast<uint32_t>(TxProducerStage::kNone),
+            std::memory_order_relaxed);
+        reason.store(
+            static_cast<uint32_t>(TxProducerFailureReason::kNone),
+            std::memory_order_relaxed);
+        packetIndex.store(0, std::memory_order_relaxed);
+        rangeStart.store(0, std::memory_order_relaxed);
+        rangeTarget.store(0, std::memory_order_relaxed);
+        preparedCount.store(0, std::memory_order_relaxed);
+        completionCursor.store(0, std::memory_order_relaxed);
+        exposeCursor.store(0, std::memory_order_relaxed);
+        replayProducerCursor.store(0, std::memory_order_relaxed);
+        replayEpoch.store(0, std::memory_order_relaxed);
+        generation.store(0, std::memory_order_release);
+    }
+
+    [[nodiscard]] uint64_t Publish(
+        const TxProducerFailureRecord& record) noexcept {
+        const uint64_t nextGeneration =
+            generation.load(std::memory_order_relaxed) + 1;
+        stage.store(
+            static_cast<uint32_t>(record.stage),
+            std::memory_order_relaxed);
+        reason.store(
+            static_cast<uint32_t>(record.reason),
+            std::memory_order_relaxed);
+        packetIndex.store(record.packetIndex, std::memory_order_relaxed);
+        rangeStart.store(record.rangeStart, std::memory_order_relaxed);
+        rangeTarget.store(record.rangeTarget, std::memory_order_relaxed);
+        preparedCount.store(record.preparedCount, std::memory_order_relaxed);
+        completionCursor.store(
+            record.completionCursor, std::memory_order_relaxed);
+        exposeCursor.store(record.exposeCursor, std::memory_order_relaxed);
+        replayProducerCursor.store(
+            record.replayProducerCursor, std::memory_order_relaxed);
+        replayEpoch.store(record.replayEpoch, std::memory_order_relaxed);
+        generation.store(nextGeneration, std::memory_order_release);
+        return nextGeneration;
+    }
+
+    [[nodiscard]] bool TryRead(
+        TxProducerFailureRecord& out) const noexcept {
+        for (uint32_t attempt = 0; attempt < 4; ++attempt) {
+            const uint64_t before =
+                generation.load(std::memory_order_acquire);
+            if (before == 0) {
+                return false;
+            }
+
+            TxProducerFailureRecord record{};
+            record.generation = before;
+            record.stage = static_cast<TxProducerStage>(
+                stage.load(std::memory_order_relaxed));
+            record.reason = static_cast<TxProducerFailureReason>(
+                reason.load(std::memory_order_relaxed));
+            record.packetIndex =
+                packetIndex.load(std::memory_order_relaxed);
+            record.rangeStart =
+                rangeStart.load(std::memory_order_relaxed);
+            record.rangeTarget =
+                rangeTarget.load(std::memory_order_relaxed);
+            record.preparedCount =
+                preparedCount.load(std::memory_order_relaxed);
+            record.completionCursor =
+                completionCursor.load(std::memory_order_relaxed);
+            record.exposeCursor =
+                exposeCursor.load(std::memory_order_relaxed);
+            record.replayProducerCursor =
+                replayProducerCursor.load(std::memory_order_relaxed);
+            record.replayEpoch =
+                replayEpoch.load(std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (generation.load(std::memory_order_relaxed) == before) {
+                out = record;
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 struct TxStreamControl final {
@@ -181,6 +348,7 @@ struct TxStreamControl final {
     // --- audio → core ---
     std::atomic<uint64_t> exposeCursor{0};  ///< Count of committed packets
                                             ///< (end-exclusive absolute index).
+    TxProducerFailureSnapshot producerFailure{};
 
     void MarkPreparationHandled(uint64_t generation) noexcept {
         uint64_t handled =
@@ -224,6 +392,7 @@ struct TxStreamControl final {
 };
 
 static_assert(std::atomic<TxStreamStatus>::is_always_lock_free);
+static_assert(std::atomic<uint64_t>::is_always_lock_free);
 
 // =============================================================================
 // Device stream profile (ISOCH_AUDIO_CLEANUP_PREP.md §7.2) — resolved by the

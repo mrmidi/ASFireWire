@@ -73,14 +73,34 @@ public:
         uint64_t packetsAssembled{0};
     };
 
+    enum class RefillFailureReason : uint8_t {
+        None = 0,
+        InvalidSharedContract,
+        DeadContext,
+        ProducerFatalStatus,
+        CommandPointerDecode,
+        UncommittedSlot,
+        InvalidPacketSize,
+        PayloadMapping,
+    };
+
+    [[nodiscard]] static const char* RefillFailureReasonName(
+        RefillFailureReason reason) noexcept;
+
     struct RefillOutcome {
         bool ok{false};
         bool dead{false};
         bool decodeFailed{false};
         bool hwOOB{false};
+        RefillFailureReason failureReason{RefillFailureReason::None};
+        uint32_t contextControl{0};
+        uint32_t streamStatus{0};
         uint32_t hwPacketIndex{0};
         uint32_t cmdPtr{0};
         uint32_t cmdAddr{0};
+        uint64_t failurePacketAbs{0};
+        uint32_t failureSlot{0};
+        uint32_t failurePayloadLength{0};
         uint16_t hwTimestamp{0};
         uint32_t completedPacketIndex{0};
         uint32_t completedPacketCount{0};
@@ -88,6 +108,8 @@ public:
         uint32_t refillPacketCount{0};
         uint64_t packetsFilled{0};
         uint64_t preparationRequestGeneration{0};
+        bool producerFailureAvailable{false};
+        ASFW::IsochTransport::TxProducerFailureRecord producerFailure{};
     };
 
     IsochTxDmaRing() noexcept = default;

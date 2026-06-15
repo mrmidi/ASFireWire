@@ -134,9 +134,13 @@ public:
     uint32_t slotStrideBytes{0};
     uint8_t isoChannel{0};
 
-    bool AcquireWritableSlot(uint32_t packetIndex,
-                             ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot) noexcept override {
-        if (!payloadBase) return false;
+    bool AcquireWritableSlot(
+        uint32_t packetIndex,
+        ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
+        noexcept override {
+        if (!payloadBase || numSlots == 0 || slotStrideBytes == 0) {
+            return false;
+        }
         const uint32_t slotIdx = packetIndex % numSlots;
         outSlot.packetIndex = packetIndex;
         outSlot.bytes = payloadBase + (slotIdx * slotStrideBytes);
@@ -144,8 +148,12 @@ public:
         return true;
     }
 
-    void PublishSlot(const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet) noexcept override {
-        if (!metadataRing || !controlBlock) return;
+    [[nodiscard]] bool PublishSlot(
+        const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet)
+        noexcept override {
+        if (!metadataRing || !controlBlock || numSlots == 0) {
+            return false;
+        }
         const uint32_t slotIdx = packet.packetIndex % numSlots;
         auto& meta = metadataRing[slotIdx];
 
@@ -179,6 +187,7 @@ public:
 
         // Expose cursor progress to core
         controlBlock->exposeCursor.store(packet.packetIndex + 1, std::memory_order_release);
+        return true;
     }
 
     uint32_t SlotCount() const noexcept override {

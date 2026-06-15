@@ -2,6 +2,8 @@
 
 #include "IsochTxDmaRing.hpp"
 
+#include "../../Common/TimingUtils.hpp"
+
 #include <algorithm>
 #include <DriverKit/IOLib.h>
 
@@ -375,6 +377,29 @@ bool IsochTxDmaRing::DecodeHardwarePacketIndex(Driver::HardwareInterface& hw,
     return outPacketIndex < Layout::kNumPackets;
 }
 
+const char* IsochTxDmaRing::RefillFailureReasonName(
+    RefillFailureReason reason) noexcept {
+    switch (reason) {
+        case RefillFailureReason::None:
+            return "none";
+        case RefillFailureReason::InvalidSharedContract:
+            return "invalid-shared-contract";
+        case RefillFailureReason::DeadContext:
+            return "dead-context";
+        case RefillFailureReason::ProducerFatalStatus:
+            return "producer-fatal-status";
+        case RefillFailureReason::CommandPointerDecode:
+            return "command-pointer-decode";
+        case RefillFailureReason::UncommittedSlot:
+            return "uncommitted-slot";
+        case RefillFailureReason::InvalidPacketSize:
+            return "invalid-packet-size";
+        case RefillFailureReason::PayloadMapping:
+            return "payload-mapping";
+    }
+    return "unknown";
+}
+
 IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     Driver::HardwareInterface& hw,
     uint8_t contextIndex,
@@ -393,7 +418,7 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         controlBlock->slotStrideBytes == 0 ||
         controlBlock->maxPacketBytes == 0 ||
         controlBlock->maxPacketBytes > controlBlock->slotStrideBytes) {
-        out.ok = false;
+        out.failureReason = RefillFailureReason::InvalidSharedContract;
         return out;
     }
 
@@ -413,17 +438,27 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     // 2. Check context status
     const Register32 ctrlReg = static_cast<Register32>(DMAContextHelpers::IsoXmitContextControl(contextIndex));
     const uint32_t ctrl = hw.Read(ctrlReg);
+    out.contextControl = ctrl;
     const bool dead = (ctrl & Driver::ContextControl::kDead) != 0;
     if (dead) {
         counters_.exitDead.fetch_add(1, std::memory_order_relaxed);
         controlBlock->statusWord.store(ASFW::IsochTransport::TxStreamStatus::kDeadContext, std::memory_order_release);
         controlBlock->streamGeneration.fetch_add(1, std::memory_order_release);
         out.dead = true;
+        out.failureReason = RefillFailureReason::DeadContext;
+        out.streamStatus = static_cast<uint32_t>(
+            ASFW::IsochTransport::TxStreamStatus::kDeadContext);
         return out;
     }
-    if (controlBlock->statusWord.load(std::memory_order_acquire) ==
+    const auto streamStatus =
+        controlBlock->statusWord.load(std::memory_order_acquire);
+    out.streamStatus = static_cast<uint32_t>(streamStatus);
+    if (streamStatus ==
         ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal) {
-        out.ok = false;
+        out.failureReason = RefillFailureReason::ProducerFatalStatus;
+        out.producerFailureAvailable =
+            controlBlock->producerFailure.TryRead(
+                out.producerFailure);
         return out;
     }
 
@@ -433,6 +468,9 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
     if (!DecodeHardwarePacketIndex(hw, contextIndex, hwPacketIndex, cmdPtr)) {
         counters_.exitDecodeFail.fetch_add(1, std::memory_order_relaxed);
         out.decodeFailed = true;
+        out.failureReason = RefillFailureReason::CommandPointerDecode;
+        out.cmdPtr = cmdPtr;
+        out.cmdAddr = cmdPtr & 0xFFFFFFF0u;
         return out;
     }
 
@@ -533,6 +571,22 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         const uint64_t commitGen = meta.commitGen.load(std::memory_order_acquire);
 
         if (commitGen != expectedGen) {
+            const uint64_t requestGeneration =
+                controlBlock->preparationRequestGeneration.load(
+                    std::memory_order_acquire);
+            const uint64_t handledGeneration =
+                controlBlock->preparationHandledGeneration.load(
+                    std::memory_order_acquire);
+            const uint64_t requestHostTicks =
+                controlBlock->preparationRequestHostTicks.load(
+                    std::memory_order_relaxed);
+            const uint64_t nowHostTicks = mach_absolute_time();
+            const uint64_t requestAgeUs =
+                requestHostTicks != 0 && nowHostTicks >= requestHostTicks
+                    ? ASFW::Timing::hostTicksToNanos(
+                          nowHostTicks - requestHostTicks) /
+                          1000
+                    : 0;
             counters_.txUnderruns.fetch_add(1, std::memory_order_relaxed);
             controlBlock->statusWord.store(
                 ASFW::IsochTransport::TxStreamStatus::kUnderrunFatal,
@@ -556,7 +610,8 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
                 Isoch,
                 "IT FATAL dump: fatalAbs=%llu slot=%u expectedGen=%llu commitGen=%llu "
                 "slotLastPacketAbs=%llu exposeCursor=%llu completionCursor=%llu "
-                "softwareFillAbs=%llu ringPacketsAhead=%u deltaConsumed=%u i=%u numSlots=%u",
+                "softwareFillAbs=%llu ringPacketsAhead=%u deltaConsumed=%u i=%u numSlots=%u "
+                "prepReq=%llu prepHandled=%llu prepAgeUs=%llu prepCoalesced=%llu",
                 fillAbsIdx,
                 pktSlot,
                 expectedGen,
@@ -568,8 +623,15 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
                 ringPacketsAhead_,
                 deltaConsumed,
                 i,
-                numSlots);
-            out.ok = false;
+                numSlots,
+                requestGeneration,
+                handledGeneration,
+                requestAgeUs,
+                controlBlock->preparationCoalescedCount.load(
+                    std::memory_order_relaxed));
+            out.failureReason = RefillFailureReason::UncommittedSlot;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
             return out;
         }
 
@@ -582,7 +644,18 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
         if (payloadLength < 2 ||
             payloadLength > controlBlock->maxPacketBytes) {
             counters_.fatalPacketSize.fetch_add(1, std::memory_order_relaxed);
-            out.ok = false;
+            out.failureReason = RefillFailureReason::InvalidPacketSize;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
+            out.failurePayloadLength = payloadLength;
+            ASFW_LOG(
+                Isoch,
+                "IT FATAL: invalid payload size packet=%llu slot=%u len=%u max=%u stride=%u",
+                fillAbsIdx,
+                pktSlot,
+                payloadLength,
+                controlBlock->maxPacketBytes,
+                controlBlock->slotStrideBytes);
             return out;
         }
 
@@ -604,7 +677,10 @@ IsochTxDmaRing::RefillOutcome IsochTxDmaRing::Refill(
                 payloadOffset,
                 meta.payloadLength,
                 payloadDmaMap.SegmentCount());
-            out.ok = false;
+            out.failureReason = RefillFailureReason::PayloadMapping;
+            out.failurePacketAbs = fillAbsIdx;
+            out.failureSlot = pktSlot;
+            out.failurePayloadLength = payloadLength;
             return out;
         }
 

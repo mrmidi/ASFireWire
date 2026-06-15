@@ -18,6 +18,14 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> slotAcquireFailures{0};
 };
 
+enum class TxSlotPrepareResult : uint8_t {
+    kPrepared = 0,
+    kSlotProviderUnavailable,
+    kSlotAcquireFailed,
+    kPacketizerRejected,
+    kSlotPublishFailed,
+};
+
 class DiceStreamConfigMapper final {
 public:
     [[nodiscard]] static AMDTP::AmdtpStreamConfig ToAmdtpConfig(
@@ -38,8 +46,9 @@ public:
 
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
 
-    bool PrepareNextTransmitSlot(uint32_t packetIndex,
-                                 const AMDTP::AmdtpTimingState& timing) noexcept;
+    [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
+        uint32_t packetIndex,
+        const AMDTP::AmdtpTimingState& timing) noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
     void WriteHostOutputFloat32(const AMDTP::HostAudioBufferView& hostBuffer,

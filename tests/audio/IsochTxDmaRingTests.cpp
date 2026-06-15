@@ -900,6 +900,12 @@ TEST_F(IsochTxDmaRingTest, RefillRejectsPayloadLargerThanSharedSlot) {
         kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
 
     EXPECT_FALSE(outcome.ok);
+    EXPECT_EQ(
+        outcome.failureReason,
+        IsochTxDmaRing::RefillFailureReason::InvalidPacketSize);
+    EXPECT_EQ(outcome.failurePacketAbs, 0U);
+    EXPECT_EQ(outcome.failureSlot, 0U);
+    EXPECT_EQ(outcome.failurePayloadLength, kSharedPayloadStride + 1);
     EXPECT_EQ(ring_.RTCounters().fatalPacketSize.load(std::memory_order_relaxed), 1u);
 }
 
@@ -915,6 +921,23 @@ TEST_F(IsochTxDmaRingTest, RefillHonorsProducerFatalStatusImmediately) {
     controlBlock.numSlots = kSharedPayloadSlots;
     controlBlock.slotStrideBytes = kSharedPayloadStride;
     controlBlock.maxPacketBytes = kSharedPayloadStride;
+    const ASFW::IsochTransport::TxProducerFailureRecord producerFailure{
+        .stage =
+            ASFW::IsochTransport::TxProducerStage::kReplayRead,
+        .reason =
+            ASFW::IsochTransport::TxProducerFailureReason::
+                kReplayUnavailable,
+        .packetIndex = 192,
+        .rangeStart = 192,
+        .rangeTarget = 194,
+        .preparedCount = 0,
+        .completionCursor = 50,
+        .exposeCursor = 192,
+        .replayProducerCursor = 513,
+        .replayEpoch = 4,
+    };
+    EXPECT_EQ(
+        controlBlock.producerFailure.Publish(producerFailure), 1U);
     controlBlock.statusWord.store(
         TxStreamStatus::kUnderrunFatal, std::memory_order_release);
 
@@ -930,7 +953,54 @@ TEST_F(IsochTxDmaRingTest, RefillHonorsProducerFatalStatusImmediately) {
         kSharedPayloadSlots, sharedPayload_.data(), payloadDmaMap_);
 
     EXPECT_FALSE(outcome.ok);
+    EXPECT_EQ(
+        outcome.failureReason,
+        IsochTxDmaRing::RefillFailureReason::ProducerFatalStatus);
     EXPECT_EQ(outcome.packetsFilled, 0U);
+    ASSERT_TRUE(outcome.producerFailureAvailable);
+    EXPECT_EQ(outcome.producerFailure.generation, 1U);
+    EXPECT_EQ(
+        outcome.producerFailure.stage,
+        ASFW::IsochTransport::TxProducerStage::kReplayRead);
+    EXPECT_EQ(
+        outcome.producerFailure.reason,
+        ASFW::IsochTransport::TxProducerFailureReason::
+            kReplayUnavailable);
+    EXPECT_EQ(outcome.producerFailure.packetIndex, 192U);
+    EXPECT_EQ(outcome.producerFailure.rangeStart, 192U);
+    EXPECT_EQ(outcome.producerFailure.rangeTarget, 194U);
+    EXPECT_EQ(outcome.producerFailure.preparedCount, 0U);
+    EXPECT_EQ(outcome.producerFailure.completionCursor, 50U);
+    EXPECT_EQ(outcome.producerFailure.exposeCursor, 192U);
+    EXPECT_EQ(outcome.producerFailure.replayProducerCursor, 513U);
+    EXPECT_EQ(outcome.producerFailure.replayEpoch, 4U);
+}
+
+TEST(TxProducerFailureSnapshotTests, ResetClearsRecordAndNamesArePublic) {
+    ASFW::IsochTransport::TxProducerFailureSnapshot snapshot{};
+    const ASFW::IsochTransport::TxProducerFailureRecord failure{
+        .stage =
+            ASFW::IsochTransport::TxProducerStage::
+                kReplaySytValidation,
+        .reason =
+            ASFW::IsochTransport::TxProducerFailureReason::
+                kInvalidReplaySyt,
+        .packetIndex = 192,
+    };
+
+    EXPECT_EQ(snapshot.Publish(failure), 1U);
+    ASFW::IsochTransport::TxProducerFailureRecord observed{};
+    ASSERT_TRUE(snapshot.TryRead(observed));
+    EXPECT_STREQ(
+        ASFW::IsochTransport::TxProducerStageName(observed.stage),
+        "replay-syt-validation");
+    EXPECT_STREQ(
+        ASFW::IsochTransport::TxProducerFailureReasonName(
+            observed.reason),
+        "invalid-replay-syt");
+
+    snapshot.Reset();
+    EXPECT_FALSE(snapshot.TryRead(observed));
 }
 
 TEST_F(IsochTxDmaRingTest,

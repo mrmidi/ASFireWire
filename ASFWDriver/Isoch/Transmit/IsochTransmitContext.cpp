@@ -242,6 +242,7 @@ kern_return_t IsochTransmitContext::SetSharedMemoryDescriptors(
         0, std::memory_order_relaxed);
     controlBlock_->preparationCoalescedCount.store(
         0, std::memory_order_relaxed);
+    controlBlock_->producerFailure.Reset();
 
     ASFW_LOG(Isoch, "IT: Mapped shared memory. payloadSegments=%zu metadataRing=%p controlBlock=%p slots=%u maxBytes=%u",
              payloadDmaMap_.SegmentCount(), metadataRing_, controlBlock_, numSlots, maxPacketBytes);
@@ -401,7 +402,54 @@ void IsochTransmitContext::DoRefillOnce(uint64_t eventHostTicks,
         payloadBase_,
         payloadDmaMap_);
     if (!outcome.ok) {
-        ASFW_LOG(Isoch, "IT: Refill failed - stopping immediately");
+        const auto& counters = ring_.RTCounters();
+        if (outcome.failureReason ==
+                Tx::IsochTxDmaRing::RefillFailureReason::
+                    ProducerFatalStatus &&
+            outcome.producerFailureAvailable) {
+            const auto& failure = outcome.producerFailure;
+            ASFW_LOG(
+                Isoch,
+                "IT: Producer fatal stage=%{public}s reason=%{public}s "
+                "generation=%llu packet=%llu range=[%llu,%llu) "
+                "prepared=%u completion=%llu expose=%llu "
+                "replayProducer=%llu replayEpoch=%u",
+                ASFW::IsochTransport::TxProducerStageName(
+                    failure.stage),
+                ASFW::IsochTransport::TxProducerFailureReasonName(
+                    failure.reason),
+                failure.generation,
+                failure.packetIndex,
+                failure.rangeStart,
+                failure.rangeTarget,
+                failure.preparedCount,
+                failure.completionCursor,
+                failure.exposeCursor,
+                failure.replayProducerCursor,
+                failure.replayEpoch);
+        }
+        ASFW_LOG(
+            Isoch,
+            "IT: Refill failed reason=%{public}s ctrl=0x%08x streamStatus=%u "
+            "cmdPtr=0x%08x cmdAddr=0x%08x hwPacket=%u "
+            "fatalAbs=%llu fatalSlot=%u payloadLen=%u "
+            "exitDead=%llu exitDecode=%llu fatalSize=%llu fatalMap=%llu "
+            "underruns=%llu - stopping immediately",
+            Tx::IsochTxDmaRing::RefillFailureReasonName(
+                outcome.failureReason),
+            outcome.contextControl,
+            outcome.streamStatus,
+            outcome.cmdPtr,
+            outcome.cmdAddr,
+            outcome.hwPacketIndex,
+            outcome.failurePacketAbs,
+            outcome.failureSlot,
+            outcome.failurePayloadLength,
+            counters.exitDead.load(std::memory_order_relaxed),
+            counters.exitDecodeFail.load(std::memory_order_relaxed),
+            counters.fatalPacketSize.load(std::memory_order_relaxed),
+            counters.fatalPayloadMapping.load(std::memory_order_relaxed),
+            counters.txUnderruns.load(std::memory_order_relaxed));
         StopImmediatelyForTxFault();
     } else {
         packetsAssembled_ += outcome.packetsFilled;
