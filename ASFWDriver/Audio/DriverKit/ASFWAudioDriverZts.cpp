@@ -263,14 +263,43 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 timing.disposition =
                     ASFW::Protocols::Audio::AMDTP::
                         AmdtpPacketDisposition::Data;
+                const uint32_t txDelay =
+                    directControl->txTransferDelayTicks.load(
+                        std::memory_order_relaxed);
                 timing.nextDataSyt =
                     ASFW::Audio::Runtime::
                         ComputeReplaySytFromTicks(
                             replay.sytOffset,
                             packetAnchorTicks,
-                            directControl
-                                ->txTransferDelayTicks.load(
-                                    std::memory_order_relaxed));
+                            txDelay);
+
+                // Publish the live SYT decision to a lock-free latest-value
+                // trace. The watchdog logs it off the hot path (~1 s) so the
+                // observed device SYT, the delay-free replay offset, and the
+                // re-anchored transmit SYT are visible without logging here.
+                // `observedRxSyt` is the device's original SYT, reconstructed
+                // from the replayed delay-free offset against its source cycle.
+                ASFW::Audio::Runtime::TxSytTraceSample trace{};
+                trace.packetIndex = nextPacketToPrepare;
+                trace.sourceCycle =
+                    ASFW::Timing::decodeCycleTimer(
+                        replay.sourceCycleTimer)
+                        .cycle;
+                trace.outCycle = static_cast<uint32_t>(
+                    (ASFW::Timing::normalizeOffsetDomain(
+                         packetAnchorTicks) /
+                     ASFW::Timing::kTicksPerCycle) %
+                    ASFW::Timing::kCyclesPerSecond);
+                trace.sytOffsetDelayFree = replay.sytOffset;
+                trace.txDelayTicks = txDelay;
+                trace.observedRxSyt =
+                    ASFW::Audio::Runtime::ComputeReplaySyt(
+                        replay.sytOffset,
+                        replay.sourceCycleTimer,
+                        directControl->rxTransferDelayTicks.load(
+                            std::memory_order_relaxed));
+                trace.txSyt = timing.nextDataSyt;
+                directControl->txSytTrace.Publish(trace);
 
                 const int64_t sourcePresentationTicks =
                     ASFW::Timing::normalizeOffsetDomain(

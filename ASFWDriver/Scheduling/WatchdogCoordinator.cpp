@@ -19,15 +19,14 @@ namespace {
 // host-vs-bus-cycle drift. Seed records are always emitted (see ZtsTelemetryRing).
 constexpr uint32_t kZtsDrainIntervalTicks = 100;
 constexpr uint32_t kZtsRecordsPerDrain = 8;
-// TX SYT decisions arrive ~6000/s, so drain more often and emit a consecutive
-// burst (replayable phase chain) rather than a wide stride. 50 ms keeps the
-// 512-record ring well clear of overflow.
-constexpr uint32_t kTxSytDrainIntervalTicks = 50;
-constexpr uint32_t kTxSytRecordsPerDrain = 16;
 // Audio payload writer decisions arrive ~100/s, so drain every 100 ticks
 // (~100 ms) and emit up to 8 strided records.
 constexpr uint32_t kPayloadWriterDrainIntervalTicks = 100;
 constexpr uint32_t kPayloadWriterRecordsPerDrain = 8;
+// TX SYT decisions arrive ~6000/s; the trace is a single latest-value mailbox,
+// so log the most recent decision once per ~1 s (1000 ticks). The line carries
+// the total decision count so collapsed updates are still visible.
+constexpr uint32_t kTxSytTraceIntervalTicks = 1000;
 
 uint64_t MicrosecondsToMachTicks(uint64_t usec) {
     static mach_timebase_info_data_t timebase{0, 0};
@@ -98,8 +97,8 @@ void WatchdogCoordinator::Reset() {
     isochLogDivider_ = 0;
     itLogDivider_ = 0;
     ztsLogDivider_ = 0;
-    txSytLogDivider_ = 0;
     payloadWriterLogDivider_ = 0;
+    txSytTraceDivider_ = 0;
 }
 
 void WatchdogCoordinator::Schedule(uint64_t delayUsec) {
@@ -160,13 +159,13 @@ void WatchdogCoordinator::TickIsochReceive(
             ztsLogDivider_ = 0;
             isochReceiveContext->DrainZtsTelemetry(kZtsRecordsPerDrain);
         }
-        if (++txSytLogDivider_ >= kTxSytDrainIntervalTicks) {
-            txSytLogDivider_ = 0;
-            isochReceiveContext->DrainTxSytTelemetry(kTxSytRecordsPerDrain);
-        }
         if (++payloadWriterLogDivider_ >= kPayloadWriterDrainIntervalTicks) {
             payloadWriterLogDivider_ = 0;
             isochReceiveContext->DrainPayloadWriterTelemetry(kPayloadWriterRecordsPerDrain);
+        }
+        if (++txSytTraceDivider_ >= kTxSytTraceIntervalTicks) {
+            txSytTraceDivider_ = 0;
+            isochReceiveContext->LogTxSytTrace();
         }
     }
 

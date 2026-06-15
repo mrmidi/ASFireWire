@@ -3,7 +3,7 @@
 #include "AudioClientCursor.hpp"
 #include "AudioRtCounters.hpp"
 #include "DeviceTimeline.hpp"
-#include "TxSytTelemetry.hpp"
+#include "TxSytTrace.hpp"
 #include "PayloadWriterTelemetry.hpp"
 #include "../../Runtime/HostClockAnchor.hpp"
 #include "../../Wire/AMDTP/RxSequenceReplay.hpp"
@@ -123,8 +123,10 @@ struct AudioTransportControlBlock final {
     std::atomic<uint64_t> fatalGeneration{0};
 
     // TX control block members
-    TxSytTelemetryRing txSytTelemetry{};
     PayloadWriterTelemetryRing payloadWriterTelemetry{};
+
+    // Latest-value trace of the live replay TX SYT decision (diagnostics).
+    TxSytTraceLatest txSytTrace{};
     TxPreparationRequestState txPreparationRequests{};
     TxFatalSnapshot txFatalSnapshot{};
 
@@ -208,8 +210,8 @@ struct AudioTransportControlBlock final {
         discontinuities.store(0, std::memory_order_release);
 
         // Reset TX members
-        txSytTelemetry.Reset();
         payloadWriterTelemetry.Reset();
+        txSytTrace.Reset();
         txPreparationRequests.Reset();
         txFatalSnapshot.Reset();
 

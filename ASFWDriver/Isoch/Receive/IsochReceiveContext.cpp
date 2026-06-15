@@ -746,51 +746,6 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
     }
 }
 
-void IsochReceiveContext::DrainTxSytTelemetry(uint32_t maxRecords) {
-    auto* control = directInputView_.control;
-    if (control == nullptr) {
-        return;
-    }
-
-    const uint64_t dropped = control->txSytTelemetry.Drain(
-        maxRecords, [](const ASFW::Audio::Runtime::TxSytTelemetryRecord& r) {
-            // Full servo operand set per data-packet decision. flags bits:
-            // 0x1 seeded, 0x2 forceAdjust, 0x4 reseeded, 0x8 committed(data).
-            ASFW_LOG(
-                TxSyt,
-                "pkt=%llu flags=0x%02x health=%u anchor=%lld phasePre=%lld "
-                "phasePost=%lld recPhase=%lld rxFree=%lld pErr=%lld fErr=%lld "
-                "corr=%lld lead=%lld wire=%lld rollCad=%u pend=%u ridx=%u syt=0x%04x "
-                "tgtZts=%lld tgtDev=%lld tgtDiff=%lld",
-                r.packetIndex,
-                static_cast<unsigned>(r.flags),
-                static_cast<unsigned>(r.health),
-                r.packetAnchorTicks,
-                r.phaseTicksPre,
-                r.phaseTicksPost,
-                r.recoveredPhaseTicks,
-                r.rxPhaseDelayFree,
-                r.phaseError,
-                r.frameError,
-                r.correctionTicks,
-                r.leadTicks,
-                r.wireLeadTicks,
-                r.rollingCadenceTicks,
-                static_cast<unsigned>(r.pendingCadenceTicks),
-                static_cast<unsigned>(r.cadenceReadIndex),
-                static_cast<unsigned>(r.syt),
-                r.targetFromZts,
-                r.targetFromDevice,
-                r.targetFrameDiff);
-        });
-
-    if (dropped != 0) {
-        ASFW_LOG(TxSyt,
-                 "drain overflow: dropped=%llu (capacity=%u)",
-                 dropped, ASFW::Audio::Runtime::TxSytTelemetryRing::kCapacity);
-    }
-}
-
 void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
     auto* control = directInputView_.control;
     if (control == nullptr) {
@@ -890,6 +845,38 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
                  "[PayloadWriter] drain overflow: dropped=%llu (capacity=%u)",
                  dropped, ASFW::Audio::Runtime::PayloadWriterTelemetryRing::kCapacity);
     }
+}
+
+void IsochReceiveContext::LogTxSytTrace() {
+    auto* control = directInputView_.control;
+    if (control == nullptr) {
+        return;
+    }
+
+    ASFW::Audio::Runtime::TxSytTraceSample sample{};
+    uint64_t decisions = 0;
+    if (!control->txSytTrace.ReadLatest(sample, decisions)) {
+        return;
+    }
+
+    // tx = rx + delay, re-anchored to our transmit cycle: the txSyt offset
+    // within its cycle equals (sytOffDelayFree + txDelay) % 3072, and its cycle
+    // nibble is outCyc + carry. Surfaced so the replay phase is observed, not
+    // inferred.
+    ASFW_LOG(
+        TxSyt,
+        "obsCyc=%u rxSyt=0x%04x sytOffDelayFree=%u +txDelay=%u outCyc=%u "
+        "=> txSyt=0x%04x (cyc=%u off=0x%03x) pkt=%llu decisions=%llu",
+        sample.sourceCycle,
+        sample.observedRxSyt,
+        sample.sytOffsetDelayFree,
+        sample.txDelayTicks,
+        sample.outCycle,
+        sample.txSyt,
+        (static_cast<uint32_t>(sample.txSyt) >> 12) & 0x0Fu,
+        static_cast<uint32_t>(sample.txSyt) & 0x0FFFu,
+        sample.packetIndex,
+        decisions);
 }
 
 } // namespace ASFW::Isoch

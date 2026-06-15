@@ -114,17 +114,16 @@ public:
     // any seed) into the Zts log category. Never call from the interrupt path.
     void DrainZtsTelemetry(uint32_t maxRecords);
 
-    // Off-hot-path drain of the Isoch-Transmit SYT resync telemetry, captured by
-    // the audio driver into the shared AudioTransportControlBlock. Formats up to
-    // `maxRecords` strided records (plus every seed/reseed) into the TxSyt log
-    // category. Called by the watchdog; the producer runs on the audio queue.
-    void DrainTxSytTelemetry(uint32_t maxRecords);
-
     // Off-hot-path drain of the audio payload writer telemetry, captured by the
     // audio driver into the shared AudioTransportControlBlock. Formats up to
     // `maxRecords` strided records into the PayloadWriter log category.
     // Called by the watchdog.
     void DrainPayloadWriterTelemetry(uint32_t maxRecords);
+
+    // Off-hot-path log of the latest live replay TX SYT decision, published by
+    // the audio driver into the shared AudioTransportControlBlock. Emits one
+    // line into the TxSyt log category. Called by the watchdog (~1 s).
+    void LogTxSytTrace();
 
 private:
     void ResetReplayEpochForDiscontinuity() noexcept;

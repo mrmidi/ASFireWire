@@ -134,8 +134,12 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txPreparationWakeDispatches,
              snapshot.txPreparationWakeCoalesced,
              snapshot.txPreparationDrainPasses);
+    auto* directControl = runtime.directAudioGraph.control;
     const int64_t transferDelayTicks =
-        runtime.txTimingModel.GetConfig().xmitTransferDelayTicks;
+        directControl
+            ? static_cast<int64_t>(directControl->txTransferDelayTicks.load(
+                  std::memory_order_relaxed))
+            : 0;
     const int64_t wireLeadMinimum =
         snapshot.txMinimumLeadTicks == std::numeric_limits<int64_t>::max()
             ? std::numeric_limits<int64_t>::max()

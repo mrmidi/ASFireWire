@@ -10,7 +10,6 @@
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
-#include "../Wire/AMDTP/TxTimingModel.hpp"
 #include "../../Shared/Isoch/IsochAudioTransport.hpp"
 #include "../../Common/TimingUtils.hpp"
 
@@ -188,7 +187,6 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
-    ASFW::Driver::TxTimingModel txTimingModel;
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;

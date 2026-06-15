@@ -215,15 +215,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txStreamEngine.ResetForStart(0, 0);
             ivars.runtime.txReplayReader.Reset();
 
-            ASFW::Driver::TxTimingModel::Config timeConfig{};
             const uint32_t timingRateHz =
                 ivars.device.currentSampleRate > 0
                     ? static_cast<uint32_t>(ivars.device.currentSampleRate)
                     : 48000u;
-            timeConfig.xmitTransferDelayTicks =
-                ASFW::Driver::TxTimingModel::XmitTransferDelayTicksForRate(
-                    timeConfig.sytIntervalFrames, timingRateHz);
-            ivars.runtime.txTimingModel.Configure(timeConfig);
             control->rxTransferDelayTicks.store(
                 profile->RxTransferDelayTicks(ivars.device.currentSampleRate),
                 std::memory_order_relaxed);
