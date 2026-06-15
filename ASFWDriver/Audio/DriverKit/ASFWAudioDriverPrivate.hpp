@@ -275,7 +275,6 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
-                                                                                           uint64_t throughGeneration,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
 // Prepares transmit slots [startPacketIndex, targetPacketIndex) into the shared

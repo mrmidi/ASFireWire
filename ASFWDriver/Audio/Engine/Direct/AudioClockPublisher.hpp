@@ -18,8 +18,8 @@ public:
         binding_ = nullptr;
     }
 
-    // The controller-side clock leg enqueues raw grid anchors in shared memory.
-    // A coalesced Nub action drains them in the AudioDriverKit process.
+    // The controller-side clock leg enqueues observed packet-start anchors in
+    // shared memory. A coalesced Nub action drains them in AudioDriverKit.
     [[nodiscard]] bool IsBound() const noexcept {
         return binding_ != nullptr &&
                binding_->control != nullptr;

@@ -107,14 +107,11 @@ struct DirectAudioDebugSnapshot final {
     uint64_t captureRingOverruns{0};
     uint64_t captureRingStarvations{0};
     uint64_t rxDecodedFrames{0};
+    uint64_t hostAnchorGeneration{0};
     uint64_t hostAnchorFrame{0};
     uint64_t hostAnchorUpdates{0};
     uint64_t hostAnchorMirrorPublications{0};
-    uint64_t hostAnchorStaleUpdates{0};
-    uint64_t hostAnchorQueueDepth{0};
-    uint64_t hostAnchorQueueOverflows{0};
-    uint64_t hostAnchorNotificationDispatches{0};
-    uint64_t hostAnchorNotificationCoalesced{0};
+    uint64_t hostAnchorInvalidUpdates{0};
 
     // Phase A counters
     uint64_t txValidPhasePcmPackets{0};
@@ -290,6 +287,9 @@ struct DirectAudioDebugLogState final {
         control.counters.txCompletedStartupSilenceSlots.load(std::memory_order_relaxed);
     snapshot.txPayloadMismatchFaults =
         control.counters.txPayloadMismatchFaults.load(std::memory_order_relaxed);
+    snapshot.hostAnchorGeneration =
+        control.hostClockAnchor.generation.load(
+            std::memory_order_acquire);
     snapshot.hostAnchorFrame =
         control.hostClockAnchor.sampleFrame.load(
             std::memory_order_relaxed);
@@ -299,25 +299,8 @@ struct DirectAudioDebugLogState final {
     snapshot.hostAnchorMirrorPublications =
         control.hostClockAnchor.mirrorPublications.load(
             std::memory_order_relaxed);
-    snapshot.hostAnchorStaleUpdates =
-        control.hostClockAnchor.staleUpdates.load(
-            std::memory_order_relaxed);
-    const uint64_t anchorWrite =
-        control.hostClockAnchor.producerCursor.load(
-            std::memory_order_acquire);
-    const uint64_t anchorRead =
-        control.hostClockAnchor.consumerCursor.load(
-            std::memory_order_acquire);
-    snapshot.hostAnchorQueueDepth =
-        anchorWrite >= anchorRead ? anchorWrite - anchorRead : 0;
-    snapshot.hostAnchorQueueOverflows =
-        control.hostClockAnchor.queueOverflows.load(
-            std::memory_order_relaxed);
-    snapshot.hostAnchorNotificationDispatches =
-        control.hostClockAnchor.notificationDispatches.load(
-            std::memory_order_relaxed);
-    snapshot.hostAnchorNotificationCoalesced =
-        control.hostClockAnchor.notificationCoalesced.load(
+    snapshot.hostAnchorInvalidUpdates =
+        control.hostClockAnchor.invalidUpdates.load(
             std::memory_order_relaxed);
     snapshot.fatalReason = control.fatalReason.load(std::memory_order_acquire);
     snapshot.fatalGeneration = control.fatalGeneration.load(std::memory_order_acquire);

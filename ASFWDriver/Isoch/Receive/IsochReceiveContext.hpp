@@ -23,7 +23,6 @@
 #include "../../Audio/Engine/Direct/DirectInputWriter.hpp"
 #include "../../Audio/Engine/Direct/AudioClockPublisher.hpp"
 #include "../../Audio/Engine/Direct/Rx/RxAudioPacketProcessor.hpp"
-#include "../../Audio/Engine/Direct/Rx/ZtsFrameProjector.hpp"
 #include "../../Audio/DriverKit/Runtime/AudioGraphBinding.hpp"
 
 namespace ASFW {
@@ -163,9 +162,6 @@ private:
     uint32_t am824Slots_{0};
 
     uint64_t absoluteFrameCursor_{0};
-    ASFW::AudioEngine::Direct::Rx::ZtsFrameProjector ztsProjector_{
-        ASFW::IsochTransport::AudioTimingGeometry::
-            kHalZeroTimestampPeriodFrames};
     bool cursorInitialized_{false};
     uint64_t rxZtsPublishCount_{0};
     uint64_t rxTimestampValidCount_{0};

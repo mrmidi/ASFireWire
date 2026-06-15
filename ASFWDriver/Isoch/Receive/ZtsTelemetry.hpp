@@ -33,7 +33,7 @@ struct ZtsTelemetryRecord final {
     uint64_t publishCount{0};         // rxZtsPublishCount_ at capture
     uint64_t sampleFrame{0};          // gridFrame: HAL zero-timestamp sample frame
     uint64_t hostTicks{0};            // gridHostTicks: published host clock (mach)
-    uint64_t rawHostTicks{0};         // packetReceiveHostTicks (back-corrected drain uptime)
+    uint64_t rawHostTicks{0};         // same observed packet receive time as hostTicks
     uint64_t drainHostTicks{0};       // mach uptime sampled once per batch drain
     int64_t  ageTicks{0};             // descriptor cycle timer vs drain reference
     int64_t  sytLeadTicks{0};         // device SYT presentation lead

@@ -118,7 +118,6 @@ kern_return_t IsochReceiveContext::Start() {
     Transition(IRPolicy::State::Running, 0, "Start");
     rxRing_.ResetForStart();
     absoluteFrameCursor_ = 0;
-    ztsProjector_.Reset(0);
     cursorInitialized_ = false;
     dbcInitialized_ = false;
     lastDbc_ = 0;
@@ -249,11 +248,13 @@ uint32_t IsochReceiveContext::Poll() {
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
         if (pkt.payload) {
+            const uint64_t packetFirstAudioFrame =
+                absoluteFrameCursor_;
             const uint32_t channels = directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
             const auto result = directProcessor_.ProcessPacket(pkt.payload,
                                                                pkt.actualLength,
-                                                               absoluteFrameCursor_,
+                                                               packetFirstAudioFrame,
                                                                channels,
                                                                slots,
                                                                wireFormat_);
@@ -397,7 +398,7 @@ uint32_t IsochReceiveContext::Poll() {
 
                     ASFW::Audio::Runtime::RxSequenceEntry replayEntry{};
                     replayEntry.firstAudioFrame =
-                        absoluteFrameCursor_;
+                        packetFirstAudioFrame;
                     replayEntry.sourceCycleTimer = rxTimestamp.cycleTimer;
                     replayEntry.dataBlocks =
                         static_cast<uint16_t>(result.framesDecoded);
@@ -493,37 +494,26 @@ uint32_t IsochReceiveContext::Poll() {
                         : static_cast<uint32_t>(
                               (1000000000ULL << 8) /
                               directInputView_.sampleRateHz);
-                ztsProjector_.Advance(
-                    result.framesDecoded,
-                    [&](uint64_t gridFrame,
-                        uint32_t framesFromPacketStart) {
-                        if (!rxClockEstablished ||
-                            packetReceiveHostTicks == 0 ||
-                            !clockPublisher_.IsBound() ||
-                            hostNanosPerSampleQ8 == 0) {
-                            return;
-                        }
-
-                        const uint64_t gridDeltaNanos =
-                            (static_cast<uint64_t>(
-                                 framesFromPacketStart) *
-                             hostNanosPerSampleQ8) >>
-                            8;
-                        const uint64_t gridHostTicks =
-                            packetReceiveHostTicks +
-                            ASFW::Timing::nanosToHostTicks(
-                                gridDeltaNanos);
-
-                        const auto publishResult =
-                            clockPublisher_.Publish(
-                                gridFrame,
-                                gridHostTicks,
-                                hostNanosPerSampleQ8);
-                        if (!publishResult.accepted) {
-                            ResetReplayEpochForDiscontinuity();
-                            return;
-                        }
-
+                constexpr uint64_t kZtsPeriodFrames =
+                    ASFW::IsochTransport::AudioTimingGeometry::
+                        kHalZeroTimestampPeriodFrames;
+                const bool observedZtsBoundary =
+                    result.framesDecoded != 0 &&
+                    kZtsPeriodFrames != 0 &&
+                    (packetFirstAudioFrame % kZtsPeriodFrames) == 0;
+                if (observedZtsBoundary &&
+                    rxClockEstablished &&
+                    packetReceiveHostTicks != 0 &&
+                    clockPublisher_.IsBound() &&
+                    hostNanosPerSampleQ8 != 0) {
+                    const auto publishResult =
+                        clockPublisher_.Publish(
+                            packetFirstAudioFrame,
+                            packetReceiveHostTicks,
+                            hostNanosPerSampleQ8);
+                    if (!publishResult.accepted) {
+                        ResetReplayEpochForDiscontinuity();
+                    } else {
                         ++rxZtsPublishCount_;
                         if (publishResult.notifyConsumer &&
                             ztsAnchorReadyCallback_) {
@@ -534,8 +524,8 @@ uint32_t IsochReceiveContext::Poll() {
 
                         Rx::ZtsTelemetryRecord rec{};
                         rec.publishCount = rxZtsPublishCount_;
-                        rec.sampleFrame = gridFrame;
-                        rec.hostTicks = gridHostTicks;
+                        rec.sampleFrame = packetFirstAudioFrame;
+                        rec.hostTicks = packetReceiveHostTicks;
                         rec.rawHostTicks = packetReceiveHostTicks;
                         rec.drainHostTicks = drainHostTicks;
                         rec.ageTicks = rxTimestamp.ageTicks;
@@ -558,9 +548,10 @@ uint32_t IsochReceiveContext::Poll() {
                                 ? Rx::ZtsEventKind::kSeed
                                 : Rx::ZtsEventKind::kUpdate);
                         ztsTelemetry_.Record(rec);
-                    });
+                    }
+                }
                 absoluteFrameCursor_ =
-                    ztsProjector_.AbsoluteFrame();
+                    packetFirstAudioFrame + result.framesDecoded;
             }
         }
 

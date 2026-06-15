@@ -176,11 +176,8 @@ struct AudioTransportControlBlock final {
         uint64_t sampleFrame,
         uint64_t hostTicks,
         uint32_t hostNanosPerSampleQ8) noexcept {
-        const uint64_t period =
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalZeroTimestampPeriodFrames;
         return hostClockAnchor.Publish(
-            sampleFrame, hostTicks, hostNanosPerSampleQ8, period);
+            sampleFrame, hostTicks, hostNanosPerSampleQ8);
     }
 
     void ResetForStart() noexcept {

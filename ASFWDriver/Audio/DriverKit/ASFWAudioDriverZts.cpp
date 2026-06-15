@@ -2,7 +2,7 @@
 // ASFWAudioDriverZts.cpp
 // ASFWDriver
 //
-// Ordered zero-timestamp queue drain for ASFWAudioDriver.
+// Latest observed zero-timestamp publication for ASFWAudioDriver.
 //
 
 #include <new>
@@ -12,118 +12,65 @@
 #include "../../Common/TimingUtils.hpp"
 #include "../../Logging/Logging.hpp"
 
-#include "../Config/TimingCursorPolicy.hpp"
-
 #include <DriverKit/DriverKit.h>
 
 namespace ASFW::Audio::DriverKit {
 
-ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
-                                                                             uint64_t throughGeneration,
-                                                                             const char* reason,
-                                                                             bool logSuccess) noexcept {
+ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
+    ASFWAudioDriver_IVars& ivars,
+    const char* reason,
+    bool logSuccess) noexcept {
     auto* control = ivars.runtime.directAudioGraph.control;
     auto* audioDevice = ivars.audioDevice.get();
     if (!control || !audioDevice) {
         return ASFW::Audio::Runtime::ZtsMirrorPublishResult::NotReady;
     }
 
-    const auto policy = ASFW::Audio::TimingCursorPolicy::MakeDice48kBlocking();
-    const uint32_t P = policy.HalZeroTimestampPeriodFrames();
-    if (P == 0) {
-        return ASFW::Audio::Runtime::ZtsMirrorPublishResult::InvalidTimeline;
-    }
-
-    // The declared ZTS period is a host contract: each successive sample time
-    // must advance by exactly P. Drain and publish every queued hardware anchor
-    // in order; collapsing to the newest anchor creates multi-period jumps that
-    // can prevent the HAL IO engine from establishing its cycle.
-    (void)throughGeneration;
-    bool published = false;
-    bool firstPublication = false;
-    uint64_t drained = 0;
-    uint64_t publishedCount = 0;
+    const uint64_t lastGeneration =
+        ivars.runtime.lastHalZeroTimestampGeneration.load(
+            std::memory_order_acquire);
     ASFW::Audio::Runtime::HostClockAnchorSample anchor{};
-    ASFW::Audio::Runtime::HostClockAnchorSample newestPublished{};
-    uint64_t lastSampleFrame =
-        ivars.runtime.lastHalZeroTimestampSampleFrame.load(
-            std::memory_order_relaxed);
-    uint64_t lastHostTicks =
+    if (!control->hostClockAnchor.TryReadLatest(
+            lastGeneration, anchor)) {
+        return ASFW::Audio::Runtime::ZtsMirrorPublishResult::
+            NoNewGeneration;
+    }
+
+    const bool firstPublication =
         ivars.runtime.lastHalZeroTimestampHostTicks.load(
-            std::memory_order_relaxed);
+            std::memory_order_relaxed) == 0;
+    audioDevice->UpdateCurrentZeroTimestamp(
+        anchor.sampleFrame, anchor.hostTicks);
+    ivars.runtime.lastHalZeroTimestampSampleFrame.store(
+        anchor.sampleFrame, std::memory_order_relaxed);
+    ivars.runtime.lastHalZeroTimestampHostTicks.store(
+        anchor.hostTicks, std::memory_order_relaxed);
+    ivars.runtime.lastHalZeroTimestampGeneration.store(
+        anchor.generation, std::memory_order_release);
+    control->hostClockAnchor.mirrorPublications.fetch_add(
+        1, std::memory_order_relaxed);
+    control->counters.CountRxAdkZtsPublished();
 
-    while (control->hostClockAnchor.TryPop(anchor)) {
-        ++drained;
-        if (anchor.hostTicks == 0 || anchor.hostNanosPerSampleQ8 == 0 ||
-            (anchor.sampleFrame % P) != 0) {
-            continue;
-        }
-
-        const bool firstAnchor = lastHostTicks == 0;
-        const bool advancesExactly =
-            firstAnchor ||
-            (anchor.sampleFrame == lastSampleFrame + P &&
-             anchor.hostTicks > lastHostTicks);
-        if (!advancesExactly) {
-            if (logSuccess) {
-                ASFW_LOG(
-                    DirectAudio,
-                    "ADK ZTS skip discontinuity sample=%llu host=%llu expectedSample=%llu lastHost=%llu",
-                    anchor.sampleFrame,
-                    anchor.hostTicks,
-                    lastSampleFrame + P,
-                    lastHostTicks);
-            }
-            continue;
-        }
-
-        if (firstAnchor) {
-            firstPublication = true;
-        }
-        audioDevice->UpdateCurrentZeroTimestamp(
-            anchor.sampleFrame, anchor.hostTicks);
-        lastSampleFrame = anchor.sampleFrame;
-        lastHostTicks = anchor.hostTicks;
-        newestPublished = anchor;
-        ++publishedCount;
-        published = true;
-        control->hostClockAnchor.mirrorPublications.fetch_add(
-            1, std::memory_order_relaxed);
-        control->counters.CountRxAdkZtsPublished();
+    if (logSuccess) {
+        ASFW_LOG(
+            DirectAudio,
+            "ADK ZTS publish reason=%{public}s generation=%llu sample=%llu host=%llu adkPeriod=%u",
+            reason ? reason : "unknown",
+            anchor.generation,
+            anchor.sampleFrame,
+            anchor.hostTicks,
+            audioDevice->GetZeroTimestampPeriod());
     }
 
-    if (published) {
-        ivars.runtime.lastHalZeroTimestampSampleFrame.store(
-            lastSampleFrame, std::memory_order_relaxed);
-        ivars.runtime.lastHalZeroTimestampHostTicks.store(
-            lastHostTicks, std::memory_order_relaxed);
-        ivars.runtime.lastHalZeroTimestampGeneration.store(
-            control->hostClockAnchor.consumerCursor.load(
-                std::memory_order_acquire),
-            std::memory_order_release);
-        if (logSuccess) {
-            ASFW_LOG(
-                DirectAudio,
-                "ADK ZTS publish reason=%{public}s sample=%llu host=%llu period=%u drained=%llu published=%llu adkPeriod=%u",
-                reason ? reason : "unknown",
-                newestPublished.sampleFrame,
-                newestPublished.hostTicks,
-                P,
-                drained,
-                publishedCount,
-                audioDevice->GetZeroTimestampPeriod());
-        }
-
-        if (firstPublication) {
-            ASFW_LOG(DirectAudio,
-                     "Core audio hardware ZTS ready guid=0x%016llx sampleFrame=%llu hostTicks=%llu",
-                     ivars.device.guid,
-                     newestPublished.sampleFrame,
-                     newestPublished.hostTicks);
-        }
-        return ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published;
+    if (firstPublication) {
+        ASFW_LOG(
+            DirectAudio,
+            "Core audio hardware ZTS ready guid=0x%016llx sampleFrame=%llu hostTicks=%llu",
+            ivars.device.guid,
+            anchor.sampleFrame,
+            anchor.hostTicks);
     }
-    return ASFW::Audio::Runtime::ZtsMirrorPublishResult::AlreadyPublished;
+    return ASFW::Audio::Runtime::ZtsMirrorPublishResult::Published;
 }
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
@@ -366,12 +313,13 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
 void IMPL(ASFWAudioDriver, ZtsAnchorReady)
 {
     (void)action;
+    (void)generation;
     if (!ivars || !ivars->audioDevice) {
         return;
     }
 
     (void)ASFW::Audio::DriverKit::PublishSharedZeroTimestampToHAL(
-        *ivars, generation, "rx-action", false);
+        *ivars, "rx-action", false);
 }
 
 void IMPL(ASFWAudioDriver, TxPreparationReady)
