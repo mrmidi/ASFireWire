@@ -577,8 +577,8 @@ The current ZTS path is:
 ```text
 IR drain
   -> publish (sampleFrame, hostTicks) to shared memory
-  -> coalesced ZtsAnchorReady OSAction
-  -> AudioDriverKit process drains the queue
+  -> ZtsAnchorReady OSAction
+  -> AudioDriverKit process snapshots the latest generation
   -> UpdateCurrentZeroTimestamp(sampleFrame, hostTicks)
 ```
 
@@ -590,20 +590,22 @@ OSAction and call inline" was based on the false assumption that both objects
 execute in one dext task.
 
 The `OSAction` also does not add error to the timestamp value itself. The
-cycle-derived `hostTicks` is captured and queued before notification; delayed
+cycle-derived `hostTicks` is captured before notification; delayed
 delivery changes when CoreAudio receives the anchor, not the
 `(sampleFrame, hostTicks)` pair. The real costs are:
 
 *   cross-process wakeup and scheduling overhead;
 *   delayed visibility of an otherwise valid anchor;
-*   queue depth/overflow risk if the consumer stalls.
+*   intermediate observations being replaced if the consumer stalls.
 
 The required design is therefore to keep the timestamp creation entirely in
-the IR path, preserve the captured value unchanged, coalesce notifications,
-and drain every queued anchor in order. Eliminating `OSAction` would require a
-larger architectural change that moves ZTS production into the
-AudioDriverKit process or collapses the current process boundary. It is not a
-local callback optimization.
+the IR path, preserve the latest captured value unchanged, and let the
+AudioDriverKit consumer publish each generation it observes. Skipped
+generations are valid; CoreAudio's configured clock algorithm owns timestamp
+history and smoothing. Eliminating `OSAction` would require a larger
+architectural change that moves ZTS production into the AudioDriverKit process
+or collapses the current process boundary. It is not a local callback
+optimization.
 
 ### Defect B: Historical Fill-in-Place Ownership Was Wrong
 The pre-FW-53 implementation exposed a 384-packet window, or 48 ms at 8000
@@ -1170,8 +1172,8 @@ live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
 | Frame alignment | 32 frames | Shared alignment contract |
 | IR descriptor ring | 504 packets | Packet-domain receive storage |
 | TX hardware ring | 48 packets | OHCI-owned transmit program |
-| TX preparation slack | 36 packets | Six additional timing groups |
-| TX preparation lead | 84 packets | Hardware ring plus scheduling slack |
+| TX preparation slack | 96 packets | Sixteen groups / 12 ms of producer scheduling tolerance |
+| TX preparation lead | 144 packets | Three hardware-ring depths |
 | TX shared packet ring | 192 packets | Packet-domain backing capacity |
 | Input safety floor | 104 frames | Maximum 40-frame group plus 64-frame jitter floor |
 
@@ -1213,10 +1215,11 @@ independent from the frame-domain ZTS grid.
 
 Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. A six-packet group
 advances by 32 or 40 decoded frames, so many receive drains occur between
-1536-frame anchors. The receive path advances by decoded data-block count and
-publishes in a grid-crossing loop. A device crystal slip, cadence relock,
-delayed drain, or multi-group drain can therefore cross zero, one, or several
-1536-frame grid points without publishing an off-grid sample time.
+1536-frame anchors. The receive path advances the absolute frame cursor by the
+decoded data-block count. It publishes only when a real DATA packet begins
+exactly on the 1536-frame grid, using that packet's hardware-derived receive
+host time unchanged. It does not synthesize a boundary timestamp by adding
+nominal frame durations to another packet observation.
 
 Each packet's eight-byte receive prefix is decoded for its own OHCI timestamp
 and isochronous header. The single cycle-timer/host-time pair captured at drain
@@ -1226,7 +1229,7 @@ packets would make older packets stale.
 
 **Verification priority: high after the first stable duplex run.** Exercise
 multi-group and wraparound drains and confirm that every published anchor uses
-the packet that actually crossed its grid point.
+the DATA packet whose first decoded frame is the grid point.
 
 ### D. NO-DATA, DBC, and Startup Prefill
 
@@ -1238,11 +1241,11 @@ following DATA packet repeats it.
 
 Before IT RUN, the packetizer seeds the entire 192-slot shared TX ring with
 committed NO-DATA packets. This is 24 ms of valid packet-domain backing. It is
-deliberately larger than the steady-state 84-packet preparation lead because
+deliberately larger than the steady-state 144-packet preparation lead because
 action delivery and the startup handoff can be delayed. `TxPreparationReady`
 uses a dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait
 for the first hardware ZTS does not starve the producer. Once the action runs,
-the normal producer target remains `completion + 84`; it prepares later
+the normal producer target remains `completion + 144`; it prepares later
 generations before the consumer reaches them.
 
 The DMA layer must not invent fallback CIP state by copying an arbitrary
