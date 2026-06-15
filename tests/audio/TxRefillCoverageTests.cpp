@@ -36,7 +36,7 @@ using ASFW::IsochTransport::ExpectedCommitGen;
 
 constexpr uint32_t kNumSlots = AudioTimingGeometry::kTxSharedSlotPackets;     // 192
 constexpr uint32_t kHwRing = AudioTimingGeometry::kTxHardwareRingPackets;     // 48
-constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 84 (current)
+constexpr uint32_t kLead = AudioTimingGeometry::kTxPreparationLeadPackets;    // 144
 constexpr uint32_t kGroup = AudioTimingGeometry::kTxPacketsPerGroup;          // 6
 
 // The historical pre-fix lead (slack == 2*group) the hardware IT FATAL was
@@ -175,6 +175,19 @@ TEST(TxRefillCoverage, FullRingPrefillCoversDelayedStartupProducer) {
     }
 }
 
+TEST(TxRefillCoverage, CurrentGeometryCoversCapturedDispatchStall) {
+    RefillSim sim(kNumSlots, kLead, kHwRing);
+    sim.RunProducer();
+
+    // The field failures consumed 40 and 42 packets while the producer action
+    // was delayed. Seven complete groups must remain comfortably covered.
+    for (uint32_t group = 0; group < 7; ++group) {
+        EXPECT_EQ(sim.Refill(kGroup), kNoMiss) << "group=" << group;
+    }
+    EXPECT_EQ(sim.Completion(), 42U);
+    EXPECT_EQ(sim.CommittedMargin(), kLead - 42U);
+}
+
 TEST(TxRefillCoverage, TwoGroupCoalesceCoveredAtOldLead) {
     // 12 packets/refill == the exact OLD budget (lead 60); covered with zero
     // spare — matches the field [TxPrep] margin pinned at 48 before the fix.
@@ -239,17 +252,17 @@ TEST(TxRefillCoverage, LeadSizedForMaxCoalesceIsHoleFree) {
               kNoMiss);
 }
 
-// The fix: the CURRENT geometry (lead 84, slack 36) covers the captured
-// hardware worst case and a full six-group coalesced completion.
-TEST(TxRefillCoverage, CurrentGeometryCoversCapturedAndSixGroupCoalesce) {
+// The current geometry (lead 144, slack 96) covers the captured hardware worst
+// case and sixteen groups without a producer wake.
+TEST(TxRefillCoverage, CurrentGeometryCoversSixteenGroupsWithoutProducer) {
     EXPECT_EQ(DriveSteady(kLead, kHwRing, 13, /*cycles=*/8000), kNoMiss);
-    for (uint32_t groups = 1; groups <= 6; ++groups) {
+    for (uint32_t groups = 1; groups <= 16; ++groups) {
         EXPECT_EQ(DriveSteady(kLead, kHwRing, groups * kGroup, /*cycles=*/4000),
                   kNoMiss)
             << "groups=" << groups;
     }
     // Still holes one group beyond the slack budget — the bound stays tight.
-    EXPECT_NE(DriveSteady(kLead, kHwRing, 7 * kGroup, /*cycles=*/8), kNoMiss);
+    EXPECT_NE(DriveSteady(kLead, kHwRing, 17 * kGroup, /*cycles=*/8), kNoMiss);
 }
 
 // Documents the exact relationship the geometry must satisfy.
@@ -257,8 +270,9 @@ TEST(TxRefillCoverage, CoverageBoundMatchesGeometryConstants) {
     EXPECT_EQ(kLead - kHwRing, AudioTimingGeometry::kTxPreparationSlackPackets);
     EXPECT_EQ(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets,
               AudioTimingGeometry::kTxPreparationSlackPackets);
-    // Current geometry tolerates six groups of coalescing.
-    EXPECT_EQ((kLead - kHwRing) / kGroup, 6u);
+    // Current geometry tolerates sixteen groups without a producer wake.
+    EXPECT_EQ((kLead - kHwRing) / kGroup, 16u);
+    EXPECT_EQ(kLead + kHwRing, kNumSlots);
 }
 
 } // namespace

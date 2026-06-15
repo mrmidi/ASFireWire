@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AudioHalBufferProfiles.hpp"
+
 #include <cstdint>
 
 namespace ASFW::IsochTransport {
@@ -25,25 +27,22 @@ struct AudioTimingGeometry final {
     static constexpr uint32_t kNominalFramesPerTimingGroup =
         36;
 
-    // HAL-facing PCM frame ring (one per direction, directly mapped).
-    // AudioDriverKit's sample allocates one complete ring per declared zero
-    // timestamp period. Keep those values identical so the host and driver
-    // agree on the stream-buffer wrap point.
-    static constexpr uint32_t kFrameRingFrames = 1536;
-
-    // The declared HAL clock period is also the mapped stream-ring length.
-    // RX still runs at the shorter DMA cadence and publishes only when its
-    // decoded-frame cursor crosses this grid.
+    // HAL-facing geometry is selected as one compile-time profile because the
+    // frame ring sizes cross-process shared memory.
+    static constexpr uint32_t kFrameRingFrames =
+        kActiveAudioHalBufferProfile.frameRingFrames;
     static constexpr uint32_t kHalZeroTimestampPeriodFrames =
-        kFrameRingFrames;
+        kActiveAudioHalBufferProfile.zeroTimestampPeriodFrames;
 
     // The graph applies the complete profile/output/client-IO formula. This is
     // only the interrupt-batch component of that calculation.
     static constexpr uint32_t kInputSafetyFloorFrames =
         kMaximumNominalFramesPerInterrupt + 64;
 
-    // Upper bound on a single HAL IO transfer (client buffer size).
-    static constexpr uint32_t kHalIoPeriodFrames = 512;
+    // Client IO sizing/safety budget. ADK may issue a different operation
+    // span; the callback validates that span against stream-ring capacity.
+    static constexpr uint32_t kHalIoPeriodFrames =
+        kActiveAudioHalBufferProfile.clientIoBudgetFrames;
 
     static constexpr uint32_t kFrameAlignment = 32;
 
@@ -58,20 +57,18 @@ struct AudioTimingGeometry final {
     // ahead of the hardware ring (lead = hardwareRing + slack), so a single
     // refill tolerates a coalesced completion of at most `slack` packets:
     //   lead - hardwareRing == slack  >=  max(deltaConsumed)
-    // This is a COVERAGE bound, not a latency margin: producer wake latency was
-    // measured at <100 us ([TxPrep]) yet slack == 2*group (=12) still holed on a
-    // single deltaConsumed=13 coalesced IT completion (IT FATAL dump,
-    // fatalAbs=1332, slotLastPacketAbs one lap behind, exposeCursor at target).
-    // The IT refill ISR coalesces several completion groups under DriverKit
-    // scheduling (RX is observed coalescing up to 6 groups), so size the slack
-    // for the worst expected coalescing. 6*group == 36 covers a six-group
-    // coalesced completion; raise further if the maxDeltaConsumed high-water
-    // counter (counters_.maxDeltaConsumed) reports more. See
+    // This bound covers both a coalesced refill and packets consumed while the
+    // cross-process producer action is delayed. Field runs exhausted 36 packets
+    // of slack after 40-42 packets (5.0-5.25 ms) elapsed without a producer
+    // wake, even with a dedicated DriverKit queue. Keep two hardware-ring
+    // depths of slack (96 packets / 12 ms), giving the active lead three
+    // hardware-ring depths while leaving one full hardware-ring depth before
+    // shared-slot reuse. See
     // documentation/ZTS_AND_SYT.md §13 and tests/audio/TxRefillCoverageTests.cpp.
     static constexpr uint32_t kTxSharedSlotPackets = 192;
     static constexpr uint32_t kTxHardwareRingPackets = 48;
     static constexpr uint32_t kTxPreparationSlackPackets =
-        6 * kTxPacketsPerGroup;
+        2 * kTxHardwareRingPackets;
     static constexpr uint32_t kTxPreparationLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
@@ -94,9 +91,6 @@ static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kHalZeroTimestampPeriodFrames ==
               0,
               "Frame ring must be an integer number of ZTS periods");
-static_assert(AudioTimingGeometry::kFrameRingFrames ==
-                  AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
-              "AudioDriverKit stream ring must equal the declared ZTS period");
 static_assert(AudioTimingGeometry::kFrameRingFrames %
                   AudioTimingGeometry::kFrameAlignment ==
               0,
@@ -112,17 +106,17 @@ static_assert(AudioTimingGeometry::kRxPacketsPerGroup ==
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
               AudioTimingGeometry::kTxPreparationLeadPackets,
               "TX shared slot ring must hold the full preparation lead");
-// COVERAGE: a single refill absorbs a coalesced completion of at most `slack`
-// packets. Hardware showed deltaConsumed=13 holing slack==12, so require slack
-// to cover several groups of coalescing.
+// COVERAGE: tolerate 16 six-packet groups without a producer wake. This covers
+// the observed 40-42 packet DriverKit dispatch stalls with more than 2x margin.
 static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets >=
-                  6 * AudioTimingGeometry::kTxPacketsPerGroup,
-              "TX preparation slack must cover the worst expected coalesced "
-              "IT completion (>= 6 groups); raise if maxDeltaConsumed exceeds it");
+                  16 * AudioTimingGeometry::kTxPacketsPerGroup,
+              "TX preparation slack must cover at least 12 ms of producer "
+              "dispatch latency at the current six-packet cadence");
 static_assert(AudioTimingGeometry::kTxPreparationLeadPackets <=
                   AudioTimingGeometry::kTxSharedSlotPackets -
-                      AudioTimingGeometry::kTxPacketsPerGroup,
-              "TX preparation must not overwrite the next uncompleted group");
+                      AudioTimingGeometry::kTxHardwareRingPackets,
+              "TX preparation must leave one hardware-ring depth before "
+              "shared-slot reuse");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
                   AudioTimingGeometry::kTxPacketsPerGroup ==
               0,

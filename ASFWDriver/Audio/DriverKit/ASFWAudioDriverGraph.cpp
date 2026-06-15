@@ -262,10 +262,18 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNoMemory;
     }
 
-    // The init argument is the declared zero-timestamp period: the sample grid
-    // the HAL predicts anchors on and, for ADK stream buffers, the ring wrap.
-    // The maximum individual client IO transfer remains independently bounded.
+    // The init argument is the declared zero-timestamp period. Shared stream
+    // memory is sized separately by the selected HAL buffer profile.
+    constexpr auto bufferProfile =
+        ASFW::IsochTransport::kActiveAudioHalBufferProfile;
     const uint32_t target_period = ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    ASFW_LOG(
+        Audio,
+        "ASFWAudioDriver: HAL buffer profile=%{public}s ring=%u ioBudget=%u zts=%u",
+        bufferProfile.name,
+        bufferProfile.frameRingFrames,
+        bufferProfile.clientIoBudgetFrames,
+        bufferProfile.zeroTimestampPeriodFrames);
     ASFW_LOG(Audio, "ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: %u frames", target_period);
 
     ivars.audioDevice = OSSharedPtr(OSTypeAlloc(ASFWAudioDevice), OSNoRetain);
@@ -384,19 +392,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                  static_cast<uint32_t>(ivars.device.currentSampleRate));
         return kIOReturnBadArgument;
     }
-    if (directOutputFrames != target_period ||
-        directInputFrames != target_period) {
+    if (directOutputFrames != bufferProfile.frameRingFrames ||
+        directInputFrames != bufferProfile.frameRingFrames) {
         ASFW_LOG(
             Audio,
-            "ADK FATAL MEM ring/ZTS mismatch outFrames=%u inFrames=%u ztsPeriod=%u",
+            "ADK FATAL MEM ring/profile mismatch profile=%{public}s outFrames=%u inFrames=%u expectedRing=%u ztsPeriod=%u",
+            bufferProfile.name,
             directOutputFrames,
             directInputFrames,
+            bufferProfile.frameRingFrames,
             target_period);
         return kIOReturnBadArgument;
     }
     ASFW_LOG(
         Audio,
-        "ADK GRAPH state=stream-ring/ZTS outFrames=%u inFrames=%u ztsPeriod=%u",
+        "ADK GRAPH state=stream-ring/ZTS profile=%{public}s outFrames=%u inFrames=%u ztsPeriod=%u",
+        bufferProfile.name,
         directOutputFrames,
         directInputFrames,
         target_period);

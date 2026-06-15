@@ -110,27 +110,30 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             return kIOReturnNotReady;
         }
 
+        auto* graphControl = driverIvars->runtime.directAudioGraph.control;
+        auto& callbackState = graphControl
+            ? *graphControl
+            : driverIvars->runtime.directAudioControl;
+
         auto returnError = [&](kern_return_t kr) noexcept {
-            auto& diagnostics = driverIvars->runtime.directAudioControl;
-            diagnostics.ioLastError.store(
+            callbackState.ioLastError.store(
                 static_cast<uint32_t>(kr), std::memory_order_relaxed);
-            diagnostics.ioLastErrorOperation.store(
+            callbackState.ioLastErrorOperation.store(
                 static_cast<uint32_t>(operation), std::memory_order_relaxed);
-            diagnostics.ioLastErrorFrameCount.store(
+            callbackState.ioLastErrorFrameCount.store(
                 ioBufferFrameSize, std::memory_order_relaxed);
-            diagnostics.ioLastErrorObjectId.store(
+            callbackState.ioLastErrorObjectId.store(
                 objectID, std::memory_order_relaxed);
-            diagnostics.ioLastErrorSampleTime.store(
+            callbackState.ioLastErrorSampleTime.store(
                 sampleTime, std::memory_order_relaxed);
-            diagnostics.ioLastErrorHostTime.store(
+            callbackState.ioLastErrorHostTime.store(
                 hostTime, std::memory_order_relaxed);
-            diagnostics.ioCallbackErrorGeneration.fetch_add(
+            callbackState.ioCallbackErrorGeneration.fetch_add(
                 1, std::memory_order_release);
             return kr;
         };
 
         (void)driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed);
-        auto& callbackState = driverIvars->runtime.directAudioControl;
         callbackState.ioLastOperation.store(
             static_cast<uint32_t>(operation), std::memory_order_relaxed);
         callbackState.ioLastFrameCount.store(
@@ -154,17 +157,19 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             return kIOReturnSuccess;
         }
 
-        if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
-            return returnError(kIOReturnBadArgument);
-        }
-
         if (skeletonBound) {
-            auto* control = driverIvars->runtime.directAudioGraph.control;
+            auto* control = graphControl;
             if (!control) {
                 return returnError(kIOReturnNotReady);
             }
 
             if (operation == IOUserAudioIOOperationBeginRead) {
+                // ADK permits operation spans that differ from the nominal IO
+                // size. The stream ring capacity is the actual hard bound.
+                if (ioBufferFrameSize >
+                    driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity) {
+                    return returnError(kIOReturnBadArgument);
+                }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
                                                      *control,
@@ -172,6 +177,12 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                      ioBufferFrameSize);
                 control->counters.CountBeginRead();
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
+                // See BeginRead above: CoreAudio may choose a larger span than
+                // kHalIoPeriodFrames while remaining within the stream ring.
+                if (ioBufferFrameSize >
+                    driverIvars->runtime.directAudioGraph.memory.outputFrameCapacity) {
+                    return returnError(kIOReturnBadArgument);
+                }
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
 
@@ -235,6 +246,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
 
                 control->counters.CountWriteEnd();
+            } else {
+                return returnError(kIOReturnBadArgument);
             }
         } else {
             return returnError(kIOReturnNotReady);

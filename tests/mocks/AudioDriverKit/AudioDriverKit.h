@@ -12,8 +12,8 @@ using IOUserAudioTransportType = uint32_t;
 using IOUserAudioClockAlgorithm = uint32_t;
 
 enum IOUserAudioIOOperation : uint32_t {
-    IOUserAudioIOOperationBeginRead = 1,
-    IOUserAudioIOOperationWriteEnd = 2,
+    IOUserAudioIOOperationBeginRead = 0,
+    IOUserAudioIOOperationWriteEnd = 1,
 };
 
 enum IOUserAudioObjectPropertyScope : uint32_t {
