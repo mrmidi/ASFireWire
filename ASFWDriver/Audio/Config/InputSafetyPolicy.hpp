@@ -1,21 +1,6 @@
 #pragma once
 
-#include <algorithm>
-#include <cstdint>
-
-namespace ASFW::Audio {
-
-[[nodiscard]] constexpr uint32_t RequiredInputSafetyFrames(
-    uint32_t profileInputSafety,
-    uint32_t outputSafety,
-    uint32_t maximumClientIoFrames,
-    uint32_t maximumFramesPerInterrupt,
-    uint32_t schedulingJitterFrames) noexcept {
-    return std::max(
-        profileInputSafety,
-        std::max(
-            outputSafety + maximumClientIoFrames + schedulingJitterFrames,
-            maximumFramesPerInterrupt + schedulingJitterFrames));
-}
-
-} // namespace ASFW::Audio
+// RequiredInputSafetyFrames moved to the consolidated geometry policy header.
+// This shim preserves the include path and the ASFW::Audio symbol for existing
+// call sites. See ASFWDriver/Shared/Isoch/AudioGeometryPolicy.hpp.
+#include "../../Shared/Isoch/AudioGeometryPolicy.hpp"

@@ -5,6 +5,7 @@
 #include "../../../Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "../../../Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "../../../Ports/IAmdtpTxSlotProvider.hpp"
+#include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -73,7 +74,8 @@ private:
     AMDTP::AmdtpTxPacketizer packetizer_{};
     AMDTP::AmdtpPayloadWriter payloadWriter_{};
 
-    AMDTP::PacketTimelineSlot timelineSlots_[512]{};
+    AMDTP::PacketTimelineSlot
+        timelineSlots_[ASFW::IsochTransport::AudioTimingGeometry::kTimelineSlots]{};
     AMDTP::AmdtpPacketTimeline timeline_{};
 
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};
