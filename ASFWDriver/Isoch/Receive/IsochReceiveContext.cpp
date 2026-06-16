@@ -222,6 +222,12 @@ uint32_t IsochReceiveContext::Poll() {
                              snapshot.sampleRateHz);
                     directInputWriter_.Unbind();
                     clockPublisher_.Unbind();
+                    // FW-62: drop the stale view so the non-null guard in
+                    // IsReplayEstablished() is meaningful. Unbind() only detaches the
+                    // writer/publisher; .control would otherwise dangle into freed
+                    // audio-owned memory. Re-arm the one-shot replay reset on rebind.
+                    directInputView_ = {};
+                    replayResetForStart_ = false;
                 }
                 lastDirectAudioGeneration_ = snapshot.generation;
             }
@@ -230,6 +236,9 @@ uint32_t IsochReceiveContext::Poll() {
                 ASFW_LOG(Isoch, "IR: direct audio binding cleared/unavailable. Disarming.");
                 directInputWriter_.Unbind();
                 clockPublisher_.Unbind();
+                // FW-62: see above — null the view so .control can't dangle.
+                directInputView_ = {};
+                replayResetForStart_ = false;
                 lastDirectAudioGeneration_ = 0;
             }
         }
@@ -612,8 +621,12 @@ void IsochReceiveContext::SetReplayReadyCallback(
 }
 
 bool IsochReceiveContext::IsReplayEstablished() const noexcept {
-    return directInputView_.control &&
-           directInputView_.control->rxSequenceReplay.IsEstablished();
+    // FW-62: this runs on the audio queue while .control is written/nulled on the RX
+    // queue (Poll, under rxLock_). Snapshot the pointer once — reading it twice risks a
+    // null-TOCTOU (check passes, deref nulls). NOTE: this does not fix use-after-free of
+    // a non-null-but-freed control block; that lifetime ownership is FW-63.
+    const auto* control = directInputView_.control;
+    return control != nullptr && control->rxSequenceReplay.IsEstablished();
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
