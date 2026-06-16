@@ -233,7 +233,7 @@ template the FireWire side.
 
 **References are read-only behavioral sources — do not copy code.** `references/` holds GPL (Linux, libffado), LGPL, and APSL (Apple) source. Copying any of it verbatim imports its license onto the dext (Linux = GPLv2 — a hard no). Use references to learn *wire/behavioral* truth, then write fresh, modern C++ following DriverKit idioms. Apple's IOFireWire is C++98-era — correct for *behavior*, wrong to copy 1:1 in 2026; Linux is C/Rust/old C++ — same. If a non-trivial fragment is genuinely adapted (not just behavior), add a header attribution + the source's license and confirm license compatibility first.
 
-**Check references before implementing anything wire-observable** — not just device-specific audio features. This covers OHCI mechanism (DMA/descriptors/contexts), bus policy (reset/gap/IRM/BM/topology), protocol logic (AVC, SBP-2, Config ROM, CSR), *and* device-class features (Alesis, MOTU, RME, DICE/TCAT, …). `ls references/` — is there a Linux/FFADO/ALSA/Apple source covering this? If yes, read it and cite `file:line`. If **not**, tell the user, name the likely upstream, and **warn that the implementation will be synthesized and is probably wrong on the wire** without a reference. Offer to `git clone`/`curl` it into `references/` and ask the user to confirm the source.
+**Check references before implementing anything wire-observable** — not just device-specific audio features. This covers OHCI mechanism (DMA/descriptors/contexts), bus policy (reset/gap/IRM/BM/topology), protocol logic (AVC, SBP-2, Config ROM, CSR), *and* device-class features (Alesis, MOTU, RME, DICE/TCAT, …). `ls references/` — is there a Linux/FFADO/ALSA/Apple source covering this? If yes, read it and cite `file:line`. If **not**, tell the user, name the likely upstream, and **warn that the implementation will be synthesized and is probably wrong on the wire** without a reference. Offer to `git clone`/`curl` it into `references/` and ask the user to confirm the source. If the behavior depends on a spec and cannot be clarified from Linux, Apple, FFADO, or other local references, ask the user to confirm or manually check the relevant spec; do not guess.
 
 **Ground truth per question type** (don't hallucinate, don't guess a `§`):
 - **API surface** (DriverKit / AudioDriverKit / PCIDriverKit signatures, enums, entitlements) → `ctx7` / `find-docs` / SDK headers. The trap: `ctx7` will confidently answer about a *single method in isolation* while omitting the surrounding contract (call ordering, what must precede/follow, ownership, concurrency, post-`Stop` behavior). A right per-method answer is **not** a right *lifecycle* answer.
@@ -246,6 +246,12 @@ template the FireWire side.
 **General complexity.** ASFW is an extremely complex project — the audio stack alone touches OHCI / IEEE 1394, IEC 61883-1, IEC 61883-6, CoreAudio, and stream/buffer geometry at once. A fix that looks local to one field often breaks another. Trace a change through every layer it touches before committing.
 
 **Hardware testing is expensive** (rebuild, install, connect/disconnect). Reserve quick HW checks for when a theory is a blocker and only HW can settle it. Otherwise design the full solution first, verify against tests + the reference stacks, and batch HW verification at the end.
+
+**Fallback and legacy support.** Avoid double paths when implementing or fixing behavior; they often lead to days of debugging. Prefer to validate the new approach, then remove the superseded path and any dead code. If the old code is obviously wrong, delete it. If the migration boundary is unclear, warn or ask before leaving both paths alive.
+
+**Instrumentation.** Features and fixes should be traceable, but do not add IO or noisy logging to hot paths. Design instrumentation alongside the feature, suggest the relevant `log stream` command or predicate, and ask the user for runtime state when needed (for example: driver running, audio playing, device connected). Otherwise the trace may prove nothing.
+
+**Commit and git history.** Keep history traceable. If changes are getting large, warn the user that it is better to commit the current work first; otherwise unrelated logic shifts can become hard to repair or reason about.
 
 ## Code Patterns
 
