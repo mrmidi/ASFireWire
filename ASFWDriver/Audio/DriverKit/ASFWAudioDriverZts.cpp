@@ -540,7 +540,7 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         directControl ? directControl->client.OutputWrittenEndFrame() : 0;
     const uint64_t targetFrameEnd =
         outputWrittenEndFrame != 0
-            ? SaturatingAdd(
+            ? ASFW::Audio::DriverKit::SaturatingAdd(
                   outputWrittenEndFrame,
                   ASFW::IsochTransport::AudioTimingGeometry::
                       kTxExposureLeadFrames)
