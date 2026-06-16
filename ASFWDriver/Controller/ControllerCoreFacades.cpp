@@ -52,23 +52,8 @@ MetricsSink& ControllerCore::Metrics() const {
 
 std::optional<TopologySnapshot> ControllerCore::LatestTopology() const {
     if (deps_.topology) {
-        auto snapshot = deps_.topology->LatestSnapshot();
-        if (snapshot.has_value()) {
-            // mute log spamming
-            // ASFW_LOG(Controller, "LatestTopology() returning snapshot: gen=%u nodes=%u
-            // root=%{public}s IRM=%{public}s",
-            //          snapshot->generation,
-            //          snapshot->nodeCount,
-            //          snapshot->rootNodeId.has_value() ?
-            //          std::to_string(*snapshot->rootNodeId).c_str() : "none",
-            //          snapshot->irmNodeId.has_value() ?
-            //          std::to_string(*snapshot->irmNodeId).c_str() : "none");
-        } else {
-            ASFW_LOG(Controller, "LatestTopology() returning nullopt (no topology built yet)");
-        }
-        return snapshot;
+        return deps_.topology->LatestSnapshot();
     }
-    ASFW_LOG(Controller, "LatestTopology() returning nullopt (no TopologyManager)");
     return std::nullopt;
 }
 
