@@ -88,3 +88,6 @@ __pycache__/
 
 # mimo
 .mimocode
+
+# references - libffado, apple, linux firewire ohci driver, linux sound/firewire stack, alsa snd-firewire-ctl-services
+/references/
