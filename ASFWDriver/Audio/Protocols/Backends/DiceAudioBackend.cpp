@@ -20,6 +20,22 @@
 
 namespace ASFW::Audio {
 
+namespace {
+
+[[nodiscard]] uint64_t UptimeMilliseconds() noexcept {
+    mach_timebase_info_data_t timebase{};
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS ||
+        timebase.denom == 0) {
+        return 0;
+    }
+    const unsigned __int128 nanos =
+        static_cast<unsigned __int128>(mach_absolute_time()) *
+        timebase.numer / timebase.denom;
+    return static_cast<uint64_t>(nanos / 1'000'000U);
+}
+
+} // namespace
+
 DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                                    Discovery::DeviceRegistry& registry,
                                    AudioRuntimeRegistry& runtime,
@@ -67,6 +83,52 @@ DiceAudioBackend::~DiceAudioBackend() noexcept {
     }
 }
 
+void DiceAudioBackend::BeginTeardown() noexcept {
+    const bool wasStopping = stopping_.exchange(true, std::memory_order_acq_rel);
+    DICE::NotificationMailbox::ClearObserver(this);
+    hostTransport_.SetTimingLossCallback({});
+
+    const uint64_t recoveryRejectBefore =
+        recoveryRejectCount_.load(std::memory_order_acquire);
+    const uint64_t probeRejectBefore =
+        probeRejectCount_.load(std::memory_order_acquire);
+    const uint64_t probeAbortBefore =
+        probeAbortCount_.load(std::memory_order_acquire);
+    const uint64_t coordinatorAbortBefore =
+        restartCoordinator_.TeardownAbortCount();
+    const uint64_t startMs = UptimeMilliseconds();
+
+    ASFW_LOG(Audio,
+             "DiceAudioBackend: BeginTeardown stopping=true draining dice queue already=%u",
+             wasStopping ? 1 : 0);
+
+    if (workQueue_) {
+#ifdef ASFW_HOST_TEST
+        workQueue_->DispatchSync([] {});
+#else
+        workQueue_->DispatchSync(^{});
+#endif
+    }
+
+    const uint64_t endMs = UptimeMilliseconds();
+    const uint64_t drainMs = endMs >= startMs ? endMs - startMs : 0;
+    const uint64_t coordinatorAborted =
+        restartCoordinator_.TeardownAbortCount() - coordinatorAbortBefore;
+    const uint64_t probeAborted =
+        probeAbortCount_.load(std::memory_order_acquire) - probeAbortBefore;
+    const uint64_t recoveryRejected =
+        recoveryRejectCount_.load(std::memory_order_acquire) - recoveryRejectBefore;
+    const uint64_t probeRejected =
+        probeRejectCount_.load(std::memory_order_acquire) - probeRejectBefore;
+
+    ASFW_LOG(Audio,
+             "DiceAudioBackend: dice queue drained aborted=%llu recoveryRejected=%llu probeRejected=%llu drain=%llums",
+             coordinatorAborted + probeAborted,
+             recoveryRejected,
+             probeRejected,
+             drainMs);
+}
+
 void DiceAudioBackend::OnDeviceRecordUpdated(uint64_t guid) noexcept {
     EnsureNubForGuid(guid);
 }
@@ -93,11 +155,31 @@ void DiceAudioBackend::HandleRecoveryEvent(uint64_t guid, DICE::DiceRestartReaso
         return;
     }
 
+    if (stopping_.load(std::memory_order_acquire)) {
+        recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: recovery event ignored by teardown GUID=%llx reason=%u",
+                 guid,
+                 static_cast<unsigned>(reason));
+        return;
+    }
+
     if (!TryBeginRecovery(guid)) {
         return;
     }
 
     auto recover = ^{
+        // FW-61: a block enqueued just before BeginTeardown's drain bails here before any
+        // MMIO, so it cannot run after ASFWDriver::Stop detaches hardware.
+        if (stopping_.load(std::memory_order_acquire)) {
+            recoveryRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: queued recovery aborted by teardown GUID=%llx reason=%u",
+                     guid,
+                     static_cast<unsigned>(reason));
+            FinishRecovery(guid);
+            return;
+        }
         const IOReturn status = restartCoordinator_.RecoverStreaming(guid, reason);
         if (status == kIOReturnSuccess) {
             EnsureNubForGuid(guid);
@@ -130,6 +212,14 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
         return;
     }
 
+    if (stopping_.load(std::memory_order_acquire)) {
+        probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: device notification ignored by teardown bits=0x%08x",
+                 bits);
+        return;
+    }
+
     std::vector<uint64_t> guids;
     if (lock_) {
         IOLockLock(lock_);
@@ -139,6 +229,14 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
 
     for (const uint64_t guid : guids) {
         auto probe = ^{
+            if (stopping_.load(std::memory_order_acquire)) {
+                probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+                ASFW_LOG(Audio,
+                         "DiceAudioBackend: queued health probe ignored by teardown GUID=%llx bits=0x%08x",
+                         guid,
+                         bits);
+                return;
+            }
             ProbeDuplexHealth(guid, bits);
         };
 
@@ -151,11 +249,28 @@ void DiceAudioBackend::HandleDeviceNotification(uint32_t bits) noexcept {
 }
 
 void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBits) noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: health probe refused by teardown GUID=%llx bits=0x%08x",
+                 guid,
+                 notificationBits);
+        return;
+    }
+
     // Hold a shared_ptr for the duration of the (blocking) health probe so the
     // protocol cannot be torn down underneath us by a concurrent device removal.
     auto protocol = runtime_.FindShared(guid);
     auto* diceProtocol = protocol ? protocol->AsDiceDuplexProtocol() : nullptr;
     if (!diceProtocol) {
+        return;
+    }
+    if (stopping_.load(std::memory_order_acquire)) {
+        probeRejectCount_.fetch_add(1, std::memory_order_acq_rel);
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: health probe refused by teardown before read GUID=%llx bits=0x%08x",
+                 guid,
+                 notificationBits);
         return;
     }
 
@@ -175,6 +290,15 @@ void DiceAudioBackend::ProbeDuplexHealth(uint64_t guid, uint32_t notificationBit
     for (uint32_t waited = 0; waited < kHealthBridgeTimeoutMs; waited += kHealthBridgePollMs) {
         if (waitState->done.load(std::memory_order_acquire)) {
             break;
+        }
+        if (stopping_.load(std::memory_order_acquire)) {
+            probeAbortCount_.fetch_add(1, std::memory_order_acq_rel);
+            ASFW_LOG(Audio,
+                     "DiceAudioBackend: health probe aborted by teardown GUID=%llx bits=0x%08x kr=0x%x",
+                     guid,
+                     notificationBits,
+                     kIOReturnAborted);
+            return;
         }
         IOSleep(kHealthBridgePollMs);
     }
@@ -308,6 +432,12 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
     if (guid == 0) {
         return kIOReturnBadArgument;
     }
+    if (stopping_.load(std::memory_order_acquire)) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: StartStreaming refused by teardown GUID=0x%016llx",
+                 guid);
+        return kIOReturnAborted;
+    }
 
     auto* nub = publisher_.GetNub(guid);
     if (!nub) {
@@ -340,6 +470,19 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
 }
 
 IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: StopStreaming refused by teardown GUID=0x%016llx",
+                 guid);
+        if (lock_) {
+            IOLockLock(lock_);
+            activeStreamingGuids_.erase(guid);
+            recoveringGuids_.erase(guid);
+            IOLockUnlock(lock_);
+        }
+        return kIOReturnAborted;
+    }
+
     const IOReturn status = restartCoordinator_.StopStreaming(guid);
     if (status == kIOReturnSuccess && lock_) {
         IOLockLock(lock_);
@@ -353,6 +496,13 @@ IOReturn DiceAudioBackend::StopStreaming(uint64_t guid) noexcept {
 IOReturn DiceAudioBackend::RequestClockConfig(uint64_t guid,
                                               const DICE::DiceDesiredClockConfig& desiredClock,
                                               DICE::DiceRestartReason reason) noexcept {
+    if (stopping_.load(std::memory_order_acquire)) {
+        ASFW_LOG(Audio,
+                 "DiceAudioBackend: RequestClockConfig refused by teardown GUID=0x%016llx",
+                 guid);
+        return kIOReturnAborted;
+    }
+
     const IOReturn status = restartCoordinator_.RequestClockConfig(guid, desiredClock, reason);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);

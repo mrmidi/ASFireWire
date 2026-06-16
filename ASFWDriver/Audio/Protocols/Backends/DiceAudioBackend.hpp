@@ -51,6 +51,12 @@ public:
                                               const DICE::DiceDesiredClockConfig& desiredClock,
                                               DICE::DiceRestartReason reason) noexcept;
 
+    // FW-61: quiesce the dice queue before the core detaches hardware. Sets the stop flag,
+    // cancels in-flight recovery (coordinator), then drains the work queue (synchronous
+    // barrier) so no recovery/probe block issues MMIO after ASFWDriver::Stop's Detach.
+    // Idempotent; must be called before HardwareInterface::Detach().
+    void BeginTeardown() noexcept;
+
 private:
     void EnsureNubForGuid(uint64_t guid) noexcept;
     void HandleDeviceNotification(uint32_t bits) noexcept;
@@ -74,6 +80,9 @@ private:
     std::unordered_set<uint64_t> retryOutstanding_{};
     std::unordered_set<uint64_t> activeStreamingGuids_{};
     std::unordered_set<uint64_t> recoveringGuids_{};
+    std::atomic<uint64_t> recoveryRejectCount_{0};
+    std::atomic<uint64_t> probeRejectCount_{0};
+    std::atomic<uint64_t> probeAbortCount_{0};
 
     static constexpr uint32_t kCapsRetryDelayMs = 50;
     static constexpr uint8_t kCapsRetryMaxAttempts = 40; // 2s @ 50ms
