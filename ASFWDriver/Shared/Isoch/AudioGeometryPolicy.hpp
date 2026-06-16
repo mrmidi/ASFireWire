@@ -128,16 +128,29 @@ namespace ASFW::Audio {
 
 [[nodiscard]] constexpr uint32_t RequiredInputSafetyFrames(
     uint32_t profileInputSafety,
-    uint32_t outputSafety,
-    uint32_t maximumClientIoFrames,
     uint32_t maximumFramesPerInterrupt,
     uint32_t schedulingJitterFrames) noexcept {
-    const uint32_t fullWindow =
-        outputSafety + maximumClientIoFrames + schedulingJitterFrames;
+    // The HAL safety offset is the data-VISIBILITY margin only: how far the
+    // input read head must lag the producer so the frames are guaranteed
+    // present. CoreAudio accounts for the IO buffer size SEPARATELY (via the
+    // buffer-frame-size property), so the IO window must NOT be folded in here.
+    // Folding it in inflated the input safety offset to 624 frames (~13 ms,
+    // ~10.7 ms of phantom input latency) and broke the input==output symmetry
+    // every reference stack holds: Apogee Duet plist (50/50 @48k, x2/x4 by
+    // rate), Focusrite Saffire (delayPackets x framesPerPacket), and Apple's
+    // AppleFWAudio engine (small multiples of frames-per-group + device
+    // override) all sit at tens of frames, never hundreds.
+    //
+    // The margin is one interrupt batch + scheduling jitter, floored by the
+    // device profile's own value (RxSafetyOffsetFrames = 128 @48k), aligned up
+    // to the 32-frame grid.
     const uint32_t interruptBatch =
         maximumFramesPerInterrupt + schedulingJitterFrames;
-    const uint32_t hi = fullWindow > interruptBatch ? fullWindow : interruptBatch;
-    return profileInputSafety > hi ? profileInputSafety : hi;
+    const uint32_t raw =
+        profileInputSafety > interruptBatch ? profileInputSafety : interruptBatch;
+    constexpr uint32_t kAlign =
+        ASFW::IsochTransport::AudioTimingGeometry::kFrameAlignment;
+    return ((raw + kAlign - 1) / kAlign) * kAlign;
 }
 
 } // namespace ASFW::Audio

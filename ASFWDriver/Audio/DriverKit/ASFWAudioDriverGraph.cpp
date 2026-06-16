@@ -666,24 +666,21 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
 
     constexpr uint32_t kSchedulingJitterFrames = 64;
+    // Data-visibility margin only; the IO buffer size is NOT folded in (see
+    // RequiredInputSafetyFrames). This floors the profile's per-rate value
+    // (RxSafetyOffsetFrames) at one interrupt batch + jitter, never inflates it.
     const uint32_t requiredInputSafety =
         ASFW::Audio::RequiredInputSafetyFrames(
             inSafety,
-            outSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalIoPeriodFrames,
             ASFW::IsochTransport::AudioTimingGeometry::
                 kMaximumNominalFramesPerInterrupt,
             kSchedulingJitterFrames);
     if (inSafety != requiredInputSafety) {
         ASFW_LOG(
             Audio,
-            "ASFWAudioDriver: raising input safety %u -> %u (output=%u maxIO=%u maxIRQFrames=%u jitter=%u)",
+            "ASFWAudioDriver: input safety %u -> %u (maxIRQFrames=%u jitter=%u)",
             inSafety,
             requiredInputSafety,
-            outSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalIoPeriodFrames,
             ASFW::IsochTransport::AudioTimingGeometry::
                 kMaximumNominalFramesPerInterrupt,
             kSchedulingJitterFrames);
