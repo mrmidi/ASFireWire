@@ -357,7 +357,14 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         ctx.DisarmProviderNotifications();
 #endif
 
-        // Hot-unplug safety: Detach early so any late Stop() work can't issue MMIO.
+        ASFW_LOG(Controller, "Stop: quiescing audio coordinator before Detach");
+        if (ctx.audioCoordinator) {
+            ctx.audioCoordinator->BeginTeardown();
+        }
+        ASFW_LOG(Controller, "Stop: audio quiesced - stopping isoch before Detach");
+        ctx.isoch.StopAll();
+
+        ASFW_LOG(Controller, "Stop: audio quiesced - detaching hardware");
         if (ctx.deps.hardware) {
             ctx.deps.hardware->Detach();
         }
@@ -615,6 +622,12 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
 
     // Quiesce immediately: any MMIO after TB/PCIe removal is a fatal Apple-silicon SError.
     (void)ctx.stopping.exchange(true, std::memory_order_acq_rel);
+    ASFW_LOG(Controller, "Provider termination: quiescing audio coordinator before Detach");
+    if (ctx.audioCoordinator) {
+        ctx.audioCoordinator->BeginTeardown();
+    }
+    ctx.isoch.StopAll();
+    ASFW_LOG(Controller, "Provider termination: audio quiesced - detaching hardware");
     ctx.watchdog.Stop();
     if (ctx.deps.interrupts) {
         ctx.deps.interrupts->Disable();

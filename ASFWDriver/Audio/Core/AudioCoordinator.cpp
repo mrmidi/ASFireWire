@@ -330,6 +330,17 @@ IOReturn AudioCoordinator::RequestDiceClockConfig(
     return kIOReturnSuccess;
 }
 
+void AudioCoordinator::BeginTeardown() noexcept {
+    ASFW_LOG(Audio, "AudioCoordinator: BeginTeardown");
+    dice_.BeginTeardown();
+
+    if (lock_) {
+        IOLockLock(lock_);
+        activeGuid_ = 0;
+        IOLockUnlock(lock_);
+    }
+}
+
 std::optional<uint64_t> AudioCoordinator::GetSinglePublishedGuid() const noexcept {
     // AudioNubPublisher is the source of truth for published audio endpoints.
     // This is intentionally used only for debug paths that still lack GUID selection.

@@ -60,6 +60,7 @@ public:
         uint64_t guid,
         const DICE::DiceDesiredClockConfig& desiredClock,
         DICE::DiceRestartReason reason) noexcept;
+    void BeginTeardown() noexcept;
 
     [[nodiscard]] ASFWAudioNub* GetNub(uint64_t guid) const noexcept { return publisher_.GetNub(guid); }
 

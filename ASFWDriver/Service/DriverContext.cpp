@@ -47,6 +47,10 @@ void ServiceContext::DisarmProviderNotifications() {
 
 void ServiceContext::Reset() {
     stopping.store(true, std::memory_order_release);
+    if (audioCoordinator) {
+        audioCoordinator->BeginTeardown();
+    }
+    isoch.StopAll();
     controller.reset();
     audioCoordinator.reset();
     // Tear down the runtime audio protocols while the services they were built from
@@ -79,7 +83,6 @@ void ServiceContext::Reset() {
     DisarmProviderNotifications();
     workQueue.reset();
     interruptAction.reset();
-    isoch.StopAll();
 }
 
 namespace ASFW::Driver {
@@ -252,6 +255,10 @@ kern_return_t DriverWiring::PrepareWatchdog(ASFWDriver& service, ::ServiceContex
 
 void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     ctx.stopping.store(true, std::memory_order_release);
+    if (ctx.audioCoordinator) {
+        ctx.audioCoordinator->BeginTeardown();
+    }
+    ctx.isoch.StopAll();
     if (ctx.controller) {
         ctx.controller->Stop();
         ctx.controller.reset();
