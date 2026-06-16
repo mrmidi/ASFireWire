@@ -8,8 +8,10 @@ namespace ASFW::Audio::Runtime {
 
 struct PayloadWriterTelemetryRecord final {
     uint64_t sampleTime{0};
+    uint64_t writeEndFrame{0};
     uint64_t completionCursor{0};
     uint64_t exposedFrameEnd{0};
+    uint64_t exposureDeficitFrames{0};
     uint32_t frameCount{0};
     uint32_t frameCapacity{0};
     uint64_t visited{0};
@@ -19,6 +21,8 @@ struct PayloadWriterTelemetryRecord final {
     uint64_t racedReuse{0};
     uint64_t wroteIntoTransmitted{0};
     uint64_t nonZeroFrames{0};
+    uint64_t underExposureCalls{0};
+    uint64_t underExposureFrames{0};
     float    maxAbsSample{0.0f};
 
     // Additional cursors and addresses for diagnosing buffer mapping / pointer alignment

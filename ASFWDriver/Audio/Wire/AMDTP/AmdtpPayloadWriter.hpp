@@ -23,6 +23,8 @@ struct AmdtpPayloadWriterCounters final {
     std::atomic<uint64_t> framesWroteIntoTransmitted{0};
     std::atomic<uint64_t> framesNonZero{0};
     std::atomic<uint64_t> slotsNonZero{0};
+    std::atomic<uint64_t> underExposureCalls{0};
+    std::atomic<uint64_t> underExposureFrames{0};
     std::atomic<uint32_t> maxAbsSampleBits{0}; // Absolute int32 sample magnitude
 };
 

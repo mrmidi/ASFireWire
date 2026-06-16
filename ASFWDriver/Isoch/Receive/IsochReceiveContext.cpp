@@ -823,15 +823,18 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
 
             ASFW_LOG(
                 DirectAudio,
-                "[PayloadWriter] sampleTime=%llu frameCount=%u frameCapacity=%u completion=%llu exposedEnd=%llu "
+                "[PayloadWriter] sampleTime=%llu writeEnd=%llu frameCount=%u frameCapacity=%u completion=%llu exposedEnd=%llu deficit=%llu "
                 "visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu raced=%llu legacyTrans=%llu nonZero=%llu maxAbs=%f "
+                "underExpCalls=%llu underExpFrames=%llu "
                 "pbRead=%llu pbWrite=%llu outBase=0x%llx capRead=%llu capWrite=%llu inBase=0x%llx "
                 "lastReadPkt=%llu cip=%08x %08x pay=%08x %08x",
                 r.sampleTime,
+                r.writeEndFrame,
                 r.frameCount,
                 r.frameCapacity,
                 r.completionCursor,
                 r.exposedFrameEnd,
+                r.exposureDeficitFrames,
                 r.visited,
                 r.written,
                 r.withoutPacket,
@@ -840,6 +843,8 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
                 r.wroteIntoTransmitted,
                 r.nonZeroFrames,
                 r.maxAbsSample,
+                r.underExposureCalls,
+                r.underExposureFrames,
                 r.playbackRingReadFrame,
                 r.playbackRingWriteFrame,
                 r.outputBaseAddr,

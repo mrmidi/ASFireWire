@@ -79,6 +79,14 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
 
     const uint32_t retiredCursor =
         static_cast<uint32_t>(completionCursor);
+    const uint64_t writeEndFrame =
+        hostBuffer.firstFrame + hostBuffer.frameCount;
+    const uint64_t exposedFrameEnd = timeline_->ExposedFrameEnd();
+    if (writeEndFrame > exposedFrameEnd) {
+        counters_.underExposureCalls.fetch_add(1, std::memory_order_relaxed);
+        counters_.underExposureFrames.fetch_add(
+            writeEndFrame - exposedFrameEnd, std::memory_order_relaxed);
+    }
 
     uint64_t written = 0;
     uint64_t withoutPacket = 0;

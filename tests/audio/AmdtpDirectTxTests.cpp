@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 namespace {
@@ -222,6 +223,29 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     EXPECT_EQ(dataBytes[13], 0x80);
     EXPECT_EQ(dataBytes[14], 0x00);
     EXPECT_EQ(dataBytes[15], 0x01);
+}
+
+TEST(AmdtpDirectTxTests, PayloadWriterCountsUnderExposureAtCallBoundary) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(
+        timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpPayloadWriter writer{};
+    writer.Configure(BlockingStereoConfig(), AmdtpTxPolicy{});
+    writer.BindTimeline(&timeline);
+
+    std::array<float, 16> mappedRing{};
+    writer.WriteFloat32Interleaved(
+        {mappedRing.data(), 0, 8, 8, 2}, 0);
+
+    const auto& counters = writer.Counters();
+    EXPECT_EQ(
+        counters.underExposureCalls.load(std::memory_order_relaxed), 1U);
+    EXPECT_EQ(
+        counters.underExposureFrames.load(std::memory_order_relaxed), 8U);
+    EXPECT_EQ(
+        counters.framesWithoutPacket.load(std::memory_order_relaxed), 8U);
 }
 
 TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {

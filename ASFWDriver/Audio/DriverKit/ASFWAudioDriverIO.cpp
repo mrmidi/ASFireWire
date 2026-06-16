@@ -200,6 +200,11 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.controlBlock
                         ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
                         : 0;
+                    const uint64_t writeEndFrame =
+                        sampleTime + ioBufferFrameSize;
+                    const uint64_t exposedFrameEnd =
+                        driverIvars->runtime.txStreamEngine.Timeline()
+                            .ExposedFrameEnd();
 
                     driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(
                         hostBuffer,
@@ -208,8 +213,13 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     const auto& cw = driverIvars->runtime.txStreamEngine.PayloadWriterCounters();
                     ASFW::Audio::Runtime::PayloadWriterTelemetryRecord rec{};
                     rec.sampleTime = sampleTime;
+                    rec.writeEndFrame = writeEndFrame;
                     rec.completionCursor = completionCursor;
-                    rec.exposedFrameEnd = driverIvars->runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+                    rec.exposedFrameEnd = exposedFrameEnd;
+                    rec.exposureDeficitFrames =
+                        writeEndFrame > exposedFrameEnd
+                            ? writeEndFrame - exposedFrameEnd
+                            : 0;
                     rec.frameCount = ioBufferFrameSize;
                     rec.frameCapacity = memory.outputFrameCapacity;
                     rec.visited = cw.framesVisited.load(std::memory_order_relaxed);
@@ -219,6 +229,10 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     rec.racedReuse = cw.framesRacedReuse.load(std::memory_order_relaxed);
                     rec.wroteIntoTransmitted = cw.framesWroteIntoTransmitted.load(std::memory_order_relaxed);
                     rec.nonZeroFrames = cw.framesNonZero.load(std::memory_order_relaxed);
+                    rec.underExposureCalls =
+                        cw.underExposureCalls.load(std::memory_order_relaxed);
+                    rec.underExposureFrames =
+                        cw.underExposureFrames.load(std::memory_order_relaxed);
                     const uint32_t bits = cw.maxAbsSampleBits.load(std::memory_order_relaxed);
                     std::memcpy(&rec.maxAbsSample, &bits, sizeof(bits));
 
