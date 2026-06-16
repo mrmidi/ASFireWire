@@ -18,6 +18,7 @@
 
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/OSSharedPtr.h>
+#include <atomic>
 #include <cstdint>
 #include <unordered_map>
 #include <unordered_set>
@@ -64,6 +65,7 @@ private:
     AudioRuntimeRegistry& runtime_;
     Driver::HardwareInterface& hardware_;
     DiceIsochHostTransport hostTransport_;
+    std::atomic<bool> stopping_{false}; // FW-61 teardown latch
     DiceDuplexRestartCoordinator restartCoordinator_;
 
     IOLock* lock_{nullptr};

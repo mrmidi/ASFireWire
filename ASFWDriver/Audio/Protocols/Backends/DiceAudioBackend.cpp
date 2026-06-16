@@ -34,6 +34,7 @@ DiceAudioBackend::DiceAudioBackend(AudioNubPublisher& publisher,
                           runtime,
                           hostTransport_,
                           hardware,
+                          &stopping_,
                           [this](uint64_t guid) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
                               auto endpoint = runtime_.FindEndpointRuntime(guid);
                               return endpoint ? endpoint.get() : nullptr;

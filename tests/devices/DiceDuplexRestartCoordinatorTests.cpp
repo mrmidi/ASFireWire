@@ -12,6 +12,7 @@
 #include "Audio/Protocols/IDeviceProtocol.hpp"
 #include "Audio/Protocols/DICE/Core/IDICEDuplexProtocol.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <chrono>
 #include <cstdint>
@@ -308,6 +309,12 @@ public:
             ++prepareCalls;
             lastChannels_ = channels;
             lastDesiredClock_ = desiredClock;
+            if (deferPrepareCallback_) {
+                deferredPrepareCallback_ = std::move(callback);
+                prepareBlocked_ = true;
+                cv_.notify_all();
+                return;
+            }
             if (holdPrepare_) {
                 prepareBlocked_ = true;
                 cv_.notify_all();
@@ -432,6 +439,16 @@ public:
         cv_.notify_all();
     }
 
+    void SetDeferPrepareCallback(bool defer) {
+        std::scoped_lock lock(mutex_);
+        deferPrepareCallback_ = defer;
+        if (!defer) {
+            deferredPrepareCallback_ = {};
+            prepareBlocked_ = false;
+        }
+        cv_.notify_all();
+    }
+
     void SetHoldApply(bool hold) {
         std::scoped_lock lock(mutex_);
         holdApply_ = hold;
@@ -484,9 +501,11 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     bool holdPrepare_{false};
+    bool deferPrepareCallback_{false};
     bool holdApply_{false};
     bool prepareBlocked_{false};
     bool applyBlocked_{false};
+    PrepareCallback deferredPrepareCallback_{};
 };
 
 ConfigROM MakeConfigRom(uint64_t guid,
@@ -517,6 +536,7 @@ protected:
                        runtime_,
                        hostTransport_,
                        hardware_,
+                       &cancel_,
                        [this](uint64_t) -> ASFW::Audio::Runtime::IDirectAudioBindingSource* {
                            return &bindingSource_;
                        }) {
@@ -558,6 +578,7 @@ protected:
     FakeDiceHostTransport hostTransport_;
     std::shared_ptr<FakeDiceProtocol> protocol_;
     FakeDirectAudioBindingSource bindingSource_{};
+    std::atomic<bool> cancel_{false};
     DiceDuplexRestartCoordinator coordinator_;
 };
 
@@ -603,6 +624,25 @@ TEST_F(DiceDuplexRestartCoordinatorTests, ColdStartTransitionsIdleToRunning) {
             "host.start_transmit",
             "device.confirm",
         }));
+}
+
+TEST_F(DiceDuplexRestartCoordinatorTests, TeardownCancelAbortsInFlightPrepare) {
+    protocol_->SetDeferPrepareCallback(true);
+
+    auto start = std::async(std::launch::async, [this] {
+        return coordinator_.StartStreaming(kTestGuid);
+    });
+
+    ASSERT_TRUE(protocol_->WaitUntilPrepareBlocked(1));
+    cancel_.store(true, std::memory_order_release);
+
+    ASSERT_EQ(start.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(start.get(), kIOReturnAborted);
+    EXPECT_EQ(protocol_->programRxCalls, 0);
+    EXPECT_EQ(protocol_->programTxCalls, 0);
+    EXPECT_EQ(protocol_->confirmCalls, 0);
+    EXPECT_EQ(hostTransport_.stopCalls, 0);
+    EXPECT_EQ(coordinator_.TeardownAbortCount(), 1U);
 }
 
 TEST_F(DiceDuplexRestartCoordinatorTests,

@@ -12,6 +12,7 @@
 #include "../DICE/Core/IDICEDuplexProtocol.hpp"
 #include "../DICE/Core/DICERestartSession.hpp"
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -36,6 +37,7 @@ public:
                                  AudioRuntimeRegistry& runtime,
                                  IDiceHostTransport& hostTransport,
                                  Driver::HardwareInterface& hardware,
+                                 const std::atomic<bool>* cancel,
                                  DirectAudioBindingSourceProvider bindingSourceProvider) noexcept;
     ~DiceDuplexRestartCoordinator() noexcept;
 
@@ -53,6 +55,10 @@ public:
 
     void ClearSession(uint64_t guid) noexcept;
     [[nodiscard]] std::optional<DICE::DiceRestartSession> GetSession(uint64_t guid) const noexcept;
+
+    [[nodiscard]] uint64_t TeardownAbortCount() const noexcept {
+        return teardownAbortCount_.load(std::memory_order_acquire);
+    }
 
 private:
     struct PendingClockRequest {
@@ -90,6 +96,7 @@ private:
                                              const DICE::DiceDesiredClockConfig& desiredClock,
                                              DICE::DiceRestartReason reason) noexcept;
     [[nodiscard]] IOReturn WaitForStableGlobalClock(
+        uint64_t guid,
         DICE::IDICEDuplexProtocol& diceProtocol,
         FW::Generation topologyGeneration,
         const DICE::DiceDesiredClockConfig& desiredClock) noexcept;
@@ -120,14 +127,23 @@ private:
     void FailPendingClockRequest(uint64_t guid,
                                  DICE::DiceClockRequestOutcome outcome,
                                  IOReturn status) noexcept;
+    void RecordTeardownAbort(const char* stage, uint64_t guid) noexcept;
 
     [[nodiscard]] DICE::DiceRestartSession LoadSession(uint64_t guid) const noexcept;
     void StoreSession(const DICE::DiceRestartSession& session) noexcept;
+
+    // FW-61: global teardown cancel token. Distinct from the per-guid stop intent
+    // (stopRequestedGuids_) - that aborts one stream; this aborts everything for
+    // service teardown. Owned by DiceAudioBackend and read on the dice queue.
+    [[nodiscard]] bool TeardownRequested() const noexcept {
+        return cancel_ != nullptr && cancel_->load(std::memory_order_acquire);
+    }
 
     Discovery::DeviceRegistry& registry_;
     AudioRuntimeRegistry& runtime_;
     IDiceHostTransport& hostTransport_;
     Driver::HardwareInterface& hardware_;
+    const std::atomic<bool>* cancel_{nullptr};
     DirectAudioBindingSourceProvider bindingSourceProvider_;
 
     IOLock* lock_{nullptr};
@@ -138,6 +154,7 @@ private:
     std::unordered_map<uint64_t, ClockCompletionStore> completedClockRequests_{};
     uint64_t nextClockToken_{1};
     uint64_t nextRestartId_{1};
+    std::atomic<uint64_t> teardownAbortCount_{0};
 
     static constexpr uint32_t kSyncBridgeTimeoutMs = 12000;
     static constexpr uint32_t kSyncBridgePollMs = 10;
