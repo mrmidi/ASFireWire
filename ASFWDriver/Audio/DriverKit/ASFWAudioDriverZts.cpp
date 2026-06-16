@@ -582,19 +582,15 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             prepareUntilAbs > completionCursor
                 ? prepareUntilAbs - completionCursor
                 : 0;
-        // Log every wake that stopped short of the packet target
-        // (hole-producing), sample frame under-exposure, plus a coarse
-        // heartbeat. A clean run prints only heartbeats;
-        // any [TxPrepRange] line with short=1 / firstMissing!=-1 before an IT
-        // FATAL proves the underrun is refill-coverage, not scheduling margin.
-        const uint64_t preparationRequests =
-            txControl->preparationRequestCount.load(
-                std::memory_order_relaxed);
-        const bool frameShortSample =
-            frameShort &&
-            (preparationRequests <= 8 || (preparationRequests % 64) == 0);
-        if (stoppedShort || frameShortSample || (slotsPrepared == 0) ||
-            (preparationRequests % 1024) == 0) {
+        // Basic TX flow is confirmed (Defect B closed, tag
+        // tx-frame-exposure-lead). Anomaly-only: log only a wake that stopped
+        // short of the coverage target (hole-producing -- precedes an IT FATAL,
+        // proves the underrun is refill-coverage not scheduling margin) or one
+        // that under-exposed the frame timeline (frameShort, W > E). The steady
+        // "nothing to prepare" wake (slotsPrepared == 0, ring already full) is
+        // the normal state and no longer logged; the periodic [TxPrep] summary
+        // remains the liveness/margin heartbeat.
+        if (stoppedShort || frameShort) {
             const uint64_t frameDeficit =
                 frameShort ? (targetFrameEnd - exposedFrameEndAfter) : 0;
             ASFW_LOG(

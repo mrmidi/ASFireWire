@@ -802,8 +802,21 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
         return;
     }
 
+    // Basic TX flow is confirmed (under-exposure / Defect B closed, see tag
+    // tx-frame-exposure-lead). Keep draining the ring every tick so it never
+    // overflows, but only LOG a record when it shows an anomaly -- the happy
+    // path stays silent. A single [PayloadWriter] line in the log now means
+    // something is actually wrong.
     const uint64_t dropped = control->payloadWriterTelemetry.Drain(
         maxRecords, [](const ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& r) {
+            const bool anomaly =
+                r.exposureDeficitFrames != 0 || r.withoutPacket != 0 ||
+                r.outsidePacket != 0 || r.racedReuse != 0 ||
+                r.wroteIntoTransmitted != 0 || r.written != r.visited;
+            if (!anomaly) {
+                return;
+            }
+
             const uint32_t cipQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[0]) << 24) |
                                    (static_cast<uint32_t>(r.lastReadPacketBytes[1]) << 16) |
                                    (static_cast<uint32_t>(r.lastReadPacketBytes[2]) << 8) |
