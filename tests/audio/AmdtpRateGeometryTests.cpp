@@ -51,10 +51,12 @@ TEST(AudioTimingGeometryTests, SaffireGeometryIsUnified) {
     EXPECT_EQ(Geometry::kNominalFramesPerTimingGroup, 36U);
     EXPECT_EQ(Geometry::kInputSafetyFloorFrames, 104U);
     EXPECT_EQ(Geometry::kRxDescriptorPackets, 504U);
-    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 192U);
+    EXPECT_EQ(Geometry::kTxSharedSlotPackets, 384U);
     EXPECT_EQ(Geometry::kTxHardwareRingPackets, 48U);
     EXPECT_EQ(Geometry::kTxPreparationSlackPackets, 96U);
-    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 144U);
+    EXPECT_EQ(Geometry::kTxCoverageLeadPackets, 144U);
+    EXPECT_EQ(Geometry::kTxFrameExposureWindowPackets, 192U);
+    EXPECT_EQ(Geometry::kTxPreparationLeadPackets, 336U);
 
     // DMA completion cadence and the ZTS grid are intentionally independent.
     EXPECT_NE(Geometry::kHalZeroTimestampPeriodFrames,

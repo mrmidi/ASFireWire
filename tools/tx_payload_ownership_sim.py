@@ -73,8 +73,11 @@ AVG_FRAMES_PER_PKT = sum(CADENCE) / len(CADENCE)  # 6.0
 
 HW_RING_PKTS_DEFAULT = 48                       # kTxHardwareRingPackets
 SLACK_PKTS_DEFAULT = 96                         # kTxPreparationSlackPackets (2x HW ring)
-LEAD_PKTS_DEFAULT = HW_RING_PKTS_DEFAULT + SLACK_PKTS_DEFAULT  # 144 = kTxPreparationLeadPackets
-SHARED_SLOT_PKTS_DEFAULT = 192                  # kTxSharedSlotPackets
+EXPOSURE_WINDOW_PKTS_DEFAULT = 192              # kTxFrameExposureWindowPackets
+LEAD_PKTS_DEFAULT = (HW_RING_PKTS_DEFAULT +
+                     SLACK_PKTS_DEFAULT +
+                     EXPOSURE_WINDOW_PKTS_DEFAULT)  # 336 = kTxPreparationLeadPackets
+SHARED_SLOT_PKTS_DEFAULT = 384                  # kTxSharedSlotPackets
 HOST_RING_FRAMES_DEFAULT = 1536                 # observed outputFrameCapacity
 
 # Safety offset: CoreAudio leads playout by delayPackets * framesPerPacket.

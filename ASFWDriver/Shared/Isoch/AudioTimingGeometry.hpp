@@ -72,55 +72,60 @@ struct AudioTimingGeometry final {
 
     static constexpr uint32_t kRxDescriptorPackets = 504;
 
-    // Packet-domain TX ownership: 48 descriptors on hardware, plus a committed
-    // preparation lead beyond the hardware ring.
+    // === TX exposure lead (E - W) -- the audio-frame cushion ================
+    // Minimum audio frames the producer's exposure frontier (E) must keep ahead
+    // of CoreAudio's write-window end. TX analogue of RX's
+    // RequiredInputSafetyFrames cushion: RX had it, TX did not -- which is why
+    // TX shipped silence when the writer ran beyond ExposedFrameEnd()
+    // (Defect B = under-exposure, W > E). Conservative form = one full
+    // client-IO budget + scheduling jitter; tighten toward the actual IO size
+    // once measured. Frames.
+    static constexpr uint32_t kTxExposureLeadFrames =
+        kHalIoPeriodFrames + kSchedulingJitterFrames;          // 512 + 64 = 576
+    // Packet lead deep enough to expose that many frames at the six-frame
+    // average cadence. ceil(576 / 6) = 96 packets.
+    static constexpr uint32_t kTxExposureLeadPackets =
+        (kTxExposureLeadFrames * kCadenceBlockPackets +
+         kCadenceBlockFrames - 1) /
+        kCadenceBlockFrames;
+
+    // Packet-domain TX ownership: 48 descriptors on hardware, plus two
+    // independent producer budgets:
+    //
+    // 1. Refill coverage: packets that keep the core from holing the OHCI
+    //    refill when the producer action is delayed.
+    // 2. Frame exposure: extra packets the producer may prepare so the AMDTP
+    //    timeline covers CoreAudio's latest WriteEnd plus kTxExposureLeadFrames.
     //
     // COVERAGE INVARIANT (hardware-confirmed). The IT refill ISR checks slots
     //   [completion + hardwareRing, completion + hardwareRing + deltaConsumed)
-    // and FATALs if any is not yet committed. The producer stays `slack` packets
-    // ahead of the hardware ring (lead = hardwareRing + slack), so a single
-    // refill tolerates a coalesced completion of at most `slack` packets:
-    //   lead - hardwareRing == slack  >=  max(deltaConsumed)
-    // This bound covers both a coalesced refill and packets consumed while the
-    // cross-process producer action is delayed. Field runs exhausted 36 packets
-    // of slack after 40-42 packets (5.0-5.25 ms) elapsed without a producer
-    // wake, even with a dedicated DriverKit queue. Keep two hardware-ring
-    // depths of slack (96 packets / 12 ms), giving the active lead three
-    // hardware-ring depths while leaving one full hardware-ring depth before
-    // shared-slot reuse. See
-    // documentation/ZTS_AND_SYT.md §13 and tests/audio/TxRefillCoverageTests.cpp.
-    static constexpr uint32_t kTxSharedSlotPackets = 192;
+    // and FATALs if any is not yet committed. The coverage target stays
+    // hardwareRing + slack (144 packets), but the total preparation limit is
+    // larger so the audio-frame invariant can be satisfied without reusing
+    // hardware-owned shared slots.
     static constexpr uint32_t kTxHardwareRingPackets = 48;
     static constexpr uint32_t kTxPreparationSlackPackets =
         2 * kTxHardwareRingPackets;
-    static constexpr uint32_t kTxPreparationLeadPackets =
+    static constexpr uint32_t kTxCoverageLeadPackets =
         kTxHardwareRingPackets + kTxPreparationSlackPackets;
+    // Covers a full client write window plus the output exposure cushion when
+    // the producer target is expressed as WriteEnd + kTxExposureLeadFrames.
+    // 2 * 96 packets = 1152 nominal frames, enough for 512 + 576 = 1088 frames
+    // while preserving cadence/group-friendly packet counts.
+    static constexpr uint32_t kTxFrameExposureWindowPackets =
+        2 * kTxExposureLeadPackets;
+    static constexpr uint32_t kTxPreparationLeadPackets =
+        kTxCoverageLeadPackets + kTxFrameExposureWindowPackets;
+    // Shared backing leaves one hardware-ring depth before slot reuse.
+    static constexpr uint32_t kTxSharedSlotPackets =
+        kTxPreparationLeadPackets + kTxHardwareRingPackets;
     // Largest single coalesced deltaConsumed a refill can absorb without holing.
     static constexpr uint32_t kTxMaxCoveredDeltaConsumedPackets =
-        kTxPreparationSlackPackets;
+        kTxPreparationLeadPackets - kTxHardwareRingPackets;
 
     // Backing packet-ring / timeline slot array length
     // (AmdtpPacketTimeline, DiceTxStreamEngine::timelineSlots_). Packets.
     static constexpr uint32_t kTimelineSlots = 512;
-
-    // === TX exposure lead (E - W) -- the audio-frame cushion ================
-    // Minimum audio frames the producer's exposure frontier (E) must keep ahead
-    // of CoreAudio's write-window leading edge (W). TX analogue of RX's
-    // RequiredInputSafetyFrames cushion: RX had it, TX did not -- which is why
-    // TX shipped ~1% silence (Defect B = under-exposure, W > E). Previously
-    // IMPLICIT (emerged from AlignFrameCursorOnce + the per-packet advance,
-    // measured ~120 frames against a 128-frame IO window). Named so it can be
-    // asserted and, in the follow-up fix, enforced by the producer. Conservative
-    // form = one full client-IO budget + scheduling jitter; tighten toward the
-    // actual IO size once measured. Frames.
-    static constexpr uint32_t kTxExposureLeadFrames =
-        kHalIoPeriodFrames + kSchedulingJitterFrames;          // 512 + 64 = 576
-    // Packet lead deep enough to expose that many frames (ceil at 6 fr/pkt avg,
-    // computed x100 to stay integral). ceil(576 / 6) = 96 packets.
-    static constexpr uint32_t kTxExposureLeadPackets =
-        (kTxExposureLeadFrames * 100 +
-         (kCadenceBlockFrames * 100 / kCadenceBlockPackets) - 1) /
-        (kCadenceBlockFrames * 100 / kCadenceBlockPackets);
 };
 
 static_assert(AudioTimingGeometry::kRxDescriptorPackets %
@@ -157,8 +162,12 @@ static_assert(AudioTimingGeometry::kTxSharedSlotPackets >=
 // the observed 40-42 packet DriverKit dispatch stalls with more than 2x margin.
 static_assert(AudioTimingGeometry::kTxMaxCoveredDeltaConsumedPackets >=
                   16 * AudioTimingGeometry::kTxPacketsPerGroup,
-              "TX preparation slack must cover at least 12 ms of producer "
+              "TX preparation headroom must cover at least 12 ms of producer "
               "dispatch latency at the current six-packet cadence");
+static_assert(AudioTimingGeometry::kTxCoverageLeadPackets ==
+                  AudioTimingGeometry::kTxHardwareRingPackets +
+                      AudioTimingGeometry::kTxPreparationSlackPackets,
+              "TX coverage lead must remain the refill-safety sub-budget");
 static_assert(AudioTimingGeometry::kTxPreparationLeadPackets <=
                   AudioTimingGeometry::kTxSharedSlotPackets -
                       AudioTimingGeometry::kTxHardwareRingPackets,
@@ -176,6 +185,10 @@ static_assert(AudioTimingGeometry::kTxHardwareRingPackets %
                   AudioTimingGeometry::kCadenceBlockPackets ==
               0,
               "TX ring wrap must preserve blocking-cadence phase");
+static_assert(AudioTimingGeometry::kTxSharedSlotPackets %
+                  AudioTimingGeometry::kCadenceBlockPackets ==
+              0,
+              "TX shared slot wrap must preserve blocking-cadence phase");
 
 // --- TX exposure cushion (Defect B guard: the invariant whose absence let TX
 //     ship ~1% silence). E must lead W by a full IO window plus jitter. -------
@@ -190,6 +203,13 @@ static_assert(AudioTimingGeometry::kTxExposureLeadFrames <
 static_assert(AudioTimingGeometry::kTxExposureLeadPackets <=
                   AudioTimingGeometry::kTxSharedSlotPackets,
               "TX packet lead must be able to hold the required exposure frames");
+static_assert(AudioTimingGeometry::kTxFrameExposureWindowPackets *
+                  AudioTimingGeometry::kCadenceBlockFrames >=
+              (AudioTimingGeometry::kHalIoPeriodFrames +
+               AudioTimingGeometry::kTxExposureLeadFrames) *
+                  AudioTimingGeometry::kCadenceBlockPackets,
+              "TX frame-exposure packet window must cover WriteEnd plus the "
+              "exposure cushion");
 static_assert(AudioTimingGeometry::kTxSharedSlotPackets <=
                   AudioTimingGeometry::kTimelineSlots,
               "shared packet ring must fit inside the timeline slot array");

@@ -254,17 +254,20 @@ void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
-// Prepares transmit slots [startPacketIndex, targetPacketIndex) into the shared
-// metadata ring, committing each slot's generation so the IT DMA refill never
-// observes an uncommitted slot. Returns the number of slots prepared. Shared by
-// the steady-state ZTS pump and the pre-RUN prefill; with an unseeded transmit
-// clock the normal AMDTP cadence is preserved but every packet carries NO_INFO
+// Prepares transmit slots from startPacketIndex until both producer invariants
+// are true or limitPacketIndex is reached:
+//   * requiredPacketIndex covers the core refill / commit-generation invariant.
+//   * targetFrameEnd covers the AMDTP frame-exposure invariant for WriteEnd.
+// Returns the number of slots prepared. With an unseeded transmit clock the
+// normal AMDTP cadence is preserved but every packet carries NO_INFO
 // (SYT=0xffff), matching the reference Saffire seed behavior. Set
 // allowRecoveredClock only after HAL has accepted the first real RX anchor.
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t startPacketIndex,
-                              uint64_t targetPacketIndex,
+                              uint64_t requiredPacketIndex,
+                              uint64_t limitPacketIndex,
                               uint32_t maxToPrepare,
+                              uint64_t targetFrameEnd,
                               bool allowRecoveredClock) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets

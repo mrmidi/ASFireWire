@@ -5,6 +5,7 @@
 // Latest observed zero-timestamp publication for ASFWAudioDriver.
 //
 
+#include <cstdint>
 #include <new>
 
 #include "ASFWAudioDevice.h"
@@ -15,6 +16,14 @@
 #include <DriverKit/DriverKit.h>
 
 namespace ASFW::Audio::DriverKit {
+namespace {
+
+[[nodiscard]] uint64_t SaturatingAdd(uint64_t value,
+                                     uint64_t addend) noexcept {
+    return (UINT64_MAX - value < addend) ? UINT64_MAX : value + addend;
+}
+
+} // namespace
 
 ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
     ASFWAudioDriver_IVars& ivars,
@@ -75,8 +84,10 @@ ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(
 
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                              uint64_t startPacketIndex,
-                             uint64_t targetPacketIndex,
+                             uint64_t requiredPacketIndex,
+                             uint64_t limitPacketIndex,
                              uint32_t maxToPrepare,
+                             uint64_t targetFrameEnd,
                              bool allowRecoveredClock) noexcept {
     const uint32_t numSlots = ivars.runtime.txSlotProvider.numSlots;
     auto* metadataRing = ivars.runtime.txSlotProvider.metadataRing;
@@ -111,7 +122,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 .reason = producerReason,
                 .packetIndex = packetIndex,
                 .rangeStart = startPacketIndex,
-                .rangeTarget = targetPacketIndex,
+                .rangeTarget = limitPacketIndex,
                 .preparedCount = preparedCount,
                 .completionCursor = completionCursor,
                 .exposeCursor = exposeCursor,
@@ -149,7 +160,7 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 runtimeGeneration,
                 packetIndex,
                 startPacketIndex,
-                targetPacketIndex,
+                limitPacketIndex,
                 preparedCount,
                 completionCursor,
                 exposeCursor,
@@ -178,8 +189,19 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         return 0;
     }
 
-    while (nextPacketToPrepare < targetPacketIndex &&
+    auto frameTargetSatisfied = [&]() noexcept {
+        return targetFrameEnd == 0 ||
+               ivars.runtime.txStreamEngine.Timeline().ExposedFrameEnd() >=
+                   targetFrameEnd;
+    };
+
+    while (nextPacketToPrepare < limitPacketIndex &&
            preparedCount < maxToPrepare) {
+        if (nextPacketToPrepare >= requiredPacketIndex &&
+            frameTargetSatisfied()) {
+            break;
+        }
+
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
         timing.replayValid = true;
         timing.disposition =
@@ -502,23 +524,41 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         txControl->completionCursor.load(std::memory_order_acquire);
     const uint64_t exposeCursor =
         txControl->exposeCursor.load(std::memory_order_acquire);
-    const uint64_t targetPacketIndex =
+    const uint64_t packetCoverageTarget =
+        completionCursor +
+        ASFW::IsochTransport::AudioTimingGeometry::
+            kTxCoverageLeadPackets;
+    const uint64_t packetLimitTarget =
         completionCursor +
         ASFW::IsochTransport::AudioTimingGeometry::
             kTxPreparationLeadPackets;
 
+    auto* directControl = ivars->runtime.directAudioGraph.control;
     const bool replayEstablished =
-        ivars->runtime.directAudioGraph.control &&
-        ivars->runtime.directAudioGraph.control
-            ->rxSequenceReplay.IsEstablished();
+        directControl && directControl->rxSequenceReplay.IsEstablished();
+    const uint64_t outputWrittenEndFrame =
+        directControl ? directControl->client.OutputWrittenEndFrame() : 0;
+    const uint64_t targetFrameEnd =
+        outputWrittenEndFrame != 0
+            ? SaturatingAdd(
+                  outputWrittenEndFrame,
+                  ASFW::IsochTransport::AudioTimingGeometry::
+                      kTxExposureLeadFrames)
+            : 0;
+    const uint64_t exposedFrameEndBefore =
+        ivars->runtime.txStreamEngine.Timeline().ExposedFrameEnd();
     const uint32_t slotsPrepared =
         ASFW::Audio::DriverKit::PrepareTransmitSlots(
             *ivars,
             exposeCursor,
-            targetPacketIndex,
+            packetCoverageTarget,
+            packetLimitTarget,
             ASFW::IsochTransport::AudioTimingGeometry::
                 kTxPreparationLeadPackets,
+            targetFrameEnd,
             replayEstablished);
+    const uint64_t exposedFrameEndAfter =
+        ivars->runtime.txStreamEngine.Timeline().ExposedFrameEnd();
 
     // [TxPrepRange] Refill-coverage instrumentation. Answers the decisive
     // question: did the producer's range reach `target` this wake, or stop
@@ -530,46 +570,62 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
         const uint64_t prepareBaseAbs = exposeCursor;
         const uint64_t prepareUntilAbs = exposeCursor + slotsPrepared;
         const uint64_t requestedSpan =
-            targetPacketIndex > prepareBaseAbs
-                ? targetPacketIndex - prepareBaseAbs
+            packetLimitTarget > prepareBaseAbs
+                ? packetLimitTarget - prepareBaseAbs
                 : 0;
-        const bool stoppedShort = prepareUntilAbs < targetPacketIndex;
+        const bool stoppedShort = prepareUntilAbs < packetCoverageTarget;
+        const bool frameShort =
+            targetFrameEnd != 0 && exposedFrameEndAfter < targetFrameEnd;
         const uint64_t firstMissingAbs =
             stoppedShort ? prepareUntilAbs : UINT64_MAX;
         const uint64_t committedMargin =
             prepareUntilAbs > completionCursor
                 ? prepareUntilAbs - completionCursor
                 : 0;
-        // Log every wake that stopped short of target (the hole-producing
-        // case), plus a coarse heartbeat. A clean run prints only heartbeats;
+        // Log every wake that stopped short of the packet target
+        // (hole-producing), sample frame under-exposure, plus a coarse
+        // heartbeat. A clean run prints only heartbeats;
         // any [TxPrepRange] line with short=1 / firstMissing!=-1 before an IT
         // FATAL proves the underrun is refill-coverage, not scheduling margin.
-        if (stoppedShort || (slotsPrepared == 0) ||
-            (txControl->preparationRequestCount.load(
-                 std::memory_order_relaxed) %
-             1024) == 0) {
+        const uint64_t preparationRequests =
+            txControl->preparationRequestCount.load(
+                std::memory_order_relaxed);
+        const bool frameShortSample =
+            frameShort &&
+            (preparationRequests <= 8 || (preparationRequests % 64) == 0);
+        if (stoppedShort || frameShortSample || (slotsPrepared == 0) ||
+            (preparationRequests % 1024) == 0) {
+            const uint64_t frameDeficit =
+                frameShort ? (targetFrameEnd - exposedFrameEndAfter) : 0;
             ASFW_LOG(
                 DirectAudio,
                 "[TxPrepRange] retiredAbs=%llu prepareBaseAbs=%llu "
-                "prepareUntilAbs=%llu leadTargetAbs=%llu reqSpan=%llu "
+                "prepareUntilAbs=%llu coverageTargetAbs=%llu limitTargetAbs=%llu reqSpan=%llu "
                 "prepared=%u short=%d firstMissingAbs=%lld marginAfter=%llu "
-                "replay=%d",
+                "frameTarget=%llu exposedBefore=%llu exposedAfter=%llu "
+                "frameShort=%d frameDeficit=%llu writeEnd=%llu replay=%d",
                 completionCursor,
                 prepareBaseAbs,
                 prepareUntilAbs,
-                targetPacketIndex,
+                packetCoverageTarget,
+                packetLimitTarget,
                 requestedSpan,
                 slotsPrepared,
                 stoppedShort ? 1 : 0,
                 stoppedShort ? static_cast<int64_t>(firstMissingAbs)
                              : static_cast<int64_t>(-1),
                 committedMargin,
+                targetFrameEnd,
+                exposedFrameEndBefore,
+                exposedFrameEndAfter,
+                frameShort ? 1 : 0,
+                frameDeficit,
+                outputWrittenEndFrame,
                 replayEstablished ? 1 : 0);
         }
     }
 
-    if (auto* directControl =
-            ivars->runtime.directAudioGraph.control) {
+    if (directControl) {
         const uint64_t now = mach_absolute_time();
         const uint64_t requestedAt =
             txControl->preparationRequestHostTicks.load(
@@ -602,8 +658,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                         std::memory_order_relaxed)) {
         }
         const uint64_t distance =
-            targetPacketIndex > exposeCursor
-                ? targetPacketIndex - exposeCursor
+            packetLimitTarget > exposeCursor
+                ? packetLimitTarget - exposeCursor
                 : 0;
         const uint32_t boundedDistance =
             distance > UINT32_MAX
@@ -666,7 +722,8 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
             ASFW_LOG(
                 DirectAudio,
                 "[TxPrep] margin=%u min=%u lead=%u distMin=%u lastLatUs=%llu "
-                "maxLatUs=%llu late1500=%llu wakes=%llu%s",
+                "maxLatUs=%llu late1500=%llu wakes=%llu exposureLead=%u "
+                "coverageLead=%u%s",
                 boundedMargin,
                 minCommittedMargin,
                 ASFW::IsochTransport::AudioTimingGeometry::
@@ -678,6 +735,10 @@ void IMPL(ASFWAudioDriver, TxPreparationReady)
                 directControl->txPreparationAtLeast1500Us.load(
                     std::memory_order_relaxed),
                 wakeSamples,
+                ASFW::IsochTransport::AudioTimingGeometry::
+                    kTxExposureLeadFrames,
+                ASFW::IsochTransport::AudioTimingGeometry::
+                    kTxCoverageLeadPackets,
                 boundedMargin <= kCommittedMarginDangerPackets ? " DANGER"
                                                                : "");
         }

@@ -1252,8 +1252,10 @@ live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
 | IR descriptor ring | 504 packets | Packet-domain receive storage |
 | TX hardware ring | 48 packets | OHCI-owned transmit program |
 | TX preparation slack | 96 packets | Sixteen groups / 12 ms of producer scheduling tolerance |
-| TX preparation lead | 144 packets | Three hardware-ring depths |
-| TX shared packet ring | 192 packets | Packet-domain backing capacity |
+| TX coverage lead | 144 packets | Hardware ring plus scheduling slack; refill-safety sub-budget |
+| TX frame-exposure window | 192 packets | Packetized cushion for `WriteEnd + kTxExposureLeadFrames` |
+| TX preparation lead | 336 packets | Coverage lead plus frame-exposure window |
+| TX shared packet ring | 384 packets | Preparation lead plus one hardware-ring reuse guard |
 | Input safety floor | 104 frames | Maximum 40-frame group plus 64-frame jitter floor |
 
 The HAL has one frame-domain sample ring per direction. Packet-domain IR
@@ -1271,6 +1273,7 @@ frameRing == ztsPeriod
 frameRing % maxIO == 0
 frameRing % frameAlignment == 0
 txSharedSlots % timingGroupPackets == 0
+txSharedSlots % cadenceBlockPackets == 0
 txHardwarePackets % timingGroupPackets == 0
 ```
 
@@ -1282,7 +1285,8 @@ For the adopted values:
 1536       = 1536-frame ZTS period
 1536 / 512 = 3 maximum IO transfers
 1536 / 32  = 48 alignment quanta
-192 / 6    = 32 shared-ring groups
+384 / 6    = 64 shared-ring groups
+384 / 4    = 96 complete cadence blocks
 48 / 6     = 8 hardware-ring groups
 ```
 
@@ -1318,14 +1322,19 @@ must not advance merely because a NO-DATA packet occupied a bus cycle. For
 Saffire, the gap carries the cadence-appropriate already-advanced DBC and the
 following DATA packet repeats it.
 
-Before IT RUN, the packetizer seeds the entire 192-slot shared TX ring with
-committed NO-DATA packets. This is 24 ms of valid packet-domain backing. It is
-deliberately larger than the steady-state 144-packet preparation lead because
-action delivery and the startup handoff can be delayed. `TxPreparationReady`
-uses a dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait
-for the first hardware ZTS does not starve the producer. Once the action runs,
-the normal producer target remains `completion + 144`; it prepares later
-generations before the consumer reaches them.
+Before IT RUN, the packetizer seeds the entire 384-slot shared TX ring with
+committed NO-DATA packets. This is 48 ms of valid packet-domain backing. It is
+deliberately larger than the 336-packet total preparation lead because action
+delivery and the startup handoff can be delayed. `TxPreparationReady` uses a
+dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait for the
+first hardware ZTS does not starve the producer.
+
+Once the action runs, the producer has two targets. It must always reach the
+refill-coverage target (`completion + 144`) so the core never sees an
+uncommitted slot. It may continue up to the total preparation limit
+(`completion + 336`) until `AmdtpPacketTimeline::ExposedFrameEnd()` covers the
+latest CoreAudio `WriteEnd + kTxExposureLeadFrames`. This separates the
+packet-domain underrun budget from the audio-frame under-exposure budget.
 
 The DMA layer must not invent fallback CIP state by copying an arbitrary
 previous Q0. Forced fallback is a packetizer/profile transition and must
