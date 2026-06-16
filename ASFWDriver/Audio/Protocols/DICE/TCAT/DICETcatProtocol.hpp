@@ -54,6 +54,7 @@ public:
     void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock,
                           ClockApplyCallback callback) override;
     void ReadDuplexHealth(HealthCallback callback) override;
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept override;
     ::ASFW::IRM::IRMClient* GetIRMClient() const override { return irmClient_; }
 
     void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback) override;
@@ -83,6 +84,7 @@ private:
     Protocols::Ports::ProtocolRegisterIO io_;
     DICETransaction diceReader_;
     std::optional<ASFW::Audio::DICE::DICEDuplexBringupController> duplexCtrl_;
+    const std::atomic<bool>* teardownCancel_{nullptr};
     GeneralSections sections_{};
     bool initialized_{false};
     bool sectionsLoaded_{false};

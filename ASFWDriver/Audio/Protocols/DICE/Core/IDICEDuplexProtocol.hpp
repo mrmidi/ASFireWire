@@ -8,6 +8,7 @@
 #include "DICERestartSession.hpp"
 
 #include <DriverKit/IOReturn.h>
+#include <atomic>
 #include <functional>
 
 namespace ASFW::IRM {
@@ -36,6 +37,9 @@ public:
                                   ClockApplyCallback callback) = 0;
     virtual void ReadDuplexHealth(HealthCallback callback) = 0;
 
+    virtual void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
+        (void)cancel;
+    }
     [[nodiscard]] virtual IOReturn StopDuplex() = 0;
     [[nodiscard]] virtual ::ASFW::IRM::IRMClient* GetIRMClient() const = 0;
 };

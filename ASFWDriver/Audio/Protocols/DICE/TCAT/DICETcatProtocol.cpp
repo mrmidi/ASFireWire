@@ -59,6 +59,7 @@ DICETcatProtocol::DICETcatProtocol(Protocols::Ports::FireWireBusOps& busOps,
 IOReturn DICETcatProtocol::Initialize() {
     if (!duplexCtrl_) {
         duplexCtrl_.emplace(diceReader_, io_, busInfo_, nullptr /*workQueue*/, GeneralSections{});
+        duplexCtrl_->SetTeardownCancelToken(teardownCancel_);
     }
 
     initialized_ = true;
@@ -104,6 +105,13 @@ bool DICETcatProtocol::GetRuntimeAudioStreamCaps(AudioStreamRuntimeCaps& outCaps
     outCaps.hostToDeviceIsoChannel =
         static_cast<uint8_t>(hostToDeviceIsoChannel_.load(std::memory_order_relaxed));
     return true;
+}
+
+void DICETcatProtocol::SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
+    teardownCancel_ = cancel;
+    if (duplexCtrl_) {
+        duplexCtrl_->SetTeardownCancelToken(cancel);
+    }
 }
 
 void DICETcatProtocol::PrepareDuplex(const AudioDuplexChannels& channels,

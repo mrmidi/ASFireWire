@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstddef>
 #include <functional>
@@ -783,6 +784,7 @@ struct DuplexRig {
     ProtocolRegisterIO io;
     DICETransaction tx;
     IRMClient irm;
+    std::atomic<bool> cancel{false};
     DICEDuplexBringupController controller;
 
     DuplexRig()
@@ -790,6 +792,7 @@ struct DuplexRig {
         , tx(io)
         , irm(bus)
         , controller(tx, io, bus, nullptr, MakeGeneralSections()) {
+        controller.SetTeardownCancelToken(&cancel);
         irm.SetIRMNode(0x03, Generation{1});
     }
 };
@@ -1098,6 +1101,29 @@ TEST(DICEDuplexBringupControllerTests, StopSequenceReleasesOwnerLast) {
     EXPECT_EQ(rig.bus.BandwidthAvailable(), 4019U);
     EXPECT_EQ(rig.bus.ChannelsAvailable31_0(), 0x3FFFFFFFU);
     ExpectOperations(rig.bus.Operations(), ExpectedStopOps());
+}
+
+TEST(DICEDuplexBringupControllerTests, StopDuplexTeardownCancelAbortsWithoutMoreDeviceIo) {
+    DuplexRig rig;
+    const AudioDuplexChannels channels{
+        .deviceToHostIsoChannel = 1,
+        .hostToDeviceIsoChannel = 0,
+    };
+
+    std::optional<IOReturn> startStatus;
+    rig.controller.PrepareDuplex48k(channels, [&startStatus](IOReturn status) { startStatus = status; });
+    ASSERT_TRUE(startStatus.has_value());
+    ASSERT_EQ(*startStatus, kIOReturnSuccess);
+    ASSERT_TRUE(rig.controller.IsPrepared());
+
+    rig.bus.ClearOperations();
+    rig.cancel.store(true, std::memory_order_release);
+    const IOReturn stopStatus = rig.controller.StopDuplex();
+
+    EXPECT_EQ(stopStatus, kIOReturnAborted);
+    EXPECT_FALSE(rig.controller.IsPrepared());
+    EXPECT_FALSE(rig.controller.IsOwnerClaimed());
+    EXPECT_TRUE(rig.bus.Operations().empty());
 }
 
 TEST(DICEDuplexBringupControllerTests, RestartSessionTracksDevicePhasesAcrossBringupAndStop) {

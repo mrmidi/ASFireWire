@@ -13,6 +13,7 @@
 #include "../../../../Protocols/Ports/FireWireBusPort.hpp"
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/IOReturn.h>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 
@@ -50,6 +51,9 @@ public:
     void ProgramTxAndEnableDuplex(StageCallback callback);
     void ConfirmDuplexStart(ConfirmCallback callback);
     void ApplyClockConfig(const DiceDesiredClockConfig& desiredClock, ClockApplyCallback callback);
+    void SetTeardownCancelToken(const std::atomic<bool>* cancel) noexcept {
+        teardownCancel_ = cancel;
+    }
 
     // Transitional wrappers for existing non-coordinator callers.
     void PrepareDuplex48k(const AudioDuplexChannels& channels, VoidCallback callback);
@@ -104,7 +108,10 @@ private:
     void DoStopReleaseOwner(VoidCallback cb);
 
     [[nodiscard]] bool EnsureGenerationCurrent() const noexcept;
+    [[nodiscard]] bool TeardownRequested() const noexcept;
     [[nodiscard]] uint64_t OwnerValue() const noexcept;
+    void RecordStopTeardownAbort(const char* stage) const noexcept;
+    bool AbortStopIfTeardown(const char* stage, VoidCallback& cb);
 
     void ScheduleRetry(uint64_t delayMs, std::function<void()> work);
 
@@ -122,6 +129,7 @@ private:
     uint32_t confirmExtStatus_{0};
     IOReturn stopSequenceError_{kIOReturnSuccess};
     bool refreshRuntimeCapsOnPrepare_{true};
+    const std::atomic<bool>* teardownCancel_{nullptr};
 };
 
 } // namespace ASFW::Audio::DICE

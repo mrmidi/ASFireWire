@@ -214,6 +214,30 @@ bool DICEDuplexBringupController::EnsureGenerationCurrent() const noexcept {
     return busInfo_.GetGeneration() == restartSession_.generation;
 }
 
+bool DICEDuplexBringupController::TeardownRequested() const noexcept {
+    return teardownCancel_ != nullptr && teardownCancel_->load(std::memory_order_acquire);
+}
+
+void DICEDuplexBringupController::RecordStopTeardownAbort(const char* stage) const noexcept {
+    ASFW_LOG(DICE,
+             "DICEDuplexBringupController: StopDuplex aborted by teardown stage=%{public}s kr=0x%x",
+             stage ? stage : "unknown",
+             kIOReturnAborted);
+}
+
+bool DICEDuplexBringupController::AbortStopIfTeardown(const char* stage, VoidCallback& cb) {
+    if (!TeardownRequested()) {
+        return false;
+    }
+
+    stopSequenceError_ = kIOReturnAborted;
+    ResetRestartSession(restartSession_);
+    flowMode_ = FlowMode::kNone;
+    RecordStopTeardownAbort(stage);
+    cb(stopSequenceError_);
+    return true;
+}
+
 uint64_t DICEDuplexBringupController::OwnerValue() const noexcept {
     const uint64_t localNodeId =
         0xFFC0ULL | static_cast<uint64_t>(busInfo_.GetLocalNodeID().value & 0x3FU);
@@ -1239,6 +1263,12 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
     if (!HasDeviceRestartState(restartSession_)) {
         return kIOReturnSuccess;
     }
+    if (TeardownRequested()) {
+        RecordStopTeardownAbort("Entry");
+        ResetRestartSession(restartSession_);
+        flowMode_ = FlowMode::kNone;
+        return kIOReturnAborted;
+    }
 
     struct WaitState {
         std::atomic<bool> done{false};
@@ -1255,6 +1285,12 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
         if (waitState->done.load(std::memory_order_acquire)) {
             return waitState->status.load(std::memory_order_relaxed);
         }
+        if (TeardownRequested()) {
+            RecordStopTeardownAbort("Wait");
+            ResetRestartSession(restartSession_);
+            flowMode_ = FlowMode::kNone;
+            return kIOReturnAborted;
+        }
         IOSleep(kStopSyncPollMs);
     }
 
@@ -1266,6 +1302,11 @@ IOReturn DICEDuplexBringupController::StopDuplex() {
 void DICEDuplexBringupController::ReleaseOwner(VoidCallback callback) {
     if (!restartSession_.ownerClaimed) {
         callback(kIOReturnSuccess);
+        return;
+    }
+    if (TeardownRequested()) {
+        RecordStopTeardownAbort("ReleaseOwnerEntry");
+        callback(kIOReturnAborted);
         return;
     }
 
@@ -1299,12 +1340,18 @@ void DICEDuplexBringupController::DoStopSequence(
     VoidCallback cb) {
     stopSequenceError_ = kIOReturnSuccess;
     restartSession_.phase = DiceRestartPhase::kStopping;
+    if (AbortStopIfTeardown("SequenceEntry", cb)) {
+        return;
+    }
     DoStopDisableGlobal(releaseOwner, std::move(cb));
 }
 
 void DICEDuplexBringupController::DoStopDisableGlobal(
     bool releaseOwner,
     VoidCallback cb) {
+    if (AbortStopIfTeardown("DisableGlobal", cb)) {
+        return;
+    }
     if (!EnsureGenerationCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         ResetRestartSession(restartSession_);
@@ -1317,6 +1364,9 @@ void DICEDuplexBringupController::DoStopDisableGlobal(
                     [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus transportStatus) mutable {
                          const IOReturn status = MapTransportStatus(transportStatus);
                          RecordFirstError(stopSequenceError_, status);
+                         if (AbortStopIfTeardown("DisableGlobalComplete", cb)) {
+                             return;
+                         }
                          DoStopDisableTx(releaseOwner, std::move(cb));
                      });
 }
@@ -1324,6 +1374,9 @@ void DICEDuplexBringupController::DoStopDisableGlobal(
 void DICEDuplexBringupController::DoStopDisableTx(
     bool releaseOwner,
     VoidCallback cb) {
+    if (AbortStopIfTeardown("DisableTx", cb)) {
+        return;
+    }
     if (!EnsureGenerationCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         cb(stopSequenceError_);
@@ -1334,16 +1387,25 @@ void DICEDuplexBringupController::DoStopDisableTx(
                    [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
+                        if (AbortStopIfTeardown("DisableTxReadComplete", cb)) {
+                            return;
+                        }
                         (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kIsochronous),
                                         kDisabledIsoChannel,
                                         [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                                              const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
                                              RecordFirstError(stopSequenceError_, isoStatus);
+                                             if (AbortStopIfTeardown("DisableTxIsoComplete", cb)) {
+                                                 return;
+                                             }
                                              (void)io_.WriteQuadBE(MakeDICEAddress(sections_.txStreamFormat.offset + TxOffset::kSpeed),
                                                              kTxSpeedS400,
                                                              [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus speedTransportStatus) mutable {
                                                                   const IOReturn speedStatus = MapTransportStatus(speedTransportStatus);
                                                                   RecordFirstError(stopSequenceError_, speedStatus);
+                                                                  if (AbortStopIfTeardown("DisableTxSpeedComplete", cb)) {
+                                                                      return;
+                                                                  }
                                                                   DoStopReleaseTx(releaseOwner, std::move(cb));
                                                               });
                                          });
@@ -1353,12 +1415,18 @@ void DICEDuplexBringupController::DoStopDisableTx(
 void DICEDuplexBringupController::DoStopReleaseTx(
     bool releaseOwner,
     VoidCallback cb) {
+    if (AbortStopIfTeardown("ReleaseTx", cb)) {
+        return;
+    }
     DoStopDisableRx(releaseOwner, std::move(cb));
 }
 
 void DICEDuplexBringupController::DoStopDisableRx(
     bool releaseOwner,
     VoidCallback cb) {
+    if (AbortStopIfTeardown("DisableRx", cb)) {
+        return;
+    }
     if (!EnsureGenerationCurrent()) {
         RecordFirstError(stopSequenceError_, kIOReturnOffline);
         cb(stopSequenceError_);
@@ -1369,16 +1437,25 @@ void DICEDuplexBringupController::DoStopDisableRx(
                    [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus readTransportStatus, uint32_t) mutable {
                         const IOReturn readStatus = MapTransportStatus(readTransportStatus);
                         RecordFirstError(stopSequenceError_, readStatus);
+                        if (AbortStopIfTeardown("DisableRxReadComplete", cb)) {
+                            return;
+                        }
                         (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kIsochronous),
                                         kDisabledIsoChannel,
                                         [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus isoTransportStatus) mutable {
                                              const IOReturn isoStatus = MapTransportStatus(isoTransportStatus);
                                              RecordFirstError(stopSequenceError_, isoStatus);
+                                             if (AbortStopIfTeardown("DisableRxIsoComplete", cb)) {
+                                                 return;
+                                             }
                                              (void)io_.WriteQuadBE(MakeDICEAddress(sections_.rxStreamFormat.offset + RxOffset::kSeqStart),
                                                              kRxSeqStartDefault,
                                                              [this, releaseOwner, cb = std::move(cb)](Async::AsyncStatus seqTransportStatus) mutable {
                                                                   const IOReturn seqStatus = MapTransportStatus(seqTransportStatus);
                                                                   RecordFirstError(stopSequenceError_, seqStatus);
+                                                                  if (AbortStopIfTeardown("DisableRxSeqComplete", cb)) {
+                                                                      return;
+                                                                  }
                                                                   DoStopReleaseRx(releaseOwner, std::move(cb));
                                                               });
                                          });
@@ -1388,6 +1465,9 @@ void DICEDuplexBringupController::DoStopDisableRx(
 void DICEDuplexBringupController::DoStopReleaseRx(
     bool releaseOwner,
     VoidCallback cb) {
+    if (AbortStopIfTeardown("ReleaseRx", cb)) {
+        return;
+    }
     if (releaseOwner) {
         DoStopReleaseOwner(std::move(cb));
         return;
@@ -1403,6 +1483,9 @@ void DICEDuplexBringupController::DoStopReleaseRx(
 }
 
 void DICEDuplexBringupController::DoStopReleaseOwner(VoidCallback cb) {
+    if (AbortStopIfTeardown("ReleaseOwner", cb)) {
+        return;
+    }
     if (!restartSession_.ownerClaimed) {
         ResetRestartSession(restartSession_);
         flowMode_ = FlowMode::kNone;
@@ -1422,6 +1505,9 @@ void DICEDuplexBringupController::DoStopReleaseOwner(VoidCallback cb) {
                         OwnerValue(),
                         kOwnerNoOwner,
                         [this, cb = std::move(cb)](Async::AsyncStatus transportStatus, uint64_t previous) mutable {
+                              if (AbortStopIfTeardown("ReleaseOwnerComplete", cb)) {
+                                  return;
+                              }
                               const IOReturn status = MapTransportStatus(transportStatus);
                               RecordFirstError(stopSequenceError_, status);
                               if (status == kIOReturnSuccess &&
