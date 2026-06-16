@@ -674,6 +674,11 @@ RX is protected from the same Default-queue jitter that starves TX.
 
 #### The fix
 
+> **Resolved & hardware-validated (2026-06-16, tag `tx-frame-exposure-lead`).**
+> The two options below were the diagnosis-time plan. The shipped fix is a
+> refinement of option 1 — see **Resolution** at the end of this section for
+> what was actually implemented and the wire results.
+
 The frames lost to `withoutPkt` were **already present in the host ring** when
 the producer finally exposed the packet (that is what `W > E` means). Two
 options, in order of preference:
@@ -715,14 +720,77 @@ static_assert(kTxExposureLeadFrames >= kHalIoPeriodFrames + kSchedulingJitterFra
 The rate-dependent partner `RequiredOutputExposureFrames` lives beside
 `RequiredInputSafetyFrames` in `AudioGeometryPolicy.hpp`.
 
-#### Measurement caveat
+#### Resolution (2026-06-16, hardware-validated)
 
-In the analyzed run the source was **~99 % digital silence** (`nonZero` = 1.0 %
-of `written`), so the `[Isoch] IT WIRE PCM dropout` *edge* counter is heavily
-inflated by legitimate source silence. Re-measure the true dropout rate with
-*continuous* nonzero audio. (Separately: the dext crashed with `fatal 309` at the
-end of that log, and `withoutPkt` spiked from 1.14 % lifetime to 8.8 % in the
-final window — a pre-crash degradation worth investigating on its own.)
+The shipped fix refines option 1. Rather than a single bumped lead, the
+producer carries **two independent budgets** and `PrepareTransmitSlots` keeps
+preparing until *both* invariants hold:
+
+```cpp
+// PrepareTransmitSlots(start, requiredPacketIndex, limitPacketIndex,
+//                      maxToPrepare, targetFrameEnd, allowRecoveredClock)
+//   requiredPacketIndex → refill-coverage sub-budget (must always be met)
+//   limitPacketIndex    → hard ceiling (coverage + frame-exposure window)
+//   targetFrameEnd      → WriteEnd + kTxExposureLeadFrames (frame invariant)
+```
+
+| Constant (`AudioTimingGeometry.hpp`) | Value | Role |
+|--------------------------------------|------:|------|
+| `kTxHardwareRingPackets`             |    48 | OHCI IT descriptor ring |
+| `kTxCoverageLeadPackets`             |   144 | refill safety (HW ring 48 + slack 96) — the `requiredPacketIndex` target |
+| `kTxFrameExposureWindowPackets`      |   192 | extra packets to cover `WriteEnd + cushion` |
+| `kTxPreparationLeadPackets`          |   336 | coverage 144 + exposure 192 — the `limitPacketIndex` target |
+| `kTxSharedSlotPackets`               |   384 | lead 336 + one HW-ring depth before slot reuse |
+| `kTxExposureLeadFrames`              |   576 | frame cushion = `kHalIoPeriodFrames (512) + kSchedulingJitterFrames (64)` |
+
+The producer always satisfies coverage (144) first — that is the refill-hole
+invariant — then continues up to the 336-packet ceiling until
+`ExposedFrameEnd() ≥ WriteEnd + 576`. `targetFrameEnd == 0` (unseeded transmit
+clock) preserves the cadence-correct NO-INFO seed without forcing exposure.
+
+**Wire validation (Saffire Pro 24 DSP, 48 kHz, continuous audio):**
+
+* **`withoutPkt = 0`, `deficit = 0`, `written == visited`** in steady state,
+  sustained 3.5 min+ into a session (`sampleTime` > 10 M frames).
+* A start-to-45 s capture dropped **zero** frames; the only exposure deficit
+  was a single record at the very first write (silent pre-RUN ramp,
+  `withoutPkt = 0`, `nonZero = 0` — harmless).
+* `[TxPrep]` heartbeat: min committed margin **138**, lead **336**,
+  `late1500 = 0`, max wake latency ≈ 550 µs.
+* The old ~1 % silence is gone. (Re-measuring on *continuous* audio — the prior
+  ~99 % silent log was the measurement caveat below — confirmed the dropouts
+  were real under-exposure, not source silence: with real audio the writer is
+  busy and the cushion holds.)
+
+This also superseded the diagnosis-time measurement caveat. The `fatal 309`
+crash from the earlier log did **not** recur in the validated runs and remains
+untriaged (tracked separately, not part of Defect B).
+
+#### Telemetry posture after resolution
+
+With the happy path confirmed, the two hot-path traces are **anomaly-only**
+(commit `739a746`): the rings are still drained every tick so they never
+overflow, but `[PayloadWriter]` logs a record only on a fault
+(`deficit`/`withoutPkt`/`outsidePkt`/`raced`/`written != visited`) and
+`[TxPrepRange]` only on `stoppedShort` (refill hole) or `frameShort` (`W > E`).
+The periodic `[TxPrep]` summary remains the lone liveness/margin heartbeat. A
+clean run prints only that heartbeat; any other line is a regression.
+
+> **Capturing the trace.** DriverKit dexts have no real os_log categories
+> (`os_log_create` is unavailable — every line is `OS_LOG_DEFAULT` from
+> `kernel`), so filter on the message-text prefix and pass `--info --debug`:
+> ```
+> log stream --info --debug \
+>   --predicate 'eventMessage CONTAINS "[PayloadWriter]" OR eventMessage CONTAINS "[TxPrep]"' \
+>   --style compact | grep -m 60 -E 'withoutPkt=[1-9]|deficit=[1-9]|\[TxPrep\]'
+> ```
+
+#### Measurement caveat (historical — superseded by the Resolution above)
+
+In the *original* diagnosis run the source was **~99 % digital silence**
+(`nonZero` = 1.0 % of `written`), so the `[Isoch] IT WIRE PCM dropout` *edge*
+counter was heavily inflated by legitimate source silence. This is why the fix
+was re-validated on continuous audio (see Resolution).
 
 Independent of all the above, the packet-ring **capacity** may remain deep for
 wrap/recovery headroom: capacity is not latency, and (per the harmless-over-
