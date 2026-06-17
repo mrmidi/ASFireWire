@@ -134,7 +134,8 @@ enum CoolScan {
     /// EVPD page inquiry. Page 0xC1 = Nikon capabilities (max res, boundaries, …).
     static func pageInquiry(_ s: SBP2Session, page: UInt8, length: UInt8) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0x12, 0x01, page, 0x00, length, 0x00],
-                       direction: .fromTarget, transferLength: UInt32(length))
+                       direction: .fromTarget, transferLength: UInt32(length),
+                       timeoutMs: kPollCmdTimeoutMs)
     }
 
     // MARK: - Capabilities (EVPD page 0xC1)
@@ -209,15 +210,20 @@ enum CoolScan {
     /// every pass and it is the likely source of the SET WINDOW offsets. Dump raw
     /// until the layout is understood. Bytes 1..4 hold the focus position.
     static func readFrameInfo(_ s: SBP2Session) throws -> SCSIResult {
+        // 30 s: these reads run right after mechanical ops; the 5 s default
+        // ORB-timeout fired mid-settle and AGENT_RESET wedged the session
+        // (run 17: AF-result, run 18: post-focus frame-info).
         try s.sendSCSI(cdb: [0xe1, 0x00, 0xc1, 0, 0, 0, 0, 0, 0x0d, 0x00],
-                       direction: .fromTarget, transferLength: 13)
+                       direction: .fromTarget, transferLength: 13,
+                       timeoutMs: kSlowCmdTimeoutMs)
     }
 
     /// Vendor read e1/c1, 9 bytes — AF result; VueScan reads it right after the
     /// autofocus EXECUTE completes. Focus position in bytes 1..4 (BE).
     static func readAFResult(_ s: SBP2Session) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0xe1, 0x00, 0xc1, 0, 0, 0, 0, 0, 0x09, 0x00],
-                       direction: .fromTarget, transferLength: 9)
+                       direction: .fromTarget, transferLength: 9,
+                       timeoutMs: kSlowCmdTimeoutMs)
     }
 
     /// EVPD page 0xC8 (197 B) — undecoded; VueScan polls it constantly (~200×
@@ -225,7 +231,8 @@ enum CoolScan {
     /// to match the captured CDB `12 01 c8 00 c5 80` exactly.
     static func readPageC8(_ s: SBP2Session) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0x12, 0x01, 0xc8, 0x00, 0xc5, 0x80],
-                       direction: .fromTarget, transferLength: 0xc5)
+                       direction: .fromTarget, transferLength: 0xc5,
+                       timeoutMs: kPollCmdTimeoutMs)
     }
 
     /// READ FOCUS → current focus value (bytes 1..4 of the 13-byte response).
@@ -377,6 +384,66 @@ enum CoolScan {
                               timeoutMs: kSlowCmdTimeoutMs)
     }
 
+    /// SET WINDOW with caller-supplied raw payload (8-byte header + descriptor).
+    static func setWindowRaw(_ s: SBP2Session, _ data: [UInt8]) throws -> SCSIResult {
+        try s.sendSCSI(cdb: [0x24, 0, 0, 0, 0, 0, 0, 0, UInt8(data.count), 0x80],
+                       direction: .toTarget, transferLength: UInt32(data.count),
+                       outgoing: data, timeoutMs: kSlowCmdTimeoutMs)
+    }
+
+    /// Field-level fault isolation for SET WINDOW 5/26: echo the scanner's own
+    /// GET WINDOW block back unchanged, then mutate one field group at a time
+    /// toward the capture values. The first rejected rung names the culprit.
+    /// Safe to run back-to-back — key-5 rejections are deterministic and leave
+    /// the transport clean (HW-run 14).
+    static func bisectSetWindow(_ s: SBP2Session, _ g: ScanGeometry) {
+        guard let gw = try? getWindowRaw(s, color: .red), gw.payload.count == 58 else {
+            print("  bisect: GET WINDOW utilgjengelig — hopper over")
+            return
+        }
+        let defaultDesc = [UInt8](gw.payload.suffix(50))
+        let header: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0x32]
+
+        func patch16(_ d: inout [UInt8], _ i: Int, _ v: UInt16) {
+            d[i] = UInt8(v >> 8); d[i + 1] = UInt8(v & 0xff)
+        }
+        func patch32(_ d: inout [UInt8], _ i: Int, _ v: UInt32) {
+            d[i] = UInt8(v >> 24); d[i + 1] = UInt8((v >> 16) & 0xff)
+            d[i + 2] = UInt8((v >> 8) & 0xff); d[i + 3] = UInt8(v & 0xff)
+        }
+        func verdict(_ label: String, _ desc: [UInt8]) {
+            do {
+                let r = try setWindowRaw(s, header + desc)
+                print("  bisect \(label): \(r.ok ? "✅ AKSEPTERT" : "❌ \(r.statusText)")")
+            } catch {
+                print("  bisect \(label): ❌ \(error)")
+            }
+        }
+
+        // Tail-delivery matrix (run 18). Bytes 56–57 of the 58-byte payload —
+        // the exposure low half — are the ONLY meaningful bytes in a partial
+        // quadlet anywhere in the command vocabulary (ORBs are 32 B, LUT 32768,
+        // SCAN 4; setFocus' 9th byte is zero padding). If our read response
+        // garbles the non-quadlet tail, the device sees a wrong exposure in
+        // EVERY variant — invariant 5/26 — while a window whose exposure is
+        // 0x00000000 (the IR window, VueScan-accepted) has nothing to corrupt.
+        var full = defaultDesc
+        patch16(&full, 2, g.realResX); patch16(&full, 4, g.realResY)
+        patch32(&full, 6, g.xOffsetDU); patch32(&full, 10, g.yOffsetDU)
+        patch32(&full, 14, g.widthDU); patch32(&full, 18, g.heightDU)
+        full[25] = 0x05; full[41] = 0x81
+        var dRed = full; patch32(&dRed, 46, defaultExposure(.red))
+        var dRedZero = full; patch32(&dRedZero, 46, 0)
+        var dIR = full; dIR[0] = Color.infrared.rawValue; patch32(&dIR, 46, 0)
+
+        verdict("A IR-vindu (id 09, exp=0, null-hale)", dIR)
+        verdict("B rød m/eksponering=0 (null-hale)   ", dRedZero)
+        verdict("C ekko av default (referanse)       ", defaultDesc)
+        verdict("D vår fulle røde (referanse)        ", dRed)
+        print("  bisect-tolkning: A/B ✅ + C/D ❌ → ikke-quadlet-halen korrumperes i transporten;"
+            + " alle ❌ → halen frikjent, gå til dext-logg")
+    }
+
     /// GET WINDOW → read back the exposure for one color (bytes 54..57).
     static func getWindowExposure(_ s: SBP2Session, color: Color) throws -> UInt32 {
         let r = try s.sendSCSI(cdb: [0x25, 0x01, 0, 0, 0, color.rawValue, 0, 0, 0x3a, 0x00],
@@ -391,7 +458,8 @@ enum CoolScan {
     /// scanner: the descriptor fields are at the same offsets we wrote them.
     static func getWindowRaw(_ s: SBP2Session, color: Color) throws -> SCSIResult {
         try s.sendSCSI(cdb: [0x25, 0x01, 0, 0, 0, color.rawValue, 0, 0, 0x3a, 0x00],
-                       direction: .fromTarget, transferLength: 58)
+                       direction: .fromTarget, transferLength: 58,
+                       timeoutMs: kPollCmdTimeoutMs)
     }
 
     // MARK: - Scan & read
@@ -496,9 +564,10 @@ enum CoolScan {
                           resolution: UInt16, depth: UInt8? = nil,
                           negative: Bool = false,
                           rows: Int? = nil,   // cap output height (thin-strip proof)
-                          // Skip setFocus+EXECUTE entirely. Diagnostic: on HW the
-                          // device stopped fetching ORBs after the focus EXECUTE
-                          // (mechanical click heard, then SET WINDOW timed out 8×).
+                          // Skip the AF preamble entirely and keep the fixed focus
+                          // value. HW-run 13: every TUR right after EXECUTE (AF) hit
+                          // the mechanically busy device → ORB timeout → AGENT_RESET
+                          // mid-cycle → terminal wedge. nofocus avoids that path.
                           skipFocus: Bool = false,
                           focus: UInt32 = 235,   // captured value for the test slide
                           // Frame box in device units (1/resXMax″). Defaults to the
@@ -517,6 +586,7 @@ enum CoolScan {
                           // works against an old dext.
                           maxChunkBytes: Int = 480_000,
                           readTimeoutMs: UInt32 = 30_000,
+                          bootSettleSeconds: Int = 25,
                           progress: ((Int, Int) -> Void)? = nil) throws -> ScanResult {
         var g = geometry(caps, resolution: resolution, depth: depth,
                          xOffsetDU: xOffsetDU, yOffsetDU: yOffsetDU,
@@ -532,6 +602,18 @@ enum CoolScan {
         // 0) No RESERVE — VueScan never sends it (full-capture CDB vocabulary
         //    checked); dropped to eliminate every sequence difference while
         //    SET WINDOW 5/26 is unexplained.
+
+        // 0b) Let the scanner finish its post-power-cycle boot before the first
+        //     AGENT_RESET-routed command. The ORBs in main (INQUIRY/TUR/caps)
+        //     ride the agent's post-login RESET state and answer reliably even
+        //     mid-boot, but waitReady's TUR goes through AGENT_RESET→AGENT_STATE
+        //     poll, which wedges if the target is still mechanically busy
+        //     (HW-run 21: early waitReady wedge right after a power cycle, UA
+        //     0x29 power-on still pending → ORB hangs ~44 s, commandInFlight locked).
+        if bootSettleSeconds > 0 {
+            step("venter \(bootSettleSeconds)s på at skanneren fullfører boot (unngår tidlig AGENT_RESET-wedge)")
+            Thread.sleep(forTimeInterval: TimeInterval(bootSettleSeconds))
+        }
 
         // 1) Wait until the scanner reports ready (film loaded, lamp warm).
         guard waitReady(s, timeout: 120) else { throw ProbeError("scanner ikke klar (sense-timeout)") }
@@ -553,6 +635,12 @@ enum CoolScan {
         if let c8 = try? readPageC8(s) {
             print("  EVPD C8 (\(c8.payload.count)B, \(c8.statusText)): \(hexLine([UInt8](c8.payload)))")
         }
+        // GET WINDOW is our own addition (0x25 never appears in the capture) —
+        // keep it out of the AF→SET WINDOW stretch so that stretch is pure
+        // VueScan vocabulary.
+        if let gw = try? getWindowRaw(s, color: .red) {
+            print("  GET WINDOW(red) før preamble (\(gw.statusText)): \(hexLine([UInt8](gw.payload)))")
+        }
 
         // 2) Capture preamble, replicated verbatim from the preview pass: set AF
         //    point (center) → EXECUTE → frame-info → AF result → c0 → set focus
@@ -565,10 +653,27 @@ enum CoolScan {
         // Between tries: ride TUR until the device answers again instead of a
         // blind sleep — a dropped transport has been observed to need ~44 s.
         let ride: () -> Void = { _ = waitReady(s, timeout: 60) }
+        // Any command issued while the mechanics move risks ORB timeout →
+        // AGENT_RESET mid-cycle → terminal wedge (HW-run 13). VueScan survived
+        // this window via doorbell-chaining; with reset-per-ORB the only safe
+        // wait is a command-free sleep before the first TUR.
+        let settle: (TimeInterval, String) -> Void = { secs, what in
+            step("venter passivt \(Int(secs))s etter \(what) (ingen kommandoer mens mekanikken jobber)")
+            Thread.sleep(forTimeInterval: secs)
+        }
         var appliedFocus = focus
-        do {
+        // Every captured pass runs a full AF cycle in its prolog (AF at line
+        // 4673 before the preview windows, again at 12873 before the final
+        // pass), and VueScan waits a long poll stretch after the c0 before
+        // touching focus. Replicate unconditionally — skipFocus only keeps the
+        // fixed focus value instead of adopting the AF result (capture sent
+        // 235 here too).
+        if skipFocus {
+            step("nofocus: hopper over AF-syklusen (AF frikjent for 5/26 i HW-run 17, EXECUTE(AF) wedger reset-per-ORB) — fast fokus \(appliedFocus)")
+        } else { do {
             _ = try attempt("SET AF-PUNKT", tries: 3, recover: ride) { try autofocus(s, x: 2920, y: 3936) }
             _ = try attempt("EXECUTE (AF)", tries: 3, recover: ride) { try execute(s) }
+            settle(30, "EXECUTE (AF)")
             let afReady = waitReady(s, timeout: 120)
             step(afReady ? "autofokus ferdig" : "⚠️ ikke klar etter AF — fortsetter")
             if let fi = try? readFrameInfo(s) {
@@ -584,13 +689,22 @@ enum CoolScan {
                 }
             }
             _ = try? abortIdle(s)
+            settle(10, "c0 (abort/idle)")
+            _ = waitReady(s, timeout: 60)
         } catch {
             print("  ⚠️ AF-preamble feilet: \(error) — fortsetter med fast fokus")
+        } }
+        if let fi = try? readFrameInfo(s) {
+            print("  Frame-info før setFocus: \(hexLine([UInt8](fi.payload)))")
         }
         _ = try attempt("SET FOCUS", recover: ride) { try setFocus(s, focus: appliedFocus) }
         _ = try attempt("EXECUTE (fokus)", recover: ride) { try execute(s) }
+        settle(15, "EXECUTE (fokus)")
         let fReady = waitReady(s, timeout: 60)
         step(fReady ? "fokus satt (\(appliedFocus))" : "⚠️ ikke klar etter fokus — fortsetter")
+        // (Post-focus frame-info readback removed: data-OUT integrity is proven
+        // twice — byte4 read back 0xeb in runs 16/17 — and the extra read sat as
+        // one more wedge-roulette draw right before SET WINDOW; run 18 died on it.)
 
         // 3) One window per colour channel, then a LUT per channel — VueScan's
         //    order: all four SET WINDOW first, then all four SEND LUT.
@@ -599,16 +713,19 @@ enum CoolScan {
             guard let t = s.lastTransferInfo() else { return " [xfer utilgjengelig]" }
             return " [target leste \(t.targetReadBytes)B/\(t.targetReadCalls)x av \(t.expectedBytes)B forventet]"
         }
-        if let gw = try? getWindowRaw(s, color: .red) {
-            print("  GET WINDOW(red) før SET (\(gw.statusText)): \(hexLine([UInt8](gw.payload)))")
-        }
         print("  SET WINDOW payload (red): "
             + hexLine(windowDescriptor(window(g, color: .red, negative: negative))))
-        for c in colors {
-            _ = try attempt("SET WINDOW (\(c))", diag: xferDiag, recover: ride) {
-                try setWindow(s, window(g, color: c, negative: negative))
+        do {
+            for c in colors {
+                _ = try attempt("SET WINDOW (\(c))", diag: xferDiag, recover: ride) {
+                    try setWindow(s, window(g, color: c, negative: negative))
+                }
+                step("SET WINDOW \(c) ok")
             }
-            step("SET WINDOW \(c) ok")
+        } catch {
+            print("  → SET WINDOW avvist — bisekterer felt mot GET WINDOW-defaulten:")
+            bisectSetWindow(s, g)
+            throw error
         }
         for c in colors {
             _ = try attempt("SEND LUT (\(c))", recover: ride) { try sendLUT(s, color: c) }

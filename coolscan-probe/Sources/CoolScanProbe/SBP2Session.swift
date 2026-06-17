@@ -105,7 +105,9 @@ final class SBP2Session {
                   direction: ASFW.DataDirection,
                   transferLength: UInt32 = 0,
                   outgoing: [UInt8] = [],
-                  timeoutMs: UInt32 = 5000,
+                  // 15 s: a 5 s default fired the dext ORB-timeout (→ AGENT_RESET)
+                  // against a mechanically-settling scanner and wedged the session.
+                  timeoutMs: UInt32 = 15_000,
                   captureSense: Bool = true) throws -> SCSIResult {
         precondition(cdb.count >= 1 && cdb.count <= 16, "CDB må være 1–16 byte")
 
