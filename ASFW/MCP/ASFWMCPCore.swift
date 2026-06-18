@@ -9,7 +9,7 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
 
         let nodes = await driver.listNodes()
         let protocolHints = Set(nodes.flatMap(\.protocolHints))
-        let allTools = Self.toolCatalog
+        let allTools = ASFWMCPToolCatalog.all
         return allTools.filter { tool in
             guard tool.requiredProtocolHints.isEmpty ||
                   tool.requiredProtocolHints.contains(where: { protocolHints.contains($0) }) else {
@@ -33,7 +33,7 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
 
     func listResources() async -> [ASFWMCPResourceDefinition] {
         guard configuration.mode != .disabled else { return [] }
-        return Self.resourceCatalog
+        return ASFWMCPResourceCatalog.all
     }
 
     func readResource(uri: String) async -> ASFWMCPResourceEnvelope {
@@ -242,42 +242,3 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
     }
 }
 
-extension ASFWMCPCore {
-    static var toolCatalog: [ASFWMCPToolDefinition] {
-        [
-            ASFWMCPToolDefinition(name: "asfw_get_capabilities", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Summarize MCP runtime mode and available dynamic groups."),
-            ASFWMCPToolDefinition(name: "asfw_get_policy", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Report current MCP policy and write-gate status."),
-            ASFWMCPToolDefinition(name: "asfw_list_nodes", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "List current bus nodes and protocol hints."),
-            ASFWMCPToolDefinition(name: "asfw_get_node_summary", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Return one compact node summary."),
-            ASFWMCPToolDefinition(name: "asfw_explain_capability", group: "core", visibility: .always, readOnly: true, idempotent: true, summary: "Explain why a capability is available, hidden, or policy-gated."),
-
-            ASFWMCPToolDefinition(name: "asfw_get_controller_state", group: "bus_topology", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return controller state and bus health."),
-            ASFWMCPToolDefinition(name: "asfw_get_topology", group: "bus_topology", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return current topology snapshot."),
-            ASFWMCPToolDefinition(name: "asfw_get_config_rom", group: "config_rom", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return cached Config ROM summary."),
-            ASFWMCPToolDefinition(name: "asfw_read_quadlet", group: "async_transactions", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Submit an async quadlet read."),
-            ASFWMCPToolDefinition(name: "asfw_read_block", group: "async_transactions", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Submit an async block read."),
-            ASFWMCPToolDefinition(name: "asfw_read_device_register", group: "register_access", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a device register/address-space value."),
-            ASFWMCPToolDefinition(name: "asfw_dice_read_register", group: "dice_tcat", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a DICE/TCAT register.", requiredProtocolHints: ["dice_tcat"]),
-            ASFWMCPToolDefinition(name: "asfw_irm_get_state", group: "irm_cas", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return IRM and bus manager state."),
-            ASFWMCPToolDefinition(name: "asfw_avc_list_units", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List AV/C units.", requiredProtocolHints: ["avc"]),
-            ASFWMCPToolDefinition(name: "asfw_cmp_read_pcr", group: "cmp", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read and decode a CMP plug control register.", requiredProtocolHints: ["cmp"]),
-            ASFWMCPToolDefinition(name: "asfw_sbp2_list_units", group: "sbp2", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List SBP-2 units.", requiredProtocolHints: ["sbp2"]),
-
-            ASFWMCPToolDefinition(name: "asfw_write_quadlet", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated async quadlet write."),
-            ASFWMCPToolDefinition(name: "asfw_write_block", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated async block write."),
-            ASFWMCPToolDefinition(name: "asfw_compare_swap", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated compare-swap transaction."),
-            ASFWMCPToolDefinition(name: "asfw_dice_write_register", group: "dice_tcat", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated DICE/TCAT register write.", requiredProtocolHints: ["dice_tcat"]),
-            ASFWMCPToolDefinition(name: "asfw_cmp_write_pcr", group: "cmp", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated CMP PCR write.", requiredProtocolHints: ["cmp"]),
-            ASFWMCPToolDefinition(name: "asfw_write_ohci_register_dev", group: "register_access", visibility: .rawDeveloper, readOnly: false, idempotent: false, summary: "Raw developer-tier OHCI register write.")
-        ]
-    }
-
-    static var resourceCatalog: [ASFWMCPResourceDefinition] {
-        [
-            ASFWMCPResourceDefinition(uri: "asfw://telemetry/snapshot", schema: "asfw.telemetry.snapshot.v1", summary: "Compact cross-system telemetry overview."),
-            ASFWMCPResourceDefinition(uri: "asfw://controller/state", schema: "asfw.telemetry.controller_state.v1", summary: "Controller, link, and bus health."),
-            ASFWMCPResourceDefinition(uri: "asfw://nodes", schema: "asfw.telemetry.nodes.v1", summary: "Current node summaries."),
-            ASFWMCPResourceDefinition(uri: "asfw://transactions/recent", schema: "asfw.telemetry.transactions_recent.v1", summary: "Bounded recent async transaction events.")
-        ]
-    }
-}
