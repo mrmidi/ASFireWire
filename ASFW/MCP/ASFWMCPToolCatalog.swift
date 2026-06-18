@@ -57,8 +57,5 @@ enum ASFWMCPToolCatalog {
 
     // `sbp2Tools` is owned by ASFWMCPSbp2Tools.swift (FW-84).
 
-    static let diceTcatTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_dice_read_register", group: "dice_tcat", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a DICE/TCAT register.", requiredProtocolHints: ["dice_tcat"]),
-        ASFWMCPToolDefinition(name: "asfw_dice_write_register", group: "dice_tcat", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated DICE/TCAT register write.", requiredProtocolHints: ["dice_tcat"])
-    ]
+    // `diceTcatTools` is owned by ASFWMCPDiceTcatTools.swift (FW-85).
 }
