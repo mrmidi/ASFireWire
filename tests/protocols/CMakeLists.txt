@@ -221,3 +221,19 @@ add_protocols_test(SessionRegistryTests
     "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
     "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
 )
+
+# SBP2Handler Tests (user-client boundary: session state + command ABI hardening)
+add_protocols_test(SBP2HandlerTests
+    SBP2HandlerTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/SessionRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/CommandExecutor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+)
