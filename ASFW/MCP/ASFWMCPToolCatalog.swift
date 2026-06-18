@@ -51,9 +51,7 @@ enum ASFWMCPToolCatalog {
 
     // `irmCasTools` is owned by ASFWMCPIrmCasTools.swift (FW-81).
 
-    static let avcFcpTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_avc_list_units", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List AV/C units.", requiredProtocolHints: ["avc"])
-    ]
+    // `avcFcpTools` is owned by ASFWMCPAvcFcpTools.swift (FW-82).
 
     static let cmpTools: [ASFWMCPToolDefinition] = [
         ASFWMCPToolDefinition(name: "asfw_cmp_read_pcr", group: "cmp", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read and decode a CMP plug control register.", requiredProtocolHints: ["cmp"]),
