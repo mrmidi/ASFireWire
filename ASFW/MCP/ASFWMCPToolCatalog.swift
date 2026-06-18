@@ -49,9 +49,7 @@ enum ASFWMCPToolCatalog {
     // `registerTools` is owned by ASFWMCPRegisterTools.swift (FW-80) — the
     // reference for how a surface ticket extracts its slice into its own file.
 
-    static let irmCasTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_irm_get_state", group: "irm_cas", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return IRM and bus manager state.")
-    ]
+    // `irmCasTools` is owned by ASFWMCPIrmCasTools.swift (FW-81).
 
     static let avcFcpTools: [ASFWMCPToolDefinition] = [
         ASFWMCPToolDefinition(name: "asfw_avc_list_units", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List AV/C units.", requiredProtocolHints: ["avc"])
