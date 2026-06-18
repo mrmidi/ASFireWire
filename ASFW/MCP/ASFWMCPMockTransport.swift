@@ -14,6 +14,10 @@ struct ASFWMCPMockTransport<Driver: ASFWDriverControlling> {
     func readResource(_ uri: String) async -> ASFWMCPResourceEnvelope {
         await core.readResource(uri: uri)
     }
+
+    func callTool(_ name: String, arguments: ASFWMCPValue = .object([:])) async -> ASFWMCPToolCallResult {
+        await core.callTool(name: name, arguments: arguments)
+    }
 }
 
 enum ASFWMCPHardwareSmokeHarness {

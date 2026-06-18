@@ -66,6 +66,31 @@ struct ASFWMCPResourceEnvelope: Equatable {
     let errors: [ASFWMCPResourceError]
 }
 
+struct ASFWMCPToolCallResult: Equatable {
+    let toolName: String
+    let ok: Bool
+    let data: ASFWMCPValue
+    let errors: [ASFWMCPResourceError]
+
+    static func success(toolName: String, data: ASFWMCPValue) -> ASFWMCPToolCallResult {
+        ASFWMCPToolCallResult(toolName: toolName, ok: true, data: data, errors: [])
+    }
+
+    static func failure(
+        toolName: String,
+        code: ASFWMCPErrorCode,
+        reason: String,
+        data: ASFWMCPValue = .object([:])
+    ) -> ASFWMCPToolCallResult {
+        ASFWMCPToolCallResult(
+            toolName: toolName,
+            ok: false,
+            data: data,
+            errors: [ASFWMCPResourceError(code: code, reason: reason)]
+        )
+    }
+}
+
 struct ASFWMCPToolDefinition: Equatable {
     let name: String
     let group: String

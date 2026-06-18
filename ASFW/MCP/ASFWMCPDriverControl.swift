@@ -4,6 +4,11 @@ protocol ASFWDriverControlling {
     func fetchTelemetrySnapshot(configuration: ASFWMCPRuntimeConfiguration) async -> ASFWMCPTelemetrySnapshot
     func listNodes() async -> [ASFWMCPNodeSummary]
     func listRecentTransactions(limit: Int) async -> [ASFWMCPTransactionEvent]
+    func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult
+    func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult
+    func executeWriteQuadlet(_ request: ASFWMCPWriteQuadletRequest) async -> ASFWMCPTransactionResult
+    func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult
+    func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult
 }
 
 actor MockASFWDriverControl: ASFWDriverControlling {
@@ -73,12 +78,105 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         Array(transactions.prefix(max(0, limit)))
     }
 
+    func executeReadQuadlet(_ request: ASFWMCPReadQuadletRequest) async -> ASFWMCPTransactionResult {
+        ASFWMCPTransactionResult(
+            kind: request.kind,
+            ok: true,
+            status: .ok,
+            generation: generation,
+            correlationId: "mock-read-quadlet",
+            rCode: "complete",
+            durationUsec: 100,
+            payload: quadletBytes(mockQuadletValue(for: request.address))
+        )
+    }
+
+    func executeReadBlock(_ request: ASFWMCPReadBlockRequest) async -> ASFWMCPTransactionResult {
+        if request.validationError != nil {
+            return .malformed(kind: request.kind, correlationId: "mock-read-block-malformed", generation: generation)
+        }
+        let pattern = quadletBytes(mockQuadletValue(for: request.address))
+        let payload = (0..<Int(request.length)).map { pattern[$0 % pattern.count] }
+        return ASFWMCPTransactionResult(
+            kind: request.kind,
+            ok: true,
+            status: .ok,
+            generation: generation,
+            correlationId: "mock-read-block",
+            rCode: "complete",
+            durationUsec: 120,
+            payload: payload
+        )
+    }
+
+    func executeWriteQuadlet(_ request: ASFWMCPWriteQuadletRequest) async -> ASFWMCPTransactionResult {
+        attemptedWriteCount += 1
+        return ASFWMCPTransactionResult(
+            kind: request.kind,
+            ok: true,
+            status: .ok,
+            generation: generation,
+            correlationId: "mock-write-quadlet",
+            rCode: "complete",
+            durationUsec: 140,
+            payload: request.verifyReadback ? quadletBytes(request.value) : nil
+        )
+    }
+
+    func executeWriteBlock(_ request: ASFWMCPWriteBlockRequest) async -> ASFWMCPTransactionResult {
+        attemptedWriteCount += 1
+        if request.validationError != nil {
+            return .malformed(kind: request.kind, correlationId: "mock-write-block-malformed", generation: generation)
+        }
+        return ASFWMCPTransactionResult(
+            kind: request.kind,
+            ok: true,
+            status: .ok,
+            generation: generation,
+            correlationId: "mock-write-block",
+            rCode: "complete",
+            durationUsec: 160,
+            payload: request.verifyReadback ? request.payload : nil
+        )
+    }
+
+    func executeCompareSwap(_ request: ASFWMCPCompareSwapRequest) async -> ASFWMCPTransactionResult {
+        attemptedWriteCount += 1
+        let comparePassed = request.expected == mockQuadletValue(for: request.address)
+        return ASFWMCPTransactionResult(
+            kind: request.kind,
+            ok: comparePassed,
+            status: comparePassed ? .ok : .compareFailed,
+            generation: generation,
+            correlationId: "mock-compare-swap",
+            rCode: comparePassed ? "complete" : "conflictError",
+            durationUsec: 180,
+            payload: quadletBytes(comparePassed ? request.swap : mockQuadletValue(for: request.address))
+        )
+    }
+
     func recordUnexpectedWriteAttempt() {
         attemptedWriteCount += 1
     }
 
     func unexpectedWriteAttemptCount() -> Int {
         attemptedWriteCount
+    }
+
+    private func mockQuadletValue(for address: ASFWMCPAddress) -> UInt32 {
+        if address.offset48 == 0xFFFF_F000_0400 {
+            return 0x3133_3934
+        }
+        return address.addressLow
+    }
+
+    private func quadletBytes(_ value: UInt32) -> [UInt8] {
+        [
+            UInt8((value >> 24) & 0xFF),
+            UInt8((value >> 16) & 0xFF),
+            UInt8((value >> 8) & 0xFF),
+            UInt8(value & 0xFF)
+        ]
     }
 
     static let defaultNodes: [ASFWMCPNodeSummary] = [

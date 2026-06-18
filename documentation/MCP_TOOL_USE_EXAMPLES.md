@@ -5,12 +5,13 @@ Linear: [FW-87](https://linear.app/asfirewire/issue/FW-87/add-mcp-tool-use-examp
 Status: Reference examples for the implemented MCP schema layer (FW-78..85).
 
 > **Scope note.** This documents the request parameters and stable result shapes
-> an agent should expect. The schema, discovery, and policy layers are
-> implemented and unit-tested; the live `callTool` dispatch that serializes these
-> shapes is not yet wired (it returns refusals/dry-runs until then — see the MCP
-> architecture doc). Field names below match the Swift schema types
-> (`ASFWMCP*Request` / `ASFWMCPTransactionResult` / `ASFWMCPPolicyDecision`).
-> Audio-layer controls are intentionally out of scope for this phase.
+> an agent should expect. The schema, discovery, policy, and core `callTool`
+> dispatch layers are implemented and unit-tested. Live protocol/driver adapter
+> work remains separate; tools without a concrete driver surface return explicit
+> `capabilityUnavailable` / `notImplemented` results rather than bypassing
+> policy. Field names below match the Swift schema types (`ASFWMCP*Request` /
+> `ASFWMCPTransactionResult` / `ASFWMCPPolicyDecision`). Audio-layer controls are
+> intentionally out of scope for this phase.
 
 ## 1. Parameter conventions
 
