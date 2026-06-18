@@ -17,7 +17,7 @@ using ASFW::Audio::Runtime::AudioWireFormat;
 
 AudioGraphBinding MakeBinding(AudioTransportControlBlock* control,
                               IOUserAudioDevice* audioDevice,
-                              int32_t* input,
+                              float* input,
                               const float* output) {
     return AudioGraphBinding{
         .guid = 0x1122334455667788ULL,
@@ -42,7 +42,7 @@ AudioGraphBinding MakeBinding(AudioTransportControlBlock* control,
 TEST(AudioGraphBindingTests, InvalidWithoutGuid) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
 
     auto binding = MakeBinding(&control, &audioDevice, input.data(), nullptr);
     binding.guid = 0;
@@ -53,7 +53,7 @@ TEST(AudioGraphBindingTests, InvalidWithoutGuid) {
 TEST(AudioGraphBindingTests, InvalidWithoutSampleRate) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
 
     auto binding = MakeBinding(&control, &audioDevice, input.data(), nullptr);
     binding.sampleRateHz = 0;
@@ -63,7 +63,7 @@ TEST(AudioGraphBindingTests, InvalidWithoutSampleRate) {
 
 TEST(AudioGraphBindingTests, InvalidWithoutControl) {
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
 
     const auto binding = MakeBinding(nullptr, &audioDevice, input.data(), nullptr);
 
@@ -72,7 +72,7 @@ TEST(AudioGraphBindingTests, InvalidWithoutControl) {
 
 TEST(AudioGraphBindingTests, InvalidWithoutAudioDevice) {
     AudioTransportControlBlock control{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
 
     const auto binding = MakeBinding(&control, nullptr, input.data(), nullptr);
 
@@ -82,7 +82,7 @@ TEST(AudioGraphBindingTests, InvalidWithoutAudioDevice) {
 TEST(AudioGraphBindingTests, ValidWithInputOnly) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
 
     const auto binding = MakeBinding(&control, &audioDevice, input.data(), nullptr);
 
@@ -106,7 +106,7 @@ TEST(AudioGraphBindingTests, ValidWithOutputOnly) {
 TEST(AudioGraphBindingTests, ValidWithDuplex) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
 
     const auto binding = MakeBinding(&control, &audioDevice, input.data(), output.data());

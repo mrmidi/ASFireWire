@@ -11,7 +11,7 @@ enum class AudioSampleStorage : uint32_t {
 };
 
 struct AudioStreamMemory final {
-    int32_t* inputBase{nullptr};
+    float* inputBase{nullptr};
     const float* outputBase{nullptr};
 
     uint32_t inputFrameCapacity{0};
@@ -38,7 +38,7 @@ struct AudioStreamMemory final {
         return HasInput() || HasOutput();
     }
 
-    [[nodiscard]] int32_t* InputFrame(uint64_t absoluteFrame) const noexcept {
+    [[nodiscard]] float* InputFrame(uint64_t absoluteFrame) const noexcept {
         if (!HasInput()) {
             return nullptr;
         }

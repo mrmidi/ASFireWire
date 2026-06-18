@@ -322,7 +322,7 @@ private:
         directOutputBase_ = reinterpret_cast<const float*>(
             static_cast<uintptr_t>(directOutputMap_->GetAddress()));
         directOutputBytes_ = directOutputMap_->GetLength();
-        directInputBase_ = reinterpret_cast<int32_t*>(
+        directInputBase_ = reinterpret_cast<float*>(
             static_cast<uintptr_t>(directInputMap_->GetAddress()));
         directInputBytes_ = directInputMap_->GetLength();
         directControl_ = reinterpret_cast<Runtime::AudioTransportControlBlock*>(
@@ -507,7 +507,7 @@ private:
     uint64_t directOutputBytes_{0};
     uint32_t directOutputCapacityFrames_{0};
     uint32_t directOutputChannels_{0};
-    int32_t* directInputBase_{nullptr};
+    float* directInputBase_{nullptr};
     uint64_t directInputBytes_{0};
     uint32_t directInputCapacityFrames_{0};
     uint32_t directInputChannels_{0};

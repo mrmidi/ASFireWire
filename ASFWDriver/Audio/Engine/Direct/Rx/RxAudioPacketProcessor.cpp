@@ -75,7 +75,7 @@ RxAudioPacketProcessorResult RxAudioPacketProcessor::ProcessPacket(const uint8_t
     // If armed: decode quadlets directly to ADK input memory
     const uint32_t* dataBlocks = &quadlets[2];
     for (size_t i = 0; i < eventCount; ++i) {
-        int32_t* frameOut = writer_.Frame(absoluteFrame + i);
+        float* frameOut = writer_.Frame(absoluteFrame + i);
         if (!frameOut) {
             result.status = DirectRxWriteStatus::kInvalidRange;
             return result;

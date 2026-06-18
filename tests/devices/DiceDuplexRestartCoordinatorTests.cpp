@@ -150,7 +150,7 @@ public:
     bool CopyDirectAudioBinding(ASFW::Audio::Runtime::DirectAudioBindingSnapshot& out) noexcept override {
         out.generation = 1;
         out.valid = true;
-        out.inputBase = reinterpret_cast<int32_t*>(0x1234);
+        out.inputBase = reinterpret_cast<float*>(0x1234);
         out.inputFrames = 512;
         out.inputChannels = 8;
         out.outputBase = reinterpret_cast<const float*>(0x5678);
