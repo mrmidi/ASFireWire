@@ -31,6 +31,7 @@
 #include "../Hardware/RegisterMap.hpp"
 #include "../Bus/IRM/IRMClient.hpp"
 #include "../Protocols/AVC/AVCDiscovery.hpp"
+#include "../Protocols/SBP2/Session/SessionRegistry.hpp"
 #include "../Protocols/AVC/CMP/CMPClient.hpp"
 #include "../Audio/Protocols/DeviceProtocolFactory.hpp"
 #include "../Scheduling/Scheduler.hpp"
@@ -81,6 +82,9 @@ void ControllerCore::HandleInterrupt(const InterruptSnapshot& snapshot) {
         }
         if (powerLinkPolicy_) {
             powerLinkPolicy_->OnBusResetStarted(generation);
+        }
+        if (deps_.sbp2SessionRegistry) {
+            deps_.sbp2SessionRegistry->OnBusReset(static_cast<uint16_t>(generation));
         }
     }
     DispatchAsyncInterrupts(events);

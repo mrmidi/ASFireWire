@@ -61,6 +61,15 @@ enum {
     kMethodDeallocateAddressRange = 47,
     kMethodReadIncomingData = 48,
     kMethodWriteLocalData = 49,
+    kMethodCreateSBP2Session = 52,
+    kMethodStartSBP2Login = 53,
+    kMethodGetSBP2SessionState = 54,
+    kMethodSubmitSBP2Inquiry = 55,
+    kMethodGetSBP2InquiryResult = 56,
+    kMethodSubmitSBP2Command = 57,
+    kMethodGetSBP2CommandResult = 58,
+    kMethodSubmitSBP2TaskManagement = 59,
+    kMethodReleaseSBP2Session = 60,
     // TODO(ASFW-IRM): Remove temporary IRM test method after dedicated validation tooling exists.
     kMethodTestIRMAllocation = 26,
     kMethodTestIRMRelease = 27,
@@ -599,6 +608,24 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
         return runtimeState->SBP2().ReadIncomingData(arguments, this);
     case kMethodWriteLocalData:
         return runtimeState->SBP2().WriteLocalData(arguments, this);
+    case kMethodCreateSBP2Session:
+        return runtimeState->SBP2().CreateSBP2Session(arguments, this);
+    case kMethodStartSBP2Login:
+        return runtimeState->SBP2().StartSBP2Login(arguments, this);
+    case kMethodGetSBP2SessionState:
+        return runtimeState->SBP2().GetSBP2SessionState(arguments, this);
+    case kMethodSubmitSBP2Inquiry:
+        return runtimeState->SBP2().SubmitSBP2Inquiry(arguments, this);
+    case kMethodGetSBP2InquiryResult:
+        return runtimeState->SBP2().GetSBP2InquiryResult(arguments, this);
+    case kMethodSubmitSBP2Command:
+        return runtimeState->SBP2().SubmitSBP2Command(arguments, this);
+    case kMethodGetSBP2CommandResult:
+        return runtimeState->SBP2().GetSBP2CommandResult(arguments, this);
+    case kMethodSubmitSBP2TaskManagement:
+        return runtimeState->SBP2().SubmitSBP2TaskManagement(arguments, this);
+    case kMethodReleaseSBP2Session:
+        return runtimeState->SBP2().ReleaseSBP2Session(arguments, this);
     default:
         break;
     }

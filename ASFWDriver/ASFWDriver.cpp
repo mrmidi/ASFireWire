@@ -64,6 +64,7 @@
 #include "Protocols/AVC/AVCDiscovery.hpp"
 #include "Protocols/AVC/CMP/CMPClient.hpp"
 #include "Protocols/AVC/FCPResponseRouter.hpp"
+#include "Protocols/SBP2/Session/DriverKitSessionScheduler.hpp"
 #include "Scheduling/Scheduler.hpp"
 #include "Service/DriverContext.hpp"
 #include "Service/LocalRequestWiring.hpp"
@@ -306,7 +307,11 @@ kern_return_t IMPL(ASFWDriver, Start) {
 
     // Construct the SBP-2 manager dependency, then assemble the single inbound
     // request dispatch (CSR / FCP / DICE / SBP-2) in one place.
-    DriverWiring::EnsureSbp2Deps(ctx);
+    kr = DriverWiring::EnsureSbp2Deps(*this, ctx);
+    if (kr != kIOReturnSuccess) {
+        DriverWiring::CleanupStartFailure(ctx);
+        return kr;
+    }
     ASFW::Service::WireLocalRequestDispatch(ctx);
     EnsureRomScanner(ctx);
 
@@ -591,6 +596,21 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
     }
 
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);
+}
+
+void ASFWDriver::SBP2SessionTimerFired_Impl(ASFWDriver_SBP2SessionTimerFired_Args) {
+    (void)action;
+    (void)time;
+
+    if (!ivars || !ivars->context) {
+        return;
+    }
+    auto& ctx = *ivars->context;
+    if (ctx.stopping.load(std::memory_order_acquire) || !ctx.deps.sbp2SessionScheduler) {
+        return;
+    }
+
+    ctx.deps.sbp2SessionScheduler->HandleTimerFired();
 }
 
 void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationReady_Args) {
