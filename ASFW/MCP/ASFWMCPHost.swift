@@ -39,6 +39,7 @@ final class ASFWMCPHost<Driver: ASFWDriverControlling> {
     private var transport: StatefulHTTPServerTransport?
     private var httpAdapter: ASFWMCPHTTPAdapter?
     private(set) var status: ASFWMCPHostStatus = .stopped
+    var onStatusChanged: ((ASFWMCPHostStatus) -> Void)?
 
     init(core: ASFWMCPCore<Driver>) {
         self.core = core
@@ -71,7 +72,7 @@ final class ASFWMCPHost<Driver: ASFWDriverControlling> {
             },
             connectionCountChanged: { [weak self] count in
                 Task { @MainActor [weak self] in
-                    self?.status.activeHTTPConnections = count
+                    self?.setActiveHTTPConnections(count)
                 }
             }
         )
@@ -81,11 +82,11 @@ final class ASFWMCPHost<Driver: ASFWDriverControlling> {
         self.server = server
         self.transport = transport
         self.httpAdapter = adapter
-        self.status = ASFWMCPHostStatus(
+        setStatus(ASFWMCPHostStatus(
             isRunning: true,
             endpointURL: endpoint,
             activeHTTPConnections: 0
-        )
+        ))
         return status
     }
 
@@ -96,7 +97,18 @@ final class ASFWMCPHost<Driver: ASFWDriverControlling> {
         httpAdapter = nil
         transport = nil
         server = nil
-        status = .stopped
+        setStatus(.stopped)
+    }
+
+    private func setActiveHTTPConnections(_ count: Int) {
+        var nextStatus = status
+        nextStatus.activeHTTPConnections = count
+        setStatus(nextStatus)
+    }
+
+    private func setStatus(_ status: ASFWMCPHostStatus) {
+        self.status = status
+        onStatusChanged?(status)
     }
 }
 
