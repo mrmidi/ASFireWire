@@ -138,6 +138,8 @@ enum ASFWMCPTransactionStatus: String, Equatable {
     case rcodeError
     case busReset
     case compareFailed
+    case staleGeneration
+    case unavailable
     /// Refused by the FW-79 write policy before reaching the driver.
     case denied
     /// Policy-cleared shape that was intentionally not executed.
