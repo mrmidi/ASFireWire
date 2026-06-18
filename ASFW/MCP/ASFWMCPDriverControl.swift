@@ -106,6 +106,18 @@ actor MockASFWDriverControl: ASFWDriverControlling {
         )
     ]
 
+    static let sbp2Node = ASFWMCPNodeSummary(
+        nodeId: 2,
+        address16: "0xFFC2",
+        guid: "0x0022334455667788",
+        vendorId: "0x00609E",
+        modelId: "0x00001000",
+        vendorName: "Mock SBP-2",
+        modelName: "Storage",
+        configRomCached: true,
+        protocolHints: ["sbp2"]
+    )
+
     static let defaultTransactions: [ASFWMCPTransactionEvent] = [
         ASFWMCPTransactionEvent(
             timestampNs: 123_456_780_000,

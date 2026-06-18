@@ -73,6 +73,25 @@ struct ASFWMCPToolDefinition: Equatable {
     let readOnly: Bool
     let idempotent: Bool
     let summary: String
+    let requiredProtocolHints: [String]
+
+    init(
+        name: String,
+        group: String,
+        visibility: ASFWMCPVisibility,
+        readOnly: Bool,
+        idempotent: Bool,
+        summary: String,
+        requiredProtocolHints: [String] = []
+    ) {
+        self.name = name
+        self.group = group
+        self.visibility = visibility
+        self.readOnly = readOnly
+        self.idempotent = idempotent
+        self.summary = summary
+        self.requiredProtocolHints = requiredProtocolHints
+    }
 }
 
 struct ASFWMCPResourceDefinition: Equatable {
@@ -211,5 +230,23 @@ struct ASFWMCPHardwareSmokePlan: Equatable {
 
     var containsMutatingOperations: Bool {
         steps.contains { $0.mutatesHardware }
+    }
+}
+
+struct ASFWMCPTestGateCheck: Equatable {
+    let id: String
+    let passed: Bool
+    let reason: String
+}
+
+struct ASFWMCPTestGateResult: Equatable {
+    let checks: [ASFWMCPTestGateCheck]
+
+    nonisolated var passed: Bool {
+        checks.allSatisfy(\.passed)
+    }
+
+    nonisolated var failedChecks: [ASFWMCPTestGateCheck] {
+        checks.filter { $0.passed == false }
     }
 }

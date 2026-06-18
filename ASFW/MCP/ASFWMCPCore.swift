@@ -7,8 +7,15 @@ struct ASFWMCPCore<Driver: ASFWDriverControlling> {
     func listTools() async -> [ASFWMCPToolDefinition] {
         guard configuration.mode != .disabled else { return [] }
 
+        let nodes = await driver.listNodes()
+        let protocolHints = Set(nodes.flatMap(\.protocolHints))
         let allTools = Self.toolCatalog
         return allTools.filter { tool in
+            guard tool.requiredProtocolHints.isEmpty ||
+                  tool.requiredProtocolHints.contains(where: { protocolHints.contains($0) }) else {
+                return false
+            }
+
             switch tool.visibility {
             case .always:
                 return true
@@ -250,12 +257,17 @@ extension ASFWMCPCore {
             ASFWMCPToolDefinition(name: "asfw_read_quadlet", group: "async_transactions", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Submit an async quadlet read."),
             ASFWMCPToolDefinition(name: "asfw_read_block", group: "async_transactions", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Submit an async block read."),
             ASFWMCPToolDefinition(name: "asfw_read_device_register", group: "register_access", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a device register/address-space value."),
-            ASFWMCPToolDefinition(name: "asfw_dice_read_register", group: "dice_tcat", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a DICE/TCAT register."),
+            ASFWMCPToolDefinition(name: "asfw_dice_read_register", group: "dice_tcat", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a DICE/TCAT register.", requiredProtocolHints: ["dice_tcat"]),
+            ASFWMCPToolDefinition(name: "asfw_irm_get_state", group: "irm_cas", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return IRM and bus manager state."),
+            ASFWMCPToolDefinition(name: "asfw_avc_list_units", group: "avc_fcp", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List AV/C units.", requiredProtocolHints: ["avc"]),
+            ASFWMCPToolDefinition(name: "asfw_cmp_read_pcr", group: "cmp", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read and decode a CMP plug control register.", requiredProtocolHints: ["cmp"]),
+            ASFWMCPToolDefinition(name: "asfw_sbp2_list_units", group: "sbp2", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List SBP-2 units.", requiredProtocolHints: ["sbp2"]),
 
             ASFWMCPToolDefinition(name: "asfw_write_quadlet", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated async quadlet write."),
             ASFWMCPToolDefinition(name: "asfw_write_block", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated async block write."),
             ASFWMCPToolDefinition(name: "asfw_compare_swap", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated compare-swap transaction."),
-            ASFWMCPToolDefinition(name: "asfw_dice_write_register", group: "dice_tcat", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated DICE/TCAT register write."),
+            ASFWMCPToolDefinition(name: "asfw_dice_write_register", group: "dice_tcat", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated DICE/TCAT register write.", requiredProtocolHints: ["dice_tcat"]),
+            ASFWMCPToolDefinition(name: "asfw_cmp_write_pcr", group: "cmp", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated CMP PCR write.", requiredProtocolHints: ["cmp"]),
             ASFWMCPToolDefinition(name: "asfw_write_ohci_register_dev", group: "register_access", visibility: .rawDeveloper, readOnly: false, idempotent: false, summary: "Raw developer-tier OHCI register write.")
         ]
     }
