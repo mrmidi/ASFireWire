@@ -53,10 +53,7 @@ enum ASFWMCPToolCatalog {
 
     // `avcFcpTools` is owned by ASFWMCPAvcFcpTools.swift (FW-82).
 
-    static let cmpTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_cmp_read_pcr", group: "cmp", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read and decode a CMP plug control register.", requiredProtocolHints: ["cmp"]),
-        ASFWMCPToolDefinition(name: "asfw_cmp_write_pcr", group: "cmp", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated CMP PCR write.", requiredProtocolHints: ["cmp"])
-    ]
+    // `cmpTools` is owned by ASFWMCPCmpTools.swift (FW-83).
 
     static let sbp2Tools: [ASFWMCPToolDefinition] = [
         ASFWMCPToolDefinition(name: "asfw_sbp2_list_units", group: "sbp2", visibility: .readOnly, readOnly: true, idempotent: true, summary: "List SBP-2 units.", requiredProtocolHints: ["sbp2"])
