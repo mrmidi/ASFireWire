@@ -9,7 +9,7 @@ namespace ASFW::Audio::Runtime {
 struct DirectAudioBindingSnapshot {
     uint64_t generation{0};
 
-    int32_t* inputBase{nullptr};
+    float* inputBase{nullptr};
     uint64_t inputBytes{0};
     uint32_t inputFrames{0};
     uint32_t inputChannels{0};

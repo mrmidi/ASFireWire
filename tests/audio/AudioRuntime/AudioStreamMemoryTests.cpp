@@ -10,7 +10,7 @@ namespace {
 using ASFW::Audio::Runtime::AudioStreamMemory;
 
 TEST(AudioStreamMemoryTests, InputFrameWrapsByFrameCapacityAndUsesChannelStride) {
-    std::array<int32_t, 8> input{};
+    std::array<float, 8> input{};
 
     const AudioStreamMemory memory{
         .inputBase = input.data(),
@@ -50,7 +50,7 @@ TEST(AudioStreamMemoryTests, MissingBuffersReturnNullAndReportInvalidDirections)
 }
 
 TEST(AudioStreamMemoryTests, MemoryIsValidWithEitherDirection) {
-    std::array<int32_t, 2> input{};
+    std::array<float, 2> input{};
     std::array<float, 2> output{};
 
     const AudioStreamMemory inputOnly{

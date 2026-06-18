@@ -190,7 +190,7 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.memory.inputBase = snapshot.inputBase;
                     directInputView_.memory.inputFrameCapacity = snapshot.inputFrames;
                     directInputView_.memory.inputChannels = snapshot.inputChannels;
-                    directInputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native;
+                    directInputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kFloat32Native;
                     directInputView_.control = snapshot.control;
                     directInputView_.deviceToHostAm824Slots = am824Slots_ > 0 ? am824Slots_ : snapshot.inputChannels;
                     directInputView_.hostToDeviceAm824Slots = snapshot.outputChannels;

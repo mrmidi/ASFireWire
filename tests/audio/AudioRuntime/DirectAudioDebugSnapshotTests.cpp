@@ -26,7 +26,7 @@ using ASFW::Audio::Runtime::ShouldLogDirectAudioDebugSnapshot;
 TEST(DirectAudioDebugSnapshotTests, CapturesBindingCountersAndCursors) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
 
     const AudioGraphBinding binding{

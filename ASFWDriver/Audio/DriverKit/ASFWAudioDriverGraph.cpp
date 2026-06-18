@@ -85,21 +85,6 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     return kIOReturnSuccess;
 }
 
-void FillPcm24Format(IOUserAudioStreamBasicDescription& fmt,
-                     double sampleRate,
-                     uint32_t channels) noexcept {
-    fmt.mSampleRate = sampleRate;
-    fmt.mFormatID = IOUserAudioFormatID::LinearPCM;
-    fmt.mFormatFlags = static_cast<IOUserAudioFormatFlags>(
-        static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagIsSignedInteger) |
-        static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagsNativeEndian));
-    fmt.mBytesPerPacket = sizeof(int32_t) * channels;
-    fmt.mFramesPerPacket = 1;
-    fmt.mBytesPerFrame = sizeof(int32_t) * channels;
-    fmt.mChannelsPerFrame = channels;
-    fmt.mBitsPerChannel = 24;
-}
-
 void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                        double sampleRate,
                        uint32_t channels) noexcept {
@@ -243,7 +228,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ? "blocking" : "non-blocking");
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Forcing single advertised format: input=24-bit integer output=Float32");
+             "ASFWAudioDriver: Forcing single advertised format: input=Float32 output=Float32");
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
              ivars.device.inputChannelCount,
@@ -324,12 +309,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     IOUserAudioStreamBasicDescription outputFormats[8] = {};
     const uint32_t formatCount = ivars.device.sampleRateCount > 8 ? 8 : ivars.device.sampleRateCount;
     for (uint32_t i = 0; i < formatCount; i++) {
-        FillPcm24Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
+        FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
         FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
     }
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Created %u stream formats input=int24/%u ch output=float32/%u ch",
+             "ASFWAudioDriver: Created %u stream formats input=float32/%u ch output=float32/%u ch",
              formatCount,
              ivars.device.inputChannelCount,
              ivars.device.outputChannelCount);

@@ -21,7 +21,7 @@ using ASFW::AudioEngine::Direct::FireWireAudioEngine;
 
 AudioGraphBinding MakeDuplexBinding(AudioTransportControlBlock& control,
                                     IOUserAudioDevice& audioDevice,
-                                    int32_t* input,
+                                    float* input,
                                     const float* output) {
     return AudioGraphBinding{
         .guid = 0x1122334455667788ULL,
@@ -55,7 +55,7 @@ void PublishPlaybackWriteEnd(AudioTransportControlBlock& control,
 TEST(DirectAudioEngineTests, BindValidGraphBindsSubcomponents) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
@@ -72,7 +72,7 @@ TEST(DirectAudioEngineTests, BindValidGraphBindsSubcomponents) {
 TEST(DirectAudioEngineTests, BindInvalidGraphClearsState) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
@@ -91,7 +91,7 @@ TEST(DirectAudioEngineTests, BindInvalidGraphClearsState) {
 TEST(DirectAudioEngineTests, UnbindClearsState) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
@@ -108,7 +108,7 @@ TEST(DirectAudioEngineTests, UnbindClearsState) {
 TEST(DirectAudioEngineTests, OutputReaderUsesPlaybackRingCursorAvailability) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
@@ -126,7 +126,7 @@ TEST(DirectAudioEngineTests, OutputReaderUsesPlaybackRingCursorAvailability) {
 TEST(DirectAudioEngineTests, OutputReaderRejectsOverflowingFrameRange) {
     AudioTransportControlBlock control{};
     IOUserAudioDevice audioDevice{};
-    std::array<int32_t, 16> input{};
+    std::array<float, 16> input{};
     std::array<float, 16> output{};
     FireWireAudioEngine engine{};
 
