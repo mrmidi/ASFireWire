@@ -79,6 +79,24 @@ enum ASFWMCPTestGate {
             reason: "Default hardware smoke plan must not mutate hardware."
         ))
 
+        // FW-79 tightening (MCP_TEST_GATE.md §6): a write may reach the driver
+        // write path only when developer-write policy and the test gate are open.
+        // Probe with a representative, generation-current write so the decision is
+        // governed by mode/gate state rather than incidental staleness.
+        let writeProbe = core.writePolicyEngine.evaluate(
+            ASFWMCPPolicyRequest(
+                operationType: .write,
+                addressSpace: .unitsSpace,
+                requestedGeneration: 0,
+                currentGeneration: 0
+            )
+        )
+        checks.append(check(
+            id: "policy.write_path_gated",
+            passed: writeProbe.reachesDriverWritePath == false || core.configuration.canListDeveloperWriteTools,
+            reason: "Writes may reach the driver write path only when developer-write policy and the Swift test gate are open."
+        ))
+
         return ASFWMCPTestGateResult(checks: checks)
     }
 
