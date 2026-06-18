@@ -174,6 +174,12 @@ public:
     /// Reset the fetch agent (clears the ORB chain). Completion via callback.
     void ResetFetchAgent(std::function<void(int)> callback) noexcept;
 
+    /// Drop all outstanding command-ORB tracking and cancel any in-flight
+    /// fetch-agent / doorbell write. Used by the command plane (CommandExecutor)
+    /// when a command completes, fails, or is aborted — mirrors #19's
+    /// ClearORBTracking, which CleanupCommandResources invoked on the session.
+    void ClearCommandTracking() noexcept { fetchAgent_.Clear(true); }
+
     /// Re-enable unsolicited status after the device sends one. If called before
     /// login completes, it is deferred until LoggedIn.
     void EnableUnsolicitedStatus() noexcept;

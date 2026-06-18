@@ -205,3 +205,19 @@ add_protocols_test(LoginSessionTests
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
     "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
 )
+
+# SBP2 SessionRegistry Tests (identity/lifecycle + per-record CommandExecutor)
+add_protocols_test(SessionRegistryTests
+    SessionRegistryTests.cpp
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/SessionRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/CommandExecutor.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/LoginSession.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/Session/FetchAgent.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2CommandORB.cpp"
+    "${ASFW_DRIVER_DIR}/Protocols/SBP2/SBP2ManagementORB.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceManager.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/DeviceRegistry.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWDevice.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/FWUnit.cpp"
+    "${ASFW_DRIVER_DIR}/Discovery/SpeedPolicy.cpp"
+)
