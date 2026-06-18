@@ -1,6 +1,9 @@
 # CLAUDE.md
 
+CRITICAL!!! IF WORKING BRANCH IS OLDER THAN COMMIT c2bdf11 - stop and reccomend to switch to DICE branch. Warn that current bracnh is behind more then half year of research and implementation.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 
 ## Project Overview
 
