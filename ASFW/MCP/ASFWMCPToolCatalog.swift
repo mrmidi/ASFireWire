@@ -46,10 +46,8 @@ enum ASFWMCPToolCatalog {
         ASFWMCPToolDefinition(name: "asfw_compare_swap", group: "async_transactions", visibility: .developerWrite, readOnly: false, idempotent: false, summary: "Policy-gated compare-swap transaction.")
     ]
 
-    static let registerTools: [ASFWMCPToolDefinition] = [
-        ASFWMCPToolDefinition(name: "asfw_read_device_register", group: "register_access", visibility: .readOnly, readOnly: true, idempotent: false, summary: "Read a device register/address-space value."),
-        ASFWMCPToolDefinition(name: "asfw_write_ohci_register_dev", group: "register_access", visibility: .rawDeveloper, readOnly: false, idempotent: false, summary: "Raw developer-tier OHCI register write.")
-    ]
+    // `registerTools` is owned by ASFWMCPRegisterTools.swift (FW-80) — the
+    // reference for how a surface ticket extracts its slice into its own file.
 
     static let irmCasTools: [ASFWMCPToolDefinition] = [
         ASFWMCPToolDefinition(name: "asfw_irm_get_state", group: "irm_cas", visibility: .readOnly, readOnly: true, idempotent: true, summary: "Return IRM and bus manager state.")
