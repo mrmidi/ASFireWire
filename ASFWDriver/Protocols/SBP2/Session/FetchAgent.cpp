@@ -15,8 +15,8 @@ namespace ASFW::Protocols::SBP2 {
 using namespace ASFW::Protocols::SBP2::Wire;
 
 namespace {
-// Fetch-agent write retry backoff, matching PR #19 (1 ms between attempts).
-constexpr uint64_t kFetchAgentWriteRetryDelayNs = 1'000'000ULL;
+// Fetch-agent write retry backoff, matching PR #19 (1000 ms between attempts).
+constexpr uint64_t kFetchAgentWriteRetryDelayNs = 1'000'000'000ULL;
 }
 
 FetchAgent::FetchAgent(Async::IFireWireBus& bus,
