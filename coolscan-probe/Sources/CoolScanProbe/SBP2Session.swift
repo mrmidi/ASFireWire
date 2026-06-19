@@ -243,6 +243,14 @@ final class SBP2Session {
                           scsiStatus: scsiStatus, payload: payload, sense: sense)
     }
 
+    /// SBP-2 LOGICAL UNIT RESET (task management function 0x0E) via the separate
+    /// management agent. Resets the LU's task state to un-wedge a command fetch
+    /// agent that has stopped servicing ORBs — the dext's slot-recovery frees the
+    /// host side, but only this resets the scanner side. Best-effort.
+    func resetLogicalUnit() {
+        _ = try? conn.call(.submitSBP2TaskManagement, scalarIn: [handle, 0x0E])
+    }
+
     /// Tear down the session. The dext issues an async LOGOUT ORB and retains the
     /// session until it completes/times out — but if our process exits the instant
     /// release() returns, the connection is torn down before the logout ORB is

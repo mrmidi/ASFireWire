@@ -539,14 +539,19 @@ enum CoolScan {
     /// been observed to come back ~44 s after a transport drop).
     private static func attempt(_ label: String, tries: Int = 8,
                                 diag: (() -> String)? = nil,
-                                recover: (() -> Void)? = nil,
+                                recover: ((SCSIResult?) -> Void)? = nil,
                                 _ body: () throws -> SCSIResult) throws -> SCSIResult {
         var lastInfo = "ingen forsøk"
         for i in 1...tries {
             var rejected: String? = nil
+            // nil = body threw (timeout / submit-fail = transport wedge); non-nil =
+            // a result the device actually returned. recover uses this to tell a
+            // transport wedge (reset the LU) apart from a SCSI verdict (just wait).
+            var lastResult: SCSIResult? = nil
             do {
                 let r = try body()
                 if r.ok { return r }
+                lastResult = r
                 lastInfo = r.statusText
                 // ILLEGAL REQUEST (key 5) is a deterministic rejection of the
                 // command's bytes — retrying the identical command just poisons
@@ -563,7 +568,7 @@ enum CoolScan {
             if i < tries {
                 print("   ↻ \(label) forsøk \(i)/\(tries): \(lastInfo)")
                 if let recover {
-                    recover()
+                    recover(lastResult)
                 } else {
                     usleep(UInt32(min(200_000 * i, 1_000_000)))
                 }
@@ -695,7 +700,20 @@ enum CoolScan {
         //    instead of adopting the AF result (like VueScan's final scan pass).
         // Between tries: ride TUR until the device answers again instead of a
         // blind sleep — a dropped transport has been observed to need ~44 s.
-        let ride: () -> Void = { _ = waitReady(s, timeout: 60) }
+        // On a transport wedge (body threw, or the dext freed a stuck slot →
+        // transport < 0) the scanner's fetch agent has stopped servicing ORBs;
+        // freeing the host slot isn't enough, so reset the LU via the management
+        // agent before retrying. A real SCSI verdict (transport == 0) means the
+        // agent is fine — just wait for the device to answer again.
+        let ride: (SCSIResult?) -> Void = { last in
+            let wedged = (last == nil) || (last!.transportStatus < 0)
+            if wedged {
+                print("   ⟳ transport-wedge — LOGICAL UNIT RESET før retry")
+                s.resetLogicalUnit()
+                Thread.sleep(forTimeInterval: 2)
+            }
+            _ = waitReady(s, timeout: 60)
+        }
         // Any command issued while the mechanics move risks ORB timeout →
         // AGENT_RESET mid-cycle → terminal wedge (HW-run 13). VueScan survived
         // this window via doorbell-chaining; with reset-per-ORB the only safe
