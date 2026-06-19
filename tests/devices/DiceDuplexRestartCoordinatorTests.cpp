@@ -569,6 +569,24 @@ protected:
 
     void ClearLog() { log_.Clear(); }
 
+    // Blocks until the coordinator's stored session reports `reason` as its pending clock
+    // request. RequestClockConfig keeps a single pending slot per GUID written under the
+    // coordinator lock, so this lets a test serialize concurrent submissions: wait until one
+    // request is observably enqueued before launching the next, instead of racing for the lock.
+    [[nodiscard]] bool WaitForPendingClockReason(DiceRestartReason reason) const {
+        using namespace std::chrono_literals;
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto session = GetSession();
+            if (session.has_value() && session->hasPendingClockRequest &&
+                session->pendingReason == reason) {
+                return true;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+        return false;
+    }
+
     NullFireWireBus bus_{};
     IRMClient irmClient_;
     HardwareInterface hardware_{};
@@ -895,10 +913,20 @@ TEST_F(DiceDuplexRestartCoordinatorTests, LatestPendingClockRequestWinsDuringRes
         secondPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kRecoverAfterTimingLoss));
     });
+
+    // The pending slot's winner is decided by lock-acquisition order, so the second request
+    // must be observably enqueued before the third is launched; otherwise the two threads
+    // race for the lock and which one "wins" is nondeterministic (the source of CI flake).
+    ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kRecoverAfterTimingLoss));
+
     std::thread thirdThread([&] {
         thirdPromise.set_value(coordinator_.RequestClockConfig(
             kTestGuid, kSupportedClock, DiceRestartReason::kBusResetRebind));
     });
+
+    // The third request must supersede the second before prepare is released so the drain
+    // order is deterministic: second -> kSuperseded/kIOReturnAborted, third -> kApplied.
+    ASSERT_TRUE(WaitForPendingClockReason(DiceRestartReason::kBusResetRebind));
 
     protocol_->SetHoldPrepare(false);
 
