@@ -679,12 +679,11 @@ enum CoolScan {
         if let c8 = try? readPageC8(s) {
             print("  EVPD C8 (\(c8.payload.count)B, \(c8.statusText)): \(hexLine([UInt8](c8.payload)))")
         }
-        // GET WINDOW is our own addition (0x25 never appears in the capture) —
-        // keep it out of the AF→SET WINDOW stretch so that stretch is pure
-        // VueScan vocabulary.
-        if let gw = try? getWindowRaw(s, color: .red) {
-            print("  GET WINDOW(red) før preamble (\(gw.statusText)): \(hexLine([UInt8](gw.payload)))")
-        }
+        // GET WINDOW (0x25) is our own addition — it never appears in the capture
+        // and this target doesn't service it: the ORB hangs with no status block,
+        // and because the dext arms the ORB timeout only after the fetch-agent
+        // write completes, a stuck submit leaves commandInFlight latched true for
+        // the rest of the run (every later command → kIOReturnError). Dropped.
 
         // 2) Capture preamble, replicated verbatim from the preview pass: set AF
         //    point (center) → EXECUTE → frame-info → AF result → c0 → set focus
