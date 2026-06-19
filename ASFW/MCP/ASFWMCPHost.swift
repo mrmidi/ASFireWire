@@ -149,10 +149,13 @@ private actor ASFWMCPHTTPAdapter {
 
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
+        let listener: NWListener
         if let ipv4 = IPv4Address(bindHost) {
             parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(ipv4), port: nwPort)
+            listener = try NWListener(using: parameters)
+        } else {
+            listener = try NWListener(using: parameters, on: nwPort)
         }
-        let listener = try NWListener(using: parameters, on: nwPort)
         listener.service = nil
         listener.newConnectionHandler = { [weak self] connection in
             Task { await self?.accept(connection) }
